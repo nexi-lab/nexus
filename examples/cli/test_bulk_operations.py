@@ -181,7 +181,7 @@ class LocalTestRunner(TestRunner):
     async def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        await nx.sys_mkdir(self.base, parents=True, exist_ok=True)
+        await nx.mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -195,7 +195,7 @@ class LocalTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+                await nx.mkdir(parent, parents=True, exist_ok=True)
             await nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
@@ -293,10 +293,10 @@ class LocalTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        await nx.sys_mkdir(f"{self.base}/to_delete", exist_ok=True)
+        await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
         await nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
         await nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
-        await nx.sys_mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        await nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
         await nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)
@@ -402,7 +402,7 @@ class RemoteTestRunner(TestRunner):
     async def _run_tests(self, nx) -> None:
         # Setup
         print_header("Setup: Create Test Files")
-        await nx.sys_mkdir(self.base, parents=True, exist_ok=True)
+        await nx.mkdir(self.base, parents=True, exist_ok=True)
         print_success(f"Created directory: {self.base}")
 
         test_files = [
@@ -416,7 +416,7 @@ class RemoteTestRunner(TestRunner):
         for f in test_files:
             parent = str(Path(f).parent)
             if parent != self.base:
-                await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+                await nx.mkdir(parent, parents=True, exist_ok=True)
             await nx.sys_write(f, f"Content of {f}".encode())
             print_success(f"Created: {f}")
 
@@ -510,10 +510,10 @@ class RemoteTestRunner(TestRunner):
         print_header("Test 5: delete_bulk with recursive directory deletion (explicit)")
         print_test("Deleting EXPLICIT directory with recursive=True")
 
-        await nx.sys_mkdir(f"{self.base}/to_delete", exist_ok=True)
+        await nx.mkdir(f"{self.base}/to_delete", exist_ok=True)
         await nx.sys_write(f"{self.base}/to_delete/a.txt", b"file a")
         await nx.sys_write(f"{self.base}/to_delete/b.txt", b"file b")
-        await nx.sys_mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
+        await nx.mkdir(f"{self.base}/to_delete/sub", exist_ok=True)
         await nx.sys_write(f"{self.base}/to_delete/sub/c.txt", b"file c")
 
         result = await nx.delete_bulk([f"{self.base}/to_delete"], recursive=True)

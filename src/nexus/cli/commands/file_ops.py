@@ -68,8 +68,8 @@ def init(path: str) -> None:
             nx = await connect_local_workspace(str(data_dir))
 
             # Create default directories
-            await nx.sys_mkdir("/workspace", exist_ok=True)
-            await nx.sys_mkdir("/shared", exist_ok=True)
+            await nx.mkdir("/workspace", exist_ok=True)
+            await nx.mkdir("/shared", exist_ok=True)
 
             nx.close()
 

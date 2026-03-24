@@ -336,7 +336,7 @@ async def handle_mkdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "exist_ok") and params.exist_ok is not None:
         kwargs["exist_ok"] = params.exist_ok
 
-    await nexus_fs.sys_mkdir(params.path, **kwargs)
+    await nexus_fs.mkdir(params.path, **kwargs)
     return {"created": True}
 
 

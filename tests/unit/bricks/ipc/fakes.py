@@ -65,16 +65,13 @@ class InMemoryStorageDriver:
         data = self._files.pop(key)
         self._files[(dst, zone_id)] = data
 
-    async def sys_mkdir(self, path: str, zone_id: str) -> None:
+    async def mkdir(self, path: str, zone_id: str) -> None:
         self._dirs.add((path, zone_id))
         # Also create all parent directories
         parts = path.strip("/").split("/")
         for i in range(1, len(parts)):
             parent = "/" + "/".join(parts[:i])
             self._dirs.add((parent, zone_id))
-
-    # Alias for backward compatibility
-    mkdir = sys_mkdir
 
     async def sys_access(self, path: str, zone_id: str) -> bool:
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs

@@ -144,7 +144,7 @@ class RemoteBackend(ObjectStoreABC):
         context: OperationContext | None = None,
     ) -> None:
         abs_path = path if path.startswith("/") else "/" + path
-        self._call_rpc("sys_mkdir", {"path": abs_path, "parents": parents, "exist_ok": exist_ok})
+        self._call_rpc("mkdir", {"path": abs_path, "parents": parents, "exist_ok": exist_ok})
 
     def rmdir(
         self,

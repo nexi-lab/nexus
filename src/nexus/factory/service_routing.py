@@ -22,7 +22,7 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "events": ("wait_for_changes", "on_mutation", "locked"),
     "mount": ("add_mount", "remove_mount", "list_mounts"),
     "gateway": (
-        "sys_mkdir",
+        "mkdir",
         "sys_write",
         "sys_read",
         "sys_readdir",

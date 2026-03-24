@@ -480,7 +480,7 @@ async def setup_test_data():
         # Create directories
         for dir_path in ["/workspace", "/reports"]:
             with contextlib.suppress(Exception):
-                await nx.sys_mkdir(dir_path)  # Directory may already exist
+                await nx.mkdir(dir_path)  # Directory may already exist
 
         # Create sample Python files with async patterns
         sample_files = {

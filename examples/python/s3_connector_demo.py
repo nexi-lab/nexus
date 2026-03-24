@@ -181,7 +181,7 @@ async def demo_with_server():
     )
     print_success(f"Wrote: {mount_point}/data.json")
 
-    await nx.sys_mkdir(f"{mount_point}/subdir", parents=True)
+    await nx.mkdir(f"{mount_point}/subdir", parents=True)
     print_success(f"Created: {mount_point}/subdir")
 
     await nx.sys_write(f"{mount_point}/subdir/nested.txt", b"File in subdirectory")
@@ -284,7 +284,7 @@ async def demo_local():
         )
         print_success("Wrote: /workspace/s3/data.json")
 
-        await nx.sys_mkdir("/workspace/s3/subdir", parents=True)
+        await nx.mkdir("/workspace/s3/subdir", parents=True)
         await nx.sys_write("/workspace/s3/subdir/test.txt", b"Test file")
         print_success("Wrote: /workspace/s3/subdir/test.txt")
 

@@ -54,7 +54,7 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     nx.router.add_mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
-    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify directory exists in metadata
     assert nx.metadata.exists("/mnt")
@@ -66,12 +66,12 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     assert mnt_meta is not None
 
     # PathRouter.add_mount() is pure in-memory (no metastore.put); DT_MOUNT
-    # persistence is the mount subsystem's job.  sys_mkdir creates a DT_DIR
+    # persistence is the mount subsystem's job.  mkdir creates a DT_DIR
     # entry, which the kernel still treats as directory-like.
     assert await nx.sys_is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
-    # Note: sys_mkdir creates a regular directory (entry_type=0), not DT_MOUNT.
+    # Note: mkdir creates a regular directory (entry_type=0), not DT_MOUNT.
     # DT_MOUNT is set by topology/zone-manager code, not by raw mkdir.
     # The key invariant is that the path exists and is directory-like.
     assert test_meta.entry_type == 0 or test_meta.is_mount
@@ -88,7 +88,7 @@ async def test_mount_appears_in_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/mnt/gcs_demo", mount_backend, readonly=False)
-    await nx.sys_mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
+    await nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
     root_list = await nx.sys_readdir("/", recursive=False, details=False)
@@ -114,7 +114,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
 
     # Add mount and create directory
     nx.router.add_mount("/personal/alice", mount_backend, readonly=False)
-    await nx.sys_mkdir("/personal/alice", parents=True, exist_ok=True)
+    await nx.mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
     root_list = await nx.sys_readdir("/", recursive=False, details=True)
@@ -151,7 +151,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
 
     # Add mount and create directory with parents
     nx.router.add_mount("/a/b/c/mount", mount_backend, readonly=False)
-    await nx.sys_mkdir("/a/b/c/mount", parents=True, exist_ok=True)
+    await nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
     assert nx.metadata.exists("/a")
@@ -160,16 +160,16 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     assert nx.metadata.exists("/a/b/c/mount")
 
     # Verify all paths are recognized as directories by the kernel.
-    # Parent directories are created by sys_mkdir, while the mount point
+    # Parent directories are created by mkdir, while the mount point
     # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
     # treated as directory-like by sys_is_directory.
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
         assert await nx.sys_is_directory(p), f"Expected {p} to be a directory"
 
-    # PathRouter.add_mount() is pure in-memory; sys_mkdir creates DT_DIR.
+    # PathRouter.add_mount() is pure in-memory; mkdir creates DT_DIR.
     mount_meta = nx.metadata.get("/a/b/c/mount")
     assert mount_meta is not None
-    # sys_mkdir creates entry_type=0 (regular dir); DT_MOUNT is set by topology code.
+    # mkdir creates entry_type=0 (regular dir); DT_MOUNT is set by topology code.
     assert mount_meta.entry_type == 0 or mount_meta.is_mount
 
 
@@ -207,8 +207,8 @@ async def test_sync_mount_ensures_directory_exists(nx_with_mount):
     result = nx.service("sync").sync_mount(sync_ctx)
 
     # Ensure parent directories exist — _setup_mount_point may not create
-    # them on non-gateway path (sync call to async sys_mkdir).
-    await nx.sys_mkdir("/zone/test/old/mount", parents=True, exist_ok=True)
+    # them on non-gateway path (sync call to async mkdir).
+    await nx.mkdir("/zone/test/old/mount", parents=True, exist_ok=True)
 
     # Verify directory exists after sync
     assert nx.metadata.exists("/zone/test/old")
@@ -238,8 +238,8 @@ async def test_add_mount_via_api_creates_directory(nx_with_mount):
     assert mount_id == "/api/mount"
 
     # _setup_mount_point may not create dirs on non-gateway path (sync call to
-    # async sys_mkdir). Ensure dirs exist for the listing assertion below.
-    await nx.sys_mkdir("/api/mount", parents=True, exist_ok=True)
+    # async mkdir). Ensure dirs exist for the listing assertion below.
+    await nx.mkdir("/api/mount", parents=True, exist_ok=True)
 
     # Verify directory was created
     assert nx.metadata.exists("/api")
@@ -256,10 +256,10 @@ async def test_mount_exist_ok_does_not_fail(nx_with_mount):
     nx, tmpdir = nx_with_mount
 
     # Create directory first
-    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Create it again with exist_ok=True (should not raise)
-    await nx.sys_mkdir("/mnt/test", parents=True, exist_ok=True)
+    await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
 
     # Verify it still exists
     assert nx.metadata.exists("/mnt/test")
@@ -275,7 +275,7 @@ async def test_multiple_mounts_in_same_parent(nx_with_mount):
         mount_backend = MagicMock()
         mount_backend.name = name
         nx.router.add_mount(f"/mnt/{name}", mount_backend, readonly=False)
-        await nx.sys_mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
+        await nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt
     mnt_list = await nx.sys_readdir("/mnt", recursive=False, details=False)

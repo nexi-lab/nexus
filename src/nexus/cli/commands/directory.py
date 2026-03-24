@@ -259,10 +259,10 @@ def mkdir(
             ) as nx:
                 if if_not_exists:
                     with contextlib.suppress(FileExistsError):
-                        await nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                        await nx.mkdir(path, parents=parents, exist_ok=True)
                     console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
                 else:
-                    await nx.sys_mkdir(path, parents=parents, exist_ok=True)
+                    await nx.mkdir(path, parents=parents, exist_ok=True)
                     console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
         except Exception as e:
             handle_error(e)

@@ -19,7 +19,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
 )
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
-from nexus.contracts.metadata import FileMetadata
+from nexus.contracts.metadata import DT_DIR, FileMetadata
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.config import (
     BrickServices,
@@ -429,7 +429,7 @@ class NexusFS(  # type: ignore[misc]
         entries from top to bottom (shallowest first) so that ``sys_readdir``
         lists them correctly.
 
-        This is factored out of ``sys_mkdir`` so it can be called both on the
+        This is factored out of ``mkdir`` so it can be called both on the
         normal code-path *and* on the early-return path when the target path
         already exists (e.g. a DT_MOUNT entry written by ``PathRouter.add_mount``).
         """
@@ -444,136 +444,14 @@ class NexusFS(  # type: ignore[misc]
             parent_path = self._get_parent_path(parent_path)
 
         for parent_dir in reversed(parents_to_create):
-            self._create_directory_metadata(parent_dir, context=ctx)
-
-    def _create_directory_metadata(
-        self, path: str, context: OperationContext | None = None
-    ) -> None:
-        """
-        Create metadata entry for a directory.
-
-        Args:
-            path: Virtual path to directory
-            context: Operation context (for zone_id and created_by)
-        """
-        now = datetime.now(UTC)
-
-        # Use provided context or default
-        ctx = self._resolve_cred(context)
-
-        # Note: UNIX permissions (owner/group/mode) are deprecated.
-        # All permissions are now managed through ReBAC relationships.
-        # We no longer inherit or store UNIX permissions in metadata.
-
-        # Create a marker for the directory in metadata
-        # We use an empty content hash as a placeholder
-        empty_hash = hash_content(b"")
-
-        # Route to find which backend owns this path
-        route = self.router.route(path, is_admin=ctx.is_admin)
-
-        metadata = FileMetadata(
-            path=path,
-            backend_name=route.backend.name,
-            physical_path=empty_hash,  # Placeholder for directory
-            size=0,  # Directories have size 0
-            etag=empty_hash,
-            mime_type="inode/directory",  # MIME type for directories
-            created_at=now,
-            modified_at=now,
-            version=1,
-            created_by=self._get_created_by(context),  # Track who created this directory
-            zone_id=ctx.zone_id or ROOT_ZONE_ID,  # P0 SECURITY: Set zone_id
-        )
-
-        self.metadata.put(metadata)
-
-    # === Directory Operations ===
-
-    @rpc_expose(description="Create directory")
-    async def sys_mkdir(
-        self,
-        path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
-        *,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Create a directory (parents=True for mkdir -p)."""
-        path = self._validate_path(path)
-
-        # Use provided context or default
-        ctx = self._resolve_cred(context)
-
-        # Block writes during zone deprovisioning (Issue #2061)
-
-        # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import MkdirHookContext
-
-        self._dispatch.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
-
-        # Route to backend with write access check (mkdir requires write permission)
-        route = self.router.route(
-            path,
-            is_admin=ctx.is_admin,
-            check_write=True,
-        )
-
-        # Check if path is read-only
-        if route.readonly:
-            raise PermissionError(f"Cannot create directory in read-only path: {path}")
-
-        # Check if directory already exists (either as file or implicit directory)
-        existing = self.metadata.get(path)
-        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
-
-        if existing is not None or is_implicit_dir:
-            # When parents=True, behave like mkdir -p (don't raise error if exists)
-            if not exist_ok and not parents:
-                raise FileExistsError(f"Directory already exists: {path}")
-            # If exist_ok=True (or parents=True) and directory exists, we still
-            # need to create parent directory metadata entries.  DT_MOUNT entries
-            # are created by PathRouter.add_mount() *before* sys_mkdir is called,
-            # so the target path already exists in metastore but the parent
-            # directories (e.g. /mnt for /mnt/test) have no metadata yet.
-            if existing is not None:
-                if parents:
-                    self._ensure_parent_directories(path, ctx)
-                return
-
-        # Create directory in backend
-        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
-
-        # Create metadata entries for parent directories if parents=True
-        if parents:
-            self._ensure_parent_directories(path, ctx)
-
-        # Create explicit metadata entry for the directory
-        self._create_directory_metadata(path, context=ctx)
-
-        ctx = self._resolve_cred(context)
-
-        # Issue #900/#1682: Unified two-phase dispatch for mkdir
-        # Hierarchy tuples + owner grants moved to post_mkdir hooks.
-        from nexus.contracts.vfs_hooks import MkdirHookContext
-
-        await self._dispatch.intercept_post_mkdir(
-            MkdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
+            self._setattr_create(
+                parent_dir,
+                DT_DIR,
+                {
+                    "zone_id": ctx.zone_id or ROOT_ZONE_ID,
+                    "created_by": self._get_created_by(ctx),
+                },
             )
-        )
-        await self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.DIR_CREATE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
-            )
-        )
 
     @rpc_expose(description="Remove directory")
     async def sys_rmdir(
@@ -880,6 +758,8 @@ class NexusFS(  # type: ignore[misc]
             if meta.entry_type == requested_type and requested_type == DT_STREAM:
                 self._stream_manager.open(path, capacity=attrs.get("capacity", 65_536))
                 return {"path": path, "created": False, "entry_type": requested_type}
+            if meta.entry_type == requested_type and requested_type == DT_DIR:
+                return {"path": path, "created": False, "entry_type": requested_type}
             raise ValueError(
                 f"entry_type is immutable (cannot change {meta.entry_type} → {requested_type})"
             )
@@ -923,6 +803,27 @@ class NexusFS(  # type: ignore[misc]
             except StreamError as exc:
                 raise BackendError(str(exc)) from exc
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
+
+        if entry_type == DT_DIR:
+            now = datetime.now(UTC)
+            empty_hash = hash_content(b"")
+            route = self.router.route(path, is_admin=True)
+            metadata = FileMetadata(
+                path=path,
+                backend_name=route.backend.name,
+                physical_path=empty_hash,
+                size=0,
+                etag=empty_hash,
+                entry_type=DT_DIR,
+                mime_type="inode/directory",
+                created_at=now,
+                modified_at=now,
+                version=1,
+                created_by=attrs.get("created_by"),
+                zone_id=attrs.get("zone_id", ROOT_ZONE_ID),
+            )
+            self.metadata.put(metadata)
+            return {"path": path, "created": True, "entry_type": entry_type}
 
         raise ValueError(f"sys_setattr create not supported for entry_type={entry_type}")
 
@@ -2179,20 +2080,83 @@ class NexusFS(  # type: ignore[misc]
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
 
+    @rpc_expose(description="Create directory")
     async def mkdir(
         self,
         path: str,
         parents: bool = True,
         exist_ok: bool = True,
+        *,
         context: OperationContext | None = None,
     ) -> None:
-        """Create a directory with lenient defaults (Tier 2 convenience).
+        """Create a directory (Tier 2 convenience over sys_setattr).
 
-        Unlike sys_mkdir (parents=False, exist_ok=False), this defaults to
-        parents=True + exist_ok=True — the behavior most callers want.
-        Delegates to sys_mkdir.
+        Defaults: parents=True, exist_ok=True (mkdir -p semantics).
+        Uses _setattr_create(DT_DIR) for metadata creation.
         """
-        await self.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        path = self._validate_path(path)
+        ctx = self._resolve_cred(context)
+
+        # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
+        from nexus.contracts.vfs_hooks import MkdirHookContext
+
+        self._dispatch.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
+
+        # Route to backend with write access check
+        route = self.router.route(path, is_admin=ctx.is_admin, check_write=True)
+
+        if route.readonly:
+            raise PermissionError(f"Cannot create directory in read-only path: {path}")
+
+        # Check if directory already exists
+        existing = self.metadata.get(path)
+        is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
+
+        if existing is not None or is_implicit_dir:
+            if not exist_ok and not parents:
+                raise FileExistsError(f"Directory already exists: {path}")
+            # DT_MOUNT entries are created by PathRouter.add_mount() *before*
+            # mkdir is called, so parent dirs may still need metadata.
+            if existing is not None:
+                if parents:
+                    self._ensure_parent_directories(path, ctx)
+                return
+
+        # Create directory in backend
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
+
+        # Create parent directory metadata
+        if parents:
+            self._ensure_parent_directories(path, ctx)
+
+        # Create directory inode via _setattr_create (DT_DIR)
+        self._setattr_create(
+            path,
+            DT_DIR,
+            {
+                "zone_id": ctx.zone_id or ROOT_ZONE_ID,
+                "created_by": self._get_created_by(context),
+            },
+        )
+
+        # POST hooks + event dispatch (Issue #900/#1682)
+        await self._dispatch.intercept_post_mkdir(
+            MkdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+            )
+        )
+        await self._dispatch.notify(
+            FileEvent(
+                type=FileEventType.DIR_CREATE,
+                path=path,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
+        )
 
     async def rmdir(
         self,

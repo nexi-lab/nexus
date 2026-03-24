@@ -272,7 +272,7 @@ class TestProxyPermissionDeniedRealServer:
             # 5 auth failures — more than cb_failure_threshold
             for _ in range(5):
                 with pytest.raises(RemoteCallError):
-                    await proxy.sys_mkdir("/denied", "root")
+                    await proxy.mkdir("/denied", "root")
 
             # Circuit must still be CLOSED — auth errors are NOT connectivity failures
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -309,7 +309,7 @@ class TestProxyPermissionDeniedMock:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_mkdir("/denied", "z1")
+                await proxy.mkdir("/denied", "z1")
             assert exc_info.value.status_code == 403
             assert await proxy.pending_count() == 0
             assert proxy.circuit_state is CircuitState.CLOSED
@@ -358,9 +358,9 @@ class TestProxyOfflineQueueReplayE2E:
             await proxy.start()
             try:
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_mkdir("/queued_dir1", "z1")
+                    await proxy.mkdir("/queued_dir1", "z1")
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_mkdir("/queued_dir2", "z1")
+                    await proxy.mkdir("/queued_dir2", "z1")
 
                 assert await proxy.pending_count() == 2
 
@@ -428,7 +428,7 @@ class TestProxyOfflineQueueReplayE2E:
         await proxy.start()
         try:
             with pytest.raises(OfflineQueuedError):
-                await proxy.sys_mkdir("/will_fail", "z1")
+                await proxy.mkdir("/will_fail", "z1")
 
             await asyncio.sleep(1.5)
             assert await proxy.pending_count() == 0

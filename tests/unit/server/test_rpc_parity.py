@@ -78,7 +78,7 @@ def test_remote_service_proxy_coverage():
     # to services — they aren't @rpc_expose on NexusFS itself.
     expected_categories = {
         "File I/O": ["sys_read", "sys_write", "sys_unlink"],
-        "Directory": ["sys_mkdir", "sys_rmdir"],
+        "Directory": ["mkdir", "sys_rmdir"],
         "Query": ["sys_access", "sys_stat"],
         "Versioning": ["get_version", "list_versions"],
     }
@@ -199,7 +199,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "list_mounts",  # ABC stub → mount_service.list_mounts_sync()
         "get_mount",  # ABC stub → mount_service.get_mount_sync()
         # Tier 2 convenience wrappers — delegate to Tier 1 sys_* which are already @rpc_expose
-        "mkdir",  # Tier 2 → sys_mkdir(parents=True, exist_ok=True)
+        "mkdir",  # Tier 2 → mkdir(parents=True, exist_ok=True)
         "rmdir",  # Tier 2 → sys_rmdir(recursive=True)
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()

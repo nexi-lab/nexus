@@ -75,9 +75,9 @@ class AgentProvisioner:
         root = agent_dir(agent_id)
 
         # Create root and subdirectories
-        await self._storage.sys_mkdir(root, self._zone_id)
+        await self._storage.mkdir(root, self._zone_id)
         for subdir in AGENT_SUBDIRS:
-            await self._storage.sys_mkdir(f"{root}/{subdir}", self._zone_id)
+            await self._storage.mkdir(f"{root}/{subdir}", self._zone_id)
 
         # Write AGENT.json card
         card = {

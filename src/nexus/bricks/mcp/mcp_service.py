@@ -745,7 +745,7 @@ class MCPService:
 
             try:
                 if self._filesystem is not None:
-                    await self._filesystem.sys_mkdir(skill_path, parents=True, exist_ok=True)
+                    await self._filesystem.mkdir(skill_path, parents=True, exist_ok=True)
                     await self._filesystem.write(
                         skill_file, skill_md.encode("utf-8"), context=context
                     )

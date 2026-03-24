@@ -310,6 +310,7 @@ class TestProvisionUserPartialFailure:
                 register_workspace_fn=MagicMock(),
                 register_agent_fn=MagicMock(),
             ),
+            allow_overwrite=True,
         )
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):

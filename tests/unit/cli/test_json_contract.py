@@ -222,42 +222,42 @@ class TestErrorEnvelope:
 
     def test_api_error_404_maps_to_not_found(self):
         """NexusAPIError with 404 status maps to NOT_FOUND error code."""
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(404, "Agent not found")
         code = _exception_to_error_code(error)
         assert code == "NOT_FOUND"
 
     def test_api_error_403_maps_to_permission_denied(self):
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(403, "Forbidden")
         code = _exception_to_error_code(error)
         assert code == "PERMISSION_DENIED"
 
     def test_api_error_400_maps_to_validation_error(self):
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(400, "Bad request")
         code = _exception_to_error_code(error)
         assert code == "VALIDATION_ERROR"
 
     def test_api_error_500_maps_to_internal_error(self):
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(500, "Internal server error")
         code = _exception_to_error_code(error)
         assert code == "INTERNAL_ERROR"
 
     def test_api_error_429_maps_to_unavailable(self):
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(429, "Too many requests")
         code = _exception_to_error_code(error)
         assert code == "UNAVAILABLE"
 
     def test_api_error_408_maps_to_timeout(self):
-        from nexus.cli.client import NexusAPIError
+        from nexus.cli.clients.base import NexusAPIError
 
         error = NexusAPIError(408, "Request timeout")
         code = _exception_to_error_code(error)

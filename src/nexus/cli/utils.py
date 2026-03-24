@@ -627,45 +627,6 @@ def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
         rich_fn(data)
 
 
-def get_service_client(
-    remote_url: str | None = None,
-    remote_api_key: str | None = None,
-) -> Any:
-    """Create a NexusServiceClient from URL/API key, with validation.
-
-    .. deprecated::
-        Use ``get_filesystem()`` + ``nx.service()`` instead. This function
-        will be removed once all ``@service_command`` callers migrate to
-        domain-specific clients. See Issue #1133.
-
-    Args:
-        remote_url: Server URL (from --remote-url or NEXUS_URL env var)
-        remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
-
-    Returns:
-        NexusServiceClient instance
-
-    Raises:
-        SystemExit: If URL is not provided
-    """
-    import warnings
-
-    warnings.warn(
-        "get_service_client() is deprecated — use get_filesystem() + nx.service() "
-        "for gRPC-based RPC. See Issue #1133.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-
-    if not remote_url:
-        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
-        sys.exit(ExitCode.CONFIG_ERROR)
-
-    from nexus.cli.client import NexusServiceClient
-
-    return NexusServiceClient(url=remote_url, api_key=remote_api_key)
-
-
 def rpc_call(
     remote_url: str | None,
     remote_api_key: str | None,

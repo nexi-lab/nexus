@@ -14,10 +14,10 @@ Usage::
         data = client.balance()
         return ServiceResult(data=data, human_formatter=_render_balance)
 
-Can also be used without arguments (defaults to NexusServiceClient)::
+The ``client_class`` parameter is required::
 
-    @service_command
-    def my_command(client, ...) -> ServiceResult:
+    @service_command(client_class=MyDomainClient)
+    def my_command(client: MyDomainClient, ...) -> ServiceResult:
         ...
 """
 
@@ -69,8 +69,7 @@ def service_command(
 
     Args:
         func: The command function (when used without arguments).
-        client_class: Optional domain-specific client class (e.g. IdentityClient).
-            Defaults to NexusServiceClient if not specified.
+        client_class: Domain-specific client class (e.g. IdentityClient). Required.
 
     The wrapped function receives a ``client`` keyword argument and must return
     a :class:`ServiceResult`.  The decorator handles:
@@ -96,9 +95,10 @@ def service_command(
             try:
                 cls = client_class
                 if cls is None:
-                    from nexus.cli.client import NexusServiceClient
-
-                    cls = NexusServiceClient
+                    raise ValueError(
+                        "service_command requires client_class parameter — "
+                        "NexusServiceClient has been removed (Issue #1133)"
+                    )
                 client = cls(url=url, api_key=remote_api_key)
                 with timing.phase("server"), client:
                     result = fn(client=client, **kwargs)

@@ -82,17 +82,17 @@ class TestNexusFSServiceComposition:
         assert fs._brick_services.version_service.cas == fs.router.route("/").backend
 
         # ReBACService should have rebac_manager
-        assert fs.service("rebac")._rebac_manager == fs._system_services.rebac_manager
+        assert fs.service("rebac")._rebac_manager == fs.service("rebac_manager")._service_instance
 
         # MountService should have router and mount_manager
         assert fs.service("mount").router == fs.router
-        assert fs.service("mount").mount_manager == fs._system_services.mount_manager
+        assert fs.service("mount").mount_manager == fs.service("mount_manager")._service_instance
 
         # Services that take filesystem should have it
         assert fs.service("mcp")._filesystem == fs
         # SearchService should have metadata and permission_enforcer
         assert fs.service("search").metadata == fs.metadata
-        assert fs.service("search")._permission_enforcer == fs._system_services.permission_enforcer
+        assert fs.service("search")._permission_enforcer == fs._permission_enforcer
 
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None

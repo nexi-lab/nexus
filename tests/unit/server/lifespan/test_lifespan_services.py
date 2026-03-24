@@ -23,23 +23,24 @@ def _make_app(**state_attrs) -> MagicMock:
 
 
 def _make_nexus_fs(**attrs) -> SimpleNamespace:
-    """Create a NexusFS stub with given attributes."""
+    """Create a NexusFS stub with given attributes.
+
+    Includes a service() method that returns None (simulates empty ServiceRegistry).
+    Pass _service_map={"name": val} to simulate registered services.
+    """
     _service_map = attrs.pop("_service_map", {})
     defaults = {
-        "_system_services": None,
         "_brick_services": None,
         "SessionLocal": None,
         "_sql_engine": None,
-        "_entity_registry": None,
         "_permission_enforcer": None,
-        "_rebac_manager": None,
-        "_event_bus": None,
         "_coordination_client": None,
         "workflow_engine": None,
         "_snapshot_service": None,
-        "_namespace_manager": None,
         "config": None,
         "service_coordinator": None,
+        "_agent_registry": None,
+        "_pipe_manager": None,
     }
     defaults.update(attrs)
     ns = SimpleNamespace(**defaults)
@@ -91,19 +92,21 @@ class TestFromAppExtraction:
         assert svc.thread_pool_size == 80
 
     def test_extracts_nexus_fs_internals(self) -> None:
-        """NexusFS private attributes are extracted."""
+        """NexusFS private attributes + service registry entries are extracted."""
         nx = _make_nexus_fs(
             SessionLocal="session_factory",
             _sql_engine="sql_engine",
-            _entity_registry="entity_reg",
             _permission_enforcer="perm_enf",
-            _rebac_manager="rebac_mgr",
-            _event_bus="event_bus",
             _coordination_client="coord_client",
             workflow_engine="wf_engine",
             _snapshot_service="snap_svc",
-            _namespace_manager="ns_mgr",
             config="nexus_cfg",
+            _service_map={
+                "entity_registry": "entity_reg",
+                "rebac_manager": "rebac_mgr",
+                "event_bus": "event_bus",
+                "async_namespace_manager": "ns_mgr",
+            },
         )
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
@@ -123,18 +126,20 @@ class TestFromAppExtraction:
 
 
 class TestFromAppSystemServices:
-    """Test extraction from nexus_fs._system_services."""
+    """Test extraction from ServiceRegistry (previously _system_services)."""
 
     def test_extracts_system_services(self) -> None:
-        """System services (brick_lifecycle_manager, etc.) are extracted."""
-        sys_svc = SimpleNamespace(
-            brick_lifecycle_manager="blm",
-            brick_reconciler="br",
-            eviction_manager="em",
-            write_observer="write_obs",
-            zone_lifecycle="zl",
+        """System services (brick_lifecycle_manager, etc.) are extracted via nx.service()."""
+        nx = _make_nexus_fs(
+            _pipe_manager="pipe_mgr",
+            _service_map={
+                "brick_lifecycle_manager": "blm",
+                "brick_reconciler": "br",
+                "eviction_manager": "em",
+                "write_observer": "write_obs",
+                "zone_lifecycle": "zl",
+            },
         )
-        nx = _make_nexus_fs(_system_services=sys_svc, _pipe_manager="pipe_mgr")
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -145,9 +150,9 @@ class TestFromAppSystemServices:
         assert svc.zone_lifecycle == "zl"
         assert svc.pipe_manager == "pipe_mgr"
 
-    def test_missing_system_services_yields_none(self) -> None:
-        """When _system_services is None, all system service fields are None."""
-        nx = _make_nexus_fs(_system_services=None)
+    def test_empty_service_registry_yields_none(self) -> None:
+        """When no services registered, all system service fields are None."""
+        nx = _make_nexus_fs()
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -178,20 +183,19 @@ class TestFromAppBrickServices:
 
 
 class TestFromAppObservability:
-    """Test extraction of observability_subsystem from _system_services."""
+    """Test extraction of observability_subsystem from ServiceRegistry."""
 
     def test_extracts_observability_subsystem(self) -> None:
-        """observability_subsystem extracted from _system_services."""
-        sys_svc = SimpleNamespace(observability_subsystem="obs_sub")
-        nx = _make_nexus_fs(_system_services=sys_svc)
+        """observability_subsystem extracted from ServiceRegistry."""
+        nx = _make_nexus_fs(_service_map={"observability_subsystem": "obs_sub"})
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
         assert svc.observability_subsystem == "obs_sub"
 
-    def test_missing_system_services_yields_none(self) -> None:
-        """When _system_services is None, observability_subsystem is None."""
-        nx = _make_nexus_fs(_system_services=None)
+    def test_empty_registry_yields_none(self) -> None:
+        """When no service registered, observability_subsystem is None."""
+        nx = _make_nexus_fs()
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -229,7 +233,6 @@ class TestFromAppEdgeCases:
         """NexusFS missing some private attrs doesn't crash."""
         # Use a SimpleNamespace with only _system_services
         nx = SimpleNamespace(_system_services=None, _brick_services=None)
-        nx.service = lambda name: None
         app = _make_app(nexus_fs=nx)
 
         # Should not raise even though nx has no SessionLocal, etc.

@@ -102,18 +102,16 @@ class LifespanServices:
         lifespan modules access services via typed attributes.
         """
         nx = getattr(app.state, "nexus_fs", None)
-        # Issue #1771: prefer nx.service() for enlisted services, fall back to
-        # _system_services for infrastructure fields not yet in ServiceRegistry.
-        _sys = getattr(nx, "_system_services", None) if nx else None
+        # Issue #1801: ALL services now in ServiceRegistry — no _system_services fallback.
         _brk = getattr(nx, "_brick_services", None) if nx else None
-
         _coord = getattr(nx, "service_coordinator", None) if nx else None
 
-        # Helper: nx.service() with None safety and hasattr guard
-        # (SimpleNamespace stubs in tests may not have .service())
+        # Helper: nx.service() with None safety (also handles test mocks without service())
         def _svc(name: str) -> Any:
-            _service_fn = getattr(nx, "service", None) if nx else None
-            return _service_fn(name) if callable(_service_fn) else None
+            if nx is None:
+                return None
+            svc_fn = getattr(nx, "service", None)
+            return svc_fn(name) if svc_fn is not None else None
 
         return cls(
             # Core / kernel
@@ -121,14 +119,11 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
-            # Process table — kernel-owned primitive (Issue #1792),
-            # falling back to app.state for backwards compatibility
             agent_registry=(
                 getattr(nx, "_agent_registry", None)
                 if nx
                 else getattr(app.state, "agent_registry", None)
             ),
-            # Coordinator
             service_coordinator=_coord,
             # Configuration
             deployment_profile=getattr(app.state, "deployment_profile", "full"),
@@ -136,46 +131,37 @@ class LifespanServices:
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
-            # Issue #3193: delivery worker + event signal (enlisted in ServiceRegistry)
+            # All services from ServiceRegistry
             delivery_worker=_svc("delivery_worker"),
-            event_signal=(getattr(_sys, "event_signal", None) if _sys else None),
-            # System services — infrastructure fields not in ServiceRegistry
-            brick_lifecycle_manager=(
-                getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
-            ),
-            brick_reconciler=(getattr(_sys, "brick_reconciler", None) if _sys else None),
-            eviction_manager=(getattr(_sys, "eviction_manager", None) if _sys else None),
-            write_observer=(getattr(_sys, "write_observer", None) if _sys else None),
-            zone_lifecycle=(getattr(_sys, "zone_lifecycle", None) if _sys else None),
+            event_signal=None,
+            brick_lifecycle_manager=_svc("brick_lifecycle_manager"),
+            brick_reconciler=_svc("brick_reconciler"),
+            eviction_manager=_svc("eviction_manager"),
+            write_observer=_svc("write_observer"),
+            zone_lifecycle=_svc("zone_lifecycle"),
             pipe_manager=(getattr(nx, "_pipe_manager", None) if nx else None),
-            # Issue #810: DT_PIPE Zoekt consumer
             zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
-            # Task Manager DT_PIPE consumer
             task_dispatch_consumer=(
                 getattr(_brk, "task_dispatch_consumer", None) if _brk else None
             ),
-            # Issue #2195: Scheduler
-            scheduler_service=(getattr(_sys, "scheduler_service", None) if _sys else None),
-            # Brick services
+            scheduler_service=_svc("scheduler_service"),
             brick_services=_brk,
             # NexusFS internals
             session_factory=getattr(nx, "SessionLocal", None) if nx else None,
             sql_engine=getattr(nx, "_sql_engine", None) if nx else None,
-            entity_registry=(getattr(nx, "_entity_registry", None) if nx else None),
+            entity_registry=_svc("entity_registry"),
             permission_enforcer=(getattr(nx, "_permission_enforcer", None) if nx else None),
-            rebac_manager=(getattr(nx, "_rebac_manager", None) if nx else None),
-            event_bus=getattr(nx, "_event_bus", None) if nx else None,
+            rebac_manager=_svc("rebac_manager"),
+            event_bus=_svc("event_bus"),
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
             workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
             snapshot_service=(
                 getattr(_brk, "snapshot_service", None)
                 or (getattr(nx, "_snapshot_service", None) if nx else None)
             ),
-            namespace_manager=(getattr(nx, "_namespace_manager", None) if nx else None),
+            namespace_manager=_svc("async_namespace_manager"),
             nexus_config=getattr(nx, "config", None) if nx else None,
-            observability_subsystem=(
-                getattr(_sys, "observability_subsystem", None) if _sys else None
-            ),
+            observability_subsystem=_svc("observability_subsystem"),
             # From app.state (set by server init)
             observability_registry=getattr(app.state, "observability_registry", None),
         )

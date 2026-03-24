@@ -48,7 +48,6 @@ import logging
 import os as _os
 from typing import TYPE_CHECKING, Any, cast
 
-__version__ = "0.9.6"  # release version
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
@@ -90,6 +89,29 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
+
+
+def _resolve_package_version() -> str:
+    """Resolve the installed package version with a source-tree fallback."""
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as package_version
+    from pathlib import Path
+
+    try:
+        return package_version("nexus-ai-fs")
+    except PackageNotFoundError:
+        for parent in Path(__file__).resolve().parents:
+            pyproject_path = parent / "pyproject.toml"
+            if not pyproject_path.exists():
+                continue
+            for line in pyproject_path.read_text().splitlines():
+                if line.startswith("version = "):
+                    return line.split("=", 1)[1].strip().strip('"')
+            break
+    return "0.0.0+unknown"
+
+
+__version__ = _resolve_package_version()
 
 # All mutable state (data, metastore, record store, etc.) lives under this directory.
 NEXUS_STATE_DIR = _os.path.expanduser("~/.nexus")

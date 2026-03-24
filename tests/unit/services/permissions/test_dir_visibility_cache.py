@@ -181,14 +181,14 @@ class TestTTLExpiration:
 
     def test_multiple_entries_ttl_expiration(self):
         """Test that multiple entries expire independently based on TTL."""
-        cache = DirectoryVisibilityCache(ttl=0.1)  # 100ms TTL
+        cache = DirectoryVisibilityCache(ttl=0.5)  # 500ms TTL
 
         # Set first entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
 
-        time.sleep(0.05)
+        time.sleep(0.25)
 
-        # Set second entry (50ms later)
+        # Set second entry (250ms later)
         cache.set_visible("zone1", "user", "bob", "/data", False)
 
         # Both still valid
@@ -196,7 +196,7 @@ class TestTTLExpiration:
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
         # Wait for first to expire but second still valid
-        time.sleep(0.06)  # Total ~110ms for first, ~60ms for second
+        time.sleep(0.3)  # Total ~550ms for first, ~300ms for second
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is None
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 

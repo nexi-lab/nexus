@@ -69,14 +69,13 @@ class TestCheckPortAvailable:
 
 
 class TestFindFreePort:
-    def test_returns_preferred_when_free(self) -> None:
+    def test_returns_preferred_when_free(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If preferred port is free, return it directly."""
-        # Get a known-free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            _, port = s.getsockname()
-        result = find_free_port(port)
-        assert result == port
+        monkeypatch.setattr(
+            "nexus.cli.port_utils.check_port_available", lambda port, host="0.0.0.0": True
+        )
+        result = find_free_port(8000)
+        assert result == 8000
 
     def test_skips_occupied_port(self) -> None:
         """If preferred port is occupied, return the next free one."""

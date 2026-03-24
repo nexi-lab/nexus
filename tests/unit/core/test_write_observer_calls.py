@@ -30,7 +30,10 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 async def nx(tmp_path: Path) -> NexusFS:
-    return await make_test_nexus(tmp_path)
+    from nexus import CASLocalBackend
+
+    backend = CASLocalBackend(str(tmp_path / "data"))
+    return await make_test_nexus(tmp_path, backend=backend)
 
 
 @pytest.fixture
@@ -293,7 +296,10 @@ class TestVFSObserverCoverage:
 
     @pytest.fixture
     async def nx_with_hook(self, tmp_path: Path, hook: AsyncMock) -> NexusFS:
-        nx = await make_test_nexus(tmp_path)
+        from nexus import CASLocalBackend
+
+        backend = CASLocalBackend(str(tmp_path / "data"))
+        nx = await make_test_nexus(tmp_path, backend=backend)
         nx.register_observe(hook)
         return nx
 

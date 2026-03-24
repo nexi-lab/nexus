@@ -370,6 +370,41 @@ def create_app(
 
             _federation = NexusFederation(zone_manager=_zone_mgr)
             _brick_sources.append(FederationRPCService(_zone_mgr, _federation))
+        # Issue #1528: LocksRPCService
+        _lock_mgr = nexus_fs.service("lock_manager")
+        if _lock_mgr is not None:
+            from nexus.server.rpc.services.locks_rpc import LocksRPCService
+
+            _brick_sources.append(LocksRPCService(_lock_mgr))
+        # Issue #1528: SnapshotsRPCService
+        _snap_svc = getattr(app.state, "transactional_snapshot_service", None)
+        if _snap_svc is not None:
+            from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
+
+            _brick_sources.append(SnapshotsRPCService(_snap_svc))
+        # Issue #1529: EventsRPCService — create inline (not on app.state yet)
+        _rs = getattr(app.state, "record_store", None)
+        if _rs is not None:
+            try:
+                from nexus.server.rpc.services.events_rpc import EventsRPCService
+                from nexus.system_services.event_log.replay import EventReplayService
+
+                _replay = EventReplayService(
+                    _rs, event_signal=getattr(app.state, "event_signal", None)
+                )
+                _brick_sources.append(EventsRPCService(_replay))
+            except Exception:
+                logger.debug("EventsRPCService unavailable")
+        # Issue #1529: AuditRPCService — create from record_store
+        if _rs is not None:
+            try:
+                from nexus.server.rpc.services.audit_rpc import AuditRPCService
+                from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
+
+                _audit = ExchangeAuditLogger(record_store=_rs)
+                _brick_sources.append(AuditRPCService(_audit))
+            except Exception:
+                logger.debug("AuditRPCService unavailable")
         app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
     else:
         logger.info("create_app() started without NexusFS; service discovery disabled")

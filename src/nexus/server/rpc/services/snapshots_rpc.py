@@ -42,6 +42,32 @@ class SnapshotsRPCService:
         info = await self._snapshot_service.rollback(txn_id)
         return self._txn_to_dict(info)
 
+    @rpc_expose(description="Get transaction details")
+    async def snapshot_get(self, transaction_id: str) -> dict[str, Any]:
+        info = await self._snapshot_service.get_transaction(transaction_id)
+        if info is None:
+            return {"found": False}
+        return self._txn_to_dict(info)
+
+    @rpc_expose(description="Commit a transaction")
+    async def snapshot_commit(self, transaction_id: str) -> dict[str, Any]:
+        info = await self._snapshot_service.commit(transaction_id)
+        return self._txn_to_dict(info)
+
+    @rpc_expose(description="List entries in a transaction")
+    async def snapshot_list_entries(self, transaction_id: str) -> dict[str, Any]:
+        entries = await self._snapshot_service.list_entries(transaction_id)
+        return {"entries": [self._entry_to_dict(e) for e in entries], "count": len(entries)}
+
+    @staticmethod
+    def _entry_to_dict(entry: Any) -> dict[str, Any]:
+        if isinstance(entry, dict):
+            return entry
+        return {
+            k: str(v) if v is not None else None
+            for k, v in (entry.__dict__ if hasattr(entry, "__dict__") else {"value": entry}).items()
+        }
+
     @staticmethod
     def _txn_to_dict(info: Any) -> dict[str, Any]:
         if isinstance(info, dict):

@@ -419,7 +419,7 @@ async def _register_vfs_hooks(
 
     _on = _make_gate(brick_on)
 
-    _coordinator = nx._service_coordinator
+    _coordinator = nx.service_coordinator
 
     async def _enlist(name: str, hook: Any) -> None:
         """Enlist hook via coordinator — the single entry point."""

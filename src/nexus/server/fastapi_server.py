@@ -312,10 +312,10 @@ def create_app(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
-    # Discover exposed methods — includes brick services (Issue #2035, Follow-up 1)
+    # Discover exposed methods — includes brick + RPC services (Issue #2035, Follow-up 1)
     # Services with @rpc_expose override kernel stubs (later sources win).
     if nexus_fs is not None:
-        _brick_sources: list[Any] = []
+        _rpc_sources: list[Any] = []
         for _svc_name in (
             "mcp",
             "oauth",
@@ -326,30 +326,30 @@ def create_app(
         ):
             _brick_svc = nexus_fs.service(_svc_name)
             if _brick_svc is not None:
-                _brick_sources.append(_brick_svc)
+                _rpc_sources.append(_brick_svc)
         # version_service is on BrickServices, not in ServiceRegistry
         _version_svc = getattr(nexus_fs, "version_service", None)
         if _version_svc is not None:
-            _brick_sources.append(_version_svc)
+            _rpc_sources.append(_version_svc)
         # AgentRPCService
         _agent_rpc = nexus_fs.service("agent_rpc")
         if _agent_rpc is not None:
-            _brick_sources.append(_agent_rpc)
+            _rpc_sources.append(_agent_rpc)
         # WorkspaceRPCService
         _workspace_rpc = nexus_fs.service("workspace_rpc")
         if _workspace_rpc is not None:
-            _brick_sources.append(_workspace_rpc)
+            _rpc_sources.append(_workspace_rpc)
         # AcpRPCService
         _acp_rpc = nexus_fs.service("acp_rpc")
         if _acp_rpc is not None:
-            _brick_sources.append(_acp_rpc)
+            _rpc_sources.append(_acp_rpc)
         # Issue #841: MetadataExportService lives outside kernel
         try:
             from nexus.factory import create_metadata_export_service
 
             _meta_export_svc = create_metadata_export_service(nexus_fs)
             if _meta_export_svc is not None:
-                _brick_sources.append(_meta_export_svc)
+                _rpc_sources.append(_meta_export_svc)
         except Exception as _exc:
             logger.debug("MetadataExportService unavailable: %s", _exc)
         # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
@@ -361,7 +361,7 @@ def create_app(
             if _brk is not None:
                 _version_svc = getattr(_brk, "version_service", None)
         if _version_svc is not None:
-            _brick_sources.append(_version_svc)
+            _rpc_sources.append(_version_svc)
         # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
         _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
         if _zone_mgr is not None:
@@ -369,43 +369,63 @@ def create_app(
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
             _federation = NexusFederation(zone_manager=_zone_mgr)
-            _brick_sources.append(FederationRPCService(_zone_mgr, _federation))
-        # Issue #1528: LocksRPCService
-        _lock_mgr = nexus_fs.service("lock_manager")
+            _rpc_sources.append(FederationRPCService(_zone_mgr, _federation))
+        # --- Locks (Issue #1133) ---
+        _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
         if _lock_mgr is not None:
             from nexus.server.rpc.services.locks_rpc import LocksRPCService
 
-            _brick_sources.append(LocksRPCService(_lock_mgr))
-        # Issue #1528: SnapshotsRPCService
-        _snap_svc = getattr(app.state, "transactional_snapshot_service", None)
-        if _snap_svc is not None:
-            from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
+            _rpc_sources.append(LocksRPCService(_lock_mgr))
+        # --- Pay (Issue #1133) ---
+        try:
+            from nexus.bricks.pay import CreditsService
+            from nexus.server.rpc.services.pay_rpc import PayRPCService
 
-            _brick_sources.append(SnapshotsRPCService(_snap_svc))
-        # Issue #1529: EventsRPCService — create inline (not on app.state yet)
-        _rs = getattr(app.state, "record_store", None)
-        if _rs is not None:
-            try:
-                from nexus.server.rpc.services.events_rpc import EventsRPCService
-                from nexus.system_services.event_log.replay import EventReplayService
-
-                _replay = EventReplayService(
-                    _rs, event_signal=getattr(app.state, "event_signal", None)
-                )
-                _brick_sources.append(EventsRPCService(_replay))
-            except Exception:
-                logger.debug("EventsRPCService unavailable")
-        # Issue #1529: AuditRPCService — create from record_store
-        if _rs is not None:
+            _rpc_sources.append(PayRPCService(CreditsService()))
+        except Exception as _exc:
+            logger.debug("PayRPCService unavailable: %s", _exc)
+        # --- Audit (Issue #1133) ---
+        _record_store = getattr(nexus_fs, "_record_store", None)
+        if _record_store is not None:
             try:
                 from nexus.server.rpc.services.audit_rpc import AuditRPCService
                 from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
-                _audit = ExchangeAuditLogger(record_store=_rs)
-                _brick_sources.append(AuditRPCService(_audit))
-            except Exception:
-                logger.debug("AuditRPCService unavailable")
-        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_brick_sources)
+                _rpc_sources.append(
+                    AuditRPCService(ExchangeAuditLogger(record_store=_record_store))
+                )
+            except Exception as _exc:
+                logger.debug("AuditRPCService unavailable: %s", _exc)
+        # --- Governance (Issue #1133) ---
+        _brk = getattr(nexus_fs, "_brick_services", None)
+        if _brk is not None:
+            _anomaly = getattr(_brk, "governance_anomaly_service", None)
+            _collusion = getattr(_brk, "governance_collusion_service", None)
+            if _anomaly is not None or _collusion is not None:
+                from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
+
+                _rpc_sources.append(GovernanceRPCService(_anomaly, _collusion))
+        # --- Events (Issue #1133) ---
+        if _record_store is not None:
+            try:
+                from nexus.server.rpc.services.events_rpc import EventsRPCService
+                from nexus.system_services.event_log.replay import EventReplayService
+
+                _sys = getattr(nexus_fs, "_system_services", None)
+                _evt_signal = getattr(_sys, "event_signal", None) if _sys else None
+                _rpc_sources.append(
+                    EventsRPCService(EventReplayService(_record_store, event_signal=_evt_signal))
+                )
+            except Exception as _exc:
+                logger.debug("EventsRPCService unavailable: %s", _exc)
+        # --- Snapshots (Issue #1133) ---
+        if _brk is not None:
+            _snap = getattr(_brk, "snapshot_service", None)
+            if _snap is not None:
+                from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
+
+                _rpc_sources.append(SnapshotsRPCService(_snap))
+        app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_rpc_sources)
     else:
         logger.info("create_app() started without NexusFS; service discovery disabled")
         app.state.exposed_methods = {}

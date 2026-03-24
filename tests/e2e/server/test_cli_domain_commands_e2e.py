@@ -1,7 +1,7 @@
 """E2E tests for new domain CLI commands (Issue #2811).
 
 Starts a real nexus serve process, seeds test data, then exercises
-every new CLI command group via NexusServiceClient (HTTP REST bridge):
+every new CLI command group via HTTP REST bridge (deprecated — migrating to gRPC):
   pay, audit, lock, governance, events, snapshot, exchange
 
 Also tests grep -A/-B/-C context lines against real file content.
@@ -197,13 +197,12 @@ def domain_server(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def service_client(domain_server):
-    """NexusServiceClient instance for testing CLI bridge layer."""
-    from nexus.cli.client import NexusServiceClient
+    """Service client for testing CLI bridge layer.
 
-    return NexusServiceClient(
-        url=domain_server["base_url"],
-        api_key=domain_server["api_key"],
-    )
+    NexusServiceClient was removed (Issue #1133) — CLI now uses gRPC.
+    These E2E tests need migration to gRPC-based calls.
+    """
+    pytest.skip("NexusServiceClient removed (Issue #1133) — migrate E2E tests to gRPC")
 
 
 # =============================================================================

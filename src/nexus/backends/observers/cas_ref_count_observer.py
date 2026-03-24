@@ -5,12 +5,15 @@ Calls engine.release_content() which only decrements ref_count — physical
 cleanup is deferred to CASGarbageCollector.
 
 Issue #1320: CAS async GC.
+Issue #1748: async on_mutation + event_mask filtering.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+
+from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
 if TYPE_CHECKING:
     from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
@@ -28,12 +31,14 @@ class CASRefCountObserver:
     Must not raise — KernelDispatch catches and logs observer exceptions.
     """
 
+    event_mask: int = (
+        FILE_EVENT_BIT[FileEventType.FILE_WRITE] | FILE_EVENT_BIT[FileEventType.FILE_DELETE]
+    )
+
     def __init__(self, engine: CASAddressingEngine) -> None:
         self._engine = engine
 
-    def on_mutation(self, event: FileEvent) -> None:
-        from nexus.core.file_events import FileEventType
-
+    async def on_mutation(self, event: FileEvent) -> None:
         if event.type == FileEventType.FILE_WRITE:
             old_etag = getattr(event, "old_etag", None)
             if old_etag and old_etag != event.etag:

@@ -65,6 +65,8 @@ class EventsService:
         - Races both when available (FIRST_COMPLETED)
     """
 
+    event_mask: int = (1 << 10) - 1  # ALL_FILE_EVENTS
+
     def __init__(
         self,
         event_bus: "EventBusBase | None" = None,
@@ -128,16 +130,16 @@ class EventsService:
     # VFSObserver implementation (OBSERVE phase)
     # =========================================================================
 
-    def on_mutation(self, event: "FileEvent") -> None:
+    async def on_mutation(self, event: "FileEvent") -> None:
         """Called by KernelDispatch.notify() on every local mutation.
 
         Matches the event against pending waiters and resolves their futures.
-        Thread-safe: dispatch.notify() may be called from non-event-loop threads.
+        Now guaranteed to run on the event loop (via gather in KernelDispatch).
         """
         with self._waiters_lock:
             for w in self._waiters:
                 if not w.future.done() and event.matches_path_pattern(w.path_pattern):
-                    w.loop.call_soon_threadsafe(w.future.set_result, event)
+                    w.future.set_result(event)
 
     # =========================================================================
     # Internal wait (OBSERVE path)

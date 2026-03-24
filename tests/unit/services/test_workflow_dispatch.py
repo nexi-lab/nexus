@@ -1,6 +1,6 @@
-"""Unit tests for WorkflowDispatchService (#625 partial, #808).
+"""Unit tests for WorkflowDispatchService (#625 partial, #808, #1812).
 
-Tests the service directly (not via FakeCoreMixin) — fire(), on_mutation(),
+Tests the service directly — fire(), on_mutation(),
 start()/stop() lifecycle, and PipeManager integration.
 """
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -74,7 +74,7 @@ class TestFire:
         # Must start to create pipe
         await svc.start()
 
-        svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
+        await svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         assert data is not None
@@ -84,7 +84,8 @@ class TestFire:
 
         await svc.stop()
 
-    def test_drops_on_full(self) -> None:
+    @pytest.mark.asyncio
+    async def test_drops_on_full(self) -> None:
         """Overflow should log warning, not raise."""
         svc, pm = _make_service()
         # Create pipe with small capacity
@@ -95,10 +96,11 @@ class TestFire:
         pm.pipe_write_nowait("/nexus/pipes/workflow-events", b"x" * 256)
 
         # Should not raise
-        svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
+        await svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
 
-    def test_fallback_without_pipe_manager(self) -> None:
-        """No pipe manager -> fire-and-forget fallback."""
+    @pytest.mark.asyncio
+    async def test_fallback_without_pipe_manager(self) -> None:
+        """No pipe manager -> direct async call fallback."""
         engine = AsyncMock()
         svc = WorkflowDispatchService(
             pipe_manager=None,
@@ -106,17 +108,16 @@ class TestFire:
             enable_workflows=True,
         )
 
-        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
-            svc.fire("file_delete", {"path": "/x"}, "file_delete:/x")
-            mock_ff.assert_called_once()
+        await svc.fire("file_delete", {"path": "/x"}, "file_delete:/x")
+        engine.fire_event.assert_called_once_with("file_delete", {"path": "/x"})
 
-    def test_fallback_before_start(self) -> None:
+    @pytest.mark.asyncio
+    async def test_fallback_before_start(self) -> None:
         """Pipe manager exists but start() not called yet."""
         svc, _ = _make_service()
 
-        with patch("nexus.lib.sync_bridge.fire_and_forget") as mock_ff:
-            svc.fire("file_write", {"path": "/y"}, "file_write:/y")
-            mock_ff.assert_called_once()
+        await svc.fire("file_write", {"path": "/y"}, "file_write:/y")
+        svc._workflow_engine.fire_event.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_noop_when_workflows_disabled(self) -> None:
@@ -124,7 +125,7 @@ class TestFire:
         svc, pm = _make_service(enable_workflows=False)
         await svc.start()
 
-        svc.fire("file_write", {"path": "/z"}, "file_write:/z")
+        await svc.fire("file_write", {"path": "/z"}, "file_write:/z")
         # Pipe should be empty
         assert pm.pipe_peek("/nexus/pipes/workflow-events") is None
 
@@ -155,7 +156,7 @@ class TestOnMutation:
             version=3,
             is_new=True,
         )
-        svc.on_mutation(event)
+        await svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         assert data is not None
@@ -178,7 +179,7 @@ class TestOnMutation:
             zone_id="root",
             version=43,
         )
-        svc.on_mutation(event)
+        await svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         msg = json.loads(data)
@@ -200,7 +201,7 @@ class TestOnMutation:
             version=44,
             new_path="/new/path.txt",
         )
-        svc.on_mutation(event)
+        await svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         msg = json.loads(data)
@@ -225,7 +226,7 @@ class TestConsumer:
 
         # Write events directly
         for i in range(3):
-            svc.fire("file_write", {"idx": i}, f"file_write:{i}")
+            await svc.fire("file_write", {"idx": i}, f"file_write:{i}")
 
         # Wait for consumer to drain
         await asyncio.sleep(0.05)
@@ -257,8 +258,8 @@ class TestConsumer:
             None,
         ]
 
-        svc.fire("file_write", {"x": 1}, "w:1")
-        svc.fire("file_write", {"x": 2}, "w:2")
+        await svc.fire("file_write", {"x": 1}, "w:1")
+        await svc.fire("file_write", {"x": 2}, "w:2")
 
         await asyncio.sleep(0.05)
         pm.close_all()

@@ -47,10 +47,12 @@ from nexus.contracts.operation_result import OperationWarning
 
 try:
     from nexus_fast import HookRegistry as _HookRegistry
+    from nexus_fast import ObserverRegistry as _ObserverRegistry
     from nexus_fast import PathTrie as _PathTrie
 except ImportError:  # pragma: no cover — Rust extension not built
     _PathTrie = None
     _HookRegistry = None
+    _ObserverRegistry = None
 
 from nexus.contracts.vfs_hooks import (
     AccessHookContext,
@@ -124,6 +126,33 @@ class _PythonHookRegistry:
         return sync_hooks, async_hooks
 
 
+class _PythonObserverRegistry:
+    """Pure-Python fallback when Rust ``nexus_fast.ObserverRegistry`` is unavailable."""
+
+    def __init__(self) -> None:
+        self._entries: list[tuple[Any, str, int]] = []
+
+    def register(self, obs: Any, event_mask: int) -> None:
+        name = type(obs).__name__
+        self._entries.append((obs, name, event_mask))
+
+    def unregister(self, obs: Any) -> bool:
+        for i, (o, _, _) in enumerate(self._entries):
+            if o is obs:
+                self._entries.pop(i)
+                return True
+        return False
+
+    def get_matching(self, event_type_bit: int) -> list[tuple[Any, str]]:
+        return [(obs, name) for obs, name, mask in self._entries if mask & event_type_bit]
+
+    def count(self) -> int:
+        return len(self._entries)
+
+    def __repr__(self) -> str:
+        return f"_PythonObserverRegistry(count={len(self._entries)})"
+
+
 class KernelDispatch:
     """Unified three-phase VFS dispatch (PRE-DISPATCH / INTERCEPT / OBSERVE).
 
@@ -139,7 +168,7 @@ class KernelDispatch:
         dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
         ...actual VFS operation...
         dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
-        dispatch.notify(event)               # phase 2: OBSERVE
+        await dispatch.notify(event)         # phase 2: OBSERVE
     """
 
     __slots__ = (
@@ -148,7 +177,7 @@ class KernelDispatch:
         "_fallback_resolvers",
         "_next_resolver_idx",
         "_registry",
-        "_observers",
+        "_observer_registry",
         "_mount_hooks",
         "_unmount_hooks",
     )
@@ -165,8 +194,10 @@ class KernelDispatch:
             _HookRegistry() if _HookRegistry is not None else _PythonHookRegistry()
         )
 
-        # OBSERVE: generic mutation observers
-        self._observers: list[VFSObserver] = []
+        # OBSERVE: Rust ObserverRegistry with event-type bitmask filtering (Issue #1748).
+        self._observer_registry: Any = (
+            _ObserverRegistry() if _ObserverRegistry is not None else _PythonObserverRegistry()
+        )
 
         # MOUNT/UNMOUNT: driver lifecycle hooks (Issue #1811)
         self._mount_hooks: list[VFSMountHook] = []
@@ -328,17 +359,16 @@ class KernelDispatch:
     def unregister_intercept_access(self, hook: VFSAccessHook) -> bool:
         return bool(self._registry.unregister("access", hook))
 
-    # ── register_observe: generic OBSERVE observers ────────────────────
+    # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
-        self._observers.append(obs)
+        from nexus.core.file_events import ALL_FILE_EVENTS
+
+        mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
+        self._observer_registry.register(obs, mask)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        try:
-            self._observers.remove(obs)
-            return True
-        except ValueError:
-            return False
+        return bool(self._observer_registry.unregister(obs))
 
     # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
     # Uses HookRegistry.get_pre_hooks() — pre-filtered at registration.
@@ -463,24 +493,32 @@ class KernelDispatch:
     async def intercept_post_rmdir(self, ctx: RmdirHookContext) -> None:
         await self._post_dispatch("rmdir", "on_post_rmdir", ctx)
 
-    # ── OBSERVE dispatch ───────────────────────────────────────────────
+    # ── OBSERVE dispatch (Issue #1812, #1748) ────────────────────────────
 
-    def notify(self, event: FileEvent) -> None:
+    async def notify(self, event: FileEvent) -> None:
         """OBSERVE phase — fire-and-forget to all registered observers.
 
-        Synchronous: all VFSObserver.on_mutation() implementations are sync
-        by protocol contract.  Observers that need async dispatch (e.g.
-        EventBusObserver) use internal fire_and_forget().
-
-        Issue #1812: was ``async def`` but never awaited anything internally —
-        the ``async`` keyword forced callers to ``await`` a no-op coroutine,
-        violating the fire-and-forget contract.
+        Rust ``ObserverRegistry`` filters by ``event_mask`` bitmask before
+        crossing to Python.  Matching observers run concurrently via
+        ``gather(return_exceptions=True)`` — fault-isolated, no ordering.
         """
-        for obs in self._observers:
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        event_type = event.type if isinstance(event.type, FileEventType) else None
+        bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
+        if not bit:
+            return
+        observers = self._observer_registry.get_matching(bit)
+        if not observers:
+            return
+
+        async def _safe(obs: Any, name: str) -> None:
             try:
-                obs.on_mutation(event)
+                await obs.on_mutation(event)
             except Exception as exc:
-                logger.warning("Observer %s failed: %s", type(obs).__name__, exc)
+                logger.warning("Observer %s failed: %s", name, exc)
+
+        await asyncio.gather(*(_safe(obs, name) for obs, name in observers))
 
     # ── MOUNT/UNMOUNT hooks (Issue #1811) ──────────────────────────────
 
@@ -566,7 +604,7 @@ class KernelDispatch:
 
     @property
     def observer_count(self) -> int:
-        return len(self._observers)
+        return int(self._observer_registry.count())
 
     @property
     def mount_hook_count(self) -> int:

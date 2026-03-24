@@ -210,7 +210,7 @@ class TestOnMutation:
             # Give the waiter time to register
             await asyncio.sleep(0.01)
             # Fire the event (simulating dispatch.notify)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -226,7 +226,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/inbox/*.txt", timeout=0.1))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is None  # timeout, not matched
 
@@ -242,7 +242,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/docs/*.md", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -258,7 +258,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/inbox/", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -290,7 +290,7 @@ class TestWaitForChangesInternal:
         async def _test():
             wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             return await wait_task
 
         result = asyncio.run(_test())
@@ -347,7 +347,7 @@ class TestWaitForChangesRace:
         async def _test():
             wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             return await wait_task
 
         result = asyncio.run(_test())

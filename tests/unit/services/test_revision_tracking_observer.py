@@ -1,4 +1,4 @@
-"""Tests for RevisionTrackingObserver (Issue #1382).
+"""Tests for RevisionTrackingObserver (Issue #1382, #1748).
 
 Verifies that the observer feeds RevisionNotifier on versioned VFS mutations
 and skips events without version or zone_id.
@@ -6,7 +6,7 @@ and skips events without version or zone_id.
 
 from __future__ import annotations
 
-from nexus.core.file_events import FileEvent, FileEventType
+from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent, FileEventType
 from nexus.lib.revision_notifier import RevisionNotifier
 from nexus.system_services.lifecycle.revision_tracking_observer import (
     RevisionTrackingObserver,
@@ -20,7 +20,7 @@ def _make_observer() -> tuple[RevisionTrackingObserver, RevisionNotifier]:
 
 
 class TestRevisionTrackingObserver:
-    def test_write_event_updates_revision(self) -> None:
+    async def test_write_event_updates_revision(self) -> None:
         """FILE_WRITE with version should update the notifier."""
         obs, notifier = _make_observer()
         event = FileEvent(
@@ -29,10 +29,10 @@ class TestRevisionTrackingObserver:
             zone_id="root",
             version=5,
         )
-        obs.on_mutation(event)
+        await obs.on_mutation(event)
         assert notifier.get_latest_revision("root") == 5
 
-    def test_delete_event_with_version(self) -> None:
+    async def test_delete_event_with_version(self) -> None:
         """FILE_DELETE with version should also update revision."""
         obs, notifier = _make_observer()
         event = FileEvent(
@@ -41,10 +41,10 @@ class TestRevisionTrackingObserver:
             zone_id="root",
             version=10,
         )
-        obs.on_mutation(event)
+        await obs.on_mutation(event)
         assert notifier.get_latest_revision("root") == 10
 
-    def test_rename_event_with_version(self) -> None:
+    async def test_rename_event_with_version(self) -> None:
         """FILE_RENAME with version should update revision."""
         obs, notifier = _make_observer()
         event = FileEvent(
@@ -54,10 +54,10 @@ class TestRevisionTrackingObserver:
             version=7,
             new_path="/new.txt",
         )
-        obs.on_mutation(event)
+        await obs.on_mutation(event)
         assert notifier.get_latest_revision("zone-a") == 7
 
-    def test_skips_event_without_version(self) -> None:
+    async def test_skips_event_without_version(self) -> None:
         """Events without version (e.g. DIR_CREATE) should be skipped."""
         obs, notifier = _make_observer()
         event = FileEvent(
@@ -65,10 +65,10 @@ class TestRevisionTrackingObserver:
             path="/test/dir",
             zone_id="root",
         )
-        obs.on_mutation(event)
+        await obs.on_mutation(event)
         assert notifier.get_latest_revision("root") == 0
 
-    def test_skips_event_without_zone_id(self) -> None:
+    async def test_skips_event_without_zone_id(self) -> None:
         """Events without zone_id (Layer 1 local) should be skipped."""
         obs, notifier = _make_observer()
         event = FileEvent(
@@ -76,38 +76,41 @@ class TestRevisionTrackingObserver:
             path="/test/file.txt",
             version=3,
         )
-        obs.on_mutation(event)
+        await obs.on_mutation(event)
         # No zone_id → nothing tracked
         assert notifier.get_latest_revision("root") == 0
 
-    def test_zone_isolation(self) -> None:
+    async def test_zone_isolation(self) -> None:
         """Mutations in zone A should not affect zone B."""
         obs, notifier = _make_observer()
-        obs.on_mutation(
+        await obs.on_mutation(
             FileEvent(type=FileEventType.FILE_WRITE, path="/a.txt", zone_id="zone-a", version=100)
         )
         assert notifier.get_latest_revision("zone-a") == 100
         assert notifier.get_latest_revision("zone-b") == 0
 
-    def test_monotonic_only_advances(self) -> None:
+    async def test_monotonic_only_advances(self) -> None:
         """Revision should only go forward, never backward."""
         obs, notifier = _make_observer()
-        obs.on_mutation(
+        await obs.on_mutation(
             FileEvent(type=FileEventType.FILE_WRITE, path="/a.txt", zone_id="root", version=10)
         )
-        obs.on_mutation(
+        await obs.on_mutation(
             FileEvent(type=FileEventType.FILE_WRITE, path="/b.txt", zone_id="root", version=5)
         )
         assert notifier.get_latest_revision("root") == 10
 
-    def test_multiple_zones_tracked(self) -> None:
+    async def test_multiple_zones_tracked(self) -> None:
         """Multiple zones should be tracked independently."""
         obs, notifier = _make_observer()
-        obs.on_mutation(
+        await obs.on_mutation(
             FileEvent(type=FileEventType.FILE_WRITE, path="/a.txt", zone_id="zone-a", version=3)
         )
-        obs.on_mutation(
+        await obs.on_mutation(
             FileEvent(type=FileEventType.FILE_WRITE, path="/b.txt", zone_id="zone-b", version=7)
         )
         assert notifier.get_latest_revision("zone-a") == 3
         assert notifier.get_latest_revision("zone-b") == 7
+
+    def test_event_mask_is_all(self) -> None:
+        assert RevisionTrackingObserver.event_mask == ALL_FILE_EVENTS

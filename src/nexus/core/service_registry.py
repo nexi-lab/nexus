@@ -42,7 +42,6 @@ from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
-    from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +172,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Lifecycle orchestration state (formerly SLC)
         self._dispatch: KernelDispatch | None = dispatch
-        self._blm: BrickLifecycleManager | None = None
+        self._blm: Any = None  # BrickLifecycleManager (system_services tier, opaque to kernel)
         self._hook_specs: dict[str, HookSpec] = {}
         # Tracks services whose hooks were pre-registered on dispatch at
         # initialize() time by _enlist_hook().  activate_hot_swappable_services()
@@ -183,7 +182,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
     # -- BLM injection (factory calls at link-time) ------------------------
 
-    def set_lifecycle_manager(self, blm: BrickLifecycleManager | None) -> None:
+    def set_lifecycle_manager(self, blm: Any) -> None:
         """Set the optional BrickLifecycleManager (factory calls at link-time)."""
         self._blm = blm
 

@@ -238,8 +238,9 @@ etag ownership and zone isolation.
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 
 The kernel provides callback-based dispatch at 6 VFS operation points (read,
-write, delete, rename, mkdir, rmdir). These are kernel-owned callback lists
-(implemented by `KernelDispatch`, §4) that any authorized caller populates.
+write, delete, rename, mkdir, rmdir) plus driver lifecycle events (mount,
+unmount). These are kernel-owned callback lists (implemented by
+`KernelDispatch`, §4) that any authorized caller populates.
 
 **Three-phase dispatch per VFS operation:**
 
@@ -248,6 +249,17 @@ write, delete, rename, mkdir, rmdir). These are kernel-owned callback lists
 | **PRE-DISPATCH** | First-match short-circuit | Yes (skips pipeline) | VFS `file->f_op` dispatch (procfs, sysfs) |
 | **INTERCEPT** | Synchronous, ordered (pre + post) | Yes (abort/policy) | LSM security hooks |
 | **OBSERVE** | Fire-and-forget | No | `fsnotify()` / `notifier_call_chain()` |
+
+**Driver lifecycle hooks (Issue #1811):**
+
+| Phase | Semantics | Short-circuit? | Linux Analogue |
+|-------|-----------|----------------|----------------|
+| **MOUNT** | Fire-and-forget on backend mount | No | `file_system_type.mount()` |
+| **UNMOUNT** | Fire-and-forget on backend unmount | No | `kill_sb()` |
+
+Mount/unmount hooks are dispatched by `DriverLifecycleCoordinator` (§4) via
+KernelDispatch. Backends declare mount hooks via `hook_spec()` (same pattern
+as VFS hooks). CASAddressingEngine uses `on_mount` for mount-time logging.
 
 **PRE-DISPATCH** (Issue #889): `VFSPathResolver` instances checked in order;
 first match handles entire operation. Each resolver owns its own permission
@@ -263,8 +275,9 @@ Audit is a factory-registered interceptor, not a kernel built-in.
 mutations. Used for cache invalidation, workflow triggers, telemetry.
 Failures logged, never abort.
 
-All 9 hook protocols + 7 context dataclasses defined in `contracts/vfs_hooks.py`
-(tier-neutral). Concrete implementations live in `services/hooks/` (policy,
+All 11 hook protocols + 9 context dataclasses defined in `contracts/vfs_hooks.py`
+(tier-neutral): 9 VFS operation hooks + 2 driver lifecycle hooks (VFSMountHook,
+VFSUnmountHook). Concrete implementations live in `services/hooks/` (policy,
 like SELinux/AppArmor).
 
 ### 2.5 Hook Registration API
@@ -387,7 +400,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is `MountProtocol` (service) |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase callback mechanism implementing §2.4. Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
+| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Callback mechanism implementing §2.4: three VFS phases (PRE-DISPATCH / INTERCEPT / OBSERVE) + driver lifecycle hooks (MOUNT / UNMOUNT). Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `system_services` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `system_services` + `core.stream` | append-only log | VFS named streams — inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). Manages all 4 service quadrants — subsumes former ServiceLifecycleCoordinator |

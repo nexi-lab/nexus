@@ -105,7 +105,7 @@ class LifespanServices:
         _sys = getattr(nx, "_system_services", None) if nx else None
         _brk = getattr(nx, "_brick_services", None) if nx else None
 
-        _coord = nx.service_coordinator if nx else None
+        _coord = getattr(nx, "service_coordinator", None) if nx else None
 
         return cls(
             # Core / kernel

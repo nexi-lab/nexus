@@ -18,7 +18,7 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-def nx_with_db(tmp_path):
+async def nx_with_db(tmp_path):
     """Create a NexusFS instance with a real SQLite database for provisioning tests."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -29,7 +29,7 @@ def nx_with_db(tmp_path):
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    nx = make_test_nexus(tmp_path)
+    nx = await make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
     # Mock entity registry
@@ -65,6 +65,7 @@ def nx_with_db(tmp_path):
             register_workspace_fn=MagicMock(),
             register_agent_fn=MagicMock(),
         ),
+        allow_overwrite=True,
     )
 
     return nx
@@ -287,7 +288,7 @@ class TestProvisionUserPartialFailure:
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
-        nx = make_test_nexus(tmp_path)
+        nx = await make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         from dataclasses import replace

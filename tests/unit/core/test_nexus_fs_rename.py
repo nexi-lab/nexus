@@ -14,9 +14,9 @@ from tests.helpers.failing_backend import FailingBackend
 
 
 @pytest.fixture()
-def nx(tmp_path):
+async def nx(tmp_path):
     """Create a NexusFS instance with permissions disabled for unit tests."""
-    return make_test_nexus(tmp_path)
+    return await make_test_nexus(tmp_path)
 
 
 class TestRenameHappyPath:
@@ -126,7 +126,7 @@ class TestRenameWithFailingBackend:
             fail_on_methods=["write_content"],
             fail_on_nth=2,
         )
-        nx = make_test_nexus(tmp_path / "nx", backend=failing)
+        nx = await make_test_nexus(tmp_path / "nx", backend=failing)
         # First write succeeds
         await nx.write("/files/a.txt", b"data")
         # Second write fails due to backend

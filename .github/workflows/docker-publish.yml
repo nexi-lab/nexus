@@ -163,6 +163,7 @@ jobs:
           docker exec \
             -e NEXUS_URL=http://localhost:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
             nexus-e2e bash /tmp/permissions_demo_enhanced.sh
 
       - name: Run build perf e2e
@@ -170,6 +171,7 @@ jobs:
           docker exec \
             -e NEXUS_URL=http://localhost:2026 \
             -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
             -e NEXUS_GRPC_PORT=2029 \
             nexus-e2e python3 /tmp/test_build_perf_e2e.py
 

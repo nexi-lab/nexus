@@ -122,14 +122,22 @@ impl RaftGrpcServer {
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(client_ca);
+            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+            // K3s pattern: CA node (has join_token_hash) uses server-TLS only
+            // so joiners can connect without client cert to call JoinCluster.
+            // Non-CA nodes (followers that already have certs) use full mTLS.
+            if self.join_token_hash.is_some() {
+                tracing::info!(
+                    "TLS mode: server-TLS only (accepting JoinCluster without client cert)"
+                );
+            } else {
+                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+                tls_config = tls_config.client_ca_root(client_ca);
+                tracing::info!("TLS mode: mTLS (client auth required)");
+            }
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
-            tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
         builder
@@ -169,14 +177,22 @@ impl RaftGrpcServer {
         let mut builder = tonic::transport::Server::builder();
         if let Some(ref tls) = self.config.tls {
             let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
-            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
-            let tls_config = tonic::transport::ServerTlsConfig::new()
-                .identity(identity)
-                .client_ca_root(client_ca);
+            let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+            // K3s pattern: CA node (has join_token_hash) uses server-TLS only
+            // so joiners can connect without client cert to call JoinCluster.
+            // Non-CA nodes (followers that already have certs) use full mTLS.
+            if self.join_token_hash.is_some() {
+                tracing::info!(
+                    "TLS mode: server-TLS only (accepting JoinCluster without client cert)"
+                );
+            } else {
+                let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+                tls_config = tls_config.client_ca_root(client_ca);
+                tracing::info!("TLS mode: mTLS (client auth required)");
+            }
             builder = builder
                 .tls_config(tls_config)
                 .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
-            tracing::info!("TLS mode: mTLS (client auth required)");
         }
 
         builder

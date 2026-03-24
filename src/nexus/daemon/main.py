@@ -442,73 +442,25 @@ def main(
 # ---------------------------------------------------------------------------
 
 
-@main.command("share")
+@main.command("create-zone")
 @click.argument("path", type=str)
-@click.option(
-    "--zone-id",
-    type=str,
-    default=None,
-    help="Explicit zone ID for the shared subtree (auto-generated if omitted).",
-)
+@click.option("--zone-id", type=str, required=True, help="Zone ID for the new zone.")
 @click.option("--remote-url", default=None, envvar="NEXUS_URL", help="Running nexusd URL.")
 @click.option("--remote-api-key", default=None, envvar="NEXUS_API_KEY", help="API key.")
-def share_cmd(
+def create_zone_cmd(
     path: str,
-    zone_id: str | None,
+    zone_id: str,
     remote_url: str | None,
     remote_api_key: str | None,
 ) -> None:
-    """Share a local subtree as a federation zone.
+    """Create a federation zone at a path.
 
-    Tells the running nexusd to create a new zone from a local path
-    so that peers can join it.
-
-    \b
-    Examples:
-        nexusd share /data/shared
-        nexusd share /data/shared --zone-id my-shared-zone
-    """
-    from nexus.cli.utils import console, rpc_call
-
-    try:
-        data = rpc_call(
-            remote_url, remote_api_key, "federation_share", local_path=path, zone_id=zone_id
-        )
-        new_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Shared '{path}' as federation zone[/green]")
-        console.print(f"  Zone ID: [cyan]{new_zone}[/cyan]")
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-
-
-# ---------------------------------------------------------------------------
-# nexusd join — join a peer's federation zone
-# ---------------------------------------------------------------------------
-
-
-@main.command("join")
-@click.argument("peer_addr", type=str)
-@click.argument("remote_path", type=str)
-@click.argument("local_path", type=str)
-@click.option("--remote-url", default=None, envvar="NEXUS_URL", help="Running nexusd URL.")
-@click.option("--remote-api-key", default=None, envvar="NEXUS_API_KEY", help="API key.")
-def join_cmd(
-    peer_addr: str,
-    remote_path: str,
-    local_path: str,
-    remote_url: str | None,
-    remote_api_key: str | None,
-) -> None:
-    """Join a peer's federation zone.
-
-    Tells the running nexusd to connect to a remote peer and replicate
-    a shared subtree locally.
+    Carves out a subtree into its own Raft zone so other nodes can join it.
 
     \b
     Examples:
-        nexusd join peer1:2126 /shared /local/shared
-        nexusd join 10.0.0.5:2126 /data /mnt/data
+        nexusd create-zone /corp --zone-id corp
+        nexusd create-zone /data/shared --zone-id shared
     """
     from nexus.cli.utils import console, rpc_call
 
@@ -516,16 +468,62 @@ def join_cmd(
         data = rpc_call(
             remote_url,
             remote_api_key,
-            "federation_join",
-            peer_addr=peer_addr,
-            remote_path=remote_path,
-            local_path=local_path,
+            "federation_create_zone",
+            path=path,
+            zone_id=zone_id,
         )
-        joined_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Joined federation zone from {peer_addr}[/green]")
-        console.print(f"  Zone ID:     [cyan]{joined_zone}[/cyan]")
-        console.print(f"  Remote path: {remote_path}")
-        console.print(f"  Local path:  {local_path}")
+        console.print(f"[green]Zone '{data.get('zone_id')}' created at '{path}'[/green]")
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# nexusd mount — NFS-style mount (cross-link / pull / push)
+# ---------------------------------------------------------------------------
+
+
+@main.command("mount")
+@click.argument("source", type=str)
+@click.argument("target", type=str)
+@click.option("--zone-id", type=str, default=None, help="Explicit zone ID.")
+@click.option("--remote-url", default=None, envvar="NEXUS_URL", help="Running nexusd URL.")
+@click.option("--remote-api-key", default=None, envvar="NEXUS_API_KEY", help="API key.")
+def mount_cmd(
+    source: str,
+    target: str,
+    zone_id: str | None,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
+    """Mount (NFS-style) — auto-detects cross-link, pull, or push.
+
+    \b
+    Formats:
+        nexusd mount /src /dst              — cross-link (both local)
+        nexusd mount peer1:/remote /local   — pull join (remote → local)
+        nexusd mount /local peer1:/remote   — push create+join (local → remote)
+
+    \b
+    Examples:
+        nexusd mount nexus-1:/corp /corp
+        nexusd mount /corp /family/work
+        nexusd mount /data peer2:/data
+    """
+    from nexus.cli.utils import console, rpc_call
+
+    try:
+        data = rpc_call(
+            remote_url,
+            remote_api_key,
+            "federation_mount",
+            source=source,
+            target=target,
+            zone_id=zone_id,
+        )
+        console.print(f"[green]Mounted {source} → {target}[/green]")
+        if data.get("zone_id"):
+            console.print(f"  Zone ID: [cyan]{data['zone_id']}[/cyan]")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)

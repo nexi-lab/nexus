@@ -15,6 +15,7 @@ All zones share one gRPC port (zone_id routing in transport layer).
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -80,14 +81,18 @@ class ZoneManager:
         from nexus.security.tls.config import ZoneTlsConfig
 
         # TLS bootstrap logic (K3s-style pre-provision):
-        # 1. Existing certs on disk → use them (normal restart or pre-provisioned by join_cluster)
-        # 2. Single-node (no peers) or first node → auto-generate
+        # 1. NEXUS_RAFT_TLS=false → skip TLS entirely (plaintext Raft, for dev/testing)
+        # 2. Existing certs on disk → use them (normal restart or pre-provisioned by join_cluster)
+        # 3. Single-node (no peers) or first node → auto-generate
         # Note: joiners must call _nexus_raft.join_cluster() BEFORE creating ZoneManager.
         self._tls_config: ZoneTlsConfig | None = None
         ca_key_path: str | None = None
         join_token_hash: str | None = None
 
-        if tls_cert_path is None and tls_key_path is None and tls_ca_path is None:
+        raft_tls = os.environ.get("NEXUS_RAFT_TLS", "true").lower()
+        if raft_tls in ("false", "0", "no"):
+            logger.info("NEXUS_RAFT_TLS=false — Raft transport running without TLS")
+        elif tls_cert_path is None and tls_key_path is None and tls_ca_path is None:
             existing = ZoneTlsConfig.from_data_dir(base_path)
             if existing is not None:
                 # Certs exist (from auto-generate, previous run, or pre-provisioned join)

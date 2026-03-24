@@ -254,23 +254,6 @@ class NexusServiceClient:
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/v2/federation/zones/{zone_id}/cluster-info")
 
-    def federation_share(self, local_path: str, zone_id: str | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"local_path": local_path}
-        if zone_id:
-            body["zone_id"] = zone_id
-        return self._request("POST", "/api/v2/federation/share", json_body=body)
-
-    def federation_join(self, peer_addr: str, remote_path: str, local_path: str) -> dict[str, Any]:
-        return self._request(
-            "POST",
-            "/api/v2/federation/join",
-            json_body={
-                "peer_addr": peer_addr,
-                "remote_path": remote_path,
-                "local_path": local_path,
-            },
-        )
-
     def federation_mount(self, parent_zone: str, path: str, target_zone: str) -> dict[str, Any]:
         return self._request(
             "POST",

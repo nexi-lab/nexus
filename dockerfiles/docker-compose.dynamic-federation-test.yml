@@ -4,8 +4,8 @@
 # NEXUS_FEDERATION_ZONES and NEXUS_FEDERATION_MOUNTS env vars.
 #
 # Nodes start with only their root zone. The test suite dynamically creates
-# zones, mounts, and joins via JSON-RPC (federation_create_zone,
-# federation_mount, federation_join) to build the topology at runtime.
+# zones and mounts via JSON-RPC (federation_create_zone, federation_mount,
+# federation_join_zone) to build the topology at runtime.
 #
 # Usage:
 #   docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml up -d
@@ -103,6 +103,7 @@ services:
       NEXUS_NODE_ID: 1
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
+      NEXUS_RAFT_TLS: "false"
 
       # RecordStore
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -127,24 +128,11 @@ services:
 
       # NO NEXUS_FEDERATION_ZONES — topology built dynamically by tests
       # NO NEXUS_FEDERATION_MOUNTS — mounts created via federation_mount RPC
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        # Start nexusd, then copy join token to shared volume for other nodes.
-        /usr/local/bin/docker-entrypoint.sh &
-        SERVER_PID=$$!
-        # Wait for token file to appear (generated during TLS auto-init)
-        while [ ! -f /app/data/tls/join-token ]; do sleep 1; done
-        cp /app/data/tls/join-token /shared/join-token
-        echo "Join token copied to /shared/join-token"
-        wait $$SERVER_PID
     ports:
       - "${NEXUS_PORT:-2026}:2026"
       - "2126:2126"
     volumes:
       - dyn_nexus1_data:/app/data
-      - dyn_shared_token:/shared
     networks:
       - dyn-nexus-network
     healthcheck:
@@ -169,19 +157,7 @@ services:
       dragonfly:
         condition: service_healthy
       nexus-1:
-        condition: service_healthy
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        # Copy join token from node-1's shared volume into our tls dir.
-        # nexusd reads {data_dir}/tls/join-token at startup (file-only, no env var).
-        echo "Waiting for join token from node-1..."
-        while [ ! -f /shared/join-token ]; do sleep 1; done
-        mkdir -p /app/data/tls
-        cp /shared/join-token /app/data/tls/join-token
-        echo "Got join token, starting node-2..."
-        exec /usr/local/bin/docker-entrypoint.sh
+        condition: service_started
     environment:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
@@ -191,6 +167,7 @@ services:
       NEXUS_NODE_ID: 2
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
+      NEXUS_RAFT_TLS: "false"
 
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -213,7 +190,6 @@ services:
       - "2127:2126"
     volumes:
       - dyn_nexus2_data:/app/data
-      - dyn_shared_token:/shared:ro
     networks:
       - dyn-nexus-network
     healthcheck:
@@ -236,20 +212,6 @@ services:
     depends_on:
       dragonfly:
         condition: service_healthy
-      nexus-1:
-        condition: service_healthy
-    entrypoint:
-      - /bin/bash
-      - -c
-      - |
-        # Copy join token from node-1's shared volume into our tls dir.
-        # Witness reads {data_dir}/tls/join-token at startup (file-only).
-        echo "Waiting for join token from node-1..."
-        while [ ! -f /shared/join-token ]; do sleep 1; done
-        mkdir -p /home/nexus/data/tls
-        cp /shared/join-token /home/nexus/data/tls/join-token
-        echo "Got join token, starting witness..."
-        exec nexus-witness
     environment:
       NEXUS_NODE_ID: 3
       NEXUS_BIND_ADDR: 0.0.0.0:2126
@@ -260,7 +222,6 @@ services:
       - "2128:2126"
     volumes:
       - dyn_witness_data:/home/nexus/data
-      - dyn_shared_token:/shared:ro
     networks:
       - dyn-nexus-network
     healthcheck:
@@ -279,9 +240,9 @@ services:
     working_dir: /app
     depends_on:
       nexus-1:
-        condition: service_healthy
+        condition: service_started
       nexus-2:
-        condition: service_healthy
+        condition: service_started
     entrypoint: []
     volumes:
       - ..:/app
@@ -314,5 +275,3 @@ volumes:
     name: nexus-dyn-witness-data
   dyn_dragonfly_data:
     name: nexus-dyn-dragonfly-data
-  dyn_shared_token:
-    name: nexus-dyn-shared-token

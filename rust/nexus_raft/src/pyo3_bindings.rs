@@ -1319,11 +1319,12 @@ fn join_cluster(peer_address: &str, join_token: &str, node_id: u64, tls_dir: &st
         ));
     }
 
-    // Build endpoint URL
+    // Build endpoint URL — use https:// for TLS (K3s pattern: server-TLS only,
+    // no client cert needed — join token password provides authentication)
     let endpoint = if peer_address.starts_with("http") {
         peer_address.to_string()
     } else {
-        format!("http://{}", peer_address)
+        format!("https://{}", peer_address)
     };
 
     // Create a temporary Tokio runtime for the blocking call

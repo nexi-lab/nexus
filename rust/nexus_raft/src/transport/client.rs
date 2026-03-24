@@ -719,10 +719,23 @@ pub async fn call_join_cluster(
     password: &str,
     timeout_secs: u64,
 ) -> Result<JoinClusterResult> {
-    let ep = Endpoint::from_shared(leader_addr.to_string())
+    // K3s pattern: connect with server-TLS only (no client cert).
+    // The joiner doesn't have certs yet — that's what we're trying to get.
+    // Authentication is via join token password, not mTLS.
+    // TOFU: accept any server cert — the CA fingerprint in the token
+    // is verified after receiving the response (in the PyO3 wrapper).
+    let mut ep = Endpoint::from_shared(leader_addr.to_string())
         .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
         .connect_timeout(Duration::from_secs(timeout_secs))
         .timeout(Duration::from_secs(timeout_secs));
+
+    // If the address is https://, configure TLS without client cert
+    if leader_addr.starts_with("https://") {
+        let tls_config = tonic::transport::ClientTlsConfig::new().domain_name("localhost"); // TOFU — token fingerprint provides real auth
+        ep = ep
+            .tls_config(tls_config)
+            .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+    }
 
     let channel = ep
         .connect()

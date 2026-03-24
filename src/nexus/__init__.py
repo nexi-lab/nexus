@@ -370,9 +370,15 @@ async def connect(
         # certs don't exist yet, provision TLS from the leader BEFORE
         # creating ZoneManager (so Raft starts with mTLS from the start).
         # Token is file-only (no env var) — consistent with nexus being file-based.
+        # Skip entirely if NEXUS_RAFT_TLS=false (plaintext mode for dev/testing).
+        raft_tls = os.environ.get("NEXUS_RAFT_TLS", "true").lower()
         tls_dir_pre = Path(zones_dir) / "tls"
         token_file = tls_dir_pre / "join-token"
-        if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
+        if (
+            raft_tls not in ("false", "0", "no")
+            and token_file.exists()
+            and not (tls_dir_pre / "node.pem").exists()
+        ):
             join_token = token_file.read_text().strip()
             # Find a peer address to join from NEXUS_PEERS
             join_peer = None

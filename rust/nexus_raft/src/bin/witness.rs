@@ -261,10 +261,12 @@ async fn tls_bootstrap_loop(
                 continue; // Skip self
             }
 
-            tracing::debug!("Trying JoinCluster on peer {} ({})", peer.id, peer.endpoint);
+            // Use https:// for JoinCluster (K3s pattern: server-TLS only, no client cert)
+            let join_endpoint = peer.endpoint.replace("http://", "https://");
+            tracing::debug!("Trying JoinCluster on peer {} ({})", peer.id, join_endpoint);
 
             match call_join_cluster(
-                &peer.endpoint,
+                &join_endpoint,
                 node_id,
                 node_address,
                 "root",

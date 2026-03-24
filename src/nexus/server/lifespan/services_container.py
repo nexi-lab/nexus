@@ -109,10 +109,11 @@ class LifespanServices:
 
         _coord = getattr(nx, "service_coordinator", None) if nx else None
 
-        # Helper: nx.service() with None safety
+        # Helper: nx.service() with None safety and hasattr guard
+        # (SimpleNamespace stubs in tests may not have .service())
         def _svc(name: str) -> Any:
             _service_fn = getattr(nx, "service", None) if nx else None
-            return _service_fn(name) if _service_fn else None
+            return _service_fn(name) if callable(_service_fn) else None
 
         return cls(
             # Core / kernel

@@ -122,93 +122,66 @@ class PlaygroundApp(App[None]):
         await self._build_browser_ui()
 
     async def _resolve_filesystem(self) -> Any:
-        """Mount backends from URIs or auto-discover from state dir.
+        """Mount backends from URIs using direct adapters.
 
-        For local:// URIs, uses direct filesystem passthrough so users
-        can browse real files on disk without seeding through the API.
-        Cloud URIs (s3://, gcs://) go through the full NexusFS mount.
+        Always uses direct adapters (LocalDirectFS, S3DirectFS) so users
+        see real files immediately — no NexusFS kernel, no empty metastore.
         """
         if self._uris:
-            # Check if ALL URIs are local:// — use direct passthrough
-            all_local = all(u.startswith("local://") for u in self._uris)
-            if all_local:
-                return self._resolve_local_direct(self._uris)
-
-            # Mixed or cloud URIs — use full NexusFS mount
             try:
-                from nexus.fs import mount
-
-                return await mount(*self._uris)
+                return self._build_direct_fs(self._uris)
             except Exception as exc:
                 empty = self.query_one("#empty-state", Static)
                 empty.update(f"[red]Mount failed:[/red] {exc}")
                 return None
 
-        # Auto-discover from state dir (fallback when no URIs given)
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            __import__("tempfile").gettempdir(), "nexus-fs"
+        # No URIs — show empty state
+        empty = self.query_one("#empty-state", Static)
+        empty.update(
+            "[bold]No mounts specified[/bold]\n\n"
+            "nexus-fs playground s3://bucket\n"
+            "nexus-fs playground local://./data\n"
+            "nexus-fs playground s3://bucket local://./data"
         )
-        db_path = os.path.join(state_dir, "metadata.db")
-        if not os.path.exists(db_path):
-            empty = self.query_one("#empty-state", Static)
-            empty.update(
-                "[bold]No mounts found[/bold]\n\n"
-                "Pass URIs: nexus-fs playground s3://bucket local://./data\n"
-                'Or mount first: fs = await nexus.fs.mount("s3://bucket")'
-            )
-            return None
+        return None
 
-        # Reconstruct from existing state
-        try:
-            from nexus.core.router import PathRouter
-            from nexus.fs._facade import SlimNexusFS
-            from nexus.fs._sqlite_meta import SQLiteMetastore
+    def _build_direct_fs(self, uris: tuple[str, ...]) -> Any:
+        """Build direct filesystem adapters from URIs.
 
-            metastore = SQLiteMetastore(db_path)
-            router = PathRouter(metastore)
-
-            # Read existing mount entries from metastore
-            from nexus.contracts.constants import ROOT_ZONE_ID
-            from nexus.contracts.types import OperationContext
-            from nexus.core.config import BrickServices, KernelServices, PermissionConfig
-            from nexus.core.nexus_fs import NexusFS
-
-            ctx = OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
-            kernel = NexusFS(
-                metadata_store=metastore,
-                permissions=PermissionConfig(enforce=False),
-                kernel_services=KernelServices(router=router),
-                brick_services=BrickServices(),
-                init_cred=ctx,
-            )
-            return SlimNexusFS(kernel)
-        except Exception as exc:
-            empty = self.query_one("#empty-state", Static)
-            empty.update(f"[red]Auto-discover failed:[/red] {exc}")
-            return None
-
-    def _resolve_local_direct(self, uris: tuple[str, ...]) -> Any:
-        """Create a LocalDirectFS for local:// URIs (direct filesystem passthrough).
-
-        This lets users browse real files on disk without writing through the API.
-        For a single URI, returns a LocalDirectFS. For multiple, returns a
-        MultiLocalFS that combines them.
+        local:// → LocalDirectFS (pathlib)
+        s3://    → S3DirectFS (boto3)
+        Multiple → MultiDirectFS (combines them)
         """
         from pathlib import Path as _Path
 
-        from nexus.fs._tui.local_fs import LocalDirectFS
+        from nexus.fs._tui.direct_fs import LocalDirectFS, MultiDirectFS, S3DirectFS
 
-        if len(uris) == 1:
-            raw = uris[0].removeprefix("local://")
-            root = _Path(raw).expanduser().resolve()
-            if not root.exists():
-                root.mkdir(parents=True, exist_ok=True)
-            name = root.name or "local"
-            return LocalDirectFS(root, f"/local/{name}")
+        backends: list[Any] = []
+        for uri in uris:
+            if uri.startswith("local://"):
+                raw = uri.removeprefix("local://")
+                root = _Path(raw).expanduser().resolve()
+                if not root.exists():
+                    root.mkdir(parents=True, exist_ok=True)
+                name = root.name or "local"
+                backends.append(LocalDirectFS(root, f"/local/{name}"))
 
-        # Multiple local mounts — use the first one
-        # (multi-local support can be added later)
-        return self._resolve_local_direct((uris[0],))
+            elif uri.startswith("s3://"):
+                raw = uri.removeprefix("s3://")
+                parts = raw.split("/", 1)
+                bucket = parts[0]
+                prefix = parts[1] if len(parts) > 1 else ""
+                backends.append(S3DirectFS(bucket, prefix, f"/s3/{bucket}"))
+
+            else:
+                raise ValueError(
+                    f"Unsupported scheme in '{uri}'. "
+                    "Playground supports local:// and s3://"
+                )
+
+        if len(backends) == 1:
+            return backends[0]
+        return MultiDirectFS(backends)
 
     async def _build_browser_ui(self) -> None:
         """Build the file browser UI after mounts are resolved."""

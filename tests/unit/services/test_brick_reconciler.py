@@ -414,7 +414,7 @@ class TestReconcileLoop:
         await manager.mount("a")
 
         await reconciler.start()
-        await asyncio.sleep(0.30)  # Should fire 2-3 times (generous for slow CI runners)
+        await asyncio.sleep(0.20)  # Should fire 2-3 times (generous for slow CI runners)
         await reconciler.stop()
         assert reconciler._reconcile_count >= 2
 
@@ -484,7 +484,7 @@ class TestReconcileLoop:
         reconciler.reconcile = _patched_reconcile  # type: ignore[assignment]
 
         await reconciler.start()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
         await reconciler.stop()
 
         # Loop should have survived the error and continued

@@ -254,7 +254,7 @@ class TestFlushLoopResilience:
             buf.queue_owner_grant("alice", "/doc.txt", "z1")
 
             # Give background thread time to attempt flush (> flush_interval)
-            time.sleep(0.3)
+            time.sleep(0.15)
 
             # Thread should still be alive despite the error
             assert buf._flush_thread is not None

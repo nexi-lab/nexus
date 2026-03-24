@@ -175,7 +175,7 @@ async def test_shutdown_unblocks_get() -> None:
     q: DedupWorkQueue[str] = DedupWorkQueue()
 
     async def delayed_shutdown() -> None:
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         await q.shutdown()
 
     shutdown_task = asyncio.create_task(delayed_shutdown())

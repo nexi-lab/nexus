@@ -285,7 +285,7 @@ class TestAgentLoopLifecycle:
         agent.start()
 
         # Wait for stderr collector to read lines
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         assert "error line 1" in agent.stderr_output
         assert "error line 2" in agent.stderr_output

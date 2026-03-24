@@ -259,6 +259,7 @@ async def create_nexus_fs(
     zone_id: str | None = None,
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
+    init_cred: Any = None,
 ) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
@@ -282,6 +283,7 @@ async def create_nexus_fs(
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode).
         workflow_engine: Pre-built workflow engine override.
+        init_cred: Override kernel process identity (default: system user with is_admin flag).
 
     Returns:
         Fully configured NexusFS instance with services injected.
@@ -368,7 +370,9 @@ async def create_nexus_fs(
     from nexus.contracts.types import OperationContext as _OC
     from nexus.factory._lifecycle import _do_initialize, _do_link
 
-    _init_cred = _OC(user_id="system", groups=[], is_admin=is_admin)
+    _init_cred = (
+        init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
+    )
 
     nx = NexusFS(
         metadata_store=metadata_store,

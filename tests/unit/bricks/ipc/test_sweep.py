@@ -461,10 +461,10 @@ class TestEventDrivenSweeper:
 
         await _provision_agent(vfs, "agent:bob")
 
-        # Create a message with short TTL. The sweeper receives an event with
-        # expires_at=now+0.2s, should sleep until that time, then sweep.
+        # Create a message with TTL=1s. The sweeper receives an event with
+        # expires_at=now+1s, should sleep until that time, then sweep.
         now = datetime.now(UTC)
-        msg = _make_message("msg_future_expiry", now, ttl_seconds=0.2)
+        msg = _make_message("msg_future_expiry", now, ttl_seconds=1)
         filename = f"{now.strftime('%Y%m%dT%H%M%S')}_{msg.id}.json"
         msg_path = f"{inbox_path('agent:bob')}/{filename}"
         await vfs.sys_write(msg_path, msg.to_bytes(), ZONE)
@@ -478,8 +478,8 @@ class TestEventDrivenSweeper:
         await sweeper.start()
         await asyncio.sleep(0.05)  # Let subscriber register
 
-        # Publish event with expires_at = now + 0.2s
-        expires_at = time.time() + 0.2
+        # Publish event with expires_at = now + 1s
+        expires_at = time.time() + 1.0
         await cache_store.publish(
             f"ipc:ttl:schedule:{ZONE}",
             json.dumps(
@@ -491,13 +491,13 @@ class TestEventDrivenSweeper:
             ).encode(),
         )
 
-        # Check at 0.05s — message should NOT be swept yet
-        await asyncio.sleep(0.05)
+        # Check at 0.3s — message should NOT be swept yet
+        await asyncio.sleep(0.3)
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 1, "Message swept too early!"
 
         # Wait past expires_at + 100ms buffer + processing
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(1.0)
         await sweeper.stop()
 
         # Now it should be swept

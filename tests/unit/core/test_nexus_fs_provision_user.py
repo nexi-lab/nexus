@@ -37,7 +37,6 @@ async def nx_with_db(tmp_path):
 
     mock_registry = MagicMock()
     mock_registry.get_entity.return_value = None
-    nx._system_services = replace(nx._system_services, entity_registry=mock_registry)
 
     # Mock API key creator
     mock_key_creator = MagicMock()
@@ -45,9 +44,10 @@ async def nx_with_db(tmp_path):
     nx._brick_services = replace(nx._brick_services, api_key_creator=mock_key_creator)
 
     # Mock ReBAC so we don't need real ReBAC setup
-    nx._system_services = replace(nx._system_services, rebac_manager=MagicMock())
+    mock_rebac_manager = MagicMock()
 
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
+    # Issue #1801: _system_services deleted — pass mocks directly to service constructor
     from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
     nx._service_registry.register_service(
@@ -58,7 +58,7 @@ async def nx_with_db(tmp_path):
             entity_registry=mock_registry,
             api_key_creator=mock_key_creator,
             backend=nx.router.route("/").backend,
-            rebac_manager=nx._system_services.rebac_manager,
+            rebac_manager=mock_rebac_manager,
             rmdir_fn=nx.sys_rmdir,
             rebac_create_fn=MagicMock(),
             rebac_delete_fn=MagicMock(),
@@ -291,9 +291,7 @@ class TestProvisionUserPartialFailure:
         nx = await make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
-        from dataclasses import replace
-
-        nx._system_services = replace(nx._system_services, entity_registry=mock_registry)
+        # Issue #1801: _system_services deleted — pass mocks directly to service constructor
         # Issue #2133: explicitly create service with session_factory=None
         nx._service_registry.register_service(
             "user_provisioning",

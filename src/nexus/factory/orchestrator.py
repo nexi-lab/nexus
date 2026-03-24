@@ -388,8 +388,8 @@ async def create_nexus_fs(
     )
     nx._link_fn = functools.partial(_do_link, system_services=system_services, zone_id=zone_id)
     nx._initialize_fn = _do_initialize
-    # Backward compat: server/CLI/tests may read nx._system_services directly.
-    nx._system_services = system_services
+    # Issue #1801: _system_services assignment deleted — all services now in
+    # ServiceRegistry. Use nx.service("name") instead.
     await nx.link(
         enabled_bricks=enabled_bricks,
         parsing=parsing,

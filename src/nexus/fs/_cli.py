@@ -1,13 +1,18 @@
 """CLI entry point for nexus-fs.
 
 Provides the `nexus-fs` console command with subcommands:
-- nexus-fs doctor  (Phase 2)
-- nexus-fs playground  (Phase 2)
+- nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
+- nexus-fs playground   — interactive TUI file browser
 
 This module is referenced by pyproject.toml [project.scripts].
+It stays thin: imports are deferred to keep startup fast and to avoid
+pulling in optional dependencies (e.g., Textual) when they aren't needed.
 """
 
 from __future__ import annotations
+
+import asyncio
+import sys
 
 import click
 
@@ -22,15 +27,91 @@ def main(ctx: click.Context) -> None:
 
 
 @main.command()
-def doctor() -> None:
-    """Check environment, backends, and connectivity."""
-    click.echo("nexus-fs doctor: not yet implemented (Phase 2 — Issue #3232)")
+@click.option(
+    "--mount",
+    "-m",
+    "mount_uris",
+    multiple=True,
+    help="URI to mount for connectivity checks (e.g., s3://bucket).",
+)
+def doctor(mount_uris: tuple[str, ...]) -> None:
+    """Check environment, backends, and connectivity.
+
+    Runs diagnostic checks across three sections:
+
+    \b
+    - Environment: Python version, nexus-fs version, Rust accelerator
+    - Backends:    installed packages + credential validation
+    - Mounts:      connectivity + latency (when --mount is provided)
+
+    Examples:
+
+    \b
+      nexus-fs doctor
+      nexus-fs doctor --mount s3://my-bucket --mount gcs://project/bucket
+    """
+    from nexus.fs._doctor import render_doctor, run_all_checks
+
+    async def _run() -> dict:
+        fs = None
+        if mount_uris:
+            try:
+                from nexus.fs import mount
+
+                fs = await mount(*mount_uris)
+            except Exception as exc:
+                click.echo(f"Warning: unable to mount for connectivity checks: {exc}", err=True)
+
+        return await run_all_checks(fs=fs)
+
+    results = asyncio.run(_run())
+    render_doctor(results)
+
+    # Exit with error code if any checks failed
+    from nexus.fs._doctor import DoctorStatus
+
+    has_failure = any(
+        r.status == DoctorStatus.FAIL for section in results.values() for r in section
+    )
+    if has_failure:
+        sys.exit(1)
 
 
 @main.command()
-def playground() -> None:
-    """Interactive TUI file browser."""
-    click.echo("nexus-fs playground: not yet implemented (Phase 2 — Issue #3232)")
+@click.argument("uris", nargs=-1)
+def playground(uris: tuple[str, ...]) -> None:
+    """Interactive TUI file browser.
+
+    Browse files across mounted backends with keyboard navigation,
+    file preview, and search.
+
+    Pass backend URIs as arguments, or run without arguments to
+    auto-discover existing mounts from the state directory.
+
+    \b
+    Keyboard shortcuts:
+      arrows  Navigate          Enter  Open/preview
+      b       Go back           /      Search
+      c       Copy path         p      Preview file
+      m       Toggle mounts     q      Quit
+
+    Examples:
+
+    \b
+      nexus-fs playground s3://my-bucket local://./data
+      nexus-fs playground                              # auto-discover
+    """
+    try:
+        from nexus.fs._tui import PlaygroundApp
+    except ImportError:
+        click.echo(
+            "TUI requires the textual package.\nInstall with: pip install nexus-fs[tui]",
+            err=True,
+        )
+        sys.exit(1)
+
+    app = PlaygroundApp(uris=uris)
+    app.run()
 
 
 if __name__ == "__main__":

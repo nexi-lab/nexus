@@ -119,6 +119,61 @@ def check_gcs_credentials() -> dict[str, str]:
     )
 
 
+def validate_aws_credentials() -> dict[str, object]:
+    """Validate AWS credentials by calling STS GetCallerIdentity.
+
+    This is the lightest possible validation — requires zero IAM permissions.
+
+    Returns:
+        Dict with ``valid`` bool, ``account``, ``arn``, and ``user_id`` on success,
+        or ``valid=False`` with ``error`` on failure.
+    """
+    try:
+        import boto3
+    except ImportError:
+        return {"valid": False, "error": "boto3 not installed"}
+
+    try:
+        sts = boto3.client("sts")
+        identity = sts.get_caller_identity()
+        return {
+            "valid": True,
+            "account": identity.get("Account", ""),
+            "arn": identity.get("Arn", ""),
+            "user_id": identity.get("UserId", ""),
+        }
+    except Exception as exc:
+        return {"valid": False, "error": str(exc)}
+
+
+def validate_gcs_credentials() -> dict[str, object]:
+    """Validate GCP credentials by refreshing the auth token.
+
+    Contacts the OAuth2 endpoint to verify credentials are valid without
+    making any GCP service API call.
+
+    Returns:
+        Dict with ``valid`` bool and ``project`` on success,
+        or ``valid=False`` with ``error`` on failure.
+    """
+    try:
+        import google.auth
+        import google.auth.transport.requests
+    except ImportError:
+        return {"valid": False, "error": "google-auth not installed"}
+
+    try:
+        credentials, project = google.auth.default()
+        credentials.refresh(google.auth.transport.requests.Request())
+        return {
+            "valid": True,
+            "project": project or "unknown",
+            "credential_type": type(credentials).__name__,
+        }
+    except Exception as exc:
+        return {"valid": False, "error": str(exc)}
+
+
 def discover_credentials(scheme: str) -> dict[str, str]:
     """Discover credentials for a given backend scheme.
 

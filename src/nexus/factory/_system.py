@@ -99,6 +99,7 @@ def _boot_system_services(
                 is_postgresql=_is_pg,
                 version_store=_version_store,
                 namespace_store=_namespace_store,
+                enable_inheritance=ctx.perm.inherit,
             )
 
             # --- Audit Store ---
@@ -188,38 +189,19 @@ def _boot_system_services(
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193
     # =====================================================================
 
-    # --- Directory Visibility Cache ---
-    dir_visibility_cache: Any = None
-    try:
-        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
-
-        dir_visibility_cache = DirectoryVisibilityCache(
-            tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
-            ttl=ctx.cache_ttl_seconds or 300,
-            max_entries=10000,
-        )
-
-        # Wire: rebac invalidation -> dir visibility cache
-        rebac_manager.register_dir_visibility_invalidator(
-            "nexusfs",
-            lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
-        )
-        logger.debug("[BOOT:SYSTEM] DirectoryVisibilityCache created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] DirectoryVisibilityCache unavailable: %s", exc)
-
-    # --- Hierarchy Manager ---
-    hierarchy_manager: Any = None
-    try:
-        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
-
-        hierarchy_manager = HierarchyManager(
-            rebac_manager=rebac_manager,
-            enable_inheritance=ctx.perm.inherit,
-        )
-        logger.debug("[BOOT:SYSTEM] HierarchyManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] HierarchyManager unavailable: %s", exc)
+    # --- Directory Visibility Cache + Hierarchy Manager ---
+    # Now internalized into ReBACManager (constructed in its __init__).
+    # Access via rebac_manager.dir_visibility_cache / rebac_manager.hierarchy_manager.
+    dir_visibility_cache: Any = (
+        getattr(rebac_manager, "dir_visibility_cache", None) if rebac_manager else None
+    )
+    hierarchy_manager: Any = (
+        getattr(rebac_manager, "hierarchy_manager", None) if rebac_manager else None
+    )
+    if dir_visibility_cache is not None:
+        logger.debug("[BOOT:SYSTEM] DirectoryVisibilityCache (rebac-internal)")
+    if hierarchy_manager is not None:
+        logger.debug("[BOOT:SYSTEM] HierarchyManager (rebac-internal)")
 
     # --- Deferred Permission Buffer (constructed, NOT started) ---
     deferred_permission_buffer: Any = None
@@ -291,23 +273,22 @@ def _boot_system_services(
     # =====================================================================
 
     # --- Namespace Manager (Issue #1502) ---
+    # Now created via rebac_manager.create_namespace_manager() (rebac-internal).
     namespace_manager: Any = None
     async_namespace_manager: Any = None
     if not _on("namespace"):
         logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
-    else:
+    elif rebac_manager is not None:
         try:
-            from nexus.bricks.rebac.namespace_factory import (
-                create_namespace_manager as _create_ns_manager,
-            )
             from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 
-            namespace_manager = _create_ns_manager(
-                rebac_manager=rebac_manager,
+            namespace_manager = rebac_manager.create_namespace_manager(
                 record_store=ctx.record_store,
             )
             async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+            logger.debug(
+                "[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created (rebac-internal)"
+            )
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
@@ -482,14 +463,13 @@ def _boot_system_services(
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
         # Former-kernel degradable
-        "dir_visibility_cache": dir_visibility_cache,
-        "hierarchy_manager": hierarchy_manager,
+        # dir_visibility_cache, hierarchy_manager, namespace_manager
+        # now internalized into ReBACManager — not in result dict.
         "deferred_permission_buffer": deferred_permission_buffer,
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
         # Original system services
-        "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,

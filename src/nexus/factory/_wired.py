@@ -410,7 +410,9 @@ async def _boot_wired_services(
         descendant_checker = DescendantAccessChecker(
             rebac_manager=system_services.rebac_manager,
             rebac_service=rebac_service,
-            dir_visibility_cache=system_services.dir_visibility_cache,
+            dir_visibility_cache=getattr(
+                system_services.rebac_manager, "dir_visibility_cache", None
+            ),
             permission_enforcer=system_services.permission_enforcer,
             metadata_store=nx.metadata,
         )

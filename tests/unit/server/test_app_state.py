@@ -90,7 +90,7 @@ class TestInitAppState:
         mock_sys.brick_reconciler = "br"
         mock_sys.eviction_manager = "em"
         mock_fs = MagicMock()
-        mock_sys.event_bus = "eb"
+        mock_fs.service.return_value = "eb"
         mock_fs._system_services = mock_sys
         mock_fs._brick_services = "brk"
         mock_fs._write_observer = "wo"

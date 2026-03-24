@@ -111,7 +111,8 @@ class LifespanServices:
 
         # Helper: nx.service() with None safety
         def _svc(name: str) -> Any:
-            return nx.service(name) if nx else None
+            _service_fn = getattr(nx, "service", None) if nx else None
+            return _service_fn(name) if _service_fn else None
 
         return cls(
             # Core / kernel

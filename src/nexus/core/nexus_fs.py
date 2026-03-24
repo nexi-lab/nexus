@@ -1955,6 +1955,18 @@ class NexusFS(  # type: ignore[misc]
         now = datetime.now(UTC)
         meta = self.metadata.get(path)
 
+        # Add backend_path to context for path-based connectors
+        from dataclasses import replace as _replace_ctx
+
+        if context:
+            context = _replace_ctx(context, backend_path=route.backend_path, virtual_path=path)
+        else:
+            from nexus.contracts.types import OperationContext
+
+            context = OperationContext(
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
+
         # Write content via streaming
         write_result = route.backend.write_stream(chunks, context=context)
         content_hash = write_result.content_id

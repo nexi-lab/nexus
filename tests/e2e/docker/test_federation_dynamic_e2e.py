@@ -198,109 +198,94 @@ class TestBareClusterHealth:
 
 
 # ---------------------------------------------------------------------------
-# Class 2: Dynamic Zone Creation
+# Class 2: Zone Creation + Node-2 Join (Explicit API)
 # ---------------------------------------------------------------------------
 class TestDynamicZoneCreation:
-    """Create zones dynamically via federation_create_zone RPC."""
+    """Create zones on node-1, join from node-2 via explicit API."""
 
-    def test_create_corp_zone(self, cluster, api_key):
-        """Create 'corp' zone on node-1."""
-        r = _jsonrpc(
-            cluster["node1"],
-            "federation_create_zone",
-            {"zone_id": "corp"},
-            api_key=api_key,
-        )
-        assert "error" not in r, f"create_zone(corp) failed: {r}"
-        assert r["result"]["created"] is True
+    def test_create_zones_on_node1(self, cluster, api_key):
+        """Node-1: create zones with path binding (create_zone = share_subtree)."""
+        node = cluster["node1"]
 
-    def test_create_nested_zones(self, cluster, api_key):
-        """Create corp-eng, corp-sales, family zones."""
-        for zone_id in ["corp-eng", "corp-sales", "family"]:
+        # mkdir first, then create_zone (which does share_subtree internally)
+        for path, zone_id in [
+            ("/corp", "corp"),
+            ("/family", "family"),
+        ]:
+            mk = _jsonrpc(node, "mkdir", {"path": path, "parents": True}, api_key=api_key)
+            assert "error" not in mk, f"mkdir {path} failed: {mk}"
+
             r = _jsonrpc(
-                cluster["node1"],
+                node,
                 "federation_create_zone",
-                {"zone_id": zone_id},
+                {"path": path, "zone_id": zone_id},
+                api_key=api_key,
+            )
+            assert "error" not in r, f"create_zone({zone_id}) failed: {r}"
+            assert r["result"]["created"] is True
+
+    def test_create_nested_zones_on_node1(self, cluster, api_key):
+        """Node-1: create nested zones (corp-eng, corp-sales under /corp)."""
+        node = cluster["node1"]
+
+        for path, zone_id in [
+            ("/corp/eng", "corp-eng"),
+            ("/corp/sales", "corp-sales"),
+        ]:
+            mk = _jsonrpc(node, "mkdir", {"path": path, "parents": True}, api_key=api_key)
+            assert "error" not in mk, f"mkdir {path} failed: {mk}"
+
+            r = _jsonrpc(
+                node,
+                "federation_create_zone",
+                {"path": path, "zone_id": zone_id},
                 api_key=api_key,
             )
             assert "error" not in r, f"create_zone({zone_id}) failed: {r}"
 
-    def test_all_zones_visible(self, cluster, api_key):
-        """All 5 zones should now be visible."""
+    def test_all_zones_visible_on_node1(self, cluster, api_key):
+        """All 5 zones should be visible on node-1."""
         r = _jsonrpc(cluster["node1"], "federation_list_zones", {}, api_key=api_key)
         assert "error" not in r
         zone_ids = sorted(z["zone_id"] for z in r["result"]["zones"])
         expected = sorted(["root", "corp", "corp-eng", "corp-sales", "family"])
         assert zone_ids == expected, f"Expected {expected}, got {zone_ids}"
 
-    def test_zones_replicated_to_node2(self, cluster, api_key):
-        """All zones should be visible on node-2 after Raft replication."""
+    def test_node2_joins_zones(self, cluster, api_key):
+        """Node-2: join all zones from node-1 via federation_join_zone."""
+        node2 = cluster["node2"]
+
+        for path, zone_id in [
+            ("/corp", "corp"),
+            ("/corp/eng", "corp-eng"),
+            ("/corp/sales", "corp-sales"),
+            ("/family", "family"),
+        ]:
+            r = _jsonrpc(
+                node2,
+                "federation_join_zone",
+                {"path": path, "zone_id": zone_id, "peer": "nexus-1:2126"},
+                api_key=api_key,
+            )
+            assert "error" not in r, f"join_zone({zone_id}) on node-2 failed: {r}"
+            assert r["result"].get("joined") or r["result"].get("cross_link"), (
+                f"join_zone({zone_id}) unexpected result: {r}"
+            )
+
+    def test_zones_visible_on_node2(self, cluster, api_key):
+        """All zones should be visible on node-2 after joining."""
         for zone_id in ["corp", "corp-eng", "corp-sales", "family"]:
             _wait_zone_ready(cluster["node2"], zone_id, api_key, timeout=30)
 
 
 # ---------------------------------------------------------------------------
-# Class 3: Dynamic Mount Topology
+# Class 3: Cross-Link via join_zone (local-to-local)
 # ---------------------------------------------------------------------------
 class TestDynamicMountTopology:
-    """Build mount topology dynamically via mkdir + federation_mount."""
+    """Cross-link: mount same zone at additional paths."""
 
-    def test_mount_corp_zone(self, cluster, api_key):
-        """mkdir /corp → mount root:/corp → zone 'corp'."""
-        node = cluster["node1"]
-
-        # Create mount point directory first
-        mk = _jsonrpc(node, "mkdir", {"path": "/corp", "parents": True}, api_key=api_key)
-        assert "error" not in mk, f"mkdir /corp failed: {mk}"
-
-        # Mount zone
-        r = _jsonrpc(
-            node,
-            "federation_mount",
-            {"parent_zone": "root", "path": "/corp", "target_zone": "corp"},
-            api_key=api_key,
-        )
-        assert "error" not in r, f"mount corp failed: {r}"
-        assert r["result"]["mounted"] is True
-
-    def test_mount_nested_zones(self, cluster, api_key):
-        """Mount corp-eng under /corp/eng and corp-sales under /corp/sales."""
-        node = cluster["node1"]
-
-        for mount_path, zone_id in [
-            ("/corp/eng", "corp-eng"),
-            ("/corp/sales", "corp-sales"),
-        ]:
-            # mkdir in parent zone (corp)
-            mk = _jsonrpc(node, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
-            assert "error" not in mk, f"mkdir {mount_path} failed: {mk}"
-
-            # Mount
-            r = _jsonrpc(
-                node,
-                "federation_mount",
-                {"parent_zone": "corp", "path": mount_path, "target_zone": zone_id},
-                api_key=api_key,
-            )
-            assert "error" not in r, f"mount {zone_id} at {mount_path} failed: {r}"
-
-    def test_mount_family_zone(self, cluster, api_key):
-        """mkdir /family → mount root:/family → zone 'family'."""
-        node = cluster["node1"]
-
-        mk = _jsonrpc(node, "mkdir", {"path": "/family", "parents": True}, api_key=api_key)
-        assert "error" not in mk, f"mkdir /family failed: {mk}"
-
-        r = _jsonrpc(
-            node,
-            "federation_mount",
-            {"parent_zone": "root", "path": "/family", "target_zone": "family"},
-            api_key=api_key,
-        )
-        assert "error" not in r, f"mount family failed: {r}"
-
-    def test_mount_crosslink(self, cluster, api_key):
-        """Mount corp zone again at /family/work (cross-link)."""
+    def test_crosslink_corp_at_family_work(self, cluster, api_key):
+        """Cross-link: mount corp zone at /family/work on node-1."""
         node = cluster["node1"]
 
         mk = _jsonrpc(node, "mkdir", {"path": "/family/work", "parents": True}, api_key=api_key)
@@ -308,8 +293,8 @@ class TestDynamicMountTopology:
 
         r = _jsonrpc(
             node,
-            "federation_mount",
-            {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
+            "federation_join_zone",
+            {"path": "/family/work", "zone_id": "corp"},
             api_key=api_key,
         )
         assert "error" not in r, f"mount cross-link failed: {r}"
@@ -459,11 +444,11 @@ class TestDynamicUnmountRemount:
         w = _jsonrpc(node, "write", {"path": path, "content": f"before-{uid}"}, api_key=api_key)
         assert "error" not in w
 
-        # Unmount corp-sales
+        # Unmount corp-sales (new API: just path)
         um = _jsonrpc(
             node,
             "federation_unmount",
-            {"parent_zone": "corp", "path": "/corp/sales"},
+            {"path": "/corp/sales"},
             api_key=api_key,
         )
         assert "error" not in um, f"Unmount failed: {um}"
@@ -472,12 +457,11 @@ class TestDynamicUnmountRemount:
         r = _jsonrpc(node, "read", {"path": path}, api_key=api_key)
         assert "error" in r, "File should be inaccessible after unmount"
 
-        # Remount
-        # Need to recreate mount point directory (unmount restores DT_DIR)
+        # Remount via join_zone (zone already exists locally, this is a re-link)
         rm = _jsonrpc(
             node,
-            "federation_mount",
-            {"parent_zone": "corp", "path": "/corp/sales", "target_zone": "corp-sales"},
+            "federation_join_zone",
+            {"path": "/corp/sales", "zone_id": "corp-sales"},
             api_key=api_key,
         )
         assert "error" not in rm, f"Remount failed: {rm}"

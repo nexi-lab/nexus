@@ -106,7 +106,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
             event_old_path_attr="old_path",
         ),
         "copy": DispatchEntry(handle_copy),
-        "sys_mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
+        "mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
         "sys_rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
         "sys_stat": DispatchEntry(handle_get_metadata, is_async=True),
         "sys_setattr": DispatchEntry(handle_set_metadata, is_async=True),
@@ -119,7 +119,6 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "exists": DispatchEntry(handle_exists, is_async=True),
         "list": DispatchEntry(handle_list, is_async=True),
         "delete": DispatchEntry(handle_delete, is_async=True, event_type="file_delete"),
-        "mkdir": DispatchEntry(handle_mkdir, is_async=True, event_type="dir_create"),
         "rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
         "rename": DispatchEntry(
             handle_rename,

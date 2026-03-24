@@ -57,7 +57,7 @@ class NexusFilesystemABC(ABC):
     # Content I/O — sys_read(2), sys_write(2)
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
     # Namespace — sys_unlink(2), sys_rename(2)
-    # Directory — sys_mkdir(2), sys_rmdir(2), sys_readdir(3)
+    # Directory — sys_rmdir(2), sys_readdir(3)  (mkdir is Tier 2)
     # Query — sys_access(2), sys_is_directory
     # System — get_top_level_mounts, close
 
@@ -178,22 +178,6 @@ class NexusFilesystemABC(ABC):
     # ── Directory ──────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_mkdir(
-        self,
-        path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
-        *,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Create a directory (POSIX mkdir(2)).
-
-        Tier 1 defaults: parents=False, exist_ok=False (fail-fast).
-        Use mkdir() (Tier 2) for parents=True, exist_ok=True defaults.
-        """
-        ...
-
-    @abstractmethod
     async def sys_rmdir(
         self, path: str, recursive: bool = False, *, context: OperationContext | None = None
     ) -> None:
@@ -214,12 +198,23 @@ class NexusFilesystemABC(ABC):
         *,
         context: OperationContext | None = None,
     ) -> None:
-        """Create a directory with lenient defaults (Tier 2).
+        """Create a directory (Tier 2 convenience over sys_setattr).
 
-        Delegates to sys_mkdir with caller-friendly defaults:
-        parents=True, exist_ok=True (mkdir -p semantics).
+        Defaults: parents=True, exist_ok=True (mkdir -p semantics).
+        Composes sys_setattr(entry_type=DT_DIR) for inode creation.
+        NexusFS overrides with full orchestration (hooks, backend, events).
         """
-        await self.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        from nexus.contracts.metadata import DT_DIR
+
+        if parents:
+            parts = path.strip("/").split("/")
+            for i in range(1, len(parts)):
+                parent = "/" + "/".join(parts[:i])
+                await self.sys_setattr(parent, entry_type=DT_DIR, context=context)
+
+        result = await self.sys_setattr(path, entry_type=DT_DIR, context=context)
+        if not result.get("created") and not exist_ok:
+            raise FileExistsError(f"Directory already exists: {path}")
 
     async def rmdir(
         self,

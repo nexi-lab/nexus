@@ -76,7 +76,7 @@ async def main():
 
         # Create main workspace directory
         try:
-            await nx.sys_mkdir("/workspace/demo-project", parents=True)
+            await nx.mkdir("/workspace/demo-project", parents=True)
             print("✓ Created: /workspace/demo-project")
         except Exception as e:
             if "already exists" in str(e).lower():
@@ -129,7 +129,7 @@ async def main():
 
         for dir_path in directories:
             try:
-                await nx.sys_mkdir(dir_path, parents=True)
+                await nx.mkdir(dir_path, parents=True)
                 print(f"✓ Created: {dir_path}")
             except Exception as e:
                 if "already exists" in str(e).lower():

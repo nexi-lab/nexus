@@ -517,7 +517,7 @@ class TestSignedIPCWithFastAPI:
         """Unauthenticated requests are rejected (permissions enforced)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "sys_mkdir",
+            "method": "mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }
@@ -529,7 +529,7 @@ class TestSignedIPCWithFastAPI:
         headers = {"Authorization": f"Bearer {client['admin_key']}"}
         body = {
             "jsonrpc": "2.0",
-            "method": "sys_mkdir",
+            "method": "mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

@@ -24,7 +24,7 @@ def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
     gw.router.add_mount.return_value = None
     gw.router.remove_mount.return_value = True
     gw.router.has_mount.return_value = False
-    gw.sys_mkdir = AsyncMock(return_value=None)
+    gw.mkdir = AsyncMock(return_value=None)
     gw.rebac_create.return_value = "tuple-1"
     gw.rebac_check.return_value = permission_ok
     gw.rebac_delete_object_tuples.return_value = 0
@@ -104,7 +104,7 @@ class TestAddMountRollback:
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """mkdir failure is non-critical -- mount stays active (best effort)."""
         service, gw = _build_service()
-        gw.sys_mkdir.side_effect = RuntimeError("Metastore down")
+        gw.mkdir.side_effect = RuntimeError("Metastore down")
 
         # mkdir fails but is caught in _setup_mount_point -- mount succeeds
         result = service.add_mount_sync(

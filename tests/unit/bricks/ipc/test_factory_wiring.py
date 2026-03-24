@@ -100,7 +100,7 @@ class TestKernelVFSAdapter:
             "list_dir",
             "count_dir",
             "rename",
-            "sys_mkdir",
+            "mkdir",
             "sys_access",
         ):
             assert hasattr(adapter, method), f"Missing method: {method}"

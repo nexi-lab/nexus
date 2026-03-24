@@ -511,7 +511,7 @@ def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
             nx.router.add_mount("/agents", _ipc_connector)
 
             # Ensure the /agents metadata entry has target_zone_id set so
-            # ZonePathResolver doesn't fail on it. sys_mkdir creates a DT_DIR
+            # ZonePathResolver doesn't fail on it. mkdir creates a DT_DIR
             # entry but doesn't set target_zone_id for the mount.
             try:
                 from nexus.core.metadata import DT_DIR, DT_MOUNT

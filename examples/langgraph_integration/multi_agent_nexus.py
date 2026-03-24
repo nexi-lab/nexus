@@ -60,9 +60,9 @@ async def setup_nexus_permissions(admin_nx, workspace: str):
     print("\n🔐 Setting up Nexus permissions...")
 
     # Create workspace structure
-    await admin_nx.sys_mkdir(f"{workspace}/research", parents=True)
-    await admin_nx.sys_mkdir(f"{workspace}/code", parents=True)
-    await admin_nx.sys_mkdir(f"{workspace}/reviews", parents=True)
+    await admin_nx.mkdir(f"{workspace}/research", parents=True)
+    await admin_nx.mkdir(f"{workspace}/code", parents=True)
+    await admin_nx.mkdir(f"{workspace}/reviews", parents=True)
 
     # Grant permissions for researcher agent
     # Researcher can write to /workspace/research/ directory

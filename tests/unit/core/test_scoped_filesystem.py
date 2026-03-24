@@ -24,7 +24,7 @@ def mock_fs() -> MagicMock:
     fs.sys_setattr = AsyncMock()
     fs.sys_unlink = AsyncMock()
     fs.sys_rename = AsyncMock()
-    fs.sys_mkdir = AsyncMock()
+    fs.mkdir = AsyncMock()
     fs.sys_rmdir = AsyncMock()
     fs.sys_readdir = AsyncMock()
     fs.sys_access = AsyncMock()
@@ -300,8 +300,8 @@ class TestDirectoryOperations:
     @pytest.mark.asyncio
     async def test_mkdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test mkdir with path scoping."""
-        await scoped_fs.sys_mkdir("/workspace/new_dir", parents=True, exist_ok=True)
-        mock_fs.sys_mkdir.assert_called_once_with(
+        await scoped_fs.mkdir("/workspace/new_dir", parents=True, exist_ok=True)
+        mock_fs.mkdir.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/new_dir", True, True, context=None
         )
 

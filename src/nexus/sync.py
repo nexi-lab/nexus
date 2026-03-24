@@ -108,7 +108,7 @@ async def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            await nx.mkdir(parent, parents=True, exist_ok=True)
 
         await nx.write(dest, content)
         return len(content)
@@ -156,7 +156,7 @@ async def copy_file(
         # Create parent directories in Nexus
         parent = str(PurePosixPath(dest).parent)
         if parent and parent != "/" and parent != ".":
-            await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+            await nx.mkdir(parent, parents=True, exist_ok=True)
 
         await nx.write(dest, content)
         return len(content)

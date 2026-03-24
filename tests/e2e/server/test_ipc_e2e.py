@@ -267,7 +267,7 @@ class TestIPCViaServer:
         """Verify unauthenticated requests are rejected (401)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "sys_mkdir",
+            "method": "mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

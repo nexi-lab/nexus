@@ -219,7 +219,7 @@ class TestWaitThenRead:
         json_path = f"/data/config_{test_id}.json"
         txt_path = f"/data/readme_{test_id}.txt"
 
-        await nexus_fs.sys_mkdir("/data", parents=True)
+        await nexus_fs.mkdir("/data", parents=True)
 
         received_path = {"path": None}
 
@@ -245,7 +245,7 @@ class TestWaitThenRead:
     @pytest.mark.asyncio
     async def test_wait_timeout_no_write(self, nexus_fs):
         """Agent A waits but no file written -> timeout returns None."""
-        await nexus_fs.sys_mkdir("/empty", parents=True)
+        await nexus_fs.mkdir("/empty", parents=True)
 
         # Drain any stale events from mkdir before subscribing
         await asyncio.sleep(0.3)
@@ -271,7 +271,7 @@ class TestLockThenWrite:
     async def test_lock_write_unlock_basic(self, nexus_fs):
         """Basic lock -> write -> unlock workflow."""
         test_path = "/shared/config.json"
-        await nexus_fs.sys_mkdir("/shared", parents=True)
+        await nexus_fs.mkdir("/shared", parents=True)
 
         lock_id = await nexus_fs.service("events").lock(test_path, timeout=5.0)
         assert lock_id is not None
@@ -288,7 +288,7 @@ class TestLockThenWrite:
     async def test_lock_timeout_in_try_finally(self, nexus_fs):
         """Verify unlock in finally works even if operation fails."""
         test_path = "/safe/important.txt"
-        await nexus_fs.sys_mkdir("/safe", parents=True)
+        await nexus_fs.mkdir("/safe", parents=True)
 
         lock_acquired = False
         lock_released = False
@@ -323,7 +323,7 @@ class TestConcurrentAccess:
     async def test_concurrent_reads_no_lock(self, nexus_fs, second_nexus_fs):
         """Multiple agents can read same file concurrently without lock."""
         test_path = "/shared/data.txt"
-        await nexus_fs.sys_mkdir("/shared", parents=True)
+        await nexus_fs.mkdir("/shared", parents=True)
         await nexus_fs.write(test_path, b"shared content")
 
         results = []
@@ -347,7 +347,7 @@ class TestConcurrentAccess:
         """Concurrent writes without lock -> last write wins (race condition)."""
         test_id = uuid.uuid4().hex[:8]
         test_path = f"/race/file_{test_id}.txt"
-        await nexus_fs.sys_mkdir("/race", parents=True)
+        await nexus_fs.mkdir("/race", parents=True)
 
         async def write_content(nexus, content, delay):
             await asyncio.sleep(delay)
@@ -368,7 +368,7 @@ class TestConcurrentAccess:
         """Read during write -> gets consistent content (no partial reads)."""
         test_id = uuid.uuid4().hex[:8]
         test_path = f"/atomic/large_{test_id}.txt"
-        await nexus_fs.sys_mkdir("/atomic", parents=True)
+        await nexus_fs.mkdir("/atomic", parents=True)
 
         # Create initial content
         initial_content = b"A" * 10000
@@ -412,7 +412,7 @@ class TestEventNotification:
         """Write operation emits event that waiter receives."""
         test_id = uuid.uuid4().hex[:8]
         test_path = f"/notify/file_{test_id}.txt"
-        await nexus_fs.sys_mkdir("/notify", parents=True)
+        await nexus_fs.mkdir("/notify", parents=True)
 
         # Drain the dir_create event from mkdir before listening for writes
         await asyncio.sleep(0.1)
@@ -446,7 +446,7 @@ class TestEventNotification:
         """
         test_id = uuid.uuid4().hex[:8]
         test_path = f"/notify_del/file_{test_id}.txt"
-        await nexus_fs.sys_mkdir("/notify_del", parents=True)
+        await nexus_fs.mkdir("/notify_del", parents=True)
         await nexus_fs.write(test_path, b"to be deleted")
 
         # Wait for setup write event to propagate and drain
@@ -485,7 +485,7 @@ class TestEventNotification:
         test_id = uuid.uuid4().hex[:8]
         old_path = f"/notify_ren/old_{test_id}.txt"
         new_path = f"/notify_ren/new_{test_id}.txt"
-        await nexus_fs.sys_mkdir("/notify_ren", parents=True)
+        await nexus_fs.mkdir("/notify_ren", parents=True)
         await nexus_fs.write(old_path, b"to be renamed")
 
         # Wait for setup write event to propagate and drain
@@ -539,7 +539,7 @@ class TestErrorHandling:
         window.  The important thing is that it doesn't raise.
         """
         test_path = "/expired/lock.txt"
-        await nexus_fs.sys_mkdir("/expired", parents=True)
+        await nexus_fs.mkdir("/expired", parents=True)
 
         lock_id = await nexus_fs.service("events").lock(test_path, timeout=5.0, ttl=0.3)
         assert lock_id is not None
@@ -555,7 +555,7 @@ class TestErrorHandling:
     async def test_extend_wrong_lock_id(self, nexus_fs):
         """Extend with wrong lock_id -> returns False."""
         test_path = "/wrong/lock.txt"
-        await nexus_fs.sys_mkdir("/wrong", parents=True)
+        await nexus_fs.mkdir("/wrong", parents=True)
 
         lock_id = await nexus_fs.service("events").lock(test_path, timeout=5.0)
         assert lock_id is not None

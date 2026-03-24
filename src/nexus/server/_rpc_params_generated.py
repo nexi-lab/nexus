@@ -946,7 +946,7 @@ class SysIsDirectoryParams:
 
 @dataclass
 class SysMkdirParams:
-    """Parameters for sys_mkdir(): Create a directory (parents=True for mkdir -p)."""
+    """Parameters for mkdir(): Create a directory (parents=True for mkdir -p)."""
 
     path: str
     parents: bool = False
@@ -1184,7 +1184,7 @@ METHOD_PARAMS: dict[str, type] = {
     "sync_mount_async": SyncMountAsyncParams,
     "sys_access": SysAccessParams,
     "sys_is_directory": SysIsDirectoryParams,
-    "sys_mkdir": SysMkdirParams,
+    "mkdir": SysMkdirParams,
     "sys_readdir": SysReaddirParams,
     "sys_rename": SysRenameParams,
     "sys_rmdir": SysRmdirParams,

@@ -248,16 +248,16 @@ class ScopedFilesystem(ScopedPathMixin):
     # Directory Operations (path-scoped)
     # ============================================================
 
-    async def sys_mkdir(
+    async def mkdir(
         self,
         path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
+        parents: bool = True,
+        exist_ok: bool = True,
         *,
         context: OperationContext | None = None,
     ) -> None:
         """Create a directory."""
-        await self._fs.sys_mkdir(self._scope_path(path), parents, exist_ok, context=context)
+        await self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
 
     async def sys_rmdir(
         self, path: str, recursive: bool = False, *, context: OperationContext | None = None

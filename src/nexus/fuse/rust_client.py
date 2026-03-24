@@ -383,7 +383,7 @@ class RustFUSEClient:
             modified_at=result.get("modified_at"),
         )
 
-    def sys_mkdir(self, path: str) -> None:
+    def mkdir(self, path: str) -> None:
         """Create directory.
 
         Args:

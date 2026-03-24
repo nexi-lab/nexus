@@ -217,7 +217,7 @@ async def _seed_files(
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
             if parent:
-                await nx.sys_mkdir(parent, parents=True, exist_ok=True)
+                await nx.mkdir(parent, parents=True, exist_ok=True)
             await nx.write(path, content.encode())
             seeded.append(path)
             created += 1
@@ -260,7 +260,7 @@ async def _seed_directories(nx: Any) -> int:
     created = 0
     for d in DEMO_DIRS:
         try:
-            await nx.sys_mkdir(d, parents=True, exist_ok=True)
+            await nx.mkdir(d, parents=True, exist_ok=True)
             created += 1
         except Exception:
             pass

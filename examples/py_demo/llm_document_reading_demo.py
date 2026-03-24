@@ -82,8 +82,8 @@ async def main():
         print()
 
         # Create directories
-        await nx.sys_mkdir(f"{demo_base}/docs", parents=True)
-        await nx.sys_mkdir(f"{demo_base}/reports", parents=True)
+        await nx.mkdir(f"{demo_base}/docs", parents=True)
+        await nx.mkdir(f"{demo_base}/reports", parents=True)
 
         # Create sample documentation
         auth_doc = """# Authentication System

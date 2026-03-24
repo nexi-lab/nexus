@@ -135,7 +135,7 @@ class TestTTLSweeper:
 
     @pytest.mark.asyncio
     async def test_sweep_empty_agents(self, vfs: InMemoryVFS) -> None:
-        await vfs.sys_mkdir("/agents", ZONE)
+        await vfs.mkdir("/agents", ZONE)
 
         sweeper = TTLSweeper(vfs, zone_id=ZONE)
         expired_count = await sweeper.sweep_once()

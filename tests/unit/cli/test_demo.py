@@ -106,7 +106,7 @@ class TestIdempotency:
         mock_nx = MagicMock()
         mock_nx.sys_write = AsyncMock()
         mock_nx.write = AsyncMock()
-        mock_nx.sys_mkdir = AsyncMock()
+        mock_nx.mkdir = AsyncMock()
         mock_nx.sys_readdir = AsyncMock(return_value=[])
         manifest: dict = {"files": []}
 

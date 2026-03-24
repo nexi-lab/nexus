@@ -128,7 +128,7 @@ class TaskManagerService:
             "/.tasks/comments",
             "/.tasks/audit",
         ):
-            await self._fs.sys_mkdir(d, parents=True, exist_ok=True)
+            await self._fs.mkdir(d, parents=True, exist_ok=True)
         self._dirs_ready = True
 
     def _now(self) -> str:
@@ -296,7 +296,7 @@ class TaskManagerService:
         await self.get_task(task_id)
 
         # Ensure per-task comment directory
-        await self._fs.sys_mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
+        await self._fs.mkdir(self._comment_dir(task_id), parents=True, exist_ok=True)
 
         comment_id = uuid.uuid4().hex
         doc: dict[str, Any] = {
@@ -481,7 +481,7 @@ class TaskManagerService:
         await self.get_task(task_id)
 
         # Ensure per-task audit directory
-        await self._fs.sys_mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
+        await self._fs.mkdir(self._audit_dir(task_id), parents=True, exist_ok=True)
 
         entry_id = uuid.uuid4().hex
         doc: dict[str, Any] = {

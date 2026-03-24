@@ -16,7 +16,7 @@ Example:
             self._gw = gateway  # Grep pattern: self._gw.
 
         async def sync_mount(self, ctx):
-            await self._gw.sys_mkdir(ctx.mount_point, parents=True)
+            await self._gw.mkdir(ctx.mount_point, parents=True)
             meta = self._gw.metadata_get(path)
             self._gw.metadata_put(new_meta)
     ```
@@ -44,7 +44,7 @@ class NexusFSGateway:
     - No protocol hunting required
 
     Dependencies exposed:
-    - File ops: sys_mkdir(), sys_write(), sys_read(), sys_readdir(), sys_access()
+    - File ops: mkdir(), sys_write(), sys_read(), sys_readdir(), sys_access()
     - Metadata: metadata_get/put/list/delete
     - Permissions: rebac_create/check/delete_object_tuples
     - Hierarchy: ensure_parent_tuples_batch, hierarchy_enabled
@@ -64,15 +64,15 @@ class NexusFSGateway:
     # File Operations
     # =========================================================================
 
-    async def sys_mkdir(
+    async def mkdir(
         self,
         path: str,
         *,
-        parents: bool = False,
-        exist_ok: bool = False,
+        parents: bool = True,
+        exist_ok: bool = True,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory at path (POSIX mkdir).
+        """Create directory at path.
 
         Args:
             path: Virtual path for directory
@@ -80,7 +80,7 @@ class NexusFSGateway:
             exist_ok: If True, don't raise if directory exists
             context: Operation context for permissions
         """
-        await self._fs.sys_mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
+        await self._fs.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
     async def sys_write(
         self,

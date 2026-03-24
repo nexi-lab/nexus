@@ -240,7 +240,7 @@ class MCPMountManager:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
                 try:
-                    await self._filesystem.sys_mkdir(mount_dir, parents=True)
+                    await self._filesystem.mkdir(mount_dir, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -816,7 +816,7 @@ class MCPMountManager:
             # Ensure directory exists
             if mount.tools_path:
                 try:
-                    await self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    await self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:
@@ -852,7 +852,7 @@ class MCPMountManager:
         if self._filesystem:
             if mount.tools_path:
                 try:
-                    await self._filesystem.sys_mkdir(mount.tools_path, parents=True)
+                    await self._filesystem.mkdir(mount.tools_path, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:

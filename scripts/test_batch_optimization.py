@@ -78,9 +78,9 @@ async def main():
 
     # Create unique test directory
     test_dir = f"/batch_test_{uuid.uuid4().hex[:8]}"
-    await client.sys_mkdir(test_dir)
-    await client.sys_mkdir(f"{test_dir}/individual")
-    await client.sys_mkdir(f"{test_dir}/batch")
+    await client.mkdir(test_dir)
+    await client.mkdir(f"{test_dir}/individual")
+    await client.mkdir(f"{test_dir}/batch")
 
     try:
         # Test 1: Individual writes

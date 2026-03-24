@@ -176,7 +176,7 @@ class MCPConnectionManager:
             if self.filesystem:
                 # Ensure directory exists
                 try:
-                    await self.filesystem.sys_mkdir(self.CONNECTIONS_PATH, parents=True)
+                    await self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
                 except FileExistsError:
                     pass
                 except OSError as e:

@@ -37,8 +37,8 @@ Every kernel interface belongs to exactly one of four categories:
         │               Users / AI / Agents                │
         └──────────────┬───────────────────────────────────┘
                        │  ↑ USER CONTRACT (§2)
-                       │    NexusFilesystemABC, 11 sys_*,
-                       │    Tier 2 convenience, Hook Reg API
+                       │    NexusFilesystemABC, 10 sys_*,
+                       │    Tier 2 convenience (mkdir, …), Hook Reg API
         ┌──────────────┴───────────────────────────────────┐
         │               KERNEL                             │
         │  ┌─────────────────────────────────────────────┐ │
@@ -176,8 +176,8 @@ The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesy
 
 | Tier | Content | Caller responsibility |
 |------|---------|----------------------|
-| **Tier 1 (abstract)** | 11 `sys_*` kernel syscalls | Implementors MUST override |
-| **Tier 2 (concrete)** | Convenience methods composing Tier 1 | Inherit — no override needed |
+| **Tier 1 (abstract)** | 10 `sys_*` kernel syscalls | Implementors MUST override |
+| **Tier 2 (concrete)** | Convenience methods composing Tier 1 (`mkdir`, `rmdir`, `read`, `write`, …) | Inherit — no override needed |
 
 Relationship: POSIX spec (contract) vs Linux kernel (implementation) — clients
 program against the contract, kernel implements it.
@@ -188,18 +188,19 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
-**11 kernel syscalls**, all POSIX-aligned, all path-addressed:
+**10 kernel syscalls**, all POSIX-aligned, all path-addressed:
 
 | Plane | Syscalls |
 |-------|----------|
-| **Metadata** (9) | `sys_stat`, `sys_setattr`, `sys_mkdir`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
+| **Metadata** (8) | `sys_stat`, `sys_setattr`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
 | **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
+
+`mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
 
 **Syscall × Primitive usage matrix:**
 
 | Syscall | VFSRouter | VFSLock | KernelDispatch | Metastore | FileEvent |
 |---------|-----------|---------|----------------|-----------|-----------|
-| `sys_mkdir` | Yes | — | Yes (3-phase) | Yes | Yes |
 | `sys_rmdir` | Yes | — | Yes (3-phase) | Yes | Yes |
 | `sys_read` | Yes | Yes (shared) | Yes (3-phase) | Yes | —* |
 | `sys_write` | Yes | Yes (exclusive) | Yes (3-phase) | Yes | Yes |
@@ -227,7 +228,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `read()`, `write()`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver

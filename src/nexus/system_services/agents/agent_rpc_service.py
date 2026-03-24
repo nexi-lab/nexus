@@ -135,7 +135,7 @@ class AgentRPCService:
     ) -> None:
         try:
             ctx = parse_operation_context(context)
-            await self._vfs.sys_mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
+            await self._vfs.mkdir(agent_dir, parents=True, exist_ok=True, context=ctx)
             await self._write_agent_config(config_path, config_data, context)
 
             if self._rebac_manager:
@@ -287,7 +287,7 @@ class AgentRPCService:
             did_doc = create_did_document(agent_did, public_key)
             identity_dir = f"{agent_dir}/.identity"
             ctx = parse_operation_context(context)
-            await self._vfs.sys_mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            await self._vfs.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
             await self._vfs.write(
                 f"{identity_dir}/did.json", json.dumps(did_doc, indent=2), context=ctx
             )

@@ -223,15 +223,8 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_delivery_worker)
 
-    # Issue #1771: inject _flush_write_observer_fn so kernel flush_write_observer()
-    # no longer reads _system_services.
-    if _wo is not None and hasattr(_wo, "flush"):
-
-        async def _flush_wo() -> int:
-            result: int = await _wo.flush()
-            return result
-
-        nx._flush_write_observer_fn = _flush_wo
+    # Issue #1801: _flush_write_observer_fn closure removed — kernel now reads
+    # write_observer directly from service registry via nx.service("write_observer").
 
     _rebac = getattr(_sys, "rebac_manager", None)
     if _rebac is not None and hasattr(_rebac, "close"):
@@ -267,28 +260,8 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_agent_registry)
 
-    # Issue #1791: overlay config resolver — kernel calls self._overlay_config_fn(path)
-    # instead of reading workspace_registry from _system_services.
-    _ws_reg = getattr(_sys, "workspace_registry", None)
-    if _ws_reg is not None:
-
-        def _resolve_overlay(path: str) -> "Any":
-            ws_config = _ws_reg.find_workspace_for_path(path)
-            if ws_config is None:
-                return None
-            overlay_data = ws_config.metadata.get("overlay_config")
-            if overlay_data is None:
-                return None
-            from nexus.contracts.overlay_config import OverlayConfig
-
-            return OverlayConfig(
-                enabled=overlay_data.get("enabled", False),
-                base_manifest_hash=overlay_data.get("base_manifest_hash"),
-                workspace_path=ws_config.path,
-                agent_id=overlay_data.get("agent_id"),
-            )
-
-        nx._overlay_config_fn = _resolve_overlay
+    # Issue #1801: _overlay_config_fn closure removed — kernel now reads
+    # workspace_registry directly from service registry via nx.service("workspace_registry").
 
     # --- Deferred EvictionManager + AcpService (Issue #1792) ---
     # AgentRegistry is a kernel-owned primitive (created in NexusFS.__init__).

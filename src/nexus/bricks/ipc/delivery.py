@@ -1,11 +1,12 @@
 """Message sending and processing for IPC.
 
-MessageSender: writes messages to recipient inboxes with backpressure
-    and best-effort EventBus notification.
+MessageSender: writes messages to recipient inboxes with backpressure,
+    best-effort EventBus notification, and DT_PIPE wakeup (Issue #3197).
 
 MessageProcessor: reads messages from an agent's inbox, invokes a handler,
     and manages the lifecycle (inbox -> processed on success, inbox ->
-    dead_letter on failure). Supports EventBus push with poll fallback.
+    dead_letter on failure). Supports DT_PIPE wakeup + EventBus push with
+    poll fallback. Listeners auto-reconnect with exponential backoff.
 """
 
 import asyncio
@@ -17,7 +18,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import (
-    dead_letter_path,
     inbox_path,
     message_path_in_dead_letter,
     message_path_in_inbox,
@@ -33,10 +33,13 @@ from nexus.bricks.ipc.exceptions import (
     InboxNotFoundError,
     NonRetryableError,
 )
+from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.protocols import (
     EventPublisher,
     EventSubscriber,
     VFSOperations,
+    WakeupListener,
+    WakeupNotifier,
 )
 from nexus.storage.zone_settings import SigningMode
 
@@ -58,20 +61,28 @@ DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576
 # Default concurrency bound for handler dispatch
 DEFAULT_MAX_HANDLER_CONCURRENCY = 50
 
+# Maximum consecutive listener failures before stopping reconnection
+_MAX_LISTENER_RETRIES = 5
+
 
 class MessageSender:
     """Sends messages to agent inboxes via VFSOperations.
 
     Writes messages to the recipient's inbox directory, copies to the
-    sender's outbox, and fires an EventBus notification (best-effort).
+    sender's outbox, and fires notifications (best-effort):
+      1. DT_PIPE wakeup signal (~0.5us, same-node only)
+      2. EventBus notification (ms, cross-node capable)
+      3. TTL schedule event via CacheStore pub/sub (for event-driven sweeping)
 
     Args:
         storage: Storage driver for IPC read/write operations.
-        event_publisher: EventBus publisher for notifications. Optional.
+        event_publisher: EventBus publisher for cross-node notifications. Optional.
         zone_id: Zone ID for multi-tenant isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
         max_payload_bytes: Maximum serialized message size.
         signer: MessageSigner for envelope signing. Optional.
+        wakeup_notifiers: DT_PIPE notifiers for same-node wakeup. Optional.
+        cache_store: CacheStore for TTL schedule pub/sub. Optional.
     """
 
     def __init__(
@@ -83,6 +94,8 @@ class MessageSender:
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
         max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
         signer: "MessageSigner | None" = None,
+        wakeup_notifiers: list[WakeupNotifier] | None = None,
+        cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         self._storage = storage
         self._publisher = event_publisher
@@ -90,6 +103,8 @@ class MessageSender:
         self._max_inbox_size = max_inbox_size
         self._max_payload_bytes = max_payload_bytes
         self._signer = signer
+        self._wakeup_notifiers = wakeup_notifiers or []
+        self._cache_store = cache_store
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -128,7 +143,7 @@ class MessageSender:
     # ------------------------------------------------------------------
 
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
-        """Write message to inbox, copy to outbox, and notify via EventBus."""
+        """Write message to inbox, copy to outbox, and notify via DT_PIPE + EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
         if not await self._storage.sys_access(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
@@ -165,7 +180,18 @@ class MessageSender:
                 exc_info=True,
             )
 
-        # EventBus notification (best-effort)
+        # DT_PIPE wakeup (best-effort, ~0.5us same-node)
+        for notifier in self._wakeup_notifiers:
+            try:
+                await notifier.notify(envelope.recipient)
+            except Exception:
+                logger.debug(
+                    "Wakeup notifier %s failed for agent %s (best-effort)",
+                    type(notifier).__name__,
+                    envelope.recipient,
+                )
+
+        # EventBus notification (best-effort, cross-node capable)
         if self._publisher is not None:
             try:
                 await self._publisher.publish(
@@ -196,6 +222,26 @@ class MessageSender:
                         "error_detail": str(exc),
                     },
                     exc_info=True,
+                )
+
+        # TTL schedule event via CacheStore pub/sub (best-effort)
+        if envelope.ttl_seconds is not None and self._cache_store is not None:
+            try:
+                expires_at = envelope.timestamp.timestamp() + envelope.ttl_seconds
+                await self._cache_store.publish(
+                    f"ipc:ttl:schedule:{self._zone_id}",
+                    json.dumps(
+                        {
+                            "agent_id": envelope.recipient,
+                            "msg_id": envelope.id,
+                            "expires_at": expires_at,
+                        }
+                    ).encode(),
+                )
+            except Exception:
+                logger.debug(
+                    "TTL schedule publish failed for message %s (best-effort)",
+                    envelope.id,
                 )
 
         return msg_path
@@ -251,10 +297,12 @@ class MessageProcessor:
     (CacheStore pillar: ephemeral KV with TTL).  When no cache_store is provided,
     a NullCacheStore is used and dedup is effectively disabled.
 
-    Optionally listens on an EventBus channel for push notifications of new
-    inbox messages. The dedup set is shared between ``process_inbox`` and
-    the EventBus listener -- both run in the same event loop so no lock
-    is needed.
+    Supports two notification channels (both optional, poll fallback always works):
+      1. DT_PIPE wakeup via WakeupListener (~0.5us, same-node)
+      2. EventBus push via EventSubscriber (ms, cross-node)
+
+    Both listeners auto-reconnect with exponential backoff (up to
+    _MAX_LISTENER_RETRIES consecutive failures before stopping).
 
     Args:
         storage: Storage driver for IPC read/write/rename.
@@ -268,6 +316,7 @@ class MessageProcessor:
         max_retries: Maximum handler retry attempts.
         retry_delays: Backoff delays between retries.
         event_subscriber: EventBus subscriber for push notifications. Optional.
+        wakeup_listener: DT_PIPE wakeup listener for same-node push. Optional.
     """
 
     def __init__(
@@ -284,6 +333,7 @@ class MessageProcessor:
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         event_subscriber: EventSubscriber | None = None,
+        wakeup_listener: WakeupListener | None = None,
     ) -> None:
         self._storage = storage
         self._agent_id = agent_id
@@ -293,6 +343,8 @@ class MessageProcessor:
         self._dedup_ttl = dedup_ttl_seconds
         self._event_subscriber = event_subscriber
         self._event_task: asyncio.Task[None] | None = None
+        self._wakeup_listener = wakeup_listener
+        self._wakeup_task: asyncio.Task[None] | None = None
         self._verifier = verifier
         self._signing_mode = signing_mode
         self._max_retries = max_retries
@@ -314,13 +366,26 @@ class MessageProcessor:
             await self._cache_store.set(self._dedup_key(message_id), b"1", ttl=self._dedup_ttl)
 
     async def start(self) -> None:
-        """Start the EventBus listener (if subscriber is configured)."""
+        """Start notification listeners (DT_PIPE and/or EventBus)."""
+        if self._wakeup_listener is not None and self._wakeup_task is None:
+            self._wakeup_task = asyncio.create_task(self._wakeup_listen_loop())
+            logger.info("DT_PIPE wakeup listener started for agent %s", self._agent_id)
+
         if self._event_subscriber is not None and self._event_task is None:
             self._event_task = asyncio.create_task(self._event_listen_loop())
             logger.info("EventBus listener started for agent %s", self._agent_id)
 
     async def stop(self) -> None:
-        """Stop the EventBus listener."""
+        """Stop all notification listeners."""
+        if self._wakeup_task is not None:
+            self._wakeup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._wakeup_task
+            self._wakeup_task = None
+
+        if self._wakeup_listener is not None:
+            self._wakeup_listener.close()
+
         if self._event_task is not None:
             self._event_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -329,39 +394,102 @@ class MessageProcessor:
 
         logger.info("Listeners stopped for agent %s", self._agent_id)
 
+    async def _wakeup_listen_loop(self) -> None:
+        """Listen for DT_PIPE wakeup signals and process inbox.
+
+        Uses drain-and-process pattern: wait_for_wakeup() blocks until
+        at least one signal arrives, drains all pending signals, then
+        we process the inbox once. This coalesces burst signals.
+
+        Auto-reconnects with exponential backoff on failure.
+        """
+        if self._wakeup_listener is None:
+            return
+        consecutive_failures = 0
+        while True:
+            try:
+                await self._wakeup_listener.wait_for_wakeup()
+                consecutive_failures = 0
+                try:
+                    await self.process_inbox()
+                except Exception:
+                    logger.warning(
+                        "Wakeup-triggered inbox processing failed for agent %s",
+                        self._agent_id,
+                        exc_info=True,
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_LISTENER_RETRIES:
+                    logger.error(
+                        "DT_PIPE listener failed %d times for agent %s, stopping",
+                        _MAX_LISTENER_RETRIES,
+                        self._agent_id,
+                    )
+                    break
+                delay = min(2**consecutive_failures, 30)
+                logger.warning(
+                    "DT_PIPE listener error for agent %s (attempt %d/%d), retrying in %ds",
+                    self._agent_id,
+                    consecutive_failures,
+                    _MAX_LISTENER_RETRIES,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+
     async def _event_listen_loop(self) -> None:
         """Subscribe to EventBus for push notifications.
 
         Listens for "message_delivered" events on the agent's inbox channel
         and triggers process_inbox() when messages arrive.
+
+        Auto-reconnects with exponential backoff on failure.
         """
         if self._event_subscriber is None:
             return
         channel = f"ipc.inbox.{self._agent_id}"
-        try:
-            async for _event in self._event_subscriber.subscribe(channel):
-                try:
-                    # Trigger inbox processing when notified
-                    await self.process_inbox()
-                except Exception:
-                    logger.warning(
-                        "EventBus-triggered inbox processing failed for agent %s",
+        consecutive_failures = 0
+        while True:
+            try:
+                async for _event in self._event_subscriber.subscribe(channel):
+                    consecutive_failures = 0
+                    try:
+                        await self.process_inbox()
+                    except Exception:
+                        logger.warning(
+                            "EventBus-triggered inbox processing failed for agent %s",
+                            self._agent_id,
+                            exc_info=True,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                consecutive_failures += 1
+                if consecutive_failures >= _MAX_LISTENER_RETRIES:
+                    logger.error(
+                        "EventBus listener failed %d times for agent %s, stopping",
+                        _MAX_LISTENER_RETRIES,
                         self._agent_id,
-                        exc_info=True,
                     )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.error(
-                "EventBus listen loop crashed for agent %s",
-                self._agent_id,
-                exc_info=True,
-            )
+                    break
+                delay = min(2**consecutive_failures, 30)
+                logger.warning(
+                    "EventBus listener error for agent %s (attempt %d/%d), retrying in %ds",
+                    self._agent_id,
+                    consecutive_failures,
+                    _MAX_LISTENER_RETRIES,
+                    delay,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
 
     async def process_inbox(self) -> int:
         """Process all messages currently in the inbox.
 
-        May be triggered by multiple sources (polling, EventBus, POST_WRITE hook).
+        May be triggered by multiple sources (polling, DT_PIPE, EventBus, POST_WRITE hook).
         Concurrent calls are safe: per-message dedup via CacheStore prevents
         double-processing, and asyncio single-thread model prevents true data races.
 
@@ -597,55 +725,18 @@ class MessageProcessor:
         timestamp: datetime | None = None,
         detail: str = "",
     ) -> None:
-        """Move a message to the dead-letter directory with a structured reason.
+        """Move a message to dead_letter/ with a structured reason sidecar.
 
-        If *msg_id* and *timestamp* are provided (parsed envelope), the
-        destination is built from envelope fields.  Otherwise falls back
-        to extracting the filename from *msg_path* (raw/unparseable messages).
-
-        A ``.reason.json`` sidecar is written alongside the dead-lettered
-        message for programmatic triage.
+        Delegates to the shared ``lifecycle.dead_letter_message()`` helper
+        for consistent behavior with TTLSweeper (Issue #3197, DRY).
         """
-        try:
-            if msg_id is not None and timestamp is not None:
-                dest = message_path_in_dead_letter(self._agent_id, msg_id, timestamp)
-            else:
-                filename = msg_path.rsplit("/", 1)[-1]
-                dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-
-            await self._storage.rename(msg_path, dest, self._zone_id)
-
-            # Write structured .reason.json sidecar (best-effort)
-            try:
-                reason_data = json.dumps(
-                    {
-                        "reason": reason.value,
-                        "detail": detail,
-                        "agent_id": self._agent_id,
-                        "zone_id": self._zone_id,
-                        "msg_id": msg_id,
-                    },
-                    indent=2,
-                ).encode("utf-8")
-                reason_path = dest + ".reason.json"
-                await self._storage.write(reason_path, reason_data, self._zone_id)
-            except Exception:
-                logger.debug(
-                    "Failed to write .reason.json for dead-lettered message at %s",
-                    dest,
-                    exc_info=True,
-                )
-
-            logger.info(
-                "Message %s moved to dead_letter for agent %s (reason: %s, detail: %s)",
-                msg_id or msg_path,
-                self._agent_id,
-                reason.value,
-                detail,
-            )
-        except Exception:
-            logger.error(
-                "Failed to move message %s to dead_letter",
-                msg_id or msg_path,
-                exc_info=True,
-            )
+        await dead_letter_message(
+            self._storage,
+            msg_path,
+            self._agent_id,
+            self._zone_id,
+            reason,
+            msg_id=msg_id,
+            timestamp=timestamp,
+            detail=detail,
+        )

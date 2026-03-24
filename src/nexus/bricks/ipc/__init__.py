@@ -24,6 +24,7 @@ from nexus.bricks.ipc.conventions import (
     dead_letter_path,
     inbox_path,
     message_filename,
+    notify_pipe_path,
     outbox_path,
     processed_path,
 )
@@ -40,9 +41,16 @@ from nexus.bricks.ipc.exceptions import (
     MessageExpiredError,
 )
 from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
+from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
 from nexus.bricks.ipc.sweep import TTLSweeper
+from nexus.bricks.ipc.wakeup import (
+    CacheStoreEventPublisher,
+    PipeNotifyFactory,
+    PipeWakeupListener,
+    PipeWakeupNotifier,
+)
 
 __all__ = [
     # Envelope
@@ -55,6 +63,7 @@ __all__ = [
     "outbox_path",
     "processed_path",
     "dead_letter_path",
+    "notify_pipe_path",
     "message_filename",
     # Delivery
     "MessageSender",
@@ -72,6 +81,12 @@ __all__ = [
     "AgentProvisioner",
     # Sweep
     "TTLSweeper",
+    # Lifecycle
+    "dead_letter_message",
+    # Wakeup (#3197)
+    "PipeWakeupNotifier",
+    "PipeWakeupListener",
+    "PipeNotifyFactory",
     # Exceptions
     "IPCError",
     "EnvelopeValidationError",

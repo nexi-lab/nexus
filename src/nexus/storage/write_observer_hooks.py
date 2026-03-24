@@ -162,7 +162,7 @@ class AuditWriteInterceptor:
 
     name = "audit_write_observer"
 
-    __slots__ = ("_nx", "_pipe_path", "_strict_mode")
+    __slots__ = ("_nx", "_pipe_path", "_strict_mode", "_pipe_buffer")
 
     # ── HotSwappable protocol (Issue #1613) ────────────────────────────
 
@@ -188,6 +188,11 @@ class AuditWriteInterceptor:
         self._nx = nx
         self._pipe_path = pipe_path
         self._strict_mode = strict_mode
+        # Cache the pipe buffer reference for direct writes.
+        # Avoids going through the full VFS sys_write pipeline which would
+        # re-trigger post-write hooks (including this one), causing a 5s
+        # timeout per write via _post_dispatch's asyncio.wait_for.
+        self._pipe_buffer: Any = None
 
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
@@ -286,12 +291,42 @@ class AuditWriteInterceptor:
     # ── Internal ──────────────────────────────────────────────────────
 
     async def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
-        """Serialize event to JSON and write to pipe via sys_write.
+        """Serialize event to JSON and write directly to the pipe buffer.
 
-        Uses a system context so audit logging is never blocked by user
-        permissions — audit is an internal operation, not a user action.
+        Writes directly to PipeManager's in-memory buffer instead of going
+        through ``nx.sys_write()``.  This avoids re-entering the full VFS
+        pipeline (validate → metastore → dispatch → hooks), which would
+        trigger this hook again recursively and hit the 5s per-hook timeout
+        in ``KernelDispatch._post_dispatch``.
+
+        The DT_PIPE fast-path in ``sys_write`` does the same buffer lookup,
+        but calling it from a post-write hook creates a recursive chain that
+        only terminates via timeout when the pipe buffer isn't yet registered
+        (race during startup).  Writing to the buffer directly eliminates
+        both the recursion risk and the VFS overhead (~1μs vs 5s).
         """
         try:
+            data = json.dumps(event).encode()
+
+            # Fast path: write directly to cached pipe buffer (~1μs)
+            buf = self._pipe_buffer
+            if buf is None:
+                # Lazy-resolve: look up the buffer from PipeManager on first emit.
+                # After PipedRecordStoreWriteObserver.start() creates the DT_PIPE,
+                # the buffer is registered in PipeManager._buffers.
+                pm = getattr(self._nx, "_pipe_manager", None)
+                if pm is not None:
+                    buf = pm._buffers.get(self._pipe_path)
+                    if buf is not None:
+                        self._pipe_buffer = buf  # cache for subsequent calls
+
+            if buf is not None:
+                buf.write_nowait(data)
+                return
+
+            # Fallback: pipe buffer not ready (startup race or missing pipe).
+            # Use sys_write which will go through the VFS pipeline.  This is
+            # slow but correct — it only happens before start() creates the pipe.
             from nexus.contracts.types import OperationContext
 
             _audit_ctx = OperationContext(
@@ -300,7 +335,6 @@ class AuditWriteInterceptor:
                 is_admin=True,
                 is_system=True,
             )
-            data = json.dumps(event).encode()
             await self._nx.sys_write(self._pipe_path, data, context=_audit_ctx)
         except Exception as e:
             from nexus.contracts.exceptions import AuditLogError

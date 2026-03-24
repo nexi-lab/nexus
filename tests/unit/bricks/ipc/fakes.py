@@ -4,6 +4,7 @@ These satisfy the Protocol interfaces defined in ``nexus.bricks.ipc.protocols``
 without any real I/O, enabling fast, isolated unit tests.
 """
 
+import asyncio
 from typing import Any
 
 
@@ -97,3 +98,100 @@ class InMemoryEventPublisher:
         if self._should_fail:
             raise ConnectionError("EventBus unavailable")
         self.published.append((channel, data))
+
+
+class FlakyEventSubscriber:
+    """Event subscriber that fails N times before succeeding.
+
+    Used to test reconnection logic in MessageProcessor._event_listen_loop().
+
+    Args:
+        fail_count: Number of times subscribe() will raise before succeeding.
+        events: Events to yield after failures are exhausted. After yielding
+            all events, the generator blocks forever (simulating a healthy
+            connection waiting for more events).
+    """
+
+    def __init__(
+        self,
+        fail_count: int = 2,
+        events: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self._fail_count = fail_count
+        self._call_count = 0
+        self._events = events or []
+        self._connected = asyncio.Event()
+
+    async def subscribe(self, channel: str) -> Any:  # noqa: ARG002
+        self._call_count += 1
+        if self._call_count <= self._fail_count:
+            raise ConnectionError(f"EventBus down (attempt {self._call_count})")
+        self._connected.set()
+        for event in self._events:
+            yield event
+        # Block forever after yielding events (simulates healthy connection)
+        await asyncio.Event().wait()
+
+
+class InMemoryWakeupNotifier:
+    """In-memory wakeup notifier for testing.
+
+    Records all notify calls and optionally raises on notify.
+    """
+
+    def __init__(self, *, should_fail: bool = False) -> None:
+        self.notifications: list[str] = []
+        self._should_fail = should_fail
+
+    async def notify(self, agent_id: str) -> None:
+        if self._should_fail:
+            raise RuntimeError("Pipe unavailable")
+        self.notifications.append(agent_id)
+
+
+class InMemoryWakeupListener:
+    """In-memory wakeup listener for testing.
+
+    Wakes when ``trigger()`` is called. Supports multiple wakeups.
+    Uses a queue-based approach to avoid race conditions between
+    trigger() and wait_for_wakeup().
+    """
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[bool] = asyncio.Queue()
+        self._closed = False
+        self._waiting = asyncio.Event()
+        self.wait_count = 0
+
+    def trigger(self) -> None:
+        """Simulate a wakeup signal arriving."""
+        self._queue.put_nowait(True)
+
+    async def wait_for_wakeup(self) -> None:
+        """Block until trigger() is called."""
+        if self._closed:
+            raise RuntimeError("Listener closed")
+        self._waiting.set()
+        await self._queue.get()
+        self._waiting.clear()
+        self.wait_count += 1
+
+    def close(self) -> None:
+        self._closed = True
+        self._queue.put_nowait(False)  # Unblock any waiting
+
+
+class InMemoryNotifyPipeFactory:
+    """In-memory notify pipe factory for testing.
+
+    Records which agents had pipes created.
+    """
+
+    def __init__(self, *, should_fail: bool = False) -> None:
+        self.created: list[str] = []
+        self._should_fail = should_fail
+
+    def create_notify_pipe(self, agent_id: str) -> None:
+        if self._should_fail:
+            raise RuntimeError("PipeManager unavailable")
+        self.created.append(agent_id)

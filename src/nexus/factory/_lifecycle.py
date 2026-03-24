@@ -133,7 +133,7 @@ async def _do_link(
     from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
     driver_coordinator = DriverLifecycleCoordinator(nx.router, nx._dispatch)
-    nx._driver_coordinator = driver_coordinator
+    await nx._service_registry.enlist("driver_coordinator", driver_coordinator)
     driver_coordinator.adopt_existing_mount("/")
 
     # Issue #1666: Register system-tier PersistentService instances.
@@ -146,13 +146,26 @@ async def _do_link(
     if _dw is not None:
         await nx._service_registry.enlist("delivery_worker", _dw)
 
-    # Issue #1771: Enlist SystemServices fields that are read externally via
-    # getattr(nx, "_system_services", None).field — migrate to nx.service("name").
+    # Issue #1771: Enlist ALL SystemServices fields into ServiceRegistry.
+    # After this, every service is available via nx.service("name").
+    # Note: permission_enforcer stays as kernel-owns DI (Issue #1815).
     for _attr, _canonical in (
         ("event_bus", "event_bus"),
         ("context_branch_service", "context_branch"),
         ("rebac_manager", "rebac_manager"),
         ("resiliency_manager", "resiliency_manager"),
+        ("write_observer", "write_observer"),
+        ("observability_subsystem", "observability_subsystem"),
+        ("zone_lifecycle", "zone_lifecycle"),
+        ("scheduler_service", "scheduler_service"),
+        ("entity_registry", "entity_registry"),
+        ("workspace_registry", "workspace_registry"),
+        ("mount_manager", "mount_manager"),
+        ("audit_store", "audit_store"),
+        ("brick_lifecycle_manager", "brick_lifecycle_manager"),
+        ("brick_reconciler", "brick_reconciler"),
+        ("async_namespace_manager", "async_namespace_manager"),
+        ("workspace_manager", "workspace_manager"),
     ):
         _val = getattr(system_services, _attr, None)
         if _val is not None:
@@ -300,7 +313,7 @@ async def _do_link(
                 policy=_eviction_policy,
                 tuning=_eviction_tuning,
             )
-            nx._eviction_manager = _eviction_manager
+            await nx._service_registry.enlist("eviction_manager", _eviction_manager)
             logger.debug("[BOOT:LINK] EvictionManager created (deferred, QoS-aware)")
         except Exception as exc:
             logger.warning("[BOOT:LINK] EvictionManager unavailable: %s", exc)
@@ -313,7 +326,7 @@ async def _do_link(
                 agent_registry=_agent_reg,
                 zone_id=zone_id or ROOT_ZONE_ID,
             )
-            nx._acp_service = _acp_service
+            await nx._service_registry.enlist("acp_service", _acp_service)
             logger.debug("[BOOT:LINK] AcpService created (deferred)")
         except Exception as exc:
             logger.warning("[BOOT:LINK] AcpService unavailable: %s", exc)

@@ -145,12 +145,7 @@ def _wait_zone_ready(
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def cluster():
-    """Ensure the dynamic-federation cluster is running and healthy."""
-    if _health(NODE1_URL) is None:
-        pytest.skip(
-            "Dynamic federation cluster not reachable. Start with:\n"
-            "  docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml up -d"
-        )
+    """Wait for the dynamic-federation cluster to become healthy."""
     _wait_healthy([NODE1_URL, NODE2_URL])
     return {"node1": NODE1_URL, "node2": NODE2_URL}
 

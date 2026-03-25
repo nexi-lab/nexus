@@ -2,7 +2,6 @@
 
 Tests cover:
 - Content-addressable write/read/delete with hash-based paths
-- Reference counting (ref_count increment on dup, decrement on delete)
 - Hash integrity verification on read
 - Directory operations (mkdir, rmdir, is_directory, list_dir)
 - Streaming (stream_content, write_stream)
@@ -105,7 +104,7 @@ def backend(transport: InMemoryBlobTransport) -> CASAddressingEngine:
 
 
 class TestCASAddressingEngineWriteContent:
-    """Test write_content() — CAS dedup and ref counting."""
+    """Test write_content() — CAS dedup."""
 
     def test_write_stores_at_cas_path(
         self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
@@ -121,31 +120,6 @@ class TestCASAddressingEngineWriteContent:
         cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
         assert cas_key in transport.files
         assert transport.files[cas_key] == content
-
-    def test_write_creates_metadata_sidecar(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
-    ):
-        content = b"test metadata"
-        h = hash_content(content)
-        backend.write_content(content)
-
-        meta_key = f"cas/{h[:2]}/{h[2:4]}/{h}.meta"
-        assert meta_key in transport.files
-
-        import json
-
-        meta = json.loads(transport.files[meta_key])
-        assert meta["ref_count"] == 1
-        assert meta["size"] == len(content)
-
-    def test_write_dedup_increments_ref_count(self, backend: CASAddressingEngine):
-        content = b"duplicate content"
-
-        r1 = backend.write_content(content)
-        r2 = backend.write_content(content)
-
-        assert r1.content_id == r2.content_id
-        assert backend.get_ref_count(r1.content_id) == 2
 
     def test_write_different_content_different_hashes(self, backend: CASAddressingEngine):
         r1 = backend.write_content(b"content A")
@@ -186,9 +160,9 @@ class TestCASAddressingEngineReadContent:
 
 
 class TestCASAddressingEngineDeleteContent:
-    """Test delete_content() — ref counting and cleanup."""
+    """Test delete_content() — blob removal and cleanup."""
 
-    def test_delete_removes_blob_on_last_ref(
+    def test_delete_removes_blob(
         self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
     ):
         content = b"delete me"
@@ -199,14 +173,6 @@ class TestCASAddressingEngineDeleteContent:
 
         cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
         assert cas_key not in transport.files
-
-    def test_delete_decrements_ref_count(self, backend: CASAddressingEngine):
-        content = b"ref counted"
-        result = backend.write_content(content)
-        backend.write_content(content)  # ref_count = 2
-
-        backend.delete_content(result.content_id)
-        assert backend.get_ref_count(result.content_id) == 1
 
     def test_delete_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
@@ -226,7 +192,7 @@ class TestCASAddressingEngineDeleteContent:
 
 
 class TestCASAddressingEngineContentOperations:
-    """Test content_exists, get_content_size, get_ref_count."""
+    """Test content_exists, get_content_size."""
 
     def test_content_exists_true(self, backend: CASAddressingEngine):
         result = backend.write_content(b"exists")
@@ -243,10 +209,6 @@ class TestCASAddressingEngineContentOperations:
     def test_get_content_size_missing_raises(self, backend: CASAddressingEngine):
         with pytest.raises(NexusFileNotFoundError):
             backend.get_content_size("d" * 64)
-
-    def test_get_ref_count_missing_raises(self, backend: CASAddressingEngine):
-        with pytest.raises(NexusFileNotFoundError):
-            backend.get_ref_count("e" * 64)
 
 
 class TestCASAddressingEngineStreaming:
@@ -390,14 +352,6 @@ class TestVerifyOnRead:
 class TestDedupSkip:
     """Test dedup skip — blob_exists check before put_blob on write."""
 
-    def test_dedup_write_increments_ref_count(self, transport: InMemoryBlobTransport):
-        backend = CASAddressingEngine(transport, backend_name="test")
-        content = b"dedup content"
-        r1 = backend.write_content(content)
-        r2 = backend.write_content(content)
-        assert r1.content_id == r2.content_id
-        assert backend.get_ref_count(r1.content_id) == 2
-
     def test_dedup_write_skips_put_blob(self, transport: InMemoryBlobTransport):
         """On dedup, put_blob should not be called the second time."""
         from unittest.mock import patch
@@ -432,34 +386,12 @@ class TestDedupSkip:
         assert transport.files[cas_key] == content
 
 
-class TestNosyncMetaDispatch:
-    """Test _write_meta uses put_blob_nosync when available."""
+class TestNoMetaForNonCDC:
+    """Test that non-CDC writes do NOT create .meta sidecars."""
 
-    def test_meta_uses_nosync_when_available(self):
-        """When transport has put_blob_nosync, _write_meta should use it."""
-
-        class NosyncTransport(InMemoryBlobTransport):
-            """Transport with put_blob_nosync support."""
-
-            def __init__(self) -> None:
-                super().__init__()
-                self.nosync_calls: list[str] = []
-
-            def put_blob_nosync(self, key: str, data: bytes) -> None:
-                self.nosync_calls.append(key)
-                self.files[key] = data
-
-        transport = NosyncTransport()
+    def test_write_no_meta_sidecar(self, transport: InMemoryBlobTransport):
         backend = CASAddressingEngine(transport, backend_name="test")
-        backend.write_content(b"test nosync meta")
-        # Meta sidecar should have been written via nosync
-        assert any(k.endswith(".meta") for k in transport.nosync_calls)
-
-    def test_meta_falls_back_to_put_blob(self, transport: InMemoryBlobTransport):
-        """Without put_blob_nosync, meta goes through regular put_blob."""
-        assert not hasattr(transport, "put_blob_nosync")
-        backend = CASAddressingEngine(transport, backend_name="test")
-        result = backend.write_content(b"fallback meta")
+        result = backend.write_content(b"small content")
         h = result.content_id
         meta_key = f"cas/{h[:2]}/{h[2:4]}/{h}.meta"
-        assert meta_key in transport.files
+        assert meta_key not in transport.files

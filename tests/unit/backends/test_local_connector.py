@@ -281,9 +281,6 @@ class TestBackendInterface:
         with pytest.raises(BackendError):
             connector.get_content_size("somehash")
 
-        result = connector.get_ref_count("somehash")
-        assert result == 0
-
         with pytest.raises(BackendError):
             connector.delete_content("somehash")
 

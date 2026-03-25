@@ -92,15 +92,10 @@ class MessageBoundaryStrategy:
             key = b._blob_key(chunk_hash)
             b._transport.put_blob(key, chunk_bytes)
 
-            # Update chunk metadata with ref count
-            def _update_chunk(meta: dict[str, Any], sz: int = length) -> dict[str, Any]:
-                meta["ref_count"] = meta.get("ref_count", 0) + 1
-                meta["size"] = sz
-                meta["is_chunk"] = True
-                return meta
-
-            updated = b._meta_update_locked(chunk_hash, _update_chunk)
-            if updated.get("ref_count", 0) == 1 and b._bloom is not None:
+            # Write chunk metadata with is_chunk flag
+            chunk_meta: dict[str, Any] = {"size": length, "is_chunk": True}
+            b._write_meta(chunk_hash, chunk_meta)
+            if b._bloom is not None:
                 b._bloom.add(chunk_hash)
 
             chunk_infos.append(ChunkInfo(chunk_hash=chunk_hash, offset=offset, length=length))
@@ -121,15 +116,14 @@ class MessageBoundaryStrategy:
         key = b._blob_key(manifest_hash)
         b._transport.put_blob(key, manifest_bytes)
 
-        def _update_manifest(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = meta.get("ref_count", 0) + 1
-            meta["size"] = len(content)
-            meta["is_chunked_manifest"] = True
-            meta["chunk_count"] = len(chunk_infos)
-            return meta
-
-        updated = b._meta_update_locked(manifest_hash, _update_manifest)
-        if updated.get("ref_count", 0) == 1 and b._bloom is not None:
+        # Write manifest metadata
+        manifest_meta: dict[str, Any] = {
+            "size": len(content),
+            "is_chunked_manifest": True,
+            "chunk_count": len(chunk_infos),
+        }
+        b._write_meta(manifest_hash, manifest_meta)
+        if b._bloom is not None:
             b._bloom.add(manifest_hash)
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -201,7 +195,9 @@ class MessageBoundaryStrategy:
         return manifest.total_size
 
     def delete_chunked(self, content_hash: str, context: "OperationContext | None" = None) -> None:
-        """Delete manifest + decrement chunk ref counts."""
+        """Delete manifest + all chunks unconditionally."""
+        import contextlib
+
         b = self._backend
         key = b._blob_key(content_hash)
 
@@ -211,22 +207,15 @@ class MessageBoundaryStrategy:
         except Exception:
             return
 
-        # Decrement chunk ref counts
+        # Delete all chunks
         for ci in manifest.chunks:
-            chunk_meta_key = b._meta_key(ci.chunk_hash)
-            try:
-                meta_data, _ = b._transport.get_blob(chunk_meta_key)
-                meta: dict[str, Any] = json.loads(meta_data)
-                meta["ref_count"] = max(0, meta.get("ref_count", 1) - 1)
-                if meta["ref_count"] == 0:
-                    # Remove chunk blob + metadata
-                    b._transport.delete_blob(b._blob_key(ci.chunk_hash))
-                    b._transport.delete_blob(chunk_meta_key)
-                else:
-                    b._transport.put_blob(chunk_meta_key, json.dumps(meta).encode())
-            except Exception:
-                pass
+            with contextlib.suppress(Exception):
+                b._transport.delete_blob(b._blob_key(ci.chunk_hash))
+            with contextlib.suppress(Exception):
+                b._transport.delete_blob(b._meta_key(ci.chunk_hash))
 
         # Remove manifest
-        b._transport.delete_blob(key)
-        b._transport.delete_blob(b._meta_key(content_hash))
+        with contextlib.suppress(Exception):
+            b._transport.delete_blob(key)
+        with contextlib.suppress(Exception):
+            b._transport.delete_blob(b._meta_key(content_hash))

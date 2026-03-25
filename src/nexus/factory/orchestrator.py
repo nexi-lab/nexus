@@ -637,10 +637,9 @@ async def _register_vfs_hooks(
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
     await _enlist("revision_tracking", _rev_observer)
 
-    # ── CAS ref_count observer (Issue #1320, #1811) ────────────────────
-    # Moved to DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
-    # The coordinator registers CASRefCountObserver via hook_spec() at mount
-    # time, fixing the silent failure where enlist() classified backends as Q1.
+    # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
+    # ref_count eliminated; reachability-based GC via CASGarbageCollector.
+    # GC is owned by CASLocalBackend, metastore injected via set_metastore().
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

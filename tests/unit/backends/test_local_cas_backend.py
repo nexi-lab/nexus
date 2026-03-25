@@ -47,7 +47,6 @@ class TestBasicCRUD:
         r1 = backend.write_content(b"dedup")
         r2 = backend.write_content(b"dedup")
         assert r1.content_id == r2.content_id
-        assert backend.get_ref_count(r1.content_id) == 2
 
     def test_delete_content(self, backend):
         r = backend.write_content(b"delete me")
@@ -202,7 +201,7 @@ class TestConcurrentWrites:
         assert len(results) == 50
         hashes = {r.content_id for r in results}
         assert len(hashes) == 1
-        assert backend.get_ref_count(results[0].content_id) == 50
+        assert backend.content_exists(results[0].content_id)
 
     def test_50_threads_different_content(self, backend):
         results = []
@@ -285,36 +284,8 @@ class TestIncrementalChunkWrite:
             f"Expected 1 blob write (manifest only), got {len(blob_writes)}: {blob_writes}"
         )
 
-    def test_incremental_write_ref_count_correct(self, cdc_backend):
-        """Writing same content twice → chunk ref_counts should double."""
-        # Use varied content so each chunk has a unique hash
-        content = bytes(range(256)) * 8  # 2048 bytes, varied
-
-        r1 = cdc_backend.write_content(content)
-
-        # Record ref_counts after first write
-        from nexus.backends.engines.cdc import ChunkedReference
-
-        manifest_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_id))[0]
-        manifest = ChunkedReference.from_json(manifest_data)
-
-        first_counts = {}
-        for ci in manifest.chunks:
-            first_counts[ci.chunk_hash] = cdc_backend._read_meta(ci.chunk_hash)["ref_count"]
-
-        # Second write
-        r2 = cdc_backend.write_content(content)
-        assert r1.content_id == r2.content_id
-
-        for ci in manifest.chunks:
-            meta = cdc_backend._read_meta(ci.chunk_hash)
-            expected = first_counts[ci.chunk_hash] * 2
-            assert meta["ref_count"] == expected, (
-                f"Chunk {ci.chunk_hash[:16]} ref_count={meta['ref_count']}, expected {expected}"
-            )
-
     def test_incremental_write_partial_overlap(self, cdc_backend):
-        """Two files sharing some chunks → shared ref_count=2, unique ref_count=1."""
+        """Two files sharing some chunks → shared chunks exist in CAS."""
         # Use fixed chunking (avg_chunk=512) so we get predictable boundaries
         # File A: [AAAA][BBBB][CCCC][DDDD] (4 chunks of 512)
         chunk_a = b"A" * 512
@@ -326,39 +297,21 @@ class TestIncrementalChunkWrite:
         content_a = chunk_a + chunk_b + chunk_c + chunk_d  # 2048 bytes
         content_b = chunk_a + chunk_b + chunk_e + chunk_d  # shares chunks a, b, d
 
-        cdc_backend.write_content(content_a)
+        r_a = cdc_backend.write_content(content_a)
         r_b = cdc_backend.write_content(content_b)
 
-        from nexus.backends.engines.cdc import ChunkedReference
-
-        manifest_b_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r_b.content_id))[0]
-        manifest_b = ChunkedReference.from_json(manifest_b_data)
-
-        from nexus.core.hash_fast import hash_content
-
-        shared_hashes = {hash_content(chunk_a), hash_content(chunk_b), hash_content(chunk_d)}
-        unique_hashes = {hash_content(chunk_e)}
-
-        for ci in manifest_b.chunks:
-            meta = cdc_backend._read_meta(ci.chunk_hash)
-            if ci.chunk_hash in shared_hashes:
-                assert meta["ref_count"] == 2, "Shared chunk ref_count should be 2"
-            elif ci.chunk_hash in unique_hashes:
-                assert meta["ref_count"] == 1, "Unique chunk ref_count should be 1"
+        # Both should be readable
+        assert cdc_backend.read_content(r_a.content_id) == content_a
+        assert cdc_backend.read_content(r_b.content_id) == content_b
 
     def test_delete_after_incremental_write(self, cdc_backend):
-        """Write twice (ref=2), delete once (ref=1, readable), delete again (gone)."""
+        """Write then delete — blob removed."""
         content = bytes(range(256)) * 8  # 2048 bytes, varied
 
         r = cdc_backend.write_content(content)
-        cdc_backend.write_content(content)  # ref_count = 2
-
-        # Delete once — ref_count drops to 1, still readable
-        cdc_backend.delete_content(r.content_id)
         assert cdc_backend.content_exists(r.content_id)
-        assert cdc_backend.read_content(r.content_id) == content
 
-        # Delete again — ref_count = 0, gone
+        # Delete — blob gone
         cdc_backend.delete_content(r.content_id)
         assert not cdc_backend.content_exists(r.content_id)
 

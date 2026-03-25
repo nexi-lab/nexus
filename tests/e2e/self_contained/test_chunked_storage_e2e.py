@@ -107,7 +107,7 @@ class TestChunkedStorageE2E:
         # Simulate GC cleanup: delete_content handles chunk ref-counting
         backend.delete_content(content_hash)
 
-        # Verify chunks are deleted (ref_count was 1)
+        # Verify chunks are deleted
         for ch in chunk_hashes:
             assert not backend._transport._resolve(backend._blob_key(ch)).exists(), (
                 f"Chunk {ch[:16]}... should be deleted"
@@ -143,7 +143,7 @@ class TestChunkedStorageE2E:
         assert await nexus_fs.sys_read("/dedup_a.bin") == large_content
         assert await nexus_fs.sys_read("/dedup_b.bin") == large_content
 
-        # Delete one, other should still work (ref_count)
+        # Delete one, other should still work (dedup)
         await nexus_fs.sys_unlink("/dedup_a.bin")
         assert await nexus_fs.sys_read("/dedup_b.bin") == large_content
 

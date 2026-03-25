@@ -2,7 +2,7 @@
 
 Measures the performance improvement of meta_cache on repeated
 _read_meta calls, which is the hot path for is_chunked(), get_size(),
-and ref_count checks.
+and size checks.
 
 Usage:
     uv run pytest tests/benchmarks/bench_cas_metadata_cache.py -v -o "addopts="

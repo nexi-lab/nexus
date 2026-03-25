@@ -1083,22 +1083,6 @@ class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitB
                 raise NexusFileNotFoundError(content_id) from e
             raise
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get reference count (always 1 for connector backends).
-
-        Connector backends don't do deduplication, so each file
-        has exactly one reference.
-
-        Args:
-            content_hash: Content hash
-            context: Operation context
-
-        Returns:
-            1 (no reference counting)
-        """
-        # No deduplication - each file is unique
-        return 1
-
     def mkdir(
         self,
         path: str,

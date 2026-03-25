@@ -81,9 +81,6 @@ class _MockBackend(Backend):
             raise NexusFileNotFoundError(content_hash)
         return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
-        return self._ref_counts.get(content_hash, 0)
-
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
     ) -> None:
@@ -126,9 +123,6 @@ class _PartialClass:
         return None
 
     def get_content_size(self, content_hash: str, context: Any = None) -> Any:
-        return None
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> Any:
         return None
 
 

@@ -96,7 +96,6 @@ class TestContentStoreProtocolMethods:
         "delete_content",
         "content_exists",
         "get_content_size",
-        "get_ref_count",
     ]
 
     @pytest.mark.parametrize("method_name", _REQUIRED_METHODS)

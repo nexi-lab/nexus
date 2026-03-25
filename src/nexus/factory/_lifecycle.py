@@ -126,7 +126,7 @@ async def _do_link(
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") was added to PathRouter in
     # create_nexus_fs() before __init__ — adopt retroactively registers
-    # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
+    # the backend's hook_spec (fixes CAS wiring bug #1320).
     await nx._service_registry.enlist("driver_coordinator", nx._driver_coordinator)
     nx._driver_coordinator.adopt_existing_mount("/")
 
@@ -342,7 +342,7 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    # Issue #1811: CAS ref_count observer is now registered via
+    # Issue #1811: CAS hooks are registered via
     # DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
     # The `backend` parameter has been removed from _register_vfs_hooks().
     await _register_vfs_hooks(

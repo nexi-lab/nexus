@@ -78,8 +78,6 @@ class TestBackendAsObjectStore:
         r2 = backend.write_content(content)
         assert r1.content_id == r2.content_id
 
-        # Delete once — should decrement ref count
-        backend.delete_content(r1.content_id)
-        # Content still accessible (ref count > 0)
-        assert backend.content_exists(r2.content_id)
-        assert backend.read_content(r2.content_id) == content
+        # Content readable after dedup write
+        assert backend.content_exists(r1.content_id)
+        assert backend.read_content(r1.content_id) == content

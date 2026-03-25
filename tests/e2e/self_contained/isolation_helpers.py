@@ -91,9 +91,6 @@ class MockBackend:
         p = self._content_dir / h
         return p.stat().st_size if p.exists() else 0
 
-    def get_ref_count(self, h, context=None):
-        return 1 if (self._content_dir / h).exists() else 0
-
     # ── directory ops ──
 
     def mkdir(self, path, parents=False, exist_ok=False, context=None):

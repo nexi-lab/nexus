@@ -3,10 +3,13 @@
 Tests cover:
 - Meta cache hit/miss counters
 - cache_stats property
-- Cache population on _read_meta miss
+- Cache population on _read_meta miss (from .meta sidecar on disk)
 - Cache update on _write_meta
-- Cache eviction on delete_content (last ref)
+- Cache eviction on delete_content
 - Cache bypass when meta_cache is None (cloud backends)
+
+Note: Non-CDC write_content no longer creates .meta sidecars.
+Meta cache is only populated via _read_meta (CDC path) or _write_meta directly.
 """
 
 import cachetools
@@ -58,39 +61,42 @@ class TestCacheStats:
 
 
 class TestMetaCacheReadThrough:
-    """Test _read_meta with cache read-through."""
+    """Test _read_meta with cache read-through.
 
-    def test_first_read_is_miss(self, backend: CASAddressingEngine):
-        content = b"test content"
-        backend.write_content(content)
+    Non-CDC write_content does not create .meta files.
+    We test cache behavior by calling _write_meta + _read_meta directly.
+    """
 
-        # write_content calls _read_meta (miss) + _write_meta (populates cache)
-        # The initial _read_meta in _meta_update_locked is a miss
-        assert backend.cache_stats["misses"] >= 1
+    def test_read_meta_miss_returns_default(self, backend: CASAddressingEngine):
+        """_read_meta for non-existent .meta returns default and increments miss."""
+        meta = backend._read_meta("nonexistent_hash")
+        assert meta == {"size": 0}
+        assert backend.cache_stats["misses"] == 1
+
+    def test_read_meta_populates_cache_on_miss(
+        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
+    ):
+        """_read_meta stores the result in cache even on miss (default dict)."""
+        h = "some_hash"
+        backend._read_meta(h)
+        assert h in meta_cache
+        assert meta_cache[h] == {"size": 0}
 
     def test_second_read_is_hit(self, backend: CASAddressingEngine):
-        content = b"test content"
-        result = backend.write_content(content)
+        """After _write_meta populates cache, _read_meta should be a hit."""
+        h = "test_hash"
+        meta = {"size": 42, "is_chunked_manifest": True}
+        backend._write_meta(h, meta)
 
         # Reset counters to isolate the read
         backend._meta_cache_hits = 0
         backend._meta_cache_misses = 0
 
-        # Read meta again — should be a cache hit
-        meta = backend._read_meta(result.content_id)
-        assert meta["ref_count"] == 1
+        # Read meta — should be a cache hit
+        result = backend._read_meta(h)
+        assert result["size"] == 42
         assert backend.cache_stats["hits"] == 1
         assert backend.cache_stats["misses"] == 0
-
-    def test_cache_populated_after_miss(
-        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
-    ):
-        content = b"populate cache"
-        result = backend.write_content(content)
-
-        # After write, cache should contain the hash
-        assert result.content_id in meta_cache
-        assert meta_cache[result.content_id]["ref_count"] == 1
 
     def test_no_cache_no_error(self, backend_no_cache: CASAddressingEngine):
         """Backend without cache should work normally."""
@@ -106,50 +112,35 @@ class TestMetaCacheWriteThrough:
     def test_write_meta_updates_cache(
         self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
     ):
-        content = b"write-through test"
-        result = backend.write_content(content)
+        h = "write_through_hash"
+        meta = {"size": 100, "chunk_count": 3}
+        backend._write_meta(h, meta)
 
         # Verify cache has the metadata
-        cached_meta = meta_cache.get(result.content_id)
+        cached_meta = meta_cache.get(h)
         assert cached_meta is not None
-        assert cached_meta["ref_count"] == 1
-
-        # Write again (ref_count bump)
-        backend.write_content(content)
-        cached_meta = meta_cache.get(result.content_id)
-        assert cached_meta["ref_count"] == 2
+        assert cached_meta["size"] == 100
+        assert cached_meta["chunk_count"] == 3
 
 
 class TestMetaCacheEviction:
     """Test cache eviction on delete_content."""
 
-    def test_delete_last_ref_evicts_cache(
+    def test_delete_evicts_cache(
         self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
     ):
         content = b"delete me"
         result = backend.write_content(content)
         h = result.content_id
 
+        # Manually populate cache (since non-CDC write doesn't create .meta)
+        meta_cache[h] = {"size": len(content)}
         assert h in meta_cache
 
         backend.delete_content(h)
 
         # Cache entry should be evicted
         assert h not in meta_cache
-
-    def test_delete_decrement_keeps_cache(
-        self, backend: CASAddressingEngine, meta_cache: cachetools.LRUCache
-    ):
-        content = b"keep in cache"
-        result = backend.write_content(content)
-        backend.write_content(content)  # ref_count = 2
-        h = result.content_id
-
-        backend.delete_content(h)
-
-        # ref_count decremented but not deleted — cache updated
-        assert h in meta_cache
-        assert meta_cache[h]["ref_count"] == 1
 
 
 class TestMetaCacheLRUBehavior:
@@ -159,10 +150,12 @@ class TestMetaCacheLRUBehavior:
         small_cache = cachetools.LRUCache(maxsize=3)
         backend = CASAddressingEngine(transport, backend_name="test", meta_cache=small_cache)
 
+        # Populate cache via _write_meta (since write_content no longer creates .meta)
         hashes = []
         for i in range(5):
-            result = backend.write_content(f"content-{i}".encode())
-            hashes.append(result.content_id)
+            h = f"hash_{i}"
+            backend._write_meta(h, {"size": i})
+            hashes.append(h)
 
         # Only 3 entries should remain (LRU evicts oldest)
         assert len(small_cache) == 3

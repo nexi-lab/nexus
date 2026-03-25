@@ -62,9 +62,6 @@ class _MockBackend(Backend):
             raise NexusFileNotFoundError(content_hash)
         return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash: str, context: Any = None) -> int:
-        return self._ref_counts.get(content_hash, 0)
-
     def mkdir(
         self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
     ) -> None:
@@ -161,15 +158,6 @@ class TestBackendContract:
         assert content_hash is not None
         size = backend.get_content_size(content_hash)
         assert size == len(content)
-
-    def test_get_ref_count_after_writes(self, backend: Backend) -> None:
-        content = b"ref counting"
-        backend.write_content(content)
-        content_hash = backend.write_content(content).content_id  # Second write
-        assert content_hash is not None
-        ref_count = backend.get_ref_count(content_hash)
-        assert ref_count is not None
-        assert ref_count >= 2
 
     def test_read_nonexistent_content_fails(self, backend: Backend) -> None:
         with pytest.raises((NexusFileNotFoundError, BackendError)):

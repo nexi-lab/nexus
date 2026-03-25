@@ -254,17 +254,15 @@ class TestAdoptExistingMount:
 
 
 class TestCASWiringFix:
-    def test_cas_hook_spec_observer_registered_via_adopt(self) -> None:
-        """CASRefCountObserver is registered via adopt, not coordinator.enlist()."""
-        from nexus.backends.observers.cas_ref_count_observer import CASRefCountObserver
-
+    def test_cas_hook_spec_has_no_observers(self) -> None:
+        """CAS hook_spec() returns HookSpec with NO observers (empty tuple), only mount_hooks."""
         router, dispatch, coord = _make_coordinator()
 
-        # Create a minimal CAS-like backend with hook_spec
-        observer = CASRefCountObserver(MagicMock())
+        # Create a minimal CAS-like backend with hook_spec that has no observers
+        mount_hook = _FakeMountHook()
         backend = MagicMock()
         backend.name = "cas-local"
-        backend.hook_spec.return_value = HookSpec(observers=(observer,))
+        backend.hook_spec.return_value = HookSpec(observers=(), mount_hooks=(mount_hook,))
 
         mount_info = MagicMock()
         mount_info.backend = backend
@@ -272,4 +270,5 @@ class TestCASWiringFix:
 
         coord.adopt_existing_mount("/")
 
-        assert dispatch.observer_count == 1
+        assert dispatch.observer_count == 0
+        assert dispatch.mount_hook_count == 1

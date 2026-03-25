@@ -513,8 +513,8 @@ class NexusFS(  # type: ignore[misc]
             # Use batch delete for better performance (single transaction instead of N queries)
             file_paths = [file_meta.path for file_meta in files_in_dir]
 
-            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
-            # observer (CASRefCountObserver). Kernel only deletes metadata.
+            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
+            # GC. Kernel only deletes metadata.
 
             # Batch delete from metadata store
             self.metadata.delete_batch(file_paths)
@@ -3057,7 +3057,7 @@ class NexusFS(  # type: ignore[misc]
         """Remove a directory entry (POSIX unlink(2)).
 
         Removes file from backend and metadata store.
-        Decrements reference count in CAS (only deletes when ref_count=0).
+        Removes metadata only; CAS blob cleanup deferred to reachability GC.
 
         Args:
             path: Virtual path to delete (supports memory and pipe paths).
@@ -3146,8 +3146,8 @@ class NexusFS(  # type: ignore[misc]
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         # Like Linux i_rwsem: held for I/O duration only, released before observers.
         with self._vfs_locked(path, "write"):
-            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
-            # observer (CASRefCountObserver). Kernel only deletes metadata.
+            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
+            # GC. Kernel only deletes metadata.
 
             # Remove from metadata
             self.metadata.delete(path)
@@ -3872,8 +3872,8 @@ class NexusFS(  # type: ignore[misc]
             raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
 
         if recursive and files_in_dir:
-            # Issue #1320: Content cleanup deferred to CAS GC via OBSERVE
-            # observer (CASRefCountObserver). Kernel only deletes metadata.
+            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
+            # GC. Kernel only deletes metadata.
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

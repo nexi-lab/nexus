@@ -56,9 +56,6 @@ class TestBackendWriteStreamDefault:
             def get_content_size(self, content_hash: str, context=None) -> int:
                 return 0
 
-            def get_ref_count(self, content_hash: str, context=None) -> int:
-                return 0
-
             def mkdir(
                 self, path: str, parents: bool = False, exist_ok: bool = False, context=None
             ) -> None:
@@ -149,24 +146,6 @@ class TestCASLocalBackendStreaming:
         hash2 = local_backend.write_stream(chunks()).content_id
 
         assert hash1 == hash2
-
-    def test_write_stream_increments_ref_count(self, local_backend: CASLocalBackend) -> None:
-        """Test that write_stream increments ref_count for existing content."""
-        content = b"Duplicate content"
-
-        # First write
-        hash1 = local_backend.write_content(content).content_id
-        ref1 = local_backend.get_ref_count(hash1)
-
-        # Second write via stream
-        def chunks():
-            yield content
-
-        hash2 = local_backend.write_stream(chunks()).content_id
-        ref2 = local_backend.get_ref_count(hash2)
-
-        assert hash1 == hash2
-        assert ref2 == ref1 + 1
 
     def test_write_stream_large_content(self, local_backend: CASLocalBackend) -> None:
         """Test write_stream with larger content split into many chunks."""

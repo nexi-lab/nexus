@@ -943,18 +943,6 @@ class GmailConnectorBackend(
             return len(content)
         return 0
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get reference count (always 1 for connector backends).
-
-        Args:
-            content_hash: Content hash
-            context: Operation context
-
-        Returns:
-            Always 1 (no reference counting)
-        """
-        return 1
-
     def get_version(
         self,
         path: str,

@@ -28,13 +28,13 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
+from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
-from nexus.lib.semaphore import create_vfs_semaphore
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -126,7 +126,6 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # Build components
         transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
         bloom = _init_bloom(self.cas_root, bloom_capacity, bloom_fp_rate)
-        meta_semaphore = create_vfs_semaphore()
 
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools
@@ -144,13 +143,19 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             bloom_filter=bloom,
             content_cache=content_cache,
             meta_cache=meta_cache,
-            meta_semaphore=meta_semaphore,
             on_write_callback=on_write_callback,
             verify_on_read=False,
         )
 
         # CDCEngine needs self (CASAddressingEngine internals) — wire after init
         self._cdc = CDCEngine(self)
+
+        # GC: metastore injected later via set_metastore() — not available at construction.
+        self._gc = CASGarbageCollector(self)
+
+    def set_metastore(self, metastore: Any) -> None:
+        """Inject metastore reference for reachability-based GC."""
+        self._gc.set_metastore(metastore)
 
     @property
     def name(self) -> str:

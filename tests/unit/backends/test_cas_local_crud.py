@@ -6,8 +6,7 @@ used InMemoryBlobTransport.
 
 Tests cover:
 - write/read roundtrip with hash verification
-- Deduplication (same content → same hash, ref_count increments)
-- ref_count tracking and delete
+- Deduplication (same content → same hash)
 - content_exists / get_content_size
 - stream_content / write_stream / batch_read
 - Directory operations (mkdir, rmdir, is_directory, list_dir)
@@ -18,7 +17,6 @@ References:
     - Issue #1323: CAS x Backend orthogonal composition
 """
 
-import threading
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,7 +26,6 @@ from nexus.backends.transports.local_transport import LocalBlobTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
-from nexus.lib.semaphore import PythonVFSSemaphore
 
 
 @pytest.fixture
@@ -46,14 +43,12 @@ def backend_with_features(transport):
     """CASAddressingEngine with all Feature DI enabled."""
     cache = SimpleCache()
     bloom = SimpleBloom()
-    semaphore = PythonVFSSemaphore()
     callback = MagicMock()
     return CASAddressingEngine(
         transport,
         backend_name="test-local-features",
         bloom_filter=bloom,
         content_cache=cache,
-        meta_semaphore=semaphore,
         on_write_callback=callback,
     )
 
@@ -124,30 +119,12 @@ class TestDeduplication:
         r2 = backend.write_content(b"dedup")
         assert r1.content_id == r2.content_id
 
-    def test_ref_count_increments(self, backend):
-        r1 = backend.write_content(b"dedup")
-        backend.write_content(b"dedup")
-        ref = backend.get_ref_count(r1.content_id)
-        assert ref == 2
-
-    def test_ref_count_starts_at_one(self, backend):
-        r = backend.write_content(b"single")
-        assert backend.get_ref_count(r.content_id) == 1
-
 
 class TestDeleteContent:
     def test_delete_single_ref(self, backend):
         r = backend.write_content(b"del me")
         backend.delete_content(r.content_id)
         assert not backend.content_exists(r.content_id)
-
-    def test_delete_decrements_ref_count(self, backend):
-        r = backend.write_content(b"shared")
-        backend.write_content(b"shared")
-        backend.delete_content(r.content_id)
-        # Should still exist with ref_count=1
-        assert backend.content_exists(r.content_id)
-        assert backend.get_ref_count(r.content_id) == 1
 
     def test_delete_nonexistent_raises(self, backend):
         with pytest.raises(NexusFileNotFoundError):
@@ -176,12 +153,6 @@ class TestGetContentSize:
     def test_size_nonexistent_raises(self, backend):
         with pytest.raises(NexusFileNotFoundError):
             backend.get_content_size("deadbeef" * 8)
-
-
-class TestGetRefCount:
-    def test_ref_count_nonexistent_raises(self, backend):
-        with pytest.raises(NexusFileNotFoundError):
-            backend.get_ref_count("deadbeef" * 8)
 
 
 # === Streaming ===
@@ -298,77 +269,6 @@ class TestContentCache:
         b = backend_with_features
         r = b.write_content(b"write cache")
         assert b._cache.get(r.content_id) == b"write cache"
-
-
-# === Feature DI: Stripe Lock ===
-
-
-class TestMetaSemaphore:
-    def test_concurrent_writes_safe(self, tmp_path):
-        """50 threads writing same content should produce ref_count=50."""
-        transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
-        semaphore = PythonVFSSemaphore()
-        backend = CASAddressingEngine(
-            transport, backend_name="concurrent", meta_semaphore=semaphore
-        )
-
-        content = b"concurrent-content"
-        results = []
-        errors = []
-
-        def _write():
-            try:
-                r = backend.write_content(content)
-                results.append(r)
-            except Exception as e:
-                errors.append(e)
-
-        threads = [threading.Thread(target=_write) for _ in range(50)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert not errors, f"Errors occurred: {errors}"
-        assert len(results) == 50
-
-        # All results should have the same hash
-        hashes = {r.content_id for r in results}
-        assert len(hashes) == 1
-
-        # ref_count should be exactly 50
-        content_hash = results[0].content_id
-        ref_count = backend.get_ref_count(content_hash)
-        assert ref_count == 50
-
-    def test_concurrent_different_content(self, tmp_path):
-        """50 threads writing different content should all succeed."""
-        transport = LocalBlobTransport(root_path=tmp_path, fsync=False)
-        semaphore = PythonVFSSemaphore()
-        backend = CASAddressingEngine(
-            transport, backend_name="concurrent", meta_semaphore=semaphore
-        )
-
-        results = []
-        errors = []
-
-        def _write(i):
-            try:
-                r = backend.write_content(f"content-{i}".encode())
-                results.append(r)
-            except Exception as e:
-                errors.append(e)
-
-        threads = [threading.Thread(target=_write, args=(i,)) for i in range(50)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-
-        assert not errors
-        assert len(results) == 50
-        hashes = {r.content_id for r in results}
-        assert len(hashes) == 50  # All different content
 
 
 # === Feature DI: on_write_callback ===

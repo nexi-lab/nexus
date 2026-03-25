@@ -122,9 +122,6 @@ class IsolatedBackend(Backend):
     def get_content_size(self, content_id: str, context: "Any | None" = None) -> int:
         return cast(int, self._call("get_content_size", content_id, context=context))
 
-    def get_ref_count(self, content_id: str, context: "Any | None" = None) -> int:
-        return cast(int, self._call("get_ref_count", content_id, context=context))
-
     # ── Directory operations ────────────────────────────────────────────
 
     def mkdir(

@@ -17,9 +17,9 @@ Storage structure:
     cas/
     ├── ab/cd/
     │   ├── abcd1234...         # Single-blob OR chunk content
-    │   ├── abcd1234...meta     # Metadata: {"ref_count": N, "is_chunk": true}
+    │   ├── abcd1234...meta     # Metadata: {"is_chunk": true}
     │   ├── 5678efgh...         # Chunked manifest (JSON)
-    │   └── 5678efgh...meta     # {"ref_count": N, "is_chunked_manifest": true}
+    │   └── 5678efgh...meta     # {"is_chunked_manifest": true, "chunk_count": N}
 """
 
 from __future__ import annotations
@@ -95,11 +95,7 @@ class ChunkingStrategy(Protocol):
         ...
 
     def delete_chunked(self, content_hash: str, context: "OperationContext | None" = None) -> None:
-        """Delete chunked content, handling chunk reference counts."""
-        ...
-
-    def release_chunked(self, content_hash: str) -> None:
-        """Decrement ref_count for manifest + cascade to chunks (no physical delete)."""
+        """Delete chunked content (manifest + all chunks)."""
         ...
 
     def write_chunked_partial(
@@ -195,7 +191,7 @@ class CDCEngine:
 
     Uses CASAddressingEngine's internal methods directly:
     ``_transport``, ``_blob_key()``, ``_read_meta()``, ``_write_meta()``,
-    ``_meta_update_locked()``, ``_meta_semaphore``, ``_bloom``.
+    ``_write_meta()``, ``_bloom``.
     """
 
     __slots__ = ("_backend", "threshold", "min_chunk", "avg_chunk", "max_chunk", "workers")
@@ -270,15 +266,15 @@ class CDCEngine:
         key = b._blob_key(manifest_hash)
         b._transport.put_blob(key, manifest_bytes)
 
-        def _update_manifest(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = meta.get("ref_count", 0) + 1
-            meta["size"] = len(content)  # original content size
-            meta["is_chunked_manifest"] = True
-            meta["chunk_count"] = len(chunk_infos)
-            return meta
+        # Write .meta with manifest flags (for GC to identify manifests)
+        manifest_meta: dict[str, Any] = {
+            "size": len(content),
+            "is_chunked_manifest": True,
+            "chunk_count": len(chunk_infos),
+        }
+        b._write_meta(manifest_hash, manifest_meta)
 
-        updated = b._meta_update_locked(manifest_hash, _update_manifest)
-        if updated.get("ref_count", 0) == 1 and b._bloom is not None:
+        if b._bloom is not None:
             b._bloom.add(manifest_hash)
 
         written = len(chunk_infos) - dedup_count
@@ -307,16 +303,11 @@ class CDCEngine:
         if not deduped:
             b._transport.put_blob(key, chunk_bytes)
 
-        # ref_count MUST always increment (new manifest references this chunk)
-        def _update(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = meta.get("ref_count", 0) + 1
-            meta["size"] = len(chunk_bytes)
-            meta["is_chunk"] = True
-            return meta
+        # Write .meta with is_chunk flag (for GC to identify chunks)
+        meta: dict[str, Any] = {"size": len(chunk_bytes), "is_chunk": True}
+        b._write_meta(chunk_hash, meta)
 
-        updated = b._meta_update_locked(chunk_hash, _update)
-        is_new = updated.get("ref_count", 0) == 1
-        if is_new and b._bloom is not None:
+        if not deduped and b._bloom is not None:
             b._bloom.add(chunk_hash)
         return chunk_hash, deduped
 
@@ -330,7 +321,7 @@ class CDCEngine:
         """Partial write: splice ``buf`` at ``offset`` within chunked content.
 
         Only rewrites affected chunks. Unaffected chunks are reused
-        (ref_count incremented for the new manifest).
+        (referenced by the new manifest).
 
         Returns new manifest hash.
         """
@@ -406,14 +397,7 @@ class CDCEngine:
                     ChunkInfo(chunk_hash=chunk_hash, offset=region_start + _co, length=_cl)
                 )
 
-        # Increment ref_count for reused prefix/suffix chunks
-        for ci in prefix_chunks + suffix_chunks:
-
-            def _inc_ref(meta: dict[str, Any]) -> dict[str, Any]:
-                meta["ref_count"] = meta.get("ref_count", 0) + 1
-                return meta
-
-            b._meta_update_locked(ci.chunk_hash, _inc_ref)
+        # Reused chunks need no ref_count update — GC uses reachability scan.
 
         # Build new manifest
         all_chunks = tuple(prefix_chunks) + tuple(new_chunk_infos) + tuple(suffix_chunks)
@@ -436,15 +420,15 @@ class CDCEngine:
         mkey = b._blob_key(manifest_hash)
         b._transport.put_blob(mkey, manifest_bytes)
 
-        def _update_manifest(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = meta.get("ref_count", 0) + 1
-            meta["size"] = total_size
-            meta["is_chunked_manifest"] = True
-            meta["chunk_count"] = len(all_chunks)
-            return meta
+        # Write .meta with manifest flags
+        manifest_meta: dict[str, Any] = {
+            "size": total_size,
+            "is_chunked_manifest": True,
+            "chunk_count": len(all_chunks),
+        }
+        b._write_meta(manifest_hash, manifest_meta)
 
-        updated = b._meta_update_locked(manifest_hash, _update_manifest)
-        if updated.get("ref_count", 0) == 1 and b._bloom is not None:
+        if b._bloom is not None:
             b._bloom.add(manifest_hash)
 
         logger.info(
@@ -558,9 +542,27 @@ class CDCEngine:
     # === Query ===
 
     def is_chunked(self, content_hash: str) -> bool:
-        """Check if content_hash refers to a chunked manifest."""
+        """Check if content_hash refers to a chunked manifest.
+
+        Fast path: non-CDC content has no .meta file, so blob_exists (~5μs stat)
+        short-circuits before the full get_blob+json.loads path (~30μs).
+        Meta cache also short-circuits on repeated checks.
+        """
+        b = self._backend
+        # Meta cache hit → skip I/O entirely
+        if b._meta_cache is not None:
+            cached = b._meta_cache.get(content_hash)
+            if cached is not None:
+                return bool(cached.get("is_chunked_manifest", False))
+        # No .meta file → definitely not chunked (cheap stat vs expensive get_blob)
+        meta_key = b._meta_key(content_hash)
+        if not b._transport.blob_exists(meta_key):
+            # Cache the negative result to avoid repeated stat
+            if b._meta_cache is not None:
+                b._meta_cache[content_hash] = {"size": 0}
+            return False
         try:
-            meta = self._backend._read_meta(content_hash)
+            meta = b._read_meta(content_hash)
             return bool(meta.get("is_chunked_manifest", False))
         except Exception:
             return False
@@ -569,89 +571,43 @@ class CDCEngine:
         """Get original file size from manifest metadata."""
         return int(self._backend._read_meta(content_hash).get("size", 0))
 
-    # === Release (ref_count-- only, no physical delete) ===
-
-    def release_chunked(self, content_hash: str) -> None:
-        """Decrement ref_count for manifest; cascade to chunks if manifest reaches 0.
-
-        Unlike ``delete_chunked``, this never physically removes blobs.
-        Physical cleanup is deferred to CASGarbageCollector (PR #1320).
-        """
-        b = self._backend
-
-        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
-            if meta["ref_count"] == 0:
-                meta["released_at"] = time.time()
-            return meta
-
-        updated = b._meta_update_locked(content_hash, _dec_ref)
-
-        if updated.get("ref_count", 0) > 0:
-            return
-
-        # Manifest reached 0 — cascade ref_count-- to all chunks
-        key = b._blob_key(content_hash)
-        try:
-            manifest_data, _ = b._transport.get_blob(key)
-        except Exception:
-            logger.warning("release_chunked: manifest blob missing for %s", content_hash[:16])
-            return
-        manifest = ChunkedReference.from_json(manifest_data)
-
-        with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            futures = [
-                executor.submit(b._meta_update_locked, ci.chunk_hash, _dec_ref)
-                for ci in manifest.chunks
-            ]
-            for future in as_completed(futures):
-                future.result()  # propagate exceptions
-
     # === Delete ===
 
     def delete_chunked(self, content_hash: str, context: OperationContext | None = None) -> None:
-        """Delete chunked content, handling chunk reference counts."""
+        """Delete chunked content — unconditionally delete manifest + all chunks."""
         b = self._backend
 
-        # Read manifest BEFORE release — release may delete the blob
         key = b._blob_key(content_hash)
         manifest_data, _ = b._transport.get_blob(key)
         manifest = ChunkedReference.from_json(manifest_data)
 
-        deleted = self._release_blob(content_hash)
-        if not deleted:
-            logger.debug(f"Decremented manifest {content_hash[:16]}... ref_count")
-            return
+        # Delete manifest blob + meta
+        with contextlib.suppress(Exception):
+            b._transport.delete_blob(key)
+        with contextlib.suppress(Exception):
+            b._transport.delete_blob(b._meta_key(content_hash))
+        if b._meta_cache is not None:
+            b._meta_cache.pop(content_hash, None)
 
-        # Last reference — parallelize chunk releases
+        # Delete all chunks in parallel
+        def _delete_chunk(ci: ChunkInfo) -> None:
+            with contextlib.suppress(Exception):
+                b._transport.delete_blob(b._blob_key(ci.chunk_hash))
+            with contextlib.suppress(Exception):
+                b._transport.delete_blob(b._meta_key(ci.chunk_hash))
+            if b._meta_cache is not None:
+                b._meta_cache.pop(ci.chunk_hash, None)
+
         with ThreadPoolExecutor(max_workers=self.workers) as executor:
-            futures = [executor.submit(self._release_blob, ci.chunk_hash) for ci in manifest.chunks]
+            futures = [executor.submit(_delete_chunk, ci) for ci in manifest.chunks]
             for future in as_completed(futures):
                 future.result()
 
         logger.info(
-            f"Deleted chunked content {content_hash[:16]}... "
-            f"({manifest.chunk_count} chunks unreferenced)"
+            "Deleted chunked content %s... (%d chunks)",
+            content_hash[:16],
+            manifest.chunk_count,
         )
-
-    def _release_blob(self, content_hash: str) -> bool:
-        """Decrement ref_count; delete blob+meta at zero. Returns True if deleted."""
-        b = self._backend
-        key = b._blob_key(content_hash)
-
-        def _do_release() -> bool:
-            meta = b._read_meta(content_hash)
-            if meta.get("ref_count", 1) <= 1:
-                with contextlib.suppress(Exception):
-                    b._transport.delete_blob(key)
-                with contextlib.suppress(Exception):
-                    b._transport.delete_blob(b._meta_key(content_hash))
-                return True
-            meta["ref_count"] = meta["ref_count"] - 1
-            b._write_meta(content_hash, meta)
-            return False
-
-        return b._with_meta_lock(content_hash, _do_release)
 
     # === Chunking algorithms ===
 

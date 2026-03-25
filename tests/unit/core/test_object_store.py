@@ -80,9 +80,6 @@ class MockBackend(Backend):
             raise NexusFileNotFoundError(path=content_hash, message="Content not found")
         return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash, context=None) -> int:
-        return self._ref_counts.get(content_hash, 0)
-
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
         return None
 

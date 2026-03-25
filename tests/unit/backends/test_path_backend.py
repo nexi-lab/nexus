@@ -207,7 +207,7 @@ class TestPathAddressingEngineDeleteContent:
 
 
 class TestPathAddressingEngineContentOps:
-    """Test content_exists, get_content_size, get_ref_count."""
+    """Test content_exists, get_content_size."""
 
     def test_content_exists(self, backend: PathAddressingEngine):
         ctx = _make_context("file.txt")
@@ -223,9 +223,6 @@ class TestPathAddressingEngineContentOps:
         ctx = _make_context("file.txt")
         backend.write_content(b"size test", context=ctx)
         assert backend.get_content_size("hash", context=ctx) == 9
-
-    def test_get_ref_count_always_one(self, backend: PathAddressingEngine):
-        assert backend.get_ref_count("hash") == 1
 
 
 class TestPathAddressingEngineStreaming:

@@ -263,13 +263,12 @@ class TestCASLocalBackendChunkedWriteRead:
         # Manifest should be deleted
         assert not _hash_to_path(backend, content_hash).exists()
 
-        # Chunks should be deleted (ref_count was 1)
+        # Chunks should be deleted
         for ch in chunk_hashes:
             assert not _hash_to_path(backend, ch).exists()
 
-    def test_chunked_delete_preserves_shared_chunks(self, backend: CASLocalBackend) -> None:
-        """Test that deleting one file preserves chunks used by another."""
-        # Create two identical large files (will share all chunks)
+    def test_chunked_dedup_same_hash(self, backend: CASLocalBackend) -> None:
+        """Test that writing identical chunked content produces same hash."""
         large_content = os.urandom(CDC_THRESHOLD_BYTES + 1024 * 1024)
 
         # Write twice (same content = same chunks)
@@ -278,16 +277,6 @@ class TestCASLocalBackendChunkedWriteRead:
 
         # Both should have same manifest hash (same content)
         assert hash1 == hash2
-
-        # But ref_count should be 2
-        metadata = backend._read_meta(hash1)
-        assert metadata["ref_count"] == 2
-
-        # Delete once
-        backend.delete_content(hash1)
-
-        # Should still be readable (ref_count was 2, now 1)
-        assert backend.read_content(hash2) == large_content
 
     def test_get_content_size_chunked(self, backend: CASLocalBackend) -> None:
         """Test that get_content_size returns original size for chunked content."""
@@ -333,7 +322,7 @@ class TestBackwardCompatibility:
         content_path = _hash_to_path(backend, content_hash)
         content_path.parent.mkdir(parents=True, exist_ok=True)
         content_path.write_bytes(content)
-        _write_metadata(backend, content_hash, {"ref_count": 1, "size": len(content)})
+        _write_metadata(backend, content_hash, {"size": len(content)})
 
         # Should NOT be detected as chunked
         assert not backend._cdc.is_chunked(content_hash)

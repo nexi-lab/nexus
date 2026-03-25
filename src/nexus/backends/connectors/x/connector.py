@@ -928,23 +928,6 @@ class XConnectorBackend(
         # Return approximate size (tweets are usually small)
         return 1024
 
-    def get_ref_count(
-        self,
-        content_hash: str,
-        context: "OperationContext | None" = None,
-    ) -> int:
-        """
-        Get reference count (always 1 for X connector).
-
-        Args:
-            content_hash: Ignored for X connector
-            context: Operation context
-
-        Returns:
-            Reference count (always 1)
-        """
-        return 1
-
     def mkdir(
         self,
         path: str,

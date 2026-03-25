@@ -90,7 +90,7 @@ class Backend(ObjectStoreABC):
     Content Operations:
     - Files stored by SHA-256 hash
     - Automatic deduplication (same content = stored once)
-    - Reference counting for safe deletion
+    - Reachability-based GC for safe cleanup
 
     Directory Operations:
     - Virtual directory structure (metadata-based or backend-native)
@@ -270,8 +270,8 @@ class Backend(ObjectStoreABC):
         """
         Write content to storage and return a WriteResult.
 
-        If content already exists (same identifier), increments reference count
-        instead of writing duplicate data.
+        If content already exists (same identifier), skips the write
+        (CAS deduplication).
 
         Args:
             content: File content as bytes
@@ -441,8 +441,9 @@ class Backend(ObjectStoreABC):
         """
         Delete content by identifier.
 
-        Decrements reference count. Only deletes actual data when the
-        reference count reaches zero.
+        Physically deletes the content blob. For CAS backends, this is
+        typically called by explicit delete_content, not by kernel
+        (kernel uses metadata-only deletion with GC for cleanup).
 
         Args:
             content_id: Opaque content identifier
@@ -487,22 +488,6 @@ class Backend(ObjectStoreABC):
             NexusFileNotFoundError: If content does not exist.
         """
         pass
-
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get reference count for content.
-
-        This is a service-level method, NOT part of the kernel contract.
-
-        Subclasses should override if they support reference counting.
-
-        Args:
-            content_id: Opaque content identifier
-            context: Operation context (optional)
-
-        Returns:
-            Number of references.
-        """
-        raise NotImplementedError(f"Backend '{self.name}' does not implement get_ref_count")
 
     # === Directory Operations ===
 

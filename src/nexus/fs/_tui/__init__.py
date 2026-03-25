@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from contextlib import suppress
 from typing import Any, cast
 
 from textual.app import App, ComposeResult
@@ -1017,7 +1018,7 @@ class PlaygroundApp(App[None]):
         if connector_name == "gmail_connector":
             return "gmail://inbox"
         if connector_name == "gcalendar_connector":
-            return "calendar://primary"
+            return "gws://calendar"
         if connector_name == "slack_connector":
             return "slack://workspace"
         if connector_name == "x_connector":
@@ -1292,6 +1293,9 @@ class PlaygroundApp(App[None]):
 
         if width < MIN_WIDTH or height < MIN_HEIGHT:
             too_small.display = True
+            for widget_id in ("#playground-banner", "#empty-state", "#main-area", "#status-bar"):
+                with suppress(Exception):
+                    self.query_one(widget_id).display = False
             too_small.update(
                 f"[bold]Terminal too small[/bold]\n"
                 f"Need {MIN_WIDTH}x{MIN_HEIGHT}, got {width}x{height}\n"
@@ -1300,6 +1304,13 @@ class PlaygroundApp(App[None]):
             return
         else:
             too_small.display = False
+            try:
+                self.query_one("#playground-banner", Static).display = True
+                self.query_one("#main-area", Horizontal).display = True
+                self.query_one("#status-bar", Static).display = True
+                self.query_one("#empty-state", Static).display = not bool(self._mount_points)
+            except Exception:
+                pass
 
         # Auto-collapse mount panel at narrow widths
         if width < MOUNT_PANEL_COLLAPSE_WIDTH:

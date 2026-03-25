@@ -486,6 +486,18 @@ class TestPlaygroundApp:
                 banner = app.query_one("#playground-banner")
                 assert "Restored 1 mount" in str(banner.render())
 
+    @pytest.mark.asyncio
+    async def test_too_small_hides_main_content(self, tmp_path):
+        """Too-small terminals should show only the warning, not stacked content underneath."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(99, 22)) as pilot:
+            await pilot.pause(delay=0.5)
+            assert app.query_one("#too-small-message").display is True
+            assert app.query_one("#playground-banner").display is False
+            assert app.query_one("#main-area").display is False
+            assert app.query_one("#status-bar").display is False
+
     def test_auth_guidance_for_s3(self):
         """S3 auth guidance points users to the guided CLI flow."""
         app = PlaygroundApp(uris=())
@@ -502,6 +514,8 @@ class TestPlaygroundApp:
         assert "gcs://project/bucket" in names
         assert "gws://drive" in names
         assert "gws://gmail" in names
+        assert "gws://calendar" in names
+        assert "calendar://primary" not in names
 
     @pytest.mark.asyncio
     async def test_resolve_mount_user_id_prefers_single_google_credential(self):

@@ -1309,7 +1309,13 @@ class NexusFS(  # type: ignore[misc]
                 if overlay_config:
                     meta = self._overlay_resolver.resolve_read(path, overlay_config)
 
-            if meta is None or meta.etag is None:
+            if meta is None:
+                raise NexusFileNotFoundError(path)
+
+            # Issue #3194: Path-based backends (path_local, path_gcs, path_s3)
+            # store metadata without content_hash/etag. Reads go through
+            # backend_path in the OperationContext, not CAS.
+            if meta.etag is None and not (read_context and read_context.backend_path):
                 raise NexusFileNotFoundError(path)
 
             # Issue #1264: Reject whiteout markers (file was deleted in overlay)
@@ -1318,7 +1324,7 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag, context=read_context)
+            content = route.backend.read_content(meta.etag or "", context=read_context)
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 

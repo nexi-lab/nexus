@@ -136,40 +136,25 @@ class PlaygroundApp(App[None]):
                 empty.update(f"[red]Mount failed:[/red] {exc}")
                 return None
 
-        # No URIs — try auto-discover from state dir
+        # No URIs — auto-discover from mounts.json in state dir
+        import json
+
         state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
             __import__("tempfile").gettempdir(), "nexus-fs"
         )
-        db_path = os.path.join(state_dir, "metadata.db")
-        if os.path.exists(db_path):
+        mounts_file = os.path.join(state_dir, "mounts.json")
+        if os.path.exists(mounts_file):
             try:
-                from nexus.contracts.constants import ROOT_ZONE_ID
-                from nexus.contracts.types import OperationContext
-                from nexus.core.config import BrickServices, KernelServices, PermissionConfig
-                from nexus.core.nexus_fs import NexusFS
-                from nexus.core.router import PathRouter
-                from nexus.fs._facade import SlimNexusFS
-                from nexus.fs._sqlite_meta import SQLiteMetastore
-
-                metastore = SQLiteMetastore(db_path)
-                router = PathRouter(metastore)
-                ctx = OperationContext(
-                    user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
-                )
-                kernel = NexusFS(
-                    metadata_store=metastore,
-                    permissions=PermissionConfig(enforce=False),
-                    kernel_services=KernelServices(router=router),
-                    brick_services=BrickServices(),
-                    init_cred=ctx,
-                )
-                return SlimNexusFS(kernel)
+                with open(mounts_file) as f:
+                    saved_uris = json.load(f)
+                if saved_uris:
+                    return self._build_direct_fs(tuple(saved_uris))
             except Exception:
                 pass  # Fall through to empty state
 
         empty = self.query_one("#empty-state", Static)
         empty.update(
-            "[bold]No mounts specified[/bold]\n\n"
+            "[bold]No mounts found[/bold]\n\n"
             "nexus-fs playground s3://bucket\n"
             "nexus-fs playground local://./data\n"
             "nexus-fs playground s3://bucket local://./data"

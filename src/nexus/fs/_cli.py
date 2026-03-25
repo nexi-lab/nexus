@@ -64,17 +64,21 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
 
         return await run_all_checks(fs=fs)
 
-    # Use a daemon thread pool so orphaned credential-validation threads
-    # don't block normal exit (boto3 STS / google-auth can be slow).
+    # Credential validation runs in threads (asyncio.to_thread). If a check
+    # hangs (slow DNS, unresponsive metadata service), the thread can't be
+    # cancelled. We use shutdown(wait=False, cancel_futures=True) to abandon
+    # hung threads so the process exits cleanly after rendering.
     import concurrent.futures
 
-    loop = asyncio.new_event_loop()
-    loop.set_default_executor(
-        concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="doctor")
+    executor = concurrent.futures.ThreadPoolExecutor(
+        max_workers=8, thread_name_prefix="doctor"
     )
+    loop = asyncio.new_event_loop()
+    loop.set_default_executor(executor)
     try:
         results = loop.run_until_complete(_run())
     finally:
+        executor.shutdown(wait=False, cancel_futures=True)
         loop.close()
 
     render_doctor(results)

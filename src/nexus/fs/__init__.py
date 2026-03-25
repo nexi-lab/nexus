@@ -138,6 +138,16 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     empty_hash = hash_content(b"")
     now = datetime.now(UTC)
 
+    # Persist mount URIs so playground can auto-discover them later
+    import json
+
+    mounts_file = os.path.join(state_dir, "mounts.json")
+    try:
+        with open(mounts_file, "w") as f:
+            json.dump(list(uris), f)
+    except OSError:
+        pass  # Best-effort; don't fail mount() over this
+
     # Create DT_MOUNT entry for first backend at its derived path
     if _first_mp != "/":
         kernel.router.add_mount(_first_mp, _first_backend)

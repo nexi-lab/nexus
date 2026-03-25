@@ -92,19 +92,6 @@ class TestBackendHandlerInterface:
         """Test that thread_safe defaults to True."""
         assert local_backend.thread_safe is True
 
-    def test_connect_returns_success(self, local_backend):
-        """Test that connect() returns success for stateless backends."""
-        result = local_backend.connect()
-
-        assert isinstance(result, HandlerStatusResponse)
-        assert result.success is True
-        assert result.details.get("backend") == "local"
-
-    def test_disconnect_is_noop(self, local_backend):
-        """Test that disconnect() is a no-op for stateless backends."""
-        # Should not raise any exception
-        local_backend.disconnect()
-
     def test_check_connection_success(self, local_backend):
         """Test that check_connection() returns success for healthy backend."""
         result = local_backend.check_connection()
@@ -167,11 +154,7 @@ class TestBackendHandlerInterfaceInheritance:
         # Should have all handler interface methods
         assert hasattr(backend, "is_connected")
         assert hasattr(backend, "thread_safe")
-        assert hasattr(backend, "connect")
-        assert hasattr(backend, "disconnect")
         assert hasattr(backend, "check_connection")
 
         # Methods should be callable
-        assert callable(backend.connect)
-        assert callable(backend.disconnect)
         assert callable(backend.check_connection)

@@ -161,10 +161,6 @@ class ConnectorProtocol(
 
     # --- Connection lifecycle ---
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse": ...
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None: ...
-
     def check_connection(
         self, context: "OperationContext | None" = None
     ) -> "HandlerStatusResponse": ...

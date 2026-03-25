@@ -32,7 +32,7 @@ def _cfg(**overrides: object) -> IsolationConfig:
 def backend(tmp_path) -> Iterator[IsolatedBackend]:
     b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": str(tmp_path / "store")}))
     yield b
-    b.disconnect()
+    b.close()
 
 
 class TestFullRoundTrip:
@@ -108,16 +108,16 @@ class TestPoolRestartRecovery:
                 wr = backend.write_content(b"after-restart")
                 assert wr.content_id  # WriteResult with content_hash
             finally:
-                backend.disconnect()
+                backend.close()
 
 
 class TestShutdownAndReconnect:
-    def test_disconnect_then_error(self) -> None:
-        """After disconnect, calls raise BackendError (not crash)."""
+    def test_close_then_error(self) -> None:
+        """After close, calls raise BackendError (not crash)."""
         from nexus.contracts.exceptions import BackendError
 
         with tempfile.TemporaryDirectory() as td:
             b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": td + "/store"}))
-            b.disconnect()
+            b.close()
             with pytest.raises(BackendError):
                 b.write_content(b"after-shutdown")

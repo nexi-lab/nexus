@@ -132,7 +132,7 @@ class TestSysModulesIsolation:
         """Backend modifies sys.modules in the worker → host is unchanged."""
         backend = IsolatedBackend(_cfg(_HELPER_MOD, "SysModulesMutator"))
         try:
-            status = backend.connect()
+            status = backend.check_connection()
             assert status.success is True
             # Worker has the marker
             check = backend._pool.submit("check_connection", (), {"context": None})
@@ -140,7 +140,7 @@ class TestSysModulesIsolation:
             # Host does NOT have the marker
             assert "__isolation_test_marker__" not in sys.modules
         finally:
-            backend.disconnect()
+            backend.close()
 
 
 class TestGlobalStateIsolation:
@@ -148,12 +148,12 @@ class TestGlobalStateIsolation:
         """Backend sets a class variable in the worker → host copy is unchanged."""
         backend = IsolatedBackend(_cfg(_HELPER_MOD, "GlobalMutator"))
         try:
-            status = backend.connect()
+            status = backend.check_connection()
             assert status.success is True
             # Host-side flag should still be False
             assert GlobalMutator._GLOBAL_FLAG is False
         finally:
-            backend.disconnect()
+            backend.close()
 
 
 class TestCrashContainment:
@@ -161,21 +161,21 @@ class TestCrashContainment:
         """Backend raises SystemExit → IsolationCallError, host continues."""
         backend = IsolatedBackend(_cfg(_HELPER_MOD, "CrashingBackend"))
         try:
-            status = backend.connect()
+            status = backend.check_connection()
             # SystemExit in worker should be caught and reported as failure
             assert status.success is False
         finally:
-            backend.disconnect()
+            backend.close()
 
 
 class TestImportFailure:
     def test_nonexistent_module_graceful_error(self) -> None:
         """Bad module path → IsolationStartupError (not host crash)."""
         backend = IsolatedBackend(_cfg("no.such.module.at.all", "FakeClass"))
-        status = backend.connect()
+        status = backend.check_connection()
         assert status.success is False
         assert "no.such.module.at.all" in (status.error_message or "")
-        backend.disconnect()
+        backend.close()
 
 
 class TestCrossBrickIsolation:
@@ -191,5 +191,5 @@ class TestCrossBrickIsolation:
             exists = b2.content_exists(wr1.content_id)
             assert exists is False
         finally:
-            b1.disconnect()
-            b2.disconnect()
+            b1.close()
+            b2.close()

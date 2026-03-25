@@ -4,7 +4,7 @@ This module provides a single, unified interface for all storage backends,
 combining content-addressable storage (CAS) with directory operations.
 
 Backend inherits from ObjectStoreABC (the kernel contract) and adds
-service-level methods (connect, disconnect, describe, capabilities, etc.).
+service-level methods (describe, capabilities, check_connection, etc.).
 """
 
 from abc import abstractmethod
@@ -79,7 +79,7 @@ class Backend(ObjectStoreABC):
     Unified backend interface for storage operations.
 
     Inherits from ObjectStoreABC (the kernel contract) and adds service-level
-    methods: connect, disconnect, check_connection, describe, capabilities,
+    methods: check_connection, describe, capabilities,
     get_object_type, get_object_id, get_file_info, list_dir.
 
     All storage backends (LocalFS, S3, GCS, etc.) implement this interface.
@@ -221,47 +221,8 @@ class Backend(ObjectStoreABC):
 
     # === Connection Management ===
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
-        """
-        Establish connection to the backend.
-
-        For stateless backends (e.g., local filesystem), this is a no-op.
-        For stateful backends (e.g., OAuth services, databases), this
-        initializes the connection and validates credentials.
-
-        Args:
-            context: Operation context for user-scoped backends (OAuth)
-
-        Returns:
-            HandlerStatusResponse with connection status
-
-        Note:
-            Default implementation returns success for stateless backends.
-            Override in backends that require connection initialization.
-        """
-        return HandlerStatusResponse(success=True, details={"backend": self.name})
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None:  # noqa: B027
-        """Close connection and release resources.
-
-        For stateless backends, this is a no-op.
-        For stateful backends, this closes connections and cleans up.
-
-        Args:
-            context: Operation context for user-scoped backends
-
-        Note:
-            Default implementation is no-op for stateless backends.
-            Override in backends that hold connections or resources.
-        """
-
     def close(self) -> None:
-        """Release resources (ObjectStoreABC lifecycle).
-
-        Delegates to ``disconnect()`` for backward compatibility with
-        backends that override ``disconnect()``.
-        """
-        self.disconnect()
+        """Release resources (ObjectStoreABC lifecycle)."""
 
     def check_connection(
         self, context: "OperationContext | None" = None

@@ -236,12 +236,6 @@ class DelegatingBackend(Backend):
 
     # === Connection Lifecycle (delegate to inner) ===
 
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
-        return self._inner.connect(context=context)
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
-        self._inner.disconnect(context=context)
-
     def check_connection(
         self, context: "OperationContext | None" = None
     ) -> "HandlerStatusResponse":

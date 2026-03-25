@@ -193,12 +193,6 @@ class FailingBackend(Backend):
 
     # === Connection Management ===
 
-    def connect(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
-        return self._inner.connect(context)
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
-        self._inner.disconnect(context)
-
     def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
         return self._inner.check_connection(context)
 

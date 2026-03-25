@@ -431,7 +431,6 @@ def _boot_system_services(
     # AgentRegistry is a kernel-knows sentinel, created at link-time.
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 
-
     # =====================================================================
     # Assemble result
     # =====================================================================

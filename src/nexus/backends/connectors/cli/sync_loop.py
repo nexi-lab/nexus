@@ -196,6 +196,11 @@ class ConnectorSyncLoop:
             state.record_success(files_synced=scanned)
             if scanned > 0:
                 logger.debug("[CONNECTOR_SYNC] %s: full sync scanned %d files", mp, scanned)
+
+            # Populate directory_entries for metastore-first listing (Issue #3266).
+            # sync_mount writes to file_paths/content cache but not to the sparse
+            # directory index. Without this, sys_readdir falls through to the live API.
+            await self._populate_directory_entries(mp, backend)
         except Exception as e:
             state.record_failure(str(e))
             logger.warning("[CONNECTOR_SYNC] %s: full sync failed: %s", mp, e)
@@ -244,6 +249,9 @@ class ConnectorSyncLoop:
         start = time.monotonic()
         synced = await self._write_delta_to_metastore(mp, backend, delta)
         elapsed_ms = (time.monotonic() - start) * 1000
+
+        # Populate directory entries for metastore-first listing
+        await self._populate_directory_entries(mp, backend)
 
         # Notify search daemon for indexing
         await self._notify_new_files(mp, delta.added)
@@ -469,6 +477,97 @@ class ConnectorSyncLoop:
                 metastore.delete(virtual_path)
             except Exception:
                 logger.debug("[CONNECTOR_SYNC] delete failed for %s", virtual_path)
+
+    # --- Directory entry population (Issue #3266) ---
+
+    async def _populate_directory_entries(self, mp: str, backend: Any) -> None:
+        """Populate the sparse directory index for metastore-first listing.
+
+        The BFS sync (sync_mount) writes to file_paths and content cache but
+        NOT to directory_entries. Without directory_entries, sys_readdir falls
+        through to the live API which is slow. This method fills the gap by
+        walking the connector's list_dir and inserting DirectoryEntryModel rows.
+        """
+        loop = asyncio.get_event_loop()
+        try:
+            entries = await loop.run_in_executor(
+                self._executor,
+                lambda: self._collect_directory_entries(mp, backend),
+            )
+            if entries:
+                await loop.run_in_executor(
+                    self._executor,
+                    lambda: self._write_directory_entries(entries),
+                )
+                logger.info(
+                    "[CONNECTOR_SYNC] %s: populated %d directory entries",
+                    mp,
+                    len(entries),
+                )
+        except Exception:
+            logger.debug(
+                "[CONNECTOR_SYNC] %s: directory entry population failed",
+                mp,
+                exc_info=True,
+            )
+
+    def _collect_directory_entries(self, mp: str, backend: Any) -> list[tuple[str, str, str]]:
+        """BFS-walk backend.list_dir and collect (zone_id, parent_path, entry_name) tuples."""
+        entries: list[tuple[str, str, str]] = []
+        queue = [("", mp)]  # (backend_path, virtual_parent)
+
+        while queue:
+            backend_path, virtual_parent = queue.pop(0)
+            try:
+                items = backend.list_dir(backend_path, context=None)
+            except Exception:
+                continue
+
+            for item in items:
+                is_dir = item.endswith("/")
+                name = item.rstrip("/")
+                entries.append(("default", virtual_parent, name + ("/" if is_dir else "")))
+                if is_dir:
+                    child_backend = f"{backend_path}/{name}" if backend_path else name
+                    child_virtual = f"{virtual_parent}/{name}"
+                    queue.append((child_backend, child_virtual))
+
+        return entries
+
+    def _write_directory_entries(self, entries: list[tuple[str, str, str]]) -> None:
+        """Batch-write directory entries to the database."""
+        try:
+            from sqlalchemy import text
+
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return
+
+            from sqlalchemy import create_engine
+
+            engine = create_engine(db_url)
+            with engine.begin() as conn:
+                for zone_id, parent_path, entry_name in entries:
+                    is_dir = entry_name.endswith("/")
+                    clean_name = entry_name.rstrip("/")
+                    entry_type = "dir" if is_dir else "file"
+                    conn.execute(
+                        text("""
+                            INSERT INTO directory_entries (zone_id, parent_path, entry_name, entry_type, created_at, updated_at)
+                            VALUES (:zone_id, :parent_path, :entry_name, :entry_type, NOW(), NOW())
+                            ON CONFLICT (zone_id, parent_path, entry_name) DO UPDATE SET updated_at = NOW()
+                        """),
+                        {
+                            "zone_id": zone_id,
+                            "parent_path": parent_path,
+                            "entry_name": clean_name,
+                            "entry_type": entry_type,
+                        },
+                    )
+        except Exception:
+            logger.debug("[CONNECTOR_SYNC] Failed to write directory entries", exc_info=True)
 
     # --- Search notification (Decision #6A: uses full display paths) ---
 

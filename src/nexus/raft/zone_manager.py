@@ -371,7 +371,7 @@ class ZoneManager:
 
     @property
     def node_id(self) -> int:
-        return self._node_id
+        return int(self._node_id)
 
     def mount(
         self,

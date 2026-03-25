@@ -1,64 +1,46 @@
-# NexusFS Production Distro — Full Distributed Environment
+# NexusFS Federation E2E Test Environment
 # =========================================================================
-# This is the complete NexusFS "distribution" — analogous to a Linux distro
-# that bundles kernel + userland + services into a production-ready stack.
+# Minimal cluster for testing Raft consensus and multi-zone federation.
 #
-# Kernel layer (always running):
+# Services:
 #   - 3-node Raft cluster: 2 full NexusFS nodes + 1 lightweight witness
 #   - Cluster profile: kernel-native storage (Raft/redb), no external PostgreSQL
 #   - Dragonfly CacheStore (embedding cache, Tiger Cache, EventBus)
-#
-# Application layer (always running):
-#   - MCP server (Model Context Protocol for LLM tool use)
-#   - LangGraph agent server (AI agent orchestration)
-#   - Frontend (React web UI)
-#
-# Optional profiles:
-#   - zoekt: Trigram-based code search (sub-50ms on large codebases)
+#   - E2E test runner (same Docker network as cluster)
 #
 # Usage:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
-#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile zoekt up -d
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v
 #
 # Architecture:
-#   ┌───────────────────────────────────────────────────────────────────────────┐
-#   │  Application Layer                                                       │
-#   │  ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐        │
-#   │  │  Frontend   │  │  MCP Server│  │  LangGraph │  │  Zoekt     │        │
-#   │  │  :5173      │  │  :8081     │  │  :2024     │  │  :6070     │        │
-#   │  └──────┬──────┘  └──────┬─────┘  └──────┬─────┘  └────────────┘        │
-#   │         │                │               │                               │
-#   │         └────────────────┼───────────────┘                               │
-#   │                          ▼                                               │
-#   │  ┌─────────────────────────────────────────────────────────────────────┐ │
-#   │  │  Kernel: Full-Node NexusFS Cluster (2 full + 1 witness)            │ │
-#   │  │                                                                     │ │
-#   │  │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐           │ │
-#   │  │  │  nexus-1     │   │  nexus-2     │   │  witness     │           │ │
-#   │  │  │  (Leader)    │◄─►│  (Follower)  │◄─►│  (Vote-only) │           │ │
-#   │  │  │  HTTP :2026  │   │  HTTP :2027  │   │  gRPC :2128  │           │ │
-#   │  │  │  Raft :2126  │   │  Raft :2127  │   │  (no HTTP)   │           │ │
-#   │  │  │  redb+gRPC   │   │  redb+gRPC   │   │  log only    │           │ │
-#   │  │  └──────┬───────┘   └──────┬───────┘   └──────────────┘           │ │
-#   │  │         │                  │                                       │ │
-#   │  │         ▼                  ▼                                       │ │
-#   │  │  ┌────────────────────────────┐  ┌────────────────────────┐       │ │
-#   │  │  │  Raft/redb (RecordStore)   │  │  Dragonfly (CacheStore)│       │ │
-#   │  │  │  Kernel-native storage     │  │  Locks, Events, Cache  │       │ │
-#   │  │  │  (embedded, no ext. DB)    │  │  :6379                 │       │ │
-#   │  │  └────────────────────────────┘  └────────────────────────┘       │ │
-#   │  └─────────────────────────────────────────────────────────────────────┘ │
-#   └───────────────────────────────────────────────────────────────────────────┘
+#   ┌─────────────────────────────────────────────────────────────────────────┐
+#   │  Kernel: Full-Node NexusFS Cluster (2 full + 1 witness)               │
+#   │                                                                         │
+#   │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐               │
+#   │  │  nexus-1     │   │  nexus-2     │   │  witness     │               │
+#   │  │  (Leader)    │◄─►│  (Follower)  │◄─►│  (Vote-only) │               │
+#   │  │  HTTP :2026  │   │  HTTP :2027  │   │  gRPC :2128  │               │
+#   │  │  Raft :2126  │   │  Raft :2127  │   │  (no HTTP)   │               │
+#   │  │  redb+gRPC   │   │  redb+gRPC   │   │  log only    │               │
+#   │  └──────┬───────┘   └──────┬───────┘   └──────────────┘               │
+#   │         │                  │                                           │
+#   │         ▼                  ▼                                           │
+#   │  ┌────────────────────────────┐  ┌────────────────────────┐           │
+#   │  │  Raft/redb (RecordStore)   │  │  Dragonfly (CacheStore)│           │
+#   │  │  Kernel-native storage     │  │  Locks, Events, Cache  │           │
+#   │  │  (embedded, no ext. DB)    │  │  :6379                 │           │
+#   │  └────────────────────────────┘  └────────────────────────┘           │
+#   │                                                                         │
+#   │  ┌────────────────────────────────────────────────────────┐           │
+#   │  │  E2E Test Runner (pytest, same network)                │           │
+#   │  └────────────────────────────────────────────────────────┘           │
+#   └─────────────────────────────────────────────────────────────────────────┘
 #
 # Test Scenarios:
 #   - Raft leader election: stop nexus-1, verify nexus-2 becomes leader
 #   - Network partition: disconnect witness, verify cluster still works (2/3 quorum)
 #   - Data consistency: write on nexus-1, read on nexus-2 (SC mode)
 #   - Failover: kill leader, verify new leader serves requests
-#   - MCP tool use: connect Claude/LLM to mcp-server, exercise file operations
-#   - LangGraph agents: run multi-step agent workflows through LangGraph
-#   - Frontend: browse files, manage permissions, provision users via web UI
 
 services:
   # ==========================================================================
@@ -139,19 +121,8 @@ services:
       AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
 
-      # --- Sandbox ---
-      NEXUS_SERVER_URL: http://nexus-1:2026
-      NEXUS_DOCKER_NETWORK: nexus_nexus-network
-
-      # --- Zoekt code search ---
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
-      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
-
       # --- Runtime ---
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
-      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
-      NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
       RUST_LOG: info,nexus_raft=debug
 
       # --- Multi-zone federation (Task #104) ---
@@ -165,8 +136,6 @@ services:
       - "2126:2126"                   # Raft gRPC
     volumes:
       - nexus1_data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    user: root
     networks:
       - nexus-network
     healthcheck:
@@ -220,16 +189,7 @@ services:
       AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
 
-      NEXUS_SERVER_URL: http://nexus-2:2026
-      NEXUS_DOCKER_NETWORK: nexus_nexus-network
-
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
-      ZOEKT_TIMEOUT: ${ZOEKT_TIMEOUT:-10.0}
-
       NEXUS_USE_UVLOOP: ${NEXUS_USE_UVLOOP:-true}
-      NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
-      NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
       RUST_LOG: info,nexus_raft=debug
 
       # --- Multi-zone federation (Task #104) ---
@@ -243,8 +203,6 @@ services:
       - "2127:2126"   # Raft gRPC
     volumes:
       - nexus2_data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
-    user: root
     networks:
       - nexus-network
     healthcheck:
@@ -297,178 +255,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  # ==========================================================================
-  # Nexus MCP Server — Model Context Protocol for LLM tool use
-  # Reuses the nexus-fullnode image, runs MCP serve command
-  # ==========================================================================
-  mcp-server:
-    image: nexus-fullnode:latest
-    container_name: nexus-mcp-server
-    restart: unless-stopped
-    depends_on:
-      nexus-1:
-        condition: service_healthy
-    entrypoint: []
-    environment:
-      NEXUS_URL: http://nexus-1:2026
-      NEXUS_API_KEY: ${NEXUS_API_KEY:-}
-      MCP_HOST: 0.0.0.0
-      MCP_PORT: 8081
-    ports:
-      - "${MCP_PORT:-8081}:8081"
-    command: >
-      sh -c '
-        echo "Waiting for Nexus cluster to be ready..."
-        sleep 5
-        echo "Starting Nexus MCP server on port 8081..."
-        exec nexus mcp serve --transport http --port 8081 --host 0.0.0.0
-      '
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================================================
-  # LangGraph Agent Server — AI agent orchestration
-  # Build from sibling repo nexus-langgraph/
-  # ==========================================================================
-  langgraph:
-    build:
-      context: ../..  # nexi-lab/ (parent of nexus/ and nexus-langgraph/)
-      dockerfile: nexus/dockerfiles/langgraph.Dockerfile
-    image: nexus-langgraph:latest
-    container_name: nexus-langgraph
-    restart: unless-stopped
-    env_file:
-      - ../.env
-    depends_on:
-      nexus-1:
-        condition: service_healthy
-    environment:
-      LANGGRAPH_PORT: 2024
-      LANGGRAPH_HOST: 0.0.0.0
-      NEXUS_SERVER_URL: http://nexus-1:2026
-      # LLM API keys loaded from ../.env via env_file above
-      # Required: ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_API_KEY
-      # Optional: TAVILY_API_KEY, E2B_API_KEY, FIRECRAWL_API_KEY
-      # Tracing: LANGCHAIN_TRACING_V2, LANGCHAIN_API_KEY, LANGSMITH_API_KEY
-    volumes:
-      - langgraph_data:/app/.langgraph_api
-    ports:
-      - "${LANGGRAPH_PORT:-2024}:2024"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2024/ok"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================================================
-  # Frontend — React + Vite web UI
-  # Build from sibling repo nexus-frontend/
-  # ==========================================================================
-  frontend:
-    build:
-      context: ../../nexus-frontend
-      dockerfile: Dockerfile
-      args:
-        # Browser URLs — use localhost so the browser can reach services
-        VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
-        VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
-        VITE_NEXUS_SERVER_URL: ${VITE_NEXUS_SERVER_URL:-http://nexus-1:2026}
-    image: nexus-frontend:latest
-    container_name: nexus-frontend
-    restart: unless-stopped
-    depends_on:
-      nexus-1:
-        condition: service_healthy
-    environment:
-      VITE_NEXUS_API_URL: ${VITE_NEXUS_API_URL:-http://localhost:2026}
-      VITE_LANGGRAPH_API_URL: ${VITE_LANGGRAPH_API_URL:-http://localhost:2024}
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================================================
-  # Zoekt Code Search — Fast trigram-based search (Optional)
-  #
-  # Usage:
-  #   docker compose --profile zoekt -f dockerfiles/docker-compose.cross-platform-test.yml up -d
-  # ==========================================================================
-  zoekt:
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    container_name: nexus-zoekt
-    restart: unless-stopped
-    profiles:
-      - zoekt
-    environment:
-      ZOEKT_INDEX_DIR: /index
-      ZOEKT_DATA_DIR: /data
-    volumes:
-      - nexus1_data:/data:ro
-      - zoekt_index:/index
-    ports:
-      - "${ZOEKT_PORT:-6070}:6070"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  zoekt-indexer:
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    container_name: nexus-zoekt-indexer
-    profiles:
-      - zoekt-index
-    volumes:
-      - nexus1_data:/data:ro
-      - zoekt_index:/index
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "Building Zoekt index from node-1 data..."
-        zoekt-index -index /index /data
-        echo "Index build complete!"
-        ls -la /index/
-    networks:
-      - nexus-network
 
   # ==========================================================================
   # E2E Test Runner — runs inside Docker network (production-consistent)
@@ -533,20 +319,13 @@ volumes:
     name: nexus-cluster-witness-data
   dragonfly_data:
     name: nexus-cluster-dragonfly-data
-  zoekt_index:
-    name: nexus-cluster-zoekt-index
-  langgraph_data:
-    name: nexus-cluster-langgraph-data
 
 # ==========================================================================
 # Quick Reference
 # ==========================================================================
 #
-# Start full distro:
+# Start cluster:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
-#
-# Start with code search:
-#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile zoekt up -d
 #
 # View logs:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f
@@ -557,10 +336,7 @@ volumes:
 #   curl http://localhost:2027/healthz/ready   # Node 2 (follower)
 #
 # Service endpoints:
-#   Frontend:   http://localhost:5173
 #   Nexus API:  http://localhost:2026 (node-1), http://localhost:2027 (node-2)
-#   MCP:        http://localhost:8081
-#   LangGraph:  http://localhost:2024
 #   Dragonfly:  localhost:6379
 #
 # Simulate leader failure:

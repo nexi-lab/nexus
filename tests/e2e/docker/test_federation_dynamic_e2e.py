@@ -24,6 +24,8 @@ import uuid
 import httpx
 import pytest
 
+from nexus.raft.peer_address import PeerAddress
+
 # All tests share one Docker cluster — run sequentially.
 pytestmark = [pytest.mark.xdist_group("dynamic-federation-e2e")]
 
@@ -34,7 +36,11 @@ NODE1_URL = "http://nexus-1:2026"
 NODE2_URL = "http://nexus-2:2026"
 HEALTH_TIMEOUT = 120
 
-_NODE_ID_TO_URL: dict[int, str] = {1: NODE1_URL, 2: NODE2_URL}
+# Hostname-derived node IDs (SHA-256 of hostname → u64)
+_NODE_ID_TO_URL: dict[int, str] = {
+    PeerAddress.hostname_to_node_id("nexus-1"): NODE1_URL,
+    PeerAddress.hostname_to_node_id("nexus-2"): NODE2_URL,
+}
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
 
 E2E_ADMIN_API_KEY = "sk-test-dynamic-federation-key"
@@ -44,9 +50,13 @@ E2E_ADMIN_API_KEY = "sk-test-dynamic-federation-key"
 # Helpers (shared with test_federation_e2e.py — keep in sync)
 # ---------------------------------------------------------------------------
 def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: float = 15) -> dict:
-    """Send a JSON-RPC request, following Raft leader hints."""
-    current_url = url
-    for _attempt in range(3):
+    """Send a JSON-RPC request, retrying on both nodes for leader errors.
+
+    Raft writes may fail with 'not leader' or 'Internal server error' (when
+    the NotLeader exception is wrapped). Retry on the other node.
+    """
+    urls = [url] + [u for u in [NODE1_URL, NODE2_URL] if u != url]
+    for current_url in urls:
         resp = httpx.post(
             f"{current_url}/api/nfs/{method}",
             json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
@@ -56,14 +66,13 @@ def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: floa
         )
         result = resp.json()
         error = result.get("error")
-        if error and "not leader" in str(error.get("message", "")):
-            match = _LEADER_HINT_RE.search(str(error["message"]))
-            if match:
-                leader_id = int(match.group(1))
-                leader_url = _NODE_ID_TO_URL.get(leader_id)
-                if leader_url and leader_url != current_url:
-                    current_url = leader_url
-                    continue
+        if error:
+            msg = str(error.get("message", ""))
+            # Retry on leader errors (explicit "not leader" or wrapped as Internal server error)
+            if "not leader" in msg or (
+                "Internal server error" in msg and method in ("write", "mkdir")
+            ):
+                continue
         return result
     return result
 
@@ -278,22 +287,22 @@ class TestDynamicMountTopology:
         """Mount corp-eng under /corp/eng and corp-sales under /corp/sales."""
         node = cluster["node1"]
 
-        for global_path, zone_relative_path, zone_id in [
-            ("/corp/eng", "/eng", "corp-eng"),
-            ("/corp/sales", "/sales", "corp-sales"),
+        for mount_path, zone_id in [
+            ("/corp/eng", "corp-eng"),
+            ("/corp/sales", "corp-sales"),
         ]:
             # mkdir via VFS (routes through /corp mount → creates in zone corp)
-            mk = _jsonrpc(node, "mkdir", {"path": global_path, "parents": True}, api_key=api_key)
-            assert "error" not in mk, f"mkdir {global_path} failed: {mk}"
+            mk = _jsonrpc(node, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
+            assert "error" not in mk, f"mkdir {mount_path} failed: {mk}"
 
-            # Mount uses zone-relative path (corp zone stores paths relative to mount point)
+            # Mount — RPC accepts global path, resolves to zone-relative internally
             r = _jsonrpc(
                 node,
                 "federation_mount",
-                {"parent_zone": "corp", "path": zone_relative_path, "target_zone": zone_id},
+                {"parent_zone": "corp", "path": mount_path, "target_zone": zone_id},
                 api_key=api_key,
             )
-            assert "error" not in r, f"mount {zone_id} at {zone_relative_path} failed: {r}"
+            assert "error" not in r, f"mount {zone_id} at {mount_path} failed: {r}"
 
     def test_mount_family_zone(self, cluster, api_key):
         """mkdir /family → mount root:/family → zone 'family'."""
@@ -320,7 +329,7 @@ class TestDynamicMountTopology:
         r = _jsonrpc(
             node,
             "federation_mount",
-            {"parent_zone": "family", "path": "/work", "target_zone": "corp"},
+            {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
             api_key=api_key,
         )
         assert "error" not in r, f"mount cross-link failed: {r}"
@@ -474,7 +483,7 @@ class TestDynamicUnmountRemount:
         um = _jsonrpc(
             node,
             "federation_unmount",
-            {"parent_zone": "corp", "path": "/sales"},
+            {"parent_zone": "corp", "path": "/corp/sales"},
             api_key=api_key,
         )
         assert "error" not in um, f"Unmount failed: {um}"
@@ -488,7 +497,7 @@ class TestDynamicUnmountRemount:
         rm = _jsonrpc(
             node,
             "federation_mount",
-            {"parent_zone": "corp", "path": "/sales", "target_zone": "corp-sales"},
+            {"parent_zone": "corp", "path": "/corp/sales", "target_zone": "corp-sales"},
             api_key=api_key,
         )
         assert "error" not in rm, f"Remount failed: {rm}"

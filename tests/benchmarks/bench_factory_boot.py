@@ -194,14 +194,14 @@ class TestFullFactoryBoot:
         result = bench(boot)
 
         # Verify a 3-tuple of (KernelServices, SystemServices, BrickServices) was returned
-        from nexus.core.config import BrickServices, KernelServices, SystemServices
+        from nexus.core.config import KernelServices
 
         assert isinstance(result, tuple)
         assert len(result) == 3
         kernel, system, brick = result
         assert isinstance(kernel, KernelServices)
-        assert isinstance(system, SystemServices)
-        assert isinstance(brick, BrickServices)
+        assert isinstance(system, dict)
+        assert isinstance(brick, dict)
 
         # Assert timing budget
         if isinstance(bench, _FallbackBenchmark):

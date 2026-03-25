@@ -481,7 +481,7 @@ class TestCreateNexusServicesIntegration:
     """Integration tests for create_nexus_services orchestrator."""
 
     def test_full_boot_returns_three_tier_tuple(self) -> None:
-        from nexus.core.config import BrickServices, KernelServices, SystemServices
+        from nexus.core.config import KernelServices
         from nexus.factory import create_nexus_services
 
         record_store = MagicMock()
@@ -499,12 +499,12 @@ class TestCreateNexusServicesIntegration:
         assert len(result) == 3
         kernel, system, brick = result
         assert isinstance(kernel, KernelServices)
-        assert isinstance(system, SystemServices)
-        assert isinstance(brick, BrickServices)
-        # Issue #2193: rebac_manager is now on SystemServices
-        assert system.rebac_manager is not None
-        assert system.permission_enforcer is not None
-        assert brick.rebac_circuit_breaker is not None
+        assert isinstance(system, dict)
+        assert isinstance(brick, dict)
+        # Issue #2193: rebac_manager is now on system dict
+        assert system["rebac_manager"] is not None
+        assert system["permission_enforcer"] is not None
+        assert brick["rebac_circuit_breaker"] is not None
 
     def test_critical_failure_propagates_boot_error(self) -> None:
         from nexus.factory import create_nexus_services

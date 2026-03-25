@@ -22,7 +22,6 @@ from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import DT_DIR, FileMetadata
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.config import (
-    BrickServices,
     CacheConfig,
     DistributedConfig,
     KernelServices,
@@ -70,7 +69,6 @@ class NexusFS(  # type: ignore[misc]
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
         kernel_services: KernelServices | None = None,
-        brick_services: BrickServices | None = None,
         init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
@@ -92,7 +90,6 @@ class NexusFS(  # type: ignore[misc]
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
         ksvc = kernel_services or KernelServices()
-        brk_svc = brick_services or BrickServices()
 
         # Per-instance VFS revision counter (H21: must not be class-level)
         import threading as _threading
@@ -107,7 +104,6 @@ class NexusFS(  # type: ignore[misc]
         self._parse_config = parsing
         # Issue #1767: _kernel_services wrapper removed — only field was router,
         # which is already stored as self.router (set a few lines below).
-        self._brick_services = brk_svc
         self._config: Any | None = None
 
         # Map config fields to flat attributes

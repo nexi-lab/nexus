@@ -30,7 +30,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
     """
     _service_map = attrs.pop("_service_map", {})
     defaults = {
-        "_brick_services": None,
         "SessionLocal": None,
         "_sql_engine": None,
         "_permission_enforcer": None,
@@ -97,13 +96,13 @@ class TestFromAppExtraction:
             _permission_enforcer="perm_enf",
             _coordination_client="coord_client",
             workflow_engine="wf_engine",
-            _snapshot_service="snap_svc",
             config="nexus_cfg",
             _service_map={
                 "entity_registry": "entity_reg",
                 "rebac_manager": "rebac_mgr",
                 "event_bus": "event_bus",
                 "async_namespace_manager": "ns_mgr",
+                "snapshot_service": "snap_svc",
             },
         )
         app = _make_app(nexus_fs=nx)
@@ -157,17 +156,16 @@ class TestFromAppBrickServices:
     """Test extraction from nexus_fs._brick_services."""
 
     def test_extracts_brick_services_container(self) -> None:
-        """The entire BrickServices object is captured."""
-        brk = SimpleNamespace(cache_brick="cb", ipc_storage_driver="ipc")
-        nx = _make_nexus_fs(_brick_services=brk)
+        """brick_services is always None after BrickServices removal."""
+        nx = _make_nexus_fs()
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
-        assert svc.brick_services is brk
+        assert svc.brick_services is None
 
     def test_missing_brick_services_is_none(self) -> None:
-        """When _brick_services is None, field is None."""
-        nx = _make_nexus_fs(_brick_services=None)
+        """When _brick_services is absent, field is None."""
+        nx = _make_nexus_fs()
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
@@ -224,7 +222,7 @@ class TestFromAppEdgeCases:
     def test_nexus_fs_without_optional_attributes(self) -> None:
         """NexusFS missing some private attrs doesn't crash."""
         # Use a SimpleNamespace with only _system_services
-        nx = SimpleNamespace(_system_services=None, _brick_services=None)
+        nx = SimpleNamespace(_system_services=None)
         app = _make_app(nexus_fs=nx)
 
         # Should not raise even though nx has no SessionLocal, etc.

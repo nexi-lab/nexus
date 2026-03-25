@@ -51,8 +51,11 @@ Follows Linux's monolithic kernel model, not microkernel:
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
-has **zero reads** of `_system_services` attributes — all service wiring flows
-through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
+has zero reads of service containers — all service wiring flows through
+`ServiceRegistry` (`nx.service("name")`), factory-injected closures
+(`functools.partial`), or KernelDispatch hooks. Both `SystemServices` and
+`BrickServices` frozen dataclasses have been deleted; services flow as plain
+`dict[str, Any]` from factory to `ServiceRegistry.enlist()`.
 
 **Drivers** use constructor DI at startup — same binary, different config
 (`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.

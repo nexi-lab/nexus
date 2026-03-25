@@ -279,7 +279,6 @@ async def connect(
         # Build a lightweight NexusFS directly — no factory, no bricks.
         # Server is SSOT; client just proxies calls via gRPC.
         # No parser registries — remote delegates all parsing to the server.
-        from nexus.core.config import BrickServices as _BrickServices
         from nexus.core.config import PermissionConfig as _PermissionConfig
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
         from nexus.core.router import PathRouter as _PathRouter
@@ -294,7 +293,6 @@ async def connect(
             metadata_store=remote_metastore,
             permissions=_PermissionConfig(enforce=False),
             kernel_services=_KernelServices(router=_router),
-            brick_services=_BrickServices(),
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 

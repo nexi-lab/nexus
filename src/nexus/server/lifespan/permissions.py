@@ -81,15 +81,14 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
 async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize cache for Dragonfly/Redis or NullCacheStore fallback (Issue #1075, #1251, #1524).
 
-    Prefers CacheBrick from BrickServices (injected by factory). Falls back to
+    Prefers CacheBrick from ServiceRegistry (injected by factory). Falls back to
     creating a CacheBrick from environment settings if not available.
     """
     try:
-        # Prefer CacheBrick already in BrickServices (set by create_nexus_fs → lifespan)
         cache_brick = app.state.cache_brick
-        if cache_brick is None:
-            brk = svc.brick_services
-            cache_brick = getattr(brk, "cache_brick", None) if brk else None
+        if cache_brick is None and svc.nexus_fs is not None:
+            _svc_fn = getattr(svc.nexus_fs, "service", None)
+            cache_brick = _svc_fn("cache_brick") if _svc_fn else None
 
         from nexus.cache.settings import CacheSettings
 

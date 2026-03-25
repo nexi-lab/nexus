@@ -12,12 +12,10 @@ if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
     from nexus.contracts.types import AuditConfig
     from nexus.core.config import (
-        BrickServices,
         CacheConfig,
         DistributedConfig,
         KernelServices,
         PermissionConfig,
-        SystemServices,
     )
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
@@ -42,7 +40,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> "tuple[KernelServices, SystemServices, BrickServices]":
+) -> "tuple[KernelServices, dict[str, Any], dict[str, Any]]":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -74,20 +72,20 @@ def create_nexus_services(
             are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        Tuple of (KernelServices, SystemServices, BrickServices).
+        Tuple of (KernelServices, system_dict, BrickServices).
 
     .. versionchanged:: Issue #2034
         Returns a 3-tuple instead of a single KernelServices.
+    .. versionchanged:: ServiceRegistry unification
+        system_services is now a plain dict (SystemServices dataclass deleted).
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.contracts.types import AuditConfig as _AuditConfig
-    from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
     from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
-    from nexus.core.config import SystemServices as _SystemServices
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
     from nexus.factory._kernel import _boot_kernel_services
@@ -165,68 +163,15 @@ def create_nexus_services(
     # --- Assemble 3-tier containers (Issue #2034, #2193) ---
     kernel_services = _KernelServices(router=router)
 
-    system_services = _SystemServices(
-        # Former-kernel critical (Issue #2193)
-        rebac_manager=system_dict["rebac_manager"],
-        audit_store=system_dict["audit_store"],
-        entity_registry=system_dict["entity_registry"],
-        permission_enforcer=system_dict["permission_enforcer"],
-        write_observer=system_dict["write_observer"],
-        # Former-kernel degradable (Issue #2193)
-        # hierarchy_manager, dir_visibility_cache, namespace_manager
-        # now internalized into ReBACManager — access via rebac_manager properties
-        deferred_permission_buffer=system_dict["deferred_permission_buffer"],
-        workspace_registry=system_dict["workspace_registry"],
-        mount_manager=system_dict["mount_manager"],
-        workspace_manager=system_dict["workspace_manager"],
-        # Original system services
-        async_namespace_manager=system_dict["async_namespace_manager"],
-        context_branch_service=system_dict.get("context_branch_service"),
-        delivery_worker=system_dict["delivery_worker"],
-        observability_subsystem=system_dict["observability_subsystem"],
-        resiliency_manager=system_dict["resiliency_manager"],
-        zone_lifecycle=system_dict.get("zone_lifecycle"),
-        # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives §4.2,
-        # constructed in NexusFS.__init__ — not injected via SystemServices.
-        # EvictionManager + AcpService deferred to _do_link() — Issue #1792.)
-        # Scheduler (Issue #2195)
-        scheduler_service=system_dict.get("scheduler_service"),
-        # Distributed event bus — Tier 1 infrastructure (Issue #1701)
-        event_bus=brick_dict["event_bus"],
-        # Distributed lock manager — Tier 1 infrastructure (Issue #1702)
-        lock_manager=brick_dict["lock_manager"],
-    )
+    # SystemServices dataclass deleted — system_dict is the canonical container.
+    # Merge Tier 1 infrastructure from brick_dict into system_dict.
+    system_dict["event_bus"] = brick_dict["event_bus"]
+    system_dict["lock_manager"] = brick_dict["lock_manager"]
 
-    brick_services = _BrickServices(
-        workflow_engine=brick_dict["workflow_engine"],
-        rebac_circuit_breaker=brick_dict["rebac_circuit_breaker"],
-        wallet_provisioner=brick_dict["wallet_provisioner"],
-        chunked_upload_service=brick_dict["chunked_upload_service"],
-        manifest_resolver=brick_dict["manifest_resolver"],
-        tool_namespace_middleware=brick_dict["tool_namespace_middleware"],
-        api_key_creator=brick_dict["api_key_creator"],
-        snapshot_service=brick_dict["snapshot_service"],
-        # IPC Brick (Issue #1727, LEGO §8)
-        ipc_storage_driver=brick_dict["ipc_storage_driver"],
-        ipc_provisioner=brick_dict["ipc_provisioner"],
-        # Sandbox Brick (Issue #1307)
-        agent_event_log=brick_dict["agent_event_log"],
-        # Delegation Brick (Issue #2131)
-        delegation_service=brick_dict["delegation_service"],
-        # Version Brick (Issue #2034: moved from kernel)
-        version_service=brick_dict["version_service"],
-        # Governance Brick (Issue #2129)
-        governance_anomaly_service=brick_dict["governance_anomaly_service"],
-        governance_collusion_service=brick_dict["governance_collusion_service"],
-        governance_graph_service=brick_dict["governance_graph_service"],
-        governance_response_service=brick_dict["governance_response_service"],
-        # Search Brick (Issue #810)
-        zoekt_pipe_consumer=brick_dict.get("zoekt_pipe_consumer"),
-        # Task Manager Brick
-        task_dispatch_consumer=brick_dict.get("task_dispatch_consumer"),
-    )
+    # Remove event_bus/lock_manager from brick_dict (already merged into system_dict)
+    _brick_out = {k: v for k, v in brick_dict.items() if k not in ("event_bus", "lock_manager")}
 
-    return kernel_services, system_services, brick_services
+    return kernel_services, system_dict, _brick_out
 
 
 async def create_nexus_fs(
@@ -243,8 +188,8 @@ async def create_nexus_fs(
     memory: Any = None,
     parsing: Any = None,
     kernel_services: "KernelServices | None" = None,
-    system_services: "SystemServices | None" = None,
-    brick_services: "BrickServices | None" = None,
+    system_services: "dict[str, Any] | None" = None,
+    brick_services: "dict[str, Any] | None" = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
@@ -267,7 +212,7 @@ async def create_nexus_fs(
         memory: MemoryConfig object.
         parsing: ParseConfig object.
         kernel_services: Pre-built KernelServices (skips create_nexus_services).
-        system_services: Pre-built SystemServices.
+        system_services: Pre-built system services dict.
         brick_services: Pre-built BrickServices.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
@@ -283,12 +228,10 @@ async def create_nexus_fs(
         ``services`` param replaced by ``kernel_services``, ``system_services``,
         ``brick_services`` (3-tier split).
     """
-    from nexus.core.config import BrickServices as _BrickServices
     from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
     )
     from nexus.core.config import KernelServices as _KernelServices
-    from nexus.core.config import SystemServices as _SystemServices
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
@@ -352,9 +295,9 @@ async def create_nexus_fs(
 
     # Default system/brick to empty containers when not provided
     if system_services is None:
-        system_services = _SystemServices()
+        system_services = {}
     if brick_services is None:
-        brick_services = _BrickServices()
+        brick_services = {}
 
     import functools
 
@@ -375,10 +318,11 @@ async def create_nexus_fs(
         memory=memory,
         parsing=parsing,
         kernel_services=kernel_services,
-        brick_services=brick_services,
         init_cred=_init_cred,
     )
-    nx._link_fn = functools.partial(_do_link, system_services=system_services, zone_id=zone_id)
+    nx._link_fn = functools.partial(
+        _do_link, system_services=system_services, zone_id=zone_id, brick_dict=brick_services
+    )
     nx._initialize_fn = _do_initialize
     # Issue #1801: _system_services assignment deleted — all services now in
     # ServiceRegistry. Use nx.service("name") instead.
@@ -424,7 +368,8 @@ async def _register_vfs_hooks(
     # Rejects writes to zones being deprovisioned (Issue #2061).
     # Replaces _check_zone_writable() in nexus_fs — kernel no longer
     # reads zone_lifecycle from _system_services.
-    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
+    _ss = system_services or {}
+    _zl = _ss.get("zone_lifecycle")
     if _zl is not None:
         from nexus.system_services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
 
@@ -439,7 +384,7 @@ async def _register_vfs_hooks(
             metadata_store=nx.metadata,
             default_context=nx._init_cred,
             enforce_permissions=nx._enforce_permissions,
-            permission_enforcer=system_services.permission_enforcer if system_services else None,
+            permission_enforcer=_ss.get("permission_enforcer"),
             descendant_checker=getattr(nx, "_descendant_checker", None),
         )
         await _enlist("permission", _perm_hook)
@@ -447,7 +392,7 @@ async def _register_vfs_hooks(
     # ── Audit write interceptor (Issue #900, #1772) ──
     # Piped observer → async AuditWriteInterceptor serializes mutations → DT_PIPE.
     # Sync observer  → sync SyncAuditWriteInterceptor calls on_write() directly.
-    write_observer = getattr(system_services, "write_observer", None) if system_services else None
+    write_observer = _ss.get("write_observer")
     if write_observer is not None:
         from nexus.storage.piped_record_store_write_observer import PipedRecordStoreWriteObserver
 
@@ -467,7 +412,7 @@ async def _register_vfs_hooks(
 
     # DynamicViewerReadHook (post-read: column-level CSV filtering)
     has_viewer = (
-        (getattr(system_services, "rebac_manager", None) if system_services else None) is not None
+        _ss.get("rebac_manager") is not None
         and hasattr(nx, "get_dynamic_viewer_config")
         and hasattr(nx, "apply_dynamic_viewer_filter")
     )
@@ -485,13 +430,14 @@ async def _register_vfs_hooks(
     # ContentParserEngine (on-demand parsed reads — Issue #1383)
     from nexus.bricks.parsers.engine import ContentParserEngine
 
+    _provider_reg = nx.service("provider_registry") if hasattr(nx, "service") else None
     ContentParserEngine(
         metadata=nx.metadata,
-        provider_registry=nx._brick_services.provider_registry,
+        provider_registry=_provider_reg,
     )
 
     # AutoParseWriteHook (post-write: background parsing + cache invalidation)
-    parser_reg = nx._brick_services.parser_registry
+    parser_reg = nx.service("parser_registry") if hasattr(nx, "service") else None
     if auto_parse and parser_reg is not None and parse_fn is not None:
         from nexus.bricks.parsers.auto_parse_hook import AutoParseWriteHook
 
@@ -503,7 +449,7 @@ async def _register_vfs_hooks(
         await _enlist("auto_parse", _auto_parse_hook)
 
     # TigerCacheRenameHook (post-rename: bitmap updates)
-    _rebac_mgr = getattr(system_services, "rebac_manager", None) if system_services else None
+    _rebac_mgr = _ss.get("rebac_manager")
     tiger_cache = getattr(_rebac_mgr, "_tiger_cache", None) if _rebac_mgr else None
     if tiger_cache is not None:
         from nexus.bricks.rebac.cache.tiger.rename_hook import TigerCacheRenameHook
@@ -561,8 +507,10 @@ async def _register_vfs_hooks(
             _task_svc = TaskManagerService(nexus_fs=nx)
             _task_write_hook = TaskWriteHook()
 
-            # Wire consumer from brick_services (created in _bricks.py)
-            _task_consumer = getattr(nx._brick_services, "task_dispatch_consumer", None)
+            # Wire consumer from ServiceRegistry (created in _bricks.py, enlisted in _do_link)
+            _task_consumer = (
+                nx.service("task_dispatch_consumer") if hasattr(nx, "service") else None
+            )
             if _task_consumer is not None:
                 _task_write_hook.register_handler(_task_consumer)
                 _task_consumer.set_task_service(_task_svc)
@@ -576,15 +524,15 @@ async def _register_vfs_hooks(
         logger.debug("[BOOT:BRICK] task_manager disabled by profile")
 
     # ── Snapshot write tracker (Issue #1770) ─────────────────────────
-    _snapshot_svc = getattr(nx._brick_services, "snapshot_service", None)
+    _snapshot_svc = nx.service("snapshot_service") if hasattr(nx, "service") else None
     if _snapshot_svc is not None:
         from nexus.bricks.snapshot.snapshot_hook import SnapshotWriteHook
 
         await _enlist("snapshot_write", SnapshotWriteHook(_snapshot_svc))
 
     # ── Deferred permission buffer (Issue #1773, #1682) ────────────────
-    _dpb = getattr(system_services, "deferred_permission_buffer", None) if system_services else None
-    _rebac_for_perm = getattr(system_services, "rebac_manager", None) if system_services else None
+    _dpb = _ss.get("deferred_permission_buffer")
+    _rebac_for_perm = _ss.get("rebac_manager")
     if _dpb is not None:
         from nexus.bricks.rebac.deferred_permission_hook import DeferredPermissionHook
 
@@ -607,11 +555,11 @@ async def _register_vfs_hooks(
     # Replaces NexusFS._check_zone_writable() — kernel should not know
     # about zone lifecycle.  PRE hooks on all mutating ops block writes
     # to zones being deprovisioned.
-    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
-    if _zl is not None:
+    _zl2 = _ss.get("zone_lifecycle")
+    if _zl2 is not None:
         from nexus.system_services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
-        await _enlist("zone_writability", ZoneWritabilityHook(_zl))
+        await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
@@ -620,9 +568,7 @@ async def _register_vfs_hooks(
     # no bus_provider late-binding needed.  Tests use swap_service() to replace.
     from nexus.system_services.event_bus.observer import EventBusObserver
 
-    _bus_observer = EventBusObserver(
-        event_bus=system_services.event_bus if system_services else None
-    )
+    _bus_observer = EventBusObserver(event_bus=_ss.get("event_bus"))
     await _enlist("event_bus_observer", _bus_observer)
 
     # EventsService observer: self-registered via duck-typed hook_spec()

@@ -57,9 +57,8 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
     await enlist_wired_services(nfs._service_registry, wired_dict)
 
-    # BrickServices field not covered by WiredServices
-    # Issue #1570: version_service is a facade attr wired by _do_link()
-    setattr(nfs, "version_service", proxy)  # noqa: B010
+    # version_service is a brick service — enlist into ServiceRegistry
+    await nfs._service_registry.enlist("version_service", proxy)
 
     logger.info(
         "REMOTE profile: wired %d service slots with RPC forwarders (kernel runs naturally)",

@@ -33,7 +33,6 @@ async def nx_with_db(tmp_path):
     nx.SessionLocal = session_factory
 
     # Mock entity registry
-    from dataclasses import replace
 
     mock_registry = MagicMock()
     mock_registry.get_entity.return_value = None
@@ -41,7 +40,8 @@ async def nx_with_db(tmp_path):
     # Mock API key creator
     mock_key_creator = MagicMock()
     mock_key_creator.create_key.return_value = ("key-123", "nxk-test-api-key")
-    nx._brick_services = replace(nx._brick_services, api_key_creator=mock_key_creator)
+    # Enlist mock api_key_creator into ServiceRegistry (BrickServices deleted)
+    await nx._service_registry.enlist("api_key_creator", mock_key_creator)
 
     # Mock ReBAC so we don't need real ReBAC setup
     mock_rebac_manager = MagicMock()
@@ -187,7 +187,7 @@ class TestProvisionUserHappyPath:
         assert result["api_key"] is not None
         assert result["key_id"] is not None
         # With agents disabled, only the user's API key is created
-        nx_with_db._brick_services.api_key_creator.create_key.assert_called_once()
+        nx_with_db.service("api_key_creator")._service_instance.create_key.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skip_api_key_creation(self, nx_with_db):
@@ -200,7 +200,7 @@ class TestProvisionUserHappyPath:
             import_skills=False,
         )
         assert result["api_key"] is None
-        nx_with_db._brick_services.api_key_creator.create_key.assert_not_called()
+        nx_with_db.service("api_key_creator")._service_instance.create_key.assert_not_called()
 
 
 class TestProvisionUserIdempotency:
@@ -268,9 +268,7 @@ class TestProvisionUserPartialFailure:
 
     @pytest.mark.asyncio
     async def test_api_key_creator_not_injected(self, nx_with_db):
-        from dataclasses import replace
-
-        nx_with_db._brick_services = replace(nx_with_db._brick_services, api_key_creator=None)
+        # api_key_creator not enlisted → service() returns None
         # Also update the service (Issue #2033: provision_user delegated to service)
         ups = nx_with_db.service("user_provisioning")
         if ups is not None:

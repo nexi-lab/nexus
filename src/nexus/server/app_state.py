@@ -46,7 +46,6 @@ class NexusAppState:
     features_info: Any = None
 
     # === Flattened from NexusFS (replaces private attr access) ===
-    system_services: Any = None
     brick_services: Any = None
     rebac_manager: Any = None
     entity_registry: Any = None
@@ -176,7 +175,7 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     Issue #1801: ALL services now in ServiceRegistry — no _system_services.
     """
     # Direct NexusFS attrs
-    app.state.brick_services = getattr(nexus_fs, "_brick_services", None)
+    app.state.brick_services = None
     app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)
 
     # Helper: safe service() call (handles mocks without service())

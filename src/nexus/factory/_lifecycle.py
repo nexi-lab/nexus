@@ -17,6 +17,7 @@ async def _do_link(
     *,
     system_services: Any = None,
     zone_id: str | None = None,
+    brick_dict: dict[str, Any] | None = None,
     enabled_bricks: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
@@ -27,15 +28,12 @@ async def _do_link(
     BrickServices; boots wired services that need a NexusFS reference;
     binds them onto ``nx``; creates PermissionChecker.
     """
-    from dataclasses import replace as _dc_replace
-
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_wired_services
     from nexus.factory.service_routing import enlist_wired_services
 
-    _sys = system_services
-    _brk = nx._brick_services
-    nx._permission_enforcer = _sys.permission_enforcer  # Issue #1706: override sentinel
+    _sys = system_services or {}
+    nx._permission_enforcer = _sys.get("permission_enforcer")  # Issue #1706: override sentinel
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -67,7 +65,7 @@ async def _do_link(
 
             _content_cache = ContentCache(max_size_mb=_cache_cfg.content_cache_size_mb)
 
-    # --- Pack factory-created bricks into BrickServices (Issue #2134) ---
+    # Factory-created brick artifacts (not runtime services — enlisted separately)
     _brick_updates: dict[str, Any] = {
         "cache_brick": _cache_brick,
         "parse_fn": _parse_fn,
@@ -77,7 +75,6 @@ async def _do_link(
     }
     if workflow_engine is not None:
         _brick_updates["workflow_engine"] = workflow_engine
-    nx._brick_services = _dc_replace(nx._brick_services, **_brick_updates)
 
     # --- Resolve enabled_bricks for profile gating ---
     _resolved_bricks = enabled_bricks
@@ -93,7 +90,7 @@ async def _do_link(
     from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
     _permission_checker = _PC(
-        permission_enforcer=_sys.permission_enforcer,
+        permission_enforcer=_sys.get("permission_enforcer"),
         metadata_store=nx.metadata,
         default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
@@ -112,11 +109,14 @@ async def _do_link(
     )
 
     # --- Boot wired services → register into ServiceRegistry ---
+    _brick_dict: dict[str, Any] = dict(brick_dict or {})
+    _brick_dict.update(_brick_updates)
+
     _wired = await _boot_wired_services(
         nx,
-        nx.router,  # Issue #1767: KernelServices wrapper removed
+        nx.router,
         system_services,
-        nx._brick_services,
+        _brick_dict,
         _brick_on,
     )
 
@@ -126,7 +126,7 @@ async def _do_link(
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") was added to PathRouter in
     # create_nexus_fs() before __init__ — adopt retroactively registers
-    # the backend's hook_spec (fixes CAS wiring bug #1320).
+    # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
     await nx._service_registry.enlist("driver_coordinator", nx._driver_coordinator)
     nx._driver_coordinator.adopt_existing_mount("/")
 
@@ -139,10 +139,10 @@ async def _do_link(
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
-    _dpb = getattr(system_services, "deferred_permission_buffer", None)
+    _dpb = _sys.get("deferred_permission_buffer")
     if _dpb is not None:
         await nx._service_registry.enlist("deferred_permission_buffer", _dpb)
-    _dw = getattr(system_services, "delivery_worker", None)
+    _dw = _sys.get("delivery_worker")
     if _dw is not None:
         await nx._service_registry.enlist("delivery_worker", _dw)
 
@@ -165,11 +165,29 @@ async def _do_link(
         ("async_namespace_manager", "async_namespace_manager"),
         ("workspace_manager", "workspace_manager"),
     ):
-        _val = getattr(system_services, _attr, None)
+        _val = _sys.get(_attr)
         if _val is not None:
             await nx._service_registry.enlist(_canonical, _val)
 
-    # (Federation is enlisted later in connect() after nx._zone_mgr is set.)
+    # PR2: Enlist all BrickServices fields into ServiceRegistry.
+    # After this, brick services are also accessible via nx.service("name").
+    # Non-service artifacts (parse_fn, parser_registry, provider_registry,
+    # content_cache) stay on _brick_services — factory-phase locals, not services.
+    for _bname, _bval in _brick_dict.items():
+        if _bval is not None:
+            await nx._service_registry.enlist(_bname, _bval)
+
+    # Federation — Q3 PersistentService, created at link time (needs nx._zone_mgr).
+    _zone_mgr = getattr(nx, "_zone_mgr", None)
+    if _zone_mgr is not None:
+        try:
+            from nexus.raft.federation import NexusFederation
+
+            _fed = NexusFederation(zone_manager=_zone_mgr)
+            await nx._service_registry.enlist("federation", _fed)
+            logger.debug("[LINK] Federation service enlisted")
+        except Exception as exc:
+            logger.warning("[LINK] Federation unavailable: %s", exc)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
@@ -178,13 +196,13 @@ async def _do_link(
         nx._descendant_checker = _dc
 
     # Issue #1788: inject distributed lock_manager directly (kernel knows pattern)
-    nx._distributed_lock_manager = getattr(_sys, "lock_manager", None)
+    nx._distributed_lock_manager = _sys.get("lock_manager")
 
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here instead of
     # kernel reading _system_services directly.  Callbacks run BEFORE pillar
     # close (metadata_store, record_store) to ensure DB connections are still open.
-    _wo = getattr(_sys, "write_observer", None)
+    _wo = _sys.get("write_observer")
     if _wo is not None and hasattr(_wo, "flush_sync"):
 
         def _close_write_observer() -> None:
@@ -211,7 +229,7 @@ async def _do_link(
     # The coordinator's stop_persistent_services() is async and only runs
     # during lifespan shutdown. For sync close (tests, CLI), we cancel
     # the task directly so it doesn't block event loop cleanup.
-    _dw = getattr(_sys, "delivery_worker", None)
+    _dw = _sys.get("delivery_worker")
     if _dw is not None and hasattr(_dw, "_consumer_task"):
 
         def _close_delivery_worker() -> None:
@@ -226,7 +244,7 @@ async def _do_link(
     # Issue #1801: _flush_write_observer_fn closure removed — kernel now reads
     # write_observer directly from service registry via nx.service("write_observer").
 
-    _rebac = getattr(_sys, "rebac_manager", None)
+    _rebac = _sys.get("rebac_manager")
     if _rebac is not None and hasattr(_rebac, "close"):
 
         def _close_rebac() -> None:
@@ -237,7 +255,7 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_rebac)
 
-    _audit = getattr(_sys, "audit_store", None)
+    _audit = _sys.get("audit_store")
     if _audit is not None and hasattr(_audit, "close"):
 
         def _close_audit() -> None:
@@ -333,7 +351,15 @@ async def _do_initialize(
     # --- IPC adapter bind + mount (extracted from _boot_wired_services) ---
     from nexus.factory._wired import _initialize_wired_ipc
 
-    _initialize_wired_ipc(nx, nx._brick_services)
+    # Build brick_dict from ServiceRegistry for IPC initialization
+    _ipc_brick_dict: dict[str, Any] = {}
+    _ipc_svc_fn = getattr(nx, "service", None)
+    if _ipc_svc_fn is not None:
+        for _ipc_name in ("ipc_storage_driver", "ipc_provisioner"):
+            _ipc_val = _ipc_svc_fn(_ipc_name)
+            if _ipc_val is not None:
+                _ipc_brick_dict[_ipc_name] = _ipc_val
+    _initialize_wired_ipc(nx, _ipc_brick_dict)
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
     # Issue #1610/#1612/#1613/#1616: All hooks declare hook_spec() (duck-typed).
@@ -342,7 +368,7 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    # Issue #1811: CAS hooks are registered via
+    # Issue #1811: CAS ref_count observer is now registered via
     # DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
     # The `backend` parameter has been removed from _register_vfs_hooks().
     await _register_vfs_hooks(
@@ -362,7 +388,7 @@ async def _do_initialize(
     # implement PersistentService and are auto-started by the coordinator's
     # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
-    _zl = getattr(system_services, "zone_lifecycle", None) if system_services else None
+    _zl = (system_services or {}).get("zone_lifecycle")
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
         async def _load_zones() -> None:

@@ -267,19 +267,13 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
 
 
 def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose DelegationService from factory brick_dict (Issue #2131).
-
-    The DelegationService is created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires it onto ``app.state``
-    for backward-compatible access by routers and dependencies.
-    """
+    """Expose DelegationService from ServiceRegistry (Issue #2131)."""
     if svc.nexus_fs is None:
         app.state.delegation_service = None
         return
 
-    # Get from BrickServices (created by factory)
-    brk = svc.brick_services
-    app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
+    _svc_fn = getattr(svc.nexus_fs, "service", None)
+    app.state.delegation_service = _svc_fn("delegation_service") if _svc_fn else None
 
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
@@ -292,28 +286,17 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
 
 
 def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose governance brick services from factory BrickServices (Issue #2129).
-
-    Governance services are created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires them onto ``app.state``
-    for backward-compatible access by the governance router.
-    """
+    """Expose governance services from ServiceRegistry (Issue #2129)."""
     if svc.nexus_fs is None:
         return
 
-    brk = svc.brick_services
-    app.state.governance_anomaly_service = (
-        getattr(brk, "governance_anomaly_service", None) if brk else None
-    )
-    app.state.governance_collusion_service = (
-        getattr(brk, "governance_collusion_service", None) if brk else None
-    )
-    app.state.governance_graph_service = (
-        getattr(brk, "governance_graph_service", None) if brk else None
-    )
-    app.state.governance_response_service = (
-        getattr(brk, "governance_response_service", None) if brk else None
-    )
+    _svc_fn = getattr(svc.nexus_fs, "service", None)
+    if _svc_fn is None:
+        return
+    app.state.governance_anomaly_service = _svc_fn("governance_anomaly_service")
+    app.state.governance_collusion_service = _svc_fn("governance_collusion_service")
+    app.state.governance_graph_service = _svc_fn("governance_graph_service")
+    app.state.governance_response_service = _svc_fn("governance_response_service")
 
     if app.state.governance_response_service is not None:
         logger.info("[GOV] Governance services wired from brick_dict")

@@ -399,7 +399,7 @@ def create_async_files_router(
             _original_hash: str | None = None
             _original_metadata: dict[str, Any] | None = None
             if transaction_id:
-                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
                 if _ss is not None:
                     _norm_path = _normalize_path(request.path)
                     _ss.validate_path_available(transaction_id, _norm_path)
@@ -598,7 +598,7 @@ def create_async_files_router(
             _original_hash: str | None = None
             _original_metadata: dict[str, Any] | None = None
             if transaction_id:
-                _ss = getattr(getattr(fs, "_brick_services", None), "snapshot_service", None)
+                _ss = fs.service("snapshot_service") if hasattr(fs, "service") else None
                 if _ss is not None:
                     _norm_path = _normalize_path(path)
                     _ss.validate_path_available(transaction_id, _norm_path)

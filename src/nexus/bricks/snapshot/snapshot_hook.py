@@ -1,8 +1,8 @@
 """VFS write/delete hook for transactional snapshot tracking (Issue #1770).
 
 Wraps ``TransactionalSnapshotService.track_write()`` / ``track_delete()``
-as a proper KernelDispatch hook, eliminating the kernel's getattr() calls
-to ``_brick_services.snapshot_service``.
+as a proper KernelDispatch hook, eliminating direct kernel coupling
+to the snapshot service.
 
 Data mapping:
     WriteHookContext.old_metadata  → snapshot_hash (etag), metadata_snapshot

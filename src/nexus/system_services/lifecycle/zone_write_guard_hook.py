@@ -1,7 +1,6 @@
 """ZoneWriteGuardHook — rejects writes to zones being deprovisioned.
 
 Issue #1790: Replaces _check_zone_writable() in nexus_fs.py.
-Kernel no longer reads zone_lifecycle from _system_services.
 
 Fires on ALL write-like pre-intercept phases (write, delete, rename,
 mkdir, rmdir) and raises ZoneTerminatingError if the target zone

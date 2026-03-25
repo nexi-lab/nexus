@@ -3,7 +3,7 @@
 Registered in KernelDispatch OBSERVE phase. Replaces the direct
 ``_publish_file_event()`` calls that previously bypassed the observer pattern.
 
-Issue #1701: event_bus is Tier 1 (SystemServices). The observer is constructed
+Issue #1701: event_bus is a system-tier service. The observer is constructed
 with a direct ``event_bus`` reference at factory time — no late-binding needed.
 Tests that need a different bus use ``await nx.swap_service("event_bus_observer",
 EventBusObserver(event_bus=shared_bus))`` to hot-swap the observer atomically.

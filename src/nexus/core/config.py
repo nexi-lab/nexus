@@ -15,8 +15,7 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 
     KernelServices  — Tier 0: boot-fatal, always present
-    (SystemServices) — Tier 1: deleted, now plain dict[str, Any]
-    BrickServices   — Tier 2: optional, silent on failure, hot-swappable
+    ServiceRegistry — Tier 1+2: all services accessed via nx.service("name")
 """
 
 from __future__ import annotations
@@ -143,7 +142,7 @@ class KernelServices:
     constructor arguments; this container simply carries the router handle.
 
     All former kernel services (ReBAC, permissions, workspace, write-sync)
-    have been moved to ``SystemServices`` (Issue #2193) where they are
+    have been moved to the system tier (Issue #2193) where they are
     classified as *critical* (BootError on failure) or *degradable*
     (WARNING + None on failure).
 

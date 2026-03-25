@@ -54,13 +54,13 @@ class LifespanServices:
     # --- Process table (kernel process lifecycle) -------------------------
     agent_registry: Any = None
 
-    # --- System services (from nexus_fs._system_services) ----------------
+    # --- System services (from ServiceRegistry) ----------------
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
     pipe_manager: Any = None  # DT_PIPE manager — kernel-internal primitive (§4.2)
 
-    # --- Issue #2195, #2360: Scheduler (from SystemServices) ----
+    # --- Scheduler (from ServiceRegistry) ----
     scheduler_service: "SchedulerProtocol | None" = None
 
     # --- Issue #3193: delivery worker + event signal -------------------------

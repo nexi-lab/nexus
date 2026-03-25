@@ -25,7 +25,7 @@ async def _do_link(
     """Phase 1 implementation: wire service topology.  Pure memory — NO I/O.
 
     Creates ParsersBrick, CacheBrick, ContentCache; packs them into
-    BrickServices; boots wired services that need a NexusFS reference;
+    brick services; boots wired services that need a NexusFS reference;
     binds them onto ``nx``; creates PermissionChecker.
     """
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
@@ -146,7 +146,7 @@ async def _do_link(
     if _dw is not None:
         await nx._service_registry.enlist("delivery_worker", _dw)
 
-    # Issue #1771: Enlist ALL SystemServices fields into ServiceRegistry.
+    # Enlist system services into ServiceRegistry.
     # After this, every service is available via nx.service("name").
     # Note: permission_enforcer stays as kernel-owns DI (Issue #1815).
     for _attr, _canonical in (
@@ -169,10 +169,10 @@ async def _do_link(
         if _val is not None:
             await nx._service_registry.enlist(_canonical, _val)
 
-    # PR2: Enlist all BrickServices fields into ServiceRegistry.
+    # Enlist brick services into ServiceRegistry.
     # After this, brick services are also accessible via nx.service("name").
     # Non-service artifacts (parse_fn, parser_registry, provider_registry,
-    # content_cache) stay on _brick_services — factory-phase locals, not services.
+    # content_cache) are factory-phase locals, not services.
     for _bname, _bval in _brick_dict.items():
         if _bval is not None:
             await nx._service_registry.enlist(_bname, _bval)
@@ -199,8 +199,8 @@ async def _do_link(
     nx._distributed_lock_manager = _sys.get("lock_manager")
 
     # --- Register close callbacks (Issue #1793, #1789) ---
-    # Services that need cleanup at close() register callbacks here instead of
-    # kernel reading _system_services directly.  Callbacks run BEFORE pillar
+    # Services that need cleanup at close() register callbacks here.
+    # Callbacks run BEFORE pillar
     # close (metadata_store, record_store) to ensure DB connections are still open.
     _wo = _sys.get("write_observer")
     if _wo is not None and hasattr(_wo, "flush_sync"):

@@ -396,7 +396,6 @@ class NexusFS(  # type: ignore[misc]
 
     # Issue #1790: _check_zone_writable() deleted — now handled by
     # ZoneWriteGuardHook (pre-intercept on all write-like operations).
-    # Kernel no longer reads zone_lifecycle from _system_services.
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
@@ -4430,8 +4429,7 @@ class NexusFS(  # type: ignore[misc]
             self._stream_manager.close_all()
 
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
-        # Replaces direct _system_services reads for write_observer, rebac_manager,
-        # audit_store. Runs BEFORE pillar close so DB connections are still open.
+        # Runs BEFORE pillar close so DB connections are still open.
         for _close_cb in self._close_callbacks:
             try:
                 _close_cb()

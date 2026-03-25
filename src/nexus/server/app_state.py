@@ -54,7 +54,7 @@ class NexusAppState:
     permission_enforcer: Any = None
     record_store: Any = None
 
-    # === Flattened from SystemServices ===
+    # === From ServiceRegistry ===
     observability_subsystem: Any = None
     eviction_manager: Any = None
 
@@ -171,7 +171,7 @@ def init_app_state(app: "FastAPI", nexus_fs: Any = None, **overrides: Any) -> No
 def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     """Flatten NexusFS internals onto app.state for typed access.
 
-    Issue #1801: ALL services now in ServiceRegistry — no _system_services.
+    All services accessed via ServiceRegistry.
     """
     # Direct NexusFS attrs
     app.state.permission_enforcer = getattr(nexus_fs, "_permission_enforcer", None)

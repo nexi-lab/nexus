@@ -72,12 +72,10 @@ def create_nexus_services(
             are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        Tuple of (KernelServices, system_dict, BrickServices).
+        Tuple of (KernelServices, system_dict, brick_dict).
 
     .. versionchanged:: Issue #2034
         Returns a 3-tuple instead of a single KernelServices.
-    .. versionchanged:: ServiceRegistry unification
-        system_services is now a plain dict (SystemServices dataclass deleted).
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
@@ -163,7 +161,6 @@ def create_nexus_services(
     # --- Assemble 3-tier containers (Issue #2034, #2193) ---
     kernel_services = _KernelServices(router=router)
 
-    # SystemServices dataclass deleted — system_dict is the canonical container.
     # Merge Tier 1 infrastructure from brick_dict into system_dict.
     system_dict["event_bus"] = brick_dict["event_bus"]
     system_dict["lock_manager"] = brick_dict["lock_manager"]
@@ -213,7 +210,7 @@ async def create_nexus_fs(
         parsing: ParseConfig object.
         kernel_services: Pre-built KernelServices (skips create_nexus_services).
         system_services: Pre-built system services dict.
-        brick_services: Pre-built BrickServices.
+        brick_services: Pre-built brick services dict.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
@@ -262,7 +259,7 @@ async def create_nexus_fs(
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
-    # this branch is skipped — bare kernel with empty SystemServices/BrickServices.
+    # this branch is skipped — bare kernel with no services.
     if kernel_services is None and record_store is not None:
         if system_services is not None or brick_services is not None:
             logger.warning(
@@ -324,8 +321,6 @@ async def create_nexus_fs(
         _do_link, system_services=system_services, zone_id=zone_id, brick_dict=brick_services
     )
     nx._initialize_fn = _do_initialize
-    # Issue #1801: _system_services assignment deleted — all services now in
-    # ServiceRegistry. Use nx.service("name") instead.
     await nx.link(
         enabled_bricks=enabled_bricks,
         parsing=parsing,
@@ -366,8 +361,7 @@ async def _register_vfs_hooks(
 
     # ── Zone write guard hook (Issue #1790) ────────────────────────
     # Rejects writes to zones being deprovisioned (Issue #2061).
-    # Replaces _check_zone_writable() in nexus_fs — kernel no longer
-    # reads zone_lifecycle from _system_services.
+    # Replaces _check_zone_writable() in nexus_fs.
     _ss = system_services or {}
     _zl = _ss.get("zone_lifecycle")
     if _zl is not None:

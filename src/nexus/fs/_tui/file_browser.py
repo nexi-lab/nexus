@@ -200,7 +200,8 @@ class FileBrowser(Widget):
         if row_idx >= len(self._entries):
             return None
 
-        return self._entries[row_idx].get("path")
+        result: str | None = self._entries[row_idx].get("path")
+        return result
 
     @property
     def entry_count(self) -> int:

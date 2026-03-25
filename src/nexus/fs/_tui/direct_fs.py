@@ -157,12 +157,14 @@ class S3DirectFS:
     async def read(self, path: str) -> bytes:
         key = self._to_key(path)
         resp = self._s3.get_object(Bucket=self._bucket, Key=key)
-        return resp["Body"].read()
+        data: bytes = resp["Body"].read()
+        return data
 
     async def read_range(self, path: str, start: int, end: int) -> bytes:
         key = self._to_key(path)
         resp = self._s3.get_object(Bucket=self._bucket, Key=key, Range=f"bytes={start}-{end - 1}")
-        return resp["Body"].read()
+        data: bytes = resp["Body"].read()
+        return data
 
     async def write(self, path: str, content: bytes) -> dict[str, Any]:
         key = self._to_key(path)
@@ -311,10 +313,12 @@ class MultiDirectFS:
         return self._backends[0] if self._backends else None
 
     async def read(self, path: str) -> bytes:
-        return await self._resolve(path).read(path)
+        result: bytes = await self._resolve(path).read(path)
+        return result
 
     async def read_range(self, path: str, start: int, end: int) -> bytes:
-        return await self._resolve(path).read_range(path, start, end)
+        result: bytes = await self._resolve(path).read_range(path, start, end)
+        return result
 
     async def write(self, path: str, content: bytes) -> dict[str, Any]:
         result: dict[str, Any] = await self._resolve(path).write(path, content)

@@ -436,19 +436,13 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         hook_spec: HookSpec | None = None,
         drain_timeout: float = DEFAULT_DRAIN_TIMEOUT,
     ) -> None:
-        """Hot-swap a service: validate → drain → hook swap → activate.
+        """Hot-swap a service: drain → atomic replace → hook swap → activate.
 
-        Only HotSwappable services can be swapped.  Restart-required services raise
-        TypeError — use full restart instead.
+        All quadrants supported (#1452).  HotSwappable controls *how* to swap
+        (full lifecycle vs refcount-only), not *whether*.
 
-        Flow for HotSwappable services:
-            1. Validate old service is HotSwappable (TypeError if not)
-            2. Call old_service.drain() — stop accepting new work
-            3. Drain ServiceRef refcount → 0 (in-flight calls complete)
-            4. Unregister old VFS hooks (from old hook_spec or old_service.hook_spec())
-            5. Atomic replace in ServiceRegistry
-            6. Register new VFS hooks (from hook_spec param, new_service.hook_spec(), or retroactive)
-            7. Call new_service.activate() if HotSwappable
+        HotSwappable (Q2/Q4): drain() → refcount drain → unhook → replace → rehook → activate()
+        Non-HotSwappable (Q1/Q3): refcount drain → replace → rehook if new is Hot → activate if new is Hot
         """
         # --- Resolve old instance ---
         old_info = self.service_info(name)
@@ -456,25 +450,21 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             raise KeyError(f"swap_service: {name!r} not registered")
         old_instance = old_info.instance
 
-        # --- Guard: only HotSwappable services can be swapped ---
+        # --- Branch: HotSwappable determines swap strategy ---
         quadrant = ServiceQuadrant.of(old_instance)
-        if not quadrant.is_hot_swappable:
-            raise TypeError(
-                f"swap_service: {name!r} is {quadrant.label} — cannot hot-swap. "
-                f"Only Q2/Q4 services (HotSwappable) support runtime swap. "
-                f"Use full restart instead."
-            )
+        old_is_hot = quadrant.is_hot_swappable
 
-        # Resolve old hook spec: explicit retroactive > protocol auto-detect
+        # Resolve old hook spec (HotSwappable only)
         old_hook_spec = self._hook_specs.get(name)
-        if old_hook_spec is None:
+        if old_hook_spec is None and old_is_hot:
             old_hook_spec = old_instance.hook_spec()
             if old_hook_spec is not None and not old_hook_spec.is_empty:
                 self._hook_specs[name] = old_hook_spec
 
-        # Step 1: Drain old service (service-internal cleanup)
-        await old_instance.drain()
-        logger.debug("[COORDINATOR] swap %r — old service drained", name)
+        # Step 1: Protocol drain (HotSwappable only)
+        if old_is_hot:
+            await old_instance.drain()
+            logger.debug("[COORDINATOR] swap %r — old service drained", name)
 
         # Step 2: Drain ServiceRef refcount (wait for in-flight calls)
         await self._drain(name, timeout=drain_timeout)

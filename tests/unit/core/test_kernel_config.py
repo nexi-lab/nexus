@@ -267,7 +267,6 @@ class TestSystemServices:
         # Original system services
         assert ss.async_namespace_manager is None
         assert ss.context_branch_service is None
-        assert ss.brick_lifecycle_manager is None
         assert ss.delivery_worker is None
         assert ss.observability_subsystem is None
         assert ss.resiliency_manager is None
@@ -313,8 +312,6 @@ class TestSystemServices:
             # Original system services
             "async_namespace_manager",
             "context_branch_service",
-            "brick_lifecycle_manager",
-            "brick_reconciler",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",

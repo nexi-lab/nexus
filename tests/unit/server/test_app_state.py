@@ -90,8 +90,6 @@ class TestInitAppState:
             "event_bus": "eb",
             "write_observer": "wo",
             "observability_subsystem": "obs",
-            "brick_lifecycle_manager": "blm",
-            "brick_reconciler": "br",
             "eviction_manager": "em",
         }
         mock_fs.service = lambda name: _svc_map.get(name)
@@ -103,8 +101,6 @@ class TestInitAppState:
         assert app.state.write_observer == "wo"
         assert app.state.permission_enforcer == "pe"
         assert app.state.observability_subsystem == "obs"
-        assert app.state.brick_lifecycle_manager == "blm"
-        assert app.state.brick_reconciler == "br"
         assert app.state.eviction_manager == "em"
 
     def test_none_nexus_fs_does_not_crash(self) -> None:

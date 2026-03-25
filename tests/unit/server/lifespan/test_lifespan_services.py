@@ -64,8 +64,6 @@ class TestFromAppExtraction:
         assert svc.nexus_fs is None
         assert svc.database_url is None
         assert svc.record_store is None
-        assert svc.brick_lifecycle_manager is None
-        assert svc.brick_reconciler is None
         assert svc.event_bus is None
         assert svc.rebac_manager is None
 
@@ -129,12 +127,10 @@ class TestFromAppSystemServices:
     """Test extraction from ServiceRegistry (previously _system_services)."""
 
     def test_extracts_system_services(self) -> None:
-        """System services (brick_lifecycle_manager, etc.) are extracted via nx.service()."""
+        """System services (eviction_manager, etc.) are extracted via nx.service()."""
         nx = _make_nexus_fs(
             _pipe_manager="pipe_mgr",
             _service_map={
-                "brick_lifecycle_manager": "blm",
-                "brick_reconciler": "br",
                 "eviction_manager": "em",
                 "write_observer": "write_obs",
                 "zone_lifecycle": "zl",
@@ -143,8 +139,6 @@ class TestFromAppSystemServices:
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
-        assert svc.brick_lifecycle_manager == "blm"
-        assert svc.brick_reconciler == "br"
         assert svc.eviction_manager == "em"
         assert svc.write_observer == "write_obs"
         assert svc.zone_lifecycle == "zl"
@@ -156,8 +150,6 @@ class TestFromAppSystemServices:
         app = _make_app(nexus_fs=nx)
         svc = LifespanServices.from_app(app)
 
-        assert svc.brick_lifecycle_manager is None
-        assert svc.brick_reconciler is None
         assert svc.eviction_manager is None
 
 

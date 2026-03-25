@@ -442,13 +442,13 @@ class TestErrorHandling:
         buffer.queue_owner_grant("user1", "/file1", "zone1")
 
         # Wait for first flush attempt (will fail) — generous margin for slow CI
-        time.sleep(0.15)
+        time.sleep(0.5)
 
         # Queue another item
         buffer.queue_owner_grant("user2", "/file2", "zone1")
 
         # Wait for second flush attempt (should succeed)
-        time.sleep(0.15)
+        time.sleep(0.5)
 
         buffer._stop_sync()
 

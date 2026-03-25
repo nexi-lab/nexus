@@ -233,8 +233,19 @@ class TestDynamicZoneCreation:
         expected = sorted(["root", "corp", "corp-eng", "corp-sales", "family"])
         assert zone_ids == expected, f"Expected {expected}, got {zone_ids}"
 
-    def test_zones_replicated_to_node2(self, cluster, api_key):
-        """All zones should be visible on node-2 after Raft replication."""
+    def test_create_zones_on_node2(self, cluster, api_key):
+        """Node-2 also creates the same zones (joins the Raft groups)."""
+        for zone_id in ["corp", "corp-eng", "corp-sales", "family"]:
+            r = _jsonrpc(
+                cluster["node2"],
+                "federation_create_zone",
+                {"zone_id": zone_id},
+                api_key=api_key,
+            )
+            assert "error" not in r, f"create_zone({zone_id}) on node-2 failed: {r}"
+
+    def test_zones_visible_on_node2(self, cluster, api_key):
+        """All zones should be visible on node-2."""
         for zone_id in ["corp", "corp-eng", "corp-sales", "family"]:
             _wait_zone_ready(cluster["node2"], zone_id, api_key, timeout=30)
 

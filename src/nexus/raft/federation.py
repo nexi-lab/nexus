@@ -83,9 +83,16 @@ class NexusFederation:
                 self._trust_store = TofuTrustStore(tls_cfg.known_zones_path)
 
         # Cache TLS credentials for gRPC connections.
-        # Use TOFU trust store CA bundle when available so federation
-        # works across zones with different CAs (SSH-style TOFU).
         self._tls_config: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
+
+        # Cluster peers (host:port) — read from NEXUS_PEERS env var (SSOT).
+        # Used by create_zone to include all peers in new Raft groups.
+        import os
+
+        from nexus.raft.peer_address import PeerAddress
+
+        peers_str = os.environ.get("NEXUS_PEERS", "")
+        self._peers = PeerAddress.parse_peer_list(peers_str) if peers_str else []
 
     # =========================================================================
     # Q3 PersistentService lifecycle (auto-managed by ServiceRegistry)
@@ -98,6 +105,24 @@ class NexusFederation:
     async def stop(self) -> None:
         """Stop federation service. Called by ServiceRegistry at shutdown."""
         logger.info("Federation service stopped")
+
+    # =========================================================================
+    # Cluster topology
+    # =========================================================================
+
+    @property
+    def peers(self) -> list:
+        """Cluster peer addresses (PeerAddress instances)."""
+        return self._peers
+
+    @property
+    def peer_targets(self) -> list[str]:
+        """Cluster peer host:port strings for Raft group creation."""
+        return [p.grpc_target for p in self._peers]
+
+    def create_zone(self, zone_id: str) -> Any:
+        """Create a zone with all cluster peers included in the Raft group."""
+        return self._mgr.create_zone(zone_id, peers=self.peer_targets)
 
     # =========================================================================
     # Public API

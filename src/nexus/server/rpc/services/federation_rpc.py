@@ -42,7 +42,12 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True, description="Create a new Raft zone")
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        self._zone_manager.create_zone(zone_id)
+        if self._federation is not None:
+            # Federation.create_zone includes all cluster peers in the Raft group
+            self._federation.create_zone(zone_id)
+        else:
+            # Fallback: single-node (no peers)
+            self._zone_manager.create_zone(zone_id)
         logger.info("Zone '%s' created via RPC", zone_id)
         return {"zone_id": zone_id, "created": True}
 

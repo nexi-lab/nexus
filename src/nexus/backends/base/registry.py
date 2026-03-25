@@ -92,9 +92,7 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "mkdir",
         "rmdir",
         "is_directory",
-        # ConnectorProtocol (connection lifecycle)
-        "connect",
-        "disconnect",
+        # ConnectorProtocol (connection lifecycle — connect/disconnect deleted #1811)
         "check_connection",
         # ConnectorProtocol (capability flags)
         "user_scoped",

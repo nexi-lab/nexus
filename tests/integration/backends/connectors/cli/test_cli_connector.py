@@ -256,29 +256,19 @@ class TestOperationResolution:
 
 
 class TestConnectionLifecycle:
-    def test_connect_cli_not_found(self) -> None:
+    def test_check_connection_cli_not_found(self) -> None:
         connector = FakeCLIConnector()
         with patch("shutil.which", return_value=None):
-            result = connector.connect()
+            result = connector.check_connection()
         assert result.success is False
         assert "not found" in (result.error_message or "")
 
-    def test_connect_cli_found(self) -> None:
-        connector = FakeCLIConnector()
-        with patch("shutil.which", return_value="/usr/bin/test-cli"):
-            result = connector.connect()
-        assert result.success is True
-        assert result.details["path"] == "/usr/bin/test-cli"
-
-    def test_disconnect_noop(self) -> None:
-        connector = FakeCLIConnector()
-        connector.disconnect()  # Should not raise
-
-    def test_check_connection(self) -> None:
+    def test_check_connection_cli_found(self) -> None:
         connector = FakeCLIConnector()
         with patch("shutil.which", return_value="/usr/bin/test-cli"):
             result = connector.check_connection()
         assert result.success is True
+        assert result.details["path"] == "/usr/bin/test-cli"
 
 
 # ---------------------------------------------------------------------------

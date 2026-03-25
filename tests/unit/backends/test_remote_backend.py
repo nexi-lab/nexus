@@ -11,9 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nexus.backends.storage.remote import RemoteBackend
-from nexus.contracts.exceptions import (
-    RemoteConnectionError,
-)
 from nexus.core.object_store import WriteResult
 
 # ---------------------------------------------------------------------------
@@ -199,25 +196,6 @@ class TestRemoteBackendRPC:
 
 class TestRemoteBackendLifecycle:
     """Connection lifecycle operations."""
-
-    def test_connect_uses_ping(self, backend: RemoteBackend, mock_transport) -> None:
-        """connect should call transport.ping() (typed Ping RPC)."""
-        mock_transport.ping.return_value = {"version": "0.7.2", "zone_id": "root", "uptime": 0}
-        backend.connect()
-        mock_transport.ping.assert_called_once()
-
-    def test_connect_raises_on_failure(self, backend: RemoteBackend, mock_transport) -> None:
-        """connect should raise RemoteConnectionError on transport failure."""
-        mock_transport.ping.side_effect = RemoteConnectionError(
-            "Connection failed",
-            details={"server_address": "localhost:2028"},
-        )
-        with pytest.raises(RemoteConnectionError):
-            backend.connect()
-
-    def test_disconnect_is_noop(self, backend: RemoteBackend) -> None:
-        """disconnect should be a no-op (transport lifecycle managed by factory)."""
-        backend.disconnect()  # Should not raise
 
     def test_close_is_noop(self, backend: RemoteBackend) -> None:
         """close() should be a no-op (transport lifecycle managed by factory)."""

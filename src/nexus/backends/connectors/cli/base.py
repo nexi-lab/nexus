@@ -203,8 +203,8 @@ class CLIConnector(
 
     # --- Connection lifecycle ---
 
-    def connect(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
-        """Verify CLI is installed and accessible."""
+    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+        """Check if CLI is available."""
         import shutil
 
         if not self.CLI_NAME:
@@ -224,13 +224,6 @@ class CLIConnector(
             success=True,
             details={"cli": self.CLI_NAME, "path": cli_path},
         )
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
-        """No persistent connection to close."""
-
-    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
-        """Check if CLI is available."""
-        return self.connect(context)
 
     # --- Token resolution (Decision #16A: lean on TokenManager) ---
 

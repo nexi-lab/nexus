@@ -189,12 +189,8 @@ class IsolatedBackend(Backend):
 
     # ── Connection lifecycle ────────────────────────────────────────────
 
-    def connect(self, context: "Any | None" = None) -> HandlerStatusResponse:
-        """Probe the worker's backend health.
-
-        The actual ``connect()`` is called lazily by ``worker_call`` on first
-        use, so this method just verifies that the pool can reach the backend.
-        """
+    def check_connection(self, context: "Any | None" = None) -> HandlerStatusResponse:
+        """Probe the worker's backend health."""
         try:
             result = self._pool.submit("check_connection", (), {"context": context})
             if isinstance(result, HandlerStatusResponse):
@@ -203,7 +199,8 @@ class IsolatedBackend(Backend):
         except IsolationError as exc:
             return HandlerStatusResponse(success=False, error_message=str(exc))
 
-    def disconnect(self, _context: "Any | None" = None) -> None:
+    def close(self) -> None:
+        """Shut down the isolation pool and release resources."""
         self._pool.shutdown()
 
     # ── Internal helpers ────────────────────────────────────────────────

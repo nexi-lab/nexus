@@ -129,7 +129,7 @@ class TestDirectoryOpsProtocolMethods:
 class TestConnectorProtocolMethods:
     """Verify CASLocalBackend has ConnectorProtocol lifecycle and capability methods."""
 
-    _LIFECYCLE_METHODS = ["connect", "disconnect", "check_connection"]
+    _LIFECYCLE_METHODS = ["check_connection"]
     _CAPABILITY_PROPERTIES = [
         "user_scoped",
         "is_connected",

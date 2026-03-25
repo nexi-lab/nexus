@@ -180,12 +180,5 @@ class RemoteBackend(ObjectStoreABC):
 
     # === Lifecycle ===
 
-    def connect(self, context: OperationContext | None = None) -> None:
-        """Health-check the remote server via Ping RPC."""
-        self._transport.ping()
-
-    def disconnect(self, context: OperationContext | None = None) -> None:
-        """No-op — transport lifecycle managed by factory."""
-
     def close(self) -> None:
         """No-op — transport lifecycle managed by factory."""

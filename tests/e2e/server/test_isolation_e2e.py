@@ -116,7 +116,7 @@ class TestIsolatedBackendWithFastAPI:
             assert resp.status_code == 200
             data = resp.json()
             assert data.get("status") in ("ok", "healthy")
-        backend.disconnect()
+        backend.close()
 
     async def test_write_read_via_api(self, tmp_path) -> None:
         """Write → read through real FastAPI with IsolatedBackend."""
@@ -157,7 +157,7 @@ class TestIsolatedBackendWithFastAPI:
             result = resp.json().get("result", {})
             # Verify content came back (may be base64 encoded)
             assert result is not None
-        backend.disconnect()
+        backend.close()
 
     async def test_mkdir_via_api(self, tmp_path) -> None:
         """mkdir through real FastAPI with IsolatedBackend."""
@@ -179,7 +179,7 @@ class TestIsolatedBackendWithFastAPI:
                 },
             )
             assert resp.status_code == 200
-        backend.disconnect()
+        backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -210,7 +210,7 @@ class TestIsolatedBackendPermissions:
                 },
             )
             assert resp.status_code == 401
-        backend.disconnect()
+        backend.close()
 
     async def test_wrong_api_key_returns_401(self, tmp_path) -> None:
         """Request with wrong API key → 401."""
@@ -232,7 +232,7 @@ class TestIsolatedBackendPermissions:
                 },
             )
             assert resp.status_code == 401
-        backend.disconnect()
+        backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -264,14 +264,14 @@ class TestIsolatedBackendDirect:
             ex = backend.content_exists(wr.data)
             assert ex.data is False
         finally:
-            backend.disconnect()
+            backend.close()
 
-    def test_connect_disconnect(self) -> None:
+    def test_check_connection_and_close(self) -> None:
         backend = _make_isolated_mock_backend()
-        status = backend.connect()
+        status = backend.check_connection()
         assert status.success is True
         assert backend.is_connected is True
-        backend.disconnect()
+        backend.close()
         assert backend.is_connected is False
 
     def test_error_propagation(self) -> None:
@@ -280,7 +280,7 @@ class TestIsolatedBackendDirect:
             rd = backend.read_content("nonexistent")
             assert rd.success is False
         finally:
-            backend.disconnect()
+            backend.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -311,7 +311,7 @@ class TestIsolatedBackendPerformance:
             avg_ms = (elapsed / n) * 1000
             assert avg_ms < 10.0, f"Per-call overhead too high: {avg_ms:.3f}ms"
         finally:
-            backend.disconnect()
+            backend.close()
 
     def test_1kb_roundtrip_under_20ms(self) -> None:
         """1KB write+read roundtrip must be < 20ms average."""
@@ -330,7 +330,7 @@ class TestIsolatedBackendPerformance:
             avg_ms = (elapsed / n) * 1000
             assert avg_ms < 20.0, f"Roundtrip too slow: {avg_ms:.3f}ms"
         finally:
-            backend.disconnect()
+            backend.close()
 
     def test_concurrent_reads_no_deadlock(self) -> None:
         """10 parallel reads via threads do not deadlock or error."""
@@ -348,4 +348,4 @@ class TestIsolatedBackendPerformance:
                 results = list(tp.map(read_one, range(10)))
             assert all(results)
         finally:
-            backend.disconnect()
+            backend.close()

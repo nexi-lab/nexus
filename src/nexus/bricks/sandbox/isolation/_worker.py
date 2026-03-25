@@ -28,7 +28,7 @@ def _ensure_backend(
 
     The *spec* triple ``(module, class, sorted-kwargs)`` is used to detect
     configuration changes — if the caller asks for a different backend the
-    old instance is disconnected and a new one is created.
+    old instance is closed and a new one is created.
     """
     global _BACKEND_INSTANCE, _BACKEND_SPEC  # noqa: PLW0603
 
@@ -36,10 +36,10 @@ def _ensure_backend(
     if _BACKEND_INSTANCE is not None and spec == _BACKEND_SPEC:
         return _BACKEND_INSTANCE
 
-    # Disconnect old instance (if any) before replacing
+    # Close old instance (if any) before replacing
     if _BACKEND_INSTANCE is not None:
         try:
-            _BACKEND_INSTANCE.disconnect()
+            _BACKEND_INSTANCE.close()
         except Exception as e:
             logger.debug("Worker cleanup failed: %s", e)
         _BACKEND_INSTANCE = None
@@ -48,14 +48,6 @@ def _ensure_backend(
     mod = importlib.import_module(module_path)
     klass = getattr(mod, class_name)
     instance = klass(**init_kwargs)
-    try:
-        instance.connect()
-    except Exception:
-        try:
-            instance.disconnect()
-        except Exception as e:
-            logger.debug("Worker cleanup failed: %s", e)
-        raise
     _BACKEND_INSTANCE = instance
     _BACKEND_SPEC = spec
     return _BACKEND_INSTANCE
@@ -90,12 +82,12 @@ def worker_get_property(
 
 
 def worker_shutdown() -> None:
-    """Disconnect and release the worker-local Backend instance."""
+    """Close and release the worker-local Backend instance."""
     global _BACKEND_INSTANCE, _BACKEND_SPEC  # noqa: PLW0603
 
     if _BACKEND_INSTANCE is not None:
         try:
-            _BACKEND_INSTANCE.disconnect()
+            _BACKEND_INSTANCE.close()
         except Exception as e:
             logger.debug("Worker cleanup failed: %s", e)
     _BACKEND_INSTANCE = None

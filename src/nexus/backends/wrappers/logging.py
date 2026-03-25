@@ -6,7 +6,7 @@ Wraps an inner Backend and logs every operation at DEBUG level with:
 - Latency in milliseconds
 - Success/failure status
 
-Lifecycle events (connect, disconnect) are logged at INFO level.
+Lifecycle events (check_connection) are logged at DEBUG level.
 
 Usage:
     from nexus.backends.wrappers.logging import LoggingBackendWrapper
@@ -202,28 +202,6 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
 
     # === Connection Lifecycle (INFO level) ===
-
-    def connect(self, context: "OperationContext | None" = None) -> "HandlerStatusResponse":
-        response, elapsed_ms = self._timed(
-            "connect", lambda: self._inner.connect(context=context), logging.INFO
-        )
-        logger.info(
-            "connect backend=%s success=%s latency_ms=%.2f",
-            self._inner.name,
-            response.success,
-            elapsed_ms,
-        )
-        return response
-
-    def disconnect(self, context: "OperationContext | None" = None) -> None:
-        _, elapsed_ms = self._timed(
-            "disconnect", lambda: self._inner.disconnect(context=context), logging.INFO
-        )
-        logger.info(
-            "disconnect backend=%s latency_ms=%.2f",
-            self._inner.name,
-            elapsed_ms,
-        )
 
     def check_connection(
         self, context: "OperationContext | None" = None

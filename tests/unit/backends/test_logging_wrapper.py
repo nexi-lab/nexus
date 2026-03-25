@@ -176,27 +176,9 @@ class TestDirectoryOperationLogs:
 
 
 class TestLifecycleLogs:
-    """Connect/disconnect should log at INFO, not DEBUG."""
+    """Lifecycle logging tests."""
 
-    def test_connect_logs_info(
-        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_inner.connect.return_value = HandlerStatusResponse(success=True)
-        with caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"):
-            result = logged.connect()
-        assert result.success
-        assert len(caplog.records) == 1
-        assert caplog.records[0].levelno == logging.INFO
-        assert "connect" in caplog.records[0].message
-
-    def test_disconnect_logs_info(
-        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        with caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"):
-            logged.disconnect()
-        assert len(caplog.records) == 1
-        assert caplog.records[0].levelno == logging.INFO
-        assert "disconnect" in caplog.records[0].message
+    pass  # connect/disconnect removed — dead code cleanup
 
 
 # ---------------------------------------------------------------------------
@@ -295,15 +277,4 @@ class TestExceptionLogging:
         assert len(caplog.records) == 1
         assert "error=" in caplog.records[0].message
 
-    def test_connect_exception_logged_at_info(
-        self, logged: LoggingBackendWrapper, mock_inner: MagicMock, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_inner.connect.side_effect = ConnectionError("refused")
-        with (
-            caplog.at_level(logging.INFO, logger="nexus.backends.wrappers.logging"),
-            pytest.raises(ConnectionError, match="refused"),
-        ):
-            logged.connect()
-        assert len(caplog.records) == 1
-        assert caplog.records[0].levelno == logging.INFO
-        assert "error=" in caplog.records[0].message
+    # test_connect_exception_logged_at_info removed — connect() deleted

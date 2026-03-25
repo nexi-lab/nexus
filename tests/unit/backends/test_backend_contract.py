@@ -224,14 +224,8 @@ class TestBackendContract:
 
     # -- Connection Lifecycle --
 
-    def test_connect_returns_status(self, backend: Backend) -> None:
-        assert backend.connect().success is True
-
     def test_check_connection_returns_status(self, backend: Backend) -> None:
         assert isinstance(backend.check_connection().success, bool)
-
-    def test_disconnect_does_not_raise(self, backend: Backend) -> None:
-        backend.disconnect()  # Should not raise
 
     # -- Protocol Conformance --
 

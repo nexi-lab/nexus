@@ -141,7 +141,6 @@ def main() -> None:
 
     # ── Direct baseline ──────────────────────────────────────────────
     direct = BenchMockBackend()
-    direct.connect()
     wr = direct.write_content(data_1kb)
     content_hash = wr.data
 
@@ -173,7 +172,7 @@ def main() -> None:
     bench("read_content (1KB)", lambda: iso_proc.read_content(iso_hash), n_iso)
     bench("content_exists", lambda: iso_proc.content_exists(iso_hash), n_iso)
     bench("list_dir", lambda: iso_proc._pool.submit("list_dir", ("/",), {}), n_iso)
-    iso_proc.disconnect()
+    iso_proc.close()
     print()
 
     # ── InterpreterPoolExecutor (3.14+ only) ─────────────────────────
@@ -194,7 +193,7 @@ def main() -> None:
         bench("read_content (1KB)", lambda: iso_interp.read_content(interp_hash), n_iso)
         bench("content_exists", lambda: iso_interp.content_exists(interp_hash), n_iso)
         bench("list_dir", lambda: iso_interp._pool.submit("list_dir", ("/",), {}), n_iso)
-        iso_interp.disconnect()
+        iso_interp.close()
     else:
         print("=== InterpreterPoolExecutor ===")
         print("  (skipped — requires Python 3.14+)")

@@ -6,9 +6,11 @@ Extracted from fastapi_server.py (#1602).
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import FastAPI
 
     from nexus.server.lifespan.services_container import LifespanServices
@@ -175,7 +177,6 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
 
             wb_event_bus = svc.event_bus
             if wb_event_bus:
-                backlog_store = SyncBacklogStore(record_store=gw.record_store, is_postgresql=_is_pg)
                 change_log_store = ChangeLogStore(
                     record_store=gw.record_store, is_postgresql=_is_pg
                 )
@@ -191,6 +192,33 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                 except ValueError:
                     default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
 
+                # DT_PIPE wakeup callback (Issue #3194): sync, best-effort, never blocks.
+                # SyncBacklogStore calls this after every enqueue() commit to wake the
+                # poll loop via pipe signal instead of waiting up to 30s.
+                _pm = svc.pipe_manager
+                _on_enqueue = None
+                if _pm is not None:
+                    import contextlib
+
+                    from nexus.system_services.sync.write_back_service import (
+                        _BACKLOG_WAKEUP_PIPE,
+                    )
+
+                    def _make_on_enqueue(pm: "Any", pipe_path: str) -> "Callable[[], None]":
+                        def _signal() -> None:
+                            with contextlib.suppress(Exception):
+                                pm.pipe_write_nowait(pipe_path, b"\x01")
+
+                        return _signal
+
+                    _on_enqueue = _make_on_enqueue(_pm, _BACKLOG_WAKEUP_PIPE)
+
+                backlog_store = SyncBacklogStore(
+                    record_store=gw.record_store,
+                    is_postgresql=_is_pg,
+                    on_enqueue=_on_enqueue,
+                )
+
                 app.state.write_back_service = WriteBackService(
                     gateway=gw,
                     event_bus=wb_event_bus,
@@ -198,8 +226,18 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                     change_log_store=change_log_store,
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
+                    pipe_manager=_pm,
                 )
                 await app.state.write_back_service.start()
+
+                # Register as VFSObserver (Issue #3194): receive file mutation events
+                # directly from KernelDispatch OBSERVE phase (us latency, replaces
+                # EventBus _subscribe_loop).
+                _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
+                if _dispatch is not None:
+                    _dispatch.register_observe(app.state.write_back_service)
+                    logger.debug("WriteBack observer registered with KernelDispatch")
+
                 logger.info("WriteBack service started for bidirectional sync")
                 return
 

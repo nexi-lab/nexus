@@ -35,16 +35,11 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import (
-    CheckpointMixin,
     ConfirmLevel,
     OpTraits,
     Reversibility,
-    SkillDocMixin,
-    TraitBasedMixin,
-    ValidatedMixin,
     ValidationError,
 )
 from nexus.backends.connectors.calendar.errors import ERROR_REGISTRY
@@ -53,9 +48,8 @@ from nexus.backends.connectors.calendar.schemas import (
     DeleteEventSchema,
     UpdateEventSchema,
 )
-from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.backends.connectors.oauth_base import OAuthConnectorBase
+from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -78,15 +72,7 @@ logger = logging.getLogger(__name__)
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="google-calendar",
 )
-class GoogleCalendarConnectorBackend(
-    Backend,
-    CacheConnectorMixin,
-    OAuthConnectorMixin,
-    SkillDocMixin,
-    ValidatedMixin,
-    TraitBasedMixin,
-    CheckpointMixin,
-):
+class GoogleCalendarConnectorBackend(OAuthConnectorBase):
     """Google Calendar connector backend with full CRUD support.
 
     This backend syncs events from Google Calendar API and organizes them
@@ -107,13 +93,6 @@ class GoogleCalendarConnectorBackend(
     - /{calendar_id}/{event_id}.yaml - Event files
     - /{calendar_id}/_new.yaml - Write here to create new event
     """
-
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
-        {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-        }
-    )
 
     # =========================================================================
     # Mixin Configuration
@@ -211,9 +190,6 @@ send_notifications: true
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
 
-    # Enable metadata-based listing for fast database queries
-    use_metadata_listing = True
-
     # Connection arguments for registry-based instantiation
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "token_manager_db": ConnectionArg(
@@ -257,65 +233,22 @@ send_notifications: true
                        user from OperationContext (recommended for multi-user scenarios)
             provider: OAuth provider name from config (default: "gcalendar")
             record_store: Optional RecordStoreABC instance for content caching.
-                           If provided, enables persistent caching for fast grep/search.
             max_events_per_calendar: Maximum number of events to fetch per calendar (default: 250).
-            metadata_store: MetastoreABC instance for writing to file_paths table (optional).
-
-        Note:
-            For single-user scenarios (demos), set user_email explicitly.
-            For multi-user production, leave user_email=None to auto-detect from context.
+            metadata_store: MetastoreABC instance for file_paths table (optional).
         """
-        super().__init__()
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
-        self.session_factory = record_store.session_factory if record_store else None
+        super().__init__(
+            token_manager_db=token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            record_store=record_store,
+            metadata_store=metadata_store,
+        )
         self.max_events_per_calendar = max_events_per_calendar
-        self.metadata_store = metadata_store
-
-        # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
-        self._checkpoints: dict[str, Any] = {}
-
-        # Register OAuth provider
-        self._register_oauth_provider()
-
-    def _register_oauth_provider(self) -> None:
-        """Register OAuth provider with TokenManager using OAuthProviderFactory."""
-        try:
-            import importlib as _il
-
-            OAuthProviderFactory = _il.import_module(
-                "nexus.bricks.auth.oauth.factory"
-            ).OAuthProviderFactory
-
-            factory = OAuthProviderFactory()
-
-            try:
-                provider_instance = factory.create_provider(name=self.provider)
-                self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(f"Registered OAuth provider '{self.provider}' for Calendar backend")
-            except ValueError as e:
-                logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
-                )
-        except Exception as e:
-            logger.error(f"Failed to register OAuth provider: {e}")
 
     @property
     def name(self) -> str:
         """Backend identifier name."""
         return "gcalendar"
-
-    @property
-    def user_scoped(self) -> bool:
-        """This backend requires per-user OAuth credentials."""
-        return True
-
-    # --- Capability flags ---
-
-    @property
-    def has_token_manager(self) -> bool:
-        """GCalendar connector manages OAuth tokens."""
-        return True
 
     # =========================================================================
     # OAuth / Service

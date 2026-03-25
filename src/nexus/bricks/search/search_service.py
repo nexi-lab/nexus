@@ -730,18 +730,15 @@ class SearchService:
                 user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
-        # Issue #901: Parallel directory traversal for 5-10x speedup
-        all_paths = self._list_dir_parallel(
-            backend=route.backend,
-            root_path=path,
-            backend_path=route.backend_path,
-            context=list_context,
+        # Issue #3266: Metastore-first listing.
+        # Prefer metastore entries when available (populated by ConnectorSyncLoop).
+        # Fall back to live API on cache miss (empty metastore for this path).
+        all_paths = self._list_from_metastore_or_api(
+            path=path,
+            route=route,
+            list_context=list_context,
             recursive=recursive,
         )
-
-        # NOTE: Metastore-first listing deferred to Issue #3266.
-        # Once CLI connectors sync to metastore with display_path() names,
-        # this code path should prefer metastore entries over live list_dir().
 
         # Permission filtering
         if self._enforce_permissions and context:
@@ -762,6 +759,63 @@ class SearchService:
         if details:
             return self._list_connector_details(all_paths, route, path, list_context)
         return all_paths
+
+    def _list_from_metastore_or_api(
+        self,
+        path: str,
+        route: Any,
+        list_context: Any,
+        recursive: bool,
+    ) -> builtins.list[str]:
+        """Metastore-first listing with cache-miss fallback (Issue #3266, Decision #4C).
+
+        1. Query metastore for entries under this path.
+        2. If metastore has entries, return them (fast, no API call).
+        3. If metastore is empty (cache miss), fall back to live API.
+        """
+        # Check if backend declares SYNC_ELIGIBLE and metastore has data
+        from nexus.contracts.capabilities import ConnectorCapability
+
+        backend = route.backend
+        caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+        use_metastore = (
+            ConnectorCapability.SYNC_ELIGIBLE in caps
+            and getattr(backend, "use_metadata_listing", False)
+            and hasattr(self.metadata, "list_directory_entries")
+        )
+
+        if use_metastore:
+            try:
+                # Try metastore first
+                zone_id = getattr(list_context, "zone_id", None) or "root"
+                dir_entries = self.metadata.list_directory_entries(path, zone_id=zone_id)
+                if dir_entries is not None and len(dir_entries) > 0:
+                    # Metastore hit — return cached listing
+                    metastore_paths = []
+                    for entry in dir_entries:
+                        entry_path = getattr(entry, "path", None) or str(entry)
+                        metastore_paths.append(entry_path)
+                    logger.debug(
+                        "[LIST-METASTORE] HIT: %s returned %d entries",
+                        path,
+                        len(metastore_paths),
+                    )
+                    return metastore_paths
+                # Metastore miss — fall through to live API
+                logger.debug("[LIST-METASTORE] MISS: %s — falling back to live API", path)
+            except Exception:
+                logger.debug(
+                    "[LIST-METASTORE] Error querying metastore for %s", path, exc_info=True
+                )
+
+        # Live API fallback (original path)
+        return self._list_dir_parallel(
+            backend=backend,
+            root_path=path,
+            backend_path=route.backend_path,
+            context=list_context,
+            recursive=recursive,
+        )
 
     def _list_connector_details(
         self,

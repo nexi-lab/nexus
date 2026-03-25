@@ -120,6 +120,9 @@ class ConnectorCapability(StrEnum):
     CLI_BACKED = "cli_backed"
     """Backend delegates execution to an external CLI subprocess."""
 
+    SYNC_ELIGIBLE = "sync_eligible"
+    """Backend should be periodically synced to the metastore by ConnectorSyncLoop."""
+
 
 # --- Capability-to-Protocol mapping ---
 # Used for registration-time validation: if a backend claims a capability
@@ -147,6 +150,7 @@ OAUTH_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
         ConnectorCapability.USER_SCOPED,
         ConnectorCapability.TOKEN_MANAGER,
         ConnectorCapability.OAUTH,
+        ConnectorCapability.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for OAuth-based connectors."""
@@ -157,6 +161,7 @@ CLI_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
         ConnectorCapability.WRITE_BACK,
         ConnectorCapability.SKILL_DOC,
         ConnectorCapability.SYNC,
+        ConnectorCapability.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for CLI-backed connectors (gws, gh)."""

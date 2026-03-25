@@ -13,7 +13,7 @@ Usage:
 
     # With Raft (mode='federation', via ZoneManager + ZoneHandle):
     from nexus.raft import ZoneManager
-    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")
+    mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
     handle = mgr.create_zone("root", ["2@peer:2126"])
     store = RaftMetadataStore(engine=handle, zone_id="root")
 """
@@ -106,7 +106,7 @@ class RaftMetadataStore(MetastoreABC):
 
         # With Raft (via ZoneManager + ZoneHandle):
         from nexus.raft import ZoneManager
-        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")
+        mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")
         handle = mgr.create_zone("root", ["2@peer:2126"])
         store = RaftMetadataStore(engine=handle, zone_id="root")
         store.put(metadata)  # replicated

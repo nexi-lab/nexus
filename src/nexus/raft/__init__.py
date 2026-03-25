@@ -25,7 +25,7 @@ Example (Metastore - embedded mode):
 Example (ZoneManager - consensus mode):
     from nexus.raft import ZoneManager
 
-    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+    mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
     handle = mgr.create_zone("root", ["2@peer:2126"])
     handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
 """

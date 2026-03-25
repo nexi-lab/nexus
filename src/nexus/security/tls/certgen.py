@@ -81,6 +81,7 @@ def generate_node_cert(
     ca_key: ec.EllipticCurvePrivateKey,
     hostnames: list[str] | None = None,
     validity_days: int = 365,
+    hostname: str | None = None,
 ) -> tuple[x509.Certificate, ec.EllipticCurvePrivateKey]:
     """Generate a node certificate signed by the zone CA.
 
@@ -90,11 +91,12 @@ def generate_node_cert(
     Returns:
         (node_cert, node_private_key)
     """
+    cn_node = hostname if hostname else str(node_id)
     key = ec.generate_private_key(ec.SECP256R1())
     subject = x509.Name(
         [
             x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Nexus"),
-            x509.NameAttribute(NameOID.COMMON_NAME, f"nexus-zone-{zone_id}-node-{node_id}"),
+            x509.NameAttribute(NameOID.COMMON_NAME, f"nexus-zone-{zone_id}-node-{cn_node}"),
         ]
     )
 

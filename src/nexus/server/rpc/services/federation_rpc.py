@@ -66,8 +66,11 @@ class FederationRPCService:
     ) -> dict[str, Any]:
         if self._federation is None:
             raise RuntimeError("Federation not configured")
+        from nexus.raft.peer_address import PeerAddress
+
+        parsed = PeerAddress.parse(peer_addr)
         zone_id: str = await self._federation.join(
-            peer_addr=peer_addr, remote_path=remote_path, local_path=local_path
+            peer_addr=parsed.grpc_target, remote_path=remote_path, local_path=local_path
         )
         logger.info(
             "Joined zone '%s' from %s via RPC, mounted at '%s'",

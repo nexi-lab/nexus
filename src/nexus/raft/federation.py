@@ -49,7 +49,7 @@ class NexusFederation:
     Usage:
         from nexus.raft.zone_manager import ZoneManager
 
-        mgr = ZoneManager(node_id=1, base_path="./zones")
+        mgr = ZoneManager(hostname="nexus-1", base_path="./zones")
         mgr.bootstrap()
 
         fed = NexusFederation(zone_manager=mgr)

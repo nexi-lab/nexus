@@ -425,10 +425,10 @@ class PlaygroundApp(App[None]):
 
     def _refocus_table(self) -> None:
         """Return focus to the file table after CRUD operations."""
-        try:
+        import contextlib
+
+        with contextlib.suppress(Exception):
             self.query_one("#file-table").focus()
-        except Exception:
-            pass
 
     def _show_crud_input(self, mode: str, placeholder: str, prefill: str = "") -> None:
         """Show the CRUD input with a given mode and placeholder."""

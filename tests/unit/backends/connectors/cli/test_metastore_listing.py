@@ -1,7 +1,7 @@
 """Tests for metastore-first listing (Issue #3266, Decision #10A).
 
-Unit tests for _list_from_metastore_or_api: metastore hit, metastore miss
-(fallback to API), stale metastore, empty mount, permission filtering.
+Unit tests for _list_from_metastore_or_api: directory_entries hit, miss
+(fallback to API), error handling, and non-eligible backends.
 """
 
 from __future__ import annotations
@@ -10,35 +10,42 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
+from nexus.bricks.search.search_service import SearchService
+
 
 def _make_search_service(
-    metastore_entries: dict[str, list] | None = None,
+    directory_entries: dict[str, list[tuple[str, str]]] | None = None,
     parallel_results: list[str] | None = None,
 ) -> Any:
-    """Create a minimal mock search service with _list_from_metastore_or_api."""
-    # We need to import the actual method, so we'll test it through the class
-    # But since SearchService has complex deps, we'll test the logic in isolation
-    from nexus.bricks.search.search_service import SearchService
-
+    """Create a mock search service with _list_from_metastore_or_api and _query_directory_entries."""
     svc = MagicMock(spec=SearchService)
 
-    # Wire up the real method
+    # Wire up the real methods
     svc._list_from_metastore_or_api = SearchService._list_from_metastore_or_api.__get__(svc)
-
-    # Mock metadata store
-    metadata = MagicMock()
-
-    def _list_dir_entries(path: str, zone_id: str | None = None) -> list | None:
-        if metastore_entries and path in metastore_entries:
-            entries = metastore_entries[path]
-            return entries if entries else None
-        return None
-
-    metadata.list_directory_entries = MagicMock(side_effect=_list_dir_entries)
-    svc.metadata = metadata
+    svc._query_directory_entries = SearchService._query_directory_entries.__get__(svc)
 
     # Mock _list_dir_parallel
     svc._list_dir_parallel = MagicMock(return_value=parallel_results or [])
+
+    # Mock _query_directory_entries to return from the dict instead of hitting DB
+    entries = directory_entries or {}
+
+    def _mock_query(path: str) -> list[str] | None:
+        parent = path.rstrip("/")
+        if parent in entries:
+            rows = entries[parent]
+            if not rows:
+                return None
+            results = []
+            for name, entry_type in rows:
+                full_path = f"{parent}/{name}"
+                if entry_type == "dir":
+                    full_path += "/"
+                results.append(full_path)
+            return results
+        return None
+
+    svc._query_directory_entries = MagicMock(side_effect=_mock_query)
 
     return svc
 
@@ -77,13 +84,14 @@ def _make_context(user_id: str = "user1", zone_id: str = "root") -> SimpleNamesp
 
 class TestMetastoreHit:
     def test_returns_cached_entries_on_hit(self) -> None:
-        """When metastore has entries, returns them without API call."""
-        entries = [
-            SimpleNamespace(path="/mnt/gmail/INBOX/msg1.yaml"),
-            SimpleNamespace(path="/mnt/gmail/INBOX/msg2.yaml"),
-        ]
+        """When directory_entries has data, returns them without API call."""
         svc = _make_search_service(
-            metastore_entries={"/mnt/gmail/INBOX": entries},
+            directory_entries={
+                "/mnt/gmail/INBOX": [
+                    ("msg1.yaml", "file"),
+                    ("msg2.yaml", "file"),
+                ],
+            },
             parallel_results=["should-not-be-called"],
         )
         route = _make_route()
@@ -97,8 +105,32 @@ class TestMetastoreHit:
         )
 
         assert len(result) == 2
-        # Should NOT have called _list_dir_parallel
+        assert "/mnt/gmail/INBOX/msg1.yaml" in result
+        assert "/mnt/gmail/INBOX/msg2.yaml" in result
         svc._list_dir_parallel.assert_not_called()
+
+    def test_returns_directories_with_trailing_slash(self) -> None:
+        """Directory entries get trailing slash."""
+        svc = _make_search_service(
+            directory_entries={
+                "/mnt/gmail": [
+                    ("INBOX", "dir"),
+                    ("SENT", "dir"),
+                ],
+            },
+        )
+        route = _make_route()
+        ctx = _make_context()
+
+        result = svc._list_from_metastore_or_api(
+            path="/mnt/gmail",
+            route=route,
+            list_context=ctx,
+            recursive=False,
+        )
+
+        assert "/mnt/gmail/INBOX/" in result
+        assert "/mnt/gmail/SENT/" in result
 
 
 # ============================================================================
@@ -108,9 +140,9 @@ class TestMetastoreHit:
 
 class TestMetastoreMiss:
     def test_falls_back_to_api_on_empty_metastore(self) -> None:
-        """When metastore returns None, falls back to live API."""
+        """When directory_entries has no data, falls back to live API."""
         svc = _make_search_service(
-            metastore_entries={},  # No entries for any path
+            directory_entries={},
             parallel_results=["/mnt/gmail/INBOX/msg1.yaml", "/mnt/gmail/INBOX/msg2.yaml"],
         )
         route = _make_route()
@@ -126,12 +158,12 @@ class TestMetastoreMiss:
         assert len(result) == 2
         svc._list_dir_parallel.assert_called_once()
 
-    def test_falls_back_to_api_on_metastore_error(self) -> None:
-        """When metastore raises, falls back to live API."""
+    def test_falls_back_to_api_on_query_error(self) -> None:
+        """When DB query fails, falls back to live API."""
         svc = _make_search_service(
             parallel_results=["/mnt/gmail/INBOX/msg1.yaml"],
         )
-        svc.metadata.list_directory_entries = MagicMock(side_effect=RuntimeError("DB down"))
+        svc._query_directory_entries = MagicMock(side_effect=RuntimeError("DB down"))
         route = _make_route()
         ctx = _make_context()
 
@@ -155,7 +187,9 @@ class TestNonSyncEligible:
     def test_non_sync_eligible_always_uses_api(self) -> None:
         """Backends without SYNC_ELIGIBLE always go to live API."""
         svc = _make_search_service(
-            metastore_entries={"/mnt/local": [SimpleNamespace(path="/mnt/local/file.txt")]},
+            directory_entries={
+                "/mnt/local": [("file.txt", "file")],
+            },
             parallel_results=["/mnt/local/file.txt"],
         )
         route = _make_route(sync_eligible=False)
@@ -168,7 +202,6 @@ class TestNonSyncEligible:
             recursive=False,
         )
 
-        # Should call API directly, not metastore
         svc._list_dir_parallel.assert_called_once()
 
     def test_metadata_listing_disabled_uses_api(self) -> None:

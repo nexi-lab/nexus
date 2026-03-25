@@ -694,16 +694,24 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
         logger.info("CAS remote content fetcher wired for federation scatter-gather")
 
     # Content resolver — remote CAS content (#163)
+    # self_address uses VFS gRPC port (default 2028), not Raft port (2126).
+    # Content fetcher connects via NexusVFSService (VFS gRPC), not Raft gRPC.
+    _raft_addr = zone_mgr.advertise_addr  # e.g. "nexus-1:2126"
+    _hostname = _raft_addr.rsplit(":", 1)[0] if ":" in _raft_addr else _raft_addr
+    import os as _os_mod
+
+    _vfs_grpc_port = _os_mod.environ.get("NEXUS_GRPC_PORT", "2028")
+    _content_addr = f"{_hostname}:{_vfs_grpc_port}"
     content_resolver = FederationContentResolver(
         metastore=nx_fs.metadata,
-        self_address=zone_mgr.advertise_addr,
+        self_address=_content_addr,
         tls_config=zone_mgr.tls_config,
         remote_content_fetcher=remote_content_fetcher,
         local_object_store=backend,
     )
     await _coordinator.enlist("federation_content", content_resolver)
 
-    logger.info("Federation resolvers registered: IPC + Content (self=%s)", zone_mgr.advertise_addr)
+    logger.info("Federation resolvers registered: IPC + Content (self=%s)", _content_addr)
 
 
 async def _restore_mounts(nx_fs: "NexusFS") -> None:

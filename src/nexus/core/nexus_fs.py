@@ -158,9 +158,13 @@ class NexusFS(  # type: ignore[misc]
         self._descendant_checker: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
-        # Issue #1788: distributed lock manager — kernel knows (like _permission_enforcer).
+        # Issue #1788: distributed lock manager — kernel knows, factory provides.
         # In-process locks use _vfs_lock_manager (kernel owns); distributed locks use this.
         self._distributed_lock_manager: Any = None
+        # Issue #1792: agent registry — kernel knows, factory provides.
+        # Kernel does NOT own AgentRegistry (no-agent profiles like REMOTE work without it).
+        # Factory creates and injects at link-time; None = graceful degrade.
+        self._agent_registry: Any = None
         # Issue #1801: _flush_write_observer_fn and _overlay_config_fn closures removed —
         # kernel now reads services directly from service registry.
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)

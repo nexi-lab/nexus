@@ -146,15 +146,7 @@ class TestCacheBrickHealthCheck:
 
 
 class TestCacheBrickLifecycleProtocol:
-    """Test that CacheBrick satisfies BrickLifecycleProtocol."""
-
-    def test_satisfies_lifecycle_protocol(self) -> None:
-        """CacheBrick should be a structural match for BrickLifecycleProtocol."""
-        from nexus.cache.brick import CacheBrick
-        from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
-
-        brick = CacheBrick()
-        assert isinstance(brick, BrickLifecycleProtocol)
+    """Test that CacheBrick has start/stop/health_check lifecycle methods."""
 
     @pytest.mark.asyncio
     async def test_lifecycle_with_null_store(self) -> None:

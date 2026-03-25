@@ -465,10 +465,16 @@ main() {
     print_banner
     cleanup_stale_pid_files
     check_permissions_flags
-    wait_for_postgres
     ensure_skills_directory
-    init_database
-    setup_admin_api_key
+
+    # Skip PostgreSQL-dependent steps when no database URL (cluster profile)
+    if [ -n "${NEXUS_DATABASE_URL:-}" ]; then
+        wait_for_postgres
+        init_database
+        setup_admin_api_key
+    else
+        echo -e "${GREEN}✓ No NEXUS_DATABASE_URL — skipping PostgreSQL init (cluster profile)${NC}"
+    fi
     init_semantic_search_if_enabled
     start_zoekt_if_enabled
     # Note: TLS provisioning is file-based. If {data_dir}/tls/join-token

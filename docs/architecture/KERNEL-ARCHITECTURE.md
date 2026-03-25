@@ -46,7 +46,7 @@ Follows Linux's monolithic kernel model, not microkernel:
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Config-time DI + runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `register_filesystem()` + `kern_mount()` / `kill_sb()` |
+| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
 | Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
@@ -55,10 +55,7 @@ has **zero reads** of `_system_services` attributes — all service wiring flows
 through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
 
 **Drivers** use constructor DI at startup — same binary, different config
-(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). MetastoreABC is
-immutable after init; ObjectStore backends support runtime mount/unmount via
-`DriverLifecycleCoordinator` (routing table update + hook_spec registration +
-KernelDispatch notification). Like Linux `mount`/`umount` — no restart needed.
+(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
 
 ### Service Lifecycle
 
@@ -102,9 +99,6 @@ One-click contract: implement protocol → `ServiceRegistry.enlist()` →
 kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
 scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
-
-`swap_service()` supports **all quadrants** (#1452). `HotSwappable` determines
-*how* to swap (full lifecycle vs refcount-only drain), not *whether*.
 
 **Kernel DI patterns** (two mechanisms, never reads service containers directly):
 

@@ -47,9 +47,8 @@ gdrive = [
 ]
 fsspec = ["fsspec>=2024.0"]
 tui = ["textual>=1.0"]
-langchain = ["langchain-core>=0.2"]
 all = [
-    "nexus-fs[s3,gcs,gdrive,fsspec,tui,langchain]",
+    "nexus-fs[s3,gcs,gdrive,fsspec,tui]",
 ]
 dev = [
     "nexus-fs[all]",

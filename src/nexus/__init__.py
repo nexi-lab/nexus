@@ -633,6 +633,16 @@ async def connect(
     if zone_mgr is not None:
         nx_fs._zone_mgr = zone_mgr
 
+        # Enlist federation as Q3 PersistentService
+        try:
+            from nexus.raft.federation import NexusFederation
+
+            _fed = NexusFederation(zone_manager=zone_mgr)
+            await nx_fs._service_registry.enlist("federation", _fed)
+            logger.info("Federation service enlisted")
+        except Exception as exc:
+            logger.warning("Federation service unavailable: %s", exc)
+
         # Register federation content resolver (PRE-DISPATCH, Issue #163)
         # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
         await _register_federation_resolver(nx_fs, zone_mgr, backend)

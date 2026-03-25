@@ -137,7 +137,7 @@ async def _do_link(
     # Enlist all services into ServiceRegistry (unified loop).
     # After this, every service is available via nx.service("name").
     # Note: permission_enforcer stays as kernel-owns DI (Issue #1815).
-    # Canonical name mapping for system services that need aliasing.
+    # Canonical name mapping for services that need aliasing.
     _CANONICAL_ALIASES = {
         "context_branch_service": "context_branch",
     }

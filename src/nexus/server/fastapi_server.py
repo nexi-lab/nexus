@@ -297,7 +297,7 @@ def create_app(
         app.state.read_session_factory = None
         app.state.async_read_session_factory = None
 
-    # Expose kernel services on app.state so routers never reach into
+    # Expose services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
     app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
@@ -356,7 +356,7 @@ def create_app(
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
         # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
-        # Federation is a Q1 system service, enlisted via ServiceRegistry.
+        # Federation is enlisted via ServiceRegistry.
         _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
         _fed = nexus_fs.service("federation") if hasattr(nexus_fs, "service") else None
         if _zone_mgr is not None and _fed is not None:

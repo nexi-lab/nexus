@@ -69,7 +69,7 @@ class _ActiveAgent:
 
 
 class AcpService:
-    """Stateless coding agent caller via ACP JSON-RPC — Tier 1 system service.
+    """Stateless coding agent caller via ACP JSON-RPC.
 
     Lifecycle:
         1. Look up ``AgentConfig`` by ``agent_id``

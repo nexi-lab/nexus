@@ -102,8 +102,6 @@ class NexusFS(  # type: ignore[misc]
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        # Issue #1767: _kernel_services wrapper removed — only field was router,
-        # which is already stored as self.router (set a few lines below).
         self._config: Any | None = None
 
         # Map config fields to flat attributes

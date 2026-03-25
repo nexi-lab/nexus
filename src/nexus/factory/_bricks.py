@@ -92,13 +92,13 @@ def _boot_independent_bricks(
 
     Args:
         ctx: Boot context with shared dependencies.
-        system: System services dict from Tier 1 (provides rebac_manager,
+        system: Services dict (provides rebac_manager,
             entity_registry, etc.).
         svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
             When None, all bricks are enabled (backward-compatible default).
 
     Returns:
-        Dict with brick service entries (some may be None).
+        Dict with service entries (some may be None).
     """
     t0 = time.perf_counter()
     _on = _make_gate(svc_on)

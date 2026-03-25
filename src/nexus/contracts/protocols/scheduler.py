@@ -4,7 +4,7 @@ Defines the contract for agent work-request scheduling.
 
 Also defines ``CreditsReservationProtocol`` -- the narrow interface
 the scheduler uses for credit-based priority boosting, decoupling
-the system service tier from the pay brick (LEGO 3.3).
+the scheduler from the pay service (LEGO 3.3).
 
 Storage Affinity: **CacheStore** -- ephemeral work queue (Dragonfly sorted set).
 
@@ -14,7 +14,7 @@ References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md 2.4, 4.2
     - Issue #1383: Define 6 kernel protocol interfaces
     - Issue #1274: Astraea-style state-aware scheduler
-    - Issue #2360: Promote scheduler to always-started system service
+    - Issue #2360: Promote scheduler to always-started service
 """
 
 import logging
@@ -104,8 +104,8 @@ class SchedulerProtocol(Protocol):
 class CreditsReservationProtocol(Protocol):
     """Narrow credit-reservation interface used by the scheduler.
 
-    Decouples SchedulerService (system service) from CreditsService (pay brick)
-    per LEGO 3.3: "A brick MUST NOT import from other bricks."
+    Decouples SchedulerService from CreditsService
+    per LEGO 3.3: "A service MUST NOT import from other services."
 
     Only the two methods the scheduler actually uses are exposed:
     ``reserve()`` for priority-boost escrow and ``release_reservation()``

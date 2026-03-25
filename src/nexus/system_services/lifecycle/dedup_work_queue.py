@@ -16,7 +16,7 @@ asyncio.Queue. The pipe carries 8-byte sequence tokens; actual items stay
 in a Python dict — no serialization needed. Dedup logic (dirty/processing
 sets) remains in Python.
 
-Architecture: Tier 3 System Service (NEXUS-LEGO-ARCHITECTURE.md §12.5).
+Architecture: NEXUS-LEGO-ARCHITECTURE.md §12.5.
 Consumer-side dedup: each subscriber opts in independently.
 
 References:

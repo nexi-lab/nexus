@@ -4,7 +4,7 @@ Kubernetes-inspired ``ControllerExpectations`` pattern: atomic counters + TTL
 expiration to prevent duplicate mount/unmount operations during the race window
 between "action requested" and "action observed in next snapshot."
 
-Tier: TIER 3 System Services (internal utility for reconciler).
+Internal utility for the reconciler.
 
 References:
     - Issue #2067: Agent warm-up phase / expectations tracker

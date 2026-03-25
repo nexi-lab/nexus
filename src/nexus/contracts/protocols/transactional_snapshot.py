@@ -3,7 +3,6 @@
 Defines the contract for atomic COW filesystem snapshots that enable
 agent rollback of risky operations.
 
-Architecture: System Service (Tier 2) per NEXUS-LEGO-ARCHITECTURE.md.
 Triggered via KernelDispatch INTERCEPT on destructive VFS ops.
 
 Transaction lifecycle (strict state machine):
@@ -13,7 +12,7 @@ Transaction lifecycle (strict state machine):
                 └── TTL expiry -> EXPIRED      (terminal, auto-rollback)
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §2 (System Services tier)
+    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §2
     - Fault-Tolerant Sandboxing for AI Coding Agents (Dec 2025)
     - Issue #1752: Transactional filesystem snapshots for agent rollback
 """

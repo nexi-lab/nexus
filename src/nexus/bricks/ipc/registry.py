@@ -6,7 +6,7 @@ Enables POST_WRITE hooks to trigger the correct processor for each agent.
 Issue #3197: Optionally injects PipeWakeupListener into MessageProcessor
 instances for receiver-side DT_PIPE wakeup when pipe_manager is available.
 
-Architecture: Tier 3 System Service per NEXUS-LEGO-ARCHITECTURE.md §2.4.
+Architecture: per NEXUS-LEGO-ARCHITECTURE.md §2.4.
 """
 
 import asyncio
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class MessageProcessorRegistry:
-    """Registry for MessageProcessor instances (Tier 3 System Service).
+    """Registry for MessageProcessor instances.
 
     Maps agent_id → MessageProcessor and manages lifecycle (start/stop).
     Thread-safe for async concurrent access via asyncio.Lock.

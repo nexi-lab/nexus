@@ -57,7 +57,7 @@ async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) ->
     wired_dict: dict[str, Any] = dict.fromkeys(_CANONICAL_NAMES.keys(), proxy)
     await enlist_wired_services(nfs._service_registry, wired_dict)
 
-    # version_service is a brick service — enlist into ServiceRegistry
+    # version_service — enlist into ServiceRegistry
     await nfs._service_registry.enlist("version_service", proxy)
 
     logger.info(

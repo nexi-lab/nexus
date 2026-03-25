@@ -1,6 +1,6 @@
 """Universal service proxy for REMOTE deployment profile.
 
-Fills kernel service slots with RPC forwarders — like an NFS client module
+Fills service slots with RPC forwarders — like an NFS client module
 filling VFS inode_operations with RPC stubs. Any method call is forwarded
 to the server via the transport-agnostic ``call_rpc`` callback.
 

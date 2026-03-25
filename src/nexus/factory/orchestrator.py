@@ -528,8 +528,8 @@ async def _register_vfs_hooks(
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Issue #1701: event_bus is now Tier 1 (SystemServices).  Direct injection —
-    # no bus_provider late-binding needed.  Tests use swap_service() to replace.
+    # Issue #1701: event_bus injected directly via ServiceRegistry.
+    # Tests use swap_service() to replace.
     from nexus.system_services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(event_bus=_ss.get("event_bus"))

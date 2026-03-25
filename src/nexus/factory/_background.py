@@ -16,7 +16,7 @@ def _start_background_services(system: dict[str, Any]) -> None:
     kernel dict to system dict (they are now system-tier services).
 
     Args:
-        system: System services dict from ``_boot_system_services()``.
+        system: Services dict from ``_boot_system_services()``.
     """
     # Deferred Permission Buffer (former kernel tier, now system tier)
     dpb = system.get("deferred_permission_buffer")

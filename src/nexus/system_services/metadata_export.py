@@ -3,8 +3,8 @@
 Extracted from NexusFS kernel — provides JSONL export/import of file metadata
 for backup, migration, and disaster recovery.
 
-Architecture: System Service (server-layer), wired into _brick_sources
-via factory function. Receives MetastoreABC via dependency injection.
+Wired into ServiceRegistry via factory function.
+Receives MetastoreABC via dependency injection.
 """
 
 import json

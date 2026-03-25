@@ -16,12 +16,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class _BootContext:
-    """Shared dependencies passed between tier boot functions.
+    """Shared dependencies passed between boot functions.
 
     Built once at the start of ``create_nexus_services()`` and threaded
-    through ``_boot_kernel_services``, ``_boot_system_services``, and
-    ``_boot_independent_bricks`` so each tier function receives a clean,
-    immutable snapshot of the boot-time configuration.
+    through ``_boot_system_services`` and ``_boot_independent_bricks``
+    so each boot function receives a clean, immutable snapshot of the
+    boot-time configuration.
     """
 
     record_store: "RecordStoreABC"

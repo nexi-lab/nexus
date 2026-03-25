@@ -13,7 +13,7 @@ coordinator.enlist() at boot, after AgentRegistry creation.
 
 Issue #1810: Renamed from ProcResolver and migrated from
 system_services/proc/ to core/ — resolving agent status is a kernel
-concern (reads kernel-owned AgentRegistry), not a system service.
+concern (reads kernel-owned AgentRegistry).
 """
 
 from __future__ import annotations

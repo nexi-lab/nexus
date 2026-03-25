@@ -1,4 +1,4 @@
-"""System services -- SYSTEM tier (Tier 1).
+"""System services.
 
 Kernel-coupled services for sync, lifecycle, and workspace management.
 """

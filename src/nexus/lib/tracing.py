@@ -1,4 +1,4 @@
-"""Shared OTel tracing utilities for brick services.
+"""Shared OTel tracing utilities for services.
 
 Provides zero-overhead lazy tracer resolution — when telemetry is not
 enabled, the tracer resolves to ``None`` and all span operations are

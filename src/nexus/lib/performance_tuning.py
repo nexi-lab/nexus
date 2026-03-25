@@ -692,6 +692,7 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
 
     return {
         DeploymentProfile.SLIM: _SLIM_TUNING,
+        DeploymentProfile.CLUSTER: _SLIM_TUNING,  # CLUSTER reuses SLIM tuning
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,
         DeploymentProfile.LITE: _LITE_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,

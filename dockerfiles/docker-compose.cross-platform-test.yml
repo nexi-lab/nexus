@@ -5,7 +5,7 @@
 #
 # Kernel layer (always running):
 #   - 3-node Raft cluster: 2 full NexusFS nodes + 1 lightweight witness
-#   - PostgreSQL 16 (tuned: WAL archiving, pgvector HNSW)
+#   - Cluster profile: kernel-native storage (Raft/redb), no external PostgreSQL
 #   - Dragonfly CacheStore (embedding cache, Tiger Cache, EventBus)
 #
 # Application layer (always running):
@@ -44,9 +44,9 @@
 #   │  │         │                  │                                       │ │
 #   │  │         ▼                  ▼                                       │ │
 #   │  │  ┌────────────────────────────┐  ┌────────────────────────┐       │ │
-#   │  │  │  PostgreSQL (RecordStore)  │  │  Dragonfly (CacheStore)│       │ │
-#   │  │  │  Users, ReBAC, API keys   │  │  Locks, Events, Cache  │       │ │
-#   │  │  │  :5432                     │  │  :6379                 │       │ │
+#   │  │  │  Raft/redb (RecordStore)   │  │  Dragonfly (CacheStore)│       │ │
+#   │  │  │  Kernel-native storage     │  │  Locks, Events, Cache  │       │ │
+#   │  │  │  (embedded, no ext. DB)    │  │  :6379                 │       │ │
 #   │  │  └────────────────────────────┘  └────────────────────────┘       │ │
 #   │  └─────────────────────────────────────────────────────────────────────┘ │
 #   └───────────────────────────────────────────────────────────────────────────┘
@@ -61,61 +61,6 @@
 #   - Frontend: browse files, manage permissions, provision users via web UI
 
 services:
-  # ==========================================================================
-  # PostgreSQL 16 — Shared RecordStore for all NexusFS nodes
-  #
-  # Tuning: WAL archiving, pgvector HNSW, pg_stat_statements
-  # See: docs/performance/vector-search-tuning.md
-  # ==========================================================================
-  postgres:
-    image: postgres:16-alpine
-    container_name: nexus-cluster-postgres
-    hostname: postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-nexus}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
-    # PostgreSQL 16 optimizations:
-    # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
-    # - wal_compression=lz4: 30-50% WAL size reduction with fast compression
-    # pgvector HNSW tuning (Issue #1004):
-    # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
-    # - max_parallel_maintenance_workers=7: Parallel index build (up to 30x faster)
-    # - shared_buffers=1GB: Cache HNSW index in memory
-    command: >
-      postgres
-      -c shared_preload_libraries=pg_stat_statements
-      -c pg_stat_statements.track=all
-      -c effective_io_concurrency=16
-      -c maintenance_io_concurrency=16
-      -c wal_compression=lz4
-      -c archive_mode=on
-      -c archive_command='test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'
-      -c archive_timeout=300
-      -c maintenance_work_mem=2GB
-      -c max_parallel_maintenance_workers=7
-      -c shared_buffers=1GB
-      -c effective_cache_size=3GB
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - postgres_wal_archive:/var/lib/postgresql/wal_archive
-    networks:
-      - nexus-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-nexus}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      start_period: 5s
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   # ==========================================================================
   # Dragonfly — CacheStore for embedding cache, Tiger Cache, EventBus
   # Redis-compatible, ~25x faster than Redis for cache workloads
@@ -161,8 +106,6 @@ services:
     hostname: nexus-1
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       dragonfly:
         condition: service_healthy
     environment:
@@ -171,31 +114,21 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
-      # --- Deployment profile (cloud = all bricks + federation) ---
-      NEXUS_PROFILE: cloud
+      # --- Deployment profile (cluster = kernel-native storage via Raft/redb) ---
+      NEXUS_PROFILE: cluster
 
       # --- Raft consensus (static bootstrap — all nodes know all peers) ---
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
-
-      # --- RecordStore (shared PostgreSQL) ---
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
-      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
-      NEXUS_DB_POOL_TIMEOUT: ${NEXUS_DB_POOL_TIMEOUT:-30}
+      NEXUS_RAFT_TLS: "false"
 
       # --- CacheStore (Dragonfly) ---
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
 
-      # --- Auth & permissions ---
-      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      # --- Auth (StaticAPIKeyAuth — in-memory, no external DB) ---
       NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-federation-e2e-admin-key}
-      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
-      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
-      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
 
       # --- Backend storage ---
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
@@ -205,11 +138,6 @@ services:
       AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-/app/aws-credentials}
       AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-
-      # --- OAuth ---
-      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
 
       # --- Sandbox ---
       NEXUS_SERVER_URL: http://nexus-1:2026
@@ -242,11 +170,11 @@ services:
     networks:
       - nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
-      interval: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:2026/healthz/ready"]
+      interval: 5s
       timeout: 5s
-      retries: 20
-      start_period: 60s
+      retries: 24
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
@@ -263,38 +191,26 @@ services:
     hostname: nexus-2
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
       dragonfly:
         condition: service_healthy
-      nexus-1:
-        condition: service_started
     environment:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
-      # --- Deployment profile (cloud = all bricks + federation) ---
-      NEXUS_PROFILE: cloud
+      # --- Deployment profile (cluster = kernel-native storage via Raft/redb) ---
+      NEXUS_PROFILE: cluster
 
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
-
-      NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
-      NEXUS_DB_POOL_SIZE: ${NEXUS_DB_POOL_SIZE:-20}
-      NEXUS_DB_MAX_OVERFLOW: ${NEXUS_DB_MAX_OVERFLOW:-30}
-      NEXUS_DB_POOL_TIMEOUT: ${NEXUS_DB_POOL_TIMEOUT:-30}
+      NEXUS_RAFT_TLS: "false"
 
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
 
-      NEXUS_ADMIN_USER: ${NEXUS_ADMIN_USER:-admin}
+      # --- Auth (StaticAPIKeyAuth — in-memory, no external DB) ---
       NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-federation-e2e-admin-key}
-      NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
-      NEXUS_ALLOW_ADMIN_BYPASS: ${NEXUS_ALLOW_ADMIN_BYPASS:-true}
-      NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
 
       NEXUS_BACKEND: ${NEXUS_BACKEND:-local}
       NEXUS_GCS_BUCKET: ${NEXUS_GCS_BUCKET:-}
@@ -303,10 +219,6 @@ services:
       AWS_SHARED_CREDENTIALS_FILE: ${AWS_SHARED_CREDENTIALS_FILE:-/app/aws-credentials}
       AWS_CONFIG_FILE: ${AWS_CONFIG_FILE:-/app/aws-config}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-
-      NEXUS_OAUTH_ENCRYPTION_KEY: ${NEXUS_OAUTH_ENCRYPTION_KEY:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_ID: ${NEXUS_OAUTH_GOOGLE_CLIENT_ID:-}
-      NEXUS_OAUTH_GOOGLE_CLIENT_SECRET: ${NEXUS_OAUTH_GOOGLE_CLIENT_SECRET:-}
 
       NEXUS_SERVER_URL: http://nexus-2:2026
       NEXUS_DOCKER_NETWORK: nexus_nexus-network
@@ -336,11 +248,11 @@ services:
     networks:
       - nexus-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2026/health"]
-      interval: 10s
+      test: ["CMD", "curl", "-f", "http://localhost:2026/healthz/ready"]
+      interval: 5s
       timeout: 5s
-      retries: 20
-      start_period: 60s
+      retries: 24
+      start_period: 30s
     logging:
       driver: "json-file"
       options:
@@ -613,10 +525,6 @@ networks:
 # Volumes
 # ==========================================================================
 volumes:
-  postgres_data:
-    name: nexus-cluster-postgres-data
-  postgres_wal_archive:
-    name: nexus-cluster-postgres-wal
   nexus1_data:
     name: nexus-cluster-node1-data
   nexus2_data:
@@ -645,20 +553,19 @@ volumes:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f nexus-1
 #
 # Check cluster health:
-#   curl http://localhost:2026/health   # Node 1 (leader)
-#   curl http://localhost:2027/health   # Node 2 (follower)
+#   curl http://localhost:2026/healthz/ready   # Node 1 (leader)
+#   curl http://localhost:2027/healthz/ready   # Node 2 (follower)
 #
 # Service endpoints:
 #   Frontend:   http://localhost:5173
 #   Nexus API:  http://localhost:2026 (node-1), http://localhost:2027 (node-2)
 #   MCP:        http://localhost:8081
 #   LangGraph:  http://localhost:2024
-#   PostgreSQL: localhost:5432
 #   Dragonfly:  localhost:6379
 #
 # Simulate leader failure:
 #   docker stop nexus-node-1
-#   curl http://localhost:2027/health   # Node 2 becomes leader
+#   curl http://localhost:2027/healthz/ready   # Node 2 becomes leader
 #
 # Simulate network partition:
 #   docker network disconnect nexus_nexus-network nexus-witness

@@ -174,6 +174,18 @@ async def _do_link(
         if _val is not None:
             await nx._service_registry.enlist(_canonical, _val)
 
+    # Federation — Q3 PersistentService, created at link time (needs nx._zone_mgr).
+    _zone_mgr = getattr(nx, "_zone_mgr", None)
+    if _zone_mgr is not None:
+        try:
+            from nexus.raft.federation import NexusFederation
+
+            _fed = NexusFederation(zone_manager=_zone_mgr)
+            await nx._service_registry.enlist("federation", _fed)
+            logger.debug("[LINK] Federation service enlisted")
+        except Exception as exc:
+            logger.warning("[LINK] Federation unavailable: %s", exc)
+
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
     _dc = getattr(_wired, "descendant_checker", None)

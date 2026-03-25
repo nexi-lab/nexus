@@ -88,6 +88,18 @@ class NexusFederation:
         self._tls_config: ZoneTlsConfig | None = getattr(zone_manager, "tls_config", None)
 
     # =========================================================================
+    # Q3 PersistentService lifecycle (auto-managed by ServiceRegistry)
+    # =========================================================================
+
+    async def start(self) -> None:
+        """Start federation service. Called by ServiceRegistry at bootstrap."""
+        logger.info("Federation service started (zone_manager node_id=%s)", self._mgr.node_id)
+
+    async def stop(self) -> None:
+        """Stop federation service. Called by ServiceRegistry at shutdown."""
+        logger.info("Federation service stopped")
+
+    # =========================================================================
     # Public API
     # =========================================================================
 

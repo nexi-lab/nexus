@@ -385,7 +385,7 @@ def main(
             _print_lifecycle_detail(nx)
 
         # --- Resolve auth ---------------------------------------------------
-        auth_provider = None
+        auth_provider: Any = None
         if auth_type == "database":
             if not database_url:
                 database_url = os.getenv("POSTGRES_URL")
@@ -405,6 +405,15 @@ def main(
             key_file = os.getenv("NEXUS_API_KEY_FILE", "")
             if key_file and Path(key_file).is_file():
                 api_key = Path(key_file).read_text().strip()
+
+        # Fallback: StaticAPIKeyAuth when NEXUS_API_KEY is set but no DB auth
+        if auth_provider is None and api_key:
+            from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
+
+            auth_provider = StaticAPIKeyAuth(
+                {api_key: {"subject_type": "user", "subject_id": "admin", "is_admin": True}}
+            )
+            logger.info("Using static API key authentication (no database)")
 
         # --- Create FastAPI app + run ---------------------------------------
         from nexus.server.fastapi_server import create_app, run_server

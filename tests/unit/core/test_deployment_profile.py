@@ -18,7 +18,7 @@ from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
     BRICK_CACHE,
     BRICK_EVENTLOG,
-    BRICK_FEDERATION,
+    BRICK_IPC,
     BRICK_LLM,
     BRICK_NAMESPACE,
     BRICK_PAY,
@@ -64,6 +64,13 @@ class TestDeploymentProfileEnum:
 class TestDefaultBrickSets:
     """Tests for per-profile default brick sets."""
 
+    def test_cluster_minimal_multinode(self) -> None:
+        bricks = DeploymentProfile.CLUSTER.default_bricks()
+        assert BRICK_STORAGE in bricks
+        assert BRICK_IPC in bricks
+        assert BRICK_EVENTLOG not in bricks  # No audit/events
+        assert len(bricks) == 2
+
     def test_embedded_minimal(self) -> None:
         bricks = DeploymentProfile.EMBEDDED.default_bricks()
         assert BRICK_STORAGE in bricks
@@ -90,12 +97,7 @@ class TestDefaultBrickSets:
         assert BRICK_LLM in bricks
         assert BRICK_SANDBOX in bricks
         assert BRICK_WORKFLOWS in bricks
-        # Federation is cloud-only
-        assert BRICK_FEDERATION not in bricks
-
-    def test_cloud_includes_federation(self) -> None:
-        bricks = DeploymentProfile.CLOUD.default_bricks()
-        assert BRICK_FEDERATION in bricks
+        # Federation is a system service (not a brick), auto-detected from ZoneManager
 
     def test_cloud_is_superset_of_full(self) -> None:
         cloud = DeploymentProfile.CLOUD.default_bricks()
@@ -279,10 +281,6 @@ class TestInnovationProfile:
         cloud = DeploymentProfile.CLOUD.default_bricks()
         innovation = DeploymentProfile.INNOVATION.default_bricks()
         assert cloud.issubset(innovation)
-
-    def test_innovation_includes_federation(self) -> None:
-        bricks = DeploymentProfile.INNOVATION.default_bricks()
-        assert BRICK_FEDERATION in bricks
 
     def test_innovation_includes_all_full_bricks(self) -> None:
         full = DeploymentProfile.FULL.default_bricks()

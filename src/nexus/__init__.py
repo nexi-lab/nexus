@@ -370,72 +370,92 @@ async def connect(
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
 
-        # Parse peer addresses
+        # Parse peer addresses (host:port format — PeerAddress derives node IDs)
         peers_str = os.environ.get("NEXUS_PEERS", "")
         peer_addrs = PeerAddress.parse_peer_list(peers_str) if peers_str else []
-        peers = [p.to_raft_peer_str() for p in peer_addrs]
+        peers = [p.grpc_target for p in peer_addrs]
 
-        # K3s-style TLS pre-provision: if a join-token FILE exists and
-        # certs don't exist yet, provision TLS from the leader BEFORE
-        # creating ZoneManager (so Raft starts with mTLS from the start).
-        # Token is file-only (no env var) — consistent with nexus being file-based.
-        tls_dir_pre = Path(zones_dir) / "tls"
-        token_file = tls_dir_pre / "join-token"
-        if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
-            join_token = token_file.read_text().strip()
-            # Find a peer address to join from NEXUS_PEERS
-            join_peer = None
-            for p in peer_addrs:
-                if p.node_id != my_id:
-                    join_peer = p.grpc_target
-                    break
-            if join_peer:
-                from _nexus_raft import join_cluster as _join_cluster
+        # Retry loop for Raft bootstrap — CockroachDB pattern:
+        # nodes start independently, retry until cluster forms.
+        import time as _time
 
-                logger.info("Join token found — provisioning TLS from %s", join_peer)
-                _join_cluster(join_peer, join_token, hostname, str(tls_dir_pre))
-                logger.info("TLS provisioning complete")
-            else:
-                raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
+        _max_attempts = int(os.environ.get("NEXUS_STARTUP_MAX_RETRIES", "12"))
+        _base_delay = 2.0
 
-        # Check NEXUS_RAFT_TLS for explicit TLS control
-        zone_mgr = ZoneManager(
-            hostname=hostname,
-            base_path=zones_dir,
-            bind_addr=bind_addr,
-            advertise_addr=advertise_addr,
-        )
+        for _attempt in range(1, _max_attempts + 1):
+            try:
+                # TLS pre-provision (depends on leader being up)
+                tls_dir_pre = Path(zones_dir) / "tls"
+                token_file = tls_dir_pre / "join-token"
+                if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
+                    join_token = token_file.read_text().strip()
+                    join_peer = next(
+                        (p.grpc_target for p in peer_addrs if p.node_id != my_id),
+                        None,
+                    )
+                    if join_peer:
+                        from _nexus_raft import join_cluster as _join_cluster
 
-        # Detect joiner vs first-node:
-        # Joiner = has all cert files (pre-provisioned by join_cluster above)
-        # but no join-token (not the CA holder / first node)
-        tls_dir = Path(zones_dir) / "tls"
-        is_joiner = (
-            (tls_dir / "ca.pem").exists()
-            and (tls_dir / "node.pem").exists()
-            and (tls_dir / "node-key.pem").exists()
-            and not (tls_dir / "join-token").exists()
-        )
+                        logger.info(
+                            "Join token found — provisioning TLS from %s (attempt %d)",
+                            join_peer,
+                            _attempt,
+                        )
+                        _join_cluster(join_peer, join_token, hostname, str(tls_dir_pre))
+                        logger.info("TLS provisioning complete")
+                    else:
+                        raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
 
-        if is_joiner:
-            zone_mgr.join_zone("root", peers=peers if peers else None)
-            logger.info("Joiner node: joined root zone (certs provisioned)")
-        else:
-            # First node — auto_generate_tls creates CA + certs,
-            # ZoneManager starts with mTLS from the beginning.
-            zone_mgr.bootstrap(peers=peers if peers else None)
+                zone_mgr = ZoneManager(
+                    hostname=hostname,
+                    base_path=zones_dir,
+                    bind_addr=bind_addr,
+                    advertise_addr=advertise_addr,
+                )
 
-        # Static Day-1 topology from env vars (idempotent)
-        zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
-        mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
-        if zones_str:
-            zones = [z.strip() for z in zones_str.split(",") if z.strip()]
-            mounts: dict[str, str] = {}
-            if mounts_str:
-                for pair in mounts_str.split(","):
-                    path, zone_id = pair.strip().split("=", 1)
-                    mounts[path.strip()] = zone_id.strip()
-            zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
+                # Detect joiner vs first-node
+                tls_dir = Path(zones_dir) / "tls"
+                is_joiner = (
+                    (tls_dir / "ca.pem").exists()
+                    and (tls_dir / "node.pem").exists()
+                    and (tls_dir / "node-key.pem").exists()
+                    and not (tls_dir / "join-token").exists()
+                )
+
+                if is_joiner:
+                    zone_mgr.join_zone("root", peers=peers if peers else None)
+                    logger.info("Joiner node: joined root zone (certs provisioned)")
+                else:
+                    zone_mgr.bootstrap(peers=peers if peers else None)
+
+                # Static Day-1 topology from env vars (idempotent)
+                zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
+                mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
+                if zones_str:
+                    zones = [z.strip() for z in zones_str.split(",") if z.strip()]
+                    mounts: dict[str, str] = {}
+                    if mounts_str:
+                        for pair in mounts_str.split(","):
+                            path, zone_id = pair.strip().split("=", 1)
+                            mounts[path.strip()] = zone_id.strip()
+                    zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
+
+                break  # Success
+
+            except (RuntimeError, OSError, ConnectionError) as exc:
+                if _attempt >= _max_attempts:
+                    logger.error("Raft startup failed after %d attempts: %s", _max_attempts, exc)
+                    raise
+                delay = min(_base_delay * (2 ** (_attempt - 1)), 30.0)
+                logger.warning(
+                    "Raft startup attempt %d/%d failed: %s — retrying in %.1fs",
+                    _attempt,
+                    _max_attempts,
+                    exc,
+                    delay,
+                )
+                _time.sleep(delay)
+
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     except ImportError:
         zone_mgr = None

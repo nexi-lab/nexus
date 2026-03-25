@@ -11,7 +11,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    slim ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
+    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
 
 INNOVATION extends CLOUD with all bricks enabled + experimental validation.
 Requires explicit opt-in (``nexusd --innovation`` or ``--profile innovation``).
@@ -73,8 +73,7 @@ BRICK_PARSERS = "parsers"
 BRICK_SNAPSHOT = "snapshot"
 BRICK_TASK_MANAGER = "task_manager"
 
-# Cloud-only
-BRICK_FEDERATION = "federation"
+# (Federation is a system service, not a brick — auto-detected from ZoneManager)
 
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
@@ -109,7 +108,6 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_PARSERS,
         BRICK_SNAPSHOT,
         BRICK_TASK_MANAGER,
-        BRICK_FEDERATION,
         BRICK_AGENT_RUNTIME,
         BRICK_ACP,
     }
@@ -125,6 +123,7 @@ class DeploymentProfile(StrEnum):
 
     Profiles define capability tiers for different deployment targets:
     - slim: Bare minimum runnable — storage only, no system services (Issue #1801)
+    - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — storage + eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
@@ -134,6 +133,7 @@ class DeploymentProfile(StrEnum):
     """
 
     SLIM = "slim"
+    CLUSTER = "cluster"
     EMBEDDED = "embedded"
     LITE = "lite"
     FULL = "full"
@@ -166,6 +166,12 @@ class DeploymentProfile(StrEnum):
 _SLIM_BRICKS: frozenset[str] = frozenset(
     {
         BRICK_STORAGE,
+    }
+)
+
+_CLUSTER_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
+    {
+        BRICK_IPC,
     }
 )
 
@@ -215,10 +221,8 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     }
 )
 
-_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset(
-    {
-        BRICK_FEDERATION,
-    }
+_CLOUD_BRICKS: frozenset[str] = (
+    _FULL_BRICKS  # Federation is a system service, auto-detected from ZoneManager
 )
 
 _INNOVATION_BRICKS: frozenset[str] = (
@@ -229,6 +233,7 @@ _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client m
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
     DeploymentProfile.SLIM: _SLIM_BRICKS,
+    DeploymentProfile.CLUSTER: _CLUSTER_BRICKS,
     DeploymentProfile.EMBEDDED: _EMBEDDED_BRICKS,
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,

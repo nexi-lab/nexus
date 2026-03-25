@@ -144,7 +144,7 @@ class PermissionChecker:
         def metadata_exists(check_path: str) -> bool:
             return bool(self._metadata_store.exists(check_path))
 
-        original_path, view_type = parse_virtual_path(path, metadata_exists)
+        original_path, view_type, _ = parse_virtual_path(path, metadata_exists)
         if view_type == "md":
             logger.debug(
                 f"  -> Virtual view detected: checking permissions on original file {original_path}"

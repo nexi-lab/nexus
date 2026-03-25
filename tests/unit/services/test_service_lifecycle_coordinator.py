@@ -291,18 +291,21 @@ class TestSwapService:
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio()
-    async def test_swap_rejects_non_hot_swappable(
+    async def test_swap_allows_non_hot_swappable(
         self,
         coordinator: ServiceRegistry,
     ) -> None:
-        """Static (non-HotSwappable) services cannot be hot-swapped."""
+        """Q1 services can be swapped via refcount drain (#1452)."""
         svc1 = _FakeService()  # NOT HotSwappable
         coordinator._register_service("search", svc1, exports=("glob",))
         await coordinator._mount_service("search")
 
         svc2 = _FakeServiceV2()
-        with pytest.raises(TypeError, match="cannot hot-swap"):
-            await coordinator.swap_service("search", svc2, exports=("glob",))
+        await coordinator.swap_service("search", svc2, exports=("glob",))
+
+        ref = coordinator.service("search")
+        assert ref is not None
+        assert ref._service_instance is svc2
 
     @pytest.mark.asyncio()
     async def test_swap_auto_detects_hook_spec_from_protocol(
@@ -972,28 +975,27 @@ class TestQuadrantGuards:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "service_class,replacement_class,error_match",
+        "service_class,replacement_class",
         [
-            (_FakeService, _FakeServiceV2, "Q1.*restart-required.*cannot hot-swap"),
-            (
-                _PersistentFakeService,
-                _PersistentFakeService,
-                "Q3.*PersistentService.*cannot hot-swap",
-            ),
+            (_FakeService, _FakeServiceV2),
+            (_PersistentFakeService, _PersistentFakeService),
         ],
     )
-    async def test_swap_rejects_non_swappable(
+    async def test_swap_allows_non_hot_swappable(
         self,
         coordinator: ServiceRegistry,
         service_class: type,
         replacement_class: type,
-        error_match: str,
     ) -> None:
-        """Swapping a non-HotSwappable service includes quadrant label in error."""
+        """All quadrants can be swapped via refcount drain (#1452)."""
         coordinator._register_service("svc", service_class())
         await coordinator._mount_service("svc")
-        with pytest.raises(TypeError, match=error_match):
-            await coordinator.swap_service("svc", replacement_class())
+        svc2 = replacement_class()
+        await coordinator.swap_service("svc", svc2)
+
+        ref = coordinator.service("svc")
+        assert ref is not None
+        assert ref._service_instance is svc2
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -1102,3 +1104,115 @@ class TestQuadrantGuards:
     ) -> None:
         with pytest.raises(KeyError, match="not registered"):
             await coordinator._deactivate_service("ghost")
+
+
+# ---------------------------------------------------------------------------
+# Q1/Q3 swap — non-HotSwappable swap via refcount drain (Issue #1452)
+# ---------------------------------------------------------------------------
+
+
+class TestNonHotSwappableSwap:
+    """Tests for swapping Q1/Q3 services that don't implement HotSwappable."""
+
+    @pytest.mark.asyncio
+    async def test_q1_swap_succeeds(
+        self,
+        coordinator: ServiceRegistry,
+    ) -> None:
+        """Q1 (restart-required) services can be swapped at runtime."""
+        svc1 = _FakeService()
+        coordinator._register_service("search", svc1, exports=("glob",))
+        await coordinator._mount_service("search")
+
+        svc2 = _FakeServiceV2()
+        await coordinator.swap_service("search", svc2, exports=("glob",))
+
+        ref = coordinator.service("search")
+        assert ref is not None
+        assert ref._service_instance is svc2
+        assert ref.glob("*.py") == ["v2:*.py"]
+
+    @pytest.mark.asyncio
+    async def test_q1_swap_does_not_call_hot_swappable_methods(
+        self,
+        coordinator: ServiceRegistry,
+    ) -> None:
+        """Q1 swap must NOT invoke drain/activate — the service has no such methods."""
+
+        class _TrackedQ1:
+            def glob(self, pattern: str) -> list[str]:
+                return [pattern]
+
+        class _TrackedQ1V2:
+            def glob(self, pattern: str) -> list[str]:
+                return [f"v2:{pattern}"]
+
+        svc1 = _TrackedQ1()
+        coordinator._register_service("svc", svc1)
+        await coordinator._mount_service("svc")
+
+        svc2 = _TrackedQ1V2()
+        # If swap_service tries to call drain()/activate() on Q1 services,
+        # it will raise AttributeError — this test verifies it doesn't.
+        await coordinator.swap_service("svc", svc2)
+
+        ref = coordinator.service("svc")
+        assert ref is not None
+        assert ref._service_instance is svc2
+
+    @pytest.mark.asyncio
+    async def test_q1_swap_drains_in_flight_calls(
+        self,
+        coordinator: ServiceRegistry,
+    ) -> None:
+        """Q1 swap still waits for in-flight calls via ServiceRef refcount drain."""
+        call_completed = asyncio.Event()
+
+        class _SlowQ1:
+            async def work(self) -> str:
+                await asyncio.sleep(0.05)
+                call_completed.set()
+                return "done"
+
+        svc1 = _SlowQ1()
+        coordinator._register_service("svc", svc1, exports=("work",))
+        await coordinator._mount_service("svc")
+
+        ref = coordinator.service("svc")
+        assert ref is not None
+        in_flight = asyncio.create_task(ref.work())
+
+        svc2 = _FakeServiceV2()
+        swap_task = asyncio.create_task(coordinator.swap_service("svc", svc2, drain_timeout=2.0))
+
+        result = await in_flight
+        assert result == "done"
+        assert call_completed.is_set()
+
+        await swap_task
+        new_ref = coordinator.service("svc")
+        assert new_ref is not None
+        assert new_ref._service_instance is svc2
+
+    @pytest.mark.asyncio
+    async def test_q1_to_q2_upgrade_swap(
+        self,
+        coordinator: ServiceRegistry,
+        dispatch: KernelDispatch,
+    ) -> None:
+        """Swap Q1 old → Q2 new: new HotSwappable instance gets activated."""
+        svc1 = _FakeService()  # Q1
+        coordinator._register_service("svc", svc1)
+        await coordinator._mount_service("svc")
+
+        hook = MagicMock()
+        spec = HookSpec(read_hooks=(hook,))
+        svc2 = _HotSwappableService(hook_spec_value=spec)  # Q2
+        await coordinator.swap_service("svc", svc2, hook_spec=spec)
+
+        assert svc2.activated is True
+        assert dispatch.read_hook_count == 1
+
+        ref = coordinator.service("svc")
+        assert ref is not None
+        assert ref._service_instance is svc2

@@ -47,7 +47,7 @@ Follows Linux's monolithic kernel model, not microkernel:
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
+| Services | Init-time DI + runtime hot-swap (all quadrants, #1452) | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
@@ -99,6 +99,9 @@ One-click contract: implement protocol → `ServiceRegistry.enlist()` →
 kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
 scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
+
+`swap_service()` supports **all quadrants** (#1452). `HotSwappable` determines
+*how* to swap (full lifecycle vs refcount-only drain), not *whether*.
 
 **Kernel DI patterns** (two mechanisms, never reads service containers directly):
 

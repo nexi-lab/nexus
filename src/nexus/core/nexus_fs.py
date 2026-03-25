@@ -343,7 +343,7 @@ class NexusFS(  # type: ignore[misc]
         return self._service_registry
 
     async def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
-        """Hot-swap a service: atomic replace → drain → hook swap."""
+        """Hot-swap a service — all quadrants supported (#1452)."""
         await self._service_registry.swap_service(name, new_instance, **kwargs)
 
     @property

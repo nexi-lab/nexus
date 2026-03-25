@@ -26,8 +26,6 @@ class TestNexusAppState:
         assert state.database_url is None
         assert state.api_key is None
         assert state.auth_provider is None
-        assert state.system_services is None
-        assert state.brick_services is None
         assert state.search_daemon_enabled is False
 
     def test_deployment_defaults(self) -> None:
@@ -60,13 +58,11 @@ class TestInitAppState:
         assert app.state.database_url is None
         assert app.state.deployment_profile == "full"
         assert app.state.thread_pool_size == 40
-        assert app.state.brick_services is None
 
     def test_sets_nexus_fs(self) -> None:
         """init_app_state should set nexus_fs on app.state."""
         app = _make_app()
         mock_fs = MagicMock()
-        mock_fs._brick_services = None
         mock_fs._permission_enforcer = None
         mock_fs.service = lambda name: None
         init_app_state(app, nexus_fs=mock_fs)
@@ -83,7 +79,6 @@ class TestInitAppState:
         """init_app_state should flatten NexusFS attrs onto app.state via service()."""
         app = _make_app()
         mock_fs = MagicMock()
-        mock_fs._brick_services = "brk"
         mock_fs._permission_enforcer = "pe"
         # Mock service() to return values for enlisted services
         _svc_map = {
@@ -96,7 +91,6 @@ class TestInitAppState:
 
         init_app_state(app, nexus_fs=mock_fs)
 
-        assert app.state.brick_services == "brk"
         assert app.state.event_bus == "eb"
         assert app.state.write_observer == "wo"
         assert app.state.permission_enforcer == "pe"
@@ -108,7 +102,6 @@ class TestInitAppState:
         app = _make_app()
         init_app_state(app, nexus_fs=None)
         assert app.state.nexus_fs is None
-        assert app.state.brick_services is None
 
     def test_does_not_overwrite_existing_attrs(self) -> None:
         """init_app_state should not overwrite pre-existing app.state fields."""

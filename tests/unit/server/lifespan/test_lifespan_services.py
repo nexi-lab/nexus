@@ -152,26 +152,6 @@ class TestFromAppSystemServices:
         assert svc.eviction_manager is None
 
 
-class TestFromAppBrickServices:
-    """Test extraction from nexus_fs._brick_services."""
-
-    def test_extracts_brick_services_container(self) -> None:
-        """brick_services is always None after BrickServices removal."""
-        nx = _make_nexus_fs()
-        app = _make_app(nexus_fs=nx)
-        svc = LifespanServices.from_app(app)
-
-        assert svc.brick_services is None
-
-    def test_missing_brick_services_is_none(self) -> None:
-        """When _brick_services is absent, field is None."""
-        nx = _make_nexus_fs()
-        app = _make_app(nexus_fs=nx)
-        svc = LifespanServices.from_app(app)
-
-        assert svc.brick_services is None
-
-
 class TestFromAppObservability:
     """Test extraction of observability_subsystem from ServiceRegistry."""
 

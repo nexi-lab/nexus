@@ -71,9 +71,6 @@ class LifespanServices:
     zoekt_pipe_consumer: Any = None
     task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
 
-    # --- Brick services container ----------------------------------------
-    brick_services: Any = None  # The whole BrickServices dataclass
-
     # --- NexusFS internals (extracted once, never re-probed) --------------
     session_factory: Any = None  # NexusFS.SessionLocal
     sql_engine: Any = None
@@ -137,7 +134,6 @@ class LifespanServices:
             zoekt_pipe_consumer=_svc("zoekt_pipe_consumer"),
             task_dispatch_consumer=_svc("task_dispatch_consumer"),
             scheduler_service=_svc("scheduler_service"),
-            brick_services=None,
             # NexusFS internals
             session_factory=getattr(nx, "SessionLocal", None) if nx else None,
             sql_engine=getattr(nx, "_sql_engine", None) if nx else None,

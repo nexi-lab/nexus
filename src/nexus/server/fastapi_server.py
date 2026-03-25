@@ -407,8 +407,7 @@ def create_app(
                 from nexus.server.rpc.services.events_rpc import EventsRPCService
                 from nexus.system_services.event_log.replay import EventReplayService
 
-                _sys = getattr(nexus_fs, "_system_services", None)
-                _evt_signal = getattr(_sys, "event_signal", None) if _sys else None
+                _evt_signal = None
                 _rpc_sources.append(
                     EventsRPCService(EventReplayService(_record_store, event_signal=_evt_signal))
                 )

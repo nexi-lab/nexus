@@ -293,11 +293,11 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
+    """Wire circuit breaker and manifest resolver from ServiceRegistry (Issue #726, #2130)."""
     if svc.nexus_fs:
-        brk = svc.brick_services
-        app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
-        app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None
+        _svc_fn = getattr(svc.nexus_fs, "service", None)
+        app.state.rebac_circuit_breaker = _svc_fn("rebac_circuit_breaker") if _svc_fn else None
+        app.state.manifest_resolver = _svc_fn("manifest_resolver") if _svc_fn else None
         # Enlist Q1 — restart-required, no lifecycle
         coord = svc.service_coordinator
         if coord is not None:

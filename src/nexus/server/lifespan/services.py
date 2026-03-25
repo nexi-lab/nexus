@@ -323,9 +323,9 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         if not (_sandbox_rs and session_factory and callable(session_factory)):
             return
 
-        # Get AgentEventLog from factory (preferred) or create fallback
-        brk = svc.brick_services
-        _factory_event_log = getattr(brk, "agent_event_log", None) if brk else None
+        # Get AgentEventLog from ServiceRegistry (preferred) or create fallback
+        _svc_fn = getattr(svc.nexus_fs, "service", None) if svc.nexus_fs else None
+        _factory_event_log = _svc_fn("agent_event_log") if _svc_fn else None
         if _factory_event_log is not None:
             app.state.agent_event_log = _factory_event_log
         else:

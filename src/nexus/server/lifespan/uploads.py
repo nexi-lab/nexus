@@ -19,9 +19,9 @@ async def startup_uploads(app: "FastAPI", svc: "LifespanServices") -> list[async
     """Initialize chunked upload service and return background tasks."""
     bg_tasks: list[asyncio.Task] = []
 
-    # Get the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars)
-    brk = svc.brick_services
-    _factory_upload_svc = getattr(brk, "chunked_upload_service", None) if brk else None
+    # Get the pre-configured service from ServiceRegistry
+    _svc_fn = getattr(svc.nexus_fs, "service", None) if svc.nexus_fs else None
+    _factory_upload_svc = _svc_fn("chunked_upload_service") if _svc_fn else None
 
     if _factory_upload_svc is not None:
         app.state.chunked_upload_service = _factory_upload_svc

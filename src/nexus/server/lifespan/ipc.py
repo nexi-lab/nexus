@@ -22,13 +22,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     """Start IPC background tasks (TTLSweeper + DT_PIPE wakeup).
 
     Reads ``ipc_storage_driver`` and ``ipc_provisioner`` from
-    ``svc.brick_services`` and exposes them on ``app.state``
-    for the IPC REST router.
-
-    Issue #3197:
-      - Creates PipeWakeupNotifier + PipeNotifyFactory from PipeManager
-      - Passes cache_store to TTLSweeper for event-driven pub/sub sweeping
-      - Exposes wakeup_notifiers on app.state for MessageSender in REST router
+    ServiceRegistry and exposes them on ``app.state`` for the IPC REST router.
 
     Returns list of background tasks to cancel on shutdown.
     """
@@ -37,12 +31,12 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     if svc.nexus_fs is None:
         return bg_tasks
 
-    brk = svc.brick_services
-    if brk is None:
+    _svc_fn = getattr(svc.nexus_fs, "service", None)
+    if _svc_fn is None:
         return bg_tasks
 
-    ipc_storage = getattr(brk, "ipc_storage_driver", None)
-    ipc_provisioner = getattr(brk, "ipc_provisioner", None)
+    ipc_storage = _svc_fn("ipc_storage_driver")
+    ipc_provisioner = _svc_fn("ipc_provisioner")
 
     if ipc_storage is None:
         logger.debug("[IPC] IPC storage driver not available, skipping IPC startup")

@@ -191,8 +191,7 @@ class PlaygroundApp(App[None]):
 
             else:
                 raise ValueError(
-                    f"Unsupported scheme in '{uri}'. "
-                    "Playground supports local:// and s3://"
+                    f"Unsupported scheme in '{uri}'. Playground supports local:// and s3://"
                 )
 
         if len(backends) == 1:
@@ -256,9 +255,7 @@ class PlaygroundApp(App[None]):
         except Exception:
             file_count = 0
 
-        status_text = (
-            f"{mount_count} mount(s) | {file_count} entries | {self._current_path}"
-        )
+        status_text = f"{mount_count} mount(s) | {file_count} entries | {self._current_path}"
         bar.update(f"[dim]{status_text}[/dim]")
 
         # Screen reader announcement on navigation
@@ -379,7 +376,8 @@ class PlaygroundApp(App[None]):
         # Show green/red dots for backend status
         if len(self._mount_points) > 1:
             backend_status = " ".join(
-                f"[green]●[/green]{mp.split('/')[-1]}" if mp in succeeded
+                f"[green]●[/green]{mp.split('/')[-1]}"
+                if mp in succeeded
                 else f"[red]●[/red]{mp.split('/')[-1]}"
                 for mp in self._mount_points
             )

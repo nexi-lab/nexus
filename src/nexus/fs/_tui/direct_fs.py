@@ -56,7 +56,10 @@ class LocalDirectFS:
         return {"path": path, "size": len(content)}
 
     async def ls(
-        self, path: str = "/", detail: bool = False, recursive: bool = False,
+        self,
+        path: str = "/",
+        detail: bool = False,
+        recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
         real = self._to_real(path)
         if not real.is_dir():
@@ -76,6 +79,7 @@ class LocalDirectFS:
         real = self._to_real(path)
         if recursive:
             import shutil
+
             shutil.rmtree(real)
         else:
             real.rmdir()
@@ -157,9 +161,7 @@ class S3DirectFS:
 
     async def read_range(self, path: str, start: int, end: int) -> bytes:
         key = self._to_key(path)
-        resp = self._s3.get_object(
-            Bucket=self._bucket, Key=key, Range=f"bytes={start}-{end - 1}"
-        )
+        resp = self._s3.get_object(Bucket=self._bucket, Key=key, Range=f"bytes={start}-{end - 1}")
         return resp["Body"].read()
 
     async def write(self, path: str, content: bytes) -> dict[str, Any]:
@@ -168,7 +170,10 @@ class S3DirectFS:
         return {"path": path, "size": len(content)}
 
     async def ls(
-        self, path: str = "/", detail: bool = False, recursive: bool = False,
+        self,
+        path: str = "/",
+        detail: bool = False,
+        recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
         prefix = self._to_key(path)
         if prefix and not prefix.endswith("/"):
@@ -193,18 +198,20 @@ class S3DirectFS:
                 dir_key = cp["Prefix"].rstrip("/")
                 if dir_key not in dirs_seen:
                     dirs_seen.add(dir_key)
-                    entries.append({
-                        "path": self._to_virtual(dir_key),
-                        "size": 4096,
-                        "is_directory": True,
-                        "etag": None,
-                        "mime_type": "inode/directory",
-                        "created_at": None,
-                        "modified_at": None,
-                        "version": 0,
-                        "zone_id": "root",
-                        "entry_type": 1,
-                    })
+                    entries.append(
+                        {
+                            "path": self._to_virtual(dir_key),
+                            "size": 4096,
+                            "is_directory": True,
+                            "etag": None,
+                            "mime_type": "inode/directory",
+                            "created_at": None,
+                            "modified_at": None,
+                            "version": 0,
+                            "zone_id": "root",
+                            "entry_type": 1,
+                        }
+                    )
 
             # Objects = files
             for obj in page.get("Contents", []):
@@ -212,18 +219,22 @@ class S3DirectFS:
                 if key.endswith("/"):
                     continue  # Skip directory markers
                 mime, _ = mimetypes.guess_type(key)
-                entries.append({
-                    "path": self._to_virtual(key),
-                    "size": obj.get("Size", 0),
-                    "is_directory": False,
-                    "etag": obj.get("ETag", "").strip('"'),
-                    "mime_type": mime or "application/octet-stream",
-                    "created_at": None,
-                    "modified_at": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
-                    "version": 0,
-                    "zone_id": "root",
-                    "entry_type": 0,
-                })
+                entries.append(
+                    {
+                        "path": self._to_virtual(key),
+                        "size": obj.get("Size", 0),
+                        "is_directory": False,
+                        "etag": obj.get("ETag", "").strip('"'),
+                        "mime_type": mime or "application/octet-stream",
+                        "created_at": None,
+                        "modified_at": obj["LastModified"].isoformat()
+                        if obj.get("LastModified")
+                        else None,
+                        "version": 0,
+                        "zone_id": "root",
+                        "entry_type": 0,
+                    }
+                )
 
         return entries if detail else [e["path"] for e in entries]
 
@@ -239,7 +250,9 @@ class S3DirectFS:
                 "etag": resp.get("ETag", "").strip('"'),
                 "mime_type": mime or "application/octet-stream",
                 "created_at": None,
-                "modified_at": resp["LastModified"].isoformat() if resp.get("LastModified") else None,
+                "modified_at": resp["LastModified"].isoformat()
+                if resp.get("LastModified")
+                else None,
                 "version": 0,
                 "zone_id": "root",
                 "entry_type": 0,
@@ -307,7 +320,10 @@ class MultiDirectFS:
         return await self._resolve(path).write(path, content)
 
     async def ls(
-        self, path: str = "/", detail: bool = False, recursive: bool = False,
+        self,
+        path: str = "/",
+        detail: bool = False,
+        recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
         return await self._resolve(path).ls(path, detail=detail, recursive=recursive)
 

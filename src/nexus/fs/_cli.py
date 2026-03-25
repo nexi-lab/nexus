@@ -70,9 +70,7 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
     # hung threads so the process exits cleanly after rendering.
     import concurrent.futures
 
-    executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=8, thread_name_prefix="doctor"
-    )
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="doctor")
     loop = asyncio.new_event_loop()
     loop.set_default_executor(executor)
     try:

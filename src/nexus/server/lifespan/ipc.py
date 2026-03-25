@@ -97,13 +97,6 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
         logger.warning("[IPC] MessageProcessorRegistry unavailable: %s", exc)
     app.state.ipc_pipe_manager = svc.pipe_manager
 
-    # Enlist IPC driver + provisioner (Q1 — restart-required, no lifecycle)
-    coord = svc.service_coordinator
-    if coord is not None:
-        await coord.enlist("ipc_storage_driver", ipc_storage)
-        if ipc_provisioner is not None:
-            await coord.enlist("ipc_provisioner", ipc_provisioner)
-
     # Start TTLSweeper background task (with event-driven pub/sub if cache_store available)
     try:
         from nexus.bricks.ipc.sweep import TTLSweeper
@@ -115,6 +108,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
             cache_store=cache_store,
         )
         app.state.ipc_sweeper = sweeper
+        coord = svc.service_coordinator
         if coord is not None:
             await coord.enlist("ipc_sweeper", sweeper)
         else:

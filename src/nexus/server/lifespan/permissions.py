@@ -123,9 +123,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
             )
 
         coord = svc.service_coordinator
-        if coord is not None:
-            await coord.enlist("cache_brick", cache_brick)
-        else:
+        if coord is None:
             await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
@@ -293,15 +291,8 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire circuit breaker and manifest resolver from ServiceRegistry (Issue #726, #2130)."""
+    """Wire circuit breaker and manifest resolver onto app.state from ServiceRegistry."""
     if svc.nexus_fs:
         _svc_fn = getattr(svc.nexus_fs, "service", None)
         app.state.rebac_circuit_breaker = _svc_fn("rebac_circuit_breaker") if _svc_fn else None
         app.state.manifest_resolver = _svc_fn("manifest_resolver") if _svc_fn else None
-        # Enlist Q1 — restart-required, no lifecycle
-        coord = svc.service_coordinator
-        if coord is not None:
-            if app.state.rebac_circuit_breaker is not None:
-                await coord.enlist("rebac_circuit_breaker", app.state.rebac_circuit_breaker)
-            if app.state.manifest_resolver is not None:
-                await coord.enlist("manifest_resolver", app.state.manifest_resolver)

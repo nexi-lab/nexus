@@ -30,7 +30,7 @@ EXCLUDED_MODULES = frozenset(
         "nexus.cli",
         "nexus.fuse",
         "nexus.remote",
-        "nexus.system_services",
+        "nexus.services",
         "nexus.grpc",
         "nexus.security",
     }

@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.core.file_events import FILE_EVENT_BIT
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
-from nexus.system_services.sync.write_back_service import (
+from nexus.services.event_bus.types import FileEvent, FileEventType
+from nexus.services.sync.write_back_service import (
     _WRITE_BACK_EVENT_MASK,
     WriteBackService,
 )
@@ -248,8 +248,8 @@ class TestOnEnqueueCallback:
 
     def test_callback_fires_on_successful_enqueue(self):
         """on_enqueue callback is called after successful commit."""
+        from nexus.services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
-        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
 
         store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
         callback = MagicMock()
@@ -268,7 +268,7 @@ class TestOnEnqueueCallback:
 
     def test_callback_not_called_without_db(self):
         """on_enqueue callback is NOT called when record_store is None (no commit)."""
-        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
+        from nexus.services.sync.sync_backlog_store import SyncBacklogStore
 
         callback = MagicMock()
         backlog = SyncBacklogStore(record_store=None, on_enqueue=callback)
@@ -283,8 +283,8 @@ class TestOnEnqueueCallback:
 
     def test_callback_exception_is_swallowed(self):
         """on_enqueue callback exception does not prevent enqueue from returning True."""
+        from nexus.services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
-        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
 
         store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
         callback = MagicMock(side_effect=RuntimeError("pipe full"))
@@ -303,8 +303,8 @@ class TestOnEnqueueCallback:
 
     def test_no_callback_is_fine(self):
         """on_enqueue=None (default) works without error."""
+        from nexus.services.sync.sync_backlog_store import SyncBacklogStore
         from nexus.storage.record_store import SQLAlchemyRecordStore
-        from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
 
         store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
         backlog = SyncBacklogStore(record_store=store)

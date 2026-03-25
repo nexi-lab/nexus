@@ -94,7 +94,11 @@ class FederatedMetadataProxy(MetastoreABC):
             vfs_port = _os.environ.get("NEXUS_GRPC_PORT", "2028")
             self_addr = f"{hostname}:{vfs_port}"
         else:
+<<<<<<< HEAD
             self_addr = raft_addr
+=======
+            self_addr = str(raft_addr)
+>>>>>>> 43f5265c9 (fix(#1801): fix CI failures — mypy, duplicate enlist, port assertion)
         return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================

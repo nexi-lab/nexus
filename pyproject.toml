@@ -890,11 +890,6 @@ layers = [
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
 ignore_imports = [
-<<<<<<< HEAD
-=======
-    # --- core importing services (ServiceRegistry shutdown needs BrickLifecycleManager type) ---
-    "nexus.core.service_registry -> nexus.services.lifecycle.brick_lifecycle",
->>>>>>> 9c0731d44 (refactor(#1801): rename system_services/ → services/)
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
     # --- tier-neutral (contracts/protocols) importing bricks ---
@@ -907,15 +902,8 @@ ignore_imports = [
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-<<<<<<< HEAD
-    # --- lib importing system_services (upward — legacy, to be fixed) ---
-    "nexus.lib.permission_utils -> nexus.system_services.gateway",
-=======
     # --- lib importing services (upward — legacy, to be fixed) ---
     "nexus.lib.permission_utils -> nexus.services.gateway",
-    # --- kernel (core) importing services ---
-    "nexus.core.service_registry -> nexus.services.lifecycle.brick_lifecycle",
->>>>>>> 9c0731d44 (refactor(#1801): rename system_services/ → services/)
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
     # --- services importing bricks ---

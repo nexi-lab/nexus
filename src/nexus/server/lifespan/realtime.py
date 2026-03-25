@@ -204,7 +204,7 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                 if _pm is not None:
                     import contextlib
 
-                    from nexus.system_services.sync.write_back_service import (
+                    from nexus.services.sync.write_back_service import (
                         _BACKLOG_WAKEUP_PIPE,
                     )
 
@@ -230,7 +230,6 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                     change_log_store=change_log_store,
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
-                    pipe_manager=_pm,
                 )
                 await app.state.write_back_service.start()
 

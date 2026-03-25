@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.system_services.sync.write_back_service import (
+from nexus.services.sync.write_back_service import (
     _BACKLOG_PIPE_CAPACITY,
     _BACKLOG_WAKEUP_PIPE,
     WriteBackService,

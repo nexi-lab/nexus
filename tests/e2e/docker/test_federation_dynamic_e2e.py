@@ -308,7 +308,7 @@ class TestDynamicMountTopology:
                 {"parent_zone": "corp", "path": mount_path, "target_zone": zone_id},
                 api_key=api_key,
             )
-            assert "error" not in r, f"mount {zone_id} at {mount_path} failed: {r}"
+            assert "error" not in r, f"mount {zone_id} at {zone_relative_path} failed: {r}"
 
     def test_mount_family_zone(self, cluster, api_key):
         """mkdir /family → mount root:/family → zone 'family'."""
@@ -335,7 +335,7 @@ class TestDynamicMountTopology:
         r = _jsonrpc(
             node,
             "federation_mount",
-            {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
+            {"parent_zone": "family", "path": "/work", "target_zone": "corp"},
             api_key=api_key,
         )
         assert "error" not in r, f"mount cross-link failed: {r}"
@@ -489,7 +489,7 @@ class TestDynamicUnmountRemount:
         um = _jsonrpc(
             node,
             "federation_unmount",
-            {"parent_zone": "corp", "path": "/corp/sales"},
+            {"parent_zone": "corp", "path": "/sales"},
             api_key=api_key,
         )
         assert "error" not in um, f"Unmount failed: {um}"
@@ -503,7 +503,7 @@ class TestDynamicUnmountRemount:
         rm = _jsonrpc(
             node,
             "federation_mount",
-            {"parent_zone": "corp", "path": "/corp/sales", "target_zone": "corp-sales"},
+            {"parent_zone": "corp", "path": "/sales", "target_zone": "corp-sales"},
             api_key=api_key,
         )
         assert "error" not in rm, f"Remount failed: {rm}"

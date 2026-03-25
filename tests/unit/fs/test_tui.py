@@ -552,6 +552,18 @@ class TestPlaygroundApp:
         assert "gws://calendar" in names
         assert "calendar://primary" not in names
 
+    def test_supported_connector_rows_include_discovered_s3_buckets(self):
+        """Discovered S3 buckets should appear as directly mountable picker rows."""
+        app = PlaygroundApp(uris=())
+        with patch.object(
+            app,
+            "_discovered_s3_bucket_rows",
+            return_value=[("s3://nexus-888", "mountable auth:s3 discovered")],
+        ):
+            rows = app._supported_connector_rows()
+        names = {name for name, _mode in rows}
+        assert "s3://nexus-888" in names
+
     @pytest.mark.asyncio
     async def test_resolve_mount_user_id_prefers_single_google_credential(self):
         """A single stored Google credential becomes the mount user identity."""

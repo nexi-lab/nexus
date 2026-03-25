@@ -492,6 +492,9 @@ class PlaygroundApp(App[None]):
             )
         elif uri.startswith("s3://"):
             guidance.append("S3 mount. Enter `s3://bucket` or `s3://bucket/prefix`.")
+            guidance.append(
+                "If AWS credentials are available, concrete `s3://...` bucket rows appear in this picker and can be mounted directly."
+            )
             guidance.append(self._auth_guidance("s3"))
         elif uri.startswith("gcs://"):
             guidance.append(
@@ -1029,6 +1032,7 @@ class PlaygroundApp(App[None]):
             ("s3://bucket/<prefix>", "mountable auth:s3"),
             ("gcs://project/bucket", "mountable auth:gcs"),
         ]
+        rows.extend(self._discovered_s3_bucket_rows())
         for info in ConnectorRegistry.list_all():
             uri = self._connector_uri_example(info.name)
             if uri is None:
@@ -1044,6 +1048,29 @@ class PlaygroundApp(App[None]):
             seen.add(row[0])
             deduped.append(row)
         return deduped
+
+    def _discovered_s3_bucket_rows(self) -> list[tuple[str, str]]:
+        """Return concrete S3 buckets when AWS credentials can enumerate them."""
+        try:
+            import boto3
+            from botocore.config import Config
+        except Exception:
+            return []
+
+        try:
+            client = boto3.client("s3", config=Config(connect_timeout=2, read_timeout=3))
+            response = client.list_buckets()
+        except Exception:
+            return []
+
+        buckets = response.get("Buckets") or []
+        rows: list[tuple[str, str]] = []
+        for bucket in buckets:
+            name = str(bucket.get("Name") or "").strip()
+            if not name:
+                continue
+            rows.append((f"s3://{name}", "mountable auth:s3 discovered"))
+        return rows
 
     def _connector_uri_example(self, connector_name: str) -> str | None:
         """Concrete URI example for a registered connector."""

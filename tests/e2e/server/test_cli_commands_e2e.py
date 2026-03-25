@@ -150,11 +150,6 @@ def cli_server(tmp_path_factory):
 
     app.include_router(audit_router)
 
-    # Snapshot router
-    from nexus.server.api.v2.routers.snapshots import router as snapshots_router
-
-    app.include_router(snapshots_router)
-
     # Events replay router
     from nexus.server.api.v2.routers.events_replay import router as events_router
 
@@ -169,11 +164,6 @@ def cli_server(tmp_path_factory):
     from nexus.server.api.v2.routers.pay import router as pay_router
 
     app.include_router(pay_router)
-
-    # Locks router
-    from nexus.server.api.v2.routers.locks import router as locks_router
-
-    app.include_router(locks_router)
 
     # Health endpoint
     @app.get("/health")
@@ -540,41 +530,6 @@ class TestPayCLI:
 
 
 # =============================================================================
-# Lock CLI
-# =============================================================================
-
-
-class TestLockCLI:
-    """Test `nexus lock` commands against real server.
-
-    Lock endpoints require Redis/Dragonfly. Without it, server returns 503.
-    We test that the CLI handles the response correctly.
-    """
-
-    def test_lock_list_graceful(self, cli_server):
-        result = _run_cli(
-            "lock",
-            "list",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # 503 from missing lock manager → CLI error exit 1
-        assert result.returncode in (0, 1)
-
-    def test_lock_info_graceful(self, cli_server):
-        result = _run_cli(
-            "lock",
-            "info",
-            "/data/test.txt",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode in (0, 1)
-
-
-# =============================================================================
 # Events CLI
 # =============================================================================
 
@@ -604,55 +559,6 @@ class TestEventsCLI:
             env=cli_server["env"],
         )
         assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-
-
-# =============================================================================
-# Snapshot CLI
-# =============================================================================
-
-
-class TestSnapshotCLI:
-    """Test `nexus snapshot` commands against real server.
-
-    Snapshot endpoints require nexus_fs._snapshot_service (CAS + metadata stores).
-    Without a full server, endpoints return 503. We test that the CLI handles
-    the response correctly either way.
-    """
-
-    def test_snapshot_list_graceful(self, cli_server):
-        result = _run_cli(
-            "snapshot",
-            "list",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # 503 from missing snapshot service → CLI error exit 1
-        assert result.returncode in (0, 1)
-
-    def test_snapshot_create_graceful(self, cli_server):
-        result = _run_cli(
-            "snapshot",
-            "create",
-            "--description",
-            "CLI e2e test",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode in (0, 1)
-
-    def test_snapshot_restore_graceful(self, cli_server):
-        result = _run_cli(
-            "snapshot",
-            "restore",
-            "fake-txn-id",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode in (0, 1)
 
 
 # =============================================================================

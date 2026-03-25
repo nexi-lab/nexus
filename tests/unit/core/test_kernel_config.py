@@ -4,7 +4,6 @@ Validates:
 - Default values for each frozen dataclass
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
-- KernelServices (Tier 0 — kernel only)
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import pytest
 from nexus.core.config import (
     CacheConfig,
     DistributedConfig,
-    KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
@@ -184,56 +182,3 @@ class TestParseConfig:
         providers = ({"name": "pdf"}, {"name": "docx"})
         cfg = ParseConfig(providers=providers)
         assert cfg.providers == ({"name": "pdf"}, {"name": "docx"})
-
-
-# ---------------------------------------------------------------------------
-# KernelServices
-# ---------------------------------------------------------------------------
-
-
-class TestKernelServices:
-    """Tests for KernelServices frozen dataclass (Tier 0 — kernel only)."""
-
-    def test_defaults_all_none(self) -> None:
-        """Issue #2193: KernelServices has only router field."""
-        ks = KernelServices()
-        assert ks.router is None
-
-    def test_frozen(self) -> None:
-        """KernelServices is frozen — attributes cannot be set after init."""
-        ks = KernelServices()
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            ks.router = "some_router"  # type: ignore[misc]
-
-    def test_construct_with_values(self) -> None:
-        sentinel = object()
-        ks = KernelServices(router=sentinel)
-        assert ks.router is sentinel
-
-    def test_replace(self) -> None:
-        """Use dataclasses.replace() to create modified copies."""
-        ks = KernelServices()
-        new = dataclasses.replace(ks, router="new_router")
-        assert new.router == "new_router"
-        assert ks.router is None  # original unchanged
-
-    def test_is_dataclass(self) -> None:
-        assert dataclasses.is_dataclass(KernelServices)
-        ks = KernelServices()
-        assert dataclasses.is_dataclass(ks)
-
-    def test_all_kernel_fields_present(self) -> None:
-        """Verify KernelServices has exactly the Tier 0 kernel fields.
-
-        Issue #2193: Only router remains. All other fields moved to SystemServices.
-        """
-        field_names = {f.name for f in dataclasses.fields(KernelServices)}
-        expected_fields = {"router"}
-        assert field_names == expected_fields, (
-            f"Extra: {field_names - expected_fields}, Missing: {expected_fields - field_names}"
-        )
-
-    def test_router_annotation(self) -> None:
-        """Issue #2193: KernelServices.router is typed Any."""
-        annotations = KernelServices.__annotations__
-        assert "router" in annotations

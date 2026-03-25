@@ -24,7 +24,6 @@ from nexus.contracts.types import OperationContext, Permission
 from nexus.core.config import (
     CacheConfig,
     DistributedConfig,
-    KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
@@ -68,16 +67,18 @@ class NexusFS(  # type: ignore[misc]
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        kernel_services: KernelServices | None = None,
+        router: Any = None,
         init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with MetastoreABC (inode layer) and an optional router
-        (via KernelServices). Backends are mounted externally via
-        ``router.add_mount()`` — like Linux VFS, no global backend.
+        Kernel boots with MetastoreABC (inode layer) and an optional router.
+        Backends are mounted externally via ``router.add_mount()`` — like
+        Linux VFS, no global backend.
 
         Args:
+            router: PathRouter instance for VFS routing. When None, a default
+                router is created from metadata_store.
             init_cred: Kernel process credential — like Linux ``init_task.cred``.
                 Used as fallback identity for internal operations (audit pipe
                 writes, service bootstrap mkdir). Immutable after construction.
@@ -89,7 +90,6 @@ class NexusFS(  # type: ignore[misc]
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        ksvc = kernel_services or KernelServices()
 
         # Per-instance VFS revision counter (H21: must not be class-level)
         import threading as _threading
@@ -132,8 +132,8 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Path router (metastore-backed mount table)
-        if ksvc.router is not None:
-            self.router = ksvc.router
+        if router is not None:
+            self.router = router
         else:
             self.router = PathRouter(metadata_store)
 

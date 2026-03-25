@@ -193,15 +193,10 @@ class TestFullFactoryBoot:
 
         result = bench(boot)
 
-        # Verify a 3-tuple of (KernelServices, SystemServices, BrickServices) was returned
-        from nexus.core.config import KernelServices
-
-        assert isinstance(result, tuple)
-        assert len(result) == 3
-        kernel, system, brick = result
-        assert isinstance(kernel, KernelServices)
-        assert isinstance(system, dict)
-        assert isinstance(brick, dict)
+        # Verify a single flat dict was returned
+        assert isinstance(result, dict)
+        assert "rebac_manager" in result
+        assert "permission_enforcer" in result
 
         # Assert timing budget
         if isinstance(bench, _FallbackBenchmark):

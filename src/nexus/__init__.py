@@ -287,12 +287,11 @@ async def connect(
         _router.add_mount("/", remote_backend)
 
         from nexus.contracts.types import OperationContext as _RemoteOC
-        from nexus.core.config import KernelServices as _KernelServices
 
         nfs = _RemoteNexusFS(
             metadata_store=remote_metastore,
             permissions=_PermissionConfig(enforce=False),
-            kernel_services=_KernelServices(router=_router),
+            router=_router,
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
 

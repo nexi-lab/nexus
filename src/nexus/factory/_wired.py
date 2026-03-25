@@ -17,24 +17,22 @@ logger = logging.getLogger(__name__)
 async def _boot_wired_services(
     nx: Any,
     router: "PathRouter",
-    system_services: dict[str, Any],
-    brick_dict: dict[str, Any],
-    brick_on: Callable[[str], bool] | None = None,
+    services: dict[str, Any],
+    svc_on: Callable[[str], bool] | None = None,
 ) -> "WiredServices":
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
     ``NexusFSGateway`` breaks the circular dependency between kernel and services.
 
-    Profile gating is applied via ``brick_on`` — same callback used by other tiers.
+    Profile gating is applied via ``svc_on`` — same callback used by other tiers.
     Services that fail to construct are set to None (degraded mode).
 
     Args:
         nx: The NexusFS instance (already constructed).
         router: PathRouter (Tier 0 — router only).
-        system_services: System services dict (Tier 1 — rebac, permissions, etc.).
-        brick_dict: Brick services dict (Tier 2).
-        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+        services: Unified services dict (all tiers merged).
+        svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
     Returns:
         WiredServices frozen dataclass (some fields may be None).
@@ -43,7 +41,7 @@ async def _boot_wired_services(
     from nexus.factory._helpers import _make_gate
 
     t0 = time.perf_counter()
-    _on = _make_gate(brick_on)
+    _on = _make_gate(svc_on)
 
     # Resolve the root backend from the router.
     # NexusFS no longer has a .backend attribute — all backends live on the router.
@@ -71,12 +69,12 @@ async def _boot_wired_services(
         from nexus.bricks.rebac.rebac_service import ReBACService
 
         rebac_service = ReBACService(
-            rebac_manager=system_services.get("rebac_manager"),
+            rebac_manager=services.get("rebac_manager"),
             enforce_permissions=nx._enforce_permissions,
             enable_audit_logging=True,
-            circuit_breaker=brick_dict.get("rebac_circuit_breaker"),
+            circuit_breaker=services.get("rebac_circuit_breaker"),
             file_reader=nx.sys_read,
-            permission_enforcer=system_services.get("permission_enforcer"),
+            permission_enforcer=services.get("permission_enforcer"),
         )
         logger.debug("[BOOT:WIRED] ReBACService created")
     except Exception as exc:
@@ -150,7 +148,7 @@ async def _boot_wired_services(
             from nexus.bricks.mount.mount_persist_service import MountPersistService
 
             mount_persist_service = MountPersistService(
-                mount_manager=system_services.get("mount_manager"),
+                mount_manager=services.get("mount_manager"),
                 mount_service=None,  # wired after MountService creation below
                 sync_service=sync_service,
             )
@@ -166,7 +164,7 @@ async def _boot_wired_services(
 
         mount_service = MountService(
             router=router,
-            mount_manager=system_services.get("mount_manager"),
+            mount_manager=services.get("mount_manager"),
             nexus_fs=nx,
             gateway=gateway,
             sync_service=sync_service,
@@ -193,9 +191,9 @@ async def _boot_wired_services(
 
         search_service = SearchService(
             metadata_store=nx.metadata,
-            permission_enforcer=system_services.get("permission_enforcer"),
+            permission_enforcer=services.get("permission_enforcer"),
             router=router,
-            rebac_manager=system_services.get("rebac_manager"),
+            rebac_manager=services.get("rebac_manager"),
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
@@ -261,8 +259,8 @@ async def _boot_wired_services(
             from nexus.system_services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
-                event_bus=system_services.get("event_bus"),
-                lock_manager=system_services.get("lock_manager"),
+                event_bus=services.get("event_bus"),
+                lock_manager=services.get("lock_manager"),
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:
@@ -279,11 +277,11 @@ async def _boot_wired_services(
         from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
 
         workspace_rpc_service = WorkspaceRPCService(
-            workspace_manager=system_services["workspace_manager"],
-            workspace_registry=system_services["workspace_registry"],
+            workspace_manager=services["workspace_manager"],
+            workspace_registry=services["workspace_registry"],
             vfs=nx,
             default_context=_nx_init_cred,
-            snapshot_service=brick_dict.get("snapshot_service"),
+            snapshot_service=services.get("snapshot_service"),
         )
         logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
     except Exception as exc:
@@ -298,10 +296,10 @@ async def _boot_wired_services(
             metastore=nx.metadata,
             session_factory=_nx_session_factory,
             record_store=nx._record_store,
-            entity_registry=system_services.get("entity_registry"),
-            rebac_manager=system_services.get("rebac_manager"),
-            wallet_provisioner=brick_dict.get("wallet_provisioner"),
-            api_key_creator=brick_dict.get("api_key_creator"),
+            entity_registry=services.get("entity_registry"),
+            rebac_manager=services.get("rebac_manager"),
+            wallet_provisioner=services.get("wallet_provisioner"),
+            api_key_creator=services.get("api_key_creator"),
             key_service=getattr(nx, "_key_service", None),
             rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
@@ -355,10 +353,10 @@ async def _boot_wired_services(
         user_provisioning_service = UserProvisioningService(
             vfs=nx,
             session_factory=_nx_session_factory,
-            entity_registry=system_services.get("entity_registry"),
-            api_key_creator=brick_dict.get("api_key_creator"),
+            entity_registry=services.get("entity_registry"),
+            api_key_creator=services.get("api_key_creator"),
             backend=_root_backend,
-            rebac_manager=system_services.get("rebac_manager"),
+            rebac_manager=services.get("rebac_manager"),
             rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
@@ -402,14 +400,14 @@ async def _boot_wired_services(
     try:
         from nexus.system_services.namespace.descendant_access import DescendantAccessChecker
 
-        _rebac_for_dc = system_services.get("rebac_manager")
+        _rebac_for_dc = services.get("rebac_manager")
         descendant_checker = DescendantAccessChecker(
             rebac_manager=_rebac_for_dc,
             rebac_service=rebac_service,
             dir_visibility_cache=getattr(_rebac_for_dc, "dir_visibility_cache", None)
             if _rebac_for_dc
             else None,
-            permission_enforcer=system_services.get("permission_enforcer"),
+            permission_enforcer=services.get("permission_enforcer"),
             metadata_store=nx.metadata,
         )
         logger.debug("[BOOT:WIRED] DescendantAccessChecker created")
@@ -488,12 +486,12 @@ async def _boot_wired_services(
     return result
 
 
-def _initialize_wired_ipc(nx: Any, brick_dict: dict[str, Any]) -> None:
+def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
     """IPC adapter bind + mount — deferred from link() to initialize().
 
     Performs I/O (mkdir) so it cannot run in the pure-memory link() phase.
     """
-    _ipc_adapter = brick_dict.get("ipc_storage_driver")
+    _ipc_adapter = services.get("ipc_storage_driver")
     if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
         try:
             _ipc_adapter.bind(nx)

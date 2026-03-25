@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def _boot_system_services(
     ctx: _BootContext,
-    brick_on: Callable[[str], bool] | None = None,
+    svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """Boot Tier 1 (SYSTEM) — critical + degradable services.
 
@@ -46,14 +46,14 @@ def _boot_system_services(
 
     Args:
         ctx: Boot context with shared dependencies.
-        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+        svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
             When None, all services are enabled (backward-compatible default).
 
     Returns:
         Dict with all system service entries (some degradable ones may be None).
     """
     t0 = time.perf_counter()
-    _on = _make_gate(brick_on)
+    _on = _make_gate(svc_on)
 
     # =====================================================================
     # CRITICAL SECTION (BootError on failure) — Issue #2193
@@ -467,6 +467,6 @@ def _boot_system_services(
         active,
         len(result),
         elapsed,
-        "active" if brick_on is not None else "off",
+        "active" if svc_on is not None else "off",
     )
     return result

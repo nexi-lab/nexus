@@ -53,8 +53,7 @@ Follows Linux's monolithic kernel model, not microkernel:
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
 has zero reads of service containers — all service wiring flows through
 `ServiceRegistry` (`nx.service("name")`), factory-injected closures
-(`functools.partial`), or KernelDispatch hooks. Both `SystemServices` and
-`BrickServices` frozen dataclasses have been deleted; services flow as plain
+(`functools.partial`), or KernelDispatch hooks. Services flow as a single
 `dict[str, Any]` from factory to `ServiceRegistry.enlist()`.
 
 **Drivers** use constructor DI at startup — same binary, different config
@@ -68,8 +67,8 @@ and injects them via DI. `DeploymentProfile` gates which bricks are constructed
 
 Factory boot sequence:
 
-1. **`create_nexus_services()`** — Build 3-tier service containers (Kernel/System/Brick)
-2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O)
+1. **`create_nexus_services()`** — Build unified services dict (core infra + features)
+2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O, `router` passed directly)
 3. **`link()`** — Wire service topology via DI closures (memory only)
 4. **`initialize()`** — Register VFS hooks, IPC adapter bind
 

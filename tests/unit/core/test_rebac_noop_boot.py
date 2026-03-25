@@ -260,7 +260,7 @@ class TestBootDemotion:
         """
         from nexus.factory._helpers import _make_gate
 
-        # Simulate brick_on returning False for 'permissions'
+        # Simulate svc_on returning False for 'permissions'
         # (canonical brick name per deployment_profile.py BRICK_PERMISSIONS)
         gate = _make_gate(lambda name: name != "permissions")
         assert gate("permissions") is False

@@ -2,7 +2,7 @@
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
 Issue #1391: Builder pattern — frozen config dataclasses as SSOT for defaults.
-Issue #2034: Slim KernelServices — 3-tier split (Kernel / System / Brick).
+Issue #2034: Unified services dict (formerly 3-tier split).
 
 These frozen dataclasses group related constructor parameters so that
 the kernel receives a single config object instead of 50 keyword args.
@@ -14,7 +14,6 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 
-    KernelServices  — Tier 0: boot-fatal, always present
     ServiceRegistry — Tier 1+2: all services accessed via nx.service("name")
 """
 
@@ -126,32 +125,6 @@ class IPCConfig:
     # Retry configuration
     max_retries: int = 3
     retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0)
-
-
-# ---------------------------------------------------------------------------
-# KernelServices — Tier 0: Storage Pillar validation
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class KernelServices:
-    """Tier 0 (KERNEL) — Storage Pillar handles only.
-
-    Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only
-    VFS routing and Metastore belong in the kernel.  Both are injected as
-    constructor arguments; this container simply carries the router handle.
-
-    All former kernel services (ReBAC, permissions, workspace, write-sync)
-    have been moved to the system tier (Issue #2193) where they are
-    classified as *critical* (BootError on failure) or *degradable*
-    (WARNING + None on failure).
-
-    Frozen — all wiring must happen at construction time in factory.py.
-    Use ``dataclasses.replace()`` to create modified copies if needed.
-    """
-
-    # VFS routing — the only kernel-level mechanism
-    router: Any = None
 
 
 # ---------------------------------------------------------------------------

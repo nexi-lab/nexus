@@ -22,7 +22,7 @@ import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
-from nexus.core.config import KernelServices, PermissionConfig
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import PathRouter
 from nexus.fs import _make_mount_entry
@@ -55,7 +55,7 @@ def slim_fs(tmp_path: Path):
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        kernel_services=KernelServices(router=router),
+        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",
@@ -94,7 +94,7 @@ def dual_fs(tmp_path: Path):
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        kernel_services=KernelServices(router=router),
+        router=router,
     )
     kernel._init_cred = OperationContext(
         user_id="test",

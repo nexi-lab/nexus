@@ -14,7 +14,6 @@ if TYPE_CHECKING:
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
-        KernelServices,
         PermissionConfig,
     )
     from nexus.core.metastore import MetastoreABC
@@ -40,7 +39,7 @@ def create_nexus_services(
     enable_write_buffer: bool | None = None,
     resiliency_raw: dict[str, Any] | None = None,
     enabled_bricks: frozenset[str] | None = None,
-) -> "tuple[KernelServices, dict[str, Any], dict[str, Any]]":
+) -> "dict[str, Any]":
     """Create default services for NexusFS dependency injection.
 
     Orchestrates 3-tier boot sequence:
@@ -72,17 +71,13 @@ def create_nexus_services(
             are enabled (backward-compatible default = FULL profile).
 
     Returns:
-        Tuple of (KernelServices, system_dict, brick_dict).
-
-    .. versionchanged:: Issue #2034
-        Returns a 3-tuple instead of a single KernelServices.
+        dict[str, Any] — all services keyed by canonical name.
     """
     # --- Profile-based brick gating (Issue #1389) ---
     from nexus.contracts.deployment_profile import DeploymentProfile
     from nexus.contracts.types import AuditConfig as _AuditConfig
     from nexus.core.config import CacheConfig as _CacheConfig
     from nexus.core.config import DistributedConfig as _DistributedConfig
-    from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
@@ -92,7 +87,7 @@ def create_nexus_services(
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
 
-    def _brick_on(name: str) -> bool:
+    def svc_on(name: str) -> bool:
         return name in enabled_bricks
 
     from nexus.contracts.deployment_profile import ALL_BRICK_NAMES as _ALL_BRICKS
@@ -148,27 +143,28 @@ def create_nexus_services(
     _boot_kernel_services(ctx)
 
     # --- Tier 1: SYSTEM (critical + degradable, gated by profile) ---
-    system_dict = _boot_system_services(ctx, _brick_on)
+    system_dict = _boot_system_services(ctx, svc_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
-    brick_dict = _boot_independent_bricks(ctx, system_dict, _brick_on)
+    brick_dict = _boot_independent_bricks(ctx, system_dict, svc_on)
 
     # --- Tier 2b: DEPENDENT BRICK (Issue #1861: artifact auto-indexing) ---
     _boot_dependent_bricks(ctx, system_dict, brick_dict)
 
     # --- Background threads deferred to NexusFS.initialize() ---
 
-    # --- Assemble 3-tier containers (Issue #2034, #2193) ---
-    kernel_services = _KernelServices(router=router)
+    # --- Assemble unified services dict (Issue #2034, #2193) ---
 
     # Merge Tier 1 infrastructure from brick_dict into system_dict.
     system_dict["event_bus"] = brick_dict["event_bus"]
     system_dict["lock_manager"] = brick_dict["lock_manager"]
 
-    # Remove event_bus/lock_manager from brick_dict (already merged into system_dict)
-    _brick_out = {k: v for k, v in brick_dict.items() if k not in ("event_bus", "lock_manager")}
+    # Merge remaining brick services into the unified dict
+    system_dict.update(
+        {k: v for k, v in brick_dict.items() if k not in ("event_bus", "lock_manager")}
+    )
 
-    return kernel_services, system_dict, _brick_out
+    return system_dict
 
 
 async def create_nexus_fs(
@@ -184,9 +180,7 @@ async def create_nexus_fs(
     distributed: "DistributedConfig | None" = None,
     memory: Any = None,
     parsing: Any = None,
-    kernel_services: "KernelServices | None" = None,
-    system_services: "dict[str, Any] | None" = None,
-    brick_services: "dict[str, Any] | None" = None,
+    services: "dict[str, Any] | None" = None,
     enable_write_buffer: bool | None = None,
     enabled_bricks: frozenset[str] | None = None,
     zone_id: str | None = None,
@@ -208,9 +202,8 @@ async def create_nexus_fs(
         distributed: DistributedConfig object.
         memory: MemoryConfig object.
         parsing: ParseConfig object.
-        kernel_services: Pre-built KernelServices (skips create_nexus_services).
-        system_services: Pre-built system services dict.
-        brick_services: Pre-built brick services dict.
+        services: Pre-built services dict. When None and record_store is
+            provided, create_nexus_services() is called automatically.
         enable_write_buffer: Use async DT_PIPE observer for PG sync.
         enabled_bricks: Set of brick names to enable.
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
@@ -220,15 +213,10 @@ async def create_nexus_fs(
 
     Returns:
         Fully configured NexusFS instance with services injected.
-
-    .. versionchanged:: Issue #2034
-        ``services`` param replaced by ``kernel_services``, ``system_services``,
-        ``brick_services`` (3-tier split).
     """
     from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
     )
-    from nexus.core.config import KernelServices as _KernelServices
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
@@ -260,14 +248,8 @@ async def create_nexus_fs(
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
-    if kernel_services is None and record_store is not None:
-        if system_services is not None or brick_services is not None:
-            logger.warning(
-                "[FACTORY] system_services/brick_services provided without kernel_services — "
-                "they will be overwritten by create_nexus_services(). Pass kernel_services "
-                "to use pre-built service containers."
-            )
-        kernel_services, system_services, brick_services = create_nexus_services(
+    if services is None and record_store is not None:
+        services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
@@ -281,20 +263,10 @@ async def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
             enabled_bricks=enabled_bricks,
         )
-    elif kernel_services is None:
-        kernel_services = _KernelServices(router=router)
-    else:
-        # Use provided services but ensure router is set (frozen — use replace)
-        if kernel_services.router is None:
-            from dataclasses import replace as _dc_replace
 
-            kernel_services = _dc_replace(kernel_services, router=router)
-
-    # Default system/brick to empty containers when not provided
-    if system_services is None:
-        system_services = {}
-    if brick_services is None:
-        brick_services = {}
+    # Default to empty dict when not provided
+    if services is None:
+        services = {}
 
     import functools
 
@@ -314,12 +286,10 @@ async def create_nexus_fs(
         distributed=distributed,
         memory=memory,
         parsing=parsing,
-        kernel_services=kernel_services,
+        router=router,
         init_cred=_init_cred,
     )
-    nx._link_fn = functools.partial(
-        _do_link, system_services=system_services, zone_id=zone_id, brick_dict=brick_services
-    )
+    nx._link_fn = functools.partial(_do_link, services=services, zone_id=zone_id)
     nx._initialize_fn = _do_initialize
     await nx.link(
         enabled_bricks=enabled_bricks,
@@ -333,10 +303,10 @@ async def create_nexus_fs(
 async def _register_vfs_hooks(
     nx: "NexusFS",
     *,
-    system_services: Any = None,
+    services: Any = None,
     permission_checker: Any = None,
     auto_parse: bool = True,
-    brick_on: "Callable[[str], bool] | None" = None,
+    svc_on: "Callable[[str], bool] | None" = None,
     parse_fn: Any = None,
 ) -> None:
     """Register hooks + observers via coordinator.enlist() (Issue #900, #1709).
@@ -351,7 +321,7 @@ async def _register_vfs_hooks(
     """
     from nexus.factory._helpers import _make_gate
 
-    _on = _make_gate(brick_on)
+    _on = _make_gate(svc_on)
 
     _coordinator = nx.service_coordinator
 
@@ -362,7 +332,7 @@ async def _register_vfs_hooks(
     # ── Zone write guard hook (Issue #1790) ────────────────────────
     # Rejects writes to zones being deprovisioned (Issue #2061).
     # Replaces _check_zone_writable() in nexus_fs.
-    _ss = system_services or {}
+    _ss = services or {}
     _zl = _ss.get("zone_lifecycle")
     if _zl is not None:
         from nexus.system_services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook

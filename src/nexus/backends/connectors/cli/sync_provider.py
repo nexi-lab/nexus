@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 from nexus.backends.connectors.cli.protocol import (
     FetchResult,
     RemoteItem,
@@ -102,8 +103,12 @@ class CLISyncProvider:
         if not result.ok:
             raise KeyError(f"Failed to fetch {item_id}: {result.summary()}")
 
+        if isinstance(self._connector, DisplayPathMixin):
+            rel_path = self._connector.display_path(item_id, None)
+        else:
+            rel_path = f"{item_id}.yaml"
         return FetchResult(
-            relative_path=f"{item_id}.yaml",
+            relative_path=rel_path,
             content=result.stdout.encode("utf-8"),
         )
 
@@ -188,23 +193,36 @@ class CLISyncProvider:
                 item_id = str(raw.get("id", raw.get("item_id", "")))
                 if not item_id:
                     continue
+                metadata = {
+                    k: v
+                    for k, v in raw.items()
+                    if k not in ("id", "item_id", "path", "size", "modified", "mtime", "hash")
+                }
+                # Use connector's display_path() for human-readable naming
+                # if available (Issue #3256), otherwise fall back to raw path/ID.
+                explicit_path = raw.get("path")
+                if explicit_path:
+                    rel_path = explicit_path
+                elif isinstance(self._connector, DisplayPathMixin):
+                    rel_path = self._connector.display_path(item_id, metadata)
+                else:
+                    rel_path = f"{item_id}.yaml"
                 items.append(
                     RemoteItem(
                         item_id=item_id,
-                        relative_path=raw.get("path", f"{item_id}.yaml"),
+                        relative_path=rel_path,
                         size=raw.get("size"),
                         modified_time=raw.get("modified", raw.get("mtime")),
                         content_hash=raw.get("hash", raw.get("content_hash")),
-                        metadata={
-                            k: v
-                            for k, v in raw.items()
-                            if k
-                            not in ("id", "item_id", "path", "size", "modified", "mtime", "hash")
-                        },
+                        metadata=metadata,
                     )
                 )
             elif isinstance(raw, str):
-                items.append(RemoteItem(item_id=raw, relative_path=f"{raw}.yaml"))
+                if isinstance(self._connector, DisplayPathMixin):
+                    rel_path = self._connector.display_path(raw, None)
+                else:
+                    rel_path = f"{raw}.yaml"
+                items.append(RemoteItem(item_id=raw, relative_path=rel_path))
 
         return SyncPage(
             items=items,

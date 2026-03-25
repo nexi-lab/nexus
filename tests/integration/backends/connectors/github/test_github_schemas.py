@@ -458,3 +458,76 @@ class TestGitHubConnectorCommands:
         args = connector._build_cli_args("merge_pr", MagicMock(), "pulls/_merge.yaml")
 
         assert args == ["gh", "pr", "merge"]
+
+
+# ---------------------------------------------------------------------------
+# Display path tests (Issue #3256)
+# ---------------------------------------------------------------------------
+
+
+class TestGitHubDisplayPath:
+    """Test GitHubConnector.display_path() for human-readable issue/PR paths."""
+
+    def _connector(self):
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        return GitHubConnector.__new__(GitHubConnector)
+
+    def test_issue_with_number_and_title(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "issue-142",
+            {
+                "number": 142,
+                "title": "feat: add grove status command",
+            },
+        )
+        assert path == "issues/142_feat-add-grove-status-command.yaml"
+
+    def test_pr_detected_by_type(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "pr-99",
+            {
+                "number": 99,
+                "title": "fix auth bug",
+                "type": "PullRequest",
+            },
+        )
+        assert path.startswith("pulls/")
+        assert "99" in path
+        assert "fix-auth-bug" in path
+
+    def test_pr_detected_by_pull_request_key(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "pr-50",
+            {
+                "number": 50,
+                "title": "Update docs",
+                "pull_request": {"url": "https://..."},
+            },
+        )
+        assert path.startswith("pulls/")
+
+    def test_no_title_uses_number(self) -> None:
+        c = self._connector()
+        path = c.display_path("issue-10", {"number": 10})
+        assert path == "issues/10.yaml"
+
+    def test_no_metadata_uses_id(self) -> None:
+        c = self._connector()
+        path = c.display_path("abc123", None)
+        assert path == "issues/abc123.yaml"
+
+    def test_special_chars_in_title_sanitized(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "issue-1",
+            {
+                "number": 1,
+                "title": 'feat: "quoted" path/name?',
+            },
+        )
+        assert "?" not in path
+        assert '"' not in path

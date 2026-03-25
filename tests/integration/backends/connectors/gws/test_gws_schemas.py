@@ -669,3 +669,180 @@ class TestDeleteFileSchema:
                 agent_intent="short",
                 file_id="abc123",
             )
+
+
+# ---------------------------------------------------------------------------
+# Display path tests (Issue #3256)
+# ---------------------------------------------------------------------------
+
+
+class TestGmailDisplayPath:
+    """Test GmailConnector.display_path() for human-readable email paths."""
+
+    def _connector(self):
+        from nexus.backends.connectors.gws.connector import GmailConnector
+
+        return GmailConnector.__new__(GmailConnector)
+
+    def test_full_metadata(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "msg-123",
+            {
+                "subject": "Re: Meeting Notes",
+                "date": "2026-03-20T10:30:00Z",
+                "labels": ["INBOX", "CATEGORY_PERSONAL"],
+            },
+        )
+        assert path.startswith("INBOX/PRIMARY/")
+        assert "2026-03-20" in path
+        assert "Re-Meeting-Notes" in path
+        assert path.endswith(".yaml")
+
+    def test_social_category(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "msg-456",
+            {
+                "subject": "New follower",
+                "date": "2026-03-20",
+                "labels": ["INBOX", "CATEGORY_SOCIAL"],
+            },
+        )
+        assert "INBOX/SOCIAL/" in path
+
+    def test_no_subject_falls_back_to_id(self) -> None:
+        c = self._connector()
+        path = c.display_path("msg-789", {"labels": ["INBOX"]})
+        assert "msg-789" in path
+        assert path.endswith(".yaml")
+
+    def test_empty_metadata(self) -> None:
+        c = self._connector()
+        path = c.display_path("msg-000", {})
+        assert "INBOX/PRIMARY/" in path
+        assert "msg-000" in path
+
+    def test_sent_label(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "msg-sent",
+            {
+                "subject": "Hello",
+                "labels": ["SENT"],
+            },
+        )
+        assert path.startswith("SENT/")
+        assert "PRIMARY" not in path  # No categories for SENT
+
+    def test_no_metadata(self) -> None:
+        c = self._connector()
+        path = c.display_path("msg-none", None)
+        assert path.endswith(".yaml")
+
+    def test_unparseable_date_no_leading_underscore(self) -> None:
+        """Unparseable date should not produce a leading underscore in the filename."""
+        c = self._connector()
+        path = c.display_path(
+            "msg-bad-date",
+            {
+                "subject": "Hello",
+                "date": "not-a-date",
+                "labels": ["INBOX"],
+            },
+        )
+        filename = path.rsplit("/", 1)[-1]
+        assert not filename.startswith("_"), f"Leading underscore in filename: {path}"
+        assert "Hello" in path
+
+    def test_internal_date_timestamp(self) -> None:
+        """Gmail internalDate (ms timestamp) should not crash."""
+        c = self._connector()
+        path = c.display_path(
+            "msg-ts",
+            {
+                "subject": "Test",
+                "internalDate": "1711027200000",
+                "labels": ["INBOX"],
+            },
+        )
+        assert path.endswith(".yaml")
+        assert "Test" in path
+
+
+class TestCalendarDisplayPath:
+    """Test CalendarConnector.display_path() for human-readable event paths."""
+
+    def _connector(self):
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        return CalendarConnector.__new__(CalendarConnector)
+
+    def test_full_event(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "evt-123",
+            {
+                "summary": "Team Standup",
+                "start": {"dateTime": "2026-03-21T10:00:00-07:00"},
+                "calendarId": "primary",
+            },
+        )
+        assert "primary/" in path
+        assert "2026-03/" in path
+        assert "2026-03-21" in path
+        assert "10-00" in path
+        assert "Team-Standup" in path
+        assert path.endswith(".yaml")
+
+    def test_all_day_event(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "evt-456",
+            {
+                "summary": "Company Offsite",
+                "start": {"date": "2026-04-01"},
+                "calendarId": "primary",
+            },
+        )
+        assert "2026-04-01" in path
+        assert "Company-Offsite" in path
+
+    def test_no_summary(self) -> None:
+        c = self._connector()
+        path = c.display_path(
+            "evt-789",
+            {
+                "start": {"dateTime": "2026-03-21T10:00:00Z"},
+            },
+        )
+        assert "evt-789" in path
+
+    def test_no_metadata(self) -> None:
+        c = self._connector()
+        path = c.display_path("evt-000", None)
+        assert path == "primary/evt-000.yaml"
+
+
+class TestDriveDisplayPath:
+    """Test DriveConnector.display_path() for Drive files."""
+
+    def _connector(self):
+        from nexus.backends.connectors.gws.connector import DriveConnector
+
+        return DriveConnector.__new__(DriveConnector)
+
+    def test_preserves_original_filename(self) -> None:
+        c = self._connector()
+        path = c.display_path("file-abc", {"name": "Q4 Report.pdf"})
+        assert "Q4-Report.pdf" in path
+
+    def test_uses_title_field(self) -> None:
+        c = self._connector()
+        path = c.display_path("file-abc", {"title": "Design Doc"})
+        assert "Design-Doc" in path
+
+    def test_no_metadata_falls_back(self) -> None:
+        c = self._connector()
+        path = c.display_path("file-abc", None)
+        assert path == "file-abc.yaml"

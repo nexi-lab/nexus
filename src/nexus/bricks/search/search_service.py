@@ -739,6 +739,10 @@ class SearchService:
             recursive=recursive,
         )
 
+        # NOTE: Metastore-first listing deferred to Issue #3266.
+        # Once CLI connectors sync to metastore with display_path() names,
+        # this code path should prefer metastore entries over live list_dir().
+
         # Permission filtering
         if self._enforce_permissions and context:
             from nexus.contracts.types import OperationContext

@@ -229,6 +229,7 @@ class PlaygroundApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("", id="too-small-message")
         empty = Static(
             "[dim]Loading mounts…[/dim]",
             id="empty-state",
@@ -534,11 +535,12 @@ class PlaygroundApp(App[None]):
             pass
 
     def action_copy_path(self) -> None:
-        """Copy current file path to clipboard."""
+        """Copy current file path to system clipboard."""
         try:
             browser = self.query_one("#file-browser", FileBrowser)
             path = browser.copy_current_path()
             if path:
+                self.copy_to_clipboard(path)
                 self.notify(f"Copied: {path}", timeout=2)
         except Exception:
             pass

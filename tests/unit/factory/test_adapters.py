@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.factory.adapters import _NexusFSFileReader, _WorkflowLifecycleAdapter
+from nexus.factory.adapters import _NexusFSFileReader
 
 
 class TestNexusFSFileReader:
@@ -77,21 +77,3 @@ class TestNexusFSFileReader:
         reader = _NexusFSFileReader(nx)
         result = await reader.list_files("/")
         assert len(result) >= 2
-
-
-class TestWorkflowLifecycleAdapter:
-    """_WorkflowLifecycleAdapter tests."""
-
-    @pytest.mark.asyncio
-    async def test_start_calls_startup(self) -> None:
-        engine = MagicMock()
-        engine.startup = AsyncMock()
-        adapter = _WorkflowLifecycleAdapter(engine)
-        await adapter.start()
-        engine.startup.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_health_check_returns_true(self) -> None:
-        engine = MagicMock(spec=[])
-        adapter = _WorkflowLifecycleAdapter(engine)
-        assert await adapter.health_check() is True

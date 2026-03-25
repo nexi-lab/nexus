@@ -467,6 +467,7 @@ class PlaygroundApp(App[None]):
             restored = f"[yellow]Restored {len(self._mount_points)} mount(s) from the previous session.[/yellow]  "
         banner.update(
             f"{restored}[bold]Add Mount:[/bold] `a`  "
+            "[bold]Open:[/bold] `Enter` selected folder/file  "
             "[bold]Ops:[/bold] `n` file  `N` dir  `r` rename  `d` delete  `p` preview"
         )
 

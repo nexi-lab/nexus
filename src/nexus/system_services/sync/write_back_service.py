@@ -73,6 +73,14 @@ for _evt in _WRITE_BACK_EVENT_TYPES:
 _BACKLOG_WAKEUP_PIPE = "/nexus/pipes/sync-backlog-wakeup"
 _BACKLOG_PIPE_CAPACITY = 256  # 256 signals, matching NOTIFY_PIPE_CAPACITY convention
 
+# VFSSemaphore TTL for per-backend rate limiting (Issue #3194).
+# If a worker crashes mid-write-back, the permit auto-expires after this duration.
+# 5 minutes is generous — typical backend I/O is seconds, not minutes.
+_SEMAPHORE_TTL_MS = 300_000  # 5 minutes
+
+# Retry interval when waiting for a semaphore permit
+_SEMAPHORE_RETRY_INTERVAL = 0.1  # 100ms
+
 
 class WriteBackService:
     """Orchestrates bidirectional sync from Nexus to source backends.
@@ -153,8 +161,12 @@ class WriteBackService:
         self._batch_size = batch_size
         self._pipe_manager = pipe_manager
 
-        # Per-backend semaphores for rate limiting
-        self._semaphores: dict[str, asyncio.Semaphore] = {}
+        # Issue #3194: VFSSemaphore replaces dict[str, asyncio.Semaphore] for
+        # per-backend rate limiting. Provides TTL auto-release on crash,
+        # holder tracking (who's writing?), and force_release() for stuck workers.
+        from nexus.lib.semaphore import create_vfs_semaphore
+
+        self._vfs_sem = create_vfs_semaphore()
         self._metrics = WriteBackMetrics()
         # Pre-built system context template — avoids UUID generation per-operation
         self._system_ctx = OperationContext(user_id="system", groups=[], is_system=True)
@@ -307,13 +319,36 @@ class WriteBackService:
         if not entries:
             return
 
-        sem = self._get_semaphore(backend_name)
-        tasks = [self._process_entry(entry, sem) for entry in entries]
+        tasks = [self._process_entry(entry) for entry in entries]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _process_entry(self, entry: "SyncBacklogEntry", sem: asyncio.Semaphore) -> None:
-        """Process a single backlog entry with semaphore rate limiting."""
-        async with sem:
+    async def _process_entry(self, entry: "SyncBacklogEntry") -> None:
+        """Process a single backlog entry with VFSSemaphore rate limiting.
+
+        Issue #3194: Uses VFSSemaphore instead of asyncio.Semaphore for
+        TTL auto-release on crash and holder tracking observability.
+        """
+        # Acquire a semaphore permit for this backend (async retry loop)
+        sem_name = f"write_back:{entry.backend_name}"
+        holder_id: str | None = None
+        for _ in range(int(_SEMAPHORE_TTL_MS / (_SEMAPHORE_RETRY_INTERVAL * 1000))):
+            holder_id = self._vfs_sem.acquire(
+                sem_name,
+                max_holders=self._max_concurrent,
+                timeout_ms=0,
+                ttl_ms=_SEMAPHORE_TTL_MS,
+            )
+            if holder_id is not None:
+                break
+            if not self._running:
+                return  # Service shutting down, don't wait
+            await asyncio.sleep(_SEMAPHORE_RETRY_INTERVAL)
+
+        if holder_id is None:
+            logger.warning("[WRITE_BACK] Timed out acquiring semaphore for %s", entry.backend_name)
+            return
+
+        try:
             if not self._backlog_store.mark_in_progress(entry.id):
                 return  # Another worker claimed it
             try:
@@ -350,6 +385,8 @@ class WriteBackService:
                         zone_id=entry.zone_id,
                     )
                 )
+        finally:
+            self._vfs_sem.release(sem_name, holder_id)
 
     async def _write_back_single(self, entry: "SyncBacklogEntry") -> None:
         """Execute a single write-back operation to the backend.
@@ -687,12 +724,6 @@ class WriteBackService:
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to read {path}: {e}")
             return None
-
-    def _get_semaphore(self, backend_name: str) -> asyncio.Semaphore:
-        """Get or create a rate-limiting semaphore for a backend."""
-        if backend_name not in self._semaphores:
-            self._semaphores[backend_name] = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphores[backend_name]
 
     def get_stats(self) -> dict[str, Any]:
         """Get write-back service statistics."""

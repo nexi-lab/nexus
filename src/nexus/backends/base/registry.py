@@ -87,7 +87,6 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "delete_content",
         "content_exists",
         "get_content_size",
-        "get_ref_count",
         # DirectoryOpsProtocol
         "mkdir",
         "rmdir",

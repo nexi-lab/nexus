@@ -120,10 +120,6 @@ class FailingBackend(Backend):
         self._maybe_fail("get_content_size")
         return self._inner.get_content_size(content_hash, context)
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
-        self._maybe_fail("get_ref_count")
-        return self._inner.get_ref_count(content_hash, context)
-
     def batch_read_content(
         self,
         content_hashes: list[str],

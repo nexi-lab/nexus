@@ -56,9 +56,6 @@ class DummyBackend(Backend):
     def get_content_size(self, content_hash, context=None):
         return 0
 
-    def get_ref_count(self, content_hash, context=None):
-        return 0
-
     def mkdir(self, path, parents=False, exist_ok=False, context=None):
         pass
 

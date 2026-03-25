@@ -77,9 +77,6 @@ class SysModulesMutator:
     def get_content_size(self, h, context=None):
         return 0
 
-    def get_ref_count(self, h, context=None):
-        return 0
-
     def mkdir(self, path, parents=False, exist_ok=False, context=None):
         pass
 

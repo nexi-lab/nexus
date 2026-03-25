@@ -266,10 +266,6 @@ class PathAddressingEngine(Backend):
         blob_path = self._get_blob_path(context.backend_path)
         return self._transport.get_blob_size(blob_path)
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Always 1 — path-based backends don't do deduplication."""
-        return 1
-
     # === Internal I/O (used by BackendIOService via duck typing) ===
 
     def _download_blob(

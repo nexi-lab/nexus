@@ -676,13 +676,6 @@ class CLIConnector(
     ) -> int:
         return 0
 
-    def get_ref_count(
-        self,
-        content_hash: str,
-        context: "OperationContext | None" = None,
-    ) -> int:
-        return 0
-
     def mkdir(
         self,
         path: str,

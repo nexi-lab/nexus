@@ -206,9 +206,6 @@ class DelegatingBackend(Backend):
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         return self._inner.get_content_size(content_id, context=context)
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        return self._inner.get_ref_count(content_id, context=context)
-
     # === Directory Operations (delegate to inner) ===
 
     def mkdir(

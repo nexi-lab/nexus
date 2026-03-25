@@ -1,18 +1,22 @@
-"""CAS Garbage Collector — background task for physical content cleanup.
+"""CAS Garbage Collector — reachability-based background cleanup.
 
-Periodically scans CAS .meta sidecars for ref_count=0 entries past a grace
-period, then deletes the corresponding blob + meta files.
+Two-phase GC:
+  Phase 1 (collect): Scan metastore → build set of all referenced etags.
+          For CDC manifests, parse manifest → add chunk hashes to referenced set.
+  Phase 2 (sweep):   Enumerate CAS blobs, delete unreferenced blobs older than
+          grace period (mtime check).
 
 Each CASAddressingEngine instance owns its own GC — no shared state, no
 federation concerns (each node GCs its own local transport).
 
 Design:
-    - Grace period: uses ``released_at`` timestamp in meta sidecar
+    - Grace period: uses blob mtime (filesystem stat)
     - Scan interval is configurable (default 60s)
     - GC runs as an asyncio.Task, started/stopped by the engine owner
     - Thread-safe: blob deletion is idempotent (already-deleted = no-op)
 
 Issue #1320: CAS async GC.
+Issue #1772: Reachability-based GC replacing ref_count.
 """
 
 from __future__ import annotations
@@ -22,10 +26,11 @@ import contextlib
 import json
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
+    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +40,11 @@ DEFAULT_SCAN_INTERVAL_S = 60.0  # 1 minute
 
 
 class CASGarbageCollector:
-    """Background GC for CAS blobs with ref_count=0.
+    """Reachability-based GC for CAS blobs.
 
     Usage::
 
-        gc = CASGarbageCollector(engine)
+        gc = CASGarbageCollector(engine, metastore)
         gc.start()   # spawns asyncio.Task
         ...
         await gc.stop()  # cancels task, waits for clean exit
@@ -48,15 +53,21 @@ class CASGarbageCollector:
     def __init__(
         self,
         engine: CASAddressingEngine,
+        metastore: MetastoreABC | None = None,
         *,
         grace_period: float = DEFAULT_GRACE_PERIOD_S,
         scan_interval: float = DEFAULT_SCAN_INTERVAL_S,
     ) -> None:
         self._engine = engine
+        self._metastore = metastore
         self._grace_period = grace_period
         self._scan_interval = scan_interval
         self._task: asyncio.Task[None] | None = None
         self._stopped = False
+
+    def set_metastore(self, metastore: MetastoreABC) -> None:
+        """Deferred injection — metastore may not be available at construction time."""
+        self._metastore = metastore
 
     def start(self) -> None:
         """Start GC background task in the current event loop."""
@@ -95,54 +106,117 @@ class CASGarbageCollector:
                 logger.warning("CAS GC scan error for %s", self._engine.name, exc_info=True)
 
     def _collect(self) -> None:
-        """Single GC pass — find and delete ref_count=0 blobs past grace period.
+        """Single GC pass — two-phase reachability scan.
 
-        Grace period is checked via ``released_at`` timestamp in the meta
-        sidecar. If ``released_at`` is missing (legacy), the blob is treated
-        as immediately eligible.
+        Phase 1: Scan metastore to collect all referenced etags.
+                 For CDC manifests, expand to include chunk hashes.
+        Phase 2: Enumerate all CAS blobs, delete unreferenced blobs
+                 older than grace period.
         """
+        if self._metastore is None:
+            logger.debug("CAS GC: metastore not set, skipping collection")
+            return
+
         engine = self._engine
         transport = engine._transport
         now = time.time()
-        collected = 0
 
-        # list_blobs returns (blob_keys, common_prefixes)
+        # Phase 1: Collect referenced etags from metastore
+        referenced: set[str] = set()
+        try:
+            self._scan_metastore(referenced)
+        except Exception:
+            logger.warning("CAS GC: metastore scan failed for %s", engine.name, exc_info=True)
+            return
+
+        # Phase 2: Sweep CAS blobs
         try:
             blob_keys, _ = transport.list_blobs(prefix="cas/", delimiter="")
         except Exception:
             logger.debug("CAS GC: list_blobs failed for %s", engine.name, exc_info=True)
             return
 
-        meta_keys = [k for k in blob_keys if k.endswith(".meta")]
+        collected = 0
+        for blob_key in blob_keys:
+            # Skip .meta sidecars — they follow their parent blob
+            if blob_key.endswith(".meta"):
+                continue
 
-        for meta_key in meta_keys:
+            # Extract hash from path: cas/ab/cd/<hash>
+            content_hash = blob_key.split("/")[-1]
+            if content_hash in referenced:
+                continue
+
+            # Unreferenced — check grace period via mtime
             try:
-                meta_data, _ = transport.get_blob(meta_key)
-                meta = json.loads(meta_data)
+                if hasattr(transport, "get_blob_mtime"):
+                    mtime = transport.get_blob_mtime(blob_key)
+                else:
+                    # Fallback: no mtime support, skip grace period check
+                    mtime = 0.0
 
-                if meta.get("ref_count", 1) > 0:
-                    continue
-
-                # Check grace period via released_at timestamp in meta
-                released_at = meta.get("released_at", 0.0)
-                if released_at > 0 and (now - released_at) < self._grace_period:
-                    continue
-
-                # ref_count=0 and past grace period — delete blob + meta
-                blob_key = meta_key[: -len(".meta")]
-                with contextlib.suppress(Exception):
-                    transport.delete_blob(blob_key)
-                with contextlib.suppress(Exception):
-                    transport.delete_blob(meta_key)
-
-                # Evict from meta cache
-                content_hash = blob_key.split("/")[-1]
-                if engine._meta_cache is not None:
-                    engine._meta_cache.pop(content_hash, None)
-
-                collected += 1
+                if mtime > 0 and (now - mtime) < self._grace_period:
+                    continue  # Too fresh — within grace period
             except Exception:
-                continue  # Skip broken entries, continue scanning
+                continue  # Skip on stat failure
+
+            # Delete blob + meta
+            with contextlib.suppress(Exception):
+                transport.delete_blob(blob_key)
+            meta_key = blob_key + ".meta"
+            with contextlib.suppress(Exception):
+                transport.delete_blob(meta_key)
+
+            # Evict from meta cache
+            if engine._meta_cache is not None:
+                engine._meta_cache.pop(content_hash, None)
+
+            collected += 1
 
         if collected > 0:
-            logger.info("CAS GC: collected %d blobs for %s", collected, engine.name)
+            logger.info("CAS GC: collected %d unreferenced blobs for %s", collected, engine.name)
+
+    def _scan_metastore(self, referenced: set[str]) -> None:
+        """Scan metastore to collect all referenced etags.
+
+        For CDC manifests (is_chunked_manifest in .meta), parse the manifest
+        blob to add individual chunk hashes to the referenced set.
+        """
+        engine = self._engine
+        metastore = self._metastore
+        assert metastore is not None
+
+        # Scan all entries in metastore for etags
+        try:
+            all_entries = metastore.list(prefix="", recursive=True)
+        except Exception:
+            logger.warning("CAS GC: metastore.list() failed", exc_info=True)
+            return
+
+        for entry in all_entries:
+            etag = getattr(entry, "etag", None) or getattr(entry, "content_id", None)
+            if not etag:
+                continue
+            referenced.add(etag)
+
+            # Expand CDC manifests → add chunk hashes
+            try:
+                meta = engine._read_meta(etag)
+                if meta.get("is_chunked_manifest"):
+                    self._expand_manifest(etag, referenced)
+            except Exception:
+                pass  # Skip broken entries
+
+    def _expand_manifest(self, manifest_hash: str, referenced: set[str]) -> None:
+        """Parse a CDC manifest and add all chunk hashes to referenced set."""
+        engine = self._engine
+        key = engine._blob_key(manifest_hash)
+        try:
+            manifest_data, _ = engine._transport.get_blob(key)
+            manifest: dict[str, Any] = json.loads(manifest_data)
+            for chunk in manifest.get("chunks", []):
+                chunk_hash = chunk.get("chunk_hash")
+                if chunk_hash:
+                    referenced.add(chunk_hash)
+        except Exception:
+            logger.debug("CAS GC: failed to expand manifest %s", manifest_hash[:16])

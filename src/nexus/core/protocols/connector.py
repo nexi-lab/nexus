@@ -109,10 +109,6 @@ class ContentStoreProtocol(Protocol):
         self, content_id: str, context: "OperationContext | None" = None
     ) -> int: ...
 
-    def get_ref_count(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> int: ...
-
 @runtime_checkable
 class DirectoryOpsProtocol(Protocol):
     """Directory operations — needed by VFS Router and mount services."""

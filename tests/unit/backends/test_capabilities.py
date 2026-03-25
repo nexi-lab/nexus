@@ -229,9 +229,6 @@ class TestRegistryCapabilities:
             def get_content_size(self, *a: object, **kw: object) -> int:
                 return 0
 
-            def get_ref_count(self, *a: object, **kw: object) -> int:
-                return 0
-
             def mkdir(self, *a: object, **kw: object) -> None:
                 pass
 

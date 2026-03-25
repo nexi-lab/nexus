@@ -530,14 +530,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         # Fallback: Return approximate size estimate
         return 10 * 1024  # 10 KB estimate
 
-    def get_ref_count(
-        self,
-        content_hash: str,
-        context: "OperationContext | None" = None,
-    ) -> int:
-        """Get reference count (always 1 for HN connector)."""
-        return 1
-
     # === Directory Operations ===
 
     def mkdir(

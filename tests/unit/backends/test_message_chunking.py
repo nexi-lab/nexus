@@ -4,13 +4,15 @@ Tests cover:
 - should_chunk: conversation detection (JSON array of message dicts)
 - write_chunked + read_chunked: round-trip conversation through chunks
 - Shared prefix dedup: two conversations sharing N messages → N shared chunks
-- delete_chunked: ref count decrement + cleanup
+- delete_chunked: cleanup
 """
 
 from __future__ import annotations
 
 import json
 from unittest.mock import patch
+
+import pytest
 
 
 def _make_backend_and_strategy():
@@ -150,40 +152,32 @@ class TestSharedPrefixDedup:
         # Third chunk hash differs
         assert manifest_a.chunks[2].chunk_hash != manifest_b.chunks[2].chunk_hash
 
-    def test_shared_chunks_ref_counted(self) -> None:
-        """Shared chunks have ref_count=2 after writing two conversations."""
-        backend, strategy = _make_backend_and_strategy()
-
-        shared = [
-            {"role": "system", "content": "Shared system prompt."},
-            {"role": "user", "content": "Shared user message."},
-        ]
-
-        conv_a = shared + [{"role": "assistant", "content": "Response A"}]
-        conv_b = shared + [{"role": "assistant", "content": "Response B"}]
-
-        content_a = json.dumps(conv_a, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        content_b = json.dumps(conv_b, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-
-        strategy.write_chunked(content_a)
-        hash_b = strategy.write_chunked(content_b)
-
-        # Check ref count of shared chunk
-        from nexus.backends.engines.cdc import ChunkedReference
-
-        manifest_b_data, _ = backend._transport.get_blob(backend._blob_key(hash_b))
-        manifest_b = ChunkedReference.from_json(manifest_b_data)
-
-        shared_chunk_hash = manifest_b.chunks[0].chunk_hash
-        meta_data, _ = backend._transport.get_blob(backend._meta_key(shared_chunk_hash))
-        meta = json.loads(meta_data)
-        assert meta["ref_count"] == 2
-
 
 class TestDeleteChunked:
-    """Test chunked deletion with ref count management."""
+    """Test chunked deletion (unconditional, no ref counting)."""
 
-    def test_delete_reduces_ref_count(self) -> None:
+    def test_delete_removes_manifest_and_chunks(self) -> None:
+        """Deleting a conversation removes its manifest and all chunks unconditionally."""
+        backend, strategy = _make_backend_and_strategy()
+
+        msgs = [
+            {"role": "system", "content": "Shared."},
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "A"},
+        ]
+        content = json.dumps(msgs, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+        manifest_hash = strategy.write_chunked(content)
+        assert strategy.is_chunked(manifest_hash)
+
+        # Delete conversation
+        strategy.delete_chunked(manifest_hash)
+
+        # Manifest should be gone
+        assert not strategy.is_chunked(manifest_hash)
+
+    def test_delete_shared_chunks_breaks_other_conversation(self) -> None:
+        """Without ref counting, deleting shared chunks makes the other conversation unreadable."""
         backend, strategy = _make_backend_and_strategy()
 
         shared = [
@@ -199,13 +193,15 @@ class TestDeleteChunked:
         hash_a = strategy.write_chunked(content_a)
         hash_b = strategy.write_chunked(content_b)
 
-        # Delete conversation A
+        # Delete conversation A — also deletes shared chunks
         strategy.delete_chunked(hash_a)
 
         # Manifest A gone
         assert not strategy.is_chunked(hash_a)
 
-        # Conversation B still readable
-        result = strategy.read_chunked(hash_b)
-        result_msgs = json.loads(result)
-        assert result_msgs[2]["content"] == "B"
+        # Conversation B manifest still exists but shared chunks are gone,
+        # so reading it should fail (no ref counting to protect shared chunks).
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        with pytest.raises(NexusFileNotFoundError):
+            strategy.read_chunked(hash_b)

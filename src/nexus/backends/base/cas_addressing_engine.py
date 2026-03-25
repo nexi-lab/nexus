@@ -1,8 +1,7 @@
 """CAS addressing engine over any BlobTransport.
 
 CASAddressingEngine implements ObjectStoreABC (via Backend) using content-addressable
-storage semantics: content is stored by hash, automatically deduplicated,
-and reference-counted.
+storage semantics: content is stored by hash, automatically deduplicated.
 
     CASAddressingEngine(transport: BlobTransport)
         ├── CASGCSBackend   — thin: creates GCSBlobTransport, registered as "cas_gcs"
@@ -17,18 +16,19 @@ Feature DI (optional optimizations):
     bloom_filter  — Bloom pre-check for fast content_exists() miss
     content_cache — In-memory cache for read_content() hot path
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
-    meta_semaphore — VFSSemaphore for per-hash metadata read-modify-write
     on_write_callback — Write notification (e.g. Zoekt reindex)
     cdc_engine    — ChunkingStrategy for large file chunking (CDC)
 
 Storage layout (in transport key-space):
     cas/<hash[0:2]>/<hash[2:4]>/<hash>       # Content blob
-    cas/<hash[0:2]>/<hash[2:4]>/<hash>.meta   # JSON metadata sidecar
+    cas/<hash[0:2]>/<hash[2:4]>/<hash>.meta   # JSON metadata sidecar (CDC only)
     dirs/<path>/                               # Directory marker
+
+GC: Reachability-based. No ref_count — GC scans metastore for referenced etags,
+sweeps CAS blobs, deletes unreferenced blobs older than grace period.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - core/semaphore.py — VFSSemaphore for CAS metadata coordination
 """
 
 from __future__ import annotations
@@ -37,8 +37,8 @@ import contextlib
 import json
 import logging
 import re
-from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from collections.abc import Iterator
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.blob_transport import BlobTransport
@@ -46,8 +46,6 @@ from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
-
-_T = TypeVar("_T")
 
 # CAS-specific: SHA-256 hex pattern for content hash validation.
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -91,10 +89,14 @@ CAS_ADDRESSING_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
 class CASAddressingEngine(Backend):
     """CAS addressing over any BlobTransport.  Full ObjectStoreABC implementation.
 
-    Content is stored at ``cas/<h[:2]>/<h[2:4]>/<h>`` with a JSON metadata
-    sidecar at ``<path>.meta`` tracking ``ref_count`` and ``size``.
+    Content is stored at ``cas/<h[:2]>/<h[2:4]>/<h>``.  CDC-chunked content
+    has a JSON metadata sidecar at ``<path>.meta`` with chunk/manifest flags.
+    Non-CDC content has no .meta sidecar.
 
     Directory markers live at ``dirs/<path>/``.
+
+    GC uses reachability-based scan (metastore → referenced etags → sweep CAS).
+    No ref_count — writes are idempotent direct writes.
 
     Attributes:
         _transport: The underlying BlobTransport for raw I/O.
@@ -112,7 +114,6 @@ class CASAddressingEngine(Backend):
         bloom_filter: Any | None = None,
         content_cache: Any | None = None,
         meta_cache: Any | None = None,
-        meta_semaphore: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
         verify_on_read: bool = True,
@@ -125,7 +126,6 @@ class CASAddressingEngine(Backend):
         self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
         self._meta_cache_hits = 0
         self._meta_cache_misses = 0
-        self._meta_semaphore = meta_semaphore  # VFSSemaphore (core/semaphore.py)
         self._on_write_callback = on_write_callback
         self._cdc: ChunkingStrategy | None = cdc_engine
         self._verify_on_read = verify_on_read
@@ -161,7 +161,8 @@ class CASAddressingEngine(Backend):
     def _read_meta(self, content_hash: str) -> dict[str, Any]:
         """Read metadata sidecar.  Returns default dict if not found.
 
-        When meta_semaphore is injected, caller must hold the lock before calling.
+        Used by CDC engine for chunk/manifest flags (is_chunk, is_chunked_manifest).
+        Non-CDC content has no .meta file.
         Uses meta_cache (read-through) when injected via Feature DI.
         """
         # Feature DI: meta cache read-through
@@ -178,7 +179,7 @@ class CASAddressingEngine(Backend):
             data, _ = self._transport.get_blob(key)
             meta: dict[str, Any] = json.loads(data)
         except (NexusFileNotFoundError, FileNotFoundError):
-            meta = {"ref_count": 0, "size": 0}
+            meta = {"size": 0}
         except (json.JSONDecodeError, Exception) as e:
             raise BackendError(
                 f"Failed to read CAS metadata: {e}",
@@ -195,8 +196,8 @@ class CASAddressingEngine(Backend):
     def _write_meta(self, content_hash: str, meta: dict[str, Any]) -> None:
         """Write metadata sidecar (JSON).
 
-        When meta_semaphore is injected, caller must hold the lock before calling.
-        Updates meta_cache when injected via Feature DI.
+        Only used by CDC engine for chunk/manifest flags.
+        Non-CDC writes skip .meta entirely.
 
         Uses put_blob_nosync when available — meta JSON is reconstructable
         from VFS metastore, so fsync + atomic rename is unnecessary overhead.
@@ -218,41 +219,6 @@ class CASAddressingEngine(Backend):
         # Feature DI: update meta cache after successful write
         if self._meta_cache is not None:
             self._meta_cache[content_hash] = meta
-
-    def _with_meta_lock(self, content_hash: str, fn: Callable[[], _T]) -> _T:
-        """Execute fn under per-hash metadata lock (VFSSemaphore)."""
-        if self._meta_semaphore is None:
-            return fn()
-        holder = self._meta_semaphore.acquire(content_hash, max_holders=1, timeout_ms=5000)
-        if holder is None:
-            raise RuntimeError(f"Failed to acquire metadata lock for {content_hash}")
-        try:
-            return fn()
-        finally:
-            self._meta_semaphore.release(content_hash, holder)
-
-    def _meta_update_locked(
-        self,
-        content_hash: str,
-        updater: "Callable[[dict[str, Any]], dict[str, Any]]",
-    ) -> dict[str, Any]:
-        """Read-modify-write metadata under VFSSemaphore lock (if available).
-
-        Args:
-            content_hash: Hash identifying the content.
-            updater: Callable(meta_dict) -> meta_dict that modifies metadata.
-
-        Returns:
-            The updated metadata dict.
-        """
-
-        def _do_update() -> dict[str, Any]:
-            meta = self._read_meta(content_hash)
-            meta = updater(meta)
-            self._write_meta(content_hash, meta)
-            return meta
-
-        return self._with_meta_lock(content_hash, _do_update)
 
     # === Content Operations (ObjectStoreABC) ===
 
@@ -287,19 +253,11 @@ class CASAddressingEngine(Backend):
             # Dedup skip: if blob already exists, skip the content write.
             # CAS is idempotent by design — same content → same key.
             # One stat() (~17μs) is much cheaper than a full put_blob (~760μs).
-            is_dedup = self._transport.blob_exists(key)
-            if not is_dedup:
+            is_new = not self._transport.blob_exists(key)
+            if is_new:
                 self._transport.put_blob(key, content)
 
-            # Metadata update: read-modify-write under stripe lock to avoid
-            # TOCTOU race where multiple threads all see ref_count=0 and set 1.
-            def _update_meta(meta: dict[str, Any]) -> dict[str, Any]:
-                meta["ref_count"] = meta.get("ref_count", 0) + 1
-                meta["size"] = len(content)
-                return meta
-
-            updated = self._meta_update_locked(content_hash, _update_meta)
-            is_new = updated.get("ref_count", 0) == 1
+            # No .meta for non-CDC content — ref_count eliminated.
 
             # Feature DI: Bloom filter
             if self._bloom is not None:
@@ -376,17 +334,22 @@ class CASAddressingEngine(Backend):
             if cached is not None:
                 return cached
 
-        # Feature DI: CDC chunked content
-        if self._cdc is not None and self._cdc.is_chunked(content_hash):
-            chunked_content: bytes = self._cdc.read_chunked(content_hash, context)
-            if self._cache is not None:
-                self._cache.put(content_hash, chunked_content)
-            return chunked_content
-
         key = self._blob_key(content_hash)
 
         try:
             data, _ = self._transport.get_blob(key)
+
+            # CDC: check if blob IS a chunked manifest (read-then-check).
+            # Avoids .meta stat on every non-CDC read — O(1) prefix check on
+            # already-read data instead of extra filesystem I/O.
+            if self._cdc is not None:
+                from nexus.backends.engines.cdc import ChunkedReference
+
+                if ChunkedReference.is_chunked_manifest(data):
+                    chunked_content: bytes = self._cdc.read_chunked(content_hash, context)
+                    if self._cache is not None:
+                        self._cache.put(content_hash, chunked_content)
+                    return chunked_content
 
             # Verify integrity (configurable — local disk bit rot is rare)
             if self._verify_on_read:
@@ -404,9 +367,7 @@ class CASAddressingEngine(Backend):
 
             return data
 
-        except NexusFileNotFoundError:
-            raise
-        except BackendError:
+        except (NexusFileNotFoundError, BackendError, ValueError):
             raise
         except Exception as e:
             raise BackendError(
@@ -428,24 +389,16 @@ class CASAddressingEngine(Backend):
             if not self._transport.blob_exists(key):
                 raise NexusFileNotFoundError(content_hash)
 
-            def _do_delete() -> None:
-                meta = self._read_meta(content_hash)
-                ref_count = meta.get("ref_count", 1)
-
-                if ref_count <= 1:
-                    # Last reference — delete blob and metadata
-                    self._transport.delete_blob(key)
-                    meta_key = self._meta_key(content_hash)
-                    if self._transport.blob_exists(meta_key):
-                        self._transport.delete_blob(meta_key)
-                    # Feature DI: evict from meta cache
-                    if self._meta_cache is not None:
-                        self._meta_cache.pop(content_hash, None)
-                else:
-                    meta["ref_count"] = ref_count - 1
-                    self._write_meta(content_hash, meta)
-
-            self._with_meta_lock(content_hash, _do_delete)
+            # Always physically delete blob + .meta unconditionally.
+            # delete_content is never called by kernel (kernel does metadata-only
+            # sys_unlink). GC is the safe cleanup path for shared content.
+            self._transport.delete_blob(key)
+            meta_key = self._meta_key(content_hash)
+            if self._transport.blob_exists(meta_key):
+                self._transport.delete_blob(meta_key)
+            # Feature DI: evict from meta cache
+            if self._meta_cache is not None:
+                self._meta_cache.pop(content_hash, None)
 
         except NexusFileNotFoundError:
             raise
@@ -457,36 +410,6 @@ class CASAddressingEngine(Backend):
                 backend=self.name,
                 path=content_hash,
             ) from e
-
-    def release_content(self, content_id: str) -> None:
-        """Decrement ref_count without physical delete (GC does that later).
-
-        Used by OBSERVE-phase observers to release content references
-        on write-overwrite or file delete.  Physical cleanup of blobs
-        with ref_count=0 is handled by CASGarbageCollector (PR #1320).
-
-        Safe to call with a nonexistent content_id (no-op).
-        """
-        content_hash = content_id
-
-        # Feature DI: CDC chunked content
-        if self._cdc is not None and self._cdc.is_chunked(content_hash):
-            self._cdc.release_chunked(content_hash)
-            return
-
-        key = self._blob_key(content_hash)
-        if not self._transport.blob_exists(key):
-            return  # Already gone — idempotent
-
-        import time as _time
-
-        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
-            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
-            if meta["ref_count"] == 0:
-                meta["released_at"] = _time.time()
-            return meta
-
-        self._meta_update_locked(content_hash, _dec_ref)
 
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
@@ -549,27 +472,20 @@ class CASAddressingEngine(Backend):
         content = self.read_content(content_id, context=context)
         return content[start:end]
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        if not self.content_exists(content_id, context=context):
-            raise NexusFileNotFoundError(content_id)
-
-        meta = self._read_meta(content_id)
-        return int(meta.get("ref_count", 0))
-
     def hook_spec(self) -> "HookSpec":
         """Declare VFS hooks for CAS lifecycle.
 
-        - OBSERVE: CASRefCountObserver — decrements ref_count on overwrite/delete
         - MOUNT: on_mount — mount-time logging
 
         Called by DriverLifecycleCoordinator at mount time to register
-        hooks with KernelDispatch (Issue #1811, #1320).
+        hooks with KernelDispatch (Issue #1811).
+
+        Note: CASRefCountObserver removed — ref_count eliminated in favor of
+        reachability-based GC (Issue #1772).
         """
-        from nexus.backends.observers.cas_ref_count_observer import CASRefCountObserver
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(
-            observers=(CASRefCountObserver(self),),
             mount_hooks=(self,),
         )
 
@@ -649,21 +565,14 @@ class CASAddressingEngine(Backend):
                     with contextlib.suppress(OSError):
                         os.unlink(tmp_path)
 
-            # Metadata update under stripe lock
-            def _update_meta(meta: dict[str, Any]) -> dict[str, Any]:
-                meta["ref_count"] = meta.get("ref_count", 0) + 1
-                meta["size"] = total_size
-                return meta
-
-            updated = self._meta_update_locked(content_hash, _update_meta)
-            is_new = updated.get("ref_count", 0) == 1
+            # No .meta for non-CDC streamed content — ref_count eliminated.
 
             # Feature DI: Bloom filter
             if self._bloom is not None:
                 self._bloom.add(content_hash)
 
             # Feature DI: Write callback
-            if is_new and self._on_write_callback is not None:
+            if self._on_write_callback is not None:
                 self._on_write_callback(key)
 
             # Skip cache for streamed content (avoid loading into memory)

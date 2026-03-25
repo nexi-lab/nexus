@@ -864,11 +864,6 @@ send_notifications: true
         content = self.read_content(content_id, context)
         return len(content)
 
-    def get_ref_count(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get reference count (always 1 for connector backends)."""
-        _, _ = content_id, context  # Unused
-        return 1
-
     def get_version(self, path: str, context: "OperationContext | None" = None) -> str | None:
         """Get version for a calendar event file."""
         try:

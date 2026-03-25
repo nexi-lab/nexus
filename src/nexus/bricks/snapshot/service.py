@@ -248,15 +248,7 @@ class TransactionalSnapshotService:
                 path,
                 transaction_id,
             )
-            # Release CAS hold to prevent ref_count leak (CRITICAL-2 fix)
-            if original_hash is not None and hasattr(self._cas_store, "release"):
-                try:
-                    self._cas_store.release(original_hash)
-                except Exception:
-                    logger.warning(
-                        "Failed to release CAS hold after persist failure: hash=%s",
-                        original_hash,
-                    )
+            # CAS blob cleanup deferred to reachability GC — no release needed.
             raise
 
     def _persist_entry(

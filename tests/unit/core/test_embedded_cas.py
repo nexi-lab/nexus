@@ -1,7 +1,6 @@
 """Integration tests for Embedded mode with CAS backend.
 
-These tests explicitly verify CAS backend behavior (ref counting,
-deduplication).
+These tests explicitly verify CAS backend behavior (deduplication).
 """
 
 import tempfile
@@ -99,40 +98,26 @@ async def test_cas_automatic_deduplication(
     assert meta1.etag == meta2.etag  # Same content hash
     assert meta1.physical_path == meta2.physical_path  # Same physical location
 
-    # Verify ref count is 2 in CAS backend
-    assert local_backend.get_ref_count(meta1.etag) == 2
-
 
 @pytest.mark.asyncio
-async def test_cas_delete_with_ref_counting(
-    embedded_cas: NexusFS, local_backend: CASLocalBackend
-) -> None:
-    """Test that delete properly handles reference counting.
+async def test_cas_delete_content(embedded_cas: NexusFS, local_backend: CASLocalBackend) -> None:
+    """Test that delete removes content from CAS.
 
     Issue #1320: sys_unlink is now metadata-only — content cleanup is
-    deferred to CAS GC via OBSERVE observer.  This test exercises the
-    CAS backend's delete_content() directly to verify ref-counting logic.
+    deferred to CAS GC.  This test exercises the CAS backend's
+    delete_content() directly to verify blob removal.
     """
     content = b"Shared content"
 
-    # Write same content to two paths
+    # Write content
     await embedded_cas.write("/shared1.txt", content)
-    await embedded_cas.write("/shared2.txt", content)
 
     meta1 = embedded_cas.metadata.get("/shared1.txt")
     content_hash = meta1.etag
 
-    # Initial ref count should be 2
-    assert local_backend.get_ref_count(content_hash) == 2
-
-    # Delete first reference via CAS backend directly (simulates GC cleanup)
-    local_backend.delete_content(content_hash)
-
-    # Content should still exist in CAS with ref count 1
     assert local_backend.content_exists(content_hash)
-    assert local_backend.get_ref_count(content_hash) == 1
 
-    # Delete second reference
+    # Delete content via CAS backend directly (simulates GC cleanup)
     local_backend.delete_content(content_hash)
 
     # Content should now be deleted from CAS
@@ -157,9 +142,6 @@ async def test_cas_update_file_content(
     meta1 = embedded_cas.metadata.get("/test.txt")
     hash1 = meta1.etag
 
-    # Verify ref count
-    assert local_backend.get_ref_count(hash1) == 1
-
     # Update with new content
     await embedded_cas.write("/test.txt", content2)
     meta2 = embedded_cas.metadata.get("/test.txt")
@@ -174,7 +156,6 @@ async def test_cas_update_file_content(
 
     # New content should also exist
     assert local_backend.content_exists(hash2)
-    assert local_backend.get_ref_count(hash2) == 1
 
 
 @pytest.mark.asyncio
@@ -195,9 +176,6 @@ async def test_cas_storage_efficiency(
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
     content_hash = meta.etag
-
-    # Ref count should be 10
-    assert local_backend.get_ref_count(content_hash) == 10
 
     # Content should only be stored once
     assert local_backend.get_content_size(content_hash) == len(content)
@@ -282,12 +260,7 @@ async def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
 async def test_cas_concurrent_deduplication(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
-    """Test deduplication with multiple writes of same content.
-
-    Issue #1320: sys_unlink is now metadata-only — content cleanup is
-    deferred to CAS GC via OBSERVE observer.  This test exercises the
-    CAS backend's delete_content() directly to verify ref-counting logic.
-    """
+    """Test deduplication with multiple writes of same content."""
     content = b"Concurrent content"
 
     # Write same content multiple times rapidly
@@ -303,15 +276,8 @@ async def test_cas_concurrent_deduplication(
     meta = embedded_cas.metadata.get(paths[0])
     content_hash = meta.etag
 
-    # Ref count should be 20
-    assert local_backend.get_ref_count(content_hash) == 20
-
-    # Delete all references via CAS backend directly (simulates GC cleanup)
-    for _ in paths:
-        local_backend.delete_content(content_hash)
-
-    # Content should be completely deleted
-    assert not local_backend.content_exists(content_hash)
+    # Content should exist (deduplication means single blob)
+    assert local_backend.content_exists(content_hash)
 
 
 @pytest.mark.asyncio

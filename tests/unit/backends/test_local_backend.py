@@ -543,7 +543,7 @@ class TestConcurrentSync:
     """Concurrent tests for CASLocalBackend with CASBlobStore integration."""
 
     def test_concurrent_writes_same_content(self, temp_backend):
-        """50 threads writing identical content — ref_count must be exactly 50."""
+        """50 threads writing identical content — all must succeed with same hash."""
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
         content = b"concurrent same content sync"
@@ -562,9 +562,8 @@ class TestConcurrentSync:
         # Content must be readable
         assert temp_backend.read_content(h) == content
 
-        # ref_count must be exactly NUM_THREADS
-        meta = temp_backend._read_meta(h)
-        assert meta["ref_count"] == NUM_THREADS
+        # Content must be readable
+        assert temp_backend.content_exists(h)
 
     def test_concurrent_writes_different_content(self, temp_backend):
         """50 threads writing unique content — all succeed independently."""
@@ -581,10 +580,9 @@ class TestConcurrentSync:
         # All hashes should be unique
         assert len(set(hashes)) == NUM_THREADS
 
-        # Each blob should exist with ref_count=1
+        # Each blob should exist
         for h in hashes:
-            meta = temp_backend._read_meta(h)
-            assert meta["ref_count"] == 1
+            assert temp_backend.content_exists(h)
 
     def test_concurrent_read_write(self, temp_backend):
         """Concurrent reads and writes don't corrupt data."""
@@ -677,19 +675,17 @@ class TestChunkedCASIntegration:
         # Manifest should be gone
         assert not chunked_backend._transport.blob_exists(key)
 
-        # All chunks should be gone (ref_count was 1)
+        # All chunks should be gone
         for ch in chunk_hashes:
             assert not chunked_backend._transport.blob_exists(chunked_backend._blob_key(ch))
 
     def test_chunked_deduplication(self, chunked_backend):
-        """Writing same chunked content twice increments ref_count."""
+        """Writing same chunked content twice produces same hash."""
         content = b"E" * 2048
         h1 = chunked_backend.write_content(content).content_id
         h2 = chunked_backend.write_content(content).content_id
 
         assert h1 == h2
-        meta = chunked_backend._read_meta(h1)
-        assert meta.get("ref_count", 0) == 2
 
     def test_concurrent_chunked_writes(self, chunked_backend):
         """Multiple threads writing different chunked content."""

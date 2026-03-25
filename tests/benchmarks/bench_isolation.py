@@ -23,7 +23,6 @@ class BenchMockBackend:
 
     def __init__(self) -> None:
         self._store: dict[str, bytes] = {}
-        self._refs: dict[str, int] = {}
         self._dirs: set[str] = {"/"}
 
     @property
@@ -58,7 +57,6 @@ class BenchMockBackend:
 
         h = hashlib.sha256(content).hexdigest()
         self._store[h] = content
-        self._refs[h] = self._refs.get(h, 0) + 1
         return WriteResult(content_id=h, size=len(content))
 
     def read_content(self, content_hash: str, context: Any = None) -> bytes:  # noqa: ARG002
@@ -68,16 +66,12 @@ class BenchMockBackend:
 
     def delete_content(self, content_hash: str, context: Any = None) -> None:  # noqa: ARG002
         self._store.pop(content_hash, None)
-        self._refs.pop(content_hash, None)
 
     def content_exists(self, content_hash: str, context: Any = None) -> bool:  # noqa: ARG002
         return content_hash in self._store
 
     def get_content_size(self, content_hash: str, context: Any = None) -> int:  # noqa: ARG002
         return len(self._store.get(content_hash, b""))
-
-    def get_ref_count(self, content_hash: str, context: Any = None) -> int:  # noqa: ARG002
-        return self._refs.get(content_hash, 0)
 
     def mkdir(
         self,

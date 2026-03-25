@@ -494,9 +494,6 @@ class MockGCSBackend(Backend):
             raise NexusFileNotFoundError(content_hash)
         return len(self._content[content_hash])
 
-    def get_ref_count(self, content_hash, context=None) -> int:
-        return 1
-
     def mkdir(self, path, parents=False, exist_ok=False, context=None) -> None:
         pass
 

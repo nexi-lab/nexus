@@ -618,14 +618,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """
         raise BackendError("get_content_size by hash not supported for local_connector")
 
-    def get_ref_count(
-        self,
-        content_id: str,
-        context: "OperationContext | None" = None,
-    ) -> int:
-        """Get reference count by hash - not supported for local_connector."""
-        return 0
-
     def mkdir(
         self,
         path: str,

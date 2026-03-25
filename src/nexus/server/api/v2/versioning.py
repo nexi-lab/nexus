@@ -100,7 +100,7 @@ def build_v2_registry(
         _core_routers: list[RouterEntry] = [
             RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
-            RouterEntry(router=audit.router, name="audit", endpoint_count=5),
+            RouterEntry(router=audit.router, name="audit", endpoint_count=1),
             RouterEntry(router=sync_push.router, name="sync_push", endpoint_count=1),
         ]
         for entry in _core_routers:
@@ -118,19 +118,11 @@ def build_v2_registry(
         )
 
         registry.add(
-            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=3)
+            RouterEntry(router=events_replay_router, name="events_replay", endpoint_count=1)
         )
         registry.add(RouterEntry(router=watch_router, name="watch", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Events replay routes: %s", e)
-
-    # ---- Pay router ----
-    try:
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        registry.add(RouterEntry(router=pay_router, name="pay", endpoint_count=8))
-    except ImportError as e:
-        logger.warning("Failed to import Pay routes: %s", e)
 
     # ---- Scheduler router ----
     try:
@@ -270,14 +262,6 @@ def build_v2_registry(
         registry.add(RouterEntry(router=eviction_router, name="eviction", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Eviction routes: %s", e)
-
-    # ---- Governance router (Issue #1359) — admin auth required ----
-    try:
-        from nexus.server.api.v2.routers.governance import router as governance_router
-
-        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=16))
-    except ImportError as e:
-        logger.warning("Failed to import Governance routes: %s", e)
 
     # ---- Subscriptions router (Issue #2056 — ported from v1) ----
     try:

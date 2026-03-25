@@ -369,7 +369,8 @@ def create_app(
             from nexus.bricks.pay import CreditsService
             from nexus.server.rpc.services.pay_rpc import PayRPCService
 
-            _rpc_sources.append(PayRPCService(CreditsService()))
+            _policy_svc = getattr(app.state, "spending_policy_service", None)
+            _rpc_sources.append(PayRPCService(CreditsService(), policy_service=_policy_svc))
         except Exception as _exc:
             logger.debug("PayRPCService unavailable: %s", _exc)
         # --- Audit (Issue #1133) ---
@@ -392,7 +393,11 @@ def create_app(
             if _anomaly is not None or _collusion is not None:
                 from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
 
-                _rpc_sources.append(GovernanceRPCService(_anomaly, _collusion))
+                _graph = getattr(_brk, "governance_graph_service", None)
+                _response = getattr(_brk, "governance_response_service", None)
+                _rpc_sources.append(
+                    GovernanceRPCService(_anomaly, _collusion, _graph, _response, nexus_fs=nexus_fs)
+                )
         # --- Events (Issue #1133) ---
         if _record_store is not None:
             try:

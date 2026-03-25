@@ -1,14 +1,10 @@
-"""Exchange Audit Log REST API endpoints.
+"""Exchange Audit Log REST API — streaming export only.
 
-Issue #1360 Phase 2: Query & Export API for the immutable transaction
-audit trail. Provides filtered listing, aggregations, CSV/JSON export,
-single-record lookup, and integrity verification.
+All query/aggregation/integrity endpoints migrated to AuditRPCService.
+This file retains ONLY the streaming CSV/JSON export which requires
+HTTP StreamingResponse (not expressible via gRPC unary).
 
-All endpoints are scoped to the authenticated user's zone_id.
-
-Performance: All endpoints use plain ``def`` (not ``async def``) so
-FastAPI auto-dispatches them to a threadpool.  This prevents blocking
-the asyncio event loop during synchronous SQLAlchemy I/O.
+Issue #1360.
 """
 
 import csv
@@ -17,7 +13,6 @@ import json
 import logging
 from collections.abc import Iterator
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,12 +20,6 @@ from fastapi.responses import StreamingResponse
 
 from nexus.contracts.protocols.exchange_audit_log import ExchangeAuditLogProtocol
 from nexus.server.api.v2.dependencies import get_exchange_audit_logger
-from nexus.server.api.v2.models import (
-    AuditAggregationResponse,
-    AuditIntegrityResponse,
-    AuditTransactionListResponse,
-    AuditTransactionResponse,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +27,7 @@ router = APIRouter(prefix="/api/v2/audit", tags=["audit"])
 
 
 def _row_to_dict(row: Any) -> dict[str, Any]:
-    """Eagerly extract all fields from an ORM row into a plain dict.
-
-    This prevents DetachedInstanceError when the session is closed
-    before the response is serialized.
-    """
+    """Eagerly extract all fields from an ORM row into a plain dict."""
     return {
         "id": row.id,
         "record_hash": row.record_hash,
@@ -61,11 +46,6 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
-def _dict_to_response(d: dict[str, Any]) -> AuditTransactionResponse:
-    """Convert a plain dict to API response model."""
-    return AuditTransactionResponse(**d)
-
-
 def _build_filters(
     zone_id: str,
     *,
@@ -74,11 +54,8 @@ def _build_filters(
     seller_agent_id: str | None = None,
     status: str | None = None,
     application: str | None = None,
-    trace_id: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
-    amount_min: Decimal | None = None,
-    amount_max: Decimal | None = None,
 ) -> dict[str, Any]:
     """Build a filter dict, always including zone_id."""
     return {
@@ -88,97 +65,13 @@ def _build_filters(
         "seller_agent_id": seller_agent_id,
         "status": status,
         "application": application,
-        "trace_id": trace_id,
         "since": since,
         "until": until,
-        "amount_min": amount_min,
-        "amount_max": amount_max,
     }
 
 
 # --------------------------------------------------------------------------
-# List transactions
-# --------------------------------------------------------------------------
-
-
-@router.get("/transactions")
-def list_transactions(
-    since: datetime | None = Query(None, description="Transactions after this time (ISO-8601)"),
-    until: datetime | None = Query(None, description="Transactions before this time (ISO-8601)"),
-    protocol: str | None = Query(None, description="Filter by protocol"),
-    buyer_agent_id: str | None = Query(None, description="Filter by buyer agent ID"),
-    seller_agent_id: str | None = Query(None, description="Filter by seller agent ID"),
-    status: str | None = Query(None, description="Filter by status"),
-    application: str | None = Query(None, description="Filter by application"),
-    trace_id: str | None = Query(None, description="Filter by trace ID"),
-    amount_min: Decimal | None = Query(None, description="Minimum amount"),
-    amount_max: Decimal | None = Query(None, description="Maximum amount"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    cursor: str | None = Query(None, description="Cursor from previous response"),
-    include_total: bool = Query(False, description="Include total count"),
-    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
-) -> AuditTransactionListResponse:
-    """List exchange audit transactions with cursor-based pagination."""
-    audit_logger, zone_id = logger_and_zone
-
-    filters = _build_filters(
-        zone_id,
-        protocol=protocol,
-        buyer_agent_id=buyer_agent_id,
-        seller_agent_id=seller_agent_id,
-        status=status,
-        application=application,
-        trace_id=trace_id,
-        since=since,
-        until=until,
-        amount_min=amount_min,
-        amount_max=amount_max,
-    )
-
-    try:
-        rows, next_cursor = audit_logger.list_transactions_cursor(
-            filters=filters, limit=limit, cursor=cursor
-        )
-        total = None
-        if include_total:
-            total = audit_logger.count_transactions(**filters)
-
-        return AuditTransactionListResponse(
-            transactions=[_dict_to_response(_row_to_dict(r)) for r in rows],
-            limit=limit,
-            has_more=next_cursor is not None,
-            total=total,
-            next_cursor=next_cursor,
-        )
-    except Exception as e:
-        logger.error("Audit query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to query audit transactions") from e
-
-
-# --------------------------------------------------------------------------
-# Aggregations
-# --------------------------------------------------------------------------
-
-
-@router.get("/transactions/aggregations")
-def get_aggregations(
-    since: datetime | None = Query(None, description="Start time (ISO-8601)"),
-    until: datetime | None = Query(None, description="End time (ISO-8601)"),
-    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
-) -> AuditAggregationResponse:
-    """Compute aggregations: total volume, count, top counterparties."""
-    audit_logger, zone_id = logger_and_zone
-
-    try:
-        agg = audit_logger.get_aggregations(zone_id=zone_id, since=since, until=until)
-        return AuditAggregationResponse(**agg)
-    except Exception as e:
-        logger.error("Audit aggregation error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to compute aggregations") from e
-
-
-# --------------------------------------------------------------------------
-# Export (CSV / JSON)
+# Export (CSV / JSON) — MUST_STAY: uses StreamingResponse
 # --------------------------------------------------------------------------
 
 
@@ -214,7 +107,6 @@ def export_transactions(
         logger.error("Audit export error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to export transactions") from e
 
-    # Eagerly extract to plain dicts to avoid DetachedInstanceError
     dicts = [_row_to_dict(r) for r in rows]
 
     if format == "csv":
@@ -286,50 +178,4 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
         iter([content]),
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=audit_transactions.json"},
-    )
-
-
-# --------------------------------------------------------------------------
-# Single transaction
-# --------------------------------------------------------------------------
-
-
-@router.get("/transactions/{record_id}")
-def get_transaction(
-    record_id: str,
-    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
-) -> AuditTransactionResponse:
-    """Get a single audit transaction by ID."""
-    audit_logger, zone_id = logger_and_zone
-
-    row = audit_logger.get_transaction(record_id)
-    if row is None or row.zone_id != zone_id:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    return _dict_to_response(_row_to_dict(row))
-
-
-# --------------------------------------------------------------------------
-# Integrity verification
-# --------------------------------------------------------------------------
-
-
-@router.get("/integrity/{record_id}")
-def verify_integrity(
-    record_id: str,
-    logger_and_zone: tuple[ExchangeAuditLogProtocol, str] = Depends(get_exchange_audit_logger),
-) -> AuditIntegrityResponse:
-    """Verify a record's hash matches its data (tamper detection)."""
-    audit_logger, zone_id = logger_and_zone
-
-    row = audit_logger.get_transaction(record_id)
-    if row is None or row.zone_id != zone_id:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-
-    # Eagerly cache before session closes
-    record_hash = row.record_hash
-    is_valid = audit_logger.verify_integrity_from_row(row)
-    return AuditIntegrityResponse(
-        record_id=record_id,
-        is_valid=is_valid,
-        record_hash=record_hash,
     )

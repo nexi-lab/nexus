@@ -14,14 +14,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from nexus.fs._fsspec import (
+# Skip entire module if fsspec is not installed (optional dependency).
+pytest.importorskip("fsspec")
+
+from nexus.fs._fsspec import (  # noqa: E402
     _SUPPORTED_MODES,
     MAX_CAT_FILE_SIZE,
     NexusBufferedFile,
     NexusFileSystem,
     NexusWriteFile,
 )
-from nexus.fs._sync import PortalRunner
+from nexus.fs._sync import PortalRunner  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures

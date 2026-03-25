@@ -50,7 +50,7 @@ from __future__ import annotations
 import io
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 try:
     from fsspec.spec import AbstractFileSystem
@@ -151,7 +151,7 @@ class NexusFileSystem(AbstractFileSystem):
         from nexus.fs import mount
         from nexus.fs._sync import run_sync
 
-        return run_sync(mount(*uris))
+        return cast("SlimNexusFS", run_sync(mount(*uris)))
 
     # -- Protocol handling -----------------------------------------------------
 
@@ -187,7 +187,7 @@ class NexusFileSystem(AbstractFileSystem):
 
         # Check dircache first
         if path in self.dircache:
-            cached = self.dircache[path]
+            cached: list[Any] = self.dircache[path]
             if detail:
                 return cached
             return [e["name"] for e in cached]
@@ -265,7 +265,7 @@ class NexusFileSystem(AbstractFileSystem):
                 range_start = max(0, file_size + range_start)
             if range_end < 0:
                 range_end = max(0, file_size + range_end)
-            return self._runner(self._nexus.read_range(path, range_start, range_end))
+            return cast(bytes, self._runner(self._nexus.read_range(path, range_start, range_end)))
 
         # Full read — apply size guard
         stat = self._runner(self._nexus.stat(path))
@@ -278,7 +278,7 @@ class NexusFileSystem(AbstractFileSystem):
                 f"Use open() for streaming access."
             )
 
-        return self._runner(self._nexus.read(path))
+        return cast(bytes, self._runner(self._nexus.read(path)))
 
     # -- Write -----------------------------------------------------------------
 

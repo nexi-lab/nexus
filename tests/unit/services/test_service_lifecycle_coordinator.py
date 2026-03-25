@@ -524,32 +524,24 @@ class TestSwapWithFullHookSpec:
 class TestProtocolConformance:
     """Verify structural subtyping works for HotSwappable and PersistentService."""
 
-    def test_hot_swappable_detected(self) -> None:
-        svc = _HotSwappableService()
-        assert isinstance(svc, HotSwappable)
-
-    def test_static_service_not_hot_swappable(self) -> None:
-        svc = _FakeService()
-        assert not isinstance(svc, HotSwappable)
-
-    def test_persistent_service_detected(self) -> None:
-        svc = _PersistentFakeService()
-        assert isinstance(svc, PersistentService)
-
-    def test_static_service_not_persistent(self) -> None:
-        svc = _FakeService()
-        assert not isinstance(svc, PersistentService)
-
-    def test_hot_swappable_not_persistent(self) -> None:
-        """HotSwappable and PersistentService are independent protocols."""
-        svc = _HotSwappableService()
-        assert isinstance(svc, HotSwappable)
-        assert not isinstance(svc, PersistentService)
-
-    def test_persistent_not_hot_swappable(self) -> None:
-        svc = _PersistentFakeService()
-        assert isinstance(svc, PersistentService)
-        assert not isinstance(svc, HotSwappable)
+    @pytest.mark.parametrize(
+        "service_class,protocol,expected",
+        [
+            (_HotSwappableService, HotSwappable, True),
+            (_FakeService, HotSwappable, False),
+            (_PersistentFakeService, PersistentService, True),
+            (_FakeService, PersistentService, False),
+            # HotSwappable and PersistentService are independent protocols
+            (_HotSwappableService, PersistentService, False),
+            (_PersistentFakeService, HotSwappable, False),
+        ],
+    )
+    def test_protocol_conformance(
+        self, service_class: type, protocol: type, expected: bool
+    ) -> None:
+        """Test protocol detection for services."""
+        svc = service_class()
+        assert isinstance(svc, protocol) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -953,38 +945,30 @@ class TestEnlist:
 class TestServiceQuadrant:
     """Tests for ServiceQuadrant enum and classify_service()."""
 
-    def test_classify_q1_static(self) -> None:
+    @pytest.mark.parametrize(
+        "service_class,expected_quadrant,expected_hot_swappable,expected_persistent",
+        [
+            (_FakeService, "Q1_RESTART_REQUIRED", False, False),
+            (_HotSwappableService, "Q2_HOT_SWAPPABLE", True, False),
+            (_PersistentFakeService, "Q3_PERSISTENT", False, True),
+            (_BothProtocolsService, "Q4_BOTH", True, True),
+        ],
+    )
+    def test_classify_quadrant(
+        self,
+        service_class: type,
+        expected_quadrant: str,
+        expected_hot_swappable: bool,
+        expected_persistent: bool,
+    ) -> None:
         from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
 
-        q = ServiceQuadrant.of(_FakeService())
-        assert q == ServiceQuadrant.Q1_RESTART_REQUIRED
-        assert not q.is_hot_swappable
-        assert not q.is_persistent
-        assert "Q1" in q.label
-
-    def test_classify_q2_hot_swappable(self) -> None:
-        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
-
-        q = ServiceQuadrant.of(_HotSwappableService())
-        assert q == ServiceQuadrant.Q2_HOT_SWAPPABLE
-        assert q.is_hot_swappable
-        assert not q.is_persistent
-
-    def test_classify_q3_persistent(self) -> None:
-        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
-
-        q = ServiceQuadrant.of(_PersistentFakeService())
-        assert q == ServiceQuadrant.Q3_PERSISTENT
-        assert not q.is_hot_swappable
-        assert q.is_persistent
-
-    def test_classify_q4_both(self) -> None:
-        from nexus.contracts.protocols.service_lifecycle import ServiceQuadrant
-
-        q = ServiceQuadrant.of(_BothProtocolsService())
-        assert q == ServiceQuadrant.Q4_BOTH
-        assert q.is_hot_swappable
-        assert q.is_persistent
+        q = ServiceQuadrant.of(service_class())
+        assert q == getattr(ServiceQuadrant, expected_quadrant)
+        assert q.is_hot_swappable is expected_hot_swappable
+        assert q.is_persistent is expected_persistent
+        # Every quadrant label should contain its Q-number
+        assert expected_quadrant[:2] in q.label
 
     def test_coordinator_classify_all(
         self,
@@ -1008,40 +992,50 @@ class TestQuadrantGuards:
     """Tests for quadrant-enforced guards on swap/activate/deactivate."""
 
     @pytest.mark.asyncio
-    async def test_swap_rejects_q1_with_quadrant_in_error(
+    @pytest.mark.parametrize(
+        "service_class,replacement_class,error_match",
+        [
+            (_FakeService, _FakeServiceV2, "Q1.*restart-required.*cannot hot-swap"),
+            (
+                _PersistentFakeService,
+                _PersistentFakeService,
+                "Q3.*PersistentService.*cannot hot-swap",
+            ),
+        ],
+    )
+    async def test_swap_rejects_non_swappable(
         self,
         coordinator: ServiceRegistry,
+        service_class: type,
+        replacement_class: type,
+        error_match: str,
     ) -> None:
-        """Swapping Q1 service includes quadrant label in error."""
-        coordinator._register_service("svc", _FakeService())
+        """Swapping a non-HotSwappable service includes quadrant label in error."""
+        coordinator._register_service("svc", service_class())
         await coordinator._mount_service("svc")
-
-        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot hot-swap"):
-            await coordinator.swap_service("svc", _FakeServiceV2())
+        with pytest.raises(TypeError, match=error_match):
+            await coordinator.swap_service("svc", replacement_class())
 
     @pytest.mark.asyncio
-    async def test_swap_rejects_q3_with_quadrant_in_error(
+    @pytest.mark.parametrize(
+        "service_class,replacement_class",
+        [
+            (_HotSwappableService, _HotSwappableServiceV2),
+            (_BothProtocolsService, _BothProtocolsService),
+        ],
+    )
+    async def test_swap_allows_hot_swappable(
         self,
         coordinator: ServiceRegistry,
+        service_class: type,
+        replacement_class: type,
     ) -> None:
-        """Swapping Q3 (PersistentService) includes quadrant label in error."""
-        coordinator._register_service("svc", _PersistentFakeService())
-        await coordinator._mount_service("svc")
-
-        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot hot-swap"):
-            await coordinator.swap_service("svc", _PersistentFakeService())
-
-    @pytest.mark.asyncio
-    async def test_swap_allows_q2(
-        self,
-        coordinator: ServiceRegistry,
-    ) -> None:
-        """Q2 service can be swapped."""
-        svc1 = _HotSwappableService()
+        """HotSwappable services (Q2, Q4) can be swapped."""
+        svc1 = service_class()
         coordinator._register_service("svc", svc1)
         await coordinator._mount_service("svc")
 
-        svc2 = _HotSwappableServiceV2()
+        svc2 = replacement_class()
         await coordinator.swap_service("svc", svc2)
 
         ref = coordinator.service("svc")
@@ -1049,82 +1043,57 @@ class TestQuadrantGuards:
         assert ref._service_instance is svc2
 
     @pytest.mark.asyncio
-    async def test_swap_allows_q4(
+    @pytest.mark.parametrize(
+        "service_class,error_match",
+        [
+            (_FakeService, "Q1.*restart-required.*cannot activate"),
+            (_PersistentFakeService, "Q3.*PersistentService.*cannot activate"),
+        ],
+    )
+    async def test_activate_rejects_non_hot_swappable(
         self,
         coordinator: ServiceRegistry,
+        service_class: type,
+        error_match: str,
     ) -> None:
-        """Q4 service can be swapped."""
-        svc1 = _BothProtocolsService()
-        coordinator._register_service("svc", svc1)
-        await coordinator._mount_service("svc")
-
-        svc2 = _BothProtocolsService()
-        await coordinator.swap_service("svc", svc2)
-
-        ref = coordinator.service("svc")
-        assert ref is not None
-        assert ref._service_instance is svc2
-
-    @pytest.mark.asyncio
-    async def test_activate_rejects_q1(
-        self,
-        coordinator: ServiceRegistry,
-    ) -> None:
-        """activate_service on Q1 raises TypeError with quadrant info."""
-        coordinator._register_service("svc", _FakeService())
-        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot activate"):
+        """activate_service on non-HotSwappable quadrants raises TypeError."""
+        coordinator._register_service("svc", service_class())
+        with pytest.raises(TypeError, match=error_match):
             await coordinator._activate_service("svc")
 
     @pytest.mark.asyncio
-    async def test_activate_rejects_q3(
+    @pytest.mark.parametrize(
+        "service_class",
+        [_HotSwappableService, _BothProtocolsService],
+    )
+    async def test_activate_allows_hot_swappable(
         self,
         coordinator: ServiceRegistry,
+        service_class: type,
     ) -> None:
-        """activate_service on Q3 raises TypeError with quadrant info."""
-        coordinator._register_service("svc", _PersistentFakeService())
-        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot activate"):
-            await coordinator._activate_service("svc")
-
-    @pytest.mark.asyncio
-    async def test_activate_allows_q2(
-        self,
-        coordinator: ServiceRegistry,
-    ) -> None:
-        """activate_service on Q2 succeeds."""
-        svc = _HotSwappableService()
+        """activate_service succeeds on HotSwappable quadrants (Q2, Q4)."""
+        svc = service_class()
         coordinator._register_service("svc", svc)
         await coordinator._activate_service("svc")
         assert svc.activated is True
 
     @pytest.mark.asyncio
-    async def test_activate_allows_q4(
+    @pytest.mark.parametrize(
+        "service_class,error_match",
+        [
+            (_FakeService, "Q1.*restart-required.*cannot deactivate"),
+            (_PersistentFakeService, "Q3.*PersistentService.*cannot deactivate"),
+        ],
+    )
+    async def test_deactivate_rejects_non_hot_swappable(
         self,
         coordinator: ServiceRegistry,
+        service_class: type,
+        error_match: str,
     ) -> None:
-        """activate_service on Q4 succeeds."""
-        svc = _BothProtocolsService()
-        coordinator._register_service("svc", svc)
-        await coordinator._activate_service("svc")
-        assert svc.activated is True
-
-    @pytest.mark.asyncio
-    async def test_deactivate_rejects_q1(
-        self,
-        coordinator: ServiceRegistry,
-    ) -> None:
-        """deactivate_service on Q1 raises TypeError."""
-        coordinator._register_service("svc", _FakeService())
-        with pytest.raises(TypeError, match="Q1.*restart-required.*cannot deactivate"):
-            await coordinator._deactivate_service("svc")
-
-    @pytest.mark.asyncio
-    async def test_deactivate_rejects_q3(
-        self,
-        coordinator: ServiceRegistry,
-    ) -> None:
-        """deactivate_service on Q3 raises TypeError."""
-        coordinator._register_service("svc", _PersistentFakeService())
-        with pytest.raises(TypeError, match="Q3.*PersistentService.*cannot deactivate"):
+        """deactivate_service on non-HotSwappable quadrants raises TypeError."""
+        coordinator._register_service("svc", service_class())
+        with pytest.raises(TypeError, match=error_match):
             await coordinator._deactivate_service("svc")
 
     @pytest.mark.asyncio

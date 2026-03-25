@@ -349,7 +349,7 @@ class TestEventDrivenSweeper:
             zone_id=ZONE,
             interval=300,
             cache_store=cache_store,
-            debounce_seconds=0.1,
+            debounce_seconds=0.05,
         )
         await sweeper.start()
         await asyncio.sleep(0.05)  # Let subscriber register
@@ -363,7 +363,7 @@ class TestEventDrivenSweeper:
             )
 
         # Wait for debounce + sweep
-        await asyncio.sleep(0.4)
+        await asyncio.sleep(0.2)
         await sweeper.stop()
 
         # All 3 expired messages should be swept

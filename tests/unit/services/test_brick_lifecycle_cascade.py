@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 pytest.importorskip("pyroaring")
+pytest.importorskip("hypothesis")
 
 from hypothesis import settings
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, initialize, rule

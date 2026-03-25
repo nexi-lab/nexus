@@ -341,7 +341,7 @@ class TestNatsEventBusSubscribeDurable:
         gen = bus.subscribe_durable("z1", "test-consumer", deliver_policy="all")
         # Need to actually iterate to trigger the pull_subscribe call
         task = asyncio.ensure_future(gen.__anext__())
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         task.cancel()
         try:
             await task

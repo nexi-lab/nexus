@@ -4,9 +4,6 @@ import time
 
 import pytest
 
-pytest.importorskip("pyroaring")
-
-
 from nexus.bricks.rebac.cache.iterator import (
     CachedResult,
     CursorExpiredError,
@@ -78,7 +75,7 @@ class TestIteratorCache:
 
     def test_cache_ttl_expiration(self):
         """Test that cache entries expire after TTL."""
-        cache = IteratorCache(max_size=100, ttl_seconds=1)  # 1 second TTL
+        cache = IteratorCache(max_size=100, ttl_seconds=0.05)  # 50ms TTL
 
         cursor_id, results, total = cache.get_or_create(
             query_hash="test:query",
@@ -91,7 +88,7 @@ class TestIteratorCache:
         assert len(items) == 5
 
         # Wait for expiration
-        time.sleep(1.5)
+        time.sleep(0.1)
 
         # Should raise CursorExpiredError
         with pytest.raises(CursorExpiredError):

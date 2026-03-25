@@ -4,9 +4,6 @@ import time
 
 import pytest
 
-pytest.importorskip("pyroaring")
-
-
 from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
 
 
@@ -32,7 +29,7 @@ class TestReBACPermissionCache:
 
     def test_cache_ttl_expiration(self):
         """Test that cache entries expire after TTL."""
-        cache = ReBACPermissionCache(max_size=100, ttl_seconds=1)  # 1 second TTL
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=0.05)  # 50ms TTL
 
         cache.set("agent", "alice", "read", "file", "/doc.txt", True)
 
@@ -41,7 +38,7 @@ class TestReBACPermissionCache:
         assert result is True
 
         # Wait for expiration
-        time.sleep(1.5)
+        time.sleep(0.1)
 
         # Should miss after expiration
         result = cache.get("agent", "alice", "read", "file", "/doc.txt")
@@ -400,12 +397,12 @@ class TestXFetchAlgorithm:
 
     def test_xfetch_expired_returns_true(self):
         """Test that expired entries always return True for refresh."""
-        cache = ReBACPermissionCache(max_size=100, ttl_seconds=1)
+        cache = ReBACPermissionCache(max_size=100, ttl_seconds=0.05)
 
         cache.set("agent", "alice", "read", "file", "/doc.txt", True, delta=0.01)
 
         # Wait for expiration
-        time.sleep(1.5)
+        time.sleep(0.1)
 
         key = cache._make_key("agent", "alice", "read", "file", "/doc.txt", None)
         assert cache._should_refresh_xfetch(key) is True

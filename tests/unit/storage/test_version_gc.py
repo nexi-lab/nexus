@@ -380,7 +380,7 @@ class TestVersionGCTask:
         task = asyncio.create_task(version_gc_task(mock_session_factory, mock_config))
 
         # Let it start
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Cancel and verify it was created successfully
         task.cancel()

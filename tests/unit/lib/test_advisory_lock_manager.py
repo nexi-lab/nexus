@@ -66,7 +66,7 @@ async def test_acquire_retry_succeeds(mgr, sem):
     assert first is not None
 
     async def release_after_delay():
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
         await mgr.release(first, "/contested")
 
     task = asyncio.create_task(release_after_delay())

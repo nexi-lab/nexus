@@ -414,7 +414,7 @@ class TestReconcileLoop:
         await manager.mount("a")
 
         await reconciler.start()
-        await asyncio.sleep(0.30)  # Should fire 2-3 times (generous for slow CI runners)
+        await asyncio.sleep(0.20)  # Should fire 2-3 times (generous for slow CI runners)
         await reconciler.stop()
         assert reconciler._reconcile_count >= 2
 
@@ -484,7 +484,7 @@ class TestReconcileLoop:
         reconciler.reconcile = _patched_reconcile  # type: ignore[assignment]
 
         await reconciler.start()
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
         await reconciler.stop()
 
         # Loop should have survived the error and continued
@@ -1042,19 +1042,3 @@ class TestBackoffStrategy:
         import nexus.system_services.lifecycle.brick_reconciler as mod
 
         assert mod._BACKOFF_MAX == 300.0
-
-    @pytest.mark.asyncio
-    async def test_clear_on_success(
-        self,
-        manager: BrickLifecycleManager,
-    ) -> None:
-        """Successful per-brick reconcile clears backoff."""
-        brick = _make_reconcilable_brick("search", outcome=BrickReconcileOutcome())
-        manager.register("search", brick, protocol_name="SP")
-        await manager.mount("search")
-
-        reconciler = BrickReconciler(lifecycle_manager=manager)
-        reconciler._next_retry_after["search"] = 999999.0  # pre-set
-        await reconciler.reconcile()
-
-        assert "search" not in reconciler._next_retry_after

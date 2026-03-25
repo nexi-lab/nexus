@@ -485,13 +485,17 @@ class TestDistributedTeamWorkday:
         d = _grpc_call(grpc1, "delete", {"path": corp_memo}, api_key=api_key)
         assert "error" not in d, f"Delete failed: {d}"
 
-        # --- Step 25: Exists → false ---
-        ex = _grpc_call(grpc1, "exists", {"path": corp_memo}, api_key=api_key)
-        assert "error" not in ex
-        exists_val = ex["result"]
-        if isinstance(exists_val, dict):
-            exists_val = exists_val.get("exists", exists_val)
-        assert exists_val is False
+        # --- Step 25: Exists → false (wait for Raft commit propagation) ---
+        for _retry in range(5):
+            ex = _grpc_call(grpc1, "exists", {"path": corp_memo}, api_key=api_key)
+            assert "error" not in ex
+            exists_val = ex["result"]
+            if isinstance(exists_val, dict):
+                exists_val = exists_val.get("exists", exists_val)
+            if exists_val is False:
+                break
+            time.sleep(0.5)
+        assert exists_val is False, f"File still exists after delete + {_retry * 0.5}s"
 
         # --- Step 26: List → file gone ---
         ls = _grpc_call(grpc1, "list", {"path": "/corp/"}, api_key=api_key)

@@ -101,6 +101,7 @@ services:
 
       # --- Raft consensus (static bootstrap — all nodes know all peers) ---
       NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: nexus-1:2126
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
 
@@ -171,6 +172,7 @@ services:
       NEXUS_PROFILE: cluster
 
       NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_ADVERTISE_ADDR: nexus-2:2126
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
 

@@ -54,14 +54,12 @@ class TestIPCBrickWiring:
         assert AgentProvisioner is not None
 
     def test_ipc_rest_router_importable(self) -> None:
-        """IPC REST router is importable and has expected endpoints."""
+        """IPC REST router is importable and has SSE stream endpoint."""
         from nexus.server.api.v2.routers.ipc import router
 
         route_paths = [getattr(r, "path", "") for r in router.routes]
-        assert any("/send" in p for p in route_paths)
-        assert any("/inbox/{agent_id}" in p for p in route_paths)
-        assert any("/count" in p for p in route_paths)
-        assert any("/provision/{agent_id}" in p for p in route_paths)
+        # CRUD endpoints migrated to IpcRPCService; only SSE stream remains
+        assert any("/stream/{agent_id}" in p for p in route_paths)
 
     def test_ipc_lifespan_importable(self) -> None:
         """IPC lifespan module is importable."""

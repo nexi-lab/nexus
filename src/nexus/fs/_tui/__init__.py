@@ -811,6 +811,10 @@ class PlaygroundApp(App[None]):
 
     async def _mount_uri(self, uri: str) -> None:
         """Mount a new backend URI into the playground."""
+        error = self._validate_mount_uri(uri)
+        if error:
+            self.notify(error, severity="warning", timeout=5)
+            return
         next_uris = (*self._uris, uri)
         try:
             fs = await self._build_filesystem(next_uris)
@@ -825,6 +829,17 @@ class PlaygroundApp(App[None]):
         self._persist_mounts()
         await self._reset_browser_ui()
         self.notify(f"Mounted {uri}", timeout=3)
+
+    def _validate_mount_uri(self, uri: str) -> str | None:
+        """Return a user-facing error if the requested mount URI is incomplete."""
+        value = uri.strip()
+        if not value:
+            return "Mount URI is required."
+        if value in {"s3://", "s3:///"}:
+            return "S3 mounts require a bucket, for example `s3://my-bucket`."
+        if value in {"gcs://", "gcs:///"}:
+            return "GCS mounts require a bucket, for example `gcs://project/my-bucket`."
+        return None
 
     async def _touch_path(self, name: str) -> None:
         """Create an empty file in the current directory."""

@@ -7,6 +7,7 @@ large files, empty state, rapid interaction), and widget-level tests.
 from __future__ import annotations
 
 import json
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -470,6 +471,19 @@ class TestPlaygroundApp:
             await pilot.pause(delay=0.3)
             assert browser.current_path.endswith("/skills")
             assert app._current_path.endswith("/skills")
+
+    @pytest.mark.asyncio
+    async def test_mount_uri_rejects_empty_s3_bucket(self):
+        """Incomplete S3 URIs should be rejected instead of creating a broken /s3/ mount."""
+        app = PlaygroundApp(uris=())
+        state_dir = tempfile.mkdtemp(prefix="playground-empty-s3-")
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": state_dir}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.3)
+                await app._mount_uri("s3://")
+                await pilot.pause(delay=0.2)
+                assert app._mount_points == []
 
     @pytest.mark.asyncio
     async def test_browser_banner_mentions_restored_mounts(self, tmp_path):

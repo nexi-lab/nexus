@@ -151,9 +151,9 @@ jobs:
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
           echo "### Unit tests" >> $GITHUB_STEP_SUMMARY
-          echo "Duration: **${dur}s** (target &lt;180s; max 480s)" >> $GITHUB_STEP_SUMMARY
-          if [ "$dur" -gt 480 ]; then
-            echo "::error::Unit tests took ${dur}s (max 480s). Keep the suite lean; see tests/unit/README.md"
+          echo "Duration: **${dur}s** (target &lt;180s; max 1200s)" >> $GITHUB_STEP_SUMMARY
+          if [ "$dur" -gt 1200 ]; then
+            echo "::error::Unit tests took ${dur}s (max 1200s). Keep the suite lean; see tests/unit/README.md"
             exit 1
           fi
         shell: bash

@@ -1,26 +1,6 @@
-"""API v2 routers."""
+"""API v2 routers — MUST_STAY HTTP endpoints only.
 
-from nexus.server.api.v2.routers import (
-    aspects,
-    bricks,
-    catalog,
-    conflicts,
-    events_replay,
-    eviction,
-    mobile_search,
-    replay,
-    sync_push,
-    workflows,
-)
-
-__all__ = [
-    "aspects",
-    "bricks",
-    "catalog",
-    "conflicts",
-    "events_replay",
-    "mobile_search",
-    "replay",
-    "sync_push",
-    "workflows",
-]
+All query/CRUD endpoints have been migrated to @rpc_expose services.
+Remaining routers provide: SSE streaming, CSV export, K8s health probes,
+tus.io uploads, and async file streaming.
+"""

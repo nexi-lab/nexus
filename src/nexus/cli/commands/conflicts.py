@@ -1,6 +1,6 @@
 """Conflicts CLI commands — OCC conflict resolution.
 
-Maps to /api/v2/sync/conflicts/* endpoints via ConflictsClient.
+Maps to conflicts_* RPC methods via rpc_call().
 Issue #2812.
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import click
 
-from nexus.cli.clients.conflicts import ConflictsClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
-from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION, console, rpc_call
 
 
 @click.group()
@@ -33,8 +32,11 @@ def conflicts() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ConflictsClient)
-def conflicts_list(client: ConflictsClient) -> ServiceResult:
+def conflicts_list(
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List unresolved conflicts.
 
     \b
@@ -42,34 +44,43 @@ def conflicts_list(client: ConflictsClient) -> ServiceResult:
         nexus conflicts list
         nexus conflicts list --json
     """
-    data = client.list()
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "conflicts_list")
 
-    def _render(d: dict) -> None:
-        from rich.table import Table
+        def _render(d: dict) -> None:
+            from rich.table import Table
 
-        from nexus.cli.utils import console
+            items = d.get("conflicts", [])
+            if not items:
+                console.print("[green]No unresolved conflicts[/green]")
+                return
 
-        items = d.get("conflicts", [])
-        if not items:
-            console.print("[green]No unresolved conflicts[/green]")
-            return
+            table = Table(title=f"Conflicts ({len(items)})")
+            table.add_column("ID", style="dim")
+            table.add_column("Path")
+            table.add_column("Backend")
+            table.add_column("Status", style="dim")
 
-        table = Table(title=f"Conflicts ({len(items)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Path")
-        table.add_column("Backend")
-        table.add_column("Status", style="dim")
+            for c in items:
+                table.add_row(
+                    c.get("conflict_id", "")[:12],
+                    c.get("path", ""),
+                    c.get("backend_name", ""),
+                    c.get("status", ""),
+                )
+            console.print(table)
 
-        for c in items:
-            table.add_row(
-                c.get("conflict_id", "")[:12],
-                c.get("path", ""),
-                c.get("backend_name", ""),
-                c.get("status", ""),
-            )
-        console.print(table)
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @conflicts.command("show")
@@ -77,8 +88,12 @@ def conflicts_list(client: ConflictsClient) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ConflictsClient)
-def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
+def conflicts_show(
+    conflict_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show both versions of a conflict.
 
     \b
@@ -86,24 +101,33 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
         nexus conflicts show abc123
         nexus conflicts show abc123 --json
     """
-    data = client.show(conflict_id)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "conflicts_get", conflict_id=conflict_id)
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print(f"[bold cyan]Conflict: {conflict_id}[/bold cyan]")
+            console.print(f"  Path:        {d.get('path', 'N/A')}")
+            console.print(f"  Backend:     {d.get('backend_name', 'N/A')}")
+            console.print(f"  Strategy:    {d.get('strategy', 'N/A')}")
+            console.print(f"  Outcome:     {d.get('outcome', 'N/A')}")
+            console.print(f"  Status:      {d.get('status', 'N/A')}")
+            console.print(f"  Resolved at: {d.get('resolved_at', 'N/A')}")
+            nexus_hash = d.get("nexus_content_hash", "N/A")
+            backend_hash = d.get("backend_content_hash", "N/A")
+            console.print(f"  Nexus hash:  {nexus_hash}")
+            console.print(f"  Backend hash:{backend_hash}")
 
-        console.print(f"[bold cyan]Conflict: {conflict_id}[/bold cyan]")
-        console.print(f"  Path:        {d.get('path', 'N/A')}")
-        console.print(f"  Backend:     {d.get('backend_name', 'N/A')}")
-        console.print(f"  Strategy:    {d.get('strategy', 'N/A')}")
-        console.print(f"  Outcome:     {d.get('outcome', 'N/A')}")
-        console.print(f"  Status:      {d.get('status', 'N/A')}")
-        console.print(f"  Resolved at: {d.get('resolved_at', 'N/A')}")
-        nexus_hash = d.get("nexus_content_hash", "N/A")
-        backend_hash = d.get("backend_content_hash", "N/A")
-        console.print(f"  Nexus hash:  {nexus_hash}")
-        console.print(f"  Backend hash:{backend_hash}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @conflicts.command("resolve")
@@ -117,8 +141,13 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ConflictsClient)
-def conflicts_resolve(client: ConflictsClient, conflict_id: str, outcome: str) -> ServiceResult:
+def conflicts_resolve(
+    conflict_id: str,
+    outcome: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Resolve a conflict.
 
     \b
@@ -126,5 +155,23 @@ def conflicts_resolve(client: ConflictsClient, conflict_id: str, outcome: str) -
         nexus conflicts resolve abc123 --outcome nexus_wins
         nexus conflicts resolve abc123 --outcome backend_wins --json
     """
-    data = client.resolve(conflict_id, outcome=outcome)
-    return ServiceResult(data=data, message=f"Conflict {conflict_id} resolved ({outcome})")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "conflicts_resolve",
+                conflict_id=conflict_id,
+                outcome=outcome,
+            )
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Conflict {conflict_id} resolved ({outcome})",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None

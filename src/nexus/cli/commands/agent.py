@@ -9,15 +9,15 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.clients.agent_ext import AgentExtClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     add_backend_options,
     get_filesystem,
     handle_error,
+    rpc_call,
 )
 
 console = Console()
@@ -278,8 +278,12 @@ def delete_cmd(
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=AgentExtClient)
-def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
+def agent_status(
+    agent_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show agent lifecycle state, generation, and zone.
 
     \b
@@ -287,30 +291,43 @@ def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
         nexus agent status alice
         nexus agent status alice --json
     """
-    data = client.status(agent_id)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "agent_status", agent_id=agent_id)
 
-    def _render(d: dict) -> None:
-        console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
-        console.print(f"  Phase:       {d.get('phase', 'N/A')}")
-        console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
-        console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
-        console.print(f"  Context:     {d.get('context_usage_pct', 0):.1f}%")
-        if d.get("last_heartbeat"):
-            console.print(f"  Heartbeat:   {d['last_heartbeat'][:19]}")
-        if d.get("last_activity"):
-            console.print(f"  Activity:    {d['last_activity'][:19]}")
-        ru = d.get("resource_usage", {})
-        if ru:
-            console.print(f"  Tokens:      {ru.get('tokens_used', 0)}")
-            console.print(f"  Storage:     {ru.get('storage_used_mb', 0):.1f} MB")
-        conditions = d.get("conditions", [])
-        if conditions:
-            console.print("  Conditions:")
-            for c in conditions:
-                status_icon = "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
-                console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
+        def _render(d: dict) -> None:
+            console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
+            console.print(f"  Phase:       {d.get('phase', 'N/A')}")
+            console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
+            console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
+            console.print(f"  Context:     {d.get('context_usage_pct', 0):.1f}%")
+            if d.get("last_heartbeat"):
+                console.print(f"  Heartbeat:   {d['last_heartbeat'][:19]}")
+            if d.get("last_activity"):
+                console.print(f"  Activity:    {d['last_activity'][:19]}")
+            ru = d.get("resource_usage", {})
+            if ru:
+                console.print(f"  Tokens:      {ru.get('tokens_used', 0)}")
+                console.print(f"  Storage:     {ru.get('storage_used_mb', 0):.1f} MB")
+            conditions = d.get("conditions", [])
+            if conditions:
+                console.print("  Conditions:")
+                for c in conditions:
+                    status_icon = (
+                        "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
+                    )
+                    console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
 
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @agent.group(name="spec")
@@ -323,23 +340,38 @@ def agent_spec() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=AgentExtClient)
-def agent_spec_show(client: AgentExtClient, agent_id: str) -> ServiceResult:
+def agent_spec_show(
+    agent_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show agent capabilities spec.
 
     \b
     Examples:
         nexus agent spec show alice --json
     """
-    data = client.spec_show(agent_id)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "agent_spec_show", agent_id=agent_id)
 
-    def _render(d: dict) -> None:
-        import json
+        def _render(d: dict) -> None:
+            import json
 
-        console.print(f"[bold cyan]Agent Spec: {agent_id}[/bold cyan]")
-        console.print(json.dumps(d, indent=2, default=str))
+            console.print(f"[bold cyan]Agent Spec: {agent_id}[/bold cyan]")
+            console.print(json.dumps(d, indent=2, default=str))
 
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @agent_spec.command(name="set")
@@ -348,8 +380,13 @@ def agent_spec_show(client: AgentExtClient, agent_id: str) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=AgentExtClient)
-def agent_spec_set(client: AgentExtClient, agent_id: str, spec_json: str) -> ServiceResult:
+def agent_spec_set(
+    agent_id: str,
+    spec_json: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Set agent capabilities spec (JSON string).
 
     \b
@@ -359,8 +396,22 @@ def agent_spec_set(client: AgentExtClient, agent_id: str, spec_json: str) -> Ser
     import json
 
     spec = json.loads(spec_json)
-    data = client.spec_set(agent_id, spec)
-    return ServiceResult(data=data, message=f"Spec updated for {agent_id}")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url, remote_api_key, "agent_spec_set", agent_id=agent_id, spec=spec
+            )
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Spec updated for {agent_id}",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @agent.command(name="warmup")
@@ -368,16 +419,32 @@ def agent_spec_set(client: AgentExtClient, agent_id: str, spec_json: str) -> Ser
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=AgentExtClient)
-def agent_warmup(client: AgentExtClient, agent_id: str) -> ServiceResult:
+def agent_warmup(
+    agent_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Pre-warm an agent.
 
     \b
     Examples:
         nexus agent warmup alice
     """
-    data = client.warmup(agent_id)
-    return ServiceResult(data=data, message=f"Agent {agent_id} warmup initiated")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "agent_warmup", agent_id=agent_id)
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Agent {agent_id} warmup initiated",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 def register_commands(cli: click.Group) -> None:

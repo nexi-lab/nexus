@@ -200,7 +200,10 @@ def _render_human(
 
 def _api_error_to_exit_code(error: Exception) -> ExitCode | None:
     """Map NexusAPIError HTTP status to ExitCode, or None if not applicable."""
-    from nexus.cli.clients.base import NexusAPIError
+    try:
+        from nexus.cli.clients.base import NexusAPIError
+    except ImportError:
+        return None
 
     if not isinstance(error, NexusAPIError):
         return None
@@ -265,24 +268,27 @@ def render_error(
 
 def _exception_to_error_code(error: Exception) -> str:
     """Map an exception to a short machine-readable error code."""
-    # NexusAPIError — map HTTP status codes to error codes
-    from nexus.cli.clients.base import NexusAPIError
+    # NexusAPIError — map HTTP status codes to error codes (legacy client support)
+    try:
+        from nexus.cli.clients.base import NexusAPIError
 
-    if isinstance(error, NexusAPIError):
-        status = error.status_code
-        if status == 400:
-            return "VALIDATION_ERROR"
-        if status in {401, 403}:
-            return "PERMISSION_DENIED"
-        if status == 404:
-            return "NOT_FOUND"
-        if status in {408, 504}:
-            return "TIMEOUT"
-        if status in {429, 503}:
-            return "UNAVAILABLE"
-        if status >= 500:
+        if isinstance(error, NexusAPIError):
+            status = error.status_code
+            if status == 400:
+                return "VALIDATION_ERROR"
+            if status in {401, 403}:
+                return "PERMISSION_DENIED"
+            if status == 404:
+                return "NOT_FOUND"
+            if status in {408, 504}:
+                return "TIMEOUT"
+            if status in {429, 503}:
+                return "UNAVAILABLE"
+            if status >= 500:
+                return "INTERNAL_ERROR"
             return "INTERNAL_ERROR"
-        return "INTERNAL_ERROR"
+    except ImportError:
+        pass
 
     # Lazy import to avoid circular deps
     from nexus.contracts.exceptions import (

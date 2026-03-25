@@ -1,6 +1,6 @@
 """Access manifest CLI commands — agent tool access management.
 
-Maps to /api/v2/access-manifests/* endpoints via ManifestClient.
+Maps to access_manifests_* RPC methods via rpc_call().
 Issue #2812.
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import click
 
-from nexus.cli.clients.manifest import ManifestClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
-from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION, console, rpc_call
 
 
 @click.group()
@@ -45,15 +44,16 @@ def manifest() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ManifestClient)
 def manifest_create(
-    client: ManifestClient,
     agent_id: str,
     name: str,
     entries: tuple[str, ...],
     zone_id: str,
     valid_hours: int,
-) -> ServiceResult:
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Create an access manifest for an agent.
 
     \b
@@ -71,32 +71,51 @@ def manifest_create(
             )
         parsed_entries.append({"tool_pattern": parts[0], "permission": parts[1]})
 
-    data = client.create(
-        agent_id, name=name, entries=parsed_entries, zone_id=zone_id, valid_hours=valid_hours
-    )
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "access_manifests_create",
+                agent_id=agent_id,
+                name=name,
+                entries=parsed_entries,
+                zone_id=zone_id,
+                valid_hours=valid_hours,
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print("[green]Manifest created[/green]")
+            console.print(f"  Manifest ID: {d.get('manifest_id', d.get('id', 'N/A'))}")
+            console.print(f"  Agent:       {d.get('agent_id', agent_id)}")
+            console.print(f"  Name:        {d.get('name', name)}")
+            manifest_entries = d.get("entries", [])
+            if manifest_entries:
+                console.print("  Entries:")
+                for e in manifest_entries:
+                    console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
 
-        console.print("[green]Manifest created[/green]")
-        console.print(f"  Manifest ID: {d.get('manifest_id', d.get('id', 'N/A'))}")
-        console.print(f"  Agent:       {d.get('agent_id', agent_id)}")
-        console.print(f"  Name:        {d.get('name', name)}")
-        manifest_entries = d.get("entries", [])
-        if manifest_entries:
-            console.print("  Entries:")
-            for e in manifest_entries:
-                console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @manifest.command("list")
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ManifestClient)
-def manifest_list(client: ManifestClient) -> ServiceResult:
+def manifest_list(
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List access manifests.
 
     \b
@@ -104,37 +123,46 @@ def manifest_list(client: ManifestClient) -> ServiceResult:
         nexus manifest list
         nexus manifest list --json
     """
-    data = client.list()
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "access_manifests_list")
 
-    def _render(d: dict) -> None:
-        from rich.table import Table
+        def _render(d: dict) -> None:
+            from rich.table import Table
 
-        from nexus.cli.utils import console
+            manifests = d.get("manifests", [])
+            if not manifests:
+                console.print("[yellow]No manifests[/yellow]")
+                return
 
-        manifests = d.get("manifests", [])
-        if not manifests:
-            console.print("[yellow]No manifests[/yellow]")
-            return
+            table = Table(title=f"Access Manifests ({len(manifests)})")
+            table.add_column("ID", style="dim")
+            table.add_column("Agent")
+            table.add_column("Name")
+            table.add_column("Entries")
+            table.add_column("Valid Until", style="dim")
 
-        table = Table(title=f"Access Manifests ({len(manifests)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Agent")
-        table.add_column("Name")
-        table.add_column("Entries")
-        table.add_column("Valid Until", style="dim")
+            for m in manifests:
+                entry_count = len(m.get("entries", []))
+                table.add_row(
+                    str(m.get("manifest_id", m.get("id", "")))[:12],
+                    m.get("agent_id", ""),
+                    m.get("name", ""),
+                    str(entry_count),
+                    m.get("valid_until", "")[:19],
+                )
+            console.print(table)
 
-        for m in manifests:
-            entry_count = len(m.get("entries", []))
-            table.add_row(
-                str(m.get("manifest_id", m.get("id", "")))[:12],
-                m.get("agent_id", ""),
-                m.get("name", ""),
-                str(entry_count),
-                m.get("valid_until", "")[:19],
-            )
-        console.print(table)
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @manifest.command("show")
@@ -142,31 +170,46 @@ def manifest_list(client: ManifestClient) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ManifestClient)
-def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
+def manifest_show(
+    manifest_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show manifest details.
 
     \b
     Examples:
         nexus manifest show mfst_123 --json
     """
-    data = client.show(manifest_id)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url, remote_api_key, "access_manifests_get", manifest_id=manifest_id
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
+            console.print(f"  Name:       {d.get('name', 'N/A')}")
+            console.print(f"  Agent:      {d.get('agent_id', 'N/A')}")
+            console.print(f"  Valid From: {d.get('valid_from', 'N/A')[:19]}")
+            console.print(f"  Valid Until:{d.get('valid_until', 'N/A')[:19]}")
+            manifest_entries = d.get("entries", [])
+            if manifest_entries:
+                console.print("  Entries:")
+                for e in manifest_entries:
+                    console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
 
-        console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
-        console.print(f"  Name:       {d.get('name', 'N/A')}")
-        console.print(f"  Agent:      {d.get('agent_id', 'N/A')}")
-        console.print(f"  Valid From: {d.get('valid_from', 'N/A')[:19]}")
-        console.print(f"  Valid Until:{d.get('valid_until', 'N/A')[:19]}")
-        manifest_entries = d.get("entries", [])
-        if manifest_entries:
-            console.print("  Entries:")
-            for e in manifest_entries:
-                console.print(f"    - {e.get('tool_pattern', '?')}: {e.get('permission', '?')}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @manifest.command("evaluate")
@@ -175,8 +218,13 @@ def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ManifestClient)
-def manifest_evaluate(client: ManifestClient, manifest_id: str, tool_name: str) -> ServiceResult:
+def manifest_evaluate(
+    manifest_id: str,
+    tool_name: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Test tool access against a manifest.
 
     \b
@@ -184,19 +232,34 @@ def manifest_evaluate(client: ManifestClient, manifest_id: str, tool_name: str) 
         nexus manifest evaluate mfst_123 --tool-name read_file
         nexus manifest evaluate mfst_123 --tool-name write_file --json
     """
-    data = client.evaluate(manifest_id, tool_name=tool_name)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "access_manifests_evaluate",
+                manifest_id=manifest_id,
+                tool_name=tool_name,
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            permission = d.get("permission", "deny")
+            allowed = permission == "allow"
+            status = "[green]Allowed[/green]" if allowed else "[red]Denied[/red]"
+            console.print(f"Tool '{tool_name}': {status}")
+            if d.get("manifest_id"):
+                console.print(f"  Manifest: {d['manifest_id']}")
 
-        permission = d.get("permission", "deny")
-        allowed = permission == "allow"
-        status = "[green]Allowed[/green]" if allowed else "[red]Denied[/red]"
-        console.print(f"Tool '{tool_name}': {status}")
-        if d.get("manifest_id"):
-            console.print(f"  Manifest: {d['manifest_id']}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @manifest.command("revoke")
@@ -204,13 +267,34 @@ def manifest_evaluate(client: ManifestClient, manifest_id: str, tool_name: str) 
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ManifestClient)
-def manifest_revoke(client: ManifestClient, manifest_id: str) -> ServiceResult:
+def manifest_revoke(
+    manifest_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Revoke an access manifest.
 
     \b
     Examples:
         nexus manifest revoke mfst_123
     """
-    data = client.revoke(manifest_id)
-    return ServiceResult(data=data, message=f"Manifest {manifest_id} revoked")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "access_manifests_revoke",
+                manifest_id=manifest_id,
+            )
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Manifest {manifest_id} revoked",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None

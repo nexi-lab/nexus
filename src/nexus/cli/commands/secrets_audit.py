@@ -1,6 +1,6 @@
 """Secrets audit CLI commands — secret access event auditing.
 
-Maps to /api/v2/secrets-audit/* endpoints via SecretsAuditClient.
+Maps to secrets_audit_* RPC methods via rpc_call().
 Issue #2812. Distinct from `nexus audit` (transaction audit in #2811).
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import click
 
-from nexus.cli.clients.secrets_audit import SecretsAuditClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
-from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION, console, rpc_call
 
 
 @click.group("secrets-audit")
@@ -36,13 +35,14 @@ def secrets_audit() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=SecretsAuditClient)
 def secrets_audit_list(
-    client: SecretsAuditClient,
     since: str | None,
     action: str | None,
     limit: int,
-) -> ServiceResult:
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List secret access events.
 
     \b
@@ -50,36 +50,52 @@ def secrets_audit_list(
         nexus secrets-audit list
         nexus secrets-audit list --since 1h --action read --json
     """
-    data = client.list(since=since, action=action, limit=limit)
-
-    def _render(d: dict) -> None:
-        from rich.table import Table
-
-        from nexus.cli.utils import console
-
-        events = d.get("events", [])
-        if not events:
-            console.print("[yellow]No secret access events[/yellow]")
-            return
-
-        table = Table(title=f"Secret Access Events ({len(events)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Action")
-        table.add_column("Secret")
-        table.add_column("Agent")
-        table.add_column("Time", style="dim")
-
-        for ev in events:
-            table.add_row(
-                ev.get("record_id", "")[:12],
-                ev.get("action", ""),
-                ev.get("secret_name", ev.get("secret_id", "")),
-                ev.get("agent_id", ""),
-                ev.get("timestamp", "")[:19],
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "secrets_audit_list",
+                since=since,
+                action=action,
+                limit=limit,
             )
-        console.print(table)
 
-    return ServiceResult(data=data, human_formatter=_render)
+        def _render(d: dict) -> None:
+            from rich.table import Table
+
+            events = d.get("events", [])
+            if not events:
+                console.print("[yellow]No secret access events[/yellow]")
+                return
+
+            table = Table(title=f"Secret Access Events ({len(events)})")
+            table.add_column("ID", style="dim")
+            table.add_column("Action")
+            table.add_column("Secret")
+            table.add_column("Agent")
+            table.add_column("Time", style="dim")
+
+            for ev in events:
+                table.add_row(
+                    ev.get("record_id", "")[:12],
+                    ev.get("action", ""),
+                    ev.get("secret_name", ev.get("secret_id", "")),
+                    ev.get("agent_id", ""),
+                    ev.get("timestamp", "")[:19],
+                )
+            console.print(table)
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @secrets_audit.command("export")
@@ -109,14 +125,16 @@ def secrets_audit_export(
         nexus secrets-audit export --format csv > audit.csv
         nexus secrets-audit export --format json --output audit.json
     """
-    from nexus.cli.service_command import _validate_url
-    from nexus.cli.utils import console
-
-    url = _validate_url(remote_url)
     try:
-        client = SecretsAuditClient(url=url, api_key=remote_api_key)
-        with client:
-            content = client.export(fmt=fmt, since=since)
+        data = rpc_call(
+            remote_url,
+            remote_api_key,
+            "secrets_audit_export",
+            fmt=fmt,
+            since=since,
+        )
+        # data may be a string (raw export) or dict
+        content = data if isinstance(data, str) else str(data)
 
         if output_file:
             with open(output_file, "w") as f:
@@ -134,8 +152,12 @@ def secrets_audit_export(
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=SecretsAuditClient)
-def secrets_audit_verify(client: SecretsAuditClient, record_id: str) -> ServiceResult:
+def secrets_audit_verify(
+    record_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Verify integrity of an audit record.
 
     \b
@@ -143,16 +165,27 @@ def secrets_audit_verify(client: SecretsAuditClient, record_id: str) -> ServiceR
         nexus secrets-audit verify rec_123
         nexus secrets-audit verify rec_123 --json
     """
-    data = client.verify(record_id)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url, remote_api_key, "secrets_audit_integrity", record_id=record_id
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            valid = d.get("valid", d.get("integrity_valid", False))
+            status = "[green]Valid[/green]" if valid else "[red]Tampered[/red]"
+            console.print(f"[bold cyan]Integrity Check: {record_id}[/bold cyan]")
+            console.print(f"  Status: {status}")
+            if d.get("hash"):
+                console.print(f"  Hash:   {d['hash']}")
 
-        valid = d.get("valid", d.get("integrity_valid", False))
-        status = "[green]Valid[/green]" if valid else "[red]Tampered[/red]"
-        console.print(f"[bold cyan]Integrity Check: {record_id}[/bold cyan]")
-        console.print(f"  Status: {status}")
-        if d.get("hash"):
-            console.print(f"  Hash:   {d['hash']}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None

@@ -1,6 +1,6 @@
 """Delegation CLI commands — agent identity delegation lifecycle.
 
-Maps to /api/v2/agents/delegate/* endpoints via DelegationClient.
+Maps to delegation_* RPC methods via rpc_call().
 Issue #2812.
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import click
 
-from nexus.cli.clients.delegation import DelegationClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
-from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION, console, rpc_call
 
 
 @click.group()
@@ -46,16 +45,17 @@ def delegation() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=DelegationClient)
 def delegation_create(
-    client: DelegationClient,
     coordinator: str,
     worker: str,
     mode: str,
     scope_prefix: str | None,
     ttl_seconds: int | None,
     zone_id: str | None,
-) -> ServiceResult:
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Delegate identity from coordinator to worker.
 
     \b
@@ -64,27 +64,39 @@ def delegation_create(
         nexus delegation create coord worker --mode CLEAN --scope "/project/*"
         nexus delegation create coord worker --ttl 3600 --json
     """
-    data = client.create(
-        coordinator,
-        worker,
-        mode=mode,
-        scope_prefix=scope_prefix,
-        ttl_seconds=ttl_seconds,
-        zone_id=zone_id,
-    )
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "delegation_create",
+                coordinator=coordinator,
+                worker=worker,
+                mode=mode,
+                scope_prefix=scope_prefix,
+                ttl_seconds=ttl_seconds,
+                zone_id=zone_id,
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print("[green]Delegation created[/green]")
+            console.print(f"  ID:          {d.get('delegation_id', 'N/A')}")
+            console.print(f"  Coordinator: {d.get('coordinator_agent_id', coordinator)}")
+            console.print(f"  Worker:      {d.get('worker_id', worker)}")
+            console.print(f"  Mode:        {d.get('delegation_mode', mode)}")
+            if d.get("scope_prefix"):
+                console.print(f"  Scope:       {d['scope_prefix']}")
 
-        console.print("[green]Delegation created[/green]")
-        console.print(f"  ID:          {d.get('delegation_id', 'N/A')}")
-        console.print(f"  Coordinator: {d.get('coordinator_agent_id', coordinator)}")
-        console.print(f"  Worker:      {d.get('worker_id', worker)}")
-        console.print(f"  Mode:        {d.get('delegation_mode', mode)}")
-        if d.get("scope_prefix"):
-            console.print(f"  Scope:       {d['scope_prefix']}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @delegation.command("list")
@@ -95,12 +107,13 @@ def delegation_create(
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=DelegationClient)
 def delegation_list(
-    client: DelegationClient,
     coordinator_agent_id: str | None,
     limit: int,
-) -> ServiceResult:
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List active delegations.
 
     \b
@@ -108,38 +121,53 @@ def delegation_list(
         nexus delegation list
         nexus delegation list --coordinator coord_agent --json
     """
-    data = client.list(coordinator_agent_id, limit=limit)
-
-    def _render(d: dict) -> None:
-        from rich.table import Table
-
-        from nexus.cli.utils import console
-
-        delegations = d.get("delegations", [])
-        if not delegations:
-            console.print("[yellow]No active delegations[/yellow]")
-            return
-
-        table = Table(title=f"Delegations ({len(delegations)})")
-        table.add_column("ID", style="dim")
-        table.add_column("Coordinator")
-        table.add_column("Worker")
-        table.add_column("Mode")
-        table.add_column("Status")
-        table.add_column("Created", style="dim")
-
-        for dlg in delegations:
-            table.add_row(
-                dlg.get("delegation_id", "")[:12],
-                dlg.get("coordinator_agent_id", ""),
-                dlg.get("worker_id", ""),
-                dlg.get("delegation_mode", ""),
-                dlg.get("status", ""),
-                dlg.get("created_at", "")[:19],
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "delegation_list",
+                coordinator_agent_id=coordinator_agent_id,
+                limit=limit,
             )
-        console.print(table)
 
-    return ServiceResult(data=data, human_formatter=_render)
+        def _render(d: dict) -> None:
+            from rich.table import Table
+
+            delegations = d.get("delegations", [])
+            if not delegations:
+                console.print("[yellow]No active delegations[/yellow]")
+                return
+
+            table = Table(title=f"Delegations ({len(delegations)})")
+            table.add_column("ID", style="dim")
+            table.add_column("Coordinator")
+            table.add_column("Worker")
+            table.add_column("Mode")
+            table.add_column("Status")
+            table.add_column("Created", style="dim")
+
+            for dlg in delegations:
+                table.add_row(
+                    dlg.get("delegation_id", "")[:12],
+                    dlg.get("coordinator_agent_id", ""),
+                    dlg.get("worker_id", ""),
+                    dlg.get("delegation_mode", ""),
+                    dlg.get("status", ""),
+                    dlg.get("created_at", "")[:19],
+                )
+            console.print(table)
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @delegation.command("revoke")
@@ -147,8 +175,12 @@ def delegation_list(
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=DelegationClient)
-def delegation_revoke(client: DelegationClient, delegation_id: str) -> ServiceResult:
+def delegation_revoke(
+    delegation_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Revoke a delegation.
 
     \b
@@ -156,8 +188,25 @@ def delegation_revoke(client: DelegationClient, delegation_id: str) -> ServiceRe
         nexus delegation revoke abc123
         nexus delegation revoke abc123 --json
     """
-    data = client.revoke(delegation_id)
-    return ServiceResult(data=data, message=f"Delegation {delegation_id} revoked")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "delegation_revoke",
+                delegation_id=delegation_id,
+            )
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Delegation {delegation_id} revoked",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @delegation.command("show")
@@ -165,8 +214,12 @@ def delegation_revoke(client: DelegationClient, delegation_id: str) -> ServiceRe
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=DelegationClient)
-def delegation_show(client: DelegationClient, delegation_id: str) -> ServiceResult:
+def delegation_show(
+    delegation_id: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show delegation details and chain.
 
     \b
@@ -174,18 +227,32 @@ def delegation_show(client: DelegationClient, delegation_id: str) -> ServiceResu
         nexus delegation show abc123
         nexus delegation show abc123 --json
     """
-    data = client.show(delegation_id)
-
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
-
-        console.print(f"[bold cyan]Delegation Chain: {delegation_id}[/bold cyan]")
-        chain = d.get("chain", [d])
-        for i, link in enumerate(chain):
-            prefix = "  └─" if i == len(chain) - 1 else "  ├─"
-            console.print(
-                f"{prefix} {link.get('coordinator_agent_id', '?')} → "
-                f"{link.get('worker_id', '?')} [{link.get('delegation_mode', '?')}]"
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "delegation_chain",
+                delegation_id=delegation_id,
             )
 
-    return ServiceResult(data=data, human_formatter=_render)
+        def _render(d: dict) -> None:
+            console.print(f"[bold cyan]Delegation Chain: {delegation_id}[/bold cyan]")
+            chain = d.get("chain", [d])
+            for i, link in enumerate(chain):
+                prefix = "  └─" if i == len(chain) - 1 else "  ├─"
+                console.print(
+                    f"{prefix} {link.get('coordinator_agent_id', '?')} → "
+                    f"{link.get('worker_id', '?')} [{link.get('delegation_mode', '?')}]"
+                )
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None

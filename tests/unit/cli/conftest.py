@@ -10,7 +10,6 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
-from nexus.cli.clients.base import NexusAPIError
 from nexus.cli.config import NexusCliConfig, ProfileEntry
 
 
@@ -128,11 +127,6 @@ def patch_compose_runner_status(mock_compose_runner: MagicMock):
 # ---------------------------------------------------------------------------
 # Service command fixtures (Issue #2812)
 # ---------------------------------------------------------------------------
-
-
-def make_api_error(status_code: int = 500, detail: str = "Internal Server Error") -> NexusAPIError:
-    """Factory for NexusAPIError in tests."""
-    return NexusAPIError(status_code=status_code, detail=detail)
 
 
 def assert_json_envelope(result, *, expect_data: bool = True, expect_error: bool = False):

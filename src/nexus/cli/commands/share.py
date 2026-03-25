@@ -1,6 +1,6 @@
 """Share link CLI commands — create and manage share links.
 
-Maps to /api/v2/share-links/* endpoints via ShareClient.
+Maps to share_link_* RPC methods via rpc_call().
 Issue #2812.
 """
 
@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import click
 
-from nexus.cli.clients.share import ShareClient
-from nexus.cli.output import add_output_options
-from nexus.cli.service_command import ServiceResult, service_command
-from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION
+from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.timing import CommandTiming
+from nexus.cli.utils import REMOTE_API_KEY_OPTION, REMOTE_URL_OPTION, console, rpc_call
 
 
 @click.group()
@@ -43,14 +42,15 @@ def share() -> None:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ShareClient)
 def share_create(
-    client: ShareClient,
     path: str,
     expires_in_hours: int | None,
     permission_level: str,
     password: str | None,
-) -> ServiceResult:
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Create a share link for a file or directory.
 
     \b
@@ -59,24 +59,36 @@ def share_create(
         nexus share create /data/report.pdf --expires 24 --password secret
         nexus share create /workspace --permission editor --json
     """
-    data = client.create(
-        path,
-        permission_level=permission_level,
-        expires_in_hours=expires_in_hours,
-        password=password,
-    )
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(
+                remote_url,
+                remote_api_key,
+                "share_link_create",
+                path=path,
+                permission_level=permission_level,
+                expires_in_hours=expires_in_hours,
+                password=password,
+            )
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print("[green]Share link created[/green]")
+            console.print(f"  URL:        {d.get('url', d.get('token', 'N/A'))}")
+            console.print(f"  Path:       {d.get('path', path)}")
+            console.print(f"  Permission: {d.get('permission_level', permission_level)}")
+            if d.get("expires_at"):
+                console.print(f"  Expires:    {d['expires_at'][:19]}")
 
-        console.print("[green]Share link created[/green]")
-        console.print(f"  URL:        {d.get('url', d.get('token', 'N/A'))}")
-        console.print(f"  Path:       {d.get('path', path)}")
-        console.print(f"  Permission: {d.get('permission_level', permission_level)}")
-        if d.get("expires_at"):
-            console.print(f"  Expires:    {d['expires_at'][:19]}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @share.command("list")
@@ -84,8 +96,12 @@ def share_create(
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ShareClient)
-def share_list(client: ShareClient, path: str | None) -> ServiceResult:
+def share_list(
+    path: str | None,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """List active share links.
 
     \b
@@ -93,34 +109,43 @@ def share_list(client: ShareClient, path: str | None) -> ServiceResult:
         nexus share list
         nexus share list --path /data --json
     """
-    data = client.list(path=path)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "share_link_list", path=path)
 
-    def _render(d: dict) -> None:
-        from rich.table import Table
+        def _render(d: dict) -> None:
+            from rich.table import Table
 
-        from nexus.cli.utils import console
+            links = d.get("links", d.get("share_links", []))
+            if not links:
+                console.print("[yellow]No active share links[/yellow]")
+                return
 
-        links = d.get("links", d.get("share_links", []))
-        if not links:
-            console.print("[yellow]No active share links[/yellow]")
-            return
+            table = Table(title=f"Share Links ({len(links)})")
+            table.add_column("Token", style="dim")
+            table.add_column("Path")
+            table.add_column("Permission")
+            table.add_column("Expires", style="dim")
 
-        table = Table(title=f"Share Links ({len(links)})")
-        table.add_column("Token", style="dim")
-        table.add_column("Path")
-        table.add_column("Permission")
-        table.add_column("Expires", style="dim")
+            for link in links:
+                table.add_row(
+                    link.get("token", "")[:12],
+                    link.get("path", ""),
+                    link.get("permission_level", ""),
+                    link.get("expires_at", "never")[:19],
+                )
+            console.print(table)
 
-        for link in links:
-            table.add_row(
-                link.get("token", "")[:12],
-                link.get("path", ""),
-                link.get("permission_level", ""),
-                link.get("expires_at", "never")[:19],
-            )
-        console.print(table)
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @share.command("show")
@@ -128,27 +153,40 @@ def share_list(client: ShareClient, path: str | None) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ShareClient)
-def share_show(client: ShareClient, token: str) -> ServiceResult:
+def share_show(
+    token: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Show share link details.
 
     \b
     Examples:
         nexus share show abc123 --json
     """
-    data = client.show(token)
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "share_link_get", token=token)
 
-    def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        def _render(d: dict) -> None:
+            console.print(f"[bold cyan]Share Link: {token}[/bold cyan]")
+            console.print(f"  Path:        {d.get('path', 'N/A')}")
+            console.print(f"  Permission:  {d.get('permission_level', 'N/A')}")
+            console.print(f"  Created:     {d.get('created_at', 'N/A')[:19]}")
+            console.print(f"  Expires:     {d.get('expires_at', 'never')[:19]}")
+            console.print(f"  Access Count: {d.get('access_count', 0)}")
 
-        console.print(f"[bold cyan]Share Link: {token}[/bold cyan]")
-        console.print(f"  Path:        {d.get('path', 'N/A')}")
-        console.print(f"  Permission:  {d.get('permission_level', 'N/A')}")
-        console.print(f"  Created:     {d.get('created_at', 'N/A')[:19]}")
-        console.print(f"  Expires:     {d.get('expires_at', 'never')[:19]}")
-        console.print(f"  Access Count: {d.get('access_count', 0)}")
-
-    return ServiceResult(data=data, human_formatter=_render)
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            human_formatter=_render,
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None
 
 
 @share.command("revoke")
@@ -156,13 +194,29 @@ def share_show(client: ShareClient, token: str) -> ServiceResult:
 @add_output_options
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
-@service_command(client_class=ShareClient)
-def share_revoke(client: ShareClient, token: str) -> ServiceResult:
+def share_revoke(
+    token: str,
+    output_opts: OutputOptions,
+    remote_url: str | None,
+    remote_api_key: str | None,
+) -> None:
     """Revoke a share link.
 
     \b
     Examples:
         nexus share revoke abc123
     """
-    data = client.revoke(token)
-    return ServiceResult(data=data, message=f"Share link {token} revoked")
+    timing = CommandTiming()
+    try:
+        with timing.phase("server"):
+            data = rpc_call(remote_url, remote_api_key, "share_link_revoke", token=token)
+
+        render_output(
+            data=data,
+            output_opts=output_opts,
+            timing=timing,
+            message=f"Share link {token} revoked",
+        )
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise SystemExit(1) from None

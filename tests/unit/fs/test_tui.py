@@ -6,6 +6,7 @@ large files, empty state, rapid interaction), and widget-level tests.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -416,6 +417,55 @@ class TestPlaygroundApp:
             picker = app.query_one("#connector-picker", DataTable)
             assert picker is not None
             assert app.picker_visible is True
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_prompts_for_custom_local_uri(self, tmp_path):
+        """The local picker row opens an editable URI input before mounting."""
+        app = PlaygroundApp(uris=())
+        state_dir = tmp_path / "state"
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                await pilot.press("enter")
+                await pilot.pause(delay=0.2)
+                picker_input = app.query_one("#picker-input")
+                assert app.picker_input_visible is True
+                assert "local://" in picker_input.value
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_local_input_mounts_custom_uri(self, tmp_path):
+        """The mount wizard can complete a local mount without raw command entry."""
+        app = PlaygroundApp(uris=())
+        target_uri = f"local://{tmp_path}"
+        state_dir = tmp_path / "state"
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                await pilot.press("enter")
+                await pilot.pause(delay=0.2)
+                picker_input = app.query_one("#picker-input")
+                picker_input.value = target_uri
+                await app.action_submit_command()
+                await pilot.pause(delay=0.3)
+                assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+                assert app.picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_browser_banner_mentions_restored_mounts(self, tmp_path):
+        """Restored sessions should say so explicitly in the top banner."""
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        mounts_file = state_dir / "mounts.json"
+        mounts_file.write_text(json.dumps([f"local://{tmp_path}"]))
+        app = PlaygroundApp(uris=())
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                banner = app.query_one("#playground-banner")
+                assert "Restored 1 mount" in str(banner.render())
 
     def test_auth_guidance_for_s3(self):
         """S3 auth guidance points users to the guided CLI flow."""

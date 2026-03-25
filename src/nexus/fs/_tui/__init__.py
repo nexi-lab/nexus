@@ -13,7 +13,7 @@ from typing import Any, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
@@ -128,6 +128,13 @@ class PlaygroundApp(App[None]):
     #main-area {
         height: 1fr;
     }
+    #playground-banner {
+        width: 100%;
+        height: auto;
+        background: $surface;
+        color: $text;
+        padding: 0 1;
+    }
     #status-bar {
         dock: bottom;
         height: 1;
@@ -154,6 +161,19 @@ class PlaygroundApp(App[None]):
     #connector-picker {
         width: 1fr;
         height: 1fr;
+    }
+    #picker-layout {
+        width: 1fr;
+        height: 1fr;
+    }
+    #picker-help {
+        height: auto;
+        padding: 0 1 1 1;
+        color: $text-muted;
+    }
+    #picker-input {
+        width: 100%;
+        display: none;
     }
     #too-small-message {
         width: 100%;
@@ -185,6 +205,7 @@ class PlaygroundApp(App[None]):
     command_visible: reactive[bool] = reactive(False)
     command_buffer: reactive[str] = reactive("")
     picker_visible: reactive[bool] = reactive(False)
+    picker_input_visible: reactive[bool] = reactive(False)
     _crud_mode: str = ""  # "", "new_file", "new_dir", "rename", "delete_confirm"
 
     def __init__(self, uris: tuple[str, ...] = (), **kwargs: Any) -> None:
@@ -194,6 +215,9 @@ class PlaygroundApp(App[None]):
         self._mount_points: list[str] = []
         self._current_path: str = "/"
         self._crud_rename_source: str = ""
+        self._restored_mounts = False
+        self._picker_title = "Supported connectors"
+        self._picker_pending_uri: str | None = None
 
     async def on_mount(self) -> None:
         """Initialize filesystem and load mounts."""
@@ -234,6 +258,7 @@ class PlaygroundApp(App[None]):
                 with open(mounts_file) as f:
                     saved_uris = json.load(f)
                 if saved_uris:
+                    self._restored_mounts = True
                     return await self._build_filesystem(tuple(saved_uris))
             except Exception:
                 pass  # Fall through to empty state
@@ -321,6 +346,9 @@ class PlaygroundApp(App[None]):
         empty = self.query_one("#empty-state", Static)
         empty.display = False
         self.picker_visible = False
+        self.picker_input_visible = False
+        self._picker_pending_uri = None
+        self._update_banner()
 
         # Load first mount and focus the file table
         if self._mount_points:
@@ -339,21 +367,38 @@ class PlaygroundApp(App[None]):
         empty.display = True
         empty.update(
             f"[bold]{title}[/bold]\n"
-            "[dim]Browse connectors below, press Enter to mount, or press a later to reopen this picker.[/dim]"
+            "[dim]Browse connectors below, press Enter to continue, and complete any required values directly in the TUI.[/dim]"
         )
+
+        layout = Vertical(id="picker-layout")
+        await main.mount(layout)
+
+        picker_help = Static("", id="picker-help")
+        await layout.mount(picker_help)
 
         picker = DataTable(id="connector-picker")
         picker.cursor_type = "row"
         picker.add_columns("Connector", "Mode")
         for uri, mode in self._supported_connector_rows():
             picker.add_row(uri, mode)
-        await main.mount(picker)
+        await layout.mount(picker)
+
+        picker_input = self.query_one("#picker-input", Input)
+        picker_input.display = False
+        picker_input.value = ""
+        picker_input.placeholder = ""
+
         self.picker_visible = True
+        self.picker_input_visible = False
+        self._picker_title = title
+        self._picker_pending_uri = None
         if picker.row_count:
             picker.move_cursor(row=0, column=0)
+            self._update_picker_help_for_row(0)
         picker.focus()
+        self._update_banner()
         self.query_one("#status-bar", Static).update(
-            "[dim]Connector picker | arrows to browse | Enter to mount | : for auth/help[/dim]"
+            "[dim]Mount wizard | arrows to browse | Enter to continue | Esc back | a reopen later[/dim]"
         )
 
     async def _mount_selected_picker_uri(self) -> bool:
@@ -371,11 +416,102 @@ class PlaygroundApp(App[None]):
             uri = str(picker.get_row_at(cursor_row)[0])
         except Exception:
             return False
-        await self._mount_uri(uri)
+        await self._handle_picker_uri(uri)
         return True
+
+    async def _handle_picker_uri(self, uri: str) -> None:
+        """Either mount directly or prompt for URI details in the picker."""
+        if self._uri_requires_customization(uri):
+            self._show_picker_input(uri)
+            return
+        await self._mount_uri(uri)
+
+    def _uri_requires_customization(self, uri: str) -> bool:
+        """Whether a picker row needs user input before mounting."""
+        return "<" in uri or uri == "local://./data"
+
+    def _picker_input_defaults(self, uri: str) -> tuple[str, str]:
+        """Prefill and placeholder for a wizard URI input."""
+        cwd = os.getcwd()
+        if uri == "local://./data":
+            return (f"local://{cwd}/data", "local:///absolute/path")
+        if uri.startswith("s3://"):
+            return ("s3://", "s3://bucket[/prefix]")
+        if uri.startswith("gcs://"):
+            return ("gcs://", "gcs://project/bucket[/prefix]")
+        return (uri, uri)
+
+    def _show_picker_input(self, uri: str) -> None:
+        """Switch the mount wizard into URI input mode."""
+        picker_input = self.query_one("#picker-input", Input)
+        value, placeholder = self._picker_input_defaults(uri)
+        picker_input.value = value
+        picker_input.placeholder = placeholder
+        self._picker_pending_uri = uri
+        self.picker_input_visible = True
+        self._update_picker_help(uri=uri, awaiting_input=True)
+        picker_input.focus()
+
+    def _update_banner(self) -> None:
+        """Render a visible top-of-screen summary of available actions."""
+        banner = self.query_one("#playground-banner", Static)
+        if self.picker_visible:
+            banner.update(
+                "[bold]Add Mount[/bold] Browse supported connectors, press Enter to continue, "
+                "and finish setup in the TUI. [dim]Keys:[/dim] arrows browse  Enter continue  Esc back"
+            )
+            return
+
+        restored = ""
+        if self._restored_mounts and self._mount_points:
+            restored = f"[yellow]Restored {len(self._mount_points)} mount(s) from the previous session.[/yellow]  "
+        banner.update(
+            f"{restored}[bold]Add Mount:[/bold] `a`  "
+            "[bold]Ops:[/bold] `n` file  `N` dir  `r` rename  `d` delete  `p` preview"
+        )
+
+    def _update_picker_help_for_row(self, row_index: int) -> None:
+        """Refresh picker help for the highlighted connector row."""
+        try:
+            picker = self.query_one("#connector-picker", DataTable)
+            uri = str(picker.get_row_at(row_index)[0])
+        except Exception:
+            return
+        self._update_picker_help(uri=uri, awaiting_input=self.picker_input_visible)
+
+    def _update_picker_help(self, *, uri: str, awaiting_input: bool) -> None:
+        """Render contextual guidance for the selected picker row."""
+        help_widget = self.query_one("#picker-help", Static)
+        guidance: list[str] = []
+        if uri.startswith("local://"):
+            guidance.append("Local folder mount. Choose any absolute path on disk.")
+            guidance.append(
+                "After mounting you can create files with `n`, directories with `N`, and preview with `p`."
+            )
+        elif uri.startswith("s3://"):
+            guidance.append("S3 mount. Enter `s3://bucket` or `s3://bucket/prefix`.")
+            guidance.append(self._auth_guidance("s3"))
+        elif uri.startswith("gcs://"):
+            guidance.append(
+                "GCS mount. Enter `gcs://project/bucket` or `gcs://project/bucket/prefix`."
+            )
+            guidance.append(self._auth_guidance("gcs"))
+        elif uri.startswith(("gws://", "gdrive://", "gmail://", "calendar://")):
+            guidance.append(f"Google mount target: `{uri}`.")
+            guidance.append(self._auth_guidance("gws"))
+        else:
+            guidance.append(f"Mount target: `{uri}`.")
+        if awaiting_input:
+            guidance.append(
+                "Edit the URI below and press Enter to mount, or Esc to return to the list."
+            )
+        else:
+            guidance.append("Press Enter to mount this target.")
+        help_widget.update("\n".join(guidance))
 
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("", id="playground-banner")
         yield Static("", id="too-small-message")
         empty = Static(
             "[dim]Loading mounts…[/dim]",
@@ -388,6 +524,7 @@ class PlaygroundApp(App[None]):
             placeholder="Search files… (Enter to search, Escape to cancel)",
             id="search-input",
         )
+        yield Input(placeholder="", id="picker-input")
         yield Static("", id="command-bar")
         yield Input(placeholder="", id="crud-input")
         yield Static("", id="status-bar")
@@ -454,10 +591,24 @@ class PlaygroundApp(App[None]):
             uri = str(event.data_table.get_row_at(event.cursor_row)[0])
         except Exception:
             return
-        await self._mount_uri(uri)
+        await self._handle_picker_uri(uri)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Refresh picker guidance while the selection changes."""
+        if event.data_table.id != "connector-picker":
+            return
+        self._update_picker_help_for_row(event.cursor_row)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Route input submissions to search or CRUD handler."""
+        if event.input.id == "picker-input":
+            value = event.value.strip()
+            if value:
+                await self._mount_uri(value)
+                return
+            self.notify("Mount URI is required.", severity="warning", timeout=4)
+            return
+
         # CRUD input
         if event.input.id == "crud-input":
             await self._on_crud_input_submitted(event.value.strip())
@@ -615,12 +766,7 @@ class PlaygroundApp(App[None]):
 
         if command == "mount":
             if not arg:
-                self.notify(
-                    "Usage: /mount local://./data or /mount s3://bucket[/prefix]",
-                    severity="warning",
-                    timeout=4,
-                )
-                self._refocus_table()
+                await self._show_connector_picker("Add a mount")
                 return
             await self._mount_uri(arg)
             self._refocus_table()
@@ -675,6 +821,7 @@ class PlaygroundApp(App[None]):
         self._uris = next_uris
         self._fs = fs
         self._mount_points = fs.list_mounts()
+        self._restored_mounts = False
         self._persist_mounts()
         await self._reset_browser_ui()
         self.notify(f"Mounted {uri}", timeout=3)
@@ -1030,6 +1177,14 @@ class PlaygroundApp(App[None]):
         """Submit the current command buffer."""
         if await self._mount_selected_picker_uri():
             return
+        if self.picker_input_visible:
+            picker_input = self.query_one("#picker-input", Input)
+            value = picker_input.value.strip()
+            if value:
+                await self._mount_uri(value)
+            else:
+                self.notify("Mount URI is required.", severity="warning", timeout=4)
+            return
         if not self.command_visible:
             return
         await self._on_command_input_submitted(self.command_buffer.strip())
@@ -1046,6 +1201,16 @@ class PlaygroundApp(App[None]):
         self.command_visible = False
         self.command_buffer = ""
         self._refocus_table()
+
+    def watch_picker_input_visible(self, visible: bool) -> None:
+        """Show or hide the mount wizard URI input."""
+        try:
+            picker_input = self.query_one("#picker-input", Input)
+            picker_input.display = visible
+            if visible:
+                picker_input.focus()
+        except Exception:
+            pass
 
     def watch_search_visible(self, visible: bool) -> None:
         """Show/hide search input."""
@@ -1192,6 +1357,18 @@ class PlaygroundApp(App[None]):
             self.exit()
             return
         if event.key == "escape":
+            if self.picker_visible and self.picker_input_visible:
+                self.picker_input_visible = False
+                self._picker_pending_uri = None
+                picker_input = self.query_one("#picker-input", Input)
+                picker_input.value = ""
+                self._update_picker_help_for_row(
+                    self.query_one("#connector-picker", DataTable).cursor_row
+                )
+                self._refocus_table()
+                event.prevent_default()
+                return
+
             # Close CRUD input
             if self._crud_mode:
                 self._crud_mode = ""

@@ -116,7 +116,7 @@ jobs:
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
-            --features python \
+            --no-default-features --features python \
             --out build/dist \
             -m rust/nexus_raft/Cargo.toml
 

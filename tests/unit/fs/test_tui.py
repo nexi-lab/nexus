@@ -545,7 +545,7 @@ class TestPlaygroundApp:
         app = PlaygroundApp(uris=())
         rows = app._supported_connector_rows()
         names = {name for name, _mode in rows}
-        assert "s3://bucket/<prefix>" in names
+        assert "s3://<enter bucket manually>" in names
         assert "gcs://project/bucket" in names
         assert "gws://drive" in names
         assert "gws://gmail" in names
@@ -561,8 +561,9 @@ class TestPlaygroundApp:
             return_value=[("s3://nexus-888", "mountable auth:s3 discovered")],
         ):
             rows = app._supported_connector_rows()
-        names = {name for name, _mode in rows}
+        names = [name for name, _mode in rows]
         assert "s3://nexus-888" in names
+        assert names.index("s3://nexus-888") < names.index("s3://<enter bucket manually>")
 
     @pytest.mark.asyncio
     async def test_resolve_mount_user_id_prefers_single_google_credential(self):

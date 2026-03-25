@@ -1027,12 +1027,14 @@ class PlaygroundApp(App[None]):
 
         _register_optional_backends()
 
-        rows: list[tuple[str, str]] = [
-            ("local://./data", "mountable"),
-            ("s3://bucket/<prefix>", "mountable auth:s3"),
-            ("gcs://project/bucket", "mountable auth:gcs"),
-        ]
+        rows: list[tuple[str, str]] = [("local://./data", "mountable")]
         rows.extend(self._discovered_s3_bucket_rows())
+        rows.extend(
+            [
+                ("s3://<enter bucket manually>", "mountable auth:s3 manual"),
+                ("gcs://project/bucket", "mountable auth:gcs"),
+            ]
+        )
         for info in ConnectorRegistry.list_all():
             uri = self._connector_uri_example(info.name)
             if uri is None:

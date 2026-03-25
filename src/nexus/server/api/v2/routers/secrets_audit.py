@@ -1,13 +1,12 @@
-"""Secrets Audit Log REST API endpoints.
+"""Secrets Audit Log REST API — export-only endpoints.
 
-Issue #997: Query & export API for the immutable secrets/credential
-audit trail. Provides filtered listing, CSV/JSON export, single-record
-lookup, and integrity verification.
+CRUD/query endpoints have been migrated to RPC services.
+Only the streaming export endpoint remains (CSV/JSON download).
 
-All endpoints are scoped to the authenticated user's zone_id.
+    GET /api/v2/secrets-audit/events/export  — Streaming CSV/JSON export
 
-Performance: All endpoints use plain ``def`` (not ``async def``) so
-FastAPI auto-dispatches them to a threadpool. This prevents blocking
+Performance: The endpoint uses plain ``def`` (not ``async def``) so
+FastAPI auto-dispatches it to a threadpool. This prevents blocking
 the asyncio event loop during synchronous SQLAlchemy I/O.
 """
 
@@ -23,11 +22,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from nexus.contracts.protocols.secrets_audit_log import SecretsAuditLogProtocol
-from nexus.server.api.v2.models.secrets_audit import (
-    SecretsAuditEventListResponse,
-    SecretsAuditEventResponse,
-    SecretsAuditIntegrityResponse,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -52,18 +46,12 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
     }
 
 
-def _dict_to_response(d: dict[str, Any]) -> SecretsAuditEventResponse:
-    return SecretsAuditEventResponse(**d)
-
-
 def _build_filters(
     zone_id: str,
     *,
     event_type: str | None = None,
     actor_id: str | None = None,
     provider: str | None = None,
-    credential_id: str | None = None,
-    token_family_id: str | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
 ) -> dict[str, Any]:
@@ -72,8 +60,6 @@ def _build_filters(
         "event_type": event_type,
         "actor_id": actor_id,
         "provider": provider,
-        "credential_id": credential_id,
-        "token_family_id": token_family_id,
         "since": since,
         "until": until,
     }
@@ -87,59 +73,6 @@ def _build_filters(
 def get_secrets_audit_logger() -> tuple[SecretsAuditLogProtocol, str]:
     """Placeholder dependency — overridden by fastapi_server.py."""
     raise HTTPException(status_code=500, detail="Secrets audit not configured")
-
-
-# --------------------------------------------------------------------------
-# List events
-# --------------------------------------------------------------------------
-
-
-@router.get("/events")
-def list_events(
-    since: datetime | None = Query(None, description="Events after this time (ISO-8601)"),
-    until: datetime | None = Query(None, description="Events before this time (ISO-8601)"),
-    event_type: str | None = Query(None, description="Filter by event type"),
-    actor_id: str | None = Query(None, description="Filter by actor ID"),
-    provider: str | None = Query(None, description="Filter by OAuth provider"),
-    credential_id: str | None = Query(None, description="Filter by credential ID"),
-    token_family_id: str | None = Query(None, description="Filter by token family ID"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    cursor: str | None = Query(None, description="Cursor from previous response"),
-    include_total: bool = Query(False, description="Include total count"),
-    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
-) -> SecretsAuditEventListResponse:
-    """List secrets audit events with cursor-based pagination."""
-    audit_logger, zone_id = logger_and_zone
-
-    filters = _build_filters(
-        zone_id,
-        event_type=event_type,
-        actor_id=actor_id,
-        provider=provider,
-        credential_id=credential_id,
-        token_family_id=token_family_id,
-        since=since,
-        until=until,
-    )
-
-    try:
-        rows, next_cursor = audit_logger.list_events_cursor(
-            filters=filters, limit=limit, cursor=cursor
-        )
-        total = None
-        if include_total:
-            total = audit_logger.count_events(**filters)
-
-        return SecretsAuditEventListResponse(
-            events=[_dict_to_response(_row_to_dict(r)) for r in rows],
-            limit=limit,
-            has_more=next_cursor is not None,
-            total=total,
-            next_cursor=next_cursor,
-        )
-    except Exception as e:
-        logger.error("Secrets audit query error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to query secrets audit events") from e
 
 
 # --------------------------------------------------------------------------
@@ -225,49 +158,4 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
         iter([content]),
         media_type="application/json",
         headers={"Content-Disposition": "attachment; filename=secrets_audit_events.json"},
-    )
-
-
-# --------------------------------------------------------------------------
-# Single event
-# --------------------------------------------------------------------------
-
-
-@router.get("/events/{record_id}")
-def get_event(
-    record_id: str,
-    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
-) -> SecretsAuditEventResponse:
-    """Get a single secrets audit event by ID."""
-    audit_logger, zone_id = logger_and_zone
-
-    row = audit_logger.get_event(record_id)
-    if row is None or row.zone_id != zone_id:
-        raise HTTPException(status_code=404, detail="Audit event not found")
-    return _dict_to_response(_row_to_dict(row))
-
-
-# --------------------------------------------------------------------------
-# Integrity verification
-# --------------------------------------------------------------------------
-
-
-@router.get("/integrity/{record_id}")
-def verify_integrity(
-    record_id: str,
-    logger_and_zone: tuple[SecretsAuditLogProtocol, str] = Depends(get_secrets_audit_logger),
-) -> SecretsAuditIntegrityResponse:
-    """Verify a record's hash matches its data (tamper detection)."""
-    audit_logger, zone_id = logger_and_zone
-
-    row = audit_logger.get_event(record_id)
-    if row is None or row.zone_id != zone_id:
-        raise HTTPException(status_code=404, detail="Audit event not found")
-
-    record_hash = row.record_hash
-    is_valid = audit_logger.verify_integrity_from_row(row)
-    return SecretsAuditIntegrityResponse(
-        record_id=record_id,
-        is_valid=is_valid,
-        record_hash=record_hash,
     )

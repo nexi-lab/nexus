@@ -20,7 +20,9 @@ Run (from inside Docker network — production-consistent):
 """
 
 import base64
+import hashlib
 import re
+import struct
 import subprocess
 import time
 import uuid
@@ -41,8 +43,18 @@ NODE1_GRPC = "nexus-1:2028"
 NODE2_GRPC = "nexus-2:2028"
 HEALTH_TIMEOUT = 120  # longer for multi-zone startup
 
-# Map Raft node IDs to gRPC targets (for leader-hint following)
-_NODE_ID_TO_GRPC: dict[int, str] = {1: NODE1_GRPC, 2: NODE2_GRPC}
+
+# Map hostname-derived Raft node IDs to gRPC targets (for leader-hint following)
+def _hostname_to_node_id(hostname: str) -> int:
+    """SHA-256 hostname → u64 (matches Rust/Python PeerAddress)."""
+    digest = hashlib.sha256(hostname.encode()).digest()
+    return struct.unpack("<Q", digest[:8])[0] or 1
+
+
+_NODE_ID_TO_GRPC: dict[int, str] = {
+    _hostname_to_node_id("nexus-1"): NODE1_GRPC,
+    _hostname_to_node_id("nexus-2"): NODE2_GRPC,
+}
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
 
 
@@ -74,7 +86,7 @@ def _grpc_call(
             )
             resp = stub.Call(req, timeout=timeout)
             result = decode_rpc_message(resp.payload)
-            if resp.is_error and "not leader" in str(result.get("message", "")):
+            if resp.is_error and "not leader" in str(result):
                 match = _LEADER_HINT_RE.search(str(result["message"]))
                 if match:
                     leader_id = int(match.group(1))
@@ -157,6 +169,8 @@ def _decode_content(result: dict) -> str:
                 return base64.b64decode(data["data"]).decode()
             except Exception:
                 return str(data["data"])
+    if isinstance(data, bytes):
+        return data.decode()
     if isinstance(data, str):
         return data
     return str(data)
@@ -248,7 +262,7 @@ def api_key(cluster):
 class TestDistributedTeamWorkday:
     """Engineer's full workday across all 5 federated zones.
 
-    Covers: write, read, mkdir, list, glob, grep, get_metadata, exists,
+    Covers: write, read, mkdir, list, glob, grep, sys_stat, exists,
     is_directory, rename, copy, delete, cross-link, zone isolation,
     cross-node replication, health, healthz, health/detailed
     """
@@ -353,9 +367,9 @@ class TestDistributedTeamWorkday:
             grep_results = grep_results.get("results", [])
         assert len(grep_results) >= 1, f"Expected grep hit, got: {grep_results}"
 
-        # --- Step 12: Get metadata on README ---
-        m = _grpc_call(grpc1, "get_metadata", {"path": readme}, api_key=api_key)
-        assert "error" not in m, f"get_metadata failed: {m}"
+        # --- Step 12: Get metadata on README (sys_stat — kernel syscall) ---
+        m = _grpc_call(grpc1, "sys_stat", {"path": readme}, api_key=api_key)
+        assert "error" not in m, f"sys_stat failed: {m}"
         meta = m["result"]
         if isinstance(meta, dict) and "metadata" in meta:
             meta = meta["metadata"]

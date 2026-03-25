@@ -427,9 +427,10 @@ def _boot_system_services(
 
     # (Federation is created at link time in _lifecycle.py when nx._zone_mgr is available.)
 
-    # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
-    # AgentRegistry is a kernel-knows sentinel, created at link-time.
-    # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
+    # constructed in NexusFS.__init__ — not booted here.
+    # EvictionManager + AcpService are deferred to _do_link() where they can
+    # reference nx._agent_registry.  See Issue #1792.)
 
     # =====================================================================
     # Assemble result

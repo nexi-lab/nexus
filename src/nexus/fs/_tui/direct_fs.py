@@ -317,7 +317,8 @@ class MultiDirectFS:
         return await self._resolve(path).read_range(path, start, end)
 
     async def write(self, path: str, content: bytes) -> dict[str, Any]:
-        return await self._resolve(path).write(path, content)
+        result: dict[str, Any] = await self._resolve(path).write(path, content)
+        return result
 
     async def ls(
         self,
@@ -325,10 +326,14 @@ class MultiDirectFS:
         detail: bool = False,
         recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
-        return await self._resolve(path).ls(path, detail=detail, recursive=recursive)
+        result: list[str] | list[dict[str, Any]] = await self._resolve(path).ls(
+            path, detail=detail, recursive=recursive
+        )
+        return result
 
     async def stat(self, path: str) -> dict[str, Any] | None:
-        return await self._resolve(path).stat(path)
+        result: dict[str, Any] | None = await self._resolve(path).stat(path)
+        return result
 
     async def mkdir(self, path: str, parents: bool = True) -> None:
         await self._resolve(path).mkdir(path, parents=parents)
@@ -343,10 +348,12 @@ class MultiDirectFS:
         await self._resolve(old_path).rename(old_path, new_path)
 
     async def exists(self, path: str) -> bool:
-        return await self._resolve(path).exists(path)
+        result: bool = await self._resolve(path).exists(path)
+        return result
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        return await self._resolve(src).copy(src, dst)
+        result: dict[str, Any] = await self._resolve(src).copy(src, dst)
+        return result
 
     def list_mounts(self) -> list[str]:
         return sorted(self._mount_map.keys())

@@ -152,7 +152,8 @@ class MountPanel(Widget):
         if not self._mount_infos:
             return None
         idx = max(0, min(self.selected_index, len(self._mount_infos) - 1))
-        return self._mount_infos[idx].mount_point
+        result: str = self._mount_infos[idx].mount_point
+        return result
 
     @property
     def mount_infos(self) -> list[MountInfo]:

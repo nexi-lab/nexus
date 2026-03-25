@@ -64,7 +64,19 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
 
         return await run_all_checks(fs=fs)
 
-    results = asyncio.run(_run())
+    # Use a daemon thread pool so orphaned credential-validation threads
+    # don't block normal exit (boto3 STS / google-auth can be slow).
+    import concurrent.futures
+
+    loop = asyncio.new_event_loop()
+    loop.set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="doctor")
+    )
+    try:
+        results = loop.run_until_complete(_run())
+    finally:
+        loop.close()
+
     render_doctor(results)
 
     # Exit with error code if any checks failed
@@ -73,11 +85,8 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
     has_failure = any(
         r.status == DoctorStatus.FAIL for section in results.values() for r in section
     )
-    # Force-exit to avoid blocking on orphaned thread-pool threads from
-    # credential validation calls (asyncio.to_thread threads can't be cancelled).
-    import os
-
-    os._exit(1 if has_failure else 0)
+    if has_failure:
+        sys.exit(1)
 
 
 @main.command()

@@ -43,7 +43,7 @@ class TestPythonVersion:
         result = check_python_version()
         assert result.status == DoctorStatus.FAIL
         assert "3.10" in result.message
-        assert result.fix_hint is not None
+        assert "3.11" in result.fix_hint
 
 
 class TestNexusFsVersion:

@@ -52,14 +52,14 @@ class DoctorCheckResult:
 
 
 def check_python_version() -> DoctorCheckResult:
-    """Check Python version (>= 3.12 required)."""
+    """Check Python version (>= 3.11 required, per pyproject.toml)."""
     major, minor = sys.version_info[:2]
-    if (major, minor) < (3, 12):
+    if (major, minor) < (3, 11):
         return DoctorCheckResult(
             name="python",
             status=DoctorStatus.FAIL,
-            message=f"Python {major}.{minor} detected; 3.12+ required",
-            fix_hint="Install Python 3.12 or later",
+            message=f"Python {major}.{minor} detected; 3.11+ required",
+            fix_hint="Install Python 3.11 or later",
         )
     return DoctorCheckResult(
         name="python",

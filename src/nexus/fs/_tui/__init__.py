@@ -136,7 +136,37 @@ class PlaygroundApp(App[None]):
                 empty.update(f"[red]Mount failed:[/red] {exc}")
                 return None
 
-        # No URIs — show empty state
+        # No URIs — try auto-discover from state dir
+        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
+            __import__("tempfile").gettempdir(), "nexus-fs"
+        )
+        db_path = os.path.join(state_dir, "metadata.db")
+        if os.path.exists(db_path):
+            try:
+                from nexus.contracts.constants import ROOT_ZONE_ID
+                from nexus.contracts.types import OperationContext
+                from nexus.core.config import BrickServices, KernelServices, PermissionConfig
+                from nexus.core.nexus_fs import NexusFS
+                from nexus.core.router import PathRouter
+                from nexus.fs._facade import SlimNexusFS
+                from nexus.fs._sqlite_meta import SQLiteMetastore
+
+                metastore = SQLiteMetastore(db_path)
+                router = PathRouter(metastore)
+                ctx = OperationContext(
+                    user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
+                )
+                kernel = NexusFS(
+                    metadata_store=metastore,
+                    permissions=PermissionConfig(enforce=False),
+                    kernel_services=KernelServices(router=router),
+                    brick_services=BrickServices(),
+                    init_cred=ctx,
+                )
+                return SlimNexusFS(kernel)
+            except Exception:
+                pass  # Fall through to empty state
+
         empty = self.query_one("#empty-state", Static)
         empty.update(
             "[bold]No mounts specified[/bold]\n\n"
@@ -335,17 +365,19 @@ class PlaygroundApp(App[None]):
 
         query_lower = query.lower()
         for entry in browser._entries:
-            name = entry.get("path", "").rstrip("/").rsplit("/", 1)[-1]
+            # Search results show full path (not just basename) so
+            # cross-mount and duplicate-filename results are unambiguous.
+            full_path = entry.get("path", "").rstrip("/")
             is_dir = entry.get("is_directory", False)
 
-            # Highlight matching text
-            name = _highlight_match(name, query_lower)
+            # Highlight matching text in the full path
+            display_path = _highlight_match(full_path, query_lower)
 
             if is_dir:
-                name = f"[bold cyan]{name}/[/bold cyan]"
+                display_path = f"[bold cyan]{display_path}/[/bold cyan]"
             size = "—" if is_dir else _format_size(entry.get("size", 0))
             modified = _format_modified(entry.get("modified_at"))
-            table.add_row(name, size, modified)
+            table.add_row(display_path, size, modified)
 
         # Build status with partial backend indicator
         overflow = browser.query_one("#overflow", Static)

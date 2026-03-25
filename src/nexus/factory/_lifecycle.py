@@ -169,6 +169,7 @@ async def _do_link(
         ("brick_reconciler", "brick_reconciler"),
         ("async_namespace_manager", "async_namespace_manager"),
         ("workspace_manager", "workspace_manager"),
+        ("federation", "federation"),
     ):
         _val = getattr(system_services, _attr, None)
         if _val is not None:

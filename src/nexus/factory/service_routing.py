@@ -18,6 +18,14 @@ from typing import Any
 
 _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "search": ("glob", "grep", "list", "semantic_search"),
+    "federation": (
+        "federation_list_zones",
+        "federation_cluster_info",
+        "federation_create_zone",
+        "federation_join_zone",
+        "federation_mount",
+        "federation_unmount",
+    ),
     "rebac": ("rebac_check", "rebac_create", "rebac_list_tuples", "rebac_expand"),
     "events": ("wait_for_changes", "on_mutation", "locked"),
     "mount": ("add_mount", "remove_mount", "list_mounts"),

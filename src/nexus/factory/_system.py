@@ -446,6 +446,19 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
 
+    # --- Federation Service (Q1: register-only, on-demand) ---
+    # Pure Raft/redb — no PostgreSQL dependency. Created when ZoneManager available.
+    federation: Any = None
+    _zone_mgr = getattr(ctx.nx, "_zone_mgr", None) if ctx.nx is not None else None
+    if _zone_mgr is not None:
+        try:
+            from nexus.raft.federation import NexusFederation
+
+            federation = NexusFederation(zone_manager=_zone_mgr)
+            logger.debug("[BOOT:SYSTEM] NexusFederation created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] NexusFederation unavailable: %s", exc)
+
     # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
     # constructed in NexusFS.__init__ — not booted here.
     # EvictionManager + AcpService are deferred to _do_link() where they can
@@ -480,6 +493,7 @@ def _boot_system_services(
         "brick_reconciler": brick_reconciler,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        "federation": federation,
     }
 
     elapsed = time.perf_counter() - t0

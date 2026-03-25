@@ -93,8 +93,22 @@ class OAuthConnectorBase(
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
 
+    # Maps generic provider names to oauth.yaml config names.
+    # All Google services share the same OAuth client credentials, so a user
+    # who passes provider="google" should resolve to the connector-specific
+    # config entry (gmail, gcalendar, google-drive, etc.).
+    _PROVIDER_ALIASES: dict[str, list[str]] = {
+        "google": ["gmail", "gcalendar", "google-drive", "google-cloud-storage"],
+    }
+
     def _register_oauth_provider(self) -> None:
-        """Register OAuth provider with TokenManager using OAuthProviderFactory."""
+        """Register OAuth provider with TokenManager using OAuthProviderFactory.
+
+        Tries the configured provider name first, then falls back to the
+        backend's canonical name, then generic aliases. This handles the common
+        case where a user mounts with provider="google" but oauth.yaml defines
+        "gmail" or "gcalendar".
+        """
         try:
             import importlib as _il
 
@@ -104,19 +118,35 @@ class OAuthConnectorBase(
 
             factory = OAuthProviderFactory()
 
-            try:
-                provider_instance = factory.create_provider(name=self.provider)
-                self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(
-                    "Registered OAuth provider '%s' for %s backend", self.provider, self.name
-                )
-            except ValueError as e:
-                logger.warning(
-                    "OAuth provider '%s' not available: %s. "
-                    "OAuth flow must be initiated manually via the Integrations page.",
-                    self.provider,
-                    e,
-                )
+            # Build candidate list: configured name → backend name → aliases
+            candidates = [self.provider]
+            backend_name = getattr(self, "name", "")
+            if backend_name and backend_name != self.provider:
+                candidates.append(backend_name)
+            for alias, targets in self._PROVIDER_ALIASES.items():
+                if self.provider == alias:
+                    candidates.extend(targets)
+
+            for candidate in candidates:
+                try:
+                    provider_instance = factory.create_provider(name=candidate)
+                    self.token_manager.register_provider(self.provider, provider_instance)
+                    logger.info(
+                        "Registered OAuth provider '%s' (resolved from '%s') for %s backend",
+                        candidate,
+                        self.provider,
+                        self.name,
+                    )
+                    return
+                except ValueError:
+                    continue
+
+            logger.warning(
+                "OAuth provider '%s' not available (tried: %s). "
+                "OAuth flow must be initiated manually via the Integrations page.",
+                self.provider,
+                ", ".join(candidates),
+            )
         except Exception as e:
             logger.error("Failed to register OAuth provider: %s", e)
 

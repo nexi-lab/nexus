@@ -318,11 +318,10 @@ class GmailConnectorBackend(OAuthConnectorBase):
         from nexus.lib.sync_bridge import run_sync
 
         try:
-            # Default to 'default' zone if not specified to match mount configurations
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(

@@ -385,7 +385,7 @@ def main(
             _print_lifecycle_detail(nx)
 
         # --- Resolve auth ---------------------------------------------------
-        auth_provider = None
+        auth_provider: Any = None
         if auth_type == "database":
             if not database_url:
                 database_url = os.getenv("POSTGRES_URL")

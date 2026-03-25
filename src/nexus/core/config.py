@@ -268,9 +268,8 @@ class SystemServices:
     # Tier 1 because it is infrastructure (like vfs_lock_manager), not an application feature.
     lock_manager: Any = None
 
-    # Federation — multi-node zone orchestration (Q1: register-only, on-demand)
-    # Depends only on ZoneManager (Raft/redb). No PostgreSQL dependency.
-    federation: Any = None
+    # (Federation is a Q3 PersistentService, created at link time in _lifecycle.py
+    # and enlisted directly via ServiceRegistry — not in SystemServices.)
 
 
 # ---------------------------------------------------------------------------

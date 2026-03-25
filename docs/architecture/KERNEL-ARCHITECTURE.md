@@ -409,7 +409,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **PipeManager + RingBuffer** | `core.pipe_manager` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). Manages all 4 service quadrants — subsumes former ServiceLifecycleCoordinator |
-| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Manages driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry lifecycle (drivers vs services) |
+| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 

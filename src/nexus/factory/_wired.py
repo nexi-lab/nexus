@@ -511,7 +511,9 @@ def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
             _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
             _ipc_data_dir.mkdir(parents=True, exist_ok=True)
             _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-            nx.router.add_mount("/agents", _ipc_connector)
+            # DriverLifecycleCoordinator is kernel-owned (always available).
+            # Registers hook_spec + broadcasts mount event via KernelDispatch.
+            nx._driver_coordinator.mount("/agents", _ipc_connector)
 
             # Ensure the /agents metadata entry has target_zone_id set so
             # ZonePathResolver doesn't fail on it. mkdir creates a DT_DIR

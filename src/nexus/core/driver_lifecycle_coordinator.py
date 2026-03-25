@@ -11,11 +11,13 @@ Responsibilities:
     2. Register/unregister backend's hook_spec with KernelDispatch
     3. Broadcast mount/unmount events via KernelDispatch hooks
 
+Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
+Always available after kernel construction.
+
 Boot timing:
-    create_nexus_fs()  → router.add_mount("/", backend)   # before KernelDispatch
-    NexusFS.__init__() → creates _dispatch
-    _do_link()         → creates DriverLifecycleCoordinator
-                       → adopt_existing_mount("/")          # retroactive hook_spec
+    create_nexus_fs()  → router.add_mount("/", backend)   # before __init__
+    NexusFS.__init__() → creates DriverLifecycleCoordinator
+    _do_link()         → adopt_existing_mount("/")          # retroactive hook_spec
 
 Issue #1811, #1320.
 """

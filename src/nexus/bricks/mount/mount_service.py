@@ -102,6 +102,7 @@ class MountService:
             search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
         self.router = router
+        self._driver_coordinator: Any = None  # Injected post-init by factory
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
         self._gw = gateway
@@ -577,12 +578,13 @@ class MountService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # Add to router, then setup -- rollback on failure (Issue #2754).
+        # Add to router via DriverLifecycleCoordinator (registers hook_spec +
+        # broadcasts mount event), then setup -- rollback on failure (#2754).
         # If _setup_mount_point fails after the mount is active in the router,
         # the mount would be accessible without proper permissions configured.
-        self.router.add_mount(
-            mount_point=mount_point,
-            backend=backend,
+        self._driver_coordinator.mount(
+            mount_point,
+            backend,
             readonly=readonly,
             io_profile=io_profile,
         )
@@ -593,7 +595,7 @@ class MountService:
                 "Mount setup failed for %s, rolling back router registration",
                 mount_point,
             )
-            self.router.remove_mount(mount_point)
+            self._driver_coordinator.unmount(mount_point)
             raise
 
         return mount_point
@@ -626,8 +628,10 @@ class MountService:
             "errors": [],
         }
 
-        # Remove from router
-        if not self.router.remove_mount(mount_point):
+        # Remove from router via DriverLifecycleCoordinator (unregisters hooks +
+        # broadcasts unmount event).
+        removed = self._driver_coordinator.unmount(mount_point)
+        if not removed:
             result["errors"].append(f"Mount not found: {mount_point}")
             return result
 

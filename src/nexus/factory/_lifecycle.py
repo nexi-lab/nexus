@@ -126,15 +126,18 @@ async def _do_link(
     nx._service_registry.set_lifecycle_manager(_blm)
     await enlist_wired_services(nx._service_registry, _wired)
 
-    # Issue #1811: Create DriverLifecycleCoordinator and adopt root mount.
-    # Root mount ("/") was added to PathRouter in create_nexus_fs() before
-    # KernelDispatch existed.  adopt_existing_mount() retroactively registers
+    # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
+    # NexusFS.__init__). Root mount ("/") was added to PathRouter in
+    # create_nexus_fs() before __init__ — adopt retroactively registers
     # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
-    from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+    await nx._service_registry.enlist("driver_coordinator", nx._driver_coordinator)
+    nx._driver_coordinator.adopt_existing_mount("/")
 
-    driver_coordinator = DriverLifecycleCoordinator(nx.router, nx._dispatch)
-    await nx._service_registry.enlist("driver_coordinator", driver_coordinator)
-    driver_coordinator.adopt_existing_mount("/")
+    # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
+    # mounts go through coordinator (hook_spec registration + KernelDispatch).
+    _mount_svc = getattr(_wired, "mount_service", None)
+    if _mount_svc is not None:
+        _mount_svc._driver_coordinator = nx._driver_coordinator
 
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because

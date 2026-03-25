@@ -32,35 +32,6 @@ NexusFS follows an **OS-inspired layered architecture**.
 
 Every kernel interface belongs to exactly one of four categories:
 
-```
-        ┌──────────────────────────────────────────────────┐
-        │               Users / AI / Agents                │
-        └──────────────┬───────────────────────────────────┘
-                       │  ↑ USER CONTRACT (§2)
-                       │    NexusFilesystemABC, 10 sys_*,
-                       │    Tier 2 convenience (mkdir, …), Hook Reg API
-        ┌──────────────┴───────────────────────────────────┐
-        │               KERNEL                             │
-        │  ┌─────────────────────────────────────────────┐ │
-        │  │  PRIMITIVES — internal (§4)                 │ │
-        │  │  VFSRouter, VFSLockManager,                │ │
-        │  │  KernelDispatch, PipeManager, StreamManager,│ │
-        │  │  FileEvent, ServiceRegistry                │ │
-        │  └─────────────────────────────────────────────┘ │
-        └──────────────┬───────────────────────────────────┘
-                       │  ↓ HAL — DRIVER CONTRACT (§3)
-                       │    MetastoreABC, ObjectStoreABC,
-                       │    CacheStoreABC
-        ┌──────────────┴───────────────────────────────────┐
-        │               DRIVERS                            │
-        │  redb, S3, LocalDisk, Dragonfly, PostgreSQL      │
-        └──────────────────────────────────────────────────┘
-
-        ── Kernel-Authored Standards (§5) ──────────────────
-           RecordStoreABC, 40+ Service Protocols
-           Defined by kernel, NOT owned by kernel.
-```
-
 | Category | Direction | Audience | Kernel relationship |
 |----------|-----------|----------|---------------------|
 | **User Contract** (§2) | ↑ upward | Users, AI, agents, services extending syscalls | Kernel **implements** |
@@ -89,23 +60,17 @@ through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
 ### Service Lifecycle
 
 `factory/` acts as the init system (like systemd): creates selected services
-and injects them via DI. Different distros select different service sets at
-startup — `nexus-server` loads all 22+, MINIMAL profile loads zero.
+and injects them via DI. `DeploymentProfile` gates which bricks are constructed
+(see §7).
 
-Factory boot sequence (6 phases, strictly ordered):
+Factory boot sequence:
 
-| Phase | Name | Side effects | Key actions |
-|-------|------|-------------|-------------|
-| 1 | `create_nexus_services()` | None | Build 3-tier service containers (Kernel/System/Brick) |
-| 2 | `NexusFS()` constructor | None | Kernel primitives only (MetastoreABC, VFSRouter, KernelDispatch, PipeManager, StreamManager, AgentRegistry, ServiceRegistry) + `init_cred` (kernel process identity, like Linux `init_task.cred`) |
-| 3 | `link()` | None (memory only) | Wire service topology via `_do_link()`. `functools.partial` bakes `system_services` into closures — kernel never stores the reference for reads |
-| 4 | `initialize()` | None | Register VFS hooks (INTERCEPT + OBSERVE), IPC adapter bind |
-| 5 | `bootstrap()` | Yes (I/O, threads) | `mark_bootstrapped()` → auto-start PersistentServices, activate HotSwappable hooks |
-| 6 | Runtime | Yes | Syscalls live, hooks fire, observers emit |
+1. **`create_nexus_services()`** — Build 3-tier service containers (Kernel/System/Brick)
+2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O)
+3. **`link()`** — Wire service topology via DI closures (memory only)
+4. **`initialize()`** — Register VFS hooks, IPC adapter bind
 
-Services needing kernel syscalls declare `KERNEL_DEPS` in `brick_factory.py`;
-`ServiceRegistry` resolves via kernel symbol table (`EXPORT_SYMBOL()` pattern).
-`DeploymentProfile` gates which bricks are constructed (see §7).
+See `factory/orchestrator.py` for implementation.
 
 #### Service Lifecycle Protocols
 
@@ -136,11 +101,8 @@ scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
 
 **Service → Kernel wiring pattern:** Factory captures service references in
-`functools.partial` closures (same pattern as `_brick_on`, `_parse_fn`).
-The kernel receives injected callables/sentinels — never reads service
-containers directly. Example: `flush_write_observer` uses
-`_flush_write_observer_fn` (closure over `write_observer.flush()`), not
-`_system_services.write_observer`.
+`functools.partial` closures. The kernel receives injected callables/sentinels
+— never reads service containers directly.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 
@@ -262,66 +224,29 @@ Mount/unmount hooks are dispatched by `DriverLifecycleCoordinator` (§4) via
 KernelDispatch. Backends declare mount hooks via `hook_spec()` (same pattern
 as VFS hooks). CASAddressingEngine uses `on_mount` for mount-time logging.
 
-**PRE-DISPATCH** (Issue #889): `VFSPathResolver` instances checked in order;
-first match handles entire operation. Each resolver owns its own permission
-semantics.
+**PRE-DISPATCH**: `VFSPathResolver` instances checked in order; first match
+handles entire operation. Each resolver owns its own permission semantics.
 
-**INTERCEPT**: Per-operation hook lists (`VFS*Hook` protocols, one per syscall).
-Hooks receive a typed context dataclass, can modify context or abort. PRE hooks
-are synchronous. POST hooks support both sync (serial, fault-isolated) and async
-(parallel with timeout) — classified at registration by Rust `HookRegistry`.
-Audit is a factory-registered interceptor, not a kernel built-in.
+**INTERCEPT**: Per-operation `VFS*Hook` protocols. Hooks receive a typed context
+dataclass, can modify context or abort. POST hooks support sync and async
+(classified by Rust `HookRegistry`). Audit is a factory-registered interceptor,
+not a kernel built-in.
 
 **OBSERVE**: `VFSObserver` instances receive frozen `FileEvent` (§4.3) on all
-mutations. Used for cache invalidation, workflow triggers, telemetry.
-Strictly fire-and-forget: observers are dispatched concurrently (no ordering
-guarantees between observers), failures are logged but never abort the syscall.
-`notify()` returns immediately — observer execution is non-blocking to the
-caller.  Observers that need causal ordering with the mutation belong in
-INTERCEPT post-hooks, not OBSERVE.
+mutations. Strictly fire-and-forget — failures never abort the syscall.
+Observers needing causal ordering belong in INTERCEPT post-hooks, not OBSERVE.
 
-All 11 hook protocols + 9 context dataclasses defined in `contracts/vfs_hooks.py`
-(tier-neutral): 9 VFS operation hooks + 2 driver lifecycle hooks (VFSMountHook,
-VFSUnmountHook). Concrete implementations live in `services/hooks/` (policy,
-like SELinux/AppArmor).
+Hook protocols and context dataclasses are defined in `contracts/vfs_hooks.py`
+(tier-neutral). Concrete implementations live in `services/hooks/`.
 
-### 2.5 Hook Registration API
+**Registration API:** Each phase has a symmetric `register_*()` /
+`unregister_*()` pair — runtime-callable by any authorized caller.
 
-User Contract for extending syscall behavior at runtime. Each of the three
-dispatch phases has a symmetric `register_*()` / `unregister_*()` pair:
+### 2.5 Mediation Principle
 
-| Phase | Pattern | Count |
-|-------|---------|-------|
-| PRE-DISPATCH | `register_resolver()` / `unregister_resolver()` | 1 pair |
-| INTERCEPT | `register_intercept_{op}()` / `unregister_intercept_{op}()` | 7 pairs (one per hookable syscall) |
-| OBSERVE | `register_observe()` / `unregister_observe()` | 1 pair |
-
-Like Linux's `register_kprobe()` / `security_add_hooks()`, these are
-**runtime-callable** — any authorized caller (factory, service, user, agent)
-can register and unregister hooks dynamically.
-
-### 2.6 Mediation Principle
-
-Users access HAL only through syscalls. Primitives (§4) mediate all
-user→HAL interaction:
-
-```
-User call                Kernel Primitives               HAL Driver
-─────────                ─────────────────               ──────────
-nx.sys_write(path, buf)
-  │
-  ├─→ KernelDispatch.resolve_write()   [PRE-DISPATCH: short-circuit?]
-  ├─→ VFSRouter.route(path)            [path → backend + backend_path]
-  ├─→ KernelDispatch.intercept_pre_*() [permission, policy hooks]
-  ├─→ VFSLockManager.acquire(write)    [exclusive lock]
-  │     │
-  │     ├─→ Backend.write_content(buf)  ← HAL call
-  │     ├─→ MetastoreABC.put(metadata)  ← HAL call
-  │     │
-  ├─→ VFSLockManager.release()         [lock released]
-  ├─→ KernelDispatch.intercept_post_*() [audit, cache update]
-  └─→ KernelDispatch.notify(FileEvent) [OBSERVE: fire-and-forget]
-```
+Users access HAL only through syscalls. For mutating syscalls the pipeline is:
+PRE-DISPATCH → route → INTERCEPT pre → lock → HAL I/O → unlock → INTERCEPT
+post → OBSERVE. See `syscall-design.md` for the full per-syscall flow.
 
 **Exception:** Tier 2 hash-addressed operations (see §2.3 HDFS half) access
 ObjectStoreABC directly by etag, bypassing path resolution and metadata lookup.
@@ -473,20 +398,9 @@ See `federation-memo.md` §7j for design rationale.
 | Storage | In-memory dict (process heap) — no persistence |
 | Lifecycle | Created in `NexusFS.__init__()`, closed via factory close callback |
 
-The AgentRegistry is the kernel's process table — an in-memory registry of all
-active agent descriptors (spawn, status, close). Like Linux's `task_struct`,
-it is kernel-owned infrastructure that services consume but never create.
-
-**Why kernel-owned (Issue #1792):** AgentRegistry was previously created in the
-system-services boot tier and injected via `SystemServices.agent_registry`.
-This caused a layering violation: the kernel needed to read `_system_services`
-to access its own process table. Moving it to `NexusFS.__init__()` (alongside
-PipeManager and StreamManager) makes it a true kernel primitive — available
-before any service boots, with no upward dependency.
-
-**Consumers:** EvictionManager, AcpService, AgentStatusResolver (all service-layer).
-These are created at factory link-time (`_do_link()`) where `nx._agent_registry`
-is already available.
+In-memory registry of all active agent descriptors (spawn, status, close).
+Like Linux's `task_struct`, it is infrastructure that services consume but
+never create.
 
 ---
 
@@ -560,14 +474,8 @@ See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matchin
 | Scope | In-memory, process-scoped, TTL-based lazy expiry |
 | Consumers | Advisory lock layer (`SemaphoreAdvisoryLockManager`), CAS metadata RMW |
 
-Replaced `_StripeLock` (ad-hoc 64-stripe mutex) for CAS metadata coordination.
 Advisory lock layer uses two semaphores per path for RW gate pattern
 (shared/exclusive). See `lock-architecture.md` §3.
-
-Previously lived in `core.semaphore` as a kernel primitive. Moved to `lib/`
-(PR #3298) because it has no kernel dependencies and is consumed by
-service-layer components — making it a kernel-authored standard, not a
-kernel-owned primitive.
 
 ---
 
@@ -649,10 +557,12 @@ See `federation-memo.md` §2–§5 for gRPC/consensus details.
 
 | Topic | Document |
 |-------|----------|
-| Data type → pillar mapping (50+ types) | `data-storage-matrix.md` |
-| Ops ABC × scenario affinity (40+ domains) | `ops-scenario-matrix.md` |
+| Data type → pillar mapping | `data-storage-matrix.md` |
+| Ops ABC × scenario affinity | `ops-scenario-matrix.md` |
 | Syscall table and design rationale | `syscall-design.md` |
 | VFS lock design + advisory locks | `lock-architecture.md` §4 |
 | Zone model, DT_MOUNT, federation | `federation-memo.md` §5–§6 |
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
 | Pipe + Stream design rationale | `federation-memo.md` §7j |
+| Backend storage composition (CAS × Backend) | `backend-architecture.md` |
+| CLI nexus/nexusd split | `cli-design.md` |

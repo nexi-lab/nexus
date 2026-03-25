@@ -92,6 +92,7 @@ class ServiceQuadrant(enum.Enum):
       be started/stopped (event loops, polling, workers).
     """
 
+    # Q1: still swappable via ServiceRef refcount drain (#1452).
     Q1_RESTART_REQUIRED = "Q1"
     Q2_HOT_SWAPPABLE = "Q2"
     Q3_PERSISTENT = "Q3"

@@ -115,6 +115,7 @@ async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
 
     All wired services are Q1 (restart-required) — no HotSwappable or PersistentService
     — so enlist() auto-detects and registers them without lifecycle side effects.
+    Q1 services are still swappable at runtime via swap_service() (#1452).
 
     Returns the number of services enlisted.
     """

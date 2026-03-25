@@ -14,6 +14,8 @@ import pytest
 textual = pytest.importorskip("textual")
 
 
+from textual.widgets import DataTable  # noqa: E402
+
 from nexus.fs._tui import PlaygroundApp  # noqa: E402
 from nexus.fs._tui.file_browser import (  # noqa: E402
     MAX_DISPLAY_ENTRIES,
@@ -201,6 +203,12 @@ class TestMountPanel:
         info = panel._mount_infos[0]
         assert info.status == "checking"
 
+    def test_error_render_includes_auth_hint(self):
+        """Auth-backed mount errors include inline next-step guidance."""
+        panel = MountPanel(_make_mock_fs(), ["/s3/bucket"])
+        rendered = panel._render_mount(MountInfo(mount_point="/s3/bucket", status="error"))
+        assert "run /auth s3" in rendered
+
 
 # ---------------------------------------------------------------------------
 # File browser tests
@@ -289,6 +297,8 @@ class TestPlaygroundApp:
                 # App should show empty state
                 empty = app.query_one("#empty-state")
                 assert empty is not None
+                picker = app.query_one("#connector-picker", DataTable)
+                assert picker is not None
 
     @pytest.mark.asyncio
     async def test_mount_failure_shows_error(self):
@@ -333,6 +343,135 @@ class TestPlaygroundApp:
             assert app.show_mount_panel is False
             app.action_toggle_mount_panel()
             assert app.show_mount_panel is True
+
+    @pytest.mark.asyncio
+    async def test_command_toggle_via_action(self):
+        """Toggle command action changes command_visible state."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            assert not app.command_visible
+            app.action_toggle_command()
+            assert app.command_visible
+            app.action_toggle_command()
+            assert not app.command_visible
+
+    @pytest.mark.asyncio
+    async def test_mount_uri_adds_local_mount(self, tmp_path):
+        """The command-path mount helper adds a local mount and rebuilds the UI."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            await app._mount_uri(f"local://{tmp_path}")
+            await pilot.pause(delay=0.3)
+            assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+
+    @pytest.mark.asyncio
+    async def test_submit_command_mounts_local_uri(self, tmp_path):
+        """Submitting the command buffer mounts a local URI."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            app.command_visible = True
+            app.command_buffer = f"/mount local://{tmp_path}"
+            await app.action_submit_command()
+            await pilot.pause(delay=0.3)
+            assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_mounts_selected_uri(self, tmp_path):
+        """Selecting a connector picker row mounts it and transitions to browser UI."""
+        app = PlaygroundApp(uris=())
+        target_uri = f"local://{tmp_path}"
+        state_dir = tmp_path / "state"
+
+        with (
+            patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False),
+            patch.object(
+                app, "_supported_connector_rows", return_value=[(target_uri, "mountable")]
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                picker = app.query_one("#connector-picker", DataTable)
+                assert picker.row_count == 1
+                await pilot.press("enter")
+                await pilot.pause(delay=0.5)
+                assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+                assert app.picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_show_connector_picker_action_from_browser(self, tmp_path):
+        """The add-mount action reopens the connector picker from browser mode."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            assert app.picker_visible is False
+            await app.action_show_connector_picker()
+            await pilot.pause(delay=0.2)
+            picker = app.query_one("#connector-picker", DataTable)
+            assert picker is not None
+            assert app.picker_visible is True
+
+    def test_auth_guidance_for_s3(self):
+        """S3 auth guidance points users to the guided CLI flow."""
+        app = PlaygroundApp(uris=())
+        message = app._auth_guidance("s3")
+        assert "nexus-fs auth connect s3 native" in message
+        assert "/mount s3://bucket" in message
+
+    def test_supported_connector_rows_include_dynamic_gws_targets(self):
+        """The playground lists concrete connector mount targets, not just services."""
+        app = PlaygroundApp(uris=())
+        rows = app._supported_connector_rows()
+        names = {name for name, _mode in rows}
+        assert "s3://bucket/<prefix>" in names
+        assert "gcs://project/bucket" in names
+        assert "gws://drive" in names
+        assert "gws://gmail" in names
+
+    @pytest.mark.asyncio
+    async def test_resolve_mount_user_id_prefers_single_google_credential(self):
+        """A single stored Google credential becomes the mount user identity."""
+        app = PlaygroundApp(uris=())
+
+        with (
+            patch("nexus.cli.commands.oauth.get_token_manager", return_value=MagicMock()),
+            patch(
+                "nexus.bricks.auth.oauth.credential_service.OAuthCredentialService.list_credentials",
+                new=AsyncMock(
+                    return_value=[
+                        {
+                            "provider": "google",
+                            "user_email": "alice@example.com",
+                        }
+                    ]
+                ),
+            ),
+        ):
+            assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_build_filesystem_uses_generic_mount_for_connector_uri(self):
+        """Connector URIs go through nexus.fs.mount instead of the direct-only path."""
+        app = PlaygroundApp(uris=())
+        kernel = MagicMock()
+        kernel.router.list_mounts.return_value = ["/gws/drive"]
+        facade = MagicMock(kernel=kernel)
+
+        with (
+            patch("nexus.fs.mount", new=AsyncMock(return_value=facade)) as mock_mount,
+            patch.object(
+                app, "_resolve_mount_user_id", new=AsyncMock(return_value="alice@example.com")
+            ),
+        ):
+            fs = await app._build_filesystem(("gws://drive",))
+            mock_mount.assert_awaited_once_with("gws://drive")
+            assert fs.list_mounts() == ["/gws/drive"]
 
 
 # ---------------------------------------------------------------------------

@@ -84,7 +84,18 @@ class MountPanel(Widget):
             latency = f" ({info.latency_ms:.0f}ms)" if info.latency_ms is not None else ""
             return f"[green]●[/green] {info.mount_point}{latency}"
         else:
-            return f"[red]●[/red] {info.mount_point}"
+            hint = ""
+            if info.mount_point.startswith("/s3/"):
+                hint = " [dim]run /auth s3[/dim]"
+            elif info.mount_point.startswith("/gcs/"):
+                hint = " [dim]run /auth gcs[/dim]"
+            elif info.mount_point.startswith(("/gws/", "/gdrive/", "/gmail/", "/calendar/")):
+                hint = " [dim]run /auth gws[/dim]"
+            elif info.mount_point.startswith("/slack/"):
+                hint = " [dim]run /auth slack[/dim]"
+            elif info.mount_point.startswith("/x/"):
+                hint = " [dim]run /auth x[/dim]"
+            return f"[red]●[/red] {info.mount_point}{hint}"
 
     async def on_mount(self) -> None:
         """Start connectivity checks when widget is mounted."""

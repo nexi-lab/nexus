@@ -11,6 +11,7 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
+import inspect
 import json
 import sys
 from typing import Any
@@ -146,13 +147,14 @@ async def _async_add_mount(
         try:
             mount_svc = nx.service("mount")
             assert mount_svc is not None
-            mount_id = await mount_svc.add_mount(
+            mount_result = mount_svc.add_mount(
                 mount_point=mount_point,
                 backend_type=backend_type,
                 backend_config=config_dict,
                 readonly=readonly,
                 io_profile=io_profile,
             )
+            mount_id = await mount_result if inspect.isawaitable(mount_result) else mount_result
             console.print(f"[green]\u2713[/green] Mount added successfully (ID: {mount_id})")
         except AttributeError:
             # Fallback for older NexusFS that doesn't have mount_service
@@ -209,7 +211,8 @@ async def _async_remove_mount(
         try:
             mount_svc = nx.service("mount")
             assert mount_svc is not None
-            result = await mount_svc.remove_mount(mount_point=mount_point)
+            remove_result = mount_svc.remove_mount(mount_point=mount_point)
+            result = await remove_result if inspect.isawaitable(remove_result) else remove_result
             if result.get("removed"):
                 console.print("[green]\u2713[/green] Mount removed successfully")
             else:

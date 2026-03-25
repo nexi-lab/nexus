@@ -104,6 +104,15 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
         capabilities=["read", "write", "list", "delete", "tools"],
         description="Google Calendar events with full CRUD support",
     ),
+    "gws": ServiceInfo(
+        name="gws",
+        display_name="Google Workspace",
+        connector=None,  # auto-derived: prefers one canonical gws_* connector
+        klavis_mcp=None,
+        oauth_provider="google",
+        capabilities=["read", "write", "list", "delete", "tools"],
+        description="Google Workspace CLI-backed connectors using shared Google auth",
+    ),
     # Cloud storage — connector fields auto-derived from ConnectorRegistry
     "gcs": ServiceInfo(
         name="gcs",

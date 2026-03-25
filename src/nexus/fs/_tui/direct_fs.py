@@ -360,7 +360,7 @@ class MultiDirectFS:
         return result
 
     def list_mounts(self) -> list[str]:
-        return sorted(self._mount_map.keys())
+        return list(self._mount_map.keys())
 
     async def close(self) -> None:
         for b in self._backends:

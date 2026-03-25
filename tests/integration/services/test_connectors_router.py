@@ -4,7 +4,7 @@ Tests the GET /api/v2/connectors and GET /api/v2/connectors/{name}/capabilities
 endpoints using FastAPI TestClient with a mocked ConnectorRegistry.
 """
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -43,6 +43,7 @@ def _make_connector_info(
         category=category,
         user_scoped=user_scoped,
         capabilities=capabilities or frozenset(),
+        service_name=name,
     )
 
 
@@ -156,3 +157,33 @@ class TestGetConnectorCapabilities:
         resp = _client.get("/api/v2/connectors/basic_backend/capabilities")
         assert resp.status_code == 200
         assert resp.json()["capabilities"] == []
+
+
+class TestAvailableConnectors:
+    """GET /api/v2/connectors/available endpoint."""
+
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
+    def test_available_includes_auth_status(self, mock_registry: MagicMock) -> None:
+        nx = MagicMock()
+        mount_service = MagicMock()
+        mount_service.list_mounts = AsyncMock(return_value=[])
+        nx.service.side_effect = lambda name: mount_service if name == "mount" else None
+        auth_service = MagicMock()
+        auth_service.get_connector_auth_state = AsyncMock(
+            return_value={
+                "auth_status": "authed",
+                "auth_source": "stored:secret",
+            }
+        )
+        _test_app.state.nexus_fs = nx
+        _test_app.state.auth_service = auth_service
+
+        mock_registry.list_all.return_value = [
+            _make_connector_info(name="gcs", description="GCS"),
+        ]
+
+        resp = _client.get("/api/v2/connectors/available")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload[0]["auth_status"] == "authed"
+        assert payload[0]["auth_source"] == "stored:secret"

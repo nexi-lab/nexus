@@ -75,6 +75,7 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     "gws_sheets",
     description="Google Sheets via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class SheetsConnector(CLIConnector):
     """Google Sheets CLI connector via ``gws sheets``."""
@@ -117,6 +118,7 @@ class SheetsConnector(CLIConnector):
     "gws_docs",
     description="Google Docs via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class DocsConnector(CLIConnector):
     """Google Docs CLI connector via ``gws docs``."""
@@ -159,6 +161,7 @@ class DocsConnector(CLIConnector):
     "gws_chat",
     description="Google Chat via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class ChatConnector(CLIConnector):
     """Google Chat CLI connector via ``gws chat``."""
@@ -199,6 +202,7 @@ class ChatConnector(CLIConnector):
     "gws_drive",
     description="Google Drive via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class DriveConnector(CLIConnector):
     """Google Drive CLI connector via ``gws drive``."""
@@ -275,6 +279,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     "gws_gmail",
     description="Gmail via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class GmailConnector(CLIConnector):
     """Gmail CLI connector via ``gws gmail``.
@@ -706,6 +711,7 @@ class GmailConnector(CLIConnector):
     "gws_calendar",
     description="Google Calendar via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class CalendarConnector(CLIConnector):
     """Calendar CLI connector via ``gws calendar``.

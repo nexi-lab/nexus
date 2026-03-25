@@ -16,6 +16,8 @@ import sys
 
 import click
 
+from nexus.cli.commands.auth_cli import auth as auth_group
+
 
 @click.group(invoke_without_command=True)
 @click.version_option(package_name="nexus-fs")
@@ -126,6 +128,9 @@ def playground(uris: tuple[str, ...]) -> None:
 
     app = PlaygroundApp(uris=uris)
     app.run()
+
+
+main.add_command(auth_group)
 
 
 if __name__ == "__main__":

@@ -116,6 +116,11 @@ class TestMountServiceInit:
         assert service.mount_manager is None
         assert service.nexus_fs is None
 
+    def test_init_stores_auth_service(self, mock_router) -> None:
+        auth_service = MagicMock()
+        service = MountService(router=mock_router, auth_service=auth_service)
+        assert service._auth_service is auth_service
+
 
 # =============================================================================
 # list_mounts tests
@@ -241,6 +246,64 @@ class TestRemoveMount:
         assert result["removed"] is True
         assert result["directory_deleted"] is False
         assert len(result["errors"]) > 0
+
+
+class TestAddMountAuthResolution:
+    """Tests auth resolution during mount creation."""
+
+    def test_add_mount_uses_auth_service_resolution(
+        self, mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
+    ) -> None:
+        auth_service = MagicMock()
+        auth_service.resolve_backend_config.return_value = MagicMock(
+            resolved_config={"bucket": "demo", "access_key_id": "AKIA", "secret_access_key": "x"},
+            status=MagicMock(value="authed"),
+            message=None,
+        )
+        service = MountService(
+            router=mock_router,
+            mount_manager=mock_mount_manager,
+            nexus_fs=mock_nexus_fs,
+            auth_service=auth_service,
+        )
+        service._check_permission = MagicMock(return_value=True)
+        service._create_backend = MagicMock(return_value=MagicMock())
+        service._setup_mount_point = MagicMock()
+        service._driver_coordinator = mock_driver_coordinator
+
+        result = service.add_mount_sync(
+            "/mnt/s3",
+            "path_s3",
+            {"bucket": "demo"},
+        )
+
+        assert result == "/mnt/s3"
+        auth_service.resolve_backend_config.assert_called_once()
+        service._create_backend.assert_called_once_with(
+            "path_s3",
+            {"bucket": "demo", "access_key_id": "AKIA", "secret_access_key": "x"},
+        )
+
+    def test_add_mount_raises_when_auth_missing(
+        self, mock_router, mock_mount_manager, mock_nexus_fs, mock_driver_coordinator
+    ) -> None:
+        auth_service = MagicMock()
+        auth_service.resolve_backend_config.return_value = MagicMock(
+            resolved_config={"bucket": "demo"},
+            status=MagicMock(value="no_auth"),
+            message="Run `nexus auth connect s3 secret`.",
+        )
+        service = MountService(
+            router=mock_router,
+            mount_manager=mock_mount_manager,
+            nexus_fs=mock_nexus_fs,
+            auth_service=auth_service,
+        )
+        service._check_permission = MagicMock(return_value=True)
+        service._driver_coordinator = mock_driver_coordinator
+
+        with pytest.raises(RuntimeError, match="nexus auth connect s3 secret"):
+            service.add_mount_sync("/mnt/s3", "path_s3", {"bucket": "demo"})
 
 
 # =============================================================================

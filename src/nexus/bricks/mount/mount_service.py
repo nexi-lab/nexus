@@ -80,6 +80,7 @@ class MountService:
         sync_job_service: Any = None,
         mount_persist_service: Any = None,
         oauth_service: Any = None,
+        auth_service: Any = None,
         persist_service: Any = None,
         rmdir_fn: Any = None,
         token_manager_fn: Any = None,
@@ -96,6 +97,7 @@ class MountService:
             sync_job_service: SyncJobService for async sync job management
             mount_persist_service: MountPersistService for config persistence
             oauth_service: OAuthCredentialService for credential revocation
+            auth_service: UnifiedAuthService for stored/native credential resolution
             persist_service: MountPersistService (alias, used by delete_connector)
             rmdir_fn: Callback to delete directories (NexusFS.rmdir)
             token_manager_fn: Callback to get token manager for OAuth revocation
@@ -110,6 +112,7 @@ class MountService:
         self._sync_job_service = sync_job_service
         self._mount_persist_service = mount_persist_service
         self._oauth_service = oauth_service
+        self._auth_service = auth_service
         self._persist_service = persist_service
         self._rmdir_fn = rmdir_fn
         self._token_manager_fn = token_manager_fn
@@ -570,10 +573,20 @@ class MountService:
                     config = {**config, "token_manager_db": database_url}
                 except RuntimeError as e:
                     raise RuntimeError(f"Cannot create {backend_type} mount: {e}") from e
-            else:
-                raise RuntimeError(
-                    f"Cannot create {backend_type} mount: no gateway or nexus_fs configured"
-                )
+                else:
+                    raise RuntimeError(
+                        f"Cannot create {backend_type} mount: no gateway or nexus_fs configured"
+                    )
+
+        if self._auth_service is not None:
+            resolution = self._auth_service.resolve_backend_config(
+                backend_type,
+                config,
+                context=context,
+            )
+            config = resolution.resolved_config
+            if resolution.status.value == "no_auth" and resolution.message:
+                raise RuntimeError(f"Cannot create {backend_type} mount: {resolution.message}")
 
         # Create backend instance
         backend = self._create_backend(backend_type, config)

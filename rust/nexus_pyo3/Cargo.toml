@@ -1,6 +1,6 @@
 [package]
 name = "nexus_pyo3"
-version = "0.9.13"
+version = "0.9.12"
 edition = "2021"
 
 [lib]

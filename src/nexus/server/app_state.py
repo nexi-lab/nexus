@@ -188,6 +188,4 @@ def _flatten_nexus_fs(app: "FastAPI", nexus_fs: Any) -> None:
     app.state.event_bus = _svc("event_bus")
     app.state.write_observer = _svc("write_observer")
     app.state.observability_subsystem = _svc("observability_subsystem")
-    app.state.brick_lifecycle_manager = _svc("brick_lifecycle_manager")
-    app.state.brick_reconciler = _svc("brick_reconciler")
     app.state.eviction_manager = _svc("eviction_manager")

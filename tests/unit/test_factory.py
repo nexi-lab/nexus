@@ -176,8 +176,6 @@ class TestBootSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "context_branch_service",
-            "brick_lifecycle_manager",
-            "brick_reconciler",
             "zone_lifecycle",
             # (PipeManager + AgentRegistry are kernel-internal §4.2, not in SystemServices)
             "scheduler_service",

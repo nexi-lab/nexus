@@ -4,64 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.contracts.protocols.brick_lifecycle import BrickLifecycleProtocol
 from nexus.contracts.types import OperationContext
-
-# ---------------------------------------------------------------------------
-# Brick mock factories (shared by test_brick_lifecycle + test_brick_reconciler)
-# ---------------------------------------------------------------------------
-
-
-def make_lifecycle_brick(name: str = "test") -> MagicMock:
-    """Create a mock brick that satisfies BrickLifecycleProtocol."""
-    brick = AsyncMock(spec=BrickLifecycleProtocol)
-    brick.start = AsyncMock(return_value=None)
-    brick.stop = AsyncMock(return_value=None)
-    brick.health_check = AsyncMock(return_value=True)
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    return brick
-
-
-def make_stateless_brick(name: str = "pay") -> MagicMock:
-    """Create a mock brick without lifecycle methods (stateless)."""
-    brick = MagicMock()
-    brick.__class__.__name__ = f"{name.capitalize()}Brick"
-    if hasattr(brick, "start"):
-        del brick.start
-    if hasattr(brick, "stop"):
-        del brick.stop
-    if hasattr(brick, "health_check"):
-        del brick.health_check
-    return brick
-
-
-def make_zone_aware_brick(name: str = "test") -> MagicMock:
-    """Create a mock brick that satisfies both BrickLifecycleProtocol and ZoneAwareBrickProtocol."""
-    brick = make_lifecycle_brick(name)
-    brick.drain = AsyncMock(return_value=None)
-    brick.finalize = AsyncMock(return_value=None)
-    return brick
-
-
-def make_drain_only_brick(name: str = "drain_only") -> MagicMock:
-    """Create a mock brick that only has drain() (no finalize)."""
-    brick = make_lifecycle_brick(name)
-    brick.drain = AsyncMock(return_value=None)
-    return brick
-
-
-def make_finalize_only_brick(name: str = "finalize_only") -> MagicMock:
-    """Create a mock brick that only has finalize() (no drain)."""
-    brick = make_lifecycle_brick(name)
-    brick.finalize = AsyncMock(return_value=None)
-    return brick
-
-
-def make_failing_brick(error: Exception | None = None) -> MagicMock:
-    """Create a mock brick whose start() raises."""
-    brick = make_lifecycle_brick("failing")
-    brick.start = AsyncMock(side_effect=error or RuntimeError("Connection refused"))
-    return brick
 
 
 @pytest.fixture

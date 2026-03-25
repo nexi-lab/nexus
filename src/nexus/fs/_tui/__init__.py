@@ -187,8 +187,6 @@ class PlaygroundApp(App[None]):
         Binding("b", "go_back", "Back"),
         Binding("/", "toggle_search", "Search", key_display="/"),
         Binding(":", "toggle_command", "Command", key_display=":", priority=True),
-        Binding("enter", "submit_command", "", show=False, priority=True),
-        Binding("ctrl+m", "submit_command", "", show=False, priority=True),
         Binding("backspace", "command_backspace", "", show=False, priority=True),
         Binding("a", "show_connector_picker", "Add Mount"),
         Binding("c", "copy_path", "Copy path"),

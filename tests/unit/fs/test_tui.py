@@ -453,6 +453,25 @@ class TestPlaygroundApp:
                 assert app.picker_visible is False
 
     @pytest.mark.asyncio
+    async def test_browser_enter_opens_selected_directory(self, tmp_path):
+        """Pressing Enter in the file browser should navigate into the selected directory."""
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "skills" / "nested.txt").write_text("hi")
+        (tmp_path / "hello.txt").write_text("hello")
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            browser = app.query_one("#file-browser", FileBrowser)
+            table = browser.query_one("#file-table", DataTable)
+            table.focus()
+            await pilot.pause(delay=0.1)
+            await pilot.press("enter")
+            await pilot.pause(delay=0.3)
+            assert browser.current_path.endswith("/skills")
+            assert app._current_path.endswith("/skills")
+
+    @pytest.mark.asyncio
     async def test_browser_banner_mentions_restored_mounts(self, tmp_path):
         """Restored sessions should say so explicitly in the top banner."""
         state_dir = tmp_path / "state"

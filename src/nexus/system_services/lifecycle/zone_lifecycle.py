@@ -7,9 +7,7 @@ Orchestrates zone teardown using a Kubernetes-inspired finalizer pattern:
 3. Finalizers removed as they complete; zone enters ``Terminated`` when empty.
 4. Per-finalizer timeout (30 s) + reconciler retry on failure.
 
-Reuses patterns from:
-    - ``services/brick_lifecycle.py`` (state machine, per-entry locks)
-    - ``services/brick_reconciler.py`` (backoff, jitter)
+Reuses patterns: state machine with per-entry locks, exponential backoff with jitter.
 """
 
 import asyncio

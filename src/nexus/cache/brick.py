@@ -49,8 +49,8 @@ logger = logging.getLogger(__name__)
 class CacheBrick:
     """Tier 2 Cache Brick — owns all cache domain services.
 
-    Provides protocol-typed accessors for domain caches and integrates
-    with ``BrickLifecycleManager`` for start/stop orchestration.
+    Provides protocol-typed accessors for domain caches with
+    start/stop lifecycle (enlisted as PersistentService via ServiceRegistry).
 
     Example::
 

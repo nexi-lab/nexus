@@ -33,6 +33,7 @@ from nexus.backends.connectors.base import (
     ValidatedMixin,
 )
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
+from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 from nexus.backends.connectors.cli.result import CLIErrorMapper, CLIResult, CLIResultStatus
 from nexus.contracts.capabilities import (
     CLI_CONNECTOR_CAPABILITIES,
@@ -53,6 +54,7 @@ class CLIConnector(
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,
+    DisplayPathMixin,
 ):
     """Generic base class for CLI-backed connectors.
 
@@ -338,11 +340,9 @@ class CLIConnector(
         # Build CLI command
         cli_args = self._build_cli_args(operation, validated, path)
 
-        # Serialize validated payload as YAML for stdin.
-        payload_yaml = yaml.dump(
-            validated.model_dump(exclude_none=True) if hasattr(validated, "model_dump") else data,
-            default_flow_style=False,
-        )
+        # Prepare stdin payload — hookable so subclasses (e.g., GmailConnector)
+        # can return None to use flag-based args instead of stdin YAML.
+        payload_yaml = self._prepare_stdin(operation, validated, data)
 
         # Auth token is passed via CLI-specific transport (env var or flag),
         # NOT mixed into stdin. The payload YAML goes on stdin alone.
@@ -425,6 +425,18 @@ class CLIConnector(
 
         return args
 
+    def _prepare_stdin(self, operation: str, validated: Any, data: dict) -> str | None:
+        """Prepare the stdin payload for CLI execution.
+
+        Default: serialize validated model as YAML for stdin.
+        Override to return ``None`` for connectors that pass data via CLI
+        flags instead of stdin (e.g., GmailConnector gws helper commands).
+        """
+        return yaml.dump(
+            validated.model_dump(exclude_none=True) if hasattr(validated, "model_dump") else data,
+            default_flow_style=False,
+        )
+
     def _build_auth_env(self, token: str) -> dict[str, str]:
         """Build environment variables for CLI auth.
 
@@ -488,12 +500,31 @@ class CLIConnector(
                 stderr=f"CLI '{cli_binary}' not found in PATH",
             )
 
-        # Merge auth env vars with current environment
+        # Build subprocess environment only when customization is needed.
+        # - Strip GOOGLE_APPLICATION_CREDENTIALS (breaks gws OAuth in Docker)
+        # - Set HOME=/home/nexus for gws/gh (Docker runs as root)
+        # - Merge caller-provided auth env vars
         import os
 
-        run_env = None
-        if env:
-            run_env = {**os.environ, **env}
+        needs_custom_env = bool(env) or "GOOGLE_APPLICATION_CREDENTIALS" in os.environ
+        _nexus_home = "/home/nexus"
+        _cli_lower = (cli_binary or "").lower()
+        if _cli_lower in ("gws", "gh") and os.path.isdir(f"{_nexus_home}/.config"):
+            needs_custom_env = True
+
+        run_env: dict[str, str] | None = None
+        if needs_custom_env:
+            run_env = {**os.environ}
+            run_env.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+            if env:
+                run_env.update(env)
+            # Docker fix: gws/gh config is at /home/nexus/.config/
+            if (
+                _cli_lower in ("gws", "gh")
+                and run_env.get("HOME") != _nexus_home
+                and os.path.isdir(f"{_nexus_home}/.config")
+            ):
+                run_env["HOME"] = _nexus_home
 
         start = time.perf_counter()
         try:

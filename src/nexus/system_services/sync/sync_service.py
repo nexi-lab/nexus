@@ -781,15 +781,27 @@ class SyncService:
                 # Delta check failed - proceed with full sync for this file
                 logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
 
+        # Apply display_path() if the backend supports it (Issue #3256).
+        # Reads content to extract metadata (subject, date, labels) and
+        # rewrites virtual_path to a human-readable name.
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        if isinstance(backend, DisplayPathMixin):
+            virtual_path = self._apply_display_path_for_sync(
+                backend,
+                virtual_path,
+                backend_path,
+                ctx,
+            )
+
         # Check if file exists in metadata
         existing_meta = self._gw.metadata_get(virtual_path)
 
         if not existing_meta:
             try:
                 if not zone_id:
-                    raise ValueError(
-                        f"Cannot sync file {virtual_path}: zone_id not found in context or mount point path"
-                    )
+                    zone_id = ROOT_ZONE_ID
+                    logger.debug("[SYNC] No zone_id for %s, using ROOT_ZONE_ID", virtual_path)
 
                 now = datetime.now(UTC)
 
@@ -994,9 +1006,8 @@ class SyncService:
             zone_id = self._resolve_zone_id(ctx)
 
             if not zone_id:
-                raise ValueError(
-                    f"Cannot sync directory {virtual_path}: zone_id not found in context or mount point path"
-                )
+                zone_id = ROOT_ZONE_ID
+                logger.debug("[SYNC] No zone_id for dir %s, using ROOT_ZONE_ID", virtual_path)
 
             now = datetime.now(UTC)
 
@@ -1435,3 +1446,55 @@ class SyncService:
         Raises PermissionCheckError on infrastructure failures.
         """
         return check_permission(self._gw, path, permission, context)
+
+    # --- Display path support (Issue #3256) ---
+
+    def _apply_display_path_for_sync(
+        self,
+        backend: Any,
+        virtual_path: str,
+        backend_path: str,
+        ctx: "SyncContext",
+    ) -> str:
+        """Rewrite virtual_path using backend.display_path() with content metadata.
+
+        Reads file content from the backend, parses YAML to extract metadata
+        (subject, date, labels), and calls display_path() to produce a
+        human-readable virtual path. Falls back to the original path on error.
+
+        Only called during sync (not on every listing), so the extra read
+        is a one-time cost per file.
+        """
+        try:
+            content = backend.read_content(backend_path, context=ctx.context)
+            if not content:
+                return virtual_path
+
+            import yaml
+
+            parsed = yaml.safe_load(content)
+            if not isinstance(parsed, dict):
+                return virtual_path
+
+            # Extract item_id from filename and enrich metadata with
+            # path-derived context (e.g., calendarId from parent directory)
+            # that read_content() doesn't include in the response.
+            parts = backend_path.rstrip("/").rsplit("/", 1)
+            filename = parts[-1]
+            item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+            if len(parts) > 1 and "calendarId" not in parsed:
+                parsed["calendarId"] = parts[0].split("/")[-1]
+
+            display = backend.display_path(item_id, parsed)
+
+            # If display_path returned the default, no rewrite.
+            if display == f"{item_id}.yaml":
+                return virtual_path
+
+            # Build new virtual_path from mount_point + display.
+            mount_point = ctx.mount_point
+            if mount_point:
+                return f"{mount_point.rstrip('/')}/{display.lstrip('/')}"
+            return f"/{display.lstrip('/')}"
+        except Exception:
+            return virtual_path

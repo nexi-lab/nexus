@@ -320,3 +320,119 @@ class TestSyncProviderProtocol:
         """FakeConnectorSyncProvider satisfies ConnectorSyncProvider protocol."""
         provider = FakeConnectorSyncProvider()
         assert isinstance(provider, ConnectorSyncProvider)
+
+
+# ---------------------------------------------------------------------------
+# CLISyncProvider._parse_list_output metadata extraction (Issue #3256)
+# ---------------------------------------------------------------------------
+
+
+class TestParseListOutputMetadata:
+    """Verify that metadata from CLI output flows into RemoteItem.metadata."""
+
+    def _make_provider(self, connector=None):
+        from nexus.backends.connectors.cli.sync_provider import CLISyncProvider
+
+        if connector is None:
+            from unittest.mock import MagicMock
+
+            connector = MagicMock()
+            connector._config = None
+        return CLISyncProvider(connector)
+
+    def test_metadata_extracted_from_dict_items(self) -> None:
+        import yaml
+
+        provider = self._make_provider()
+        stdout = yaml.dump(
+            [
+                {
+                    "id": "msg-1",
+                    "subject": "Meeting Notes",
+                    "date": "2026-03-20",
+                    "labels": ["INBOX", "CATEGORY_PERSONAL"],
+                },
+            ]
+        )
+        page = provider._parse_list_output(stdout)
+        assert len(page.items) == 1
+        item = page.items[0]
+        assert item.item_id == "msg-1"
+        assert item.metadata["subject"] == "Meeting Notes"
+        assert item.metadata["date"] == "2026-03-20"
+        assert item.metadata["labels"] == ["INBOX", "CATEGORY_PERSONAL"]
+
+    def test_metadata_excludes_standard_fields(self) -> None:
+        import yaml
+
+        provider = self._make_provider()
+        stdout = yaml.dump(
+            [
+                {
+                    "id": "x",
+                    "size": 1024,
+                    "hash": "abc",
+                    "modified": "2026-01-01",
+                    "title": "Hello",
+                },
+            ]
+        )
+        page = provider._parse_list_output(stdout)
+        meta = page.items[0].metadata
+        # Standard fields should NOT be in metadata
+        assert "id" not in meta
+        assert "size" not in meta
+        assert "hash" not in meta
+        assert "modified" not in meta
+        # Custom fields should be in metadata
+        assert meta["title"] == "Hello"
+
+    def test_display_path_called_when_no_explicit_path(self) -> None:
+        """When items have no 'path' field, connector.display_path() is used."""
+        from unittest.mock import MagicMock
+
+        import yaml
+
+        connector = MagicMock()
+        connector._config = None
+        connector.display_path.return_value = "INBOX/PRIMARY/2026-03-20_Meeting.yaml"
+
+        provider = self._make_provider(connector)
+        stdout = yaml.dump([{"id": "msg-1", "subject": "Meeting"}])
+        page = provider._parse_list_output(stdout)
+
+        assert page.items[0].relative_path == "INBOX/PRIMARY/2026-03-20_Meeting.yaml"
+        connector.display_path.assert_called_once()
+
+    def test_explicit_path_overrides_display_path(self) -> None:
+        """When items have an explicit 'path' field, it takes precedence."""
+        from unittest.mock import MagicMock
+
+        import yaml
+
+        connector = MagicMock()
+        connector._config = None
+
+        provider = self._make_provider(connector)
+        stdout = yaml.dump([{"id": "msg-1", "path": "custom/path.yaml"}])
+        page = provider._parse_list_output(stdout)
+
+        assert page.items[0].relative_path == "custom/path.yaml"
+        connector.display_path.assert_not_called()
+
+    def test_string_items_use_display_path(self) -> None:
+        """When items are plain strings, display_path() is called."""
+        from unittest.mock import MagicMock
+
+        import yaml
+
+        connector = MagicMock()
+        connector._config = None
+        connector.display_path.return_value = "issues/42_bug-fix.yaml"
+
+        provider = self._make_provider(connector)
+        stdout = yaml.dump(["item-42"])
+        page = provider._parse_list_output(stdout)
+
+        assert page.items[0].relative_path == "issues/42_bug-fix.yaml"
+        connector.display_path.assert_called_once_with("item-42", None)

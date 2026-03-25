@@ -122,7 +122,13 @@ class SyncPipelineService:
         # STEP 5: Process content and prepare cache entries
         logger.info("[CACHE-SYNC] Step 5: Processing and preparing batch cache write...")
         cache_entries_to_write, files_to_embed = self._step5_process_content(
-            backend_contents, file_metadata, max_size, generate_embeddings, context, result
+            backend_contents,
+            file_metadata,
+            max_size,
+            generate_embeddings,
+            context,
+            result,
+            mount_point=mount_point,
         )
 
         # STEP 6: Batch write to cache (single transaction)
@@ -199,7 +205,9 @@ class SyncPipelineService:
             result.errors.append(f"Failed to list files: {e}")
             return [], {}
 
-        # Build virtual paths mapping
+        # Build virtual paths mapping.
+        # Note: display_path() rewriting and collision resolution happen later
+        # in Step 5, after content is read and metadata is available.
         backend_to_virtual: dict[str, str] = {}
         for backend_path in files:
             if mount_point:
@@ -373,6 +381,7 @@ class SyncPipelineService:
         generate_embeddings: bool,
         context: OperationContext | None,
         result: "SyncResult",
+        mount_point: str | None = None,
     ) -> tuple[list[dict], list[str]]:
         """Step 5: Process content and prepare cache entries."""
         zone_id = getattr(context, "zone_id", None) if context else None
@@ -406,7 +415,17 @@ class SyncPipelineService:
                     vpath, content
                 )
 
-                # Prepare cache entry for batch write
+                # Apply display_path() if the connector supports it (Issue #3256).
+                # This transforms ID-based vpaths into human-readable names using
+                # metadata extracted from the actual content (subject, date, etc.).
+                # Connectors with custom list_dir() (Gmail, Calendar) go through
+                # the SyncPipeline, not CLISyncProvider, so display_path() must
+                # be applied here after content is available.
+                vpath = self._apply_display_path(backend_path, vpath, content, mount_point)
+
+                # Prepare cache entry for batch write.
+                # backend_id enables reverse mapping (display path → backend ID)
+                # for read operations (Issue #3256, Decision 15A).
                 cache_entries_to_write.append(
                     {
                         "path": vpath,
@@ -414,6 +433,7 @@ class SyncPipelineService:
                         "content_text": parsed_text,
                         "content_type": "parsed" if parsed_text else "full",
                         "backend_version": version,
+                        "backend_id": backend_path,
                         "parsed_from": parsed_from,
                         "parse_metadata": parse_metadata,
                         "zone_id": zone_id,
@@ -429,6 +449,23 @@ class SyncPipelineService:
 
             except Exception as e:
                 result.errors.append(f"Failed to process {backend_path}: {e}")
+
+        # Resolve display-path collisions across the batch (Issue #3256).
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        if cache_entries_to_write and isinstance(self._connector, DisplayPathMixin):
+            from nexus.backends.connectors.cli.display_path import resolve_collisions
+
+            items = [(e["path"], e["backend_id"]) for e in cache_entries_to_write]
+            resolved = resolve_collisions(items)
+            for i, (new_path, _bid) in enumerate(resolved):
+                if new_path != cache_entries_to_write[i]["path"]:
+                    old = cache_entries_to_write[i]["path"]
+                    cache_entries_to_write[i]["path"] = new_path
+                    # Update embed path too.
+                    if old in files_to_embed:
+                        idx = files_to_embed.index(old)
+                        files_to_embed[idx] = new_path
 
         logger.info(
             f"[CACHE-SYNC] Step 5 complete: {len(cache_entries_to_write)} entries prepared "
@@ -532,3 +569,53 @@ class SyncPipelineService:
             logger.debug("Failed to list files recursively in %s: %s", path, e)
 
         return files
+
+    def _apply_display_path(
+        self,
+        backend_path: str,
+        vpath: str,
+        content: bytes,
+        mount_point: str | None,
+    ) -> str:
+        """Rewrite vpath using connector.display_path() if available.
+
+        Called in Step 5 after content is read, because display_path() needs
+        metadata (subject, date, labels) that is only available in the content.
+        Connectors with custom list_dir() (Gmail, Calendar) go through the
+        SyncPipeline, not CLISyncProvider, so display_path() must be applied
+        here rather than during list parsing.
+        """
+        connector = self._connector
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        if not isinstance(connector, DisplayPathMixin):
+            return vpath
+
+        # Extract the item ID from the backend_path filename.
+        filename = backend_path.rstrip("/").rsplit("/", 1)[-1]
+        item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+        # Parse content to get metadata for display_path().
+        metadata: dict = {}
+        try:
+            import yaml
+
+            parsed = yaml.safe_load(content)
+            if isinstance(parsed, dict):
+                metadata = parsed
+        except Exception:
+            pass
+
+        try:
+            display = connector.display_path(item_id, metadata)
+        except Exception:
+            return vpath
+
+        # If display_path returned the default (same as item_id), no rewrite.
+        if display == f"{item_id}.yaml":
+            return vpath
+
+        # Build new vpath from mount_point + display path.
+        if mount_point:
+            return f"{mount_point.rstrip('/')}/{display.lstrip('/')}"
+        return f"/{display.lstrip('/')}"

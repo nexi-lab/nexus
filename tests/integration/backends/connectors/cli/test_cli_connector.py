@@ -379,3 +379,51 @@ class TestStubs:
     def test_delete_content_noop(self) -> None:
         connector = FakeCLIConnector()
         connector.delete_content("hash")  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# CLI execution env isolation (Issue #3256)
+# ---------------------------------------------------------------------------
+
+
+class TestCLIEnvIsolation:
+    def test_google_application_credentials_stripped(self) -> None:
+        """GOOGLE_APPLICATION_CREDENTIALS must not leak to CLI subprocesses.
+
+        GCS storage backends set this env var for service account auth,
+        but it breaks gws CLI OAuth (gws uses its own env vars).
+        """
+        import os
+
+        connector = FakeCLIConnector()
+
+        # Inject GOOGLE_APPLICATION_CREDENTIALS into the environment
+        old = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/app/gcs-credentials.json"
+        try:
+            # Call the REAL _execute_cli (not the fake override)
+            result = CLIConnector._execute_cli(
+                connector, ["echo", "hello"], stdin=None, context=None, env=None
+            )
+        finally:
+            if old is None:
+                os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+            else:
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = old
+
+        # The subprocess should have run without GOOGLE_APPLICATION_CREDENTIALS
+        assert result.ok
+        assert "hello" in result.stdout
+
+    def test_auth_env_vars_passed_through(self) -> None:
+        """Custom auth env vars (GH_TOKEN, GWS_ACCESS_TOKEN) must be passed."""
+        connector = FakeCLIConnector()
+        result = CLIConnector._execute_cli(
+            connector,
+            ["env"],
+            stdin=None,
+            context=None,
+            env={"GWS_ACCESS_TOKEN": "test-tok-123"},
+        )
+        assert result.ok
+        assert "GWS_ACCESS_TOKEN=test-tok-123" in result.stdout

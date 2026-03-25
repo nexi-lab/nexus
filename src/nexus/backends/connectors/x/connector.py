@@ -58,6 +58,7 @@ from nexus.backends.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
+from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
 from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
@@ -146,10 +147,7 @@ class XConnectorBackend(
     }
 
     ERROR_REGISTRY = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "TWEET_TOO_LONG": ErrorDef(
             message="Tweet exceeds 280 characters",
             skill_section="operations",

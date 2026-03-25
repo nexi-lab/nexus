@@ -5,6 +5,7 @@ CLI configuration. Instantiate directly or via ``create_connector_from_yaml()``
 with the corresponding YAML config.
 
 Phase 3 (Issue #3148).
+Human-readable display paths added in Issue #3256.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from nexus.backends.connectors.base import (
     OpTraits,
     Reversibility,
 )
+from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.calendar.schemas import (
     CreateEventSchema,
     DeleteEventSchema,
@@ -28,6 +30,7 @@ from nexus.backends.connectors.calendar.schemas import (
 )
 from nexus.backends.connectors.cli.base import CLIConnector
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
+from nexus.backends.connectors.cli.display_path import sanitize_filename
 
 # Gmail/Calendar schemas live in their own packages (existing API connectors)
 from nexus.backends.connectors.gmail.schemas import (
@@ -53,6 +56,21 @@ logger = logging.getLogger(__name__)
 _CONFIGS_DIR = Path(__file__).parent / "configs"
 
 
+def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
+    """Load a GWS connector YAML config from the configs directory."""
+    config_path = _CONFIGS_DIR / filename
+    if config_path.exists():
+        from nexus.backends.connectors.cli.loader import load_connector_config
+
+        return load_connector_config(config_path)
+    return None
+
+
+# ============================================================================
+# Sheets
+# ============================================================================
+
+
 @register_connector(
     "gws_sheets",
     description="Google Sheets via gws CLI",
@@ -76,10 +94,7 @@ class SheetsConnector(CLIConnector):
         ),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "SPREADSHEET_NOT_FOUND": ErrorDef(
             message="Spreadsheet not found",
             skill_section="operations",
@@ -88,18 +103,14 @@ class SheetsConnector(CLIConnector):
     }
 
     def __init__(self, **kwargs: Any) -> None:
-        config = self._load_config("sheets.yaml")
+        config = _load_gws_config("sheets.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
-    @staticmethod
-    def _load_config(filename: str) -> CLIConnectorConfig | None:
-        config_path = _CONFIGS_DIR / filename
-        if config_path.exists():
-            from nexus.backends.connectors.cli.loader import load_connector_config
 
-            return load_connector_config(config_path)
-        return None
+# ============================================================================
+# Docs
+# ============================================================================
 
 
 @register_connector(
@@ -125,10 +136,7 @@ class DocsConnector(CLIConnector):
         ),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "DOCUMENT_NOT_FOUND": ErrorDef(
             message="Document not found",
             skill_section="operations",
@@ -137,9 +145,14 @@ class DocsConnector(CLIConnector):
     }
 
     def __init__(self, **kwargs: Any) -> None:
-        config = SheetsConnector._load_config("docs.yaml")
+        config = _load_gws_config("docs.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+
+# ============================================================================
+# Chat
+# ============================================================================
 
 
 @register_connector(
@@ -163,10 +176,7 @@ class ChatConnector(CLIConnector):
         "create_space": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.EXPLICIT),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "SPACE_NOT_FOUND": ErrorDef(
             message="Chat space not found",
             skill_section="operations",
@@ -175,9 +185,14 @@ class ChatConnector(CLIConnector):
     }
 
     def __init__(self, **kwargs: Any) -> None:
-        config = SheetsConnector._load_config("chat.yaml")
+        config = _load_gws_config("chat.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+
+# ============================================================================
+# Drive
+# ============================================================================
 
 
 @register_connector(
@@ -203,10 +218,7 @@ class DriveConnector(CLIConnector):
         "delete_file": OpTraits(reversibility=Reversibility.PARTIAL, confirm=ConfirmLevel.USER),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "FILE_NOT_FOUND": ErrorDef(
             message="File not found in Drive",
             skill_section="operations",
@@ -215,9 +227,48 @@ class DriveConnector(CLIConnector):
     }
 
     def __init__(self, **kwargs: Any) -> None:
-        config = SheetsConnector._load_config("drive.yaml")
+        config = _load_gws_config("drive.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
+        """Preserve original filename from Drive metadata."""
+        if metadata:
+            name = metadata.get("name") or metadata.get("title")
+            if name:
+                return sanitize_filename(name)
+        return f"{item_id}.yaml"
+
+
+# ============================================================================
+# Gmail
+# ============================================================================
+
+
+# Gmail inbox category subfolders (Issue #3256, Decision 16A).
+# These map to Gmail's CATEGORY_* system labels.
+_GMAIL_CATEGORIES: dict[str, str] = {
+    "CATEGORY_PERSONAL": "PRIMARY",
+    "CATEGORY_SOCIAL": "SOCIAL",
+    "CATEGORY_UPDATES": "UPDATES",
+    "CATEGORY_PROMOTIONS": "PROMOTIONS",
+    "CATEGORY_FORUMS": "FORUMS",
+}
+_GMAIL_CATEGORY_FOLDERS = sorted(_GMAIL_CATEGORIES.values())
+
+
+def _gmail_category_from_labels(labels: list[str] | None) -> str:
+    """Derive the Gmail category subfolder from message labels.
+
+    Returns the first matching category, or ``PRIMARY`` as default.
+    """
+    if not labels:
+        return "PRIMARY"
+    for label in labels:
+        cat = _GMAIL_CATEGORIES.get(label)
+        if cat:
+            return cat
+    return "PRIMARY"
 
 
 @register_connector(
@@ -230,6 +281,7 @@ class GmailConnector(CLIConnector):
 
     CLI-backed alternative to the existing GmailConnectorBackend API connector.
     Uses gws CLI for all operations. Phase 3 (Issue #3148).
+    Human-readable display paths added in Issue #3256.
     """
 
     SKILL_NAME = "gmail"
@@ -250,10 +302,7 @@ class GmailConnector(CLIConnector):
         "create_draft": OpTraits(reversibility=Reversibility.FULL, confirm=ConfirmLevel.INTENT),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "MISSING_RECIPIENTS": ErrorDef(
             message="Email requires at least one recipient",
             skill_section="operations",
@@ -264,9 +313,12 @@ class GmailConnector(CLIConnector):
     DIRECTORY_STRUCTURE = """\
 /mnt/gmail/
   INBOX/                           # Unread + read inbox emails
-    {threadId}-{msgId}.yaml        # Email as YAML (subject, from, to, body, labels)
+    PRIMARY/                       # Primary category
+    SOCIAL/                        # Social notifications
+    UPDATES/                       # Updates and notifications
+    PROMOTIONS/                    # Promotional emails
+    FORUMS/                        # Forum and mailing list emails
   SENT/                            # Sent emails
-    {threadId}-{msgId}.yaml
     _new.yaml                      # ✏ Write here to SEND an email (irreversible)
     _reply.yaml                    # ✏ Write here to REPLY to an email
     _forward.yaml                  # ✏ Write here to FORWARD an email
@@ -288,9 +340,73 @@ class GmailConnector(CLIConnector):
     _last_history_id: str | None = None
 
     def __init__(self, **kwargs: Any) -> None:
-        config = SheetsConnector._load_config("gmail.yaml")
+        config = _load_gws_config("gmail.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    # --- Display path (Issue #3256) ---
+
+    def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
+        """Generate human-readable email path with category subfolders.
+
+        Format: ``{label}/{category}/{date}_{subject}.yaml``
+        Example: ``INBOX/PRIMARY/2026-03-20_Re-Meeting-Notes.yaml``
+        """
+        meta = metadata or {}
+
+        # Determine label folder (default: INBOX).
+        labels: list[str] = meta.get("labels", meta.get("labelIds", []))
+        label_folder = "INBOX"
+        for lbl in labels:
+            if lbl in self._LABELS:
+                label_folder = lbl
+                break
+
+        # Build filename from subject and date.
+        parts: list[str] = []
+        date_str = meta.get("date", meta.get("internalDate", ""))
+        if date_str:
+            date_prefix = self._extract_date_prefix(date_str)
+            if date_prefix:
+                parts.append(date_prefix)
+        subject = meta.get("subject", "")
+        if subject:
+            parts.append(sanitize_filename(subject, max_len=80))
+        else:
+            parts.append(item_id)
+
+        filename = "_".join(parts) + ".yaml" if parts else f"{item_id}.yaml"
+
+        # Category subfolder for INBOX only.
+        if label_folder == "INBOX":
+            category = _gmail_category_from_labels(labels)
+            return f"{label_folder}/{category}/{filename}"
+
+        return f"{label_folder}/{filename}"
+
+    @staticmethod
+    def _extract_date_prefix(date_str: str) -> str:
+        """Extract YYYY-MM-DD from an ISO 8601 or RFC 2822 date string."""
+        # Try ISO 8601 first (2026-03-20T10:00:00Z).
+        if len(date_str) >= 10 and date_str[4:5] == "-":
+            return date_str[:10]
+        # Try to parse RFC 2822 (Mon, 20 Mar 2026 10:00:00 +0000).
+        try:
+            from email.utils import parsedate_to_datetime
+
+            dt = parsedate_to_datetime(date_str)
+            return dt.strftime("%Y-%m-%d")
+        except Exception:
+            return ""
+
+    # --- Write path: use _prepare_stdin() hook instead of overriding write_content() ---
+
+    def _prepare_stdin(self, operation: str, validated: Any, data: dict) -> str | None:
+        """Return None — Gmail gws helper commands use flags, not stdin YAML."""
+        if operation in ("send_email", "reply_email", "forward_email"):
+            return None
+        # create_draft uses the standard stdin YAML path.
+        return super()._prepare_stdin(operation, validated, data)
 
     def _build_cli_args(self, operation: str, validated: Any, path: str) -> list[str]:
         """Build gws gmail CLI args from validated schema data.
@@ -319,7 +435,11 @@ class GmailConnector(CLIConnector):
             args.extend(["--body", data.get("body", "")])
         elif operation == "forward_email":
             args.append("+forward")
-            args.extend(["--to", ",".join(data.get("to", []))])
+            to = data.get("to") or []
+            if isinstance(to, list):
+                args.extend(["--to", ",".join(to)])
+            else:
+                args.extend(["--to", str(to)])
             args.extend(["--body", data.get("body", "")])
         elif operation == "create_draft":
             args.extend(["users", "drafts", "create"])
@@ -329,49 +449,7 @@ class GmailConnector(CLIConnector):
         args.extend(["--format", "yaml"])
         return args
 
-    def write_content(
-        self, content: bytes, content_id: str = "", *, offset: int = 0, context: Any = None
-    ) -> Any:
-        """Override to use flag-based CLI args instead of stdin YAML for gws helpers."""
-        import yaml as _yaml
-
-        from nexus.contracts.exceptions import BackendError
-        from nexus.core.object_store import WriteResult
-
-        if not context or not context.backend_path:
-            raise BackendError(f"{self.name} requires backend_path", backend=self.name)
-
-        path = context.backend_path.strip("/")
-        operation = self._resolve_operation(path)
-        if not operation:
-            raise BackendError(f"No operation for path: {path}", backend=self.name)
-
-        data = _yaml.safe_load(content)
-        if not isinstance(data, dict):
-            raise BackendError(
-                f"Expected YAML mapping, got {type(data).__name__}", backend=self.name
-            )
-
-        # Validate traits + schema
-        self.validate_traits(operation, data)
-        validated = self.validate_schema(operation, data)
-
-        # Build CLI args with flags (not stdin)
-        cli_args = self._build_cli_args(operation, validated, path)
-
-        # Execute — no stdin needed, args have everything
-        result = self._execute_cli(cli_args, stdin=None, context=context)
-        result = self._error_mapper.classify_result(result)
-
-        if not result.ok:
-            raise BackendError(result.summary(), backend=self.name)
-
-        import hashlib
-
-        return WriteResult(
-            content_id=hashlib.sha256(result.stdout.encode()).hexdigest(),
-            size=len(content),
-        )
+    # --- Read/sync operations ---
 
     def get_history_id(self) -> str | None:
         """Get current Gmail historyId for delta sync."""
@@ -455,7 +533,7 @@ class GmailConnector(CLIConnector):
         path: str = "/",
         context: Any = None,
     ) -> list[str]:
-        """List Gmail labels or messages in a label folder."""
+        """List Gmail labels, category subfolders, or messages."""
         import json
         import re
 
@@ -465,8 +543,23 @@ class GmailConnector(CLIConnector):
             # Root: return label folders
             return [f"{label}/" for label in self._LABELS]
 
-        # Inside a label folder: list messages
-        label = path.split("/")[0]
+        parts = path.split("/")
+        label = parts[0]
+
+        # INBOX listing: return category subfolders (Decision 16A).
+        if label == "INBOX" and len(parts) == 1:
+            return [f"{cat}/" for cat in _GMAIL_CATEGORY_FOLDERS]
+
+        # Inside a label (or INBOX/CATEGORY): list messages via CLI.
+        label_ids = [label]
+        if label == "INBOX" and len(parts) >= 2:
+            category_name = parts[1]
+            # Map category folder name back to Gmail label ID.
+            for gmail_label, folder in _GMAIL_CATEGORIES.items():
+                if folder == category_name:
+                    label_ids.append(gmail_label)
+                    break
+
         result = self._execute_cli(
             [
                 "gws",
@@ -475,7 +568,7 @@ class GmailConnector(CLIConnector):
                 "messages",
                 "list",
                 "--params",
-                json.dumps({"userId": "me", "maxResults": 50, "labelIds": [label]}),
+                json.dumps({"userId": "me", "maxResults": 50, "labelIds": label_ids}),
                 "--format",
                 "yaml",
             ],
@@ -576,10 +669,7 @@ class GmailConnector(CLIConnector):
         }
 
     def get_file_info(self, path: str, context: Any = None) -> Any:
-        """Return file metadata wrapped in a response object for sync service.
-
-        The sync service expects .success and .data attributes on the return value.
-        """
+        """Return file metadata wrapped in a response object for sync service."""
         from datetime import datetime
         from types import SimpleNamespace
 
@@ -589,8 +679,6 @@ class GmailConnector(CLIConnector):
             fi = FileInfo(size=0, mtime=datetime.now(UTC))
         else:
             hid = self._last_history_id or self.get_history_id()
-            # size > 0 and content_hash set so the file isn't mistaken for
-            # a directory (the heuristic: size=0 + no etag = directory).
             fi = FileInfo(
                 size=1,
                 mtime=datetime.now(UTC),
@@ -604,7 +692,14 @@ class GmailConnector(CLIConnector):
         path = path.strip("/")
         if not path:
             return True
-        return path.split("/")[0] in self._LABELS and not path.endswith(".yaml")
+        parts = path.split("/")
+        # Label folder or category subfolder.
+        return parts[0] in self._LABELS and not path.endswith(".yaml")
+
+
+# ============================================================================
+# Calendar
+# ============================================================================
 
 
 @register_connector(
@@ -617,6 +712,7 @@ class CalendarConnector(CLIConnector):
 
     CLI-backed alternative to the existing GoogleCalendarConnectorBackend.
     Uses gws CLI for all operations. Phase 3 (Issue #3148).
+    Human-readable display paths added in Issue #3256.
     """
 
     SKILL_NAME = "gcalendar"
@@ -627,12 +723,12 @@ class CalendarConnector(CLIConnector):
     DIRECTORY_STRUCTURE = """\
 /mnt/calendar/
   primary/                         # Primary calendar
-    {eventId}.yaml                 # Event as YAML (summary, start, end, attendees)
+    2026-03/                       # Month-based grouping
+      2026-03-21_10-00_Team-Standup.yaml
     _new.yaml                      # ✏ Write here to CREATE an event
     _update.yaml                   # ✏ Write here to UPDATE an event
     _delete.yaml                   # ✏ Write here to DELETE an event (irreversible)
   {calendarId}/                    # Other calendars (shared, holidays, etc.)
-    {eventId}.yaml
   .skill/
     SKILL.md"""
 
@@ -647,10 +743,7 @@ class CalendarConnector(CLIConnector):
         "delete_event": OpTraits(reversibility=Reversibility.PARTIAL, confirm=ConfirmLevel.USER),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "EVENT_NOT_FOUND": ErrorDef(
             message="Calendar event not found",
             skill_section="operations",
@@ -659,9 +752,56 @@ class CalendarConnector(CLIConnector):
     }
 
     def __init__(self, **kwargs: Any) -> None:
-        config = SheetsConnector._load_config("calendar.yaml")
+        config = _load_gws_config("calendar.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    # --- Display path (Issue #3256) ---
+
+    def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
+        """Generate human-readable event path with month grouping.
+
+        Format: ``{calendarId}/{YYYY-MM}/{date}_{time}_{summary}.yaml``
+        Example: ``primary/2026-03/2026-03-21_10-00_Team-Standup.yaml``
+        """
+        meta = metadata or {}
+        cal_id = meta.get("calendarId", "primary")
+
+        parts: list[str] = []
+        month_folder = ""
+
+        # Extract start date/time.
+        start = meta.get("start", {})
+        if isinstance(start, dict):
+            date_str = start.get("dateTime", start.get("date", ""))
+        else:
+            date_str = str(start) if start else ""
+
+        if date_str and len(date_str) >= 10:
+            date_prefix = date_str[:10]  # YYYY-MM-DD
+            month_folder = date_str[:7]  # YYYY-MM
+            parts.append(date_prefix)
+            # Add time if available (HH-MM).
+            if len(date_str) >= 16 and "T" in date_str:
+                time_part = date_str[11:16].replace(":", "-")
+                parts.append(time_part)
+        elif date_str:
+            # All-day event with just a date.
+            parts.append(date_str[:10] if len(date_str) >= 10 else date_str)
+
+        summary = meta.get("summary", "")
+        if summary:
+            parts.append(sanitize_filename(summary, max_len=60))
+        else:
+            parts.append(item_id)
+
+        filename = "_".join(parts) + ".yaml" if parts else f"{item_id}.yaml"
+
+        if month_folder:
+            return f"{cal_id}/{month_folder}/{filename}"
+        return f"{cal_id}/{filename}"
+
+    # --- Read/sync operations ---
 
     def list_dir(
         self,
@@ -684,8 +824,26 @@ class CalendarConnector(CLIConnector):
             cal_ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
             return [f"{cid}/" for cid in cal_ids] if cal_ids else ["primary/"]
 
-        # Inside a calendar: list events
-        cal_id = path.split("/")[0]
+        # Inside a calendar (or calendar/month): list events
+        parts = path.split("/")
+        cal_id = parts[0]
+        month_filter = parts[1] if len(parts) >= 2 else None
+
+        # Fetch events from API
+        params: dict[str, Any] = {
+            "calendarId": cal_id,
+            "maxResults": 50,
+            "timeMin": "2026-01-01T00:00:00Z",
+        }
+        # If filtering by month, narrow the time range
+        if month_filter and re.match(r"^\d{4}-\d{2}$", month_filter):
+            import calendar as _cal_mod
+
+            year, month = int(month_filter[:4]), int(month_filter[5:7])
+            last_day = _cal_mod.monthrange(year, month)[1]
+            params["timeMin"] = f"{month_filter}-01T00:00:00Z"
+            params["timeMax"] = f"{month_filter}-{last_day}T23:59:59Z"
+
         result = self._execute_cli(
             [
                 "gws",
@@ -693,13 +851,7 @@ class CalendarConnector(CLIConnector):
                 "events",
                 "list",
                 "--params",
-                json.dumps(
-                    {
-                        "calendarId": cal_id,
-                        "maxResults": 50,
-                        "timeMin": "2026-01-01T00:00:00Z",
-                    }
-                ),
+                json.dumps(params),
                 "--format",
                 "yaml",
             ],
@@ -708,6 +860,19 @@ class CalendarConnector(CLIConnector):
             return []
 
         event_ids = re.findall(r'^\s+id:\s*"([^"]+)"', result.stdout, re.MULTILINE)
+
+        # Calendar root listing: return month subfolders derived from event dates.
+        if not month_filter:
+            start_dates = re.findall(r'dateTime:\s*"(\d{4}-\d{2})', result.stdout) + re.findall(
+                r'date:\s*"(\d{4}-\d{2})', result.stdout
+            )
+            months = sorted(set(start_dates))
+            if months:
+                return [f"{m}/" for m in months]
+            # Fallback: no parseable dates, return flat event list
+            return [f"{eid}.yaml" for eid in event_ids]
+
+        # Month listing: return event files
         return [f"{eid}.yaml" for eid in event_ids]
 
     def read_content(

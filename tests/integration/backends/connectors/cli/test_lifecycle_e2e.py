@@ -255,3 +255,120 @@ class TestConnectorLifecycleE2E:
         """Step 9: Fake sync provider satisfies ConnectorSyncProvider protocol."""
         provider = FakeGHSyncProvider()
         assert isinstance(provider, ConnectorSyncProvider)
+
+
+# ---------------------------------------------------------------------------
+# Display path integration (Issue #3256, Decision 11A)
+# ---------------------------------------------------------------------------
+
+
+class TestDisplayPathIntegration:
+    """Integration: sync → display_path → collision resolution roundtrip."""
+
+    def test_collision_resolution_in_sync_pipeline(self) -> None:
+        """Verify resolve_collisions handles duplicates from same display_path."""
+        from nexus.backends.connectors.cli.display_path import resolve_collisions
+
+        # Simulate two emails with the same subject on the same date
+        items = [
+            ("INBOX/PRIMARY/2026-03-20_Meeting-Notes.yaml", "msg-aaa"),
+            ("INBOX/PRIMARY/2026-03-20_Meeting-Notes.yaml", "msg-bbb"),
+            ("INBOX/PRIMARY/2026-03-20_Unique-Email.yaml", "msg-ccc"),
+        ]
+        resolved = resolve_collisions(items)
+
+        # Unique email should be unchanged
+        assert resolved[2] == items[2]
+
+        # Colliding emails should be disambiguated
+        assert resolved[0][0] != resolved[1][0]
+        assert resolved[0][0].startswith("INBOX/PRIMARY/2026-03-20_Meeting-Notes_")
+        assert resolved[0][0].endswith(".yaml")
+        assert resolved[1][0].endswith(".yaml")
+
+        # Backend IDs preserved
+        assert resolved[0][1] == "msg-aaa"
+        assert resolved[1][1] == "msg-bbb"
+
+    def test_display_path_mixin_default_fallback(self) -> None:
+        """Connectors without display_path override get item_id.yaml."""
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        mixin = DisplayPathMixin()
+        assert mixin.display_path("abc123") == "abc123.yaml"
+        assert mixin.display_path("abc123", {"some": "meta"}) == "abc123.yaml"
+
+    def test_gmail_display_path_roundtrip(self) -> None:
+        """Gmail display_path produces readable paths with categories."""
+        from nexus.backends.connectors.gws.connector import GmailConnector
+
+        connector = GmailConnector.__new__(GmailConnector)
+        path = connector.display_path(
+            "msg-123",
+            {
+                "subject": "Re: Q4 Budget Review",
+                "date": "2026-03-20T10:30:00Z",
+                "labels": ["INBOX", "CATEGORY_SOCIAL"],
+            },
+        )
+
+        # Should have category subfolder
+        assert path.startswith("INBOX/SOCIAL/")
+        # Should have date prefix
+        assert "2026-03-20" in path
+        # Should have sanitized subject
+        assert "Re-Q4-Budget-Review" in path
+        assert path.endswith(".yaml")
+        # No unsafe characters
+        assert ":" not in path
+        assert "?" not in path
+
+    def test_calendar_display_path_roundtrip(self) -> None:
+        """Calendar display_path produces readable paths with month grouping."""
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        connector = CalendarConnector.__new__(CalendarConnector)
+        path = connector.display_path(
+            "evt-456",
+            {
+                "summary": "Team Standup",
+                "start": {"dateTime": "2026-03-21T10:00:00-07:00"},
+                "calendarId": "primary",
+            },
+        )
+
+        assert path.startswith("primary/2026-03/")
+        assert "2026-03-21" in path
+        assert "10-00" in path
+        assert "Team-Standup" in path
+
+    def test_github_display_path_roundtrip(self) -> None:
+        """GitHub display_path produces readable paths with type subfolder."""
+        from nexus.backends.connectors.github.connector import GitHubConnector
+
+        connector = GitHubConnector.__new__(GitHubConnector)
+        path = connector.display_path(
+            "issue-142",
+            {
+                "number": 142,
+                "title": "feat: add grove status command",
+            },
+        )
+        assert path == "issues/142_feat-add-grove-status-command.yaml"
+
+    def test_backend_id_in_cache_entry(self) -> None:
+        """Verify backend_id is included in cache entry dict (Decision 15A)."""
+        # This tests that the sync pipeline adds backend_id to the cache entry
+        # dict, which is used for reverse mapping (display path → backend ID).
+        cache_entry = {
+            "path": "/mnt/gmail/INBOX/PRIMARY/2026-03-20_Meeting.yaml",
+            "content": b"test",
+            "content_text": None,
+            "content_type": "full",
+            "backend_version": None,
+            "backend_id": "INBOX/msg-aaa.yaml",
+            "parsed_from": None,
+            "parse_metadata": None,
+            "zone_id": None,
+        }
+        assert cache_entry["backend_id"] == "INBOX/msg-aaa.yaml"

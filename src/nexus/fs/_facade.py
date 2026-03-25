@@ -96,7 +96,7 @@ class SlimNexusFS:
         Returns:
             Dict with path, size, etag, version.
         """
-        return await self._kernel.sys_write(path, content, context=self._ctx)
+        return await self._kernel.write(path, content, context=self._ctx)
 
     # -- Directory operations --
 
@@ -130,7 +130,7 @@ class SlimNexusFS:
             path: Directory path to create.
             parents: If True, create parent directories as needed (mkdir -p).
         """
-        await self._kernel.sys_mkdir(
+        await self._kernel.mkdir(
             path,
             parents=parents,
             exist_ok=True,

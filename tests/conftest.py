@@ -94,7 +94,7 @@ if _HAS_STRUCTLOG:
         structlog.contextvars.clear_contextvars()
 
 
-def make_test_nexus(
+async def make_test_nexus(
     tmp_path,
     *,
     backend=None,
@@ -103,37 +103,31 @@ def make_test_nexus(
     cache=None,
     memory=None,
     distributed=None,
-    services=None,
-    system_services=None,
     is_admin=False,
     record_store=None,
     use_raft=False,
     metadata_store=None,
     context=None,
 ):
-    """Create a NexusFS instance for testing with sensible defaults.
+    """Create a NexusFS instance for testing via factory (Issue #1801).
 
-    Defaults: permissions off, no auto-parse, no distributed features.
-    Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
-
-    A default CASLocalBackend is created and mounted at ``/`` (root) unless
-    a custom ``backend`` is provided. This mirrors ``create_nexus_fs()``
-    in the factory (``router.add_mount("/", backend)``).
+    Uses ``create_nexus_fs()`` — the same boot path as production.
+    Defaults: permissions off, no auto-parse, no distributed features,
+    no bricks (SLIM profile).
 
     Args:
         tmp_path: pytest tmp_path fixture for backend/metadata storage.
-        backend: Backend to mount at ``/``. Default: CASLocalBackend(tmp_path / "data").
+        backend: Backend to mount at ``/``. Default: PathLocalBackend(tmp_path / "data").
         permissions: PermissionConfig override. Default: enforce=False.
         parsing: ParseConfig override. Default: auto_parse=False.
         cache: CacheConfig override.
         memory: MemoryConfig override.
         distributed: DistributedConfig override. Default: all disabled.
-        services: KernelServices override.
-        system_services: SystemServices override.
-        is_admin: Admin flag.
+        is_admin: Admin flag for init_cred.
         record_store: Optional RecordStoreABC.
         use_raft: Use RaftMetadataStore (requires Python 3.13).
         metadata_store: Override metadata store. Default: DictMetastore or Raft.
+        context: Override init_cred identity.
 
     Returns:
         NexusFS instance ready for testing.
@@ -143,7 +137,7 @@ def make_test_nexus(
         ParseConfig,
         PermissionConfig,
     )
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.factory import create_nexus_fs
 
     if permissions is None:
         permissions = PermissionConfig(enforce=False)
@@ -166,26 +160,6 @@ def make_test_nexus(
 
             metadata_store = DictMetastore()
 
-    nx = NexusFS(
-        metadata_store=metadata_store,
-        record_store=record_store,
-        permissions=permissions,
-        parsing=parsing,
-        cache=cache,
-        memory=memory,
-        distributed=distributed,
-        kernel_services=services,
-        system_services=system_services,
-    )
-    # Issue #1801: inject default context externally (kernel never fabricates identity)
-    from tests.helpers.test_context import TEST_ADMIN_CONTEXT, TEST_CONTEXT
-
-    if context is not None:
-        nx._default_context = context
-    else:
-        nx._default_context = TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT
-
-    # Mount backend at root (same as factory/orchestrator.py: router.add_mount("/", backend))
     if backend is None:
         from pathlib import Path
 
@@ -194,34 +168,27 @@ def make_test_nexus(
         data_dir = Path(tmp_path) / "data"
         data_dir.mkdir(exist_ok=True)
         backend = PathLocalBackend(root_path=str(data_dir))
-    nx.router.add_mount("/", backend)
 
-    # Wire PermissionCheckHook via DI (same as factory/orchestrator.py, Issue #899)
-    from nexus.bricks.rebac.checker import PermissionChecker
-    from nexus.bricks.rebac.permission_hook import PermissionCheckHook
+    # Issue #1801: unified boot path — all NexusFS goes through factory
+    from tests.helpers.test_context import TEST_ADMIN_CONTEXT, TEST_CONTEXT
 
-    _checker = PermissionChecker(
-        permission_enforcer=nx._permission_enforcer,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
+    _init_cred = (
+        context if context is not None else (TEST_ADMIN_CONTEXT if is_admin else TEST_CONTEXT)
     )
-    _perm_hook = PermissionCheckHook(
-        checker=_checker,
-        metadata_store=nx.metadata,
-        default_context=nx._default_context,
-        enforce_permissions=nx._enforce_permissions,
-        permission_enforcer=nx._permission_enforcer,
-        descendant_checker=getattr(nx, "_descendant_checker", None),
-    )
-    nx._dispatch.register_intercept_read(_perm_hook)
-    nx._dispatch.register_intercept_write(_perm_hook)
-    nx._dispatch.register_intercept_delete(_perm_hook)
-    nx._dispatch.register_intercept_rename(_perm_hook)
-    nx._dispatch.register_intercept_mkdir(_perm_hook)
-    nx._dispatch.register_intercept_rmdir(_perm_hook)
 
-    return nx
+    return await create_nexus_fs(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        permissions=permissions,
+        parsing=parsing,
+        cache=cache,
+        memory=memory,
+        distributed=distributed,
+        is_admin=is_admin,
+        enabled_bricks=frozenset(),  # SLIM profile for fast tests
+        init_cred=_init_cred,
+    )
 
 
 @pytest.fixture(autouse=True)

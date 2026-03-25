@@ -20,7 +20,7 @@ from nexus.system_services.gateway import NexusFSGateway
 def mock_fs():
     """Create a mock NexusFS instance."""
     fs = MagicMock()
-    fs.sys_mkdir = AsyncMock()
+    fs.mkdir = AsyncMock()
     fs.sys_write = AsyncMock(
         return_value={"path": "/test/file.txt", "bytes_written": 7, "created": True}
     )
@@ -114,9 +114,9 @@ class TestFileOperations:
 
     @pytest.mark.asyncio
     async def test_mkdir_delegates(self, gateway, mock_fs, context):
-        """sys_mkdir delegates to NexusFS.sys_mkdir."""
-        await gateway.sys_mkdir("/test/dir", parents=True, exist_ok=True, context=context)
-        mock_fs.sys_mkdir.assert_called_once_with(
+        """mkdir delegates to NexusFS.mkdir."""
+        await gateway.mkdir("/test/dir", parents=True, exist_ok=True, context=context)
+        mock_fs.mkdir.assert_called_once_with(
             "/test/dir", parents=True, exist_ok=True, context=context
         )
 

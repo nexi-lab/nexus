@@ -4,6 +4,7 @@
 # 国内镜像支持：APT、pip、Rust、Go
 ARG USE_CHINA_MIRROR=false
 ARG TORCH_VARIANT=cpu
+ARG NEXUS_TXTAI_USE_API_EMBEDDINGS=false
 
 # ---------- Stage 1: Build Zoekt binaries (independent, cached separately) ----------
 FROM golang:1.25 AS zoekt-builder
@@ -22,6 +23,7 @@ FROM python:3.13-slim AS builder
 # 设置国内镜像环境变量（默认 false，国外环境不使用）
 ARG USE_CHINA_MIRROR
 ARG TORCH_VARIANT
+ARG NEXUS_TXTAI_USE_API_EMBEDDINGS
 ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
@@ -73,10 +75,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     else \
         uv pip install --system -i $(cat /tmp/pip_index) torch; \
     fi && \
-    uv pip install --system -i $(cat /tmp/pip_index) \
-        ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
-        "txtai[ann]>=9.0" \
-        "sentence-transformers>=5.3"
+    if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
+        uv pip install --system -i $(cat /tmp/pip_index) \
+            ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
+            "txtai[ann]>=9.0"; \
+    else \
+        uv pip install --system -i $(cat /tmp/pip_index) \
+            ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
+            "txtai[ann]>=9.0" \
+            "sentence-transformers>=5.3"; \
+    fi
 
 # NOTE: hnswlib removal moved to after the final pip install (line ~121)
 # to ensure it's not re-introduced by any subsequent install step.
@@ -126,6 +134,7 @@ RUN if [ "${TARGETARCH}" = "arm64" ]; then \
 FROM python:3.13-slim
 
 ARG USE_CHINA_MIRROR
+ARG TARGETARCH
 ENV USE_CHINA_MIRROR=${USE_CHINA_MIRROR}
 
 # ---------- Runtime dependencies ----------
@@ -139,14 +148,27 @@ RUN set -eux; \
         gosu \
     && rm -rf /var/lib/apt/lists/*
 
+# PyTorch/txtai on slim Linux containers can fail with:
+# "libc10.so: cannot allocate memory in static TLS block".
+# Preload libgomp plus torch's libc10 via stable symlinks so
+# ``from txtai import Embeddings`` works reliably at runtime.
+RUN set -eux; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+    elif [ "${TARGETARCH}" = "amd64" ]; then \
+        ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+    fi && \
+    ln -sf /usr/local/lib/python3.13/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
+ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
+
 # ---------- CLI connectors: gws + gh (Issue #3148) ----------
 # gws: Google Workspace CLI for Gmail/Calendar/Drive/Sheets/Docs/Chat connectors
 # gh: GitHub CLI for GitHub connector
 ARG TARGETARCH
 RUN set -eux; \
     ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
-    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/gws-${ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin "gws-${ARCH}-unknown-linux-gnu/gws" \
+    curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
+        | tar -xz --strip-components=1 -C /usr/local/bin "google-workspace-cli-${ARCH}-unknown-linux-gnu/gws" \
     && chmod +x /usr/local/bin/gws; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
@@ -238,7 +260,7 @@ ENV PYTHONUNBUFFERED=1 \
     ZOEKT_INDEX_DIR=/app/data/.zoekt-index \
     ZOEKT_DATA_DIR=/app/data \
     NEXUS_TXTAI_RERANKER=cross-encoder/ms-marco-MiniLM-L-2-v2 \
-    NEXUS_TXTAI_SPARSE=true
+    NEXUS_TXTAI_SPARSE=false
 
 EXPOSE 2026 2126 6070
 

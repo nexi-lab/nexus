@@ -26,7 +26,7 @@ SYSCALL_METHODS = {
     "sys_setattr",
     "sys_unlink",
     "sys_rename",
-    "sys_mkdir",
+    "mkdir",
     "sys_rmdir",
     "sys_readdir",
     "sys_access",

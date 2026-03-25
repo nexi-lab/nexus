@@ -111,7 +111,7 @@ class TestZoektPipeConsumerE2E:
             consumer.notify_write("/workspace/file2.txt")
 
             # Wait for debounce window + consumer processing
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.1)
 
             # Verify reindex was triggered
             assert zoekt.trigger_reindex_async.call_count >= 1
@@ -135,7 +135,7 @@ class TestZoektPipeConsumerE2E:
 
         try:
             consumer.notify_sync_complete(files_synced=5)
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.1)
             assert zoekt.trigger_reindex_async.call_count >= 1
         finally:
             await consumer.stop()
@@ -151,7 +151,7 @@ class TestZoektPipeConsumerE2E:
         zoekt.debounce_seconds = 0.1
         zoekt.trigger_reindex_async = AsyncMock()
 
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.1)
+        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
         consumer.bind_fs(mock_nx)
         await consumer.start()
 
@@ -161,7 +161,7 @@ class TestZoektPipeConsumerE2E:
                 consumer.notify_write(f"/workspace/file{i}.txt")
 
             # Wait for debounce + processing
-            await asyncio.sleep(0.25)
+            await asyncio.sleep(0.1)
 
             # Should coalesce into 1 reindex call (not 20)
             assert zoekt.trigger_reindex_async.call_count == 1

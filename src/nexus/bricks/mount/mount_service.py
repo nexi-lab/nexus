@@ -102,6 +102,7 @@ class MountService:
             search_service: Optional SearchService for post-mount indexing (Issue #3148)
         """
         self.router = router
+        self._driver_coordinator: Any = None  # Injected post-init by factory
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
         self._gw = gateway
@@ -143,7 +144,7 @@ class MountService:
             if hasattr(backend, "has_capability") and backend.has_capability(
                 ConnectorCapability.SKILL_DOC
             ):
-                await asyncio.to_thread(self._generate_skill_docs, mount_point, backend)
+                await self._generate_skill_docs(mount_point, backend)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -171,8 +172,8 @@ class MountService:
                 "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
             )
 
-    def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
-        """Generate .skill/ directory for a connector backend (sync).
+    async def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
+        """Generate .skill/ directory for a connector backend (async).
 
         Called from post-mount hooks and sync completion.
         """
@@ -194,7 +195,7 @@ class MountService:
 
         if fs is not None:
             try:
-                result = backend.write_skill_docs(mount_point, fs)
+                result = await backend.write_skill_docs(mount_point, fs)
                 if result.get("skill_md"):
                     logger.info(
                         "Generated skill docs for %s at %s", mount_point, result["skill_md"]
@@ -354,7 +355,7 @@ class MountService:
         logger.info(f"Setting up mount point: {mount_point}")
 
         # Create directory entries for mount point AND parent directories
-        # via sync metadata_put (gateway.sys_mkdir is async and can't be
+        # via sync metadata_put (gateway.mkdir is async and can't be
         # called from this sync context).
         if self._gw is not None:
             from datetime import UTC, datetime
@@ -577,12 +578,13 @@ class MountService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
-        # Add to router, then setup -- rollback on failure (Issue #2754).
+        # Add to router via DriverLifecycleCoordinator (registers hook_spec +
+        # broadcasts mount event), then setup -- rollback on failure (#2754).
         # If _setup_mount_point fails after the mount is active in the router,
         # the mount would be accessible without proper permissions configured.
-        self.router.add_mount(
-            mount_point=mount_point,
-            backend=backend,
+        self._driver_coordinator.mount(
+            mount_point,
+            backend,
             readonly=readonly,
             io_profile=io_profile,
         )
@@ -593,7 +595,7 @@ class MountService:
                 "Mount setup failed for %s, rolling back router registration",
                 mount_point,
             )
-            self.router.remove_mount(mount_point)
+            self._driver_coordinator.unmount(mount_point)
             raise
 
         return mount_point
@@ -626,8 +628,10 @@ class MountService:
             "errors": [],
         }
 
-        # Remove from router
-        if not self.router.remove_mount(mount_point):
+        # Remove from router via DriverLifecycleCoordinator (unregisters hooks +
+        # broadcasts unmount event).
+        removed = self._driver_coordinator.unmount(mount_point)
+        if not removed:
             result["errors"].append(f"Mount not found: {mount_point}")
             return result
 
@@ -1558,7 +1562,7 @@ class MountService:
             try:
                 route = self.router.route(mount_point)
                 if route:
-                    await asyncio.to_thread(self._generate_skill_docs, mount_point, route.backend)
+                    await self._generate_skill_docs(mount_point, route.backend)
             except Exception:
                 logger.warning(
                     "Post-sync skill doc regeneration failed for %s",

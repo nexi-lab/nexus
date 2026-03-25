@@ -16,6 +16,10 @@ import time
 from threading import Thread
 from unittest.mock import MagicMock
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.visibility import (
     DirectoryVisibilityCache,
 )
@@ -149,27 +153,27 @@ class TestTTLExpiration:
     def test_entry_past_ttl_returns_none(self):
         """Test that entry past TTL returns None (cache miss).
 
-        Uses a real short TTL (100ms) + sleep to test expiry — cachebox
+        Uses a real short TTL (50ms) + sleep to test expiry — cachebox
         (Rust) uses its own internal monotonic clock that can't be mocked.
         """
-        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
+        cache = DirectoryVisibilityCache(ttl=0.05)  # 50ms TTL
 
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is True
 
-        time.sleep(1.1)
+        time.sleep(0.1)
 
         result = cache.is_visible("zone1", "user", "alice", "/workspace")
         assert result is None
 
     def test_expired_entry_is_removed_from_cache(self):
         """Test that expired entry is removed from cache after check."""
-        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
+        cache = DirectoryVisibilityCache(ttl=0.05)  # 50ms TTL
 
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
         assert len(cache) == 1
 
-        time.sleep(1.1)
+        time.sleep(0.1)
 
         # Access expired entry triggers eviction
         cache.is_visible("zone1", "user", "alice", "/workspace")
@@ -177,14 +181,14 @@ class TestTTLExpiration:
 
     def test_multiple_entries_ttl_expiration(self):
         """Test that multiple entries expire independently based on TTL."""
-        cache = DirectoryVisibilityCache(ttl=1)  # 1 second TTL
+        cache = DirectoryVisibilityCache(ttl=0.5)  # 500ms TTL
 
         # Set first entry
         cache.set_visible("zone1", "user", "alice", "/workspace", True)
 
-        time.sleep(0.5)
+        time.sleep(0.25)
 
-        # Set second entry (0.5s later)
+        # Set second entry (250ms later)
         cache.set_visible("zone1", "user", "bob", "/data", False)
 
         # Both still valid
@@ -192,7 +196,7 @@ class TestTTLExpiration:
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 
         # Wait for first to expire but second still valid
-        time.sleep(0.6)  # Total 1.1s for first, 0.6s for second
+        time.sleep(0.3)  # Total ~550ms for first, ~300ms for second
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is None
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
 

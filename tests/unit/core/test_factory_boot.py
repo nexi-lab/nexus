@@ -53,15 +53,12 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "permission_enforcer",
         "write_observer",
         # Former-kernel degradable
-        "dir_visibility_cache",
-        "hierarchy_manager",
+        # hierarchy_manager, dir_visibility_cache, namespace_manager → rebac-internal
         "deferred_permission_buffer",
         "workspace_registry",
         "mount_manager",
         "workspace_manager",
         # Original system services
-        "eviction_manager",
-        "namespace_manager",
         "async_namespace_manager",
         "delivery_worker",
         "observability_subsystem",
@@ -70,9 +67,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "brick_lifecycle_manager",
         "brick_reconciler",
         "zone_lifecycle",
-        "agent_registry",
         "scheduler_service",
-        "acp_service",
         "event_signal",
     }
 )
@@ -236,7 +231,8 @@ class TestBootSystemServices:
     def test_degradable_failure_returns_none(self) -> None:
         """Degradable service failure returns None (not an exception).
 
-        Patches namespace_manager. Agent registry was removed (Issue #1692).
+        Patches namespace_manager creation via rebac_manager.create_namespace_manager().
+        Agent registry was removed (Issue #1692).
         """
         ctx = _make_boot_context()
 
@@ -247,9 +243,10 @@ class TestBootSystemServices:
             result = _boot_system_services(ctx)
 
         assert isinstance(result, dict)
-        assert result["namespace_manager"] is None
-        # Critical services should still work
-        assert result["rebac_manager"] is not None
+        # namespace_manager is now rebac-internal — verify via rebac_manager property
+        rebac = result["rebac_manager"]
+        assert rebac is not None
+        assert getattr(rebac, "namespace_manager", None) is None
 
     def test_deferred_buffer_none_when_disabled(self) -> None:
         """deferred_permission_buffer is None when enable_deferred=False."""

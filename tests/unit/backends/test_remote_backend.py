@@ -155,7 +155,7 @@ class TestRemoteBackendRPC:
             backend.mkdir("/test/dir", parents=True, exist_ok=True)
 
             mock_rpc.assert_called_once_with(
-                "sys_mkdir",
+                "mkdir",
                 {"path": "/test/dir", "parents": True, "exist_ok": True},
             )
 

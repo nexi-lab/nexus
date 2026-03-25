@@ -4,6 +4,10 @@ Tests the permission boundary cache that provides O(1) inheritance checks
 by caching the nearest ancestor with an explicit permission grant.
 """
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
 
 

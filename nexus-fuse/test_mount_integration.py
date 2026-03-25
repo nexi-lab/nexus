@@ -63,7 +63,7 @@ def test_rust_client() -> None:
 
     # Test mkdir
     print("\n6. Testing mkdir operation...")
-    client.sys_mkdir("/rust-testdir")
+    client.mkdir("/rust-testdir")
     print("✓ Mkdir succeeded")
 
     # Test rename

@@ -80,6 +80,10 @@ services:
       NEXUS_API_KEY: ${NEXUS_API_KEY:-}
       # Search
       NEXUS_SEARCH_DAEMON: "true"
+      NEXUS_TXTAI_MODEL: ${NEXUS_TXTAI_MODEL:-}
+      NEXUS_TXTAI_USE_API_EMBEDDINGS: ${NEXUS_TXTAI_USE_API_EMBEDDINGS:-false}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       # Permissions
       NEXUS_SKIP_PERMISSIONS: ${NEXUS_SKIP_PERMISSIONS:-false}
       NEXUS_ENFORCE_PERMISSIONS: ${NEXUS_ENFORCE_PERMISSIONS:-true}
@@ -89,6 +93,8 @@ services:
       NEXUS_CACHE_EMBEDDING_TTL: ${NEXUS_CACHE_EMBEDDING_TTL:-86400}
       # gRPC
       NEXUS_GRPC_PORT: "2028"  # Fixed inside container; host port varies via port mapping
+      NEXUS_GRPC_TLS: ${NEXUS_GRPC_TLS:-false}
+      NEXUS_GRPC_BIND_ALL: ${NEXUS_GRPC_BIND_ALL:-true}
       # Zoekt (external container, not built-in sidecar)
       ZOEKT_ENABLED: "false"
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}

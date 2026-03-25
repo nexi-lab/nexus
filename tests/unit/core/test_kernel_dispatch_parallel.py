@@ -1,4 +1,9 @@
-"""Unit tests for async parallel POST hook dispatch (Issue #1317 Phase 3)."""
+"""Unit tests for async parallel dispatch (Issue #1317, #1748, #1812).
+
+Tests:
+- POST hook dispatch (sync/async/mixed/fault isolation)
+- Async OBSERVE dispatch with ObserverRegistry + event_mask filtering
+"""
 
 from __future__ import annotations
 
@@ -9,7 +14,8 @@ import pytest
 
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.vfs_hooks import WriteHookContext
-from nexus.core.kernel_dispatch import KernelDispatch
+from nexus.core.file_events import ALL_FILE_EVENTS, FILE_EVENT_BIT, FileEvent, FileEventType
+from nexus.core.kernel_dispatch import KernelDispatch, _PythonObserverRegistry
 
 
 @pytest.fixture()
@@ -99,7 +105,6 @@ class TestAsyncPostHooks:
         dispatch.register_intercept_write(hook)
         ctx = _write_ctx()
         await dispatch.intercept_post_write(ctx)
-        # async fn was called (no assertion on mock — it's a real coroutine)
         assert len(ctx.warnings) == 0
 
     async def test_async_hooks_run_parallel(self, dispatch: KernelDispatch) -> None:
@@ -160,26 +165,137 @@ class TestMixedHooks:
         assert len(ctx.warnings) == 0
 
 
-class TestAsyncNotify:
-    async def test_notify_calls_observers(self, dispatch: KernelDispatch) -> None:
-        from nexus.core.file_events import FileEvent, FileEventType
+# ── Async OBSERVE dispatch tests (Issue #1748, #1812) ─────────────────
 
-        obs = MagicMock()
+
+def _make_async_observer(
+    *,
+    name: str = "TestObserver",
+    event_mask: int = ALL_FILE_EVENTS,
+    side_effect: Exception | None = None,
+    delay: float = 0.0,
+):
+    """Create an async observer with event_mask."""
+
+    class _Obs:
+        pass
+
+    obs = _Obs()
+    obs.__class__.__name__ = name
+    obs.event_mask = event_mask
+
+    calls: list = []
+
+    async def _on_mutation(event):
+        if delay > 0:
+            await asyncio.sleep(delay)
+        if side_effect:
+            raise side_effect
+        calls.append(event)
+
+    obs.on_mutation = _on_mutation
+    obs._calls = calls
+    return obs
+
+
+class TestAsyncObserveDispatch:
+    """Tests for the async OBSERVE phase with ObserverRegistry."""
+
+    async def test_observer_called(self, dispatch: KernelDispatch) -> None:
+        obs = _make_async_observer()
         dispatch.register_observe(obs)
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
         await dispatch.notify(event)
-        obs.on_mutation.assert_called_once_with(event)
+        assert len(obs._calls) == 1
+        assert obs._calls[0] is event
 
-    async def test_notify_fault_isolation(self, dispatch: KernelDispatch) -> None:
-        from nexus.core.file_events import FileEvent, FileEventType
+    async def test_event_mask_filtering(self, dispatch: KernelDispatch) -> None:
+        """CAS observer with WRITE|DELETE mask should NOT fire for DIR_CREATE."""
+        cas_obs = _make_async_observer(
+            name="CAS",
+            event_mask=FILE_EVENT_BIT[FileEventType.FILE_WRITE]
+            | FILE_EVENT_BIT[FileEventType.FILE_DELETE],
+        )
+        dispatch.register_observe(cas_obs)
+        event = FileEvent(type=FileEventType.DIR_CREATE, path="/mydir")
+        await dispatch.notify(event)
+        assert len(cas_obs._calls) == 0
 
-        bad = MagicMock()
-        bad.on_mutation.side_effect = RuntimeError("observer boom")
-        good = MagicMock()
+    async def test_event_mask_allows_matching_events(self, dispatch: KernelDispatch) -> None:
+        cas_obs = _make_async_observer(
+            name="CAS",
+            event_mask=FILE_EVENT_BIT[FileEventType.FILE_WRITE]
+            | FILE_EVENT_BIT[FileEventType.FILE_DELETE],
+        )
+        dispatch.register_observe(cas_obs)
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test.txt")
+        await dispatch.notify(event)
+        assert len(cas_obs._calls) == 1
+
+    async def test_fault_isolation(self, dispatch: KernelDispatch) -> None:
+        """One observer raising should not prevent others from firing."""
+        bad = _make_async_observer(name="Bad", side_effect=RuntimeError("kaboom"))
+        good = _make_async_observer(name="Good")
         dispatch.register_observe(bad)
         dispatch.register_observe(good)
 
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
         await dispatch.notify(event)
+        assert len(good._calls) == 1
 
-        good.on_mutation.assert_called_once_with(event)
+    async def test_concurrent_execution(self, dispatch: KernelDispatch) -> None:
+        """Multiple observers sleeping should run in parallel (gather), not serial."""
+        import time
+
+        a = _make_async_observer(name="A", delay=0.1)
+        b = _make_async_observer(name="B", delay=0.1)
+        dispatch.register_observe(a)
+        dispatch.register_observe(b)
+
+        event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
+        t0 = time.monotonic()
+        await dispatch.notify(event)
+        elapsed = time.monotonic() - t0
+
+        assert len(a._calls) == 1
+        assert len(b._calls) == 1
+        assert elapsed < 0.18, f"Expected parallel (~0.1s), got {elapsed:.3f}s"
+
+    async def test_unregister(self, dispatch: KernelDispatch) -> None:
+        obs = _make_async_observer()
+        dispatch.register_observe(obs)
+        assert dispatch.observer_count == 1
+        removed = dispatch.unregister_observe(obs)
+        assert removed is True
+        assert dispatch.observer_count == 0
+
+    async def test_observer_count(self, dispatch: KernelDispatch) -> None:
+        a = _make_async_observer(name="A")
+        b = _make_async_observer(name="B")
+        dispatch.register_observe(a)
+        dispatch.register_observe(b)
+        assert dispatch.observer_count == 2
+
+
+class TestPythonObserverRegistryFallback:
+    """Tests for the pure-Python fallback ObserverRegistry."""
+
+    def test_register_and_get_matching(self) -> None:
+        reg = _PythonObserverRegistry()
+        obs = MagicMock()
+        reg.register(obs, 0x03)  # FILE_WRITE | FILE_DELETE
+        assert len(reg.get_matching(0x01)) == 1  # FILE_WRITE matches
+        assert len(reg.get_matching(0x10)) == 0  # DIR_CREATE does not
+
+    def test_unregister(self) -> None:
+        reg = _PythonObserverRegistry()
+        obs = MagicMock()
+        reg.register(obs, 0x03)
+        assert reg.count() == 1
+        assert reg.unregister(obs) is True
+        assert reg.count() == 0
+
+    def test_unregister_not_found(self) -> None:
+        reg = _PythonObserverRegistry()
+        obs = MagicMock()
+        assert reg.unregister(obs) is False

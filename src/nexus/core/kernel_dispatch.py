@@ -47,23 +47,33 @@ from nexus.contracts.operation_result import OperationWarning
 
 try:
     from nexus_fast import HookRegistry as _HookRegistry
+    from nexus_fast import ObserverRegistry as _ObserverRegistry
     from nexus_fast import PathTrie as _PathTrie
 except ImportError:  # pragma: no cover — Rust extension not built
     _PathTrie = None
     _HookRegistry = None
+    _ObserverRegistry = None
 
 from nexus.contracts.vfs_hooks import (
+    AccessHookContext,
     DeleteHookContext,
     MkdirHookContext,
+    MountHookContext,
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
+    StatHookContext,
+    UnmountHookContext,
+    VFSAccessHook,
     VFSDeleteHook,
     VFSMkdirHook,
+    VFSMountHook,
     VFSObserver,
     VFSReadHook,
     VFSRenameHook,
     VFSRmdirHook,
+    VFSStatHook,
+    VFSUnmountHook,
     VFSWriteBatchHook,
     VFSWriteHook,
     WriteBatchHookContext,
@@ -116,6 +126,33 @@ class _PythonHookRegistry:
         return sync_hooks, async_hooks
 
 
+class _PythonObserverRegistry:
+    """Pure-Python fallback when Rust ``nexus_fast.ObserverRegistry`` is unavailable."""
+
+    def __init__(self) -> None:
+        self._entries: list[tuple[Any, str, int]] = []
+
+    def register(self, obs: Any, event_mask: int) -> None:
+        name = type(obs).__name__
+        self._entries.append((obs, name, event_mask))
+
+    def unregister(self, obs: Any) -> bool:
+        for i, (o, _, _) in enumerate(self._entries):
+            if o is obs:
+                self._entries.pop(i)
+                return True
+        return False
+
+    def get_matching(self, event_type_bit: int) -> list[tuple[Any, str]]:
+        return [(obs, name) for obs, name, mask in self._entries if mask & event_type_bit]
+
+    def count(self) -> int:
+        return len(self._entries)
+
+    def __repr__(self) -> str:
+        return f"_PythonObserverRegistry(count={len(self._entries)})"
+
+
 class KernelDispatch:
     """Unified three-phase VFS dispatch (PRE-DISPATCH / INTERCEPT / OBSERVE).
 
@@ -131,7 +168,7 @@ class KernelDispatch:
         dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
         ...actual VFS operation...
         dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
-        dispatch.notify(event)               # phase 2: OBSERVE
+        await dispatch.notify(event)         # phase 2: OBSERVE
     """
 
     __slots__ = (
@@ -140,7 +177,9 @@ class KernelDispatch:
         "_fallback_resolvers",
         "_next_resolver_idx",
         "_registry",
-        "_observers",
+        "_observer_registry",
+        "_mount_hooks",
+        "_unmount_hooks",
     )
 
     def __init__(self) -> None:
@@ -155,8 +194,14 @@ class KernelDispatch:
             _HookRegistry() if _HookRegistry is not None else _PythonHookRegistry()
         )
 
-        # OBSERVE: generic mutation observers
-        self._observers: list[VFSObserver] = []
+        # OBSERVE: Rust ObserverRegistry with event-type bitmask filtering (Issue #1748).
+        self._observer_registry: Any = (
+            _ObserverRegistry() if _ObserverRegistry is not None else _PythonObserverRegistry()
+        )
+
+        # MOUNT/UNMOUNT: driver lifecycle hooks (Issue #1811)
+        self._mount_hooks: list[VFSMountHook] = []
+        self._unmount_hooks: list[VFSUnmountHook] = []
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 
@@ -180,9 +225,8 @@ class KernelDispatch:
         self,
         path: str,
         *,
-        return_metadata: bool = False,
         context: Any = None,
-    ) -> tuple[bool, Any]:
+    ) -> tuple[bool, bytes | None]:
         """PRE-DISPATCH: first-match resolver for read (#1665).
 
         Returns (handled, result):
@@ -197,14 +241,12 @@ class KernelDispatch:
             if idx is not None:
                 resolver = self._trie_resolvers.get(idx)
                 if resolver is not None:
-                    result = resolver.try_read(
-                        path, return_metadata=return_metadata, context=context
-                    )
+                    result = resolver.try_read(path, context=context)
                     if result is not None:
                         return True, result
         # Phase 2: fallback linear scan
         for r in self._fallback_resolvers:
-            result = r.try_read(path, return_metadata=return_metadata, context=context)
+            result = r.try_read(path, context=context)
             if result is not None:
                 return True, result
         return False, None
@@ -268,6 +310,12 @@ class KernelDispatch:
     def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
         self._registry.register("rmdir", hook)
 
+    def register_intercept_stat(self, hook: VFSStatHook) -> None:
+        self._registry.register("stat", hook)
+
+    def register_intercept_access(self, hook: VFSAccessHook) -> None:
+        self._registry.register("access", hook)
+
     # ── unregister ─────────────────────────────────────────────────────
 
     def unregister_resolver(self, resolver: "VFSPathResolver") -> bool:
@@ -305,17 +353,22 @@ class KernelDispatch:
     def unregister_intercept_rmdir(self, hook: VFSRmdirHook) -> bool:
         return bool(self._registry.unregister("rmdir", hook))
 
-    # ── register_observe: generic OBSERVE observers ────────────────────
+    def unregister_intercept_stat(self, hook: VFSStatHook) -> bool:
+        return bool(self._registry.unregister("stat", hook))
+
+    def unregister_intercept_access(self, hook: VFSAccessHook) -> bool:
+        return bool(self._registry.unregister("access", hook))
+
+    # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
-        self._observers.append(obs)
+        from nexus.core.file_events import ALL_FILE_EVENTS
+
+        mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
+        self._observer_registry.register(obs, mask)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        try:
-            self._observers.remove(obs)
-            return True
-        except ValueError:
-            return False
+        return bool(self._observer_registry.unregister(obs))
 
     # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
     # Uses HookRegistry.get_pre_hooks() — pre-filtered at registration.
@@ -350,6 +403,16 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
         for hook in self._registry.get_pre_hooks("rmdir"):
             hook.on_pre_rmdir(ctx)
+
+    def intercept_pre_stat(self, ctx: StatHookContext) -> None:
+        """PRE-INTERCEPT phase for stat — hooks may abort by raising."""
+        for hook in self._registry.get_pre_hooks("stat"):
+            hook.on_pre_stat(ctx)
+
+    def intercept_pre_access(self, ctx: AccessHookContext) -> None:
+        """PRE-INTERCEPT phase for access — hooks may abort by raising."""
+        for hook in self._registry.get_pre_hooks("access"):
+            hook.on_pre_access(ctx)
 
     # ── POST-INTERCEPT dispatch ────────────────────────────────────────
 
@@ -430,15 +493,76 @@ class KernelDispatch:
     async def intercept_post_rmdir(self, ctx: RmdirHookContext) -> None:
         await self._post_dispatch("rmdir", "on_post_rmdir", ctx)
 
-    # ── OBSERVE dispatch ───────────────────────────────────────────────
+    # ── OBSERVE dispatch (Issue #1812, #1748) ────────────────────────────
 
     async def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — fire-and-forget to all registered observers."""
-        for obs in self._observers:
+        """OBSERVE phase — fire-and-forget to all registered observers.
+
+        Rust ``ObserverRegistry`` filters by ``event_mask`` bitmask before
+        crossing to Python.  Matching observers run concurrently via
+        ``gather(return_exceptions=True)`` — fault-isolated, no ordering.
+        """
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        event_type = event.type if isinstance(event.type, FileEventType) else None
+        bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
+        if not bit:
+            return
+        observers = self._observer_registry.get_matching(bit)
+        if not observers:
+            return
+
+        async def _safe(obs: Any, name: str) -> None:
             try:
-                obs.on_mutation(event)
+                await obs.on_mutation(event)
             except Exception as exc:
-                logger.warning("Observer %s failed: %s", type(obs).__name__, exc)
+                logger.warning("Observer %s failed: %s", name, exc)
+
+        await asyncio.gather(*(_safe(obs, name) for obs, name in observers))
+
+    # ── MOUNT/UNMOUNT hooks (Issue #1811) ──────────────────────────────
+
+    def register_mount_hook(self, hook: VFSMountHook) -> None:
+        self._mount_hooks.append(hook)
+
+    def register_unmount_hook(self, hook: VFSUnmountHook) -> None:
+        self._unmount_hooks.append(hook)
+
+    def unregister_mount_hook(self, hook: VFSMountHook) -> bool:
+        try:
+            self._mount_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def unregister_unmount_hook(self, hook: VFSUnmountHook) -> bool:
+        try:
+            self._unmount_hooks.remove(hook)
+            return True
+        except ValueError:
+            return False
+
+    def notify_mount(self, mount_point: str, backend: Any) -> None:
+        """Fire-and-forget mount notification to all registered hooks."""
+        if not self._mount_hooks:
+            return
+        ctx = MountHookContext(mount_point=mount_point, backend=backend)
+        for hook in self._mount_hooks:
+            try:
+                hook.on_mount(ctx)
+            except Exception as exc:
+                logger.warning("Mount hook %s failed: %s", type(hook).__name__, exc)
+
+    def notify_unmount(self, mount_point: str, backend: Any) -> None:
+        """Fire-and-forget unmount notification to all registered hooks."""
+        if not self._unmount_hooks:
+            return
+        ctx = UnmountHookContext(mount_point=mount_point, backend=backend)
+        for hook in self._unmount_hooks:
+            try:
+                hook.on_unmount(ctx)
+            except Exception as exc:
+                logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
 
     # ── Hook counts ────────────────────────────────────────────────────
 
@@ -471,5 +595,21 @@ class KernelDispatch:
         return int(self._registry.count("rmdir"))
 
     @property
+    def stat_hook_count(self) -> int:
+        return int(self._registry.count("stat"))
+
+    @property
+    def access_hook_count(self) -> int:
+        return int(self._registry.count("access"))
+
+    @property
     def observer_count(self) -> int:
-        return len(self._observers)
+        return int(self._observer_registry.count())
+
+    @property
+    def mount_hook_count(self) -> int:
+        return len(self._mount_hooks)
+
+    @property
+    def unmount_hook_count(self) -> int:
+        return len(self._unmount_hooks)

@@ -581,7 +581,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            await nx_instance.sys_mkdir(path)
+            await nx_instance.mkdir(path)
         except FileExistsError:
             return f"Directory already exists at '{path}'."
         return f"Successfully created directory {path}"
@@ -1353,24 +1353,14 @@ async def create_mcp_server(
     # =========================================================================
 
     def _get_branch_service(ctx: Context | None = None):  # type: ignore[no-untyped-def]
-        """Get ContextBranchService from NexusFS services."""
+        """Get ContextBranchService via ServiceRegistry (Issue #1771)."""
         nx_instance = _get_nexus_instance(ctx)
-        svc = getattr(
-            getattr(nx_instance, "_system_services", None), "context_branch_service", None
-        )
-        if not svc:
-            return None
-        return svc
+        return nx_instance.service("context_branch") if nx_instance else None
 
     def _get_namespace_fork_service(ctx: Context | None = None) -> Any:
-        """Get AgentNamespaceForkService from NexusFS services."""
+        """Get AgentNamespaceForkService via ServiceRegistry (Issue #1771)."""
         nx_instance = _get_nexus_instance(ctx)
-        svc = getattr(
-            getattr(nx_instance, "_system_services", None), "namespace_fork_service", None
-        )
-        if not svc:
-            return None
-        return svc
+        return nx_instance.service("namespace_fork") if nx_instance else None
 
     @mcp.tool(
         annotations={

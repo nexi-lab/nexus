@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from nexus.cli.port_utils import (
     DEFAULT_PORTS,
     VALID_STRATEGIES,
     check_port_available,
+    derive_ports,
     find_free_port,
     resolve_ports,
 )
@@ -67,14 +69,13 @@ class TestCheckPortAvailable:
 
 
 class TestFindFreePort:
-    def test_returns_preferred_when_free(self) -> None:
+    def test_returns_preferred_when_free(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """If preferred port is free, return it directly."""
-        # Get a known-free port
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("127.0.0.1", 0))
-            _, port = s.getsockname()
-        result = find_free_port(port)
-        assert result == port
+        monkeypatch.setattr(
+            "nexus.cli.port_utils.check_port_available", lambda port, host="0.0.0.0": True
+        )
+        result = find_free_port(8000)
+        assert result == 8000
 
     def test_skips_occupied_port(self) -> None:
         """If preferred port is occupied, return the next free one."""
@@ -189,3 +190,57 @@ class TestResolvePorts:
         assert "postgres" in DEFAULT_PORTS
         assert "dragonfly" in DEFAULT_PORTS
         assert "zoekt" in DEFAULT_PORTS
+
+
+# ---------------------------------------------------------------------------
+# derive_ports — deterministic hash-based port derivation
+# ---------------------------------------------------------------------------
+
+
+class TestDerivePorts:
+    def test_returns_all_expected_keys(self) -> None:
+        ports = derive_ports("/tmp/project-a")
+        assert set(ports.keys()) == {"http", "grpc", "postgres", "dragonfly", "zoekt"}
+
+    def test_deterministic(self) -> None:
+        """Same path always produces the same ports."""
+        a = derive_ports("/tmp/project-a")
+        b = derive_ports("/tmp/project-a")
+        assert a == b
+
+    def test_different_paths_differ(self) -> None:
+        """Different directories should (almost certainly) get different ports."""
+        a = derive_ports("/tmp/project-a")
+        b = derive_ports("/tmp/project-b")
+        assert a["http"] != b["http"]
+
+    def test_ports_are_contiguous(self) -> None:
+        """Ports within a slot should be consecutive."""
+        ports = derive_ports("/tmp/test-contiguous")
+        base = ports["http"]
+        assert ports["grpc"] == base + 1
+        assert ports["postgres"] == base + 2
+        assert ports["dragonfly"] == base + 3
+        assert ports["zoekt"] == base + 4
+
+    def test_ports_in_valid_range(self) -> None:
+        """Derived ports should be in 10000–59999."""
+        for path in ["/a", "/b/c", "/tmp/nexus-data", "/Users/dev/project"]:
+            ports = derive_ports(path)
+            for port in ports.values():
+                assert 10000 <= port <= 59999, f"Port {port} out of range for {path}"
+
+    def test_resolves_relative_paths(self, tmp_path: Path) -> None:
+        """Relative and absolute paths to the same dir produce the same ports."""
+        import os
+
+        abs_path = str(tmp_path / "nexus-data")
+        # Simulate relative path from within tmp_path
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(tmp_path))
+            rel_ports = derive_ports("nexus-data")
+        finally:
+            os.chdir(old_cwd)
+        abs_ports = derive_ports(abs_path)
+        assert rel_ports == abs_ports

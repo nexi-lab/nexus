@@ -205,7 +205,7 @@ async def connect_local_workspace(data_dir: str) -> NexusFilesystem:
     with _isolated_local_workspace_env(data_dir):
         filesystem = await nexus.connect(
             config={
-                "profile": "minimal",
+                "profile": "slim",
                 "backend": "local",
                 "data_dir": data_dir,
                 "db_path": None,
@@ -258,11 +258,17 @@ async def get_filesystem(
             pass
 
         # Source-checkout quickstart: if a local data dir is explicitly set and
-        # the user did not explicitly pass --remote-url, prefer the local
-        # workspace over any ambient NEXUS_URL or saved CLI profile.
+        # the user did not explicitly request REMOTE mode, prefer the local
+        # workspace over ambient config. This preserves the documented local
+        # quickstart while still honoring containerized workflows that set
+        # NEXUS_PROFILE=remote and pass NEXUS_URL via environment.
+        remote_profile_requested = (
+            os.environ.get("NEXUS_PROFILE") or ""
+        ).strip().lower() == "remote" or profile_name == "remote"
         if (
             allow_local_default
             and explicit_local_data_dir
+            and not remote_profile_requested
             and remote_url_source is not ParameterSource.COMMANDLINE
         ):
             return await connect_local_workspace(explicit_local_data_dir)
@@ -279,7 +285,7 @@ async def get_filesystem(
                     "NEXUS_DATA_DIR",
                     str(Path(nexus.NEXUS_STATE_DIR) / "data"),
                 )
-                return await nexus.connect(config={"profile": "minimal", "data_dir": data_dir})
+                return await nexus.connect(config={"profile": "slim", "data_dir": data_dir})
 
             console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
             console.print(
@@ -621,53 +627,33 @@ def output_result(data: Any, json_output: bool, rich_fn: Any) -> None:
         rich_fn(data)
 
 
-def get_service_client(
-    remote_url: str | None = None,
-    remote_api_key: str | None = None,
-) -> Any:
-    """Create a NexusServiceClient from URL/API key, with validation.
-
-    Args:
-        remote_url: Server URL (from --remote-url or NEXUS_URL env var)
-        remote_api_key: API key (from --remote-api-key or NEXUS_API_KEY env var)
-
-    Returns:
-        NexusServiceClient instance
-
-    Raises:
-        SystemExit: If URL is not provided
-    """
-    if not remote_url:
-        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
-        sys.exit(ExitCode.CONFIG_ERROR)
-
-    from nexus.cli.client import NexusServiceClient
-
-    return NexusServiceClient(url=remote_url, api_key=remote_api_key)
-
-
 def rpc_call(
     remote_url: str | None,
     remote_api_key: str | None,
     rpc_method: str,
     **kwargs: Any,
 ) -> Any:
-    """Backward-compatible wrapper over ``NexusServiceClient`` methods.
+    """Execute a service RPC via gRPC REMOTE profile.
 
-    A few CLI commands still call the older ``rpc_call(...)`` helper. Keep it
-    as a thin adapter until those commands are migrated to the newer client
-    wrappers.
+    Uses the same RemoteServiceProxy + RPCTransport path that filesystem
+    commands use. Any method name dispatches to server dispatch_method()
+    via gRPC Call RPC.
     """
+    import asyncio
+
     method_aliases = {
         "federation_list_zones": "federation_zones",
     }
-    client_method_name = method_aliases.get(rpc_method, rpc_method)
+    method_name = method_aliases.get(rpc_method, rpc_method)
 
-    with get_service_client(remote_url, remote_api_key) as client:
-        client_method = getattr(client, client_method_name, None)
-        if client_method is None or not callable(client_method):
-            raise AttributeError(
-                f"NexusServiceClient has no method {client_method_name!r} "
-                f"(requested via legacy rpc_call name {rpc_method!r})"
-            )
-        return client_method(**kwargs)
+    async def _call() -> Any:
+        nx = await get_filesystem(remote_url, remote_api_key)
+        try:
+            proxy = nx.service("operations")
+            if proxy is None:
+                raise RuntimeError("Not connected in REMOTE mode")
+            return getattr(proxy, method_name)(**kwargs)
+        finally:
+            nx.close()
+
+    return asyncio.run(_call())

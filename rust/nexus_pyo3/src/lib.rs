@@ -100,5 +100,6 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // Dispatch (Issue #1317)
     m.add_class::<dispatch::PathTrie>()?;
     m.add_class::<dispatch::HookRegistry>()?;
+    m.add_class::<dispatch::ObserverRegistry>()?;
     Ok(())
 }

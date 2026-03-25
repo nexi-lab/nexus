@@ -219,7 +219,7 @@ async def _startup_connector_sync(app: "FastAPI", svc: "LifespanServices") -> No
     if not svc.nexus_fs:
         return
 
-    sync_loop = getattr(svc.nexus_fs, "_connector_sync_loop", None)
+    sync_loop = svc.nexus_fs.service("connector_sync_loop")
     if sync_loop is not None:
         try:
             await sync_loop.start()
@@ -246,16 +246,15 @@ def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None
     """Initialize ExporterRegistry and configured exporters (Issue #1138)."""
     app.state.exporter_registry = None
 
-    try:
-        from nexus.system_services.event_subsystem.log.exporter_registry import ExporterRegistry
-        from nexus.system_services.event_subsystem.log.exporters.config import EventStreamConfig
-        from nexus.system_services.event_subsystem.log.exporters.factory import create_exporter
+    enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
+    if not enabled:
+        logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
+        return
 
-        # Read config from env vars
-        enabled = os.getenv("NEXUS_EVENT_STREAM_ENABLED", "").lower() in ("true", "1", "yes")
-        if not enabled:
-            logger.debug("Event stream export disabled (NEXUS_EVENT_STREAM_ENABLED not set)")
-            return
+    try:
+        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
+        from nexus.system_services.event_log.exporters.config import EventStreamConfig
+        from nexus.system_services.event_log.exporters.factory import create_exporter
 
         exporter_type = os.getenv("NEXUS_EVENT_STREAM_EXPORTER", "kafka")
         config = EventStreamConfig(enabled=True, exporter=exporter_type)

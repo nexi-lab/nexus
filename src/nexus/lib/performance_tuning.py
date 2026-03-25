@@ -290,7 +290,7 @@ class ProfileTuning:
 # Profile-to-tuning mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_MINIMAL_TUNING = ProfileTuning(
+_SLIM_TUNING = ProfileTuning(
     concurrency=ConcurrencyTuning(
         default_workers=1,
         thread_pool_size=4,
@@ -691,13 +691,13 @@ def _get_profile_tuning_map() -> dict[str, ProfileTuning]:
     from nexus.contracts.deployment_profile import DeploymentProfile
 
     return {
-        DeploymentProfile.MINIMAL: _MINIMAL_TUNING,
+        DeploymentProfile.SLIM: _SLIM_TUNING,
         DeploymentProfile.EMBEDDED: _EMBEDDED_TUNING,
         DeploymentProfile.LITE: _LITE_TUNING,
         DeploymentProfile.FULL: _FULL_TUNING,
         DeploymentProfile.CLOUD: _CLOUD_TUNING,
         DeploymentProfile.INNOVATION: _CLOUD_TUNING,  # INNOVATION reuses CLOUD tuning
-        DeploymentProfile.REMOTE: _MINIMAL_TUNING,  # REMOTE reuses MINIMAL tuning
+        DeploymentProfile.REMOTE: _SLIM_TUNING,  # REMOTE reuses SLIM tuning
     }
 
 

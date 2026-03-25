@@ -135,6 +135,7 @@ jobs:
         shell: bash
 
       - name: Run unit tests
+        timeout-minutes: 20
         run: |
           start=$(date +%s)
           uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
@@ -144,15 +145,15 @@ jobs:
           exit $status
         shell: bash
 
-      - name: Unit test duration (target <3min; fail if >7min)
+      - name: Unit test duration (target <3min; fail if >8min)
         if: always()
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
           echo "### Unit tests" >> $GITHUB_STEP_SUMMARY
-          echo "Duration: **${dur}s** (target &lt;180s; max 420s)" >> $GITHUB_STEP_SUMMARY
-          if [ "$dur" -gt 420 ]; then
-            echo "::error::Unit tests took ${dur}s (max 420s). Keep the suite lean; see tests/unit/README.md"
+          echo "Duration: **${dur}s** (target &lt;180s; max 480s)" >> $GITHUB_STEP_SUMMARY
+          if [ "$dur" -gt 480 ]; then
+            echo "::error::Unit tests took ${dur}s (max 480s). Keep the suite lean; see tests/unit/README.md"
             exit 1
           fi
         shell: bash

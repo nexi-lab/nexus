@@ -5,6 +5,9 @@ These tests verify the async-to-sync bridge functionality for ReBAC operations.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.async_bridge import (
     AsyncReBACBridge,
     get_async_rebac_bridge,

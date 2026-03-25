@@ -164,15 +164,13 @@ class TestBootSystemServices:
             "permission_enforcer",
             "write_observer",
             # Former-kernel degradable
-            "dir_visibility_cache",
-            "hierarchy_manager",
+            # dir_visibility_cache, hierarchy_manager, namespace_manager
+            # now internalized into ReBACManager — not in result dict.
             "deferred_permission_buffer",
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
             # Original system services
-            "eviction_manager",
-            "namespace_manager",
             "async_namespace_manager",
             "delivery_worker",
             "observability_subsystem",
@@ -181,12 +179,8 @@ class TestBootSystemServices:
             "brick_lifecycle_manager",
             "brick_reconciler",
             "zone_lifecycle",
-            # (PipeManager is kernel-internal §4.2, not in SystemServices)
-            # Process lifecycle (Issue #1509)
-            "agent_registry",
+            # (PipeManager + AgentRegistry are kernel-internal §4.2, not in SystemServices)
             "scheduler_service",
-            # ACP coding agent service
-            "acp_service",
             # Issue #3193: shared notification signal
             "event_signal",
         }
@@ -214,14 +208,14 @@ class TestBootSystemServices:
         with (
             caplog.at_level(logging.WARNING, logger="nexus.factory"),
             patch(
-                "nexus.bricks.rebac.namespace_factory.create_namespace_manager",
+                "nexus.bricks.rebac.manager.ReBACManager.create_namespace_manager",
                 side_effect=RuntimeError("namespace db error"),
             ),
         ):
             result = _boot_system_services(ctx)
 
-        # Namespace manager failed, but others should still work
-        assert result["namespace_manager"] is None
+        # Namespace manager failed (internalized into rebac), async wrapper is None
+        assert result["async_namespace_manager"] is None
         # Critical services should still be created
         assert result["rebac_manager"] is not None
         assert result["permission_enforcer"] is not None

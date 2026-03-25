@@ -9,7 +9,6 @@ import pytest
 
 from nexus.core.config import WiredServices
 from nexus.factory.service_routing import enlist_wired_services
-from tests.helpers.test_context import TEST_CONTEXT
 
 
 class TestWiredServicesDataclass:
@@ -47,45 +46,51 @@ class TestEnlistWiredServices:
     """Test enlist_wired_services accepts both WiredServices and dict (#1708)."""
 
     @pytest.fixture()
-    def nx(self) -> Any:
-        """Minimal NexusFS with mocked pillars."""
-        from nexus.core.config import KernelServices, ParseConfig
-        from nexus.core.nexus_fs import NexusFS
+    async def nx(self, tmp_path: Any) -> Any:
+        """Minimal NexusFS via factory boot path."""
+        from tests.conftest import make_test_nexus
 
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            kernel_services=KernelServices(),
-            parsing=ParseConfig(auto_parse=False),
-        )
-        nx._default_context = TEST_CONTEXT
-        return nx
+        return await make_test_nexus(tmp_path)
 
     @pytest.fixture()
-    def coordinator(self, nx: Any) -> Any:
-        """Create coordinator with BLM=None (Issue #1708)."""
-        from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-            ServiceLifecycleCoordinator,
-        )
+    def registry(self, nx: Any) -> Any:
+        """Return the ServiceRegistry (now has lifecycle methods, Issue #1814).
 
-        return ServiceLifecycleCoordinator(nx._service_registry, None, nx._dispatch)
+        Clears any wired-service keys that the factory boot path already
+        registered, so tests can call enlist_wired_services() without
+        hitting 'already registered' errors.
+        """
+        from nexus.factory.service_routing import _CANONICAL_NAMES
 
-    def test_enlist_from_dataclass(self, nx: Any, coordinator: Any) -> None:
+        reg = nx._service_registry
+        for canonical in _CANONICAL_NAMES.values():
+            reg.unregister(canonical)
+        return reg
+
+    def test_enlist_from_dataclass(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
+        # Factory boot may have pre-registered these; clear them for a clean test.
+        for key in ("rebac", "mount"):
+            try:
+                registry.unregister(key)
+            except KeyError:
+                pass
         ws = WiredServices(rebac_service=mock_svc, mount_service=mock_svc)
-        asyncio.run(enlist_wired_services(coordinator, ws))
+        asyncio.run(enlist_wired_services(registry, ws))
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc
         assert nx.service("mcp") is None
 
-    def test_enlist_from_dict(self, nx: Any, coordinator: Any) -> None:
+    def test_enlist_from_dict(self, nx: Any, registry: Any) -> None:
         mock_svc = MagicMock()
+        # Factory boot may have pre-registered these; clear them for a clean test.
+        for key in ("rebac", "mount"):
+            try:
+                registry.unregister(key)
+            except KeyError:
+                pass
         asyncio.run(
-            enlist_wired_services(
-                coordinator, {"rebac_service": mock_svc, "mount_service": mock_svc}
-            )
+            enlist_wired_services(registry, {"rebac_service": mock_svc, "mount_service": mock_svc})
         )
         assert nx.service("rebac")._service_instance is mock_svc
         assert nx.service("mount")._service_instance is mock_svc

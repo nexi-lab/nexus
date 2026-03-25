@@ -109,7 +109,7 @@ class TestEdgeSyncManagerStateTransitions:
 
         mgr.notify_connected()
         # Wait for reconnection to complete
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         assert mgr.state is SyncState.ONLINE
         await mgr.stop()
@@ -127,7 +127,7 @@ class TestEdgeSyncManagerStateTransitions:
 
         mgr.notify_disconnected()
         mgr.notify_connected()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         deps["auth_manager"].exit_offline_mode.assert_called_once()
         deps["auth_manager"].force_refresh.assert_called_once()
@@ -147,7 +147,7 @@ class TestEdgeSyncManagerStateTransitions:
 
         mgr.notify_disconnected()
         mgr.notify_connected()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         assert mgr.state is SyncState.DISCONNECTED
         await mgr.stop()
@@ -205,7 +205,7 @@ class TestEdgeSyncManagerHealthCheckUrl:
 
         mgr.notify_disconnected()
         mgr.notify_connected()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # The transport should have been called with the custom URL, not "health.check"
         deps["transport"].call.assert_called_with("custom.health.endpoint", params={})
@@ -224,7 +224,7 @@ class TestEdgeSyncManagerHealthCheckUrl:
 
         mgr.notify_disconnected()
         mgr.notify_connected()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Transport.call should NOT be called for health check (circuit state used instead)
         # But it might be called for other operations — check no "health" call was made

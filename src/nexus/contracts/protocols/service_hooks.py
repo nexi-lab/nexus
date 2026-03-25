@@ -1,8 +1,8 @@
 """Declarative VFS hook specification for service lifecycle.
 
 Services declare which VFS hooks they need at mount time via ``HookSpec``.
-The ``ServiceLifecycleCoordinator`` registers/unregisters these hooks
-during mount/unmount/swap, enabling clean hook teardown on hot-swap.
+The ``ServiceRegistry`` registers/unregisters these hooks during
+mount/unmount/swap, enabling clean hook teardown on hot-swap.
 
 Issue #1452 Phase 3.
 """
@@ -35,8 +35,12 @@ class HookSpec:
     rename_hooks: tuple[Any, ...] = ()
     mkdir_hooks: tuple[Any, ...] = ()
     rmdir_hooks: tuple[Any, ...] = ()
+    stat_hooks: tuple[Any, ...] = ()
+    access_hooks: tuple[Any, ...] = ()
     observers: tuple[Any, ...] = ()
     resolvers: tuple[Any, ...] = ()
+    mount_hooks: tuple[Any, ...] = ()
+    unmount_hooks: tuple[Any, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -50,8 +54,12 @@ class HookSpec:
                 self.rename_hooks,
                 self.mkdir_hooks,
                 self.rmdir_hooks,
+                self.stat_hooks,
+                self.access_hooks,
                 self.observers,
                 self.resolvers,
+                self.mount_hooks,
+                self.unmount_hooks,
             )
         )
 
@@ -66,6 +74,10 @@ class HookSpec:
             + len(self.rename_hooks)
             + len(self.mkdir_hooks)
             + len(self.rmdir_hooks)
+            + len(self.stat_hooks)
+            + len(self.access_hooks)
             + len(self.observers)
             + len(self.resolvers)
+            + len(self.mount_hooks)
+            + len(self.unmount_hooks)
         )

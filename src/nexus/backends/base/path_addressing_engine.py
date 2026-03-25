@@ -439,8 +439,6 @@ class PathAddressingEngine(Backend):
                     path=path,
                 )
 
-        self._transport.delete_blob(blob_path)
-
         if recursive:
             blobs, _ = self._transport.list_blobs(prefix=blob_path, delimiter="")
             for blob_key in blobs:
@@ -449,6 +447,8 @@ class PathAddressingEngine(Backend):
                         self._transport.delete_blob(blob_key)
                     except Exception as e:
                         logger.debug("Failed to delete blob during recursive rmdir: %s", e)
+
+        self._transport.delete_blob(blob_path)
 
     def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         try:

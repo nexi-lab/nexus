@@ -368,3 +368,353 @@ class TestBackpressure:
         )
         path = await sender.send(env)
         assert path is not None
+
+
+# ===========================================================================
+# Issue #3197: DT_PIPE wakeup + event-driven TTL sweep integration tests
+# ===========================================================================
+
+
+class TestDTPipeWakeupIntegration:
+    """Integration: DT_PIPE wakeup notifier triggers inbox processing."""
+
+    @pytest.mark.asyncio
+    async def test_wakeup_notifier_fires_on_send(self, vfs: InMemoryVFS) -> None:
+        """Send with wakeup notifier -> notifier records the recipient."""
+        from tests.unit.bricks.ipc.fakes import InMemoryWakeupNotifier
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        notifier = InMemoryWakeupNotifier()
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[notifier])
+
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            payload={"action": "wakeup_test"},
+        )
+        await sender.send(env)
+
+        assert notifier.notifications == ["agent:bob"]
+
+    @pytest.mark.asyncio
+    async def test_wakeup_notifier_failure_does_not_block_send(self, vfs: InMemoryVFS) -> None:
+        """Failing wakeup notifier must not prevent message delivery."""
+        from tests.unit.bricks.ipc.fakes import InMemoryWakeupNotifier
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        failing = InMemoryWakeupNotifier(should_fail=True)
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[failing])
+
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            payload={"action": "should_still_arrive"},
+        )
+        path = await sender.send(env)
+
+        # Message was written despite notifier failure
+        data = await vfs.sys_read(path, ZONE)
+        restored = MessageEnvelope.from_bytes(data)
+        assert restored.payload["action"] == "should_still_arrive"
+
+    @pytest.mark.asyncio
+    async def test_full_roundtrip_with_wakeup(self, vfs: InMemoryVFS) -> None:
+        """End-to-end: send with notifier -> wakeup -> process -> processed/."""
+        import asyncio
+
+        from tests.unit.bricks.ipc.fakes import InMemoryWakeupListener, InMemoryWakeupNotifier
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+
+        notifier = InMemoryWakeupNotifier()
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[notifier])
+
+        received: list[MessageEnvelope] = []
+
+        async def handler(msg: MessageEnvelope) -> None:
+            received.append(msg)
+
+        listener = InMemoryWakeupListener()
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, wakeup_listener=listener
+        )
+        await processor.start()
+
+        # Send message
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_roundtrip_wakeup",
+            payload={"test": "roundtrip"},
+        )
+        await sender.send(env)
+
+        # Wait for listener to be ready, then trigger wakeup
+        await asyncio.wait_for(listener._waiting.wait(), timeout=2.0)
+        listener.trigger()
+        await asyncio.sleep(0.05)
+
+        await processor.stop()
+
+        assert len(received) == 1
+        assert received[0].id == "msg_roundtrip_wakeup"
+        # Inbox empty, processed has the message
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 0
+        processed_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
+        assert len(processed_files) == 1
+
+
+class TestEventDrivenSweepIntegration:
+    """Integration: CacheStore pub/sub triggers TTL sweeper."""
+
+    @pytest.mark.asyncio
+    async def test_ttl_schedule_event_triggers_targeted_sweep(self, vfs: InMemoryVFS) -> None:
+        """Send with TTL -> CacheStore pub/sub event -> sweeper wakes -> sweeps agent."""
+        import asyncio
+        import json
+
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        cache_store = InMemoryCacheStore()
+
+        # Write an already-expired message to bob's inbox
+        from nexus.bricks.ipc.conventions import message_path_in_inbox
+
+        old_ts = datetime(2020, 1, 1, tzinfo=UTC)
+        expired_env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_expired_event",
+            timestamp=old_ts,
+            ttl_seconds=60,
+            payload={},
+        )
+        msg_path = message_path_in_inbox("agent:bob", expired_env.id, expired_env.timestamp)
+        await vfs.sys_write(msg_path, expired_env.to_bytes(), ZONE)
+
+        # Start event-driven sweeper
+        sweeper = TTLSweeper(
+            vfs,
+            zone_id=ZONE,
+            interval=300,  # Long poll interval — we rely on event
+            cache_store=cache_store,
+            debounce_seconds=0.05,
+        )
+        await sweeper.start()
+        await asyncio.sleep(0.05)  # Let subscriber register
+
+        # Publish TTL schedule event (as MessageSender would)
+        await cache_store.publish(
+            f"ipc:ttl:schedule:{ZONE}",
+            json.dumps({"agent_id": "agent:bob", "msg_id": "msg_expired_event"}).encode(),
+        )
+
+        await asyncio.sleep(0.3)  # Wait for debounce + sweep
+        await sweeper.stop()
+        await cache_store.close()
+
+        # Expired message should have been swept
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 0
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
+
+    @pytest.mark.asyncio
+    async def test_sender_publishes_ttl_event_and_sweeper_reacts(self, vfs: InMemoryVFS) -> None:
+        """Full integration: MessageSender publishes TTL event -> sweeper reacts."""
+        import asyncio
+
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        cache_store = InMemoryCacheStore()
+
+        # Start event-driven sweeper first
+        sweeper = TTLSweeper(
+            vfs,
+            zone_id=ZONE,
+            interval=300,
+            cache_store=cache_store,
+            debounce_seconds=0.05,
+        )
+        await sweeper.start()
+        await asyncio.sleep(0.05)  # Let subscriber register
+
+        # Write an already-expired message to inbox
+        old_ts = datetime(2020, 1, 1, tzinfo=UTC)
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_sender_ttl",
+            timestamp=old_ts,
+            ttl_seconds=60,
+            payload={},
+        )
+        # Manually write (send() would reject since inbox validation uses real paths)
+        from nexus.bricks.ipc.conventions import message_path_in_inbox
+
+        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+
+        # Publish TTL event (simulate what MessageSender._send_to_inbox does)
+        import json
+
+        expires_at = env.timestamp.timestamp() + env.ttl_seconds
+        await cache_store.publish(
+            f"ipc:ttl:schedule:{ZONE}",
+            json.dumps(
+                {
+                    "agent_id": "agent:bob",
+                    "msg_id": env.id,
+                    "expires_at": expires_at,
+                }
+            ).encode(),
+        )
+
+        await asyncio.sleep(0.3)
+        await sweeper.stop()
+        await cache_store.close()
+
+        # Expired message swept, with reason sidecar
+        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+        assert len(inbox_files) == 0
+        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+        reason_files = [f for f in dl_files if f.endswith(".reason.json")]
+        assert len(reason_files) == 1  # .reason.json sidecar written by shared helper
+
+
+# ===========================================================================
+# Issue #3197: SSE stream + EventPublisher end-to-end
+# ===========================================================================
+
+
+class TestSSEStreamIntegration:
+    """Integration: CacheStore pub/sub event -> SSE stream delivery."""
+
+    @pytest.mark.asyncio
+    async def test_event_publisher_delivers_to_subscriber(self, vfs: InMemoryVFS) -> None:
+        """Full flow: send with EventPublisher -> subscriber receives event."""
+        import asyncio
+        import json
+
+        from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob")
+        cache_store = InMemoryCacheStore()
+
+        # Simulate SSE subscriber (what the /stream endpoint does)
+        received_events: list[dict] = []
+
+        async def sse_subscriber():
+            async with cache_store.subscribe("ipc.inbox.agent:bob") as messages:
+                async for msg in messages:
+                    received_events.append(json.loads(msg))
+                    if len(received_events) >= 2:
+                        break
+
+        subscriber_task = asyncio.create_task(sse_subscriber())
+        await asyncio.sleep(0.02)  # Let subscriber register
+
+        # Send via MessageSender with EventPublisher (same as REST API)
+        event_pub = CacheStoreEventPublisher(cache_store)
+        sender = MessageSender(vfs, event_pub, zone_id=ZONE)
+
+        env1 = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_sse_1",
+            payload={"action": "first"},
+        )
+        env2 = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            id="msg_sse_2",
+            payload={"action": "second"},
+        )
+        await sender.send(env1)
+        await sender.send(env2)
+
+        # Wait for subscriber to receive both
+        await asyncio.wait_for(subscriber_task, timeout=2.0)
+
+        assert len(received_events) == 2
+        assert received_events[0]["event"] == "message_delivered"
+        assert received_events[0]["sender"] == "agent:alice"
+        assert received_events[0]["message_id"] == "msg_sse_1"
+        assert received_events[1]["message_id"] == "msg_sse_2"
+
+        await cache_store.close()
+
+    @pytest.mark.asyncio
+    async def test_multiple_agents_receive_own_events(self, vfs: InMemoryVFS) -> None:
+        """Each agent's SSE stream only receives events for their inbox."""
+        import asyncio
+        import json
+
+        from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
+        from nexus.cache.inmemory import InMemoryCacheStore
+
+        await _setup_agents(vfs, "agent:alice", "agent:bob", "agent:carol")
+        cache_store = InMemoryCacheStore()
+
+        bob_events: list[dict] = []
+        carol_events: list[dict] = []
+
+        async def bob_sub():
+            async with cache_store.subscribe("ipc.inbox.agent:bob") as msgs:
+                async for msg in msgs:
+                    bob_events.append(json.loads(msg))
+                    break
+
+        async def carol_sub():
+            async with cache_store.subscribe("ipc.inbox.agent:carol") as msgs:
+                async for msg in msgs:
+                    carol_events.append(json.loads(msg))
+                    break
+
+        bob_task = asyncio.create_task(bob_sub())
+        carol_task = asyncio.create_task(carol_sub())
+        await asyncio.sleep(0.02)
+
+        event_pub = CacheStoreEventPublisher(cache_store)
+        sender = MessageSender(vfs, event_pub, zone_id=ZONE)
+
+        # Send to bob only
+        await sender.send(
+            MessageEnvelope(
+                sender="agent:alice",
+                recipient="agent:bob",
+                type=MessageType.TASK,
+                payload={"for": "bob"},
+            )
+        )
+        # Send to carol only
+        await sender.send(
+            MessageEnvelope(
+                sender="agent:alice",
+                recipient="agent:carol",
+                type=MessageType.TASK,
+                payload={"for": "carol"},
+            )
+        )
+
+        await asyncio.wait_for(bob_task, timeout=2.0)
+        await asyncio.wait_for(carol_task, timeout=2.0)
+
+        assert len(bob_events) == 1
+        assert bob_events[0]["recipient"] == "agent:bob"
+        assert len(carol_events) == 1
+        assert carol_events[0]["recipient"] == "agent:carol"
+
+        await cache_store.close()

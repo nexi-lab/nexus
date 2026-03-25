@@ -14,6 +14,7 @@ Graph methods provide semantic graph search using txtai's built-in graph module.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from typing import Any, Protocol, cast, runtime_checkable
@@ -21,6 +22,9 @@ from typing import Any, Protocol, cast, runtime_checkable
 from nexus.bricks.search.results import BaseSearchResult
 
 logger = logging.getLogger(__name__)
+
+_RERANK_MAX_CHARS = 800
+_RERANK_MAX_WORDS = 128
 
 
 # =============================================================================
@@ -108,6 +112,7 @@ class TxtaiBackend:
         *,
         database_url: str | None = None,
         model: str = "sentence-transformers/all-MiniLM-L6-v2",
+        vectors: dict[str, Any] | None = None,
         hybrid: bool = True,
         graph: bool = True,
         reranker_model: str | None = None,
@@ -115,6 +120,7 @@ class TxtaiBackend:
     ) -> None:
         self._database_url = database_url
         self._model = model
+        self._vectors = dict(vectors or {})
         self._hybrid = hybrid
         self._graph = graph
         self._reranker_model = reranker_model
@@ -122,6 +128,10 @@ class TxtaiBackend:
         self._embeddings: Any = None
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
+        self._started = False
+        self._startup_lock = asyncio.Lock()
+        self._startup_task: asyncio.Task[None] | None = None
+        self._reranker_task: asyncio.Task[None] | None = None
         # Serialise all access to _embeddings / _reranker across coroutines.
         # faiss (used by txtai) is NOT thread-safe for concurrent search+write
         # operations. Since asyncio.to_thread() dispatches to a thread pool,
@@ -129,6 +139,31 @@ class TxtaiBackend:
         self._lock = asyncio.Lock()
 
     async def startup(self) -> None:
+        """Initialize txtai resources once."""
+        if self._started or self._embeddings is not None:
+            if self._embeddings is not None:
+                self._started = True
+            return
+
+        async with self._startup_lock:
+            if self._started:
+                return
+            if self._startup_task is None or self._startup_task.done():
+                self._startup_task = asyncio.create_task(self._startup_impl())
+            task = self._startup_task
+
+        await task
+
+    def kickoff_startup(self) -> None:
+        """Begin backend startup in the background without blocking app readiness."""
+        if self._started or self._embeddings is not None:
+            if self._embeddings is not None:
+                self._started = True
+            return
+        if self._startup_task is None or self._startup_task.done():
+            self._startup_task = asyncio.create_task(self._startup_impl())
+
+    async def _startup_impl(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
 
         Fallback chain:
@@ -137,7 +172,13 @@ class TxtaiBackend:
         3. Keyword-only BM25 (embedding model fails to load)
         4. Degraded mode — _embeddings stays None, all searches return []
         """
-        from txtai import Embeddings
+        try:
+            from txtai import Embeddings
+        except ModuleNotFoundError:
+            logger.warning("txtai package not installed; starting in degraded search mode")
+            self._embeddings = None
+            self._started = True
+            return
 
         # Auto-detect GPU: MPS (Apple Silicon) > CUDA > CPU
         gpu_device: str | bool = False
@@ -164,6 +205,8 @@ class TxtaiBackend:
             "hybrid": self._hybrid,
             "objects": True,
         }
+        if self._vectors:
+            config["vectors"] = dict(self._vectors)
 
         if gpu_device:
             config["gpu"] = gpu_device
@@ -223,21 +266,13 @@ class TxtaiBackend:
                 )
                 self._embeddings = None
 
-        # Initialize cross-encoder reranker if configured
-        if self._reranker_model and self._embeddings is not None:
-            try:
-                from txtai.pipeline import Similarity
+        # Mark backend usable as soon as embeddings are ready. Reranker startup
+        # can continue in the background without blocking indexing/search.
+        self._started = True
 
-                self._reranker = await asyncio.to_thread(
-                    lambda: Similarity(path=self._reranker_model, crossencode=True)
-                )
-                logger.info("Reranker initialized: %s", self._reranker_model)
-            except Exception:
-                logger.warning(
-                    "Reranker init failed (model=%s). Continuing without reranking.",
-                    self._reranker_model,
-                    exc_info=True,
-                )
+        # Initialize cross-encoder reranker in the background if configured.
+        if self._reranker_model and self._embeddings is not None:
+            self._reranker_task = asyncio.create_task(self._init_reranker())
 
         logger.info(
             "txtai backend started: model=%s, hybrid=%s, graph=%s, pgvector=%s, "
@@ -246,18 +281,44 @@ class TxtaiBackend:
             self._hybrid,
             self._graph,
             use_pgvector,
-            self._reranker_model if self._reranker else None,
+            self._reranker_model,
             bool(self._sparse),
             self._embeddings is None,
         )
 
+    async def _init_reranker(self) -> None:
+        """Load the optional cross-encoder reranker without blocking backend readiness."""
+        try:
+            from txtai.pipeline import Similarity
+
+            reranker = await asyncio.to_thread(
+                lambda: Similarity(path=self._reranker_model, crossencode=True)
+            )
+            async with self._lock:
+                self._reranker = reranker
+            logger.info("Reranker initialized: %s", self._reranker_model)
+        except Exception:
+            logger.warning(
+                "Reranker init failed (model=%s). Continuing without reranking.",
+                self._reranker_model,
+                exc_info=True,
+            )
+            async with self._lock:
+                self._reranker = None
+
     async def shutdown(self) -> None:
         """Release txtai resources."""
+        if self._reranker_task is not None and not self._reranker_task.done():
+            self._reranker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reranker_task
+        self._reranker_task = None
         async with self._lock:
             self._reranker = None
             if self._embeddings is not None:
                 await asyncio.to_thread(self._embeddings.close)
                 self._embeddings = None
+            self._started = False
         logger.info("txtai backend shut down")
 
     # ----- Index operations ---------------------------------------------------
@@ -266,6 +327,7 @@ class TxtaiBackend:
         """Index documents (full rebuild for zone_id)."""
         if not documents:
             return 0
+        await self.startup()
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
@@ -283,6 +345,7 @@ class TxtaiBackend:
         """
         if not documents:
             return 0
+        await self.startup()
 
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
@@ -302,6 +365,7 @@ class TxtaiBackend:
         """Delete documents by id."""
         if not ids:
             return 0
+        await self.startup()
 
         async with self._lock:
             if not self._embeddings:
@@ -322,6 +386,7 @@ class TxtaiBackend:
     ) -> list[BaseSearchResult]:
         """Search with mandatory zone_id isolation via txtai SQL WHERE clause."""
         self.last_rerank_ms = 0.0
+        await self.startup()
 
         # Over-fetch when reranker is available so it has enough candidates.
         # 2x balances rerank quality vs CPU latency (~10ms per candidate).
@@ -367,7 +432,7 @@ class TxtaiBackend:
         """Rerank results using cross-encoder model."""
         start = time.perf_counter()
 
-        texts = [r.chunk_text for r in results if r.chunk_text]
+        texts = [_truncate_reranker_text(r.chunk_text) for r in results if r.chunk_text]
         if not texts:
             return results[:limit]
 
@@ -375,7 +440,15 @@ class TxtaiBackend:
         async with self._lock:
             if not self._reranker:
                 return results[:limit]
-            scored: list[tuple[int, float]] = await asyncio.to_thread(self._reranker, query, texts)
+            try:
+                scored: list[tuple[int, float]] = await asyncio.to_thread(
+                    self._reranker,
+                    query,
+                    texts,
+                )
+            except Exception as exc:
+                logger.warning("Reranker failed, falling back to backend ranking: %s", exc)
+                return results[:limit]
 
         reranked: list[BaseSearchResult] = []
         for idx, score in scored:
@@ -399,6 +472,7 @@ class TxtaiBackend:
         limit: int = 10,
     ) -> list[BaseSearchResult]:
         """Graph-augmented search using txtai's semantic graph."""
+        await self.startup()
         async with self._lock:
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
@@ -429,6 +503,7 @@ class TxtaiBackend:
 
         Returns list of neighbor dicts with ``id``, ``text``, ``score`` keys.
         """
+        await self.startup()
         if not self._embeddings or not getattr(self._embeddings, "graph", None):
             return []
 
@@ -505,6 +580,19 @@ def _build_search_sql(
 def _stamp_zone_id(documents: list[dict[str, Any]], zone_id: str) -> list[dict[str, Any]]:
     """Return new document list with zone_id stamped on each (immutable)."""
     return [{**doc, "zone_id": zone_id} for doc in documents]
+
+
+def _truncate_reranker_text(text: str) -> str:
+    """Trim reranker candidates to avoid cross-encoder sequence overflows."""
+    trimmed = text.strip()
+    if len(trimmed) > _RERANK_MAX_CHARS:
+        trimmed = trimmed[:_RERANK_MAX_CHARS]
+
+    words = trimmed.split()
+    if len(words) > _RERANK_MAX_WORDS:
+        trimmed = " ".join(words[:_RERANK_MAX_WORDS])
+
+    return trimmed
 
 
 # =============================================================================

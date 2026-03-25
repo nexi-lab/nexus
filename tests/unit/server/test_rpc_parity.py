@@ -78,7 +78,7 @@ def test_remote_service_proxy_coverage():
     # to services — they aren't @rpc_expose on NexusFS itself.
     expected_categories = {
         "File I/O": ["sys_read", "sys_write", "sys_unlink"],
-        "Directory": ["sys_mkdir", "sys_rmdir"],
+        "Directory": ["mkdir", "sys_rmdir"],
         "Query": ["sys_access", "sys_stat"],
         "Versioning": ["get_version", "list_versions"],
     }
@@ -112,7 +112,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "initialize",  # Boot phase 2 - one-time side effects, not an RPC operation
         "bootstrap",  # Boot phase 3 - async task startup, server-only
         "service",  # ServiceRegistry lookup — local kernel API, not an RPC operation (Issue #1452)
-        "service_coordinator",  # ServiceLifecycleCoordinator access — server-only (Issue #1452 Phase 3)
+        "service_coordinator",  # ServiceRegistry lifecycle access — server-only (Issue #1452 Phase 3)
         "swap_service",  # Hot-swap via coordinator — server-only admin operation (Issue #1452 Phase 3)
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
         # Server-side only methods (clients get this via HTTP headers)
@@ -198,6 +198,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "remove_mount",  # ABC stub → mount_service.remove_mount_sync()
         "list_mounts",  # ABC stub → mount_service.list_mounts_sync()
         "get_mount",  # ABC stub → mount_service.get_mount_sync()
+        # Tier 2 convenience wrappers — delegate to Tier 1 sys_* which are already @rpc_expose
+        "mkdir",  # Tier 2 → mkdir(parents=True, exist_ok=True)
+        "rmdir",  # Tier 2 → sys_rmdir(recursive=True)
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

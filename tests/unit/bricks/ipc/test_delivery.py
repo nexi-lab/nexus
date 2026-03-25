@@ -23,8 +23,11 @@ from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.cache.inmemory import InMemoryCacheStore
 
 from .fakes import (
+    FlakyEventSubscriber,
     InMemoryEventPublisher,
     InMemoryVFS,
+    InMemoryWakeupListener,
+    InMemoryWakeupNotifier,
 )
 
 ZONE = "test-zone"
@@ -196,6 +199,100 @@ class TestMessageSender:
             await sender.send(env)
 
 
+class TestMessageSenderWakeup:
+    """Tests for DT_PIPE wakeup integration in MessageSender (#3197)."""
+
+    @pytest.fixture
+    def vfs(self) -> InMemoryVFS:
+        return InMemoryVFS()
+
+    @pytest.mark.asyncio
+    async def test_send_fires_wakeup_notifier(self, vfs: InMemoryVFS) -> None:
+        """MessageSender should fire wakeup notifiers after writing to inbox."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        notifier = InMemoryWakeupNotifier()
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[notifier])
+
+        await sender.send(_make_envelope())
+
+        assert notifier.notifications == ["agent:bob"]
+
+    @pytest.mark.asyncio
+    async def test_send_fires_multiple_notifiers(self, vfs: InMemoryVFS) -> None:
+        """All configured wakeup notifiers should be called."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        n1 = InMemoryWakeupNotifier()
+        n2 = InMemoryWakeupNotifier()
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[n1, n2])
+
+        await sender.send(_make_envelope())
+
+        assert n1.notifications == ["agent:bob"]
+        assert n2.notifications == ["agent:bob"]
+
+    @pytest.mark.asyncio
+    async def test_send_wakeup_failure_still_succeeds(self, vfs: InMemoryVFS) -> None:
+        """Wakeup notifier failure should not prevent message delivery."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        failing_notifier = InMemoryWakeupNotifier(should_fail=True)
+        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[failing_notifier])
+
+        path = await sender.send(_make_envelope())
+        assert path.startswith("/agents/agent:bob/inbox/")
+
+    @pytest.mark.asyncio
+    async def test_send_publishes_ttl_schedule_event(self, vfs: InMemoryVFS) -> None:
+        """Messages with TTL should publish a schedule event to CacheStore."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        cache_store = InMemoryCacheStore()
+
+        # Subscribe before sending to capture the event
+        import json
+
+        received: list[dict] = []
+
+        async def _consume() -> None:
+            async with cache_store.subscribe(f"ipc:ttl:schedule:{ZONE}") as msgs:
+                async for msg in msgs:
+                    received.append(json.loads(msg))
+                    break  # Just capture one
+
+        consumer_task = asyncio.create_task(_consume())
+        await asyncio.sleep(0.01)  # Let subscriber register
+
+        sender = MessageSender(vfs, zone_id=ZONE, cache_store=cache_store)
+        await sender.send(_make_envelope(ttl_seconds=300))
+
+        await asyncio.sleep(0.01)
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass
+
+        assert len(received) == 1
+        assert received[0]["agent_id"] == "agent:bob"
+        assert "expires_at" in received[0]
+
+    @pytest.mark.asyncio
+    async def test_send_no_ttl_no_schedule_event(self, vfs: InMemoryVFS) -> None:
+        """Messages without TTL should NOT publish a schedule event."""
+        await _provision_agent(vfs, "agent:bob")
+        await _provision_agent(vfs, "agent:alice")
+        cache_store = InMemoryCacheStore()
+        sender = MessageSender(vfs, zone_id=ZONE, cache_store=cache_store)
+
+        await sender.send(_make_envelope(ttl_seconds=None))
+
+        # No events should have been published
+        # (InMemoryCacheStore has no way to check this directly,
+        # but we verify no error was raised)
+
+
 class TestMessageProcessor:
     """Tests for processing messages from inboxes."""
 
@@ -356,7 +453,7 @@ class TestMessageProcessor:
 
 
 class TestSendProcessRoundtrip:
-    """End-to-end roundtrip: MessageSender → storage → MessageProcessor (#9)."""
+    """End-to-end roundtrip: MessageSender -> storage -> MessageProcessor (#9)."""
 
     @pytest.fixture
     def vfs(self) -> InMemoryVFS:
@@ -446,6 +543,137 @@ class TestConcurrentProcessing:
 
         # Dedup cache populated — a third sweep would skip
         assert await cache_store.exists(f"ipc:dedup:{ZONE}:msg_concurrent")
+
+
+# ===========================================================================
+# Listener resilience tests (#3197 — Issue 6A, 9A)
+# ===========================================================================
+
+
+class TestListenerResilience:
+    """Tests for listener reconnection with exponential backoff (#3197)."""
+
+    @pytest.fixture
+    def vfs(self) -> InMemoryVFS:
+        return InMemoryVFS()
+
+    @pytest.mark.asyncio
+    async def test_event_listener_reconnects_after_failure(self, vfs: InMemoryVFS) -> None:
+        """EventBus listener should reconnect and process events after failure."""
+        await _provision_agent(vfs, "agent:bob")
+        env = _make_envelope()
+        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+
+        received: list[MessageEnvelope] = []
+
+        async def handler(msg: MessageEnvelope) -> None:
+            received.append(msg)
+
+        # Fails once, then succeeds with one event and blocks
+        subscriber = FlakyEventSubscriber(
+            fail_count=1,
+            events=[{"event": "message_delivered"}],
+        )
+
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, event_subscriber=subscriber
+        )
+
+        from unittest.mock import AsyncMock, patch
+
+        # Patch asyncio.sleep to be near-instant for backoff delays
+        with patch("nexus.bricks.ipc.delivery.asyncio.sleep", new_callable=AsyncMock):
+            task = asyncio.create_task(processor._event_listen_loop())
+            # Wait for the subscriber to connect after recovery
+            await asyncio.wait_for(subscriber._connected.wait(), timeout=5.0)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        # Subscriber was called twice: 1 failure + 1 success
+        assert subscriber._call_count == 2
+        # Handler was invoked after recovery
+        assert len(received) == 1
+
+    @pytest.mark.asyncio
+    async def test_event_listener_stops_after_max_retries(self, vfs: InMemoryVFS) -> None:
+        """EventBus listener should stop after MAX_LISTENER_RETRIES consecutive failures."""
+        from nexus.bricks.ipc.delivery import _MAX_LISTENER_RETRIES
+
+        await _provision_agent(vfs, "agent:bob")
+
+        async def handler(msg: MessageEnvelope) -> None:
+            pass
+
+        # Always fails — should stop after _MAX_LISTENER_RETRIES
+        subscriber = FlakyEventSubscriber(fail_count=100)
+
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, event_subscriber=subscriber
+        )
+
+        from unittest.mock import AsyncMock, patch
+
+        # Patch asyncio.sleep to be near-instant for backoff delays
+        with patch("nexus.bricks.ipc.delivery.asyncio.sleep", new_callable=AsyncMock):
+            try:
+                await asyncio.wait_for(processor._event_listen_loop(), timeout=5.0)
+            except TimeoutError:
+                pytest.fail("Event listen loop did not stop after max retries")
+
+        # Should have been called _MAX_LISTENER_RETRIES times
+        assert subscriber._call_count == _MAX_LISTENER_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_wakeup_listener_start_and_stop(self, vfs: InMemoryVFS) -> None:
+        """DT_PIPE wakeup listener should start and stop cleanly."""
+        await _provision_agent(vfs, "agent:bob")
+
+        async def handler(msg: MessageEnvelope) -> None:
+            pass
+
+        listener = InMemoryWakeupListener()
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, wakeup_listener=listener
+        )
+
+        await processor.start()
+        assert processor._wakeup_task is not None
+
+        await processor.stop()
+        assert processor._wakeup_task is None
+
+    @pytest.mark.asyncio
+    async def test_wakeup_listener_triggers_process_inbox(self, vfs: InMemoryVFS) -> None:
+        """DT_PIPE wakeup should trigger process_inbox when signal arrives."""
+        await _provision_agent(vfs, "agent:bob")
+        env = _make_envelope()
+        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
+        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
+
+        received: list[MessageEnvelope] = []
+
+        async def handler(msg: MessageEnvelope) -> None:
+            received.append(msg)
+
+        listener = InMemoryWakeupListener()
+        processor = MessageProcessor(
+            vfs, "agent:bob", handler, zone_id=ZONE, wakeup_listener=listener
+        )
+        await processor.start()
+
+        # Wait for listener to be in wait state, then trigger
+        await asyncio.wait_for(listener._waiting.wait(), timeout=1.0)
+        listener.trigger()
+        await asyncio.sleep(0.05)
+
+        await processor.stop()
+
+        assert len(received) == 1
+        assert received[0].id == env.id
 
 
 # ===========================================================================

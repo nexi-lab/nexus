@@ -173,7 +173,8 @@ class NexusFUSE:
             namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
         # Create FUSE operations
-        event_bus = getattr(getattr(self.nexus_fs, "_system_services", None), "event_bus", None)
+        # Issue #1771: event_bus via ServiceRegistry
+        event_bus = self.nexus_fs.service("event_bus") if self.nexus_fs else None
         subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,

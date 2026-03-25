@@ -22,7 +22,7 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
     "events": ("wait_for_changes", "on_mutation", "locked"),
     "mount": ("add_mount", "remove_mount", "list_mounts"),
     "gateway": (
-        "sys_mkdir",
+        "mkdir",
         "sys_write",
         "sys_read",
         "sys_readdir",
@@ -116,6 +116,6 @@ async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
         if val is None:
             continue
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        await coordinator.enlist(canonical, val, exports=exports)
+        await coordinator.enlist(canonical, val, exports=exports, allow_overwrite=True)
         count += 1
     return count

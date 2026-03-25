@@ -12,6 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.coordinator import CacheCoordinator
 
 # ---------------------------------------------------------------------------

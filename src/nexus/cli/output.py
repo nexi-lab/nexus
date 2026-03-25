@@ -200,7 +200,7 @@ def _render_human(
 
 def _api_error_to_exit_code(error: Exception) -> ExitCode | None:
     """Map NexusAPIError HTTP status to ExitCode, or None if not applicable."""
-    from nexus.cli.client import NexusAPIError
+    from nexus.cli.clients.base import NexusAPIError
 
     if not isinstance(error, NexusAPIError):
         return None
@@ -266,7 +266,7 @@ def render_error(
 def _exception_to_error_code(error: Exception) -> str:
     """Map an exception to a short machine-readable error code."""
     # NexusAPIError — map HTTP status codes to error codes
-    from nexus.cli.client import NexusAPIError
+    from nexus.cli.clients.base import NexusAPIError
 
     if isinstance(error, NexusAPIError):
         status = error.status_code

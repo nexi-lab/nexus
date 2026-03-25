@@ -16,6 +16,7 @@ async def _do_link(
     nx: Any,
     *,
     system_services: Any = None,
+    zone_id: str | None = None,
     enabled_bricks: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
@@ -94,7 +95,7 @@ async def _do_link(
     _permission_checker = _PC(
         permission_enforcer=_sys.permission_enforcer,
         metadata_store=nx.metadata,
-        default_context=nx._default_context,
+        default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
     )
 
@@ -119,26 +120,59 @@ async def _do_link(
         _brick_on,
     )
 
-    # Issue #1708: Coordinator is always created — BLM is optional.
-    # Single entry point for all service registration (no fallback path).
-    from nexus.system_services.lifecycle.service_lifecycle_coordinator import (
-        ServiceLifecycleCoordinator,
-    )
-
+    # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
+    # BLM is optional — inject via set_lifecycle_manager().
     _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    coordinator = ServiceLifecycleCoordinator(nx._service_registry, _blm, nx._dispatch)
-    nx._service_coordinator = coordinator
-    await enlist_wired_services(coordinator, _wired)
+    nx._service_registry.set_lifecycle_manager(_blm)
+    await enlist_wired_services(nx._service_registry, _wired)
+
+    # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
+    # NexusFS.__init__). Root mount ("/") was added to PathRouter in
+    # create_nexus_fs() before __init__ — adopt retroactively registers
+    # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
+    await nx._service_registry.enlist("driver_coordinator", nx._driver_coordinator)
+    nx._driver_coordinator.adopt_existing_mount("/")
+
+    # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
+    # mounts go through coordinator (hook_spec registration + KernelDispatch).
+    _mount_svc = getattr(_wired, "mount_service", None)
+    if _mount_svc is not None:
+        _mount_svc._driver_coordinator = nx._driver_coordinator
 
     # Issue #1666: Register system-tier PersistentService instances.
     # These are Q3 (PersistentService) — enlist() defers start() because
     # coordinator is not yet bootstrapped (mark_bootstrapped at bootstrap).
     _dpb = getattr(system_services, "deferred_permission_buffer", None)
     if _dpb is not None:
-        await coordinator.enlist("deferred_permission_buffer", _dpb)
+        await nx._service_registry.enlist("deferred_permission_buffer", _dpb)
     _dw = getattr(system_services, "delivery_worker", None)
     if _dw is not None:
-        await coordinator.enlist("delivery_worker", _dw)
+        await nx._service_registry.enlist("delivery_worker", _dw)
+
+    # Issue #1771: Enlist ALL SystemServices fields into ServiceRegistry.
+    # After this, every service is available via nx.service("name").
+    # Note: permission_enforcer stays as kernel-owns DI (Issue #1815).
+    for _attr, _canonical in (
+        ("event_bus", "event_bus"),
+        ("context_branch_service", "context_branch"),
+        ("rebac_manager", "rebac_manager"),
+        ("resiliency_manager", "resiliency_manager"),
+        ("write_observer", "write_observer"),
+        ("observability_subsystem", "observability_subsystem"),
+        ("zone_lifecycle", "zone_lifecycle"),
+        ("scheduler_service", "scheduler_service"),
+        ("entity_registry", "entity_registry"),
+        ("workspace_registry", "workspace_registry"),
+        ("mount_manager", "mount_manager"),
+        ("audit_store", "audit_store"),
+        ("brick_lifecycle_manager", "brick_lifecycle_manager"),
+        ("brick_reconciler", "brick_reconciler"),
+        ("async_namespace_manager", "async_namespace_manager"),
+        ("workspace_manager", "workspace_manager"),
+    ):
+        _val = getattr(system_services, _attr, None)
+        if _val is not None:
+            await nx._service_registry.enlist(_canonical, _val)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
@@ -192,15 +226,8 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_delivery_worker)
 
-    # Issue #1771: inject _flush_write_observer_fn so kernel flush_write_observer()
-    # no longer reads _system_services.
-    if _wo is not None and hasattr(_wo, "flush"):
-
-        async def _flush_wo() -> int:
-            result: int = await _wo.flush()
-            return result
-
-        nx._flush_write_observer_fn = _flush_wo
+    # Issue #1801: _flush_write_observer_fn closure removed — kernel now reads
+    # write_observer directly from service registry via nx.service("write_observer").
 
     _rebac = getattr(_sys, "rebac_manager", None)
     if _rebac is not None and hasattr(_rebac, "close"):
@@ -224,8 +251,8 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
-    # Issue #1792: agent_registry close via callback (not kernel → _system_services)
-    _pt = getattr(_sys, "agent_registry", None)
+    # Issue #1792: agent_registry close via callback (kernel-owned primitive)
+    _pt = getattr(nx, "_agent_registry", None)
     if _pt is not None and hasattr(_pt, "close_all"):
 
         def _close_agent_registry() -> None:
@@ -236,28 +263,49 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_agent_registry)
 
-    # Issue #1791: overlay config resolver — kernel calls self._overlay_config_fn(path)
-    # instead of reading workspace_registry from _system_services.
-    _ws_reg = getattr(_sys, "workspace_registry", None)
-    if _ws_reg is not None:
+    # Issue #1801: _overlay_config_fn closure removed — kernel now reads
+    # workspace_registry directly from service registry via nx.service("workspace_registry").
 
-        def _resolve_overlay(path: str) -> "Any":
-            ws_config = _ws_reg.find_workspace_for_path(path)
-            if ws_config is None:
-                return None
-            overlay_data = ws_config.metadata.get("overlay_config")
-            if overlay_data is None:
-                return None
-            from nexus.contracts.overlay_config import OverlayConfig
+    # --- Deferred EvictionManager + AcpService (Issue #1792) ---
+    # AgentRegistry is a kernel-owned primitive (created in NexusFS.__init__).
+    # EvictionManager and AcpService depend on it, so they are created here
+    # at link() time where nx._agent_registry is available.
+    _agent_reg = getattr(nx, "_agent_registry", None)
+    if _agent_reg is not None:
+        try:
+            from nexus.contracts.deployment_profile import DeploymentProfile as _DP
+            from nexus.lib.performance_tuning import resolve_profile_tuning
+            from nexus.system_services.agents.eviction_manager import EvictionManager
+            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.system_services.agents.resource_monitor import ResourceMonitor
 
-            return OverlayConfig(
-                enabled=overlay_data.get("enabled", False),
-                base_manifest_hash=overlay_data.get("base_manifest_hash"),
-                workspace_path=ws_config.path,
-                agent_id=overlay_data.get("agent_id"),
+            _profile_tuning = resolve_profile_tuning(_DP.FULL)
+            _eviction_tuning = _profile_tuning.eviction
+            _resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
+            _eviction_policy = QoSEvictionPolicy()
+            _eviction_manager = EvictionManager(
+                agent_registry=_agent_reg,
+                monitor=_resource_monitor,
+                policy=_eviction_policy,
+                tuning=_eviction_tuning,
             )
+            await nx._service_registry.enlist("eviction_manager", _eviction_manager)
+            logger.debug("[BOOT:LINK] EvictionManager created (deferred, QoS-aware)")
+        except Exception as exc:
+            logger.warning("[BOOT:LINK] EvictionManager unavailable: %s", exc)
 
-        nx._overlay_config_fn = _resolve_overlay
+        try:
+            from nexus.contracts.constants import ROOT_ZONE_ID
+            from nexus.system_services.acp.service import AcpService
+
+            _acp_service = AcpService(
+                agent_registry=_agent_reg,
+                zone_id=zone_id or ROOT_ZONE_ID,
+            )
+            await nx._service_registry.enlist("acp_service", _acp_service)
+            logger.debug("[BOOT:LINK] AcpService created (deferred)")
+        except Exception as exc:
+            logger.warning("[BOOT:LINK] AcpService unavailable: %s", exc)
 
 
 async def _do_initialize(
@@ -288,6 +336,9 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
+    # Issue #1811: CAS ref_count observer is now registered via
+    # DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
+    # The `backend` parameter has been removed from _register_vfs_hooks().
     await _register_vfs_hooks(
         nx,
         system_services=system_services,

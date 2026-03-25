@@ -22,27 +22,28 @@ from starlette.testclient import TestClient
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
+from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from tests.helpers.test_context import TEST_CONTEXT
 
 
 @pytest.fixture
-def nexus_fs_local(tmp_path: Path):
-    """Create a real NexusFS with RaftMetadataStore."""
+async def nexus_fs_local(tmp_path: Path):
+    """Create a real NexusFS with RaftMetadataStore via factory."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir()
     backend = CASLocalBackend(root_path=storage_path)
     raft_dir = str(tmp_path / "raft-metadata")
     metadata_store = RaftMetadataStore.embedded(raft_dir)
     record_store = SQLAlchemyRecordStore(db_url=f"sqlite:///{tmp_path / 'records.db'}")
-    nx = NexusFS(
+    nx = await create_nexus_fs(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
         permissions=PermissionConfig(enforce=False),
+        init_cred=TEST_CONTEXT,
     )
-    nx._default_context = TEST_CONTEXT
     yield nx
     nx.close()
 

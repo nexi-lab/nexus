@@ -230,6 +230,9 @@ services:
       # --- Multi-zone federation (Task #104) ---
       NEXUS_FEDERATION_ZONES: "corp,corp-eng,corp-sales,family"
       NEXUS_FEDERATION_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
+
+      # --- gRPC (Issue #1528) ---
+      NEXUS_GRPC_BIND_ALL: "true"    # Bind 0.0.0.0 for cross-container access
     ports:
       - "${NEXUS_PORT:-2026}:2026"   # HTTP API
       - "2126:2126"                   # Raft gRPC
@@ -322,6 +325,9 @@ services:
       # --- Multi-zone federation (Task #104) ---
       NEXUS_FEDERATION_ZONES: "corp,corp-eng,corp-sales,family"
       NEXUS_FEDERATION_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
+
+      # --- gRPC (Issue #1528) ---
+      NEXUS_GRPC_BIND_ALL: "true"    # Bind 0.0.0.0 for cross-container access
     ports:
       - "2027:2026"   # HTTP API (host:2027 → container:2026)
       - "2127:2126"   # Raft gRPC

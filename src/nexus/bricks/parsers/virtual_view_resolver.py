@@ -80,9 +80,7 @@ class VirtualViewResolver(VFSPathResolver):
     # VFSPathResolver single-call try_* protocol (#1665)
     # ------------------------------------------------------------------
 
-    def try_read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict[str, Any] | None:
+    def try_read(self, path: str, *, context: Any = None) -> bytes | None:
         """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
@@ -123,14 +121,6 @@ class VirtualViewResolver(VFSPathResolver):
         if self._read_tracker_fn is not None:
             self._read_tracker_fn(context, "file", original_path, "content")
 
-        if return_metadata:
-            return {
-                "content": content,
-                "etag": meta.etag + ".md",  # Synthetic etag for virtual view
-                "version": meta.version,
-                "modified_at": meta.modified_at,
-                "size": len(content),
-            }
         return content
 
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:

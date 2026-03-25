@@ -157,7 +157,7 @@ class TestBootRemoteServices:
         # version_service also set
         assert isinstance(nfs.version_service, RemoteServiceProxy)
         # Coordinator stored on nfs
-        assert nfs._service_coordinator is not None
+        assert nfs.service_coordinator is not None
 
     def test_all_slots_are_same_proxy_instance(self):
         """All slots share one proxy instance (universal pass-through)."""

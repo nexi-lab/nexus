@@ -28,7 +28,6 @@ from nexus.contracts.constants import DEFAULT_NATS_URL
 
 if TYPE_CHECKING:
     from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
     from nexus.contracts.write_observer import WriteObserverProtocol
     from nexus.core.protocols.entity_registry import EntityRegistryProtocol
     from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
@@ -209,9 +208,9 @@ class SystemServices:
     # Former-kernel DEGRADABLE services (WARNING + None on failure)
     # =================================================================
 
-    # ReBAC caching / hierarchy — degradable
-    dir_visibility_cache: Any = None
-    hierarchy_manager: Any = None
+    # ReBAC caching / hierarchy — now internalized into ReBACManager:
+    # hierarchy_manager, dir_visibility_cache → rebac_manager.hierarchy_manager, .dir_visibility_cache
+    # namespace_manager → rebac_manager.namespace_manager (created via .create_namespace_manager())
     deferred_permission_buffer: Any = None
 
     # Workspace subsystem — degradable
@@ -223,8 +222,7 @@ class SystemServices:
     # Original system services (all degradable)
     # =================================================================
 
-    # Namespace visibility (Issue #1502)
-    namespace_manager: NamespaceManagerProtocol | None = None
+    # Namespace visibility (Issue #1502) — async wrapper still needed at system level
     async_namespace_manager: Any = None
 
     # Workspace branching (Issue #1315)
@@ -242,8 +240,8 @@ class SystemServices:
     # Resiliency policies (Issue #1366)
     resiliency_manager: Any = None
 
-    # Agent eviction under resource pressure (Issue #2170)
-    eviction_manager: Any = None
+    # (EvictionManager is deferred to _do_link() — depends on kernel-owned
+    # AgentRegistry.  Stored on nx._eviction_manager, not SystemServices.)
 
     # Brick reconciler — drift detection and self-healing (Issue #2060)
     brick_reconciler: Any = None
@@ -251,17 +249,14 @@ class SystemServices:
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None
 
-    # (PipeManager + StreamManager are kernel-internal primitives,
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
     # constructed in NexusFS.__init__ — not injected via SystemServices.)
-
-    # Process lifecycle — kernel process table (Issue #1509)
-    agent_registry: Any = None
 
     # Scheduler — task scheduling service (Issue #2195, #2360)
     scheduler_service: Any = None
 
-    # ACP — stateless coding agent CLI caller
-    acp_service: Any = None
+    # (AcpService is deferred to _do_link() — depends on kernel-owned
+    # AgentRegistry.  Stored on nx._acp_service, not SystemServices.)
 
     # Distributed event bus — infrastructure messaging (Issue #1701: promoted from Tier 2)
     # EventBusObserver (VFSObserver hook) publishes KernelDispatch OBSERVE events to Redis/NATS.

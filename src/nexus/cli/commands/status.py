@@ -34,7 +34,7 @@ def _load_project_config_optional() -> dict[str, Any]:
 
 
 def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
-    """Add the *effective* image_ref into *data*.
+    """Add the *effective* image_ref, connection env, and project info into *data*.
 
     Uses the same precedence logic as ``nexus up`` (env vars > config ref >
     deprecated config tag) so ``nexus status`` always shows the image that
@@ -47,6 +47,15 @@ def _enrich_with_image_info(data: dict[str, Any]) -> dict[str, Any]:
         data["image_ref"] = _resolve_image_ref_from_config(project_cfg)
         data["image_channel"] = project_cfg.get("image_channel", "")
         data["image_accelerator"] = project_cfg.get("image_accelerator", "")
+
+        # Add connection env vars and project metadata
+        from nexus.cli.state import load_runtime_state, resolve_connection_env
+
+        data_dir = project_cfg.get("data_dir", "./nexus-data")
+        state = load_runtime_state(data_dir)
+        data["connection_env"] = resolve_connection_env(project_cfg, state)
+        data["project_name"] = state.get("project_name", "")
+        data["data_dir"] = data_dir
     return data
 
 
@@ -218,8 +227,36 @@ def _build_table(data: dict[str, Any]) -> Table:
 
 
 def _render_table(data: dict[str, Any]) -> None:
-    """Print a Rich table summarising service status."""
+    """Print a Rich table summarising service status, plus connection info."""
+    is_running = data["server_reachable"] or bool(data["docker_services"])
+
+    if not is_running:
+        console.print()
+        console.print("[yellow]Nexus is not running.[/yellow]")
+        console.print("  Run `nexus up` to start the stack.")
+        console.print()
+        return
+
     console.print(_build_table(data))
+
+    # Connection info from state.json / nexus.yaml
+    conn_env = data.get("connection_env")
+    if conn_env:
+        console.print()
+        console.print("[bold]Connection:[/bold]")
+        for key, value in sorted(conn_env.items()):
+            console.print(f"  export {key}='{value}'")
+
+    # Project metadata
+    project_name = data.get("project_name", "")
+    data_dir = data.get("data_dir", "")
+    if project_name or data_dir:
+        console.print()
+        console.print("[bold]Project:[/bold]")
+        if project_name:
+            console.print(f"  Name:     {project_name}")
+        if data_dir:
+            console.print(f"  Data dir: {data_dir}")
 
 
 # ---------------------------------------------------------------------------

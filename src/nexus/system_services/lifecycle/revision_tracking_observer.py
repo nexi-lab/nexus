@@ -8,12 +8,16 @@ are unblocked.
 This replaces the old kernel-internal ``_increment_vfs_revision()`` that was
 deleted in the decomposition (#899).  The observer pattern moves revision
 tracking from the kernel into the service layer where it belongs.
+
+Issue #1748: async on_mutation + event_mask filtering.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
+
+from nexus.core.file_events import ALL_FILE_EVENTS
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
@@ -35,6 +39,8 @@ class RevisionTrackingObserver:
 
     __slots__ = ("_notifier",)
 
+    event_mask: int = ALL_FILE_EVENTS
+
     # ── HotSwappable protocol (Issue #1616) ────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
@@ -51,7 +57,7 @@ class RevisionTrackingObserver:
     def __init__(self, revision_notifier: RevisionNotifierBase) -> None:
         self._notifier = revision_notifier
 
-    def on_mutation(self, event: FileEvent) -> None:
+    async def on_mutation(self, event: FileEvent) -> None:
         """Update revision tracking when a versioned mutation occurs."""
         version = event.version
         zone_id = event.zone_id

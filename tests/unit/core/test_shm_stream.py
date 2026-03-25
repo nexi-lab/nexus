@@ -6,6 +6,9 @@ Same-process tests (create + attach in same process, valid because MAP_SHARED).
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip("nexus_fast")
+
 from nexus_fast import SharedStreamBufferCore
 
 from nexus.core.shm_stream import SharedStreamBuffer

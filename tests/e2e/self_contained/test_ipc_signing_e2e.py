@@ -152,6 +152,7 @@ async def app(tmp_path: Any, db_path: Any, record_store: Any) -> Any:
 
     yield {"app": application, "admin_key": admin_raw}
 
+    nx.close()
     metadata_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -516,7 +517,7 @@ class TestSignedIPCWithFastAPI:
         """Unauthenticated requests are rejected (permissions enforced)."""
         body = {
             "jsonrpc": "2.0",
-            "method": "sys_mkdir",
+            "method": "mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }
@@ -528,7 +529,7 @@ class TestSignedIPCWithFastAPI:
         headers = {"Authorization": f"Bearer {client['admin_key']}"}
         body = {
             "jsonrpc": "2.0",
-            "method": "sys_mkdir",
+            "method": "mkdir",
             "params": {"path": "/agents", "exist_ok": True},
             "id": "1",
         }

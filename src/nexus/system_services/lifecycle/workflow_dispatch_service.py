@@ -11,6 +11,8 @@ DI dependencies (no god-object access):
     - workflow_engine: WorkflowProtocol for firing workflow events
     - subscription_manager: Optional webhook broadcast (injected late by server)
     - enable_workflows: Feature flag from DistributedConfig
+
+Issue #1812: async on_mutation + event_mask filtering.
 """
 
 import asyncio
@@ -21,7 +23,7 @@ from typing import Any
 
 from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.core.file_events import FileEvent
+from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent
 from nexus.core.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ class WorkflowDispatchService:
 
     Implements ``WorkflowDispatchProtocol`` and ``VFSObserver``.
     """
+
+    event_mask: int = ALL_FILE_EVENTS
 
     def __init__(
         self,
@@ -64,7 +68,7 @@ class WorkflowDispatchService:
     # VFSObserver — called by KernelDispatch OBSERVE phase
     # ------------------------------------------------------------------
 
-    def on_mutation(self, event: FileEvent) -> None:
+    async def on_mutation(self, event: FileEvent) -> None:
         """Translate kernel FileEvent into workflow fire + webhook broadcast."""
         from nexus.core.file_events import FileEventType
 
@@ -95,13 +99,13 @@ class WorkflowDispatchService:
             ctx["created"] = event.is_new
 
         label = f"{trigger_type}:{event.path}"
-        self.fire(trigger_type, ctx, label)
+        await self.fire(trigger_type, ctx, label)
 
     # ------------------------------------------------------------------
-    # fire() — sync, called from on_mutation or directly
+    # fire() — async, called from on_mutation or directly
     # ------------------------------------------------------------------
 
-    def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
+    async def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
         """Fire a workflow event and broadcast to webhook subscriptions.
 
         Uses PipeManager userspace API — never touches RingBuffer directly.
@@ -118,21 +122,15 @@ class WorkflowDispatchService:
             except (PipeClosedError, PipeFullError):
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
-            # Fallback: fire-and-forget (CLI mode or pre-startup, no pipe yet)
-            from nexus.lib.sync_bridge import fire_and_forget
-
-            fire_and_forget(self._workflow_engine.fire_event(trigger_type, event_context))
+            # Fallback: direct async call (CLI mode or pre-startup, no pipe yet)
+            await self._workflow_engine.fire_event(trigger_type, event_context)
 
         if self._subscription_manager:
-            from nexus.lib.sync_bridge import fire_and_forget
-
             event_type = label.split(":")[0] if ":" in label else label
-            fire_and_forget(
-                self._subscription_manager.broadcast(
-                    event_type,
-                    event_context,
-                    event_context.get("zone_id", ROOT_ZONE_ID),
-                )
+            await self._subscription_manager.broadcast(
+                event_type,
+                event_context,
+                event_context.get("zone_id", ROOT_ZONE_ID),
             )
 
     # ------------------------------------------------------------------

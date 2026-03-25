@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus import CASLocalBackend, NexusFS
 from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 from nexus.contracts.types import OperationContext
@@ -73,8 +76,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.sys_mkdir("/zone", context=system_admin)
-        await nx.sys_mkdir("/zone/acme", context=system_admin)
+        await nx.mkdir("/zone", context=system_admin)
+        await nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret acme data", context=system_admin)
@@ -114,8 +117,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.sys_mkdir("/zone", context=system_admin_setup)
-        await nx.sys_mkdir("/zone/acme", context=system_admin_setup)
+        await nx.mkdir("/zone", context=system_admin_setup)
+        await nx.mkdir("/zone/acme", context=system_admin_setup)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret acme data", context=system_admin_setup)
@@ -155,8 +158,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.sys_mkdir("/zone", context=system_admin)
-        await nx.sys_mkdir("/zone/acme", context=system_admin)
+        await nx.mkdir("/zone", context=system_admin)
+        await nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"acme data", context=system_admin)
@@ -199,8 +202,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.sys_mkdir("/zone", context=system_admin)
-        await nx.sys_mkdir("/zone/acme", context=system_admin)
+        await nx.mkdir("/zone", context=system_admin)
+        await nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"original", context=system_admin)
@@ -239,8 +242,8 @@ class TestZoneBoundarySecurity:
         )
 
         # Create zone directories
-        await nx.sys_mkdir("/zone", context=system_admin)
-        await nx.sys_mkdir("/zone/acme", context=system_admin)
+        await nx.mkdir("/zone", context=system_admin)
+        await nx.mkdir("/zone/acme", context=system_admin)
 
         test_file = "/zone/acme/doc.txt"
         await nx.write(test_file, b"secret", context=system_admin)

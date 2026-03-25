@@ -599,19 +599,26 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
     2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
 
-    Both follow the deferred-injection pattern: created in factory without
-    PipeManager, then PipeManager is injected here and start() spawns the
-    background consumer task.
+    Consumers support two deferred-injection styles:
+    1. Legacy DT_PIPE consumers expect ``set_pipe_manager(pipe_manager)``
+    2. Current syscall-backed consumers expect ``bind_fs(nexus_fs)``
+
+    Lifespan startup handles both so write-observer/search indexing does
+    not silently stop when the implementation migrates away from PipeManager.
     """
     pipe_manager = svc.pipe_manager
-    if pipe_manager is None:
-        return
+    nx = svc.nexus_fs
 
     # Issue #809: PipedRecordStoreWriteObserver
     wo = svc.write_observer
-    if wo is not None and hasattr(wo, "set_pipe_manager"):
+    if wo is not None:
         try:
-            wo.set_pipe_manager(pipe_manager)
+            if hasattr(wo, "bind_fs") and nx is not None:
+                wo.bind_fs(nx)
+            elif hasattr(wo, "set_pipe_manager") and pipe_manager is not None:
+                wo.set_pipe_manager(pipe_manager)
+            else:
+                raise RuntimeError("write observer missing startup binding hook")
             await wo.start()
             app.state.write_observer = wo
             logger.info("[PIPE] PipedRecordStoreWriteObserver started")
@@ -620,7 +627,7 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 "[PIPE] PipedRecordStoreWriteObserver start failed: %s", e, exc_info=True
             )
 
-    # Issue #3193: EventDeliveryWorker is started by ServiceLifecycleCoordinator
+    # Issue #3193: EventDeliveryWorker is started by ServiceRegistry
     # (PersistentService auto-start). We only expose it + event_signal on
     # app.state so the API layer (EventReplayService) can access the signal.
     if svc.delivery_worker is not None:
@@ -630,9 +637,14 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
 
     # Issue #810: ZoektPipeConsumer
     zpc = svc.zoekt_pipe_consumer
-    if zpc is not None and hasattr(zpc, "set_pipe_manager"):
+    if zpc is not None:
         try:
-            zpc.set_pipe_manager(pipe_manager)
+            if hasattr(zpc, "bind_fs") and nx is not None:
+                zpc.bind_fs(nx)
+            elif hasattr(zpc, "set_pipe_manager") and pipe_manager is not None:
+                zpc.set_pipe_manager(pipe_manager)
+            else:
+                raise RuntimeError("zoekt consumer missing startup binding hook")
             await zpc.start()
             app.state.zoekt_pipe_consumer = zpc
             logger.info("[PIPE] ZoektPipeConsumer started")
@@ -642,34 +654,32 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     # TaskDispatchPipeConsumer (task lifecycle signals)
     tdc = svc.task_dispatch_consumer
     # Fallback: create consumer if not provided by factory (e.g. no record_store)
-    if tdc is None:
-        nx = svc.nexus_fs
-        if nx is not None:
-            try:
-                from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
+    if tdc is None and nx is not None:
+        try:
+            from nexus.task_manager.dispatch_consumer import TaskDispatchPipeConsumer
 
-                _task_svc = getattr(nx, "_task_manager_service", None)
-                # AcpService lives on AcpRPCService (created in _boot_wired_services)
-                _acp_svc = None
-                _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
-                if _acp_rpc_ref is not None:
-                    _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
-                    _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
-                _proc_tbl = app.state.agent_registry
-                if _task_svc is not None:
-                    tdc = TaskDispatchPipeConsumer(
-                        acp_service=_acp_svc,
-                        agent_registry=_proc_tbl,
-                    )
-                    tdc.set_task_service(_task_svc)
-                    # Wire into existing TaskWriteHook
-                    _twh = getattr(nx, "_task_write_hook", None)
-                    if _twh is not None:
-                        _twh.register_handler(tdc)
-                    logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
-            except Exception as e:
-                logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
-    if tdc is not None and hasattr(tdc, "set_pipe_manager"):
+            _task_svc = getattr(nx, "_task_manager_service", None)
+            # AcpService lives on AcpRPCService (created in _boot_wired_services)
+            _acp_svc = None
+            _acp_rpc_ref = nx.service("acp_rpc") if hasattr(nx, "service") else None
+            if _acp_rpc_ref is not None:
+                _acp_rpc_obj = getattr(_acp_rpc_ref, "_service", _acp_rpc_ref)
+                _acp_svc = getattr(_acp_rpc_obj, "_acp", None)
+            _proc_tbl = app.state.agent_registry
+            if _task_svc is not None:
+                tdc = TaskDispatchPipeConsumer(
+                    acp_service=_acp_svc,
+                    agent_registry=_proc_tbl,
+                )
+                tdc.set_task_service(_task_svc)
+                # Wire into existing TaskWriteHook
+                _twh = getattr(nx, "_task_write_hook", None)
+                if _twh is not None:
+                    _twh.register_handler(tdc)
+                logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
+        except Exception as e:
+            logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
+    if tdc is not None and hasattr(tdc, "set_pipe_manager") and pipe_manager is not None:
         try:
             tdc.set_pipe_manager(pipe_manager)
             # Inject server base URL so enriched worker prompts can reference the API
@@ -688,7 +698,7 @@ async def _shutdown_pipe_consumers(app: "FastAPI") -> None:
     """Stop DT_PIPE consumers (Issue #809, #810).
 
     Note: EventDeliveryWorker (Issue #3193) is stopped by
-    ServiceLifecycleCoordinator.stop_persistent_services() — no
+    ServiceRegistry.stop_persistent_services() — no
     explicit stop here to avoid double-stop.
     """
     # Issue #809: PipedRecordStoreWriteObserver

@@ -99,6 +99,7 @@ def _boot_system_services(
                 is_postgresql=_is_pg,
                 version_store=_version_store,
                 namespace_store=_namespace_store,
+                enable_inheritance=ctx.perm.inherit,
             )
 
             # --- Audit Store ---
@@ -188,38 +189,19 @@ def _boot_system_services(
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193
     # =====================================================================
 
-    # --- Directory Visibility Cache ---
-    dir_visibility_cache: Any = None
-    try:
-        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
-
-        dir_visibility_cache = DirectoryVisibilityCache(
-            tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
-            ttl=ctx.cache_ttl_seconds or 300,
-            max_entries=10000,
-        )
-
-        # Wire: rebac invalidation -> dir visibility cache
-        rebac_manager.register_dir_visibility_invalidator(
-            "nexusfs",
-            lambda zone_id, path: dir_visibility_cache.invalidate_for_resource(path, zone_id),
-        )
-        logger.debug("[BOOT:SYSTEM] DirectoryVisibilityCache created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] DirectoryVisibilityCache unavailable: %s", exc)
-
-    # --- Hierarchy Manager ---
-    hierarchy_manager: Any = None
-    try:
-        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
-
-        hierarchy_manager = HierarchyManager(
-            rebac_manager=rebac_manager,
-            enable_inheritance=ctx.perm.inherit,
-        )
-        logger.debug("[BOOT:SYSTEM] HierarchyManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] HierarchyManager unavailable: %s", exc)
+    # --- Directory Visibility Cache + Hierarchy Manager ---
+    # Now internalized into ReBACManager (constructed in its __init__).
+    # Access via rebac_manager.dir_visibility_cache / rebac_manager.hierarchy_manager.
+    dir_visibility_cache: Any = (
+        getattr(rebac_manager, "dir_visibility_cache", None) if rebac_manager else None
+    )
+    hierarchy_manager: Any = (
+        getattr(rebac_manager, "hierarchy_manager", None) if rebac_manager else None
+    )
+    if dir_visibility_cache is not None:
+        logger.debug("[BOOT:SYSTEM] DirectoryVisibilityCache (rebac-internal)")
+    if hierarchy_manager is not None:
+        logger.debug("[BOOT:SYSTEM] HierarchyManager (rebac-internal)")
 
     # --- Deferred Permission Buffer (constructed, NOT started) ---
     deferred_permission_buffer: Any = None
@@ -291,23 +273,22 @@ def _boot_system_services(
     # =====================================================================
 
     # --- Namespace Manager (Issue #1502) ---
+    # Now created via rebac_manager.create_namespace_manager() (rebac-internal).
     namespace_manager: Any = None
     async_namespace_manager: Any = None
     if not _on("namespace"):
         logger.debug("[BOOT:SYSTEM] NamespaceManager disabled by profile")
-    else:
+    elif rebac_manager is not None:
         try:
-            from nexus.bricks.rebac.namespace_factory import (
-                create_namespace_manager as _create_ns_manager,
-            )
             from nexus.bricks.rebac.namespace_manager import AsyncNamespaceManager
 
-            namespace_manager = _create_ns_manager(
-                rebac_manager=rebac_manager,
+            namespace_manager = rebac_manager.create_namespace_manager(
                 record_store=ctx.record_store,
             )
             async_namespace_manager = AsyncNamespaceManager(namespace_manager)
-            logger.debug("[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created")
+            logger.debug(
+                "[BOOT:SYSTEM] NamespaceManager + AsyncNamespaceManager created (rebac-internal)"
+            )
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] NamespaceManager unavailable: %s", exc)
 
@@ -465,55 +446,10 @@ def _boot_system_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
 
-    # (PipeManager + StreamManager are kernel-internal primitives,
-    # constructed in NexusFS.__init__ — not booted here.)
-
-    # --- AgentRegistry (Issue #1509: kernel process lifecycle) ---
-    agent_registry: Any = None
-    try:
-        from nexus.core.agent_registry import AgentRegistry
-
-        agent_registry = AgentRegistry()
-        logger.debug("[BOOT:SYSTEM] AgentRegistry created (in-memory)")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] AgentRegistry unavailable: %s", exc)
-
-    # --- Eviction Manager (Issues #2170, #2171) ---
-    eviction_manager: Any = None
-    if agent_registry is not None:
-        try:
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
-
-            eviction_tuning = ctx.profile_tuning.eviction
-            resource_monitor = ResourceMonitor(tuning=eviction_tuning)
-            eviction_policy = QoSEvictionPolicy()
-            eviction_manager = EvictionManager(
-                agent_registry=agent_registry,
-                monitor=resource_monitor,
-                policy=eviction_policy,
-                tuning=eviction_tuning,
-            )
-            logger.debug("[BOOT:SYSTEM] EvictionManager created (QoS-aware)")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] EvictionManager unavailable: %s", exc)
-
-    # --- ACP Service (Stateless coding agent CLI caller) ---
-    acp_service: Any = None
-    if not _on("acp"):
-        logger.debug("[BOOT:SYSTEM] AcpService disabled by profile")
-    elif agent_registry is not None:
-        try:
-            from nexus.system_services.acp.service import AcpService
-
-            acp_service = AcpService(
-                agent_registry=agent_registry,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-            )
-            logger.debug("[BOOT:SYSTEM] AcpService created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] AcpService unavailable: %s", exc)
+    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
+    # constructed in NexusFS.__init__ — not booted here.
+    # EvictionManager + AcpService are deferred to _do_link() where they can
+    # reference nx._agent_registry.  See Issue #1792.)
 
     # =====================================================================
     # Assemble result
@@ -526,16 +462,14 @@ def _boot_system_services(
         "entity_registry": entity_registry,
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
-        "agent_registry": agent_registry,
         # Former-kernel degradable
-        "dir_visibility_cache": dir_visibility_cache,
-        "hierarchy_manager": hierarchy_manager,
+        # dir_visibility_cache, hierarchy_manager, namespace_manager
+        # now internalized into ReBACManager — not in result dict.
         "deferred_permission_buffer": deferred_permission_buffer,
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
         # Original system services
-        "namespace_manager": namespace_manager,
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,
@@ -544,10 +478,8 @@ def _boot_system_services(
         "context_branch_service": context_branch_service,
         "brick_lifecycle_manager": brick_lifecycle_manager,
         "brick_reconciler": brick_reconciler,
-        "eviction_manager": eviction_manager,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
-        "acp_service": acp_service,
     }
 
     elapsed = time.perf_counter() - t0

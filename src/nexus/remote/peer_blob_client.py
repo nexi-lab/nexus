@@ -105,3 +105,70 @@ class PeerBlobClient:
                 results[h] = future.result()  # raises on error
 
         return results
+
+    # ------------------------------------------------------------------
+    # Scatter-gather: fan-out to multiple origins (#1744 Phase 2)
+    # ------------------------------------------------------------------
+
+    def fetch_blob_scatter(self, origins: list[str], content_hash: str) -> bytes:
+        """Fetch a single blob from the first origin that has it.
+
+        Sends ReadBlob to all origins in parallel.  Returns data from the
+        first successful response; remaining futures are cancelled/ignored.
+
+        Raises NexusFileNotFoundError if no origin has the blob.
+        """
+        if len(origins) == 1:
+            return self.fetch_blob(origins[0], content_hash)
+
+        with ThreadPoolExecutor(max_workers=min(self._workers, len(origins))) as executor:
+            futures = {
+                executor.submit(self.fetch_blob, origin, content_hash): origin for origin in origins
+            }
+            last_err: Exception | None = None
+            for future in as_completed(futures):
+                try:
+                    data = future.result()
+                    # First success — cancel remaining futures
+                    for f in futures:
+                        f.cancel()
+                    return data
+                except NexusFileNotFoundError as exc:
+                    last_err = exc
+                    continue
+
+        raise NexusFileNotFoundError(
+            content_hash,
+            f"Blob {content_hash[:16]} not found on any origin",
+        ) from last_err
+
+    def fetch_blobs_scatter(
+        self,
+        origins: list[str],
+        content_hashes: list[str],
+    ) -> dict[str, bytes]:
+        """Fetch multiple blobs, each scattered across all origins.
+
+        For each chunk hash, tries all origins in parallel — first responder
+        wins.  CAS identity guarantees same hash = same content regardless
+        of which origin responds.
+
+        Returns dict mapping content_hash → bytes.
+        Raises NexusFileNotFoundError if any chunk is missing from all origins.
+        """
+        if not content_hashes:
+            return {}
+
+        if len(origins) == 1:
+            return self.fetch_blobs(origins[0], content_hashes)
+
+        results: dict[str, bytes] = {}
+        with ThreadPoolExecutor(max_workers=min(self._workers, len(content_hashes))) as executor:
+            futures = {
+                executor.submit(self.fetch_blob_scatter, origins, h): h for h in content_hashes
+            }
+            for future in as_completed(futures):
+                h = futures[future]
+                results[h] = future.result()  # raises on error
+
+        return results

@@ -154,15 +154,15 @@ class TestInfrastructureDetection:
         svc = EventsService()
         assert svc._has_distributed_events() is False
 
-    def test_has_distributed_locks_true(self, mock_lock_manager):
+    def test_has_lock_manager_true(self, mock_lock_manager):
         """Lock manager present means distributed locks available."""
         svc = EventsService(lock_manager=mock_lock_manager)
-        assert svc._has_distributed_locks() is True
+        assert svc._has_lock_manager() is True
 
-    def test_has_distributed_locks_false(self):
+    def test_has_lock_manager_false(self):
         """No lock manager means no distributed locks."""
         svc = EventsService()
-        assert svc._has_distributed_locks() is False
+        assert svc._has_lock_manager() is False
 
 
 # =============================================================================
@@ -210,7 +210,7 @@ class TestOnMutation:
             # Give the waiter time to register
             await asyncio.sleep(0.01)
             # Fire the event (simulating dispatch.notify)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -226,7 +226,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/inbox/*.txt", timeout=0.1))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is None  # timeout, not matched
 
@@ -242,7 +242,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/docs/*.md", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -258,7 +258,7 @@ class TestOnMutation:
         async def _test():
             wait_task = asyncio.create_task(svc._wait_internal("/inbox/", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             result = await wait_task
             assert result is event
 
@@ -290,7 +290,7 @@ class TestWaitForChangesInternal:
         async def _test():
             wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             return await wait_task
 
         result = asyncio.run(_test())
@@ -347,7 +347,7 @@ class TestWaitForChangesRace:
         async def _test():
             wait_task = asyncio.create_task(svc.wait_for_changes("/data/file.txt", timeout=5.0))
             await asyncio.sleep(0.01)
-            svc.on_mutation(event)
+            await svc.on_mutation(event)
             return await wait_task
 
         result = asyncio.run(_test())
@@ -433,22 +433,22 @@ class TestDistributedLocking:
 class TestLockingNoInfrastructure:
     """Tests for locking when no lock infrastructure is available."""
 
-    def test_lock_raises_not_implemented(self):
-        """Lock raises NotImplementedError without any lock manager."""
+    def test_lock_raises_runtime_error(self):
+        """Lock raises RuntimeError without any lock manager."""
         svc = EventsService()
-        with pytest.raises(NotImplementedError, match="No lock manager"):
+        with pytest.raises(RuntimeError, match="No lock manager"):
             asyncio.run(svc.lock("/data/file.txt"))
 
-    def test_unlock_raises_not_implemented(self):
-        """Unlock raises NotImplementedError without any lock manager."""
+    def test_unlock_raises_runtime_error(self):
+        """Unlock raises RuntimeError without any lock manager."""
         svc = EventsService()
-        with pytest.raises(NotImplementedError, match="No lock manager"):
+        with pytest.raises(RuntimeError, match="No lock manager"):
             asyncio.run(svc.unlock("lock-123", path="/data/file.txt"))
 
-    def test_extend_raises_not_implemented(self):
-        """Extend raises NotImplementedError without any lock manager."""
+    def test_extend_raises_runtime_error(self):
+        """Extend raises RuntimeError without any lock manager."""
         svc = EventsService()
-        with pytest.raises(NotImplementedError, match="No lock manager"):
+        with pytest.raises(RuntimeError, match="No lock manager"):
             asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
 
 

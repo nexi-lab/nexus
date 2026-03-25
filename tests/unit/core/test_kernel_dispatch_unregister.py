@@ -88,7 +88,14 @@ class TestUnregisterObserve:
         assert dispatch.unregister_observe(MagicMock()) is False
 
     async def test_multiple_observers(self, dispatch: KernelDispatch) -> None:
-        obs1, obs2, obs3 = MagicMock(), MagicMock(), MagicMock()
+        from unittest.mock import AsyncMock
+
+        from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent, FileEventType
+
+        obs1, obs2, obs3 = AsyncMock(), AsyncMock(), AsyncMock()
+        obs1.event_mask = ALL_FILE_EVENTS
+        obs2.event_mask = ALL_FILE_EVENTS
+        obs3.event_mask = ALL_FILE_EVENTS
         dispatch.register_observe(obs1)
         dispatch.register_observe(obs2)
         dispatch.register_observe(obs3)
@@ -97,8 +104,6 @@ class TestUnregisterObserve:
         dispatch.unregister_observe(obs2)
         assert dispatch.observer_count == 2
         # obs1 and obs3 remain — verify notify still reaches them
-        from nexus.core.file_events import FileEvent, FileEventType
-
         event = FileEvent(type=FileEventType.FILE_WRITE, path="/test")
         await dispatch.notify(event)
         obs1.on_mutation.assert_called_once_with(event)

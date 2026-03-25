@@ -186,6 +186,7 @@ jobs:
       - name: Download rust artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: rust-*
           path: artifacts
 
       - name: Collect nexus-fast distributions
@@ -215,10 +216,17 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          name: wheel
+          path: artifacts/wheel
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts/sdist
 
       - name: Collect nexus-ai-fs distributions
         run: |
@@ -368,9 +376,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download all artifacts
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
+          name: wheel
+          path: artifacts/wheel
+
+      - name: Download sdist
+        uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: artifacts/sdist
+
+      - name: Download rust artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rust-*
           path: artifacts
 
       - name: Collect release artifacts

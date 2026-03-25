@@ -9,12 +9,14 @@ Two-phase dispatch model (Issue #900):
     INTERCEPT — synchronous, ordered.  Can abort (raise) or modify context.
     OBSERVE   — fire-and-forget (``FileEvent``).  Cannot abort.
 
-All six operations are covered:
-    read / write / delete / rename / mkdir / rmdir
+All eight operations are covered:
+    read / write / delete / rename / mkdir / rmdir / stat / access
 
 Issue #625: Extracted from ``core/vfs_hooks.py``.
 Issue #900: Added MkdirHookContext, RmdirHookContext, VFSMkdirHook,
             VFSRmdirHook.  Unified under KernelDispatch.
+Issue #1815: Added StatHookContext, AccessHookContext, VFSStatHook,
+             VFSAccessHook for permission enforcement migration.
 """
 
 from dataclasses import dataclass, field
@@ -117,6 +119,32 @@ class RmdirHookContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class StatHookContext:
+    """Context for stat/is_directory permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AccessHookContext:
+    """Context for sys_access permission check (Issue #1815).
+
+    Hooks raise ``PermissionDeniedError`` to deny access.
+    """
+
+    path: str
+    context: OperationContext | None
+    permission: str = "TRAVERSE"  # TRAVERSE or READ
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Hook protocols — implemented by services that plug into VFS operations
 # ---------------------------------------------------------------------------
@@ -202,6 +230,28 @@ class VFSRmdirHook(Protocol):
     def on_post_rmdir(self, ctx: RmdirHookContext) -> None: ...
 
 
+@runtime_checkable
+class VFSStatHook(Protocol):
+    """INTERCEPT hook for stat/is_directory permission check (Issue #1815).
+
+    ``on_pre_stat`` is called before stat operations.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_stat(self, ctx: StatHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSAccessHook(Protocol):
+    """INTERCEPT hook for sys_access permission check (Issue #1815).
+
+    ``on_pre_access`` is called before access checks.  Raise
+    ``PermissionDeniedError`` to deny access.
+    """
+
+    def on_pre_access(self, ctx: AccessHookContext) -> None: ...
+
+
 @dataclass
 class WriteBatchHookContext:
     """Context passed through write-batch hooks (Issue #900)."""
@@ -233,10 +283,15 @@ class VFSObserver(Protocol):
     """OBSERVE-phase observer for kernel VFS mutations (fire-and-forget).
 
     Receives a frozen ``FileEvent`` after every successful mutation.
-    Must not raise — exceptions are caught and logged by KernelDispatch.
+    Observers run concurrently via ``asyncio.gather`` with no ordering
+    guarantees.  Must not raise — exceptions are caught and logged by
+    KernelDispatch.
+
+    Optional ``event_mask`` class attribute (default: ``ALL_FILE_EVENTS``)
+    enables Rust-side event-type filtering to skip irrelevant observers.
     """
 
-    def on_mutation(self, event: Any) -> None: ...
+    async def on_mutation(self, event: Any) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +317,50 @@ class VFSPathResolver(Protocol):
     chain = no-op = zero overhead when no resolvers registered.
     """
 
-    def try_read(
-        self, path: str, *, return_metadata: bool = False, context: Any = None
-    ) -> bytes | dict | None: ...
+    def try_read(self, path: str, *, context: Any = None) -> bytes | None: ...
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None: ...
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
+
+
+# ---------------------------------------------------------------------------
+# MOUNT/UNMOUNT hooks — driver lifecycle notifications (Issue #1811)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MountHookContext:
+    """Context passed to mount hooks when a backend is mounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@dataclass
+class UnmountHookContext:
+    """Context passed to unmount hooks when a backend is unmounted."""
+
+    mount_point: str
+    backend: Any  # ObjectStoreABC
+
+
+@runtime_checkable
+class VFSMountHook(Protocol):
+    """Hook that runs when a backend is mounted (Issue #1811).
+
+    Linux analogue: ``file_system_type.mount()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    Dispatched by DriverLifecycleCoordinator via KernelDispatch.
+    """
+
+    def on_mount(self, ctx: MountHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSUnmountHook(Protocol):
+    """Hook that runs when a backend is unmounted (Issue #1811).
+
+    Linux analogue: ``kill_sb()``.
+    Fire-and-forget — failures are caught and logged by KernelDispatch.
+    """
+
+    def on_unmount(self, ctx: UnmountHookContext) -> None: ...

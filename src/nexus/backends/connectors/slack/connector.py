@@ -54,6 +54,7 @@ from nexus.backends.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
+from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.connectors.slack.schemas import (
     DeleteMessageSchema,
@@ -143,10 +144,7 @@ class SlackConnectorBackend(
     }
 
     ERROR_REGISTRY = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "CHANNEL_NOT_FOUND": ErrorDef(
             message="Channel not found or bot not a member",
             skill_section="operations",

@@ -46,12 +46,18 @@ async def rpc_endpoint(
     request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
 ) -> Response:
-    """Handle RPC method calls."""
+    """Handle RPC method calls.
+
+    .. deprecated::
+        This HTTP RPC endpoint is deprecated. Use gRPC ``Call`` RPC instead.
+        Sunset date: 2026-06-25. See Issue #1133.
+    """
     import time as _time
 
     from nexus.server.dependencies import get_operation_context
     from nexus.server.rpc.dispatch import dispatch_method
 
+    logger.debug("Deprecated HTTP RPC called: method=%s (use gRPC Call RPC instead)", method)
     _rpc_start = _time.time()
 
     try:
@@ -130,8 +136,11 @@ async def rpc_endpoint(
         )
         _dispatch_elapsed = (_time.time() - _dispatch_start) * 1000
 
-        # Build response with cache headers
+        # Build response with cache headers + deprecation (Issue #1133)
         headers = get_cache_headers(method, result)
+        headers["Deprecation"] = "true"
+        headers["Sunset"] = "Wed, 25 Jun 2026 00:00:00 GMT"
+        headers["X-Migration-Guide"] = "Use gRPC Call RPC (Issue #1133)"
 
         # Late 304 check
         if if_none_match and "ETag" in headers:

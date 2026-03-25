@@ -70,6 +70,119 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # ---------------------------------------------------------------------------
+  # E2E smoke tests against the edge image (develop only)
+  # Starts a Nexus container, runs init, then exercises the permissions demo
+  # and build-perf e2e scripts.  Failures block the workflow so issues are
+  # caught early.
+  # ---------------------------------------------------------------------------
+  e2e-edge:
+    name: E2E edge smoke tests
+    needs: build-and-push
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: nexus
+          POSTGRES_DB: nexus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start Nexus edge container
+        run: |
+          # Container runs as nexus (UID 1000) — match host volume ownership
+          mkdir -p /tmp/nexus-data && sudo chown -R 1000:1000 /tmp/nexus-data
+          docker run -d --name nexus-e2e \
+            --network host \
+            -e NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            -e NEXUS_HOST=0.0.0.0 \
+            -e NEXUS_PORT=2026 \
+            -e NEXUS_GRPC_PORT=2029 \
+            -e NEXUS_PROFILE=full \
+            -e LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libgomp.so.1 \
+            -v /tmp/nexus-data:/app/data \
+            ghcr.io/nexi-lab/nexus:edge
+
+          # Wait for server to be ready
+          echo "Waiting for Nexus to start..."
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:2026/health > /dev/null 2>&1; then
+              echo "Nexus is ready (${i}s)"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:2026/health || (docker logs nexus-e2e && exit 1)
+
+      - name: Initialize and extract credentials
+        run: |
+          # Run init inside the container where nexus CLI is available
+          docker exec nexus-e2e sh -c '
+            SKIP_CONFIRM=1 QUIET=1 \
+            NEXUS_DATABASE_URL=postgresql://postgres:nexus@localhost/nexus \
+            /usr/local/bin/docker-entrypoint.sh nexusd --help >/dev/null 2>&1 || true
+          '
+          # Create admin API key via the REST API
+          ADMIN_KEY=$(curl -sf http://localhost:2026/api/admin/bootstrap 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('api_key',''))" 2>/dev/null || true)
+          if [ -z "$ADMIN_KEY" ]; then
+            echo "Bootstrap not available, trying default admin key from container..."
+            ADMIN_KEY=$(docker exec nexus-e2e cat /app/data/.admin-api-key 2>/dev/null || true)
+          fi
+          echo "NEXUS_URL=http://localhost:2026" >> "$GITHUB_ENV"
+          echo "NEXUS_API_KEY=${ADMIN_KEY}" >> "$GITHUB_ENV"
+          echo "Admin key obtained: ${ADMIN_KEY:0:10}..."
+
+      - name: Copy test scripts into container
+        run: |
+          docker cp permissions_demo_enhanced.sh nexus-e2e:/tmp/
+          docker cp scripts/test_build_perf_e2e.py nexus-e2e:/tmp/
+
+      - name: Run permissions demo
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            nexus-e2e bash /tmp/permissions_demo_enhanced.sh
+
+      - name: Run build perf e2e
+        run: |
+          docker exec \
+            -e NEXUS_URL=http://localhost:2026 \
+            -e NEXUS_API_KEY="${NEXUS_API_KEY}" \
+            -e NEXUS_PROFILE=remote \
+            -e NEXUS_GRPC_PORT=2029 \
+            nexus-e2e python3 /tmp/test_build_perf_e2e.py
+
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker logs nexus-e2e 2>&1 | tail -200
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f nexus-e2e 2>/dev/null || true
+
   build-zoekt:
     name: Build & push multi-arch zoekt image
     runs-on: ubuntu-latest

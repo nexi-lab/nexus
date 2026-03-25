@@ -432,7 +432,7 @@ class TestLLMStreamingService:
         await service.start_stream(request, "/zone/llm/.streams/s2")
 
         # Wait for background task
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.15)
 
         # Verify tokens were written to stream
         written = mock_stream_manager._written
@@ -474,7 +474,7 @@ class TestLLMStreamingService:
         await service.start_stream(request, "/zone/llm/.streams/err")
 
         # Wait for background task
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.15)
 
         # Verify error message was written
         written = mock_stream_manager._written
@@ -533,5 +533,5 @@ class TestLLMStreamingService:
         assert "/zone/llm/.streams/track" in service.active_streams
 
         # Wait for completion
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(0.15)
         assert "/zone/llm/.streams/track" not in service.active_streams

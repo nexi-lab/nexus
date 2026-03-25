@@ -63,7 +63,7 @@ class TestPumpAndRead:
 
         await stream.start_pump()
         # Wait for pump to finish
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         assert stream.tail > 0
         assert stream.stats["msg_count"] == 3
@@ -77,7 +77,7 @@ class TestPumpAndRead:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         data, next_offset = stream.read_at(0)
         assert data == b"hello\n"
@@ -92,7 +92,7 @@ class TestPumpAndRead:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         _, next_offset = stream.read_at(0)
         data2, next_offset2 = stream.read_at(next_offset)
@@ -115,7 +115,7 @@ class TestPumpAndRead:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         with pytest.raises(StreamClosedError):
             stream.read_at(999)
@@ -136,7 +136,7 @@ class TestMultiReader:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Reader 1 reads all three
         d1, off1 = stream.read_at(0)
@@ -159,7 +159,7 @@ class TestMultiReader:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         tail1 = stream.tail
         assert tail1 == 5  # len("msg1\n")
@@ -212,7 +212,7 @@ class TestBatchRead:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         items, next_off = stream.read_batch(0, count=10)
         assert len(items) == 5
@@ -228,7 +228,7 @@ class TestBatchRead:
         reader.feed_eof()
 
         await stream.start_pump()
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         items, next_off = stream.read_batch(0, count=2)
         assert len(items) == 2

@@ -137,7 +137,7 @@ class TestAcpConnectionDispatch:
                     "params": {"path": "/test/file.txt"},
                 }
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
             # Should respond with file content
             assert len(stdin._written) > 0
@@ -167,7 +167,7 @@ class TestAcpConnectionDispatch:
                     "params": {"path": "/test/out.txt", "content": "hello"},
                 }
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
             assert "/test/out.txt" in written_files
             assert written_files["/test/out.txt"] == "hello"
@@ -213,7 +213,7 @@ class TestAcpConnectionDispatch:
                     "params": {"path": "/some/file.txt"},
                 }
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
             resp = json.loads(stdin._written[-1].decode())
             assert resp["id"] == 10
@@ -238,7 +238,7 @@ class TestAcpConnectionDispatch:
                     "params": {"path": "/some/file.txt", "content": "hello"},
                 }
             )
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
 
             resp = json.loads(stdin._written[-1].decode())
             assert resp["id"] == 11

@@ -119,8 +119,7 @@ class TestVersionGCSettings:
 
 async def _flush(nx) -> None:
     """Flush async write observer so version_history is up to date."""
-    if nx._flush_write_observer_fn:
-        await nx._flush_write_observer_fn()
+    nx.flush_write_observer()
 
 
 class TestVersionHistoryGC:
@@ -381,7 +380,7 @@ class TestVersionGCTask:
         task = asyncio.create_task(version_gc_task(mock_session_factory, mock_config))
 
         # Let it start
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Cancel and verify it was created successfully
         task.cancel()

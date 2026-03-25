@@ -258,7 +258,7 @@ class ProxyVFSBrick(ProxyBrick):
     async def sys_rename(self, src: str, dst: str, zone_id: str) -> None:
         await self._forward("rename", src=src, dst=dst, zone_id=zone_id)
 
-    async def sys_mkdir(self, path: str, zone_id: str) -> None:
+    async def mkdir(self, path: str, zone_id: str) -> None:
         await self._forward("mkdir", path=path, zone_id=zone_id)
 
     async def sys_access(self, path: str, zone_id: str) -> bool:

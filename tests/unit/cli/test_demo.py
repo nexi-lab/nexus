@@ -106,7 +106,7 @@ class TestIdempotency:
         mock_nx = MagicMock()
         mock_nx.sys_write = AsyncMock()
         mock_nx.write = AsyncMock()
-        mock_nx.sys_mkdir = AsyncMock()
+        mock_nx.mkdir = AsyncMock()
         mock_nx.sys_readdir = AsyncMock(return_value=[])
         manifest: dict = {"files": []}
 
@@ -140,8 +140,7 @@ class TestIdempotency:
 
         mock_nx = MagicMock()
         # No rebac_manager available
-        mock_nx._system_services.rebac_manager = None
-        mock_nx.rebac_manager = None
+        mock_nx.service.return_value = None
         config: dict = {"preset": "local"}
         manifest: dict = {}
 
@@ -157,7 +156,7 @@ class TestIdempotency:
 
         mock_rebac = MagicMock()
         mock_nx = MagicMock()
-        mock_nx._system_services.rebac_manager = mock_rebac
+        mock_nx.service.return_value = mock_rebac
         config: dict = {"preset": "local"}
         manifest: dict = {}
 
@@ -390,7 +389,7 @@ class TestDeletePermissions:
         mock_rebac = MagicMock()
         mock_rebac.delete_tuple.return_value = True
         mock_nx = MagicMock()
-        mock_nx._system_services.rebac_manager = mock_rebac
+        mock_nx.service.return_value = mock_rebac
         config: dict = {"preset": "local"}
 
         deleted = _delete_permissions(mock_nx, config)
@@ -400,8 +399,7 @@ class TestDeletePermissions:
     def test_delete_permissions_local_no_rebac(self) -> None:
         """When no rebac_manager is available, should return 0."""
         mock_nx = MagicMock()
-        mock_nx._system_services.rebac_manager = None
-        mock_nx.rebac_manager = None
+        mock_nx.service.return_value = None
         config: dict = {"preset": "local"}
 
         deleted = _delete_permissions(mock_nx, config)

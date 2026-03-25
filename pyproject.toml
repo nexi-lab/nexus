@@ -246,6 +246,7 @@ semantic-search = [
 semantic-search-remote = [
     # Remote embedding providers (lightweight, requires API keys)
     # Recommended: OpenAI embeddings (default for semantic search)
+    "litellm>=1.74.0",
     "openai>=1.0.0",
 ]
 
@@ -296,6 +297,7 @@ all = [
     "psycopg2-binary>=2.9.9",
     "sqlite-vec>=0.1.0",
     "pgvector>=0.3.0",
+    "litellm>=1.74.0",
     "openai>=1.0.0",
     "e2b-code-interpreter>=1.0.0",
 ]
@@ -855,7 +857,6 @@ ignore_imports = [
     # search -> rebac: permission enforcement + entity registry in search_service (moved from services/)
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
-    "nexus.bricks.search.search_service -> nexus.bricks.rebac.entity_registry",
     # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
     "nexus.bricks.search.search_service -> nexus.system_services.gateway",
     # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
@@ -889,13 +890,13 @@ layers = [
 # Ratchet baseline — known violations. Remove entries as fixes land.
 # Run: lint-imports --contract four-tier-layers to check.
 ignore_imports = [
+    # --- core importing system_services (ServiceRegistry shutdown needs BrickLifecycleManager type) ---
+    "nexus.core.service_registry -> nexus.system_services.lifecycle.brick_lifecycle",
     # --- tier-neutral (contracts) importing core ---
     "nexus.contracts.metadata -> nexus.core._compact_generated",
     # --- tier-neutral (contracts/protocols) importing bricks ---
     # chunked_upload protocol TYPE_CHECKING import for UploadSession return type
     "nexus.contracts.protocols.chunked_upload -> nexus.bricks.upload.upload_session",
-    # process_manager protocol TYPE_CHECKING import for agent process types
-    "nexus.contracts.protocols.process_manager -> nexus.system_services.agent_runtime.types",
     # --- contracts importing lib (upward — legacy, to be fixed) ---
     "nexus.contracts.agent_utils -> nexus.storage.models",
     "nexus.contracts -> nexus.lib.validators",
@@ -905,6 +906,8 @@ ignore_imports = [
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
     # --- lib importing system_services (upward — legacy, to be fixed) ---
     "nexus.lib.permission_utils -> nexus.system_services.gateway",
+    # --- kernel (core) importing system_services ---
+    "nexus.core.service_registry -> nexus.system_services.lifecycle.brick_lifecycle",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
     # --- system_services importing bricks ---

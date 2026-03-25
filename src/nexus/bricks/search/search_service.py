@@ -739,6 +739,10 @@ class SearchService:
             recursive=recursive,
         )
 
+        # NOTE: Metastore-first listing deferred to Issue #3266.
+        # Once CLI connectors sync to metastore with display_path() names,
+        # this code path should prefer metastore entries over live list_dir().
+
         # Permission filtering
         if self._enforce_permissions and context:
             from nexus.contracts.types import OperationContext
@@ -2481,7 +2485,7 @@ class SearchService:
             db_path = _unscope(path) if path != "/" else None
             daemon_results = await daemon.search(
                 query=query,
-                search_type=search_mode if search_mode != "semantic" else "hybrid",
+                search_type=search_mode,
                 limit=fetch_limit,
                 path_filter=db_path,
                 zone_id=zone_id,
@@ -2668,6 +2672,12 @@ class SearchService:
     @rpc_expose(description="Get semantic search indexing statistics")
     async def semantic_search_stats(self) -> dict[str, Any]:
         """Get semantic search indexing statistics."""
+        daemon = getattr(self, "_search_daemon", None)
+        if daemon is not None:
+            stats = dict(daemon.get_stats())
+            stats.setdefault("engine", stats.get("backend", "txtai"))
+            return stats
+
         if self._indexing_service is not None:
             return await self._indexing_service.get_index_stats()
 

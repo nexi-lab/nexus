@@ -28,6 +28,7 @@ OUTBOX_DIR = "outbox"
 PROCESSED_DIR = "processed"
 DEAD_LETTER_DIR = "dead_letter"
 TASKS_DIR = "tasks"
+NOTIFY_PIPE_NAME = "notify"
 AGENT_CARD_FILENAME = "AGENT.json"
 
 # All directories auto-provisioned for each agent
@@ -115,6 +116,11 @@ def dead_letter_path(agent_id: str) -> str:
 def agent_card_path(agent_id: str) -> str:
     """Agent card file: ``/agents/{agent_id}/AGENT.json``."""
     return f"{AGENTS_ROOT}/{agent_id}/{AGENT_CARD_FILENAME}"
+
+
+def notify_pipe_path(agent_id: str) -> str:
+    """Notification pipe path: ``/agents/{agent_id}/notify``."""
+    return f"{AGENTS_ROOT}/{agent_id}/{NOTIFY_PIPE_NAME}"
 
 
 def tasks_path(agent_id: str) -> str:

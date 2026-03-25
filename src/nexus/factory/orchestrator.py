@@ -179,14 +179,13 @@ def create_nexus_services(
         permission_enforcer=system_dict["permission_enforcer"],
         write_observer=system_dict["write_observer"],
         # Former-kernel degradable (Issue #2193)
-        dir_visibility_cache=system_dict["dir_visibility_cache"],
-        hierarchy_manager=system_dict["hierarchy_manager"],
+        # hierarchy_manager, dir_visibility_cache, namespace_manager
+        # now internalized into ReBACManager — access via rebac_manager properties
         deferred_permission_buffer=system_dict["deferred_permission_buffer"],
         workspace_registry=system_dict["workspace_registry"],
         mount_manager=system_dict["mount_manager"],
         workspace_manager=system_dict["workspace_manager"],
         # Original system services
-        namespace_manager=system_dict["namespace_manager"],
         async_namespace_manager=system_dict["async_namespace_manager"],
         context_branch_service=system_dict.get("context_branch_service"),
         brick_lifecycle_manager=system_dict.get("brick_lifecycle_manager"),
@@ -194,15 +193,12 @@ def create_nexus_services(
         delivery_worker=system_dict["delivery_worker"],
         observability_subsystem=system_dict["observability_subsystem"],
         resiliency_manager=system_dict["resiliency_manager"],
-        eviction_manager=system_dict.get("eviction_manager"),
         zone_lifecycle=system_dict.get("zone_lifecycle"),
-        # (PipeManager + StreamManager are kernel-internal primitives §4.2,
-        # constructed in NexusFS.__init__ — not injected via SystemServices.)
+        # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives §4.2,
+        # constructed in NexusFS.__init__ — not injected via SystemServices.
+        # EvictionManager + AcpService deferred to _do_link() — Issue #1792.)
         # Scheduler (Issue #2195)
         scheduler_service=system_dict.get("scheduler_service"),
-        # Process table + ACP
-        agent_registry=system_dict.get("agent_registry"),
-        acp_service=system_dict.get("acp_service"),
         # Distributed event bus — Tier 1 infrastructure (Issue #1701)
         event_bus=brick_dict["event_bus"],
         # Distributed lock manager — Tier 1 infrastructure (Issue #1702)
@@ -262,6 +258,7 @@ async def create_nexus_fs(
     zone_id: str | None = None,
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
+    init_cred: Any = None,
 ) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
@@ -285,6 +282,7 @@ async def create_nexus_fs(
         zone_id: Default zone ID (for WorkspaceManager, embedded mode).
         agent_id: Default agent ID (for WorkspaceManager, embedded mode).
         workflow_engine: Pre-built workflow engine override.
+        init_cred: Override kernel process identity (default: system user with is_admin flag).
 
     Returns:
         Fully configured NexusFS instance with services injected.
@@ -368,7 +366,12 @@ async def create_nexus_fs(
 
     import functools
 
+    from nexus.contracts.types import OperationContext as _OC
     from nexus.factory._lifecycle import _do_initialize, _do_link
+
+    _init_cred = (
+        init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
+    )
 
     nx = NexusFS(
         metadata_store=metadata_store,
@@ -381,12 +384,9 @@ async def create_nexus_fs(
         parsing=parsing,
         kernel_services=kernel_services,
         brick_services=brick_services,
+        init_cred=_init_cred,
     )
-    # Issue #1801: factory owns identity — kernel never fabricates it.
-    from nexus.contracts.types import OperationContext as _OC
-
-    nx._default_context = _OC(user_id="system", groups=[], is_admin=is_admin)
-    nx._link_fn = functools.partial(_do_link, system_services=system_services)
+    nx._link_fn = functools.partial(_do_link, system_services=system_services, zone_id=zone_id)
     nx._initialize_fn = _do_initialize
     # Backward compat: server/CLI/tests may read nx._system_services directly.
     nx._system_services = system_services
@@ -422,7 +422,7 @@ async def _register_vfs_hooks(
 
     _on = _make_gate(brick_on)
 
-    _coordinator = nx._service_coordinator
+    _coordinator = nx.service_coordinator
 
     async def _enlist(name: str, hook: Any) -> None:
         """Enlist hook via coordinator — the single entry point."""
@@ -445,7 +445,7 @@ async def _register_vfs_hooks(
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
-            default_context=nx._default_context,
+            default_context=nx._init_cred,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=system_services.permission_enforcer if system_services else None,
             descendant_checker=getattr(nx, "_descendant_checker", None),
@@ -548,16 +548,16 @@ async def _register_vfs_hooks(
     )
     await _enlist("virtual_view", _vview_resolver)
 
-    # ── ProcResolver (procfs virtual filesystem for AgentRegistry — Issue #1570) ──
-    _proc_table = getattr(system_services, "agent_registry", None) if system_services else None
+    # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
+    _proc_table = getattr(nx, "_agent_registry", None)
     if _proc_table is not None:
         try:
-            from nexus.system_services.proc.proc_resolver import ProcResolver
+            from nexus.core.agent_status_resolver import AgentStatusResolver
 
-            _proc_resolver = ProcResolver(_proc_table)
-            await _enlist("proc", _proc_resolver)
+            _agent_status_resolver = AgentStatusResolver(_proc_table)
+            await _enlist("agent_status", _agent_status_resolver)
         except Exception as exc:
-            logger.debug("[BOOT:HOOKS] ProcResolver unavailable: %s", exc)
+            logger.debug("[BOOT:HOOKS] AgentStatusResolver unavailable: %s", exc)
 
     # ── TaskWriteHook + TaskDispatchPipeConsumer + TaskAgentResolver ───────────
     if _on("task_manager"):
@@ -602,7 +602,7 @@ async def _register_vfs_hooks(
         )
     else:
         # Sync fallback — same logic, runs as post-write hook instead of inline kernel code
-        _hier = getattr(system_services, "hierarchy_manager", None) if system_services else None
+        _hier = getattr(_rebac_for_perm, "hierarchy_manager", None) if _rebac_for_perm else None
         if _hier is not None or _rebac_for_perm is not None:
             from nexus.bricks.rebac.sync_permission_hook import SyncPermissionWriteHook
 
@@ -644,6 +644,11 @@ async def _register_vfs_hooks(
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
     await _enlist("revision_tracking", _rev_observer)
+
+    # ── CAS ref_count observer (Issue #1320, #1811) ────────────────────
+    # Moved to DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
+    # The coordinator registers CASRefCountObserver via hook_spec() at mount
+    # time, fixing the silent failure where enlist() classified backends as Q1.
 
     # ── Test hooks (Issue #2) ────────────────────────────────────────
     # Only registered when NEXUS_TEST_HOOKS=true for E2E hook testing.

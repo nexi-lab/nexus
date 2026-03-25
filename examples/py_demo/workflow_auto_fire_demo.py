@@ -200,8 +200,8 @@ actions:
     print("\n⏳ Performing file operations (workflows will auto-fire)...\n")
 
     # Create directories
-    await nx.sys_mkdir("/uploads/invoices", parents=True)
-    await nx.sys_mkdir("/uploads/receipts", parents=True)
+    await nx.mkdir("/uploads/invoices", parents=True)
+    await nx.mkdir("/uploads/receipts", parents=True)
 
     # Test 1: Upload invoice (should trigger invoice-auto-tagger)
     print("1️⃣  Uploading invoice PDF...")
@@ -309,7 +309,7 @@ actions:
 
     # Create test file anyway (webhook will fail but shows the concept)
     print("\n📤 Uploading test file (webhook will attempt to fire)...")
-    await nx.sys_mkdir("/uploads/webhooks", parents=True)
+    await nx.mkdir("/uploads/webhooks", parents=True)
     test_data = json.dumps({"test": "data", "timestamp": time.time()}).encode()
     await nx.sys_write("/uploads/webhooks/test.json", test_data)
     print("   ✅ File uploaded, webhook workflow triggered!")

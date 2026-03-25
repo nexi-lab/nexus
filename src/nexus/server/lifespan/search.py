@@ -18,6 +18,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("true", "1", "yes")
+
+
+def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
+    """Resolve txtai embedding model and optional vectors config from env.
+
+    Supports an explicit API-backed mode for Docker/demo stacks so users can
+    avoid local embedding model startup when they already have OpenAI creds.
+    """
+    use_api_embeddings = _env_truthy("NEXUS_TXTAI_USE_API_EMBEDDINGS")
+    configured_model = os.environ.get("NEXUS_TXTAI_MODEL", "").strip()
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "").strip()
+    openai_base_url = os.environ.get("OPENAI_BASE_URL", "").strip()
+    model = configured_model or "sentence-transformers/all-MiniLM-L6-v2"
+    vectors: dict[str, str] | None = None
+
+    if use_api_embeddings:
+        if not configured_model and openai_api_key:
+            model = "openai/text-embedding-3-small"
+
+        if model.startswith("openai/") and openai_api_key:
+            vectors = {"api_key": openai_api_key}
+            if openai_base_url:
+                vectors["api_base"] = openai_base_url
+
+    return model, vectors or None
+
+
 async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
     search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
@@ -37,13 +66,13 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
     try:
         from nexus.bricks.search.daemon import DaemonConfig, SearchDaemon
 
+        txtai_model, txtai_vectors = _resolve_txtai_runtime_config()
         config = DaemonConfig(
             database_url=svc.database_url,
             query_timeout_seconds=float(os.environ.get("NEXUS_QUERY_TIMEOUT", "10.0")),
             # txtai backend config (Issue #2663)
-            txtai_model=os.environ.get(
-                "NEXUS_TXTAI_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
-            ),
+            txtai_model=txtai_model,
+            txtai_vectors=txtai_vectors,
             txtai_reranker=os.environ.get("NEXUS_TXTAI_RERANKER") or None,
             txtai_sparse=os.environ.get("NEXUS_TXTAI_SPARSE", "").lower() in ("true", "1", "yes"),
             txtai_graph=os.environ.get("NEXUS_TXTAI_GRAPH", "true").lower()
@@ -56,6 +85,11 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         if _record_store is not None:
             with contextlib.suppress(AttributeError):
                 _async_sf = _record_store.async_session_factory
+        _settings_store = None
+        with contextlib.suppress(ImportError, AttributeError):
+            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+            _settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
 
         # Issue #2188: Create ZoektClient + embedding provider via DI
         _zoekt_client = None
@@ -80,6 +114,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             async_session_factory=_async_sf,
             zoekt_client=_zoekt_client,
             cache_brick=_cache_brick,
+            settings_store=_settings_store,
         )
 
         # Embeddings are now handled by txtai backend (Issue #2663).
@@ -97,6 +132,10 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
             from nexus.factory import _NexusFSFileReader
 
             app.state.search_daemon._file_reader = _NexusFSFileReader(svc.nexus_fs)
+            if getattr(app.state.search_daemon, "_mutation_resolver", None) is not None:
+                app.state.search_daemon._mutation_resolver.set_file_reader(  # noqa: SLF001
+                    app.state.search_daemon._file_reader
+                )
 
         # Wire SearchDaemon into SearchService so semantic_search queries
         # use the txtai backend instead of falling back to SQL ILIKE.

@@ -135,6 +135,7 @@ class ReBACManager:
         is_postgresql: bool = False,
         version_store: MetastoreVersionStore | None = None,
         namespace_store: "MetastoreNamespaceStore | None" = None,
+        enable_inheritance: bool = True,
     ):
         """Initialize ReBAC manager.
 
@@ -151,6 +152,7 @@ class ReBACManager:
             is_postgresql: Whether the database is PostgreSQL (config-time flag).
             version_store: MetastoreVersionStore for zone revision tracking (Issue #191).
             namespace_store: MetastoreNamespaceStore for namespace config (Issue #183).
+            enable_inheritance: Enable automatic parent tuple creation in HierarchyManager.
         """
         # ── Base initialization (formerly in ReBACManager.__init__) ──
         self.engine = engine
@@ -375,6 +377,68 @@ class ReBACManager:
 
         # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
         self._wire_shared_ring_buffer()
+
+        # ── Internalized sub-components (formerly factory-constructed) ────
+        # These are rebac-internal concerns — factory shouldn't construct them.
+
+        # HierarchyManager: automatic parent tuple creation on permission writes
+        from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
+
+        self._hierarchy_manager: HierarchyManager = HierarchyManager(
+            rebac_manager=self,
+            enable_inheritance=enable_inheritance,
+        )
+
+        # DirectoryVisibilityCache: O(1) directory permission lookups via Tiger bitmaps
+        from nexus.bricks.rebac.cache.visibility import DirectoryVisibilityCache
+
+        self._dir_visibility_cache: DirectoryVisibilityCache = DirectoryVisibilityCache(
+            tiger_cache=self._tiger_cache,
+            ttl=cache_ttl_seconds,
+            max_entries=10000,
+        )
+        # Wire invalidation: permission changes → dir visibility cache
+        self.register_dir_visibility_invalidator(
+            "nexusfs",
+            lambda zone_id, path: self._dir_visibility_cache.invalidate_for_resource(path, zone_id),
+        )
+
+        # NamespaceManager: optional (profile-gated), created on demand via
+        # create_namespace_manager() when namespace brick is enabled.
+        self._namespace_manager: "Any | None" = None
+
+    # ── Public property accessors for internalized sub-components ────
+
+    @property
+    def hierarchy_manager(self) -> Any:
+        """HierarchyManager — automatic parent tuple creation on permission writes."""
+        return self._hierarchy_manager
+
+    @property
+    def dir_visibility_cache(self) -> Any:
+        """DirectoryVisibilityCache — O(1) directory permission lookups."""
+        return self._dir_visibility_cache
+
+    @property
+    def namespace_manager(self) -> Any:
+        """NamespaceManager — per-subject namespace visibility (may be None if not created)."""
+        return self._namespace_manager
+
+    def create_namespace_manager(self, record_store: Any = None) -> Any:
+        """Create and attach the NamespaceManager (profile-gated, call when namespace brick is enabled).
+
+        Args:
+            record_store: RecordStoreABC for L3 persistent view store. If None, L3 is disabled.
+
+        Returns:
+            The newly created NamespaceManager instance.
+        """
+        from nexus.bricks.rebac.namespace_factory import (
+            create_namespace_manager as _create_ns_manager,
+        )
+
+        self._namespace_manager = _create_ns_manager(self, record_store)
+        return self._namespace_manager
 
     def _create_invalidation_stream(self) -> Any:
         """Create the DT_STREAM for ordered intra-zone invalidation."""

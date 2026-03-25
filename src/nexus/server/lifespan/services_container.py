@@ -49,7 +49,7 @@ class LifespanServices:
     thread_pool_size: int = 40
 
     # --- Coordinator (post-bootstrap service registration) ---------------
-    service_coordinator: Any = None  # ServiceLifecycleCoordinator
+    service_coordinator: Any = None  # ServiceRegistry (lifecycle orchestration)
 
     # --- Process table (kernel process lifecycle) -------------------------
     agent_registry: Any = None
@@ -102,10 +102,18 @@ class LifespanServices:
         lifespan modules access services via typed attributes.
         """
         nx = getattr(app.state, "nexus_fs", None)
+        # Issue #1771: prefer nx.service() for enlisted services, fall back to
+        # _system_services for infrastructure fields not yet in ServiceRegistry.
         _sys = getattr(nx, "_system_services", None) if nx else None
         _brk = getattr(nx, "_brick_services", None) if nx else None
 
-        _coord = getattr(nx, "_service_coordinator", None) if nx else None
+        _coord = getattr(nx, "service_coordinator", None) if nx else None
+
+        # Helper: nx.service() with None safety and hasattr guard
+        # (SimpleNamespace stubs in tests may not have .service())
+        def _svc(name: str) -> Any:
+            _service_fn = getattr(nx, "service", None) if nx else None
+            return _service_fn(name) if callable(_service_fn) else None
 
         return cls(
             # Core / kernel
@@ -113,11 +121,11 @@ class LifespanServices:
             database_url=getattr(app.state, "database_url", None),
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
-            # Process table — read from system_services (where it's created),
+            # Process table — kernel-owned primitive (Issue #1792),
             # falling back to app.state for backwards compatibility
             agent_registry=(
-                getattr(_sys, "agent_registry", None)
-                if _sys
+                getattr(nx, "_agent_registry", None)
+                if nx
                 else getattr(app.state, "agent_registry", None)
             ),
             # Coordinator
@@ -128,10 +136,10 @@ class LifespanServices:
             enabled_bricks=getattr(app.state, "enabled_bricks", frozenset()),
             profile_tuning=getattr(app.state, "profile_tuning", None),
             thread_pool_size=getattr(app.state, "thread_pool_size", 40),
-            # Issue #3193: delivery worker + event signal
-            delivery_worker=(getattr(_sys, "delivery_worker", None) if _sys else None),
+            # Issue #3193: delivery worker + event signal (enlisted in ServiceRegistry)
+            delivery_worker=_svc("delivery_worker"),
             event_signal=(getattr(_sys, "event_signal", None) if _sys else None),
-            # System services
+            # System services — infrastructure fields not in ServiceRegistry
             brick_lifecycle_manager=(
                 getattr(_sys, "brick_lifecycle_manager", None) if _sys else None
             ),

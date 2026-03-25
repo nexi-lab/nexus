@@ -116,14 +116,15 @@ class TaskDispatchPipeConsumer:
         if self._nx is None:
             return
 
-        from nexus.contracts.metadata import DT_PIPE
+        pipe_manager = getattr(self._nx, "_pipe_manager", None)
+        if pipe_manager is None:
+            raise RuntimeError("PipeManager not available for task dispatch startup")
 
-        with contextlib.suppress(Exception):
-            await self._nx.sys_setattr(
-                _TASK_DISPATCH_PIPE_PATH,
-                entry_type=DT_PIPE,
-                owner_id="kernel",
-            )
+        pipe_manager.ensure(
+            _TASK_DISPATCH_PIPE_PATH,
+            capacity=_TASK_DISPATCH_PIPE_CAPACITY,
+            owner_id="kernel",
+        )
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

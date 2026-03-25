@@ -11,8 +11,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.helpers.test_context import TEST_CONTEXT
-
 
 class TestDescribableConformance:
     """Verify concrete types implement the Describable protocol."""
@@ -33,12 +31,11 @@ class TestDescribableConformance:
 class TestWirableFSConformance:
     """Verify NexusFS implements the WirableFS protocol."""
 
-    def test_nexus_fs_is_wirable(self) -> None:
-        from unittest.mock import MagicMock
-
+    @pytest.mark.asyncio
+    async def test_nexus_fs_is_wirable(self, tmp_path) -> None:
         from nexus.contracts.wirable_fs import WirableFS
-        from nexus.core.config import ParseConfig
         from nexus.core.nexus_fs import NexusFS
+        from tests.conftest import make_test_nexus
 
         # NexusFS.sys_read exists at class level (method)
         assert callable(getattr(NexusFS, "sys_read", None))
@@ -47,13 +44,7 @@ class TestWirableFSConformance:
         assert hasattr(WirableFS, "__protocol_attrs__") or True
 
         # Verify an instance satisfies the protocol structurally
-        mock_metadata = MagicMock()
-        mock_metadata.list = MagicMock(return_value=[])
-        nx = NexusFS(
-            metadata_store=mock_metadata,
-            parsing=ParseConfig(auto_parse=False),
-        )
-        nx._default_context = TEST_CONTEXT
+        nx = await make_test_nexus(tmp_path)
         assert isinstance(nx, WirableFS)
 
 

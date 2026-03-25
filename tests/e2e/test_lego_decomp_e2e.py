@@ -208,7 +208,7 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_mkdir_and_list(self, nx):
-        await nx.sys_mkdir("/mydir", parents=True, exist_ok=True)
+        await nx.mkdir("/mydir", parents=True, exist_ok=True)
         await nx.write("/mydir/file.txt", b"content")
         entries = await nx.sys_readdir("/mydir", recursive=False)
         assert "/mydir/file.txt" in entries
@@ -227,7 +227,7 @@ class TestKernelSanity:
 
     @pytest.mark.asyncio
     async def test_is_directory(self, nx):
-        await nx.sys_mkdir("/somedir", parents=True, exist_ok=True)
+        await nx.mkdir("/somedir", parents=True, exist_ok=True)
         assert await nx.sys_is_directory("/somedir")
 
     @pytest.mark.asyncio
@@ -370,7 +370,7 @@ class TestPermissionEnforcement:
             is_system=False,
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
-        await nx_perms.sys_mkdir(dirname, parents=True, exist_ok=True, context=ctx)
+        await nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
         assert await nx_perms.sys_is_directory(dirname, context=ctx)
 
     @pytest.mark.asyncio

@@ -83,19 +83,20 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     if not grpc_port:
         grpc_port = state.get("ports", {}).get("grpc", cfg.get("ports", {}).get("grpc", 2028))
 
-    # TLS: propagate state.json paths into env so ZoneTlsConfig.from_env()
-    # picks them up. Always run this regardless of how grpc_port was resolved.
+    # TLS: trust explicit runtime state / env, not blind auto-detection from
+    # NEXUS_DATA_DIR. Standalone demo/shared stacks may still have a tls/
+    # directory for internal services while exposing insecure host gRPC.
     tls = state.get("tls", {})
     if tls.get("cert") and not os.environ.get("NEXUS_TLS_CERT"):
         os.environ["NEXUS_TLS_CERT"] = tls["cert"]
         os.environ["NEXUS_TLS_KEY"] = tls.get("key", "")
         os.environ["NEXUS_TLS_CA"] = tls.get("ca", "")
-    if not os.environ.get("NEXUS_DATA_DIR") and data_dir:
-        os.environ["NEXUS_DATA_DIR"] = data_dir
 
     grpc_address = f"{parsed.hostname}:{grpc_port}"
 
-    tls_config = ZoneTlsConfig.from_env()
+    tls_config = None
+    if tls.get("cert") or os.environ.get("NEXUS_TLS_CERT"):
+        tls_config = ZoneTlsConfig.from_env()
     transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
     return transport.call_rpc
 

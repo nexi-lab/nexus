@@ -356,18 +356,18 @@ def _boot_independent_bricks(
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
             )
 
-        # Always create lock manager if metastore satisfies LockStoreProtocol
-        # (standalone → LocalLockManager, Raft → RaftLockManager already created above)
+        # Always create lock manager — SemaphoreAdvisoryLockManager wraps
+        # VFSSemaphore directly (no LockStoreProtocol capability check needed).
         if lock_manager is None:
             try:
-                from nexus.lib.distributed_lock import LocalLockManager, LockStoreProtocol
+                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
+                from nexus.lib.semaphore import create_vfs_semaphore
 
-                if isinstance(ctx.metadata_store, LockStoreProtocol):
-                    _zone = ctx.zone_id or ROOT_ZONE_ID
-                    lock_manager = LocalLockManager(ctx.metadata_store, zone_id=_zone)
-                    logger.info("Local lock manager initialized (standalone, zone=%s)", _zone)
+                _zone = ctx.zone_id or ROOT_ZONE_ID
+                lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=_zone)
+                logger.info("Advisory lock manager initialized (standalone, zone=%s)", _zone)
             except Exception as _lm_exc:
-                logger.debug("[BOOT:BRICK] LocalLockManager unavailable: %s", _lm_exc)
+                logger.debug("[BOOT:BRICK] SemaphoreAdvisoryLockManager unavailable: %s", _lm_exc)
 
     # --- Workflow engine ---
     workflow_engine: Any = None

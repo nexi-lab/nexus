@@ -81,7 +81,7 @@ class TestReplayProcessesBatch:
 
         # Run engine briefly
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -105,7 +105,7 @@ class TestReplayMarksDoneOnSuccess:
         )
 
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -133,7 +133,7 @@ class TestReplayMarksFailedOnConnectionError:
         )
 
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -164,7 +164,7 @@ class TestReplayDeadLettersInvalidJson:
         )
 
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -192,7 +192,7 @@ class TestReplayStopsBatchOnConnectionError:
         )
 
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -243,7 +243,7 @@ class TestReplayContinuesAfterNonConnectionError:
         )
 
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -365,7 +365,7 @@ class TestReplayEngineWake:
 
         # Wake should cause immediate processing instead of waiting 60s
         engine.wake()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
 
         await engine.stop()
         task.cancel()
@@ -481,7 +481,7 @@ class TestReplayStreamUpload:
             queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -502,7 +502,7 @@ class TestReplayStreamUpload:
             queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -567,7 +567,7 @@ class TestReplayRespectsHalfOpenGate:
             queue=queue, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -606,7 +606,7 @@ class TestReplaySuccessCallback:
             on_replay_success=callback,
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -637,7 +637,7 @@ class TestReplaySuccessCallback:
             on_replay_success=callback,
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:
@@ -686,7 +686,7 @@ class TestReplayPersistentIdempotency:
             queue=q, transport=transport, circuit=circuit, batch_size=10, poll_interval=0.01
         )
         task = asyncio.create_task(engine.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.03)
         await engine.stop()
         task.cancel()
         try:

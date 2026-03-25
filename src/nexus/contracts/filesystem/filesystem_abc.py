@@ -33,6 +33,8 @@ class NexusFilesystemABC(ABC):
     this interface. Service-layer concerns (workspace, memory, sandbox)
     are deliberately excluded — they belong to their respective service
     protocols, not the kernel.
+
+    Error pattern: mutations raise, queries return False/None, stat returns None if not found.
     """
 
     # ── Service Registry ──────────────────────────────────────────
@@ -55,7 +57,7 @@ class NexusFilesystemABC(ABC):
     # Content I/O — sys_read(2), sys_write(2)
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
     # Namespace — sys_unlink(2), sys_rename(2)
-    # Directory — sys_mkdir(2), sys_rmdir(2), sys_readdir(3)
+    # Directory — sys_rmdir(2), sys_readdir(3)  (mkdir is Tier 2)
     # Query — sys_access(2), sys_is_directory
     # System — get_top_level_mounts, close
 
@@ -116,7 +118,9 @@ class NexusFilesystemABC(ABC):
     # ── Metadata I/O ───────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_stat(self, path: str, context: Any = None) -> dict[str, Any] | None:
+    async def sys_stat(
+        self, path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any] | None:
         """Read all file metadata (POSIX stat(2)).
 
         Returns:
@@ -125,7 +129,9 @@ class NexusFilesystemABC(ABC):
         ...
 
     @abstractmethod
-    async def sys_setattr(self, path: str, context: Any = None, **attrs: Any) -> dict[str, Any]:
+    async def sys_setattr(
+        self, path: str, *, context: OperationContext | None = None, **attrs: Any
+    ) -> dict[str, Any]:
         """Upsert file metadata (chmod/chown/utimensat + mknod analog).
 
         Upsert semantics — create-on-write for metadata:
@@ -148,36 +154,81 @@ class NexusFilesystemABC(ABC):
     # ── Namespace ──────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_unlink(self, path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_unlink(
+        self, path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """Remove a directory entry (POSIX unlink(2)).
 
         NOT "delete" — unlink is precise: removes directory entry,
         CAS refcount decrements. Content freed only when refcount=0.
+
+        When operating in overlay mode and the file exists only in the
+        base layer, creates a whiteout marker instead of deleting.
+        Returns ``{"overlay_whiteout": True}`` in that case.
         """
         ...
 
     @abstractmethod
-    async def sys_rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:
+    async def sys_rename(
+        self, old_path: str, new_path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
         """Rename/move a file (POSIX rename(2))."""
         ...
 
     # ── Directory ──────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_mkdir(
-        self,
-        path: str,
-        parents: bool = False,
-        exist_ok: bool = False,
-        context: Any = None,
+    async def sys_rmdir(
+        self, path: str, recursive: bool = False, *, context: OperationContext | None = None
     ) -> None:
-        """Create a directory (POSIX mkdir(2))."""
+        """Remove a directory (POSIX rmdir(2)).
+
+        Tier 1 default: recursive=False (empty dir only).
+        Use rmdir() (Tier 2) for recursive=True default.
+        """
         ...
 
-    @abstractmethod
-    async def sys_rmdir(self, path: str, recursive: bool = False, context: Any = None) -> None:
-        """Remove a directory (POSIX rmdir(2))."""
-        ...
+    # ── Directory (Tier 2 convenience) ───────────────────────────
+
+    async def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        *,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Create a directory (Tier 2 convenience over sys_setattr).
+
+        Defaults: parents=True, exist_ok=True (mkdir -p semantics).
+        Composes sys_setattr(entry_type=DT_DIR) for inode creation.
+        NexusFS overrides with full orchestration (hooks, backend, events).
+        """
+        from nexus.contracts.metadata import DT_DIR
+
+        if parents:
+            parts = path.strip("/").split("/")
+            for i in range(1, len(parts)):
+                parent = "/" + "/".join(parts[:i])
+                await self.sys_setattr(parent, entry_type=DT_DIR, context=context)
+
+        result = await self.sys_setattr(path, entry_type=DT_DIR, context=context)
+        if not result.get("created") and not exist_ok:
+            raise FileExistsError(f"Directory already exists: {path}")
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = True,
+        *,
+        context: OperationContext | None = None,
+    ) -> None:
+        """Remove a directory with lenient defaults (Tier 2).
+
+        Delegates to sys_rmdir with caller-friendly defaults:
+        recursive=True (rm -rf semantics).
+        """
+        await self.sys_rmdir(path, recursive=recursive, context=context)
 
     @abstractmethod
     async def sys_readdir(
@@ -186,7 +237,8 @@ class NexusFilesystemABC(ABC):
         recursive: bool = True,
         details: bool = False,
         show_parsed: bool = True,
-        context: Any = None,
+        *,
+        context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
@@ -202,16 +254,16 @@ class NexusFilesystemABC(ABC):
     # ── Query ──────────────────────────────────────────────────────
 
     @abstractmethod
-    async def sys_access(self, path: str, context: Any = None) -> bool:
-        """Check if a file exists (POSIX access(2)).
+    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
+        """Check if a file exists and is accessible (POSIX access(2)).
 
-        Simplified to existence check. Permission checks handled
-        separately by ReBAC service.
+        Combines existence with permission visibility — returns False
+        (not raises) when path doesn't exist or user lacks permission.
         """
         ...
 
     @abstractmethod
-    async def sys_is_directory(self, path: str, context: OperationContext | None = None) -> bool:
+    async def sys_is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory.
 
         Linux uses stat(2) + S_ISDIR macro — we provide direct check

@@ -85,7 +85,8 @@ async def run_benchmark(enable_deferred: bool = False):
     """
     from nexus.backends.storage.cas_local import CASLocalBackend
     from nexus.contracts.types import OperationContext
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.config import ParseConfig, PermissionConfig
+    from nexus.factory import create_nexus_fs
 
     mode = "DEFERRED" if enable_deferred else "SYNC"
     print("=" * 70)
@@ -99,18 +100,15 @@ async def run_benchmark(enable_deferred: bool = False):
 
         backend = CASLocalBackend(str(storage_path))
 
-        # Create NexusFS with permissions ENABLED
-        nx = NexusFS(
+        # Create NexusFS with permissions ENABLED via factory
+        nx = await create_nexus_fs(
             backend=backend,
             metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
             record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
-            zone_id="benchmark_zone",
-            enforce_permissions=True,
-            auto_parse=False,
-            enable_tiger_cache=False,  # SQLite doesn't support Tiger Cache
-            enable_deferred_permissions=enable_deferred,  # Issue #1071
+            permissions=PermissionConfig(enforce=True),
+            parsing=ParseConfig(auto_parse=False),
+            init_cred=TEST_CONTEXT,
         )
-        nx._default_context = TEST_CONTEXT
 
         # Create user context
         ctx = OperationContext(

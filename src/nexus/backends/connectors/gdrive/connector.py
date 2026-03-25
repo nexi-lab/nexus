@@ -47,6 +47,7 @@ from nexus.backends.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
+from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.gws.schemas import (
     DeleteFileSchema,
     UpdateFileSchema,
@@ -175,20 +176,11 @@ class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitB
 
     # Error registry for self-correcting messages
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Drive operations require agent_intent explaining why",
-            skill_section="required-format",
-            fix_example="agent_intent: Uploading quarterly report for team review",
-        ),
+        **TRAIT_ERRORS,
         "MISSING_FILE_ID": ErrorDef(
             message="Update and delete operations require a file_id",
             skill_section="update-file",
             fix_example="file_id: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
-        ),
-        "MISSING_CONFIRM": ErrorDef(
-            message="This operation requires explicit confirmation",
-            skill_section="required-format",
-            fix_example="confirm: true",
         ),
     }
 

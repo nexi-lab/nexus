@@ -4,12 +4,12 @@ Pure in-memory agent registry, analogous to Linux task_struct array.
 No metastore persistence — agent state is ephemeral (tied to OS
 process lifespan).  On nexusd restart, all agents are gone.
 
-VFS visibility is provided by ProcResolver (procfs model): reading
+VFS visibility is provided by AgentStatusResolver (procfs model): reading
 ``/{zone}/proc/{pid}/status`` generates content from memory at
 read time, like Linux ``/proc/{pid}/status``.
 
     core/agent_registry.py  = kernel/fork.c + kernel/exit.c + kernel/signal.c
-    system_services/proc/proc_resolver.py  = fs/proc/ (procfs virtual filesystem)
+    core/agent_status_resolver.py           = fs/proc/ (procfs virtual filesystem)
 
 Concurrency model:
   - spawn/kill/signal/get/list are synchronous (fast PID allocation
@@ -47,7 +47,7 @@ class AgentRegistry:
     """Manages agent lifecycle — PID allocation, state machine, signals, wait().
 
     Pure in-memory — analogous to Linux's task_struct table.
-    VFS visibility via ProcResolver (procfs), not metastore persistence.
+    VFS visibility via AgentStatusResolver (procfs), not metastore persistence.
     """
 
     def __init__(self) -> None:

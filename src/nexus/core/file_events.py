@@ -34,6 +34,23 @@ class FileEventType(StrEnum):
     CONFLICT_DETECTED = "conflict_detected"
 
 
+# ── Bitmask positions for Rust ObserverRegistry filtering (Issue #1748) ──
+
+FILE_EVENT_BIT: dict[FileEventType, int] = {
+    FileEventType.FILE_WRITE: 1 << 0,
+    FileEventType.FILE_DELETE: 1 << 1,
+    FileEventType.FILE_RENAME: 1 << 2,
+    FileEventType.METADATA_CHANGE: 1 << 3,
+    FileEventType.DIR_CREATE: 1 << 4,
+    FileEventType.DIR_DELETE: 1 << 5,
+    FileEventType.SYNC_TO_BACKEND_REQUESTED: 1 << 6,
+    FileEventType.SYNC_TO_BACKEND_COMPLETED: 1 << 7,
+    FileEventType.SYNC_TO_BACKEND_FAILED: 1 << 8,
+    FileEventType.CONFLICT_DETECTED: 1 << 9,
+}
+ALL_FILE_EVENTS: int = (1 << 10) - 1  # 0x3FF — matches all event types
+
+
 @dataclass(frozen=True)
 class FileEvent:
     """Frozen kernel I/O event — immutable once created.
@@ -61,6 +78,7 @@ class FileEvent:
     version: int | None = None  # write-specific: file version counter
     is_new: bool = False  # write-specific: True if file was created (not overwritten)
     new_path: str | None = None  # rename-specific: destination path
+    old_etag: str | None = None  # write-specific: previous content hash (for overwrite detection)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -93,6 +111,8 @@ class FileEvent:
             result["is_new"] = self.is_new
         if self.new_path is not None:
             result["new_path"] = self.new_path
+        if self.old_etag is not None:
+            result["old_etag"] = self.old_etag
         return result
 
     def to_json(self) -> str:
@@ -118,6 +138,7 @@ class FileEvent:
             version=data.get("version"),
             is_new=data.get("is_new", False),
             new_path=data.get("new_path"),
+            old_etag=data.get("old_etag"),
         )
 
     @classmethod

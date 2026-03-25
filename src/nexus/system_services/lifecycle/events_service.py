@@ -27,7 +27,7 @@ import dataclasses
 import logging
 import threading
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.protocols.service_hooks import HookSpec
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
     from nexus.core.file_events import FileEvent
-    from nexus.lib.distributed_lock import LockManagerBase
+    from nexus.lib.distributed_lock import AdvisoryLockManager
     from nexus.system_services.event_bus.base import EventBusBase
 
 
@@ -65,10 +65,12 @@ class EventsService:
         - Races both when available (FIRST_COMPLETED)
     """
 
+    event_mask: int = (1 << 10) - 1  # ALL_FILE_EVENTS
+
     def __init__(
         self,
         event_bus: "EventBusBase | None" = None,
-        lock_manager: "LockManagerBase | None" = None,
+        lock_manager: "AdvisoryLockManager | None" = None,
         zone_id: str | None = None,
     ):
         self._event_bus = event_bus
@@ -112,8 +114,8 @@ class EventsService:
         """Check if distributed event bus is available."""
         return self._event_bus is not None
 
-    def _has_distributed_locks(self) -> bool:
-        """Check if distributed lock manager is available."""
+    def _has_lock_manager(self) -> bool:
+        """Check if advisory lock manager is available."""
         return self._lock_manager is not None
 
     def _get_zone_id(self, context: "OperationContext | None") -> str:
@@ -128,16 +130,16 @@ class EventsService:
     # VFSObserver implementation (OBSERVE phase)
     # =========================================================================
 
-    def on_mutation(self, event: "FileEvent") -> None:
+    async def on_mutation(self, event: "FileEvent") -> None:
         """Called by KernelDispatch.notify() on every local mutation.
 
         Matches the event against pending waiters and resolves their futures.
-        Thread-safe: dispatch.notify() may be called from non-event-loop threads.
+        Now guaranteed to run on the event loop (via gather in KernelDispatch).
         """
         with self._waiters_lock:
             for w in self._waiters:
                 if not w.future.done() and event.matches_path_pattern(w.path_pattern):
-                    w.loop.call_soon_threadsafe(w.future.set_result, event)
+                    w.future.set_result(event)
 
     # =========================================================================
     # Internal wait (OBSERVE path)
@@ -285,6 +287,7 @@ class EventsService:
     async def lock(
         self,
         path: str,
+        mode: Literal["exclusive", "shared"] = "exclusive",
         timeout: float = 30.0,
         ttl: float = 30.0,
         max_holders: int = 1,
@@ -292,12 +295,13 @@ class EventsService:
     ) -> str | None:
         """Acquire an advisory lock on a path.
 
-        Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
+        Supports exclusive (default), shared, and counting semaphore modes.
 
         Args:
             path: Virtual path to lock
+            mode: ``"exclusive"`` (default) or ``"shared"``
             timeout: Maximum time to wait for lock in seconds
-            ttl: Lock TTL in seconds (distributed mode only)
+            ttl: Lock TTL in seconds
             max_holders: Maximum concurrent holders (1 = mutex)
             _context: Operation context (optional)
 
@@ -308,25 +312,26 @@ class EventsService:
 
         path = validate_path(path, allow_root=True)
 
-        if self._has_distributed_locks():
-            mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
-            logger.debug(f"Using distributed lock manager for {path} ({mode})")
-            lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
-                path=path,
-                timeout=timeout,
-                ttl=ttl,
-                max_holders=max_holders,
+        if not self._has_lock_manager():
+            raise RuntimeError(
+                "No lock manager available. Advisory lock manager should always "
+                "be created by factory (SemaphoreAdvisoryLockManager or RaftLockManager)."
             )
-            if lock_id:
-                logger.debug(f"Distributed lock acquired on {path}: {lock_id}")
-            else:
-                logger.warning(f"Distributed lock timeout on {path} after {timeout}s")
-            return lock_id
 
-        raise NotImplementedError(
-            "No lock manager available. Configure a metastore that implements "
-            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
+        desc = f"mode={mode}" if max_holders == 1 else f"semaphore({max_holders})"
+        logger.debug("Acquiring lock on %s (%s)", path, desc)
+        lock_id = await self._lock_manager.acquire(  # type: ignore[union-attr]
+            path=path,
+            mode=mode,
+            timeout=timeout,
+            ttl=ttl,
+            max_holders=max_holders,
         )
+        if lock_id:
+            logger.debug("Lock acquired on %s: %s", path, lock_id)
+        else:
+            logger.warning("Lock timeout on %s after %ss", path, timeout)
+        return lock_id
 
     @rpc_expose(description="Extend lock TTL (heartbeat)")
     async def extend_lock(
@@ -347,23 +352,20 @@ class EventsService:
         Returns:
             True if lock was extended, False if not found/owned
         """
-        if self._has_distributed_locks():
-            path = validate_path(path, allow_root=True)
-            extended = await self._lock_manager.extend(  # type: ignore[union-attr]
-                lock_id=lock_id,
-                path=path,
-                ttl=ttl,
-            )
-            if extended.success:
-                logger.debug(f"Lock extended: {lock_id} (TTL: {ttl}s)")
-            else:
-                logger.warning(f"Lock extend failed (not owned or expired): {lock_id}")
-            return extended.success
+        if not self._has_lock_manager():
+            raise RuntimeError("No lock manager available.")
 
-        raise NotImplementedError(
-            "No lock manager available. Configure a metastore that implements "
-            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
+        path = validate_path(path, allow_root=True)
+        extended = await self._lock_manager.extend(  # type: ignore[union-attr]
+            lock_id=lock_id,
+            path=path,
+            ttl=ttl,
         )
+        if extended.success:
+            logger.debug("Lock extended: %s (TTL: %ss)", lock_id, ttl)
+        else:
+            logger.warning("Lock extend failed (not owned or expired): %s", lock_id)
+        return extended.success
 
     @rpc_expose(description="Release advisory lock")
     async def unlock(
@@ -376,30 +378,27 @@ class EventsService:
 
         Args:
             lock_id: Lock ID returned from lock()
-            path: Path that was locked (required for distributed mode)
+            path: Path that was locked (required)
             _context: Operation context (optional)
 
         Returns:
             True if lock was released, False if not found
         """
-        if self._has_distributed_locks():
-            if path is None:
-                raise ValueError("path is required for distributed unlock")
-            path = validate_path(path, allow_root=True)
-            released = await self._lock_manager.release(  # type: ignore[union-attr]
-                lock_id=lock_id,
-                path=path,
-            )
-            if released:
-                logger.debug(f"Distributed lock released: {lock_id}")
-            else:
-                logger.warning(f"Distributed lock not found: {lock_id}")
-            return released
+        if not self._has_lock_manager():
+            raise RuntimeError("No lock manager available.")
 
-        raise NotImplementedError(
-            "No lock manager available. Configure a metastore that implements "
-            "LockStoreProtocol (factory creates LocalLockManager or RaftLockManager)."
+        if path is None:
+            raise ValueError("path is required for unlock")
+        path = validate_path(path, allow_root=True)
+        released = await self._lock_manager.release(  # type: ignore[union-attr]
+            lock_id=lock_id,
+            path=path,
         )
+        if released:
+            logger.debug("Lock released: %s", lock_id)
+        else:
+            logger.warning("Lock not found: %s", lock_id)
+        return released
 
     # =========================================================================
     # Lock Context Manager
@@ -409,16 +408,20 @@ class EventsService:
     async def locked(
         self,
         path: str,
+        mode: Literal["exclusive", "shared"] = "exclusive",
         timeout: float = 30.0,
         ttl: float = 30.0,
+        max_holders: int = 1,
         _context: "OperationContext | None" = None,
     ) -> AsyncIterator[str]:
-        """Acquire a distributed lock as an async context manager.
+        """Acquire an advisory lock as an async context manager.
 
         Args:
             path: Virtual path to lock
+            mode: ``"exclusive"`` (default) or ``"shared"``
             timeout: Maximum time to wait for lock in seconds
             ttl: Lock TTL in seconds
+            max_holders: Maximum concurrent holders (1 = mutex)
             _context: Operation context (optional)
 
         Yields:
@@ -429,7 +432,14 @@ class EventsService:
         """
         from nexus.contracts.exceptions import LockTimeout
 
-        lock_id = await self.lock(path, timeout=timeout, ttl=ttl, _context=_context)
+        lock_id = await self.lock(
+            path,
+            mode=mode,
+            timeout=timeout,
+            ttl=ttl,
+            max_holders=max_holders,
+            _context=_context,
+        )
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
 

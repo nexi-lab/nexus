@@ -23,6 +23,9 @@ Tested against SQLite in-memory via ReBACManager (composition root).
 from datetime import UTC, datetime
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 

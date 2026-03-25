@@ -356,3 +356,110 @@ class TestCASAddressingEngineName:
     def test_default_name(self, transport: InMemoryBlobTransport):
         backend = CASAddressingEngine(transport)
         assert backend.name == "cas-memory"
+
+
+class TestVerifyOnRead:
+    """Test verify_on_read flag — configurable integrity hash on read."""
+
+    def test_verify_on_read_true_detects_corruption(self, transport: InMemoryBlobTransport):
+        backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=True)
+        content = b"original"
+        result = backend.write_content(content)
+        # Corrupt stored blob
+        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
+        transport.files[cas_key] = b"corrupted"
+        with pytest.raises(BackendError, match="hash mismatch"):
+            backend.read_content(result.content_id)
+
+    def test_verify_on_read_false_skips_hash(self, transport: InMemoryBlobTransport):
+        backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=False)
+        content = b"original"
+        result = backend.write_content(content)
+        # Corrupt stored blob
+        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
+        transport.files[cas_key] = b"corrupted"
+        # Should return corrupted data without raising
+        data = backend.read_content(result.content_id)
+        assert data == b"corrupted"
+
+    def test_verify_on_read_default_is_true(self, transport: InMemoryBlobTransport):
+        backend = CASAddressingEngine(transport, backend_name="test")
+        assert backend._verify_on_read is True
+
+
+class TestDedupSkip:
+    """Test dedup skip — blob_exists check before put_blob on write."""
+
+    def test_dedup_write_increments_ref_count(self, transport: InMemoryBlobTransport):
+        backend = CASAddressingEngine(transport, backend_name="test")
+        content = b"dedup content"
+        r1 = backend.write_content(content)
+        r2 = backend.write_content(content)
+        assert r1.content_id == r2.content_id
+        assert backend.get_ref_count(r1.content_id) == 2
+
+    def test_dedup_write_skips_put_blob(self, transport: InMemoryBlobTransport):
+        """On dedup, put_blob should not be called the second time."""
+        from unittest.mock import patch
+
+        backend = CASAddressingEngine(transport, backend_name="test")
+        content = b"dedup test"
+        backend.write_content(content)
+
+        # Track put_blob calls via mock wrapper
+        h = hash_content(content)
+        content_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+        original_put = transport.put_blob
+        put_calls: list[str] = []
+
+        def tracking_put(key: str, data: bytes, content_type: str = "") -> str | None:
+            put_calls.append(key)
+            return original_put(key, data, content_type)
+
+        with patch.object(transport, "put_blob", side_effect=tracking_put):
+            backend.write_content(content)  # second write = dedup
+
+        # put_blob should NOT have been called for the content blob
+        assert content_key not in put_calls
+
+    def test_fresh_write_calls_put_blob(self, transport: InMemoryBlobTransport):
+        backend = CASAddressingEngine(transport, backend_name="test")
+        content = b"fresh content"
+        result = backend.write_content(content)
+        h = result.content_id
+        cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+        assert cas_key in transport.files
+        assert transport.files[cas_key] == content
+
+
+class TestNosyncMetaDispatch:
+    """Test _write_meta uses put_blob_nosync when available."""
+
+    def test_meta_uses_nosync_when_available(self):
+        """When transport has put_blob_nosync, _write_meta should use it."""
+
+        class NosyncTransport(InMemoryBlobTransport):
+            """Transport with put_blob_nosync support."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.nosync_calls: list[str] = []
+
+            def put_blob_nosync(self, key: str, data: bytes) -> None:
+                self.nosync_calls.append(key)
+                self.files[key] = data
+
+        transport = NosyncTransport()
+        backend = CASAddressingEngine(transport, backend_name="test")
+        backend.write_content(b"test nosync meta")
+        # Meta sidecar should have been written via nosync
+        assert any(k.endswith(".meta") for k in transport.nosync_calls)
+
+    def test_meta_falls_back_to_put_blob(self, transport: InMemoryBlobTransport):
+        """Without put_blob_nosync, meta goes through regular put_blob."""
+        assert not hasattr(transport, "put_blob_nosync")
+        backend = CASAddressingEngine(transport, backend_name="test")
+        result = backend.write_content(b"fallback meta")
+        h = result.content_id
+        meta_key = f"cas/{h[:2]}/{h[2:4]}/{h}.meta"
+        assert meta_key in transport.files

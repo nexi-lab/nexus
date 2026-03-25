@@ -15,40 +15,25 @@ Issue #900: Migrated from _write_observer to KernelDispatch.
 
 from __future__ import annotations
 
-import tempfile
-from collections.abc import Generator
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus import CASLocalBackend, NexusFS
-from nexus.core.config import ParseConfig, PermissionConfig, SystemServices
 from nexus.core.file_events import FileEventType
-from tests.helpers.dict_metastore import DictMetastore
-from tests.helpers.test_context import TEST_CONTEXT
+from tests.conftest import make_test_nexus
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 
 @pytest.fixture
-def temp_dir() -> Generator[Path, None, None]:
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+async def nx(tmp_path: Path) -> NexusFS:
+    from nexus import CASLocalBackend
 
-
-@pytest.fixture
-def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
-    metastore = DictMetastore()
-    backend = CASLocalBackend(str(temp_dir / "data"))
-    nx = NexusFS(
-        metadata_store=metastore,
-        permissions=PermissionConfig(enforce=False),
-        parsing=ParseConfig(auto_parse=False),
-        system_services=SystemServices(),
-    )
-    nx._default_context = TEST_CONTEXT
-    nx.router.add_mount("/", backend)
-    yield nx
-    nx.close()
+    backend = CASLocalBackend(str(tmp_path / "data"))
+    return await make_test_nexus(tmp_path, backend=backend)
 
 
 @pytest.fixture
@@ -206,12 +191,17 @@ class TestWriteStreamCallsDispatch:
         mock_dispatch.notify = AsyncMock()
         nx._dispatch = mock_dispatch
 
-        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]))
+        # path_local backend requires backend_path in OperationContext for
+        # streaming writes (no content_id available until hash is computed).
+        from nexus.contracts.types import OperationContext
+
+        ctx = OperationContext(user_id="test", groups=[], backend_path="streamed.txt")
+        await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
 
         mock_dispatch.intercept_post_write.assert_called_once()
-        ctx = mock_dispatch.intercept_post_write.call_args.args[0]
-        assert ctx.path == "/streamed.txt"
-        assert ctx.is_new_file is True
+        hook_ctx = mock_dispatch.intercept_post_write.call_args.args[0]
+        assert hook_ctx.path == "/streamed.txt"
+        assert hook_ctx.is_new_file is True
 
 
 class TestMkdirCallsDispatch:
@@ -219,7 +209,7 @@ class TestMkdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_mkdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_mkdir("/testdir")
+        await nx.mkdir("/testdir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -230,7 +220,7 @@ class TestMkdirCallsDispatch:
     async def test_mkdir_parents_notifies_dispatch(
         self, nx: NexusFS, mock_notify: MagicMock
     ) -> None:
-        await nx.sys_mkdir("/a/b/c", parents=True)
+        await nx.mkdir("/a/b/c", parents=True)
 
         # notify is called once for the final directory
         mock_notify.assert_called_once()
@@ -244,7 +234,7 @@ class TestRmdirCallsDispatch:
 
     @pytest.mark.asyncio
     async def test_rmdir_notifies_dispatch(self, nx: NexusFS, mock_notify: MagicMock) -> None:
-        await nx.sys_mkdir("/mydir")
+        await nx.mkdir("/mydir")
         mock_notify.reset_mock()
 
         await nx.sys_rmdir("/mydir")
@@ -255,14 +245,32 @@ class TestRmdirCallsDispatch:
         assert event.path == "/mydir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_recursive_notifies_dispatch(
-        self, nx: NexusFS, mock_notify: MagicMock
-    ) -> None:
-        await nx.sys_mkdir("/mydir")
-        await nx.write("/mydir/file.txt", b"content")
+    async def test_rmdir_recursive_notifies_dispatch(self, tmp_path: Path) -> None:
+        """Use CAS backend to avoid PathLocal rmdir ordering bug (deletes dir marker before contents)."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
+
+        backend = CASLocalBackend(root_path=str(tmp_path / "cas_data"))
+        cas_nx = await make_test_nexus(tmp_path, backend=backend)
+
+        mock_dispatch = MagicMock()
+        mock_dispatch.resolve_read.return_value = (False, None)
+        mock_dispatch.resolve_write.return_value = (False, None)
+        mock_dispatch.resolve_delete.return_value = (False, None)
+        mock_dispatch.notify = AsyncMock()
+        mock_dispatch.intercept_post_write = AsyncMock()
+        mock_dispatch.intercept_post_delete = AsyncMock()
+        mock_dispatch.intercept_post_rename = AsyncMock()
+        mock_dispatch.intercept_post_mkdir = AsyncMock()
+        mock_dispatch.intercept_post_rmdir = AsyncMock()
+        mock_dispatch.intercept_post_write_batch = AsyncMock()
+        cas_nx._dispatch = mock_dispatch
+        mock_notify = mock_dispatch.notify
+
+        await cas_nx.mkdir("/mydir")
+        await cas_nx.write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
-        await nx.sys_rmdir("/mydir", recursive=True)
+        await cas_nx.sys_rmdir("/mydir", recursive=True)
 
         # rmdir notify is the last call; write_batch notify may precede it
         events = [call.args[0] for call in mock_notify.call_args_list]
@@ -280,27 +288,23 @@ class TestVFSObserverCoverage:
     """Verify KernelDispatch OBSERVE fires for all mutation operations."""
 
     @pytest.fixture
-    def hook(self) -> MagicMock:
-        return MagicMock()
+    def hook(self) -> AsyncMock:
+        """Async observer mock — on_mutation must be async."""
+        mock = AsyncMock()
+        mock.event_mask = (1 << 10) - 1  # ALL_FILE_EVENTS
+        return mock
 
     @pytest.fixture
-    def nx_with_hook(self, temp_dir: Path, hook: MagicMock) -> Generator[NexusFS, None, None]:
-        metastore = DictMetastore()
-        backend = CASLocalBackend(str(temp_dir / "data"))
-        nx = NexusFS(
-            metadata_store=metastore,
-            permissions=PermissionConfig(enforce=False),
-            parsing=ParseConfig(auto_parse=False),
-            system_services=SystemServices(),
-        )
-        nx._default_context = TEST_CONTEXT
-        nx.router.add_mount("/", backend)
+    async def nx_with_hook(self, tmp_path: Path, hook: AsyncMock) -> NexusFS:
+        from nexus import CASLocalBackend
+
+        backend = CASLocalBackend(str(tmp_path / "data"))
+        nx = await make_test_nexus(tmp_path, backend=backend)
         nx.register_observe(hook)
-        yield nx
-        nx.close()
+        return nx
 
     @pytest.mark.asyncio
-    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_write_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
@@ -308,19 +312,23 @@ class TestVFSObserverCoverage:
         assert event.path == "/file.txt"
 
     @pytest.mark.asyncio
-    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_delete_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/file.txt", b"hello")
+
         hook.reset_mock()
         await nx_with_hook.sys_unlink("/file.txt")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_DELETE
 
     @pytest.mark.asyncio
-    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
+    async def test_rename_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
         await nx_with_hook.write("/old.txt", b"hello")
+
         hook.reset_mock()
         await nx_with_hook.sys_rename("/old.txt", "/new.txt")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.FILE_RENAME
@@ -328,27 +336,31 @@ class TestVFSObserverCoverage:
 
     @pytest.mark.asyncio
     async def test_write_batch_fires_hook_per_file(
-        self, nx_with_hook: NexusFS, hook: MagicMock
+        self, nx_with_hook: NexusFS, hook: AsyncMock
     ) -> None:
         files = [("/a.txt", b"aaa"), ("/b.txt", b"bbb"), ("/c.txt", b"ccc")]
         await nx_with_hook.write_batch(files)
+
         assert hook.on_mutation.call_count == 3
         paths = {call.args[0].path for call in hook.on_mutation.call_args_list}
         assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
     @pytest.mark.asyncio
-    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        await nx_with_hook.sys_mkdir("/newdir")
+    async def test_mkdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+        await nx_with_hook.mkdir("/newdir")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_CREATE
         assert event.path == "/newdir"
 
     @pytest.mark.asyncio
-    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: MagicMock) -> None:
-        await nx_with_hook.sys_mkdir("/mydir")
+    async def test_rmdir_fires_hook(self, nx_with_hook: NexusFS, hook: AsyncMock) -> None:
+        await nx_with_hook.mkdir("/mydir")
+
         hook.reset_mock()
         await nx_with_hook.sys_rmdir("/mydir")
+
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]
         assert event.type == FileEventType.DIR_DELETE

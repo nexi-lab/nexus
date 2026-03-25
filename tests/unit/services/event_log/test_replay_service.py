@@ -580,7 +580,7 @@ class TestStreamWithSignal:
         task = asyncio.create_task(consume())
 
         # Give consumer time to start waiting
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         # Insert event and signal
         _insert_event(

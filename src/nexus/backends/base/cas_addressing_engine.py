@@ -17,7 +17,7 @@ Feature DI (optional optimizations):
     bloom_filter  — Bloom pre-check for fast content_exists() miss
     content_cache — In-memory cache for read_content() hot path
     meta_cache    — LRU cache for _read_meta() hot path (e.g. cachetools.LRUCache)
-    stripe_lock   — Per-hash threading.Lock for metadata read-modify-write
+    meta_semaphore — VFSSemaphore for per-hash metadata read-modify-write
     on_write_callback — Write notification (e.g. Zoekt reindex)
     cdc_engine    — ChunkingStrategy for large file chunking (CDC)
 
@@ -28,7 +28,7 @@ Storage layout (in transport key-space):
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
-    - backends/base/stripe_lock.py — _StripeLock for CAS metadata coordination
+    - core/semaphore.py — VFSSemaphore for CAS metadata coordination
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import json
 import logging
 import re
 from collections.abc import Callable, Iterator
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.blob_transport import BlobTransport
@@ -46,6 +46,8 @@ from nexus.contracts.capabilities import ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
+
+_T = TypeVar("_T")
 
 # CAS-specific: SHA-256 hex pattern for content hash validation.
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -71,6 +73,7 @@ def _validate_hash(content_hash: str) -> None:
 
 if TYPE_CHECKING:
     from nexus.backends.engines.cdc import ChunkingStrategy
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -109,9 +112,10 @@ class CASAddressingEngine(Backend):
         bloom_filter: Any | None = None,
         content_cache: Any | None = None,
         meta_cache: Any | None = None,
-        stripe_lock: Any | None = None,
+        meta_semaphore: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
+        verify_on_read: bool = True,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
@@ -121,9 +125,10 @@ class CASAddressingEngine(Backend):
         self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
         self._meta_cache_hits = 0
         self._meta_cache_misses = 0
-        self._stripe_lock = stripe_lock  # stripe_lock._StripeLock
+        self._meta_semaphore = meta_semaphore  # VFSSemaphore (core/semaphore.py)
         self._on_write_callback = on_write_callback
         self._cdc: ChunkingStrategy | None = cdc_engine
+        self._verify_on_read = verify_on_read
 
     @property
     def name(self) -> str:
@@ -156,7 +161,7 @@ class CASAddressingEngine(Backend):
     def _read_meta(self, content_hash: str) -> dict[str, Any]:
         """Read metadata sidecar.  Returns default dict if not found.
 
-        When stripe_lock is injected, caller must hold the lock before calling.
+        When meta_semaphore is injected, caller must hold the lock before calling.
         Uses meta_cache (read-through) when injected via Feature DI.
         """
         # Feature DI: meta cache read-through
@@ -190,12 +195,19 @@ class CASAddressingEngine(Backend):
     def _write_meta(self, content_hash: str, meta: dict[str, Any]) -> None:
         """Write metadata sidecar (JSON).
 
-        When stripe_lock is injected, caller must hold the lock before calling.
+        When meta_semaphore is injected, caller must hold the lock before calling.
         Updates meta_cache when injected via Feature DI.
+
+        Uses put_blob_nosync when available — meta JSON is reconstructable
+        from VFS metastore, so fsync + atomic rename is unnecessary overhead.
         """
         key = self._meta_key(content_hash)
+        data = json.dumps(meta).encode()
         try:
-            self._transport.put_blob(key, json.dumps(meta).encode(), "application/json")
+            if hasattr(self._transport, "put_blob_nosync"):
+                self._transport.put_blob_nosync(key, data)
+            else:
+                self._transport.put_blob(key, data, "application/json")
         except Exception as e:
             raise BackendError(
                 f"Failed to write CAS metadata: {e}",
@@ -207,12 +219,24 @@ class CASAddressingEngine(Backend):
         if self._meta_cache is not None:
             self._meta_cache[content_hash] = meta
 
+    def _with_meta_lock(self, content_hash: str, fn: Callable[[], _T]) -> _T:
+        """Execute fn under per-hash metadata lock (VFSSemaphore)."""
+        if self._meta_semaphore is None:
+            return fn()
+        holder = self._meta_semaphore.acquire(content_hash, max_holders=1, timeout_ms=5000)
+        if holder is None:
+            raise RuntimeError(f"Failed to acquire metadata lock for {content_hash}")
+        try:
+            return fn()
+        finally:
+            self._meta_semaphore.release(content_hash, holder)
+
     def _meta_update_locked(
         self,
         content_hash: str,
         updater: "Callable[[dict[str, Any]], dict[str, Any]]",
     ) -> dict[str, Any]:
-        """Read-modify-write metadata under stripe lock (if available).
+        """Read-modify-write metadata under VFSSemaphore lock (if available).
 
         Args:
             content_hash: Hash identifying the content.
@@ -221,18 +245,14 @@ class CASAddressingEngine(Backend):
         Returns:
             The updated metadata dict.
         """
-        if self._stripe_lock is not None:
-            lock = self._stripe_lock.acquire_for(content_hash)
-            with lock:
-                meta: dict[str, Any] = self._read_meta(content_hash)
-                meta = updater(meta)
-                self._write_meta(content_hash, meta)
-                return meta
-        else:
+
+        def _do_update() -> dict[str, Any]:
             meta = self._read_meta(content_hash)
             meta = updater(meta)
             self._write_meta(content_hash, meta)
             return meta
+
+        return self._with_meta_lock(content_hash, _do_update)
 
     # === Content Operations (ObjectStoreABC) ===
 
@@ -264,8 +284,12 @@ class CASAddressingEngine(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            # Blob write is idempotent (same content → same key), safe without lock
-            self._transport.put_blob(key, content)
+            # Dedup skip: if blob already exists, skip the content write.
+            # CAS is idempotent by design — same content → same key.
+            # One stat() (~17μs) is much cheaper than a full put_blob (~760μs).
+            is_dedup = self._transport.blob_exists(key)
+            if not is_dedup:
+                self._transport.put_blob(key, content)
 
             # Metadata update: read-modify-write under stripe lock to avoid
             # TOCTOU race where multiple threads all see ref_count=0 and set 1.
@@ -364,22 +388,21 @@ class CASAddressingEngine(Backend):
         try:
             data, _ = self._transport.get_blob(key)
 
-            # Verify integrity
-            actual_hash = hash_content(data)
-            if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend=self.name,
-                    path=content_hash,
-                )
-
-            content = bytes(data)
+            # Verify integrity (configurable — local disk bit rot is rare)
+            if self._verify_on_read:
+                actual_hash = hash_content(data)
+                if actual_hash != content_hash:
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend=self.name,
+                        path=content_hash,
+                    )
 
             # Feature DI: cache on miss
             if self._cache is not None:
-                self._cache.put(content_hash, content)
+                self._cache.put(content_hash, data)
 
-            return content
+            return data
 
         except NexusFileNotFoundError:
             raise
@@ -422,12 +445,7 @@ class CASAddressingEngine(Backend):
                     meta["ref_count"] = ref_count - 1
                     self._write_meta(content_hash, meta)
 
-            if self._stripe_lock is not None:
-                lock = self._stripe_lock.acquire_for(content_hash)
-                with lock:
-                    _do_delete()
-            else:
-                _do_delete()
+            self._with_meta_lock(content_hash, _do_delete)
 
         except NexusFileNotFoundError:
             raise
@@ -439,6 +457,36 @@ class CASAddressingEngine(Backend):
                 backend=self.name,
                 path=content_hash,
             ) from e
+
+    def release_content(self, content_id: str) -> None:
+        """Decrement ref_count without physical delete (GC does that later).
+
+        Used by OBSERVE-phase observers to release content references
+        on write-overwrite or file delete.  Physical cleanup of blobs
+        with ref_count=0 is handled by CASGarbageCollector (PR #1320).
+
+        Safe to call with a nonexistent content_id (no-op).
+        """
+        content_hash = content_id
+
+        # Feature DI: CDC chunked content
+        if self._cdc is not None and self._cdc.is_chunked(content_hash):
+            self._cdc.release_chunked(content_hash)
+            return
+
+        key = self._blob_key(content_hash)
+        if not self._transport.blob_exists(key):
+            return  # Already gone — idempotent
+
+        import time as _time
+
+        def _dec_ref(meta: dict[str, Any]) -> dict[str, Any]:
+            meta["ref_count"] = max(meta.get("ref_count", 1) - 1, 0)
+            if meta["ref_count"] == 0:
+                meta["released_at"] = _time.time()
+            return meta
+
+        self._meta_update_locked(content_hash, _dec_ref)
 
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
@@ -507,6 +555,27 @@ class CASAddressingEngine(Backend):
 
         meta = self._read_meta(content_id)
         return int(meta.get("ref_count", 0))
+
+    def hook_spec(self) -> "HookSpec":
+        """Declare VFS hooks for CAS lifecycle.
+
+        - OBSERVE: CASRefCountObserver — decrements ref_count on overwrite/delete
+        - MOUNT: on_mount — mount-time logging
+
+        Called by DriverLifecycleCoordinator at mount time to register
+        hooks with KernelDispatch (Issue #1811, #1320).
+        """
+        from nexus.backends.observers.cas_ref_count_observer import CASRefCountObserver
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(
+            observers=(CASRefCountObserver(self),),
+            mount_hooks=(self,),
+        )
+
+    def on_mount(self, ctx: Any) -> None:
+        """VFSMountHook: receive mount notification from KernelDispatch."""
+        logger.info("CAS engine mounted at %s (backend=%s)", ctx.mount_point, self._backend_name)
 
     def stream_content(
         self,

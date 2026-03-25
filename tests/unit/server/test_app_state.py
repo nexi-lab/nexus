@@ -90,11 +90,12 @@ class TestInitAppState:
         mock_sys.brick_reconciler = "br"
         mock_sys.eviction_manager = "em"
         mock_fs = MagicMock()
-        mock_sys.event_bus = "eb"
+        mock_fs.service.return_value = "eb"
         mock_fs._system_services = mock_sys
         mock_fs._brick_services = "brk"
         mock_fs._write_observer = "wo"
         mock_fs._permission_enforcer = "pe"
+        mock_fs.service = lambda name: {"event_bus": "eb"}.get(name)
 
         init_app_state(app, nexus_fs=mock_fs)
 

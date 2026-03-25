@@ -4,6 +4,7 @@ CLIConnector subclass for GitHub operations via the ``gh`` CLI.
 Instantiate directly or via the declarative YAML config.
 
 Phase 6 (Issue #3148).
+Human-readable display paths added in Issue #3256.
 """
 
 from __future__ import annotations
@@ -19,8 +20,10 @@ from nexus.backends.connectors.base import (
     OpTraits,
     Reversibility,
 )
+from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.cli.base import CLIConnector
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
+from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.backends.connectors.github.schemas import (
     CloseIssueSchema,
     CommentIssueSchema,
@@ -47,12 +50,12 @@ class GitHubConnector(CLIConnector):
     DIRECTORY_STRUCTURE = """\
 /mnt/github/
   issues/
-    {number}.yaml                  # Issue as YAML (title, body, state, labels)
+    {number}_{title}.yaml          # Issue as YAML (title, body, state, labels)
     _new.yaml                      # ✏ Write here to CREATE an issue
     _comment.yaml                  # ✏ Write here to COMMENT on an issue
     _close.yaml                    # ✏ Write here to CLOSE an issue
   pulls/
-    {number}.yaml                  # PR as YAML (title, body, state, reviews)
+    {number}_{title}.yaml          # PR as YAML (title, body, state, reviews)
     _new.yaml                      # ✏ Write here to CREATE a pull request
     _merge.yaml                    # ✏ Write here to MERGE a PR (⚠ irreversible)
   .skill/
@@ -77,10 +80,7 @@ class GitHubConnector(CLIConnector):
         ),
     }
     ERROR_REGISTRY: dict[str, ErrorDef] = {
-        "MISSING_AGENT_INTENT": ErrorDef(
-            message="Operations require agent_intent",
-            skill_section="required-format",
-        ),
+        **TRAIT_ERRORS,
         "ISSUE_NOT_FOUND": ErrorDef(
             message="Issue or PR not found",
             skill_section="operations",
@@ -105,3 +105,29 @@ class GitHubConnector(CLIConnector):
 
             return load_connector_config(config_path)
         return None
+
+    def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
+        """Generate human-readable path for GitHub issues/PRs.
+
+        Format: ``issues/{number}_{title}.yaml`` or ``pulls/{number}_{title}.yaml``
+        Example: ``issues/142_feat-add-grove-status-command.yaml``
+        """
+        meta = metadata or {}
+
+        # Determine subfolder from item type.
+        item_type = meta.get("type", meta.get("pull_request"))
+        if item_type == "PullRequest" or meta.get("pull_request") is not None:
+            folder = "pulls"
+        else:
+            folder = "issues"
+
+        number = meta.get("number", "")
+        title = meta.get("title", "")
+
+        if number and title:
+            safe_title = sanitize_filename(title, max_len=80)
+            return f"{folder}/{number}_{safe_title}.yaml"
+        elif number:
+            return f"{folder}/{number}.yaml"
+
+        return f"{folder}/{item_id}.yaml"

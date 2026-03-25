@@ -415,7 +415,7 @@ class TestCachingPermissions:
         admin = OperationContext(user_id="admin", groups=[], is_admin=True)
 
         # Create directory as admin
-        await nx.sys_mkdir("/test/protected", parents=True, context=admin)
+        await nx.mkdir("/test/protected", parents=True, context=admin)
 
         # Non-admin user should be denied write
         unauthorized = OperationContext(user_id="eve", groups=[], is_admin=False)

@@ -143,6 +143,12 @@ class PipeBackend(Protocol):
     PipeManager stores ``dict[str, PipeBackend]`` — all backends share
     this interface so PipeManager is transport-agnostic.
 
+    **Concurrency contract**: All PipeBackend methods are **SPSC** (single-producer,
+    single-consumer) with no internal synchronization. The asyncio event loop provides
+    implicit serialization for coroutines, but this is a *usage property*, NOT a buffer
+    guarantee. Multi-threaded callers MUST use PipeManager.pipe_write/pipe_read (which
+    add per-pipe asyncio.Lock for MPMC safety).
+
     Implementations:
         RingBuffer              — in-process SPSC ring buffer (Rust, ~0.5μs)
         SharedRingBuffer (shm_pipe.py) — cross-process mmap'd ring buffer (~1–5μs)
@@ -174,6 +180,12 @@ class RingBuffer:
     Analogous to Linux kfifo: a kernel-internal FIFO with no filesystem
     visibility. Any kernel code or in-process service can instantiate one
     directly for fast async signaling.
+
+    **Concurrency**: All operations are **SPSC** (single-producer, single-consumer)
+    with no internal synchronization. The asyncio event loop serializes coroutine
+    execution, providing implicit MPSC safety for single-event-loop deployments.
+    This is NOT a guarantee — multi-threaded callers MUST use PipeManager.pipe_write/
+    pipe_read which add per-pipe asyncio.Lock for MPMC safety.
 
     For VFS-visible named pipes (mkfifo equivalent), use PipeManager
     from core/pipe_manager.py.

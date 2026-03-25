@@ -6,10 +6,13 @@
 FROM python:3.13-slim
 
 ARG NEXUS_VERSION=latest
+ARG NEXUS_TXTAI_USE_API_EMBEDDINGS=false
+ARG TARGETARCH
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     HF_HOME=/app/data/.cache/huggingface \
+    LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so" \
     NEXUS_HOST=0.0.0.0 \
     NEXUS_PROFILE=full \
     NEXUS_PORT=2026 \
@@ -22,6 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+RUN set -eux; \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        ln -sf /usr/lib/aarch64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+    elif [ "${TARGETARCH}" = "amd64" ]; then \
+        ln -sf /usr/lib/x86_64-linux-gnu/libgomp.so.1 /usr/lib/libgomp.so.1; \
+    fi
 
 RUN pip install --no-cache-dir uv
 
@@ -38,14 +48,28 @@ RUN uv pip install --system --index-url https://download.pytorch.org/whl/cpu tor
 # Install: prefer local source (repo checkout), fall back to PyPI.
 RUN if [ -f /tmp/nexus-build/pyproject.toml ] && [ -d /tmp/nexus-build/src ]; then \
       echo "Installing from local source..."; \
-      cd /tmp/nexus-build && uv pip install --system ".[semantic-search]" "txtai[ann]>=9.0"; \
+      cd /tmp/nexus-build && if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
+        uv pip install --system ".[semantic-search-remote]" "txtai[ann]>=9.0" "pgvector>=0.3.0"; \
+      else \
+        uv pip install --system ".[semantic-search]" "txtai[ann]>=9.0"; \
+      fi; \
     elif [ "$NEXUS_VERSION" = "latest" ]; then \
       echo "Installing from PyPI (latest)..."; \
-      uv pip install --system "nexus-ai-fs[semantic-search]" "txtai[ann]>=9.0"; \
+      if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
+        uv pip install --system "nexus-ai-fs[semantic-search-remote]" "txtai[ann]>=9.0" "pgvector>=0.3.0"; \
+      else \
+        uv pip install --system "nexus-ai-fs[semantic-search]" "txtai[ann]>=9.0"; \
+      fi; \
     else \
       echo "Installing from PyPI (${NEXUS_VERSION})..."; \
-      uv pip install --system "nexus-ai-fs[semantic-search]==${NEXUS_VERSION}" "txtai[ann]>=9.0"; \
+      if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
+        uv pip install --system "nexus-ai-fs[semantic-search-remote]==${NEXUS_VERSION}" "txtai[ann]>=9.0" "pgvector>=0.3.0"; \
+      else \
+        uv pip install --system "nexus-ai-fs[semantic-search]==${NEXUS_VERSION}" "txtai[ann]>=9.0"; \
+      fi; \
     fi && rm -rf /tmp/nexus-build
+
+RUN ln -sf /usr/local/lib/python3.13/site-packages/torch/lib/libc10.so /usr/lib/libc10.so
 
 RUN useradd -r -m -u 1000 -s /bin/bash nexus \
     && mkdir -p /app/data \

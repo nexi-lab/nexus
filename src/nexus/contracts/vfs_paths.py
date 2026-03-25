@@ -1,6 +1,6 @@
 """VFS path conventions — single source of truth for all VFS path patterns.
 
-Zero nexus.* imports. Used by kernel (ProcResolver), services (AcpService,
+Zero nexus.* imports. Used by kernel (AgentStatusResolver), services (AcpService,
 ManagedAgentLoop, TaskManagerService), and bricks alike.
 
 Every VFS path pattern in the system should be constructed through this
@@ -14,7 +14,7 @@ Categories:
 
 References:
     - contracts/constants.py — SYSTEM_PATH_PREFIX
-    - system_services/proc/proc_resolver.py — ProcResolver trie patterns
+    - core/agent_status_resolver.py — AgentStatusResolver trie patterns
     - system_services/acp/service.py — AcpService path conventions
 """
 

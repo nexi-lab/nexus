@@ -24,7 +24,7 @@ def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
     gw.router.add_mount.return_value = None
     gw.router.remove_mount.return_value = True
     gw.router.has_mount.return_value = False
-    gw.sys_mkdir = AsyncMock(return_value=None)
+    gw.mkdir = AsyncMock(return_value=None)
     gw.rebac_create.return_value = "tuple-1"
     gw.rebac_check.return_value = permission_ok
     gw.rebac_delete_object_tuples.return_value = 0
@@ -46,6 +46,8 @@ def _build_service(
     if gateway is None:
         gateway = _mock_gateway(permission_ok=permission_ok)
     service = MountService(router=gateway.router, gateway=gateway)
+    # DriverLifecycleCoordinator is kernel-owned; mock it for unit tests.
+    service._driver_coordinator = MagicMock()
     return service, gateway
 
 
@@ -80,9 +82,9 @@ class TestAddMountRollback:
             context=_op_context(),
         )
         assert result == "/mnt/test"
-        gw.router.add_mount.assert_called_once()
-        # remove_mount should NOT be called on success
-        gw.router.remove_mount.assert_not_called()
+        service._driver_coordinator.mount.assert_called_once()
+        # unmount should NOT be called on success
+        service._driver_coordinator.unmount.assert_not_called()
 
     async def test_add_mount_rolls_back_on_permission_failure(self) -> None:
         """If _grant_owner_permission fails, mount is removed from router."""
@@ -97,14 +99,14 @@ class TestAddMountRollback:
                 context=_op_context(),
             )
 
-        # Router add was called, then rollback via remove_mount
-        gw.router.add_mount.assert_called_once()
-        gw.router.remove_mount.assert_called_once_with("/mnt/test")
+        # Coordinator mount was called, then rollback via unmount
+        service._driver_coordinator.mount.assert_called_once()
+        service._driver_coordinator.unmount.assert_called_once_with("/mnt/test")
 
     def test_mkdir_failure_is_best_effort_no_rollback(self) -> None:
         """mkdir failure is non-critical -- mount stays active (best effort)."""
         service, gw = _build_service()
-        gw.sys_mkdir.side_effect = RuntimeError("Metastore down")
+        gw.mkdir.side_effect = RuntimeError("Metastore down")
 
         # mkdir fails but is caught in _setup_mount_point -- mount succeeds
         result = service.add_mount_sync(
@@ -236,7 +238,7 @@ class TestRemoveMountErrorCollection:
     def test_nonexistent_mount_returns_error(self) -> None:
         """Removing a mount that doesn't exist in router returns error."""
         service, gw = _build_service()  # noqa: F841
-        gw.router.remove_mount.return_value = False
+        service._driver_coordinator.unmount.return_value = False
 
         result = service.remove_mount_sync("/mnt/nonexistent")
 

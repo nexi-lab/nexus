@@ -107,7 +107,12 @@ async def test_cas_automatic_deduplication(
 async def test_cas_delete_with_ref_counting(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
-    """Test that delete properly handles reference counting."""
+    """Test that delete properly handles reference counting.
+
+    Issue #1320: sys_unlink is now metadata-only — content cleanup is
+    deferred to CAS GC via OBSERVE observer.  This test exercises the
+    CAS backend's delete_content() directly to verify ref-counting logic.
+    """
     content = b"Shared content"
 
     # Write same content to two paths
@@ -120,21 +125,15 @@ async def test_cas_delete_with_ref_counting(
     # Initial ref count should be 2
     assert local_backend.get_ref_count(content_hash) == 2
 
-    # Delete first file
-    await embedded_cas.sys_unlink("/shared1.txt")
-
-    # First file should not exist
-    assert not await embedded_cas.sys_access("/shared1.txt")
-
-    # Second file should still exist
-    assert await embedded_cas.sys_access("/shared2.txt")
+    # Delete first reference via CAS backend directly (simulates GC cleanup)
+    local_backend.delete_content(content_hash)
 
     # Content should still exist in CAS with ref count 1
     assert local_backend.content_exists(content_hash)
     assert local_backend.get_ref_count(content_hash) == 1
 
-    # Delete second file
-    await embedded_cas.sys_unlink("/shared2.txt")
+    # Delete second reference
+    local_backend.delete_content(content_hash)
 
     # Content should now be deleted from CAS
     assert not local_backend.content_exists(content_hash)
@@ -283,7 +282,12 @@ async def test_cas_metadata_stored_correctly(embedded_cas: NexusFS) -> None:
 async def test_cas_concurrent_deduplication(
     embedded_cas: NexusFS, local_backend: CASLocalBackend
 ) -> None:
-    """Test deduplication with multiple writes of same content."""
+    """Test deduplication with multiple writes of same content.
+
+    Issue #1320: sys_unlink is now metadata-only — content cleanup is
+    deferred to CAS GC via OBSERVE observer.  This test exercises the
+    CAS backend's delete_content() directly to verify ref-counting logic.
+    """
     content = b"Concurrent content"
 
     # Write same content multiple times rapidly
@@ -302,9 +306,9 @@ async def test_cas_concurrent_deduplication(
     # Ref count should be 20
     assert local_backend.get_ref_count(content_hash) == 20
 
-    # Delete all files
-    for path in paths:
-        await embedded_cas.sys_unlink(path)
+    # Delete all references via CAS backend directly (simulates GC cleanup)
+    for _ in paths:
+        local_backend.delete_content(content_hash)
 
     # Content should be completely deleted
     assert not local_backend.content_exists(content_hash)

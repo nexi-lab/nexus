@@ -22,7 +22,7 @@ from typing import Any
 import click
 import yaml
 
-from nexus.cli.port_utils import DEFAULT_PORTS
+from nexus.cli.port_utils import DEFAULT_PORTS, derive_ports
 from nexus.cli.utils import console
 
 logger = logging.getLogger(__name__)
@@ -497,8 +497,9 @@ def init(
         )
         raise SystemExit(1)
 
-    # Build ports dict from defaults
-    ports = dict(DEFAULT_PORTS)
+    # Derive deterministic ports from data_dir so each project directory
+    # gets stable, non-conflicting ports without manual coordination.
+    ports = derive_ports(str(d_dir))
 
     # Build and write config
     config = _build_config(
@@ -557,8 +558,8 @@ def init(
             import nexus
 
             nx = await nexus.connect(config={"data_dir": str(d_dir)})
-            await nx.sys_mkdir("/workspace", exist_ok=True)
-            await nx.sys_mkdir("/shared", exist_ok=True)
+            await nx.mkdir("/workspace", exist_ok=True)
+            await nx.mkdir("/shared", exist_ok=True)
             nx.close()
 
         try:

@@ -14,6 +14,9 @@ Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.consistency.zone_manager import (
     ZoneIsolationError,
     ZoneManager,

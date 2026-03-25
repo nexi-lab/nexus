@@ -47,6 +47,40 @@ class LocksRPCService:
         await self._lock_manager.release(lock_id=lock_id, path=path)
         return {"released": True}
 
+    @rpc_expose(description="Acquire a distributed lock")
+    async def lock_acquire(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 60.0,
+        max_holders: int = 1,
+    ) -> dict[str, Any]:
+        lock_id = await self._lock_manager.acquire(
+            path=path,
+            mode=mode,
+            timeout=timeout,
+            ttl=ttl,
+            max_holders=max_holders,
+        )
+        if lock_id is None:
+            return {"acquired": False, "lock_id": None}
+        info = await self._lock_manager.get_lock_info(path=path)
+        return {"acquired": True, "lock_id": lock_id, "lock_info": self._lock_to_dict(info)}
+
+    @rpc_expose(description="Extend lock TTL (heartbeat)")
+    async def lock_extend(
+        self,
+        lock_id: str,
+        path: str,
+        ttl: float = 60.0,
+    ) -> dict[str, Any]:
+        result = await self._lock_manager.extend(lock_id=lock_id, path=path, ttl=ttl)
+        return {
+            "success": result.success,
+            "lock_info": self._lock_to_dict(result.lock_info) if result.lock_info else None,
+        }
+
     @staticmethod
     def _lock_to_dict(lock_info: Any) -> dict[str, Any]:
         """Convert a LockInfo object to a serialisable dict."""

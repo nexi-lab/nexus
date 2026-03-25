@@ -34,8 +34,8 @@ class VFSOperations(Protocol):
     never import from ``nexus.core`` at runtime.
     """
 
-    async def sys_mkdir(
-        self, path: str, parents: bool = False, exist_ok: bool = False, context: Any = None
+    async def mkdir(
+        self, path: str, parents: bool = True, exist_ok: bool = True, context: Any = None
     ) -> None: ...
 
     async def sys_write(self, path: str, buf: bytes | str, *, context: Any = None) -> int: ...

@@ -16,8 +16,7 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 
 async def _flush(nx) -> None:
     """Flush async write observer so operation_log rows are visible."""
-    if nx._flush_write_observer_fn:
-        await nx._flush_write_observer_fn()
+    nx.flush_write_observer()
 
 
 @pytest.fixture

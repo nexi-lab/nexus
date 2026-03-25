@@ -11,11 +11,10 @@
 | What | Where | Latency | Scope |
 |------|-------|---------|-------|
 | **VFSLockManager** | `core/lock_fast.py` | ~200ns Rust / ~500ns Python | Local, path-level RW, hierarchical |
-| **VFSSemaphore** | `core/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
-| **LocalLockManager** | `lib/distributed_lock.py` | ~5μs | Standalone advisory locks via MetastoreABC |
+| **VFSSemaphore** | `lib/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
+| **AdvisoryLockManager** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
+| **SemaphoreAdvisoryLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
-| **_StripeLock** | `backends/base/stripe_lock.py` | ~1us | Local, CAS hash-stripe threading.Lock |
-| **LockManagerBase** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
 | **LockStoreProtocol** | `lib/distributed_lock.py` | — | Low-level store interface (MetastoreABC lock methods) |
 | ~12 `asyncio.Semaphore` | scattered | — | Ad-hoc concurrency bounding |
 
@@ -24,6 +23,16 @@
 2. ~~PassthroughBackend.lock() duplicates kernel logic~~ → deleted, replaced by LocalLockManager
 3. ~~No local advisory lock manager~~ → LocalLockManager wraps MetastoreABC
 4. ~~No local kernel semaphore~~ → VFSSemaphore (Rust + Python)
+
+### 1.1 POSIX Mapping
+
+| Nexus | POSIX Equivalent |
+|-------|-----------------|
+| VFSLockManager | `i_rwsem` (inode RW semaphore) |
+| VFSSemaphore | `sem_t` (named counting semaphore + TTL) |
+| AdvisoryLockManager | `flock(2)` advisory lock ABC |
+| SemaphoreAdvisoryLockManager | Local `flock` via VFSSemaphore |
+| RaftLockManager | Distributed `flock` via Raft |
 
 ---
 
@@ -58,7 +67,7 @@ no TTL (held for syscall duration only), not user-visible (like `i_rwsem`).
 
 ### 2.2 VFSSemaphore — holder-tracked counting semaphore
 
-`core/semaphore.py`. Rust (PyO3) + Python fallback. Local kernel primitive.
+`lib/semaphore.py`. Rust (PyO3) + Python fallback. Kernel-authored standard library.
 
 Holder-tracked: each `acquire` returns unique `holder_id`, `release` requires it.
 Standard for distributed semaphores (Consul sessions, ZK ephemeral nodes).
@@ -116,26 +125,28 @@ TTL expires → auto-released. No orphans.
 
 ```python
 # factory/_bricks.py (actual pattern)
-from nexus.lib.distributed_lock import LockStoreProtocol, LocalLockManager
+from nexus.lib.semaphore import create_vfs_semaphore
+from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
 
-if isinstance(metadata_store, LockStoreProtocol):
-    if dist and dist.enable_locks:
-        lock_manager = RaftLockManager(metadata_store)   # federation
-    else:
-        lock_manager = LocalLockManager(metadata_store)  # standalone
+# Always available — no capability check needed
+lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=zone_id)
+
+# Federation: RaftLockManager (if dist.enable_locks)
+if dist and dist.enable_locks:
+    lock_manager = RaftLockManager(metadata_store, zone_id=zone_id)
 ```
 
-Capability detection via `isinstance(store, LockStoreProtocol)` — no `supports_locks`
-property needed. `LockStoreProtocol` is `@runtime_checkable`.
+Note: capability detection via `LockStoreProtocol` is no longer needed —
+`SemaphoreAdvisoryLockManager` uses `VFSSemaphore` (always available), not MetastoreABC.
 
 | Profile | Metastore | lock_manager → |
 |---------|-----------|----------------|
-| minimal / embedded | redb (satisfies LockStoreProtocol) | LocalLockManager |
-| lite / full | redb (satisfies LockStoreProtocol) | LocalLockManager |
-| cloud / federation | redb + Raft (satisfies LockStoreProtocol) | RaftLockManager |
-| remote | RemoteMetastore (no lock methods) | None (server-side) |
+| minimal / embedded | redb | SemaphoreAdvisoryLockManager |
+| lite / full | redb | SemaphoreAdvisoryLockManager |
+| cloud / federation | redb + Raft | RaftLockManager |
+| remote | RemoteMetastore | None (server-side) |
 
-Callers see only `LockManagerBase`. Same async API regardless of backend.
+Callers see only `AdvisoryLockManager`. Same async API regardless of backend.
 
 ---
 
@@ -144,10 +155,9 @@ Callers see only `LockManagerBase`. Same async API regardless of backend.
 | Primitive | Location | Latency | Visibility | TTL | Scope |
 |-----------|----------|---------|------------|-----|-------|
 | VFSLockManager | `core/lock_fast.py` | ~200ns | Kernel-internal | No | Local |
-| VFSSemaphore | `core/semaphore.py` | ~200ns | Kernel-internal | Yes | Local |
-| LocalLockManager | `lib/distributed_lock.py` | ~5μs | Internal | Yes | Local (standalone) |
+| VFSSemaphore | `lib/semaphore.py` | ~200ns | Kernel-authored stdlib | Yes | Local |
+| SemaphoreAdvisoryLockManager | `lib/distributed_lock.py` | ~500ns–1μs | Internal | Yes | Local (standalone) |
 | RaftLockManager | `raft/lock_manager.py` | ~5-10ms | Internal | Yes | Distributed (zone) |
-| _StripeLock | `backends/base/stripe_lock.py` | ~1us | Backend-internal | No | Local (per-hash) |
 
 ---
 
@@ -161,14 +171,19 @@ Like Linux `i_rwsem` vs `flock(2)`.
 queryable, Raft-replicated in federation. Like HDFS leases in NameNode FSImage+EditLog.
 `LockStoreProtocol` is a capability protocol — MetastoreABC does NOT own lock methods.
 
-**D3: Factory DI, not runtime routing** — `LocalLockManager` or `RaftLockManager`
+**D3: Factory DI, not runtime routing** — `SemaphoreAdvisoryLockManager` or `RaftLockManager`
 injected at boot. No `_LockRouter`, no runtime auto-detect. Simpler, testable.
 
 **D4: PassthroughBackend.lock() deleted** — duplicated kernel lock logic.
-EventsService now uses `LockManagerBase` exclusively (LocalLockManager or RaftLockManager).
+`_StripeLock` also deleted — CAS metadata RMW now uses `VFSSemaphore` directly.
+EventsService now uses `AdvisoryLockManager` exclusively (SemaphoreAdvisoryLockManager or RaftLockManager).
 
 **D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not advisory
 locks). No names, TTL, or cross-node semantics needed.
 
 **D6: Kernel lock mandatory, advisory lock cooperative** — sys_read/sys_write always
 acquire VFSLockManager. Advisory locks are cooperative like `flock(2)`.
+
+**D7: Advisory lock supports shared/exclusive modes** — RW gate pattern via two
+VFSSemaphore instances per path (one for shared, one for exclusive). Matches
+`flock(2)` LOCK_SH/LOCK_EX semantics.

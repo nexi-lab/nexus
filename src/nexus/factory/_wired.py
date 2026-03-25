@@ -203,7 +203,7 @@ async def _boot_wired_services(
             router=router,
             rebac_manager=system_services.rebac_manager,
             enforce_permissions=getattr(nx, "_enforce_permissions", True),
-            default_context=getattr(nx, "_default_context", None),
+            default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,
         )
@@ -237,7 +237,7 @@ async def _boot_wired_services(
                 mount_service=mount_service,
                 router=router,
             )
-            nx._connector_sync_loop = connector_sync  # Keep reference for shutdown
+            await nx._service_registry.enlist("connector_sync_loop", connector_sync)
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop created (starts on first request)")
         except Exception:
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop not available")
@@ -278,7 +278,7 @@ async def _boot_wired_services(
 
     # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
-    _nx_default_context: Any = getattr(nx, "_default_context", None)
+    _nx_init_cred: Any = nx._init_cred
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
     workspace_rpc_service: Any = None
     try:
@@ -288,7 +288,7 @@ async def _boot_wired_services(
             workspace_manager=system_services.workspace_manager,
             workspace_registry=system_services.workspace_registry,
             vfs=nx,
-            default_context=_nx_default_context,
+            default_context=_nx_init_cred,
             snapshot_service=brick_services.snapshot_service,
         )
         logger.debug("[BOOT:WIRED] WorkspaceRPCService created")
@@ -318,26 +318,27 @@ async def _boot_wired_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] AgentRPCService unavailable: %s", exc)
 
-    # ProcResolver moved to orchestrator._register_vfs_hooks() (Issue #1570)
+    # AgentStatusResolver moved to orchestrator._register_vfs_hooks() (Issue #1570, #1810)
 
     acp_rpc_service: Any = None
-    _acp_service = getattr(system_services, "acp_service", None)
+    # Issue #1792: AcpService is created in _do_link() using kernel-owned
+    # nx._agent_registry. Retrieve from nx (set by _do_link).
+    _acp_ref = nx._service_registry.service("acp_service")
+    _acp_service = _acp_ref._service_instance if _acp_ref is not None else None
     if _acp_service is None:
-        # System tier didn't create AcpService — construct inline.
-        try:
-            from nexus.core.agent_registry import AgentRegistry
-            from nexus.system_services.acp.service import AcpService
+        # Fallback: construct inline using kernel-owned AgentRegistry.
+        _acp_pt = getattr(nx, "_agent_registry", None)
+        if _acp_pt is not None:
+            try:
+                from nexus.system_services.acp.service import AcpService
 
-            _acp_pt = getattr(system_services, "agent_registry", None)
-            if _acp_pt is None:
-                _acp_pt = AgentRegistry()
-            _acp_service = AcpService(
-                agent_registry=_acp_pt,
-                zone_id=ROOT_ZONE_ID,
-            )
-            logger.debug("[BOOT:WIRED] AcpService created (inline)")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
+                _acp_service = AcpService(
+                    agent_registry=_acp_pt,
+                    zone_id=ROOT_ZONE_ID,
+                )
+                logger.debug("[BOOT:WIRED] AcpService created (inline)")
+            except Exception as exc:
+                logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
     if _acp_service is not None:
         # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
         if hasattr(_acp_service, "bind_fs"):
@@ -385,7 +386,7 @@ async def _boot_wired_services(
 
             sandbox_rpc_service = SandboxRPCService(
                 session_factory=_nx_session_factory,
-                default_context=_nx_default_context,
+                default_context=_nx_init_cred,
                 config=nx._config,
             )
             logger.debug("[BOOT:WIRED] SandboxRPCService created")
@@ -410,7 +411,9 @@ async def _boot_wired_services(
         descendant_checker = DescendantAccessChecker(
             rebac_manager=system_services.rebac_manager,
             rebac_service=rebac_service,
-            dir_visibility_cache=system_services.dir_visibility_cache,
+            dir_visibility_cache=getattr(
+                system_services.rebac_manager, "dir_visibility_cache", None
+            ),
             permission_enforcer=system_services.permission_enforcer,
             metadata_store=nx.metadata,
         )
@@ -427,7 +430,7 @@ async def _boot_wired_services(
             time_travel_service = TimeTravelService(
                 session_factory=_nx_session_factory,
                 backend=_root_backend,
-                default_zone_id=getattr(_nx_default_context, "zone_id", None),
+                default_zone_id=getattr(_nx_init_cred, "zone_id", None),
             )
             logger.debug("[BOOT:WIRED] TimeTravelService created")
         except Exception as exc:
@@ -508,10 +511,12 @@ def _initialize_wired_ipc(nx: Any, brick_services: "BrickServices") -> None:
             _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
             _ipc_data_dir.mkdir(parents=True, exist_ok=True)
             _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-            nx.router.add_mount("/agents", _ipc_connector)
+            # DriverLifecycleCoordinator is kernel-owned (always available).
+            # Registers hook_spec + broadcasts mount event via KernelDispatch.
+            nx._driver_coordinator.mount("/agents", _ipc_connector)
 
             # Ensure the /agents metadata entry has target_zone_id set so
-            # ZonePathResolver doesn't fail on it. sys_mkdir creates a DT_DIR
+            # ZonePathResolver doesn't fail on it. mkdir creates a DT_DIR
             # entry but doesn't set target_zone_id for the mount.
             try:
                 from nexus.core.metadata import DT_DIR, DT_MOUNT

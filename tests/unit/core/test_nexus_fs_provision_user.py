@@ -18,7 +18,7 @@ from tests.conftest import make_test_nexus
 
 
 @pytest.fixture()
-def nx_with_db(tmp_path):
+async def nx_with_db(tmp_path):
     """Create a NexusFS instance with a real SQLite database for provisioning tests."""
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
@@ -29,7 +29,7 @@ def nx_with_db(tmp_path):
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine)
 
-    nx = make_test_nexus(tmp_path)
+    nx = await make_test_nexus(tmp_path)
     nx.SessionLocal = session_factory
 
     # Mock entity registry
@@ -65,6 +65,7 @@ def nx_with_db(tmp_path):
             register_workspace_fn=MagicMock(),
             register_agent_fn=MagicMock(),
         ),
+        allow_overwrite=True,
     )
 
     return nx
@@ -287,7 +288,7 @@ class TestProvisionUserPartialFailure:
         """Missing SessionLocal should raise TypeError (None is not callable)."""
         from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
 
-        nx = make_test_nexus(tmp_path)
+        nx = await make_test_nexus(tmp_path)
         mock_registry = MagicMock()
         mock_registry.get_entity.return_value = None
         from dataclasses import replace
@@ -309,6 +310,7 @@ class TestProvisionUserPartialFailure:
                 register_workspace_fn=MagicMock(),
                 register_agent_fn=MagicMock(),
             ),
+            allow_overwrite=True,
         )
         # Don't set SessionLocal — it defaults to None
         with pytest.raises(TypeError):
@@ -341,7 +343,7 @@ class TestProvisionUserPartialFailure:
         the workspace creation fails, the path is still in the result dict.
         The key assertion is that provisioning doesn't abort.
         """
-        with patch.object(nx_with_db, "sys_mkdir", side_effect=Exception("workspace error")):
+        with patch.object(nx_with_db, "mkdir", side_effect=Exception("workspace error")):
             result = await nx_with_db.service("user_provisioning").provision_user(
                 user_id="alice",
                 email="alice@example.com",

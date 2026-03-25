@@ -12,6 +12,8 @@ import time
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
 from nexus.bricks.rebac.cache.coordinator import CacheCoordinator
 from nexus.bricks.rebac.cache.iterator import IteratorCache

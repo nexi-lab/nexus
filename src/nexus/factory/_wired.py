@@ -109,16 +109,6 @@ async def _boot_wired_services(
     else:
         logger.debug("[BOOT:WIRED] OAuthCredentialService disabled by profile")
 
-    # --- UnifiedAuthService: shared auth UX across OAuth + secret/native backends ---
-    auth_service: Any = None
-    try:
-        from nexus.bricks.auth.unified_service import UnifiedAuthService
-
-        auth_service = UnifiedAuthService(oauth_service=oauth_service)
-        logger.debug("[BOOT:WIRED] UnifiedAuthService created")
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] UnifiedAuthService unavailable: %s", exc)
-
     # --- MCPService: Model Context Protocol operations ---
     mcp_service: Any = None
     if _on("mcp"):
@@ -478,7 +468,6 @@ async def _boot_wired_services(
         mount_persist_service=mount_persist_service,
         mcp_service=mcp_service,
         oauth_service=oauth_service,
-        auth_service=auth_service,
         search_service=search_service,
         share_link_service=share_link_service,
         events_service=events_service,

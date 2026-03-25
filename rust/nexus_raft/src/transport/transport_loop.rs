@@ -578,10 +578,7 @@ mod tests {
             },
         );
 
-        let addr = NodeAddress {
-            id: 0,
-            endpoint: String::new(),
-        };
+        let addr = NodeAddress::new(0, "");
         let peers = vec![(2, addr.clone()), (3, addr)];
 
         // total_voters = 3 (self + 2 peers), needed = 3/2 = 1
@@ -594,10 +591,7 @@ mod tests {
     fn test_compute_ec_watermark_5_nodes() {
         // 5 nodes: self + 4 peers. Need 2 peer acks for majority.
         let mut peer_state = HashMap::new();
-        let addr = NodeAddress {
-            id: 0,
-            endpoint: String::new(),
-        };
+        let addr = NodeAddress::new(0, "");
         let mut peers = Vec::new();
 
         for (id, ack) in [(2, 10), (3, 8), (4, 5), (5, 3)] {
@@ -622,10 +616,7 @@ mod tests {
     #[test]
     fn test_compute_ec_watermark_no_acks() {
         let peer_state = HashMap::new();
-        let addr = NodeAddress {
-            id: 0,
-            endpoint: String::new(),
-        };
+        let addr = NodeAddress::new(0, "");
         let peers = vec![(2, addr.clone()), (3, addr)];
 
         // No acks yet — should return None

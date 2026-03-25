@@ -923,12 +923,14 @@ impl ZoneApiService for ZoneApiServiceImpl {
             &req.zone_id
         };
         let extra_hostnames = extract_hostnames(&req.node_address);
+        let peer_hostname = extra_hostnames.first().map(|s| s.as_str());
         let (node_cert_pem, node_key_pem) = match super::certgen::generate_node_cert(
             req.node_id,
             zone_id,
             &ca_pem,
             &ca_key_pem,
             &extra_hostnames,
+            peer_hostname,
         ) {
             Ok(pair) => pair,
             Err(e) => {
@@ -1278,7 +1280,7 @@ mod tests {
             ..Default::default()
         };
 
-        let server = RaftGrpcServer::new(registry, config, "http://127.0.0.1:0".to_string());
+        let server = RaftGrpcServer::new(registry, config);
         assert_eq!(
             server.bind_address(),
             "127.0.0.1:0".parse::<SocketAddr>().unwrap()

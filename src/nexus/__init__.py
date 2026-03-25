@@ -185,7 +185,7 @@ async def connect(
             >>> await nx.sys_write("/workspace/file.txt", b"Hello World")
 
         Federation (auto-detected when Rust extensions available):
-            >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
+            >>> # Requires NEXUS_PEERS, NEXUS_BIND_ADDR env vars
             >>> nx = nexus.connect(config={"profile": "cloud"})
     """
     import os
@@ -357,14 +357,23 @@ async def connect(
     zone_mgr = None
 
     try:
+        import socket
+
         from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
         from nexus.raft import FederatedMetadataProxy
+        from nexus.raft.peer_address import PeerAddress, hostname_to_node_id
         from nexus.raft.zone_manager import ZoneManager
 
-        node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
+        hostname = os.environ.get("NEXUS_HOSTNAME", socket.gethostname())
+        my_id = hostname_to_node_id(hostname)
         bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
         advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+
+        # Parse peer addresses
+        peers_str = os.environ.get("NEXUS_PEERS", "")
+        peer_addrs = PeerAddress.parse_peer_list(peers_str) if peers_str else []
+        peers = [p.to_raft_peer_str() for p in peer_addrs]
 
         # K3s-style TLS pre-provision: if a join-token FILE exists and
         # certs don't exist yet, provision TLS from the leader BEFORE
@@ -376,32 +385,26 @@ async def connect(
             join_token = token_file.read_text().strip()
             # Find a peer address to join from NEXUS_PEERS
             join_peer = None
-            for entry in (os.environ.get("NEXUS_PEERS", "")).split(","):
-                entry = entry.strip()
-                if "@" in entry:
-                    peer_id_str, peer_addr = entry.split("@", 1)
-                    if peer_id_str.strip() != str(node_id):
-                        join_peer = peer_addr.strip()
-                        break
+            for p in peer_addrs:
+                if p.node_id != my_id:
+                    join_peer = p.grpc_target
+                    break
             if join_peer:
                 from _nexus_raft import join_cluster as _join_cluster
 
                 logger.info("Join token found — provisioning TLS from %s", join_peer)
-                _join_cluster(join_peer, join_token, node_id, str(tls_dir_pre))
+                _join_cluster(join_peer, join_token, hostname, str(tls_dir_pre))
                 logger.info("TLS provisioning complete")
             else:
                 raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
 
+        # Check NEXUS_RAFT_TLS for explicit TLS control
         zone_mgr = ZoneManager(
-            node_id=node_id,
+            hostname=hostname,
             base_path=zones_dir,
             bind_addr=bind_addr,
             advertise_addr=advertise_addr,
         )
-
-        # Parse peer addresses for multi-node Raft groups
-        peers_str = os.environ.get("NEXUS_PEERS", "")
-        peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
 
         # Detect joiner vs first-node:
         # Joiner = has all cert files (pre-provisioned by join_cluster above)

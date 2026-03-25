@@ -28,6 +28,7 @@ pub fn generate_node_cert(
     ca_cert_pem: &[u8],
     ca_key_pem: &[u8],
     extra_hostnames: &[String],
+    hostname: Option<&str>,
 ) -> Result<(Vec<u8>, Vec<u8>), String> {
     // Parse CA key pair
     let ca_key_str =
@@ -51,12 +52,13 @@ pub fn generate_node_cert(
     // Build node certificate parameters
     let mut params = CertificateParams::default();
 
-    // Distinguished name: CN=nexus-zone-{zone_id}-node-{node_id}, O=Nexus
+    // Distinguished name: CN=nexus-zone-{zone_id}-node-{hostname_or_id}, O=Nexus
+    let cn_node = hostname.unwrap_or(&node_id.to_string()).to_string();
     let mut dn = DistinguishedName::new();
     dn.push(DnType::OrganizationName, "Nexus");
     dn.push(
         DnType::CommonName,
-        format!("nexus-zone-{zone_id}-node-{node_id}"),
+        format!("nexus-zone-{zone_id}-node-{cn_node}"),
     );
     params.distinguished_name = dn;
 
@@ -171,6 +173,7 @@ mod tests {
             ca_cert_pem.as_bytes(),
             ca_key_pem.as_bytes(),
             &[],
+            Some("nexus-2"),
         )
         .unwrap();
 
@@ -183,7 +186,7 @@ mod tests {
     #[test]
     fn test_invalid_ca_key() {
         let (ca_cert_pem, _) = generate_test_ca();
-        let result = generate_node_cert(1, "root", ca_cert_pem.as_bytes(), b"not-a-key", &[]);
+        let result = generate_node_cert(1, "root", ca_cert_pem.as_bytes(), b"not-a-key", &[], None);
         assert!(result.is_err());
     }
 }

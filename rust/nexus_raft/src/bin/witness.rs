@@ -24,8 +24,8 @@
 //! # Usage
 //!
 //! ```bash
-//! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2126 \
-//!   NEXUS_PEERS=1@nexus-1:2126,2@nexus-2:2126,3@witness:2126 \
+//! NEXUS_BIND_ADDR=0.0.0.0:2126 \
+//!   NEXUS_PEERS=nexus-1:2126,nexus-2:2126,witness:2126 \
 //!   NEXUS_FEDERATION_ZONES=corp,corp-eng,corp-sales,family \
 //!   nexus-witness
 //! ```
@@ -46,10 +46,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let node_id: u64 = env::var("NEXUS_NODE_ID")
-        .unwrap_or_else(|_| "1".to_string())
-        .parse()
-        .expect("NEXUS_NODE_ID must be a valid u64");
+    let hostname = env::var("NEXUS_HOSTNAME")
+        .unwrap_or_else(|_| gethostname::gethostname().to_string_lossy().into_owned());
+    let node_id = _nexus_raft::transport::hostname_to_node_id(&hostname);
 
     let bind_addr: SocketAddr = env::var("NEXUS_BIND_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:2126".to_string())
@@ -69,7 +68,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     tracing::info!(
-        "Starting Nexus Witness Node\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}",
+        "Starting Nexus Witness Node\n  Hostname: {}\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}",
+        hostname,
         node_id,
         bind_addr,
         data_path.display(),
@@ -101,7 +101,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|s| {
-                NodeAddress::parse_with_tls(s.trim(), use_tls)
+                NodeAddress::parse(s.trim(), use_tls)
                     .unwrap_or_else(|e| panic!("Invalid peer address '{}': {}", s, e))
             })
             .collect();

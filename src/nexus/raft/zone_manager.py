@@ -41,7 +41,7 @@ class ZoneManager:
     """Manage multiple Raft zones and their metadata stores.
 
     Usage:
-        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones",
+        mgr = ZoneManager(hostname="nexus-1", base_path="/var/lib/nexus/zones",
                           bind_addr="0.0.0.0:2126")
         store = mgr.create_zone("alpha", peers=["2@peer:2126"])
         store.put(metadata)
@@ -61,7 +61,7 @@ class ZoneManager:
 
     def __init__(
         self,
-        node_id: int,
+        hostname: str,
         base_path: str,
         bind_addr: str = "0.0.0.0:2126",
         *,
@@ -76,6 +76,8 @@ class ZoneManager:
                 "ZoneManager requires PyO3 build with --features full. "
                 "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
             )
+
+        self._hostname = hostname
 
         from nexus.security.tls.config import ZoneTlsConfig
 
@@ -102,7 +104,7 @@ class ZoneManager:
                 logger.debug("Auto-detected existing TLS certs in %s/tls/", base_path)
             else:
                 # No certs → auto-generate (first node bootstrap)
-                auto = self._auto_generate_tls(base_path, node_id)
+                auto = self._auto_generate_tls(base_path, hostname)
                 if auto is not None:
                     tls_cert_path = str(auto.node_cert_path)
                     tls_key_path = str(auto.node_key_path)
@@ -114,7 +116,7 @@ class ZoneManager:
                         ca_key_path = str(Path(base_path) / "tls" / "ca-key.pem")
 
         self._py_mgr = PyZoneManager(
-            node_id,
+            hostname,
             base_path,
             bind_addr,
             tls_cert_path=tls_cert_path,
@@ -124,7 +126,7 @@ class ZoneManager:
             join_token_hash=join_token_hash,
         )
         self._stores: dict[str, RaftMetadataStore] = {}
-        self._node_id = node_id
+        self._node_id = self._py_mgr.node_id
         self._base_path = base_path
         self._advertise_addr = advertise_addr or bind_addr
         self._bind_addr = bind_addr
@@ -158,7 +160,7 @@ class ZoneManager:
         return self._advertise_addr
 
     @staticmethod
-    def _auto_generate_tls(base_path: str, node_id: int) -> "ZoneTlsConfig | None":
+    def _auto_generate_tls(base_path: str, hostname: str) -> "ZoneTlsConfig | None":
         """Auto-generate TLS certs on first startup; reuse on subsequent starts."""
         from nexus.security.tls.config import ZoneTlsConfig
 
@@ -169,6 +171,7 @@ class ZoneManager:
 
         # Generate new CA + node cert + join token
         try:
+            from nexus.raft.peer_address import hostname_to_node_id
             from nexus.security.tls.certgen import (
                 cert_fingerprint,
                 generate_node_cert,
@@ -177,13 +180,16 @@ class ZoneManager:
             )
             from nexus.security.tls.join_token import generate_join_token
 
+            node_id = hostname_to_node_id(hostname)
             tls_dir = Path(base_path) / "tls"
             zone_id = ROOT_ZONE_ID
             ca_cert, ca_key = generate_zone_ca(zone_id)
             save_pem(tls_dir / "ca.pem", ca_cert)
             save_pem(tls_dir / "ca-key.pem", ca_key, is_private=True)
 
-            node_cert, node_key = generate_node_cert(node_id, zone_id, ca_cert, ca_key)
+            node_cert, node_key = generate_node_cert(
+                node_id, zone_id, ca_cert, ca_key, hostname=hostname
+            )
             save_pem(tls_dir / "node.pem", node_cert)
             save_pem(tls_dir / "node-key.pem", node_key, is_private=True)
 
@@ -365,7 +371,7 @@ class ZoneManager:
 
     @property
     def node_id(self) -> int:
-        return self._node_id
+        return int(self._node_id)
 
     def mount(
         self,

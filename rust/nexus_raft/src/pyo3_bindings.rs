@@ -22,7 +22,7 @@
 //! from _nexus_raft import ZoneManager
 //!
 //! # Multi-zone Raft consensus
-//! mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+//! mgr = ZoneManager("nexus-1", "/var/lib/nexus/zones", "0.0.0.0:2126")
 //! handle = mgr.create_zone("default", ["2@peer:2126"])
 //! handle.set_metadata("/path/to/file", metadata_bytes)  # replicated
 //! ```
@@ -641,7 +641,7 @@ impl PyMetastore {
 /// ```python
 /// from _nexus_raft import ZoneManager
 ///
-/// mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+/// mgr = ZoneManager("nexus-1", "/var/lib/nexus/zones", "0.0.0.0:2126")
 /// handle = mgr.create_zone("alpha", ["2@peer:2126"], lazy=False)
 /// handle.set_metadata("/file.txt", b"...")
 /// handle.get_metadata("/file.txt")
@@ -654,6 +654,7 @@ pub struct PyZoneManager {
     runtime: tokio::runtime::Runtime,
     shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
     node_id: u64,
+    use_tls: bool,
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
@@ -665,7 +666,7 @@ impl PyZoneManager {
     /// with `create_zone()`.
     ///
     /// Args:
-    ///     node_id: This node's ID (shared across all zones).
+    ///     hostname: This node's hostname (node_id derived via SHA-256).
     ///     base_path: Base directory for zone sled databases.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
     ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
@@ -674,10 +675,10 @@ impl PyZoneManager {
     ///     ca_key_path: Path to CA private key file (read once at startup for server-side cert signing).
     ///     join_token_hash: SHA-256 hash of join token password (for JoinCluster verification).
     #[new]
-    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
+    #[pyo3(signature = (hostname, base_path, bind_addr="0.0.0.0:2126", tls_cert_path=None, tls_key_path=None, tls_ca_path=None, ca_key_path=None, join_token_hash=None))]
     #[allow(clippy::too_many_arguments)] // PyO3 constructor — Python API needs flat keyword args
     pub fn new(
-        node_id: u64,
+        hostname: &str,
         base_path: &str,
         bind_addr: &str,
         tls_cert_path: Option<&str>,
@@ -689,6 +690,8 @@ impl PyZoneManager {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
+
+        let node_id = crate::transport::hostname_to_node_id(hostname);
 
         // Initialize Rust tracing (once) so gRPC server logs are visible.
         // Uses RUST_LOG env var (e.g., "info,nexus_raft=debug").
@@ -785,6 +788,7 @@ impl PyZoneManager {
             runtime,
             shutdown_tx: Some(shutdown_tx),
             node_id,
+            use_tls,
         })
     }
 
@@ -803,7 +807,7 @@ impl PyZoneManager {
         let peer_addrs: Vec<NodeAddress> = peers
             .iter()
             .map(|s| {
-                NodeAddress::parse(s.trim())
+                NodeAddress::parse(s.trim(), self.use_tls)
                     .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -839,7 +843,7 @@ impl PyZoneManager {
         let peer_addrs: Vec<NodeAddress> = peers
             .iter()
             .map(|s| {
-                NodeAddress::parse(s.trim())
+                NodeAddress::parse(s.trim(), self.use_tls)
                     .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -881,6 +885,7 @@ impl PyZoneManager {
     }
 
     /// Get this node's ID.
+    #[getter]
     pub fn node_id(&self) -> u64 {
         self.node_id
     }
@@ -1290,8 +1295,15 @@ impl PyZoneHandle {
 ///     tls_dir: Directory to write ca.pem, node.pem, node-key.pem.
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyfunction]
-fn join_cluster(peer_address: &str, join_token: &str, node_id: u64, tls_dir: &str) -> PyResult<()> {
+fn join_cluster(
+    peer_address: &str,
+    join_token: &str,
+    hostname: &str,
+    tls_dir: &str,
+) -> PyResult<()> {
     use crate::transport::call_join_cluster;
+
+    let node_id = crate::transport::hostname_to_node_id(hostname);
 
     // Parse join token: K10<password>::server:<ca_fingerprint>
     let token_prefix = "K10";
@@ -1381,6 +1393,13 @@ fn join_cluster(peer_address: &str, join_token: &str, node_id: u64, tls_dir: &st
     Ok(())
 }
 
+/// Derive a deterministic node ID from a hostname (exposed to Python).
+#[cfg(all(feature = "grpc", has_protos))]
+#[pyfunction]
+fn hostname_to_node_id(hostname: &str) -> u64 {
+    crate::transport::hostname_to_node_id(hostname)
+}
+
 /// Python module initialization.
 /// Module name: _nexus_raft (consistent with _nexus_fast)
 /// Import as: from _nexus_raft import Metastore, ZoneManager, ZoneHandle
@@ -1396,5 +1415,7 @@ fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyZoneHandle>()?;
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_function(wrap_pyfunction!(join_cluster, m)?)?;
+    #[cfg(all(feature = "grpc", has_protos))]
+    m.add_function(wrap_pyfunction!(hostname_to_node_id, m)?)?;
     Ok(())
 }

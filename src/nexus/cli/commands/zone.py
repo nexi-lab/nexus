@@ -56,7 +56,7 @@ def zone() -> None:
 
 
 def _get_zone_manager(
-    node_id: int,
+    hostname: str,
     data_dir: str,
     bind_addr: str,
 ) -> Any:
@@ -67,7 +67,7 @@ def _get_zone_manager(
     from nexus.raft.zone_manager import ZoneManager
 
     return ZoneManager(
-        node_id=node_id,
+        hostname=hostname,
         base_path=data_dir,
         bind_addr=bind_addr,
     )
@@ -76,12 +76,11 @@ def _get_zone_manager(
 @zone.command(name="create")
 @click.argument("zone_id", type=str)
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -103,7 +102,7 @@ def _get_zone_manager(
     "--peers",
     type=str,
     default=None,
-    help="Comma-separated peer addresses (format: id@host:port)",
+    help="Comma-separated peer addresses (format: host:port)",
 )
 @click.option(
     "--if-not-exists",
@@ -114,7 +113,7 @@ def _get_zone_manager(
 @add_dry_run_option
 def create_zone_cmd(
     zone_id: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str | None,
@@ -129,24 +128,29 @@ def create_zone_cmd(
     Examples:
         nexus zone create my-zone
 
-        nexus zone create shared-zone --peers 2@peer2:2126,3@peer3:2126
+        nexus zone create shared-zone --peers peer2:2126,peer3:2126
 
-        NEXUS_NODE_ID=2 nexus zone create shared-zone --peers 1@peer1:2126
+        nexus zone create my-zone --hostname nexus-1
 
         nexus zone create my-zone --dry-run
 
         nexus zone create my-zone --if-not-exists
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
         if dry_run:
             preview = dry_run_preview(
-                "zone create", path=zone_id, details={"node_id": node_id, "peers": peers}
+                "zone create", path=zone_id, details={"hostname": hostname, "peers": peers}
             )
             render_dry_run(preview)
             return
 
         peer_list = [p.strip() for p in peers.split(",")] if peers else []
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind)
 
         try:
             store = mgr.create_zone(zone_id, peers=peer_list)
@@ -158,7 +162,7 @@ def create_zone_cmd(
             raise
 
         console.print(f"[green]Zone '{zone_id}' created[/green]")
-        console.print(f"  Node ID: {node_id}")
+        console.print(f"  Hostname: {hostname}")
         console.print(f"  Data dir: {data_dir}/{zone_id}/")
         console.print(f"  Bind: {bind}")
         if peer_list:
@@ -173,11 +177,11 @@ def create_zone_cmd(
 @zone.command(name="join")
 @click.argument("zone_id", type=str)
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    required=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -199,11 +203,11 @@ def create_zone_cmd(
     "--peers",
     type=str,
     required=True,
-    help="Comma-separated existing peer addresses (format: id@host:port)",
+    help="Comma-separated existing peer addresses (format: host:port)",
 )
 def join_zone_cmd(
     zone_id: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     peers: str,
@@ -214,15 +218,20 @@ def join_zone_cmd(
     be notified via JoinZone RPC to add this node via ConfChange.
 
     Examples:
-        NEXUS_NODE_ID=3 nexus zone join shared-zone --peers 1@leader:2126,2@peer2:2126
+        nexus zone join shared-zone --peers leader:2126,peer2:2126
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
         peer_list = [p.strip() for p in peers.split(",")]
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind)
         store = mgr.join_zone(zone_id, peers=peer_list)
 
         console.print(f"[green]Joined zone '{zone_id}'[/green]")
-        console.print(f"  Node ID: {node_id}")
+        console.print(f"  Hostname: {hostname}")
         console.print(f"  Peers: {', '.join(peer_list)}")
         console.print("  Waiting for leader to send snapshot...")
 
@@ -234,12 +243,11 @@ def join_zone_cmd(
 
 @zone.command(name="list")
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -259,7 +267,7 @@ def join_zone_cmd(
 )
 @add_output_options
 def list_zones_cmd(
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     output_opts: OutputOptions,
@@ -271,11 +279,16 @@ def list_zones_cmd(
         nexus zone list --json
         nexus zone list --data-dir /var/lib/nexus/zones
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     timing = CommandTiming()
 
     try:
         with timing.phase("server"):
-            mgr = _get_zone_manager(node_id, data_dir, bind)
+            mgr = _get_zone_manager(hostname, data_dir, bind)
             zones = mgr.list_zones()
             mgr.shutdown()
 
@@ -285,7 +298,7 @@ def list_zones_cmd(
             if not entries:
                 console.print("[dim]No zones found[/dim]")
                 return
-            table = Table(title=f"Zones (node {node_id})")
+            table = Table(title=f"Zones ({hostname})")
             table.add_column("Zone ID", style="cyan")
             console.print()
             for entry in entries:
@@ -317,12 +330,11 @@ def list_zones_cmd(
     help="Zone containing the mount point",
 )
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -345,7 +357,7 @@ def mount_zone_cmd(
     mount_path: str,
     target_zone: str,
     parent_zone: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     dry_run: bool,
@@ -364,6 +376,11 @@ def mount_zone_cmd(
 
         nexus zone mount /shared team-zone --dry-run
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
         if dry_run:
             preview = dry_run_preview(
@@ -374,7 +391,7 @@ def mount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind)
         mgr.mount(parent_zone, mount_path, target_zone)
 
         console.print(
@@ -396,12 +413,11 @@ def mount_zone_cmd(
     help="Zone containing the mount point",
 )
 @click.option(
-    "--node-id",
-    type=int,
-    envvar="NEXUS_NODE_ID",
-    default=1,
-    show_default=True,
-    help="This node's unique Raft ID",
+    "--hostname",
+    type=str,
+    envvar="NEXUS_HOSTNAME",
+    default=None,
+    help="This node's hostname (default: socket.gethostname())",
 )
 @click.option(
     "--data-dir",
@@ -423,7 +439,7 @@ def mount_zone_cmd(
 def unmount_zone_cmd(
     mount_path: str,
     parent_zone: str,
-    node_id: int,
+    hostname: str | None,
     data_dir: str,
     bind: str,
     dry_run: bool,
@@ -437,6 +453,11 @@ def unmount_zone_cmd(
 
         nexus zone unmount /shared --dry-run
     """
+    import socket
+
+    if hostname is None:
+        hostname = socket.gethostname()
+
     try:
         if dry_run:
             preview = dry_run_preview(
@@ -447,7 +468,7 @@ def unmount_zone_cmd(
             render_dry_run(preview)
             return
 
-        mgr = _get_zone_manager(node_id, data_dir, bind)
+        mgr = _get_zone_manager(hostname, data_dir, bind)
         mgr.unmount(parent_zone, mount_path)
 
         console.print(f"[green]Unmounted '{mount_path}' from zone '{parent_zone}'[/green]")

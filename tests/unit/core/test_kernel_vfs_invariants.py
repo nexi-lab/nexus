@@ -9,6 +9,10 @@ Invariants proven:
 
 import tempfile
 
+import pytest
+
+pytest.importorskip("hypothesis")
+
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 

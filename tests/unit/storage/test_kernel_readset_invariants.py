@@ -9,6 +9,10 @@ Invariants proven:
      when direct path match has older revision
 """
 
+import pytest
+
+pytest.importorskip("hypothesis")
+
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 

@@ -17,6 +17,9 @@ import os
 import uuid
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine, text
 
 from nexus.bricks.rebac.consistency.metastore_namespace_store import (

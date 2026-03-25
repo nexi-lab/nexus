@@ -115,6 +115,7 @@ class CASAddressingEngine(Backend):
         meta_semaphore: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
+        verify_on_read: bool = True,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
@@ -127,6 +128,7 @@ class CASAddressingEngine(Backend):
         self._meta_semaphore = meta_semaphore  # VFSSemaphore (core/semaphore.py)
         self._on_write_callback = on_write_callback
         self._cdc: ChunkingStrategy | None = cdc_engine
+        self._verify_on_read = verify_on_read
 
     @property
     def name(self) -> str:
@@ -195,10 +197,17 @@ class CASAddressingEngine(Backend):
 
         When meta_semaphore is injected, caller must hold the lock before calling.
         Updates meta_cache when injected via Feature DI.
+
+        Uses put_blob_nosync when available — meta JSON is reconstructable
+        from VFS metastore, so fsync + atomic rename is unnecessary overhead.
         """
         key = self._meta_key(content_hash)
+        data = json.dumps(meta).encode()
         try:
-            self._transport.put_blob(key, json.dumps(meta).encode(), "application/json")
+            if hasattr(self._transport, "put_blob_nosync"):
+                self._transport.put_blob_nosync(key, data)
+            else:
+                self._transport.put_blob(key, data, "application/json")
         except Exception as e:
             raise BackendError(
                 f"Failed to write CAS metadata: {e}",
@@ -275,8 +284,12 @@ class CASAddressingEngine(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            # Blob write is idempotent (same content → same key), safe without lock
-            self._transport.put_blob(key, content)
+            # Dedup skip: if blob already exists, skip the content write.
+            # CAS is idempotent by design — same content → same key.
+            # One stat() (~17μs) is much cheaper than a full put_blob (~760μs).
+            is_dedup = self._transport.blob_exists(key)
+            if not is_dedup:
+                self._transport.put_blob(key, content)
 
             # Metadata update: read-modify-write under stripe lock to avoid
             # TOCTOU race where multiple threads all see ref_count=0 and set 1.
@@ -375,22 +388,21 @@ class CASAddressingEngine(Backend):
         try:
             data, _ = self._transport.get_blob(key)
 
-            # Verify integrity
-            actual_hash = hash_content(data)
-            if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend=self.name,
-                    path=content_hash,
-                )
-
-            content = bytes(data)
+            # Verify integrity (configurable — local disk bit rot is rare)
+            if self._verify_on_read:
+                actual_hash = hash_content(data)
+                if actual_hash != content_hash:
+                    raise BackendError(
+                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                        backend=self.name,
+                        path=content_hash,
+                    )
 
             # Feature DI: cache on miss
             if self._cache is not None:
-                self._cache.put(content_hash, content)
+                self._cache.put(content_hash, data)
 
-            return content
+            return data
 
         except NexusFileNotFoundError:
             raise

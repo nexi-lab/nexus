@@ -4,6 +4,9 @@ import dataclasses
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.namespace_manager import NamespaceMount
 from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
 

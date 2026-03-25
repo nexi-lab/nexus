@@ -3,6 +3,10 @@
 After consolidation, all imports come from ``nexus.bricks.rebac.consistency``.
 """
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 
 class TestCanonicalImports:
     """Verify all public symbols are accessible from bricks.rebac.consistency."""

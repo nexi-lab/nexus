@@ -7,6 +7,9 @@ EnhancedReBACManager backed by in-memory SQLite.
 from unittest.mock import MagicMock
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 

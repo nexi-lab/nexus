@@ -16,6 +16,10 @@ import time
 from threading import Thread
 from unittest.mock import MagicMock
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.cache.visibility import (
     DirectoryVisibilityCache,
 )

@@ -7,6 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.namespace_manager import MountEntry
 from nexus.contracts.exceptions import NamespaceForkNotFoundError
 from nexus.contracts.namespace_fork_types import ForkMode

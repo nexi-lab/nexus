@@ -17,6 +17,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 

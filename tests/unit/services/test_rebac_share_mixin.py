@@ -13,6 +13,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.share_mixin import ReBACShareMixin
 
 

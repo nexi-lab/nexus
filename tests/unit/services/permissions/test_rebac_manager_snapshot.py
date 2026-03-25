@@ -20,6 +20,9 @@ All tests use in-memory SQLite database with EnhancedReBACManager.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import StaticPool
 

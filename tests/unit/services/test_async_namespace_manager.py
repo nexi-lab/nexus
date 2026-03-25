@@ -4,6 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.namespace_manager import (
     AsyncNamespaceManager,
     MountEntry,

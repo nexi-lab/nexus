@@ -17,6 +17,10 @@ Admin bypass flow:
 5. Grant or deny based on above checks
 """
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.enforcer import PermissionEnforcer
 from nexus.contracts.types import OperationContext, Permission
 

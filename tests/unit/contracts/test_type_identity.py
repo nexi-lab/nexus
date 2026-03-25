@@ -5,6 +5,10 @@ paths resolve to the **same Python object** — ensuring isinstance checks,
 dict keys, pickling, etc. all work identically regardless of import path.
 """
 
+import pytest
+
+pytest.importorskip("pyroaring")
+
 
 class TestReBACTypesIdentity:
     """Verify nexus.contracts.rebac_types ↔ nexus.bricks.rebac.* identity."""

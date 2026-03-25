@@ -12,6 +12,9 @@ Issue #191: Migrated from SQLAlchemy ORM to MetastoreABC.
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.consistency.revision import (
     get_zone_revision_for_grant,

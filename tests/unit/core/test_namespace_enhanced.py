@@ -10,6 +10,9 @@ Tests cover:
 """
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from sqlalchemy import create_engine
 
 from nexus.bricks.rebac.consistency.metastore_namespace_store import MetastoreNamespaceStore

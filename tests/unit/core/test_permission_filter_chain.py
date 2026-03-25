@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
 from nexus.bricks.rebac.filter_chain import (
     BulkReBACStrategy,
     FilterContext,

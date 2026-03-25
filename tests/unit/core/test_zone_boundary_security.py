@@ -10,6 +10,9 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus import CASLocalBackend, NexusFS
 from nexus.bricks.rebac.permissions_enhanced import AdminCapability
 from nexus.contracts.types import OperationContext

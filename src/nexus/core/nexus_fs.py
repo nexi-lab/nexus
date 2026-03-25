@@ -506,8 +506,10 @@ class NexusFS(  # type: ignore[misc]
             self.metadata.delete_batch(file_paths)
 
         # Remove directory in backend (if it still exists)
-        # In CAS systems, the directory may no longer exist after deleting its contents
-        with contextlib.suppress(NexusFileNotFoundError):
+        # In CAS systems, the directory may no longer exist after deleting its contents.
+        # BackendError is suppressed because local backends may fail to rmdir a
+        # non-empty directory when content files haven't been GC'd yet.
+        with contextlib.suppress(NexusFileNotFoundError, BackendError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
         # Also delete the directory's own metadata entry if it exists
@@ -1956,13 +1958,9 @@ class NexusFS(  # type: ignore[misc]
         meta = self.metadata.get(path)
 
         # Add backend_path to context for path-based connectors
-        from dataclasses import replace as _replace_ctx
-
         if context:
-            context = _replace_ctx(context, backend_path=route.backend_path, virtual_path=path)
+            context = _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
         else:
-            from nexus.contracts.types import OperationContext
-
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )

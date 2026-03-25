@@ -14,6 +14,9 @@ Tests cover:
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
+pytest.importorskip("pyroaring")
+
 from freezegun import freeze_time
 from sqlalchemy import create_engine
 

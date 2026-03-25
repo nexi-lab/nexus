@@ -4,6 +4,9 @@ import time
 
 import pytest
 
+pytest.importorskip("pyroaring")
+
+
 from nexus.bricks.rebac.cache.iterator import (
     CachedResult,
     CursorExpiredError,

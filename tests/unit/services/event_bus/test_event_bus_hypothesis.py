@@ -1,5 +1,9 @@
 """Property-based tests for EventBus using Hypothesis."""
 
+import pytest
+
+pytest.importorskip("hypothesis")
+
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 

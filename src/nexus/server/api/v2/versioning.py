@@ -276,9 +276,7 @@ def build_v2_registry(
     try:
         from nexus.server.api.v2.routers.task_manager import router as task_manager_router
 
-        registry.add(
-            RouterEntry(router=task_manager_router, name="task_manager", endpoint_count=14)
-        )
+        registry.add(RouterEntry(router=task_manager_router, name="task_manager", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Task manager routes: %s", e)
 

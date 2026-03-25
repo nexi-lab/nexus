@@ -76,8 +76,7 @@ class TestFeaturesEndpoint:
     def test_returns_disabled_bricks(self, client: TestClient) -> None:
         data = client.get("/api/v2/features").json()
         assert isinstance(data["disabled_bricks"], list)
-        # Full profile should have federation disabled
-        assert "federation" in data["disabled_bricks"]
+        # Federation is a system service (not a brick) — won't appear in brick lists
 
     def test_returns_version(self, client: TestClient) -> None:
         data = client.get("/api/v2/features").json()

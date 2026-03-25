@@ -58,14 +58,14 @@ def _build_live_app(
     app = FastAPI(title="nexus-test")
 
     # Wire up minimal app state that the bricks router dependency expects.
-    # The _get_lifecycle_manager dependency accesses:
-    #   request.app.state.nexus_fs._system_services.brick_lifecycle_manager
-    _sys_mock = MagicMock()
-    _sys_mock.brick_lifecycle_manager = manager
-    _sys_mock.brick_reconciler = reconciler
-
+    # The _get_system_service dependency accesses:
+    #   request.app.state.nexus_fs.service("brick_lifecycle_manager")
+    _service_map = {
+        "brick_lifecycle_manager": manager,
+        "brick_reconciler": reconciler,
+    }
     nexus_fs_mock = MagicMock()
-    nexus_fs_mock._system_services = _sys_mock
+    nexus_fs_mock.service = MagicMock(side_effect=lambda name: _service_map.get(name))
     app.state.nexus_fs = nexus_fs_mock
 
     # Override admin auth so endpoints are accessible without real auth

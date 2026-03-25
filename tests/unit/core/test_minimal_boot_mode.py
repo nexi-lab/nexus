@@ -105,7 +105,8 @@ class TestSlimBootViaFactory:
 
         assert nx is not None
         # System services should be empty (no record store)
-        assert nx._system_services is None or nx._system_services.rebac_manager is None
+        # Issue #1801: _system_services deleted — check via ServiceRegistry
+        assert nx.service("rebac") is None or nx.service("rebac")._rebac_manager is None
         assert nx._permission_enforcer is None
 
     @pytest.mark.asyncio
@@ -350,10 +351,12 @@ class TestSlimIntegrationViaConnect:
         )
 
         # Services should be empty
-        assert nx._system_services is None or nx._system_services.rebac_manager is None
+        # Issue #1801: _system_services deleted — check via ServiceRegistry
+        assert nx.service("rebac") is None or nx.service("rebac")._rebac_manager is None
         assert nx._permission_enforcer is None
         # Issue #1570: audit_store accessed from container, not flat attr
-        assert getattr(nx._system_services, "audit_store", None) is None
+        # Issue #1801: check via ServiceRegistry instead of _system_services
+        assert nx.service("audit") is None
 
         # File operations should work
         await nx.write("/hello.txt", b"slim mode")

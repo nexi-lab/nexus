@@ -129,10 +129,9 @@ class ResetBrickResponse(BaseModel):
 
 
 def _get_system_service(request: Request, attr: str, label: str) -> Any:
-    """Resolve a system service from the NexusFS instance on app state.
+    """Resolve a system service from the NexusFS ServiceRegistry.
 
-    Issue #1771: Prefer nx.service() (ServiceRegistry) with fallback to
-    _system_services for infrastructure fields not yet in the registry.
+    Issue #1801: ALL services now in ServiceRegistry — no _system_services fallback.
 
     Raises HTTPException(503) if NexusFS or the requested service is unavailable.
     """
@@ -140,12 +139,7 @@ def _get_system_service(request: Request, attr: str, label: str) -> Any:
     if nx is None:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
-    # Try ServiceRegistry first, then fall back to _system_services container
     service = nx.service(attr)
-    if service is None:
-        _sys = getattr(nx, "_system_services", None)
-        service = getattr(_sys, attr, None) if _sys else None
-
     if service is None:
         raise HTTPException(status_code=503, detail=f"{label} not available")
 

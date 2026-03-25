@@ -118,14 +118,12 @@ async def nexus_fs(
 
     # Ensure workspace_registry exists (factory may fail to create it if
     # ReBACManager is unavailable — rebac_manager is optional for the registry)
-    if nx._system_services is None or nx._system_services.workspace_registry is None:
-        from dataclasses import replace
-
+    if nx.service("workspace_registry") is None:
         from nexus.bricks.workspace.workspace_registry import WorkspaceRegistry
 
-        nx._system_services = replace(
-            nx._system_services,
-            workspace_registry=WorkspaceRegistry(
+        nx.service_registry.register_service(
+            "workspace_registry",
+            WorkspaceRegistry(
                 metadata=metadata_store,
                 rebac_manager=None,
                 session_factory=record_store.session_factory,
@@ -133,7 +131,7 @@ async def nexus_fs(
         )
 
     # Register workspace with overlay config so _get_overlay_config() finds it
-    nx._system_services.workspace_registry.register_workspace(
+    nx.service("workspace_registry").register_workspace(
         path="/ws/agent-a",
         name="agent-a-workspace",
         metadata={

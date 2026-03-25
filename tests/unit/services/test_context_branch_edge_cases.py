@@ -24,9 +24,9 @@ from nexus.contracts.exceptions import (
     BranchProtectedError,
     BranchStateError,
 )
+from nexus.services.workspace.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
-from nexus.system_services.workspace.context_branch import ContextBranchService
 
 
 @pytest.fixture

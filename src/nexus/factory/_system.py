@@ -254,7 +254,7 @@ def _boot_system_services(
     workspace_manager: Any = None
     try:
         from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.system_services.workspace.workspace_manager import WorkspaceManager
+        from nexus.services.workspace.workspace_manager import WorkspaceManager
 
         workspace_manager = WorkspaceManager(
             metadata=ctx.metadata_store,
@@ -298,7 +298,7 @@ def _boot_system_services(
         logger.debug("[BOOT:SYSTEM] EventDeliveryWorker disabled by profile")
     elif ctx.db_url.startswith(("postgres", "postgresql")):
         try:
-            from nexus.system_services.event_log.delivery import EventDeliveryWorker
+            from nexus.services.event_log.delivery import EventDeliveryWorker
 
             delivery_worker = EventDeliveryWorker(
                 record_store=ctx.record_store,
@@ -350,7 +350,7 @@ def _boot_system_services(
     context_branch_service: Any = None
     try:
         from nexus.contracts.protocols.rebac import ReBACBrickProtocol
-        from nexus.system_services.workspace.context_branch import ContextBranchService
+        from nexus.services.workspace.context_branch import ContextBranchService
 
         context_branch_service = ContextBranchService(
             workspace_manager=workspace_manager,
@@ -383,7 +383,7 @@ def _boot_system_services(
     session_factory = getattr(ctx.record_store, "session_factory", None)
     if session_factory is not None:
         try:
-            from nexus.system_services.lifecycle.zone_lifecycle import ZoneLifecycleService
+            from nexus.services.lifecycle.zone_lifecycle import ZoneLifecycleService
 
             zone_lifecycle = ZoneLifecycleService(session_factory=session_factory)
 
@@ -391,7 +391,7 @@ def _boot_system_services(
             # Cache + Mount finalizers are registered later in service_wiring
             # when their dependencies (file_cache, mount_service) exist.
             try:
-                from nexus.system_services.lifecycle.zone_finalizers import (
+                from nexus.services.lifecycle.zone_finalizers import (
                     ReBACZoneFinalizer,
                     SearchZoneFinalizer,
                 )
@@ -413,12 +413,12 @@ def _boot_system_services(
     else:
         try:
             if ctx.db_url.startswith(("postgres", "postgresql")):
-                from nexus.system_services.scheduler.service import SchedulerService
+                from nexus.services.scheduler.service import SchedulerService
 
                 scheduler_service = SchedulerService(db_pool=None)
                 logger.debug("[BOOT:SYSTEM] SchedulerService created (two-phase, pool=None)")
             else:
-                from nexus.system_services.scheduler.in_memory import InMemoryScheduler
+                from nexus.services.scheduler.in_memory import InMemoryScheduler
 
                 scheduler_service = InMemoryScheduler()
                 logger.debug("[BOOT:SYSTEM] InMemoryScheduler created (no PostgreSQL)")

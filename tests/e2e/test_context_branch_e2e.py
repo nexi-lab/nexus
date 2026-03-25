@@ -25,9 +25,9 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
 )
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
+from nexus.services.workspace.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
-from nexus.system_services.workspace.context_branch import ContextBranchService
 
 # ---------------------------------------------------------------------------
 # Fixtures — real DB + CAS
@@ -641,7 +641,7 @@ class TestE2ENamespaceForkIntegration:
 
     @pytest.fixture
     def fork_service(self, mock_namespace_manager):
-        from nexus.system_services.namespace.namespace_fork_service import (
+        from nexus.services.namespace.namespace_fork_service import (
             AgentNamespaceForkService,
         )
 
@@ -691,7 +691,7 @@ class TestE2ENamespaceForkIntegration:
         broken_mgr = MagicMock()
         broken_mgr.get_mount_table.side_effect = RuntimeError("DB down")
 
-        from nexus.system_services.namespace.namespace_fork_service import (
+        from nexus.services.namespace.namespace_fork_service import (
             AgentNamespaceForkService,
         )
 

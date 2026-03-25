@@ -177,7 +177,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WatchProtocol",
         "nexus.contracts.protocols.watch",
-        "nexus.system_services.lifecycle.events_service.EventsService",
+        "nexus.services.lifecycle.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
     # LockProtocol removed — consolidated into LockManagerBase (lib/distributed_lock.py).
@@ -245,7 +245,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WorkspaceManagerProtocol",
         "nexus.contracts.protocols.workspace_manager",
-        "nexus.system_services.workspace.workspace_manager.WorkspaceManager",
+        "nexus.services.workspace.workspace_manager.WorkspaceManager",
         True,
     ),
 ]

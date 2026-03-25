@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.circuit_breaker import CircuitState
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
-from nexus.system_services.event_log.exporter_registry import ExporterRegistry
+from nexus.services.event_bus.types import FileEvent, FileEventType
+from nexus.services.event_log.exporter_registry import ExporterRegistry
 
 
 def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:

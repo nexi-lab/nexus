@@ -26,9 +26,9 @@ from nexus.contracts.process_types import (
 )
 from nexus.contracts.qos import QoSClass
 from nexus.lib.performance_tuning import EvictionTuning
-from nexus.system_services.agents.eviction_manager import EvictionManager
-from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy, QoSEvictionPolicy
-from nexus.system_services.agents.resource_monitor import PressureLevel
+from nexus.services.agents.eviction_manager import EvictionManager
+from nexus.services.agents.eviction_policy import LRUEvictionPolicy, QoSEvictionPolicy
+from nexus.services.agents.resource_monitor import PressureLevel
 
 
 def _make_process(

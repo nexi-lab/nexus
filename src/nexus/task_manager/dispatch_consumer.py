@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.bricks.task_manager.service import TaskManagerService
-    from nexus.system_services.pipe_manager import PipeManager
+    from nexus.services.pipe_manager import PipeManager
 
 logger = logging.getLogger(__name__)
 

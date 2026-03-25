@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.types import OperationContext
-from nexus.system_services.sync.change_log_store import ChangeLogEntry
-from nexus.system_services.sync.sync_service import (
+from nexus.services.sync.change_log_store import ChangeLogEntry
+from nexus.services.sync.sync_service import (
     SyncContext,
     SyncResult,
     SyncService,

@@ -27,13 +27,13 @@ from pathlib import Path
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.storage.models import OperationLogModel
-from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_log.replay import (
+from nexus.services.event_log.replay import (
     EventReplayService,
     _decode_cursor,
     _encode_cursor,
 )
+from nexus.storage.models import OperationLogModel
+from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
 @pytest.fixture

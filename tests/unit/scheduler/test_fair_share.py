@@ -5,7 +5,7 @@ Tests admission, counters, limits, sync, and snapshots.
 
 import pytest
 
-from nexus.system_services.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
+from nexus.services.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
 
 
 class TestFairShareSnapshot:

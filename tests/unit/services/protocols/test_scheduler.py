@@ -13,8 +13,8 @@ from nexus.contracts.protocols.scheduler import (
     NullCreditsReservation,
     SchedulerProtocol,
 )
-from nexus.system_services.scheduler.in_memory import InMemoryScheduler
-from nexus.system_services.scheduler.policies.classifier import classify_agent_request
+from nexus.services.scheduler.in_memory import InMemoryScheduler
+from nexus.services.scheduler.policies.classifier import classify_agent_request
 
 # ---------------------------------------------------------------------------
 # AgentRequest frozen dataclass tests

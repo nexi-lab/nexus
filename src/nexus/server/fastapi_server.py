@@ -402,7 +402,7 @@ def create_app(
         if _record_store is not None:
             try:
                 from nexus.server.rpc.services.events_rpc import EventsRPCService
-                from nexus.system_services.event_log.replay import EventReplayService
+                from nexus.services.event_log.replay import EventReplayService
 
                 _evt_signal = None
                 _rpc_sources.append(

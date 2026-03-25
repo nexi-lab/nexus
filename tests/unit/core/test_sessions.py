@@ -9,13 +9,13 @@ import pytest
 
 from nexus.contracts.auth_store_types import SessionDTO
 from nexus.contracts.cache_store import InMemoryCacheStore
-from nexus.storage.auth_stores.cache_session_store import CacheSessionStore
-from nexus.system_services.lifecycle.sessions import (
+from nexus.services.lifecycle.sessions import (
     create_session,
     get_session,
     list_user_sessions,
     update_session_activity,
 )
+from nexus.storage.auth_stores.cache_session_store import CacheSessionStore
 
 
 @pytest.fixture

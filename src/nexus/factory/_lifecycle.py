@@ -269,9 +269,9 @@ async def _do_link(
         try:
             from nexus.contracts.deployment_profile import DeploymentProfile as _DP
             from nexus.lib.performance_tuning import resolve_profile_tuning
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
 
             _profile_tuning = resolve_profile_tuning(_DP.FULL)
             _eviction_tuning = _profile_tuning.eviction
@@ -290,7 +290,7 @@ async def _do_link(
 
         try:
             from nexus.contracts.constants import ROOT_ZONE_ID
-            from nexus.system_services.acp.service import AcpService
+            from nexus.services.acp.service import AcpService
 
             _acp_service = AcpService(
                 agent_registry=_agent_reg,

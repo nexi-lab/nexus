@@ -17,10 +17,10 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.services.event_log.delivery import EventDeliveryWorker
+from nexus.services.event_log.exporter_registry import ExporterRegistry
 from nexus.storage.models import DeadLetterModel, OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_log.delivery import EventDeliveryWorker
-from nexus.system_services.event_log.exporter_registry import ExporterRegistry
 
 
 @pytest.fixture

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from nexus.system_services.scheduler.queue import TaskQueue
+from nexus.services.scheduler.queue import TaskQueue
 
 
 @pytest.fixture()
@@ -83,7 +83,7 @@ class TestDeadlineEnforcement:
 
     async def test_dequeue_sql_contains_deadline_filter(self) -> None:
         """All dequeue SQL statements include deadline enforcement."""
-        from nexus.system_services.scheduler.queue import (
+        from nexus.services.scheduler.queue import (
             _SQL_DEQUEUE,
             _SQL_DEQUEUE_BY_EXECUTOR,
             _SQL_DEQUEUE_HRRN,
@@ -101,7 +101,7 @@ class TestDeadlineEnforcement:
 
     async def test_dequeue_sql_uses_shared_columns(self) -> None:
         """All dequeue SQL statements use the shared _TASK_COLUMNS constant."""
-        from nexus.system_services.scheduler.queue import (
+        from nexus.services.scheduler.queue import (
             _SQL_DEQUEUE,
             _SQL_DEQUEUE_BY_EXECUTOR,
             _SQL_DEQUEUE_HRRN,

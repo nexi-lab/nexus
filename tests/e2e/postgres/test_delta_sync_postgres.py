@@ -23,9 +23,9 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from nexus.services.sync.change_log_store import ChangeLogStore
 from nexus.storage.models import BackendChangeLogModel
 from nexus.storage.record_store import RecordStoreABC
-from nexus.system_services.sync.change_log_store import ChangeLogStore
 
 # ============================================================================
 # Skip if PostgreSQL is not available

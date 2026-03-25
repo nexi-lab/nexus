@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.system_services.acp.service import AcpService, _ActiveAgent
+from nexus.services.acp.service import AcpService, _ActiveAgent
 
 # ---------------------------------------------------------------------------
 # Mock AgentRegistry
@@ -103,7 +103,7 @@ class TestAcpServiceNoTransitionHack:
         _transition should not be called anywhere in service.py."""
         import inspect
 
-        from nexus.system_services.acp import service
+        from nexus.services.acp import service
 
         source = inspect.getsource(service)
         assert "_transition" not in source
@@ -112,7 +112,7 @@ class TestAcpServiceNoTransitionHack:
         """AcpService must not access metastore directly — all I/O through VFS."""
         import inspect
 
-        from nexus.system_services.acp import service
+        from nexus.services.acp import service
 
         source = inspect.getsource(service)
         assert "_metastore" not in source
@@ -301,7 +301,7 @@ class TestAgentConfigFromDict:
     """Test AgentConfig.from_dict() deserialization from VFS JSON."""
 
     def test_from_dict_minimal(self):
-        from nexus.system_services.acp.agents import AgentConfig
+        from nexus.services.acp.agents import AgentConfig
 
         data = {"agent_id": "test", "name": "Test", "command": "test-bin"}
         cfg = AgentConfig.from_dict(data)
@@ -309,7 +309,7 @@ class TestAgentConfigFromDict:
         assert cfg.command == "test-bin"
 
     def test_from_dict_full(self):
-        from nexus.system_services.acp.agents import AgentConfig
+        from nexus.services.acp.agents import AgentConfig
 
         data = {
             "agent_id": "claude",
@@ -330,7 +330,7 @@ class TestAgentConfigFromDict:
 
     def test_from_dict_defaults(self):
         """from_dict fills in defaults for missing optional fields."""
-        from nexus.system_services.acp.agents import AgentConfig
+        from nexus.services.acp.agents import AgentConfig
 
         data = {"agent_id": "x", "name": "X", "command": "x-bin"}
         cfg = AgentConfig.from_dict(data)

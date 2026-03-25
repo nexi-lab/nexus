@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 if TYPE_CHECKING:
-    from nexus.system_services.event_bus.redis import RedisEventBus
+    from nexus.services.event_bus.redis import RedisEventBus
 
 # Skip entire module if Redis is not available
 pytestmark = pytest.mark.skipif(
@@ -55,7 +55,7 @@ async def redis_client():
 @pytest.fixture
 async def event_bus(redis_client):
     """Create a RedisEventBus for testing."""
-    from nexus.system_services.event_bus.redis import RedisEventBus
+    from nexus.services.event_bus.redis import RedisEventBus
 
     bus = RedisEventBus(redis_client)
     await bus.start()
@@ -76,7 +76,7 @@ class TestRedisEventBusIntegration:
     @pytest.mark.asyncio
     async def test_publish_event(self, event_bus):
         """Test publishing an event to Redis."""
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
@@ -107,8 +107,8 @@ class TestRedisEventBusIntegration:
         """Test publishing and receiving an event."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         # Use unique zone to avoid cross-test contamination in parallel runs
         zone_id = f"pubsub-test-{uuid.uuid4().hex[:8]}"
@@ -162,8 +162,8 @@ class TestRedisEventBusIntegration:
         """Test that events are filtered by path pattern."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         # Use unique zone to avoid cross-test contamination in parallel runs
         zone_id = f"filter-test-{uuid.uuid4().hex[:8]}"
@@ -215,8 +215,8 @@ class TestRedisEventBusIntegration:
     @pytest.mark.asyncio
     async def test_multi_zone_isolation(self, redis_client):
         """Test that events are isolated per zone."""
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         publisher = RedisEventBus(redis_client)
         subscriber = RedisEventBus(redis_client)
@@ -286,8 +286,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"dir-match-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -328,8 +328,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /other/test.txt -> no fire."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"dir-nomatch-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -370,8 +370,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/ -> event at /inbox/subdir/test.txt -> fires (recursive)."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"subdir-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -412,8 +412,8 @@ class TestPathPatternFiltering:
         """Watch /root/ -> event at /root/a/b/c/d/deep.txt -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"deep-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -454,8 +454,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/*.txt -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-ext-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -496,8 +496,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/*.txt -> event at /inbox/test.pdf -> no fire."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-noext-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -537,8 +537,8 @@ class TestPathPatternFiltering:
         """Watch **/*.txt -> event at /a/b/c/test.txt -> fires (cross-folder)."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-cross-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -579,8 +579,8 @@ class TestPathPatternFiltering:
         """Watch exact /inbox/test.txt -> event at same path -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"exact-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -621,8 +621,8 @@ class TestPathPatternFiltering:
         """Watch exact /inbox/test.txt -> event at /inbox/other.txt -> no fire."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"exact-no-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -662,8 +662,8 @@ class TestPathPatternFiltering:
         """Watch /inbox/tes?.txt -> event at /inbox/test.txt -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"glob-q-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -712,8 +712,8 @@ class TestEventTypes:
         """Watch -> FILE_WRITE event -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-write-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -754,8 +754,8 @@ class TestEventTypes:
         """Watch -> FILE_DELETE event -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-delete-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -796,8 +796,8 @@ class TestEventTypes:
         """Watch -> FILE_RENAME event -> fires (matches new path)."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-rename-new-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -840,8 +840,8 @@ class TestEventTypes:
         """Watch -> FILE_RENAME event -> fires (matches old path)."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-rename-old-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -883,8 +883,8 @@ class TestEventTypes:
         """Watch -> DIR_CREATE event -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-dircreate-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -925,8 +925,8 @@ class TestEventTypes:
         """Watch -> DIR_DELETE event -> fires."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"evt-dirdelete-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -976,8 +976,8 @@ class TestDistributedSpecific:
         """Multiple subscribers with same pattern -> all receive event."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"multi-sub-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1035,8 +1035,8 @@ class TestDistributedSpecific:
         """Event metadata (size, etag, agent_id) preserved through pub/sub."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"metadata-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1082,8 +1082,8 @@ class TestDistributedSpecific:
         """Subscriber joins after event published -> doesn't receive old event."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"late-sub-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1123,8 +1123,8 @@ class TestDistributedSpecific:
         """Rapid sequence of events -> subscriber receives them in order."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"rapid-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1178,8 +1178,8 @@ class TestDistributedSpecific:
         """Each event has unique event_id for deduplication."""
         import uuid
 
-        from nexus.system_services.event_bus.redis import RedisEventBus
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.redis import RedisEventBus
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         zone_id = f"unique-{uuid.uuid4().hex[:8]}"
         publisher = RedisEventBus(redis_client)
@@ -1243,7 +1243,7 @@ class TestErrorRecoveryLayer2:
     @pytest.mark.asyncio
     async def test_publish_to_stopped_bus_raises(self, event_bus: "RedisEventBus"):
         """Test that publishing to stopped bus raises appropriate error."""
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         # Stop the bus first
         await event_bus.stop()
@@ -1288,7 +1288,7 @@ class TestErrorRecoveryLayer2:
     @pytest.mark.asyncio
     async def test_bus_can_restart_after_stop(self, event_bus: "RedisEventBus"):
         """Test that bus can restart after being stopped."""
-        from nexus.system_services.event_bus.types import FileEvent, FileEventType
+        from nexus.services.event_bus.types import FileEvent, FileEventType
 
         # Stop the bus
         await event_bus.stop()

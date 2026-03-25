@@ -9,7 +9,7 @@ Issue #1138: Event Stream Export.
 import pytest
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
+from nexus.services.event_bus.types import FileEvent, FileEventType
 
 # Skip if testcontainers or nats not installed
 pytest.importorskip("testcontainers")
@@ -52,8 +52,8 @@ def nats_url(nats_container) -> str:
 
 @pytest.fixture
 def exporter(nats_url: str):
-    from nexus.system_services.event_log.exporters.config import NatsExporterConfig
-    from nexus.system_services.event_log.exporters.nats_exporter import NatsExporter
+    from nexus.services.event_log.exporters.config import NatsExporterConfig
+    from nexus.services.event_log.exporters.nats_exporter import NatsExporter
 
     config = NatsExporterConfig(
         servers=nats_url,

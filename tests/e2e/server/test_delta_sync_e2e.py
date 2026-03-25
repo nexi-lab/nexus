@@ -380,7 +380,7 @@ def mock_context():
 @pytest.fixture()
 def sync_service_with_pg(pg_session_factory):
     """Create SyncService with a mocked gateway that uses real PostgreSQL sessions."""
-    from nexus.system_services.sync.sync_service import SyncService
+    from nexus.services.sync.sync_service import SyncService
 
     gateway = MagicMock()
     gateway.session_factory = pg_session_factory

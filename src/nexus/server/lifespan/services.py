@@ -145,8 +145,8 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
 
     # Issue #2172: Create AgentWarmupService with step registry
     try:
-        from nexus.system_services.agents.agent_warmup import AgentWarmupService
-        from nexus.system_services.agents.warmup_steps import register_standard_steps
+        from nexus.services.agents.agent_warmup import AgentWarmupService
+        from nexus.services.agents.warmup_steps import register_standard_steps
 
         app.state.agent_warmup_service = AgentWarmupService(
             agent_registry=agent_registry,
@@ -458,9 +458,9 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
 
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()
@@ -503,7 +503,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.scheduler_service = scheduler
 
     # InMemoryScheduler doesn't need PostgreSQL init
-    from nexus.system_services.scheduler.in_memory import InMemoryScheduler
+    from nexus.services.scheduler.in_memory import InMemoryScheduler
 
     if isinstance(scheduler, InMemoryScheduler):
         logger.info("Scheduler service started (InMemoryScheduler fallback)")

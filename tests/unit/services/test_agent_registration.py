@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.contracts.grant_helpers import GrantInput
-from nexus.system_services.agents.agent_registration import (
+from nexus.services.agents.agent_registration import (
     AgentAlreadyExistsError,
     AgentRegistrationService,
     RegistrationResult,

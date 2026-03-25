@@ -401,7 +401,7 @@ class TestLLMStreamingService:
         self, mock_stream_manager: MagicMock, mock_backend: MagicMock
     ) -> None:
         """start_stream creates DT_STREAM and returns immediately."""
-        from nexus.system_services.llm_streaming_service import (
+        from nexus.services.llm_streaming_service import (
             LLMStreamingService,
         )
 
@@ -422,7 +422,7 @@ class TestLLMStreamingService:
         self, mock_stream_manager: MagicMock, mock_backend: MagicMock
     ) -> None:
         """Tokens are pushed to DT_STREAM, then CAS persist + signal_close."""
-        from nexus.system_services.llm_streaming_service import (
+        from nexus.services.llm_streaming_service import (
             LLMStreamingService,
         )
 
@@ -459,7 +459,7 @@ class TestLLMStreamingService:
     @pytest.mark.asyncio()
     async def test_stream_error_handling(self, mock_stream_manager: MagicMock) -> None:
         """On LLM failure, error is written to stream and stream is closed."""
-        from nexus.system_services.llm_streaming_service import (
+        from nexus.services.llm_streaming_service import (
             LLMStreamingService,
         )
 
@@ -488,7 +488,7 @@ class TestLLMStreamingService:
     @pytest.mark.asyncio()
     async def test_cancel_stream(self, mock_stream_manager: MagicMock) -> None:
         """cancel_stream cancels the background task and destroys the stream."""
-        from nexus.system_services.llm_streaming_service import (
+        from nexus.services.llm_streaming_service import (
             LLMStreamingService,
         )
 
@@ -518,7 +518,7 @@ class TestLLMStreamingService:
         self, mock_stream_manager: MagicMock, mock_backend: MagicMock
     ) -> None:
         """active_streams tracks running streams."""
-        from nexus.system_services.llm_streaming_service import (
+        from nexus.services.llm_streaming_service import (
             LLMStreamingService,
         )
 

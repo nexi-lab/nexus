@@ -11,7 +11,7 @@ import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-from nexus.system_services.event_bus.base import EventBusBase
+from nexus.services.event_bus.base import EventBusBase
 
 
 def _make_operation(op_id: str, created_at: datetime, op_type: str = "write") -> Mock:
@@ -179,7 +179,7 @@ class TestStartupSyncCheckpointSafety:
         async def run():
             bus._update_checkpoint = AsyncMock()
             bus._get_checkpoint = AsyncMock(return_value=datetime(2026, 1, 1, 0, 0, 0))
-            with patch("nexus.system_services.event_bus.base.logger") as mock_logger:
+            with patch("nexus.services.event_bus.base.logger") as mock_logger:
                 await bus.startup_sync(event_handler=handler)
                 # Check that warning about truncation was logged
                 warning_calls = [

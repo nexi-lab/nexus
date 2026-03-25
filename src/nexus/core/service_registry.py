@@ -2,7 +2,7 @@
 
 Provides ``ServiceRegistry``, a typed registry for wired service instances
 **with integrated lifecycle orchestration**.  Merges the former
-``ServiceLifecycleCoordinator`` (system_services/lifecycle) into the kernel-owned
+``ServiceLifecycleCoordinator`` (services/lifecycle) into the kernel-owned
 registry — like Linux ``kernel/module/main.c`` handling both symbol table and
 lifecycle in one module.
 

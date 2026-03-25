@@ -48,7 +48,7 @@ async def nx_with_db(tmp_path):
 
     # Issue #2133: service_wiring.py deleted — explicitly create UserProvisioningService
     # Issue #1801: _system_services deleted — pass mocks directly to service constructor
-    from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
+    from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
     nx._service_registry.register_service(
         "user_provisioning",
@@ -284,7 +284,7 @@ class TestProvisionUserPartialFailure:
     @pytest.mark.asyncio
     async def test_no_session_local_raises(self, tmp_path):
         """Missing SessionLocal should raise TypeError (None is not callable)."""
-        from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
+        from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
         nx = await make_test_nexus(tmp_path)
         mock_registry = MagicMock()

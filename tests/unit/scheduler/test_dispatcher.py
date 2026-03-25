@@ -12,13 +12,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.system_services.scheduler.constants import PriorityTier
-from nexus.system_services.scheduler.dispatcher import (
+from nexus.services.scheduler.constants import PriorityTier
+from nexus.services.scheduler.dispatcher import (
     _BACKOFF_BASE_SECS,
     TaskDispatcher,
 )
-from nexus.system_services.scheduler.events import AgentStateEmitter, AgentStateEvent
-from nexus.system_services.scheduler.models import ScheduledTask
+from nexus.services.scheduler.events import AgentStateEmitter, AgentStateEvent
+from nexus.services.scheduler.models import ScheduledTask
 
 
 def _make_task(
@@ -417,7 +417,7 @@ class TestExecutorDispatchLoop:
 
         # Let it run for a bit — it should back off
         with patch(
-            "nexus.system_services.scheduler.dispatcher.asyncio.sleep", new_callable=AsyncMock
+            "nexus.services.scheduler.dispatcher.asyncio.sleep", new_callable=AsyncMock
         ) as mock_sleep:
             loop_task = asyncio.create_task(dispatcher._executor_dispatch_loop("exec-a", event))
             # Let 3 errors happen
@@ -444,10 +444,8 @@ class TestExecutorDispatchLoop:
 
         # Patch sleep to not actually wait, and reduce max errors to 3
         with (
-            patch(
-                "nexus.system_services.scheduler.dispatcher.asyncio.sleep", new_callable=AsyncMock
-            ),
-            patch("nexus.system_services.scheduler.dispatcher._MAX_CONSECUTIVE_ERRORS", 3),
+            patch("nexus.services.scheduler.dispatcher.asyncio.sleep", new_callable=AsyncMock),
+            patch("nexus.services.scheduler.dispatcher._MAX_CONSECUTIVE_ERRORS", 3),
         ):
             await dispatcher._executor_dispatch_loop("exec-a", event)
 
@@ -543,7 +541,7 @@ class TestDRYStatusDict:
     """Test _task_to_status_dict helper (Issue #2748 DRY fix)."""
 
     def test_produces_correct_dict(self):
-        from nexus.system_services.scheduler.service import _task_to_status_dict
+        from nexus.services.scheduler.service import _task_to_status_dict
 
         task = _make_task(
             task_id="t-123",
@@ -566,7 +564,7 @@ class TestTaskColumnsConstant:
     """Test _TASK_COLUMNS DRY constant (Issue #2748)."""
 
     def test_task_columns_has_all_fields(self):
-        from nexus.system_services.scheduler.queue import _TASK_COLUMNS
+        from nexus.services.scheduler.queue import _TASK_COLUMNS
 
         required = [
             "id::text",
@@ -601,7 +599,7 @@ class TestNotifyPayload:
 
     @pytest.mark.asyncio
     async def test_enqueue_sends_json_notify(self):
-        from nexus.system_services.scheduler.queue import TaskQueue
+        from nexus.services.scheduler.queue import TaskQueue
 
         queue = TaskQueue()
         conn = AsyncMock()

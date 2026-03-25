@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from nexus.system_services.lifecycle.dedup_work_queue import (
+from nexus.services.lifecycle.dedup_work_queue import (
     DedupWorkQueue,
     ShutdownError,
     run_worker,

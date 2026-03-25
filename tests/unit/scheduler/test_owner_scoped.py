@@ -16,11 +16,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.system_services.scheduler.constants import PriorityTier
-from nexus.system_services.scheduler.models import ScheduledTask
-from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
-from nexus.system_services.scheduler.queue import TaskQueue
-from nexus.system_services.scheduler.service import SchedulerService
+from nexus.services.scheduler.constants import PriorityTier
+from nexus.services.scheduler.models import ScheduledTask
+from nexus.services.scheduler.policies.fair_share import FairShareCounter
+from nexus.services.scheduler.queue import TaskQueue
+from nexus.services.scheduler.service import SchedulerService
 
 # =============================================================================
 # Fixtures

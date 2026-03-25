@@ -19,13 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.backends.storage.local_connector import LocalConnectorBackend
+from nexus.services.event_bus.types import FileEvent, FileEventType
+from nexus.services.sync.change_log_store import ChangeLogStore
+from nexus.services.sync.conflict_log_store import ConflictLogStore
+from nexus.services.sync.conflict_resolution import ConflictStrategy
+from nexus.services.sync.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
+from nexus.services.sync.write_back_service import WriteBackService
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
-from nexus.system_services.sync.change_log_store import ChangeLogStore
-from nexus.system_services.sync.conflict_log_store import ConflictLogStore
-from nexus.system_services.sync.conflict_resolution import ConflictStrategy
-from nexus.system_services.sync.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
-from nexus.system_services.sync.write_back_service import WriteBackService
 
 # =============================================================================
 # Helpers

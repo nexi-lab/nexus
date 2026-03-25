@@ -335,7 +335,7 @@ async def _register_vfs_hooks(
     _ss = services or {}
     _zl = _ss.get("zone_lifecycle")
     if _zl is not None:
-        from nexus.system_services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
+        from nexus.services.lifecycle.zone_write_guard_hook import ZoneWriteGuardHook
 
         await _enlist("zone_write_guard", ZoneWriteGuardHook(zone_lifecycle=_zl))
 
@@ -521,7 +521,7 @@ async def _register_vfs_hooks(
     # to zones being deprovisioned.
     _zl2 = _ss.get("zone_lifecycle")
     if _zl2 is not None:
-        from nexus.system_services.lifecycle.zone_writability_hook import ZoneWritabilityHook
+        from nexus.services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
         await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
@@ -530,7 +530,7 @@ async def _register_vfs_hooks(
     # Replaces _publish_file_event() direct calls — single dispatch exit point.
     # Issue #1701: event_bus injected directly via ServiceRegistry.
     # Tests use swap_service() to replace.
-    from nexus.system_services.event_bus.observer import EventBusObserver
+    from nexus.services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(event_bus=_ss.get("event_bus"))
     await _enlist("event_bus_observer", _bus_observer)
@@ -541,7 +541,7 @@ async def _register_vfs_hooks(
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
     from nexus.lib.revision_notifier import RevisionNotifier
-    from nexus.system_services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
+    from nexus.services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
 
     _rev_notifier = RevisionNotifier()
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)

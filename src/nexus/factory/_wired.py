@@ -54,7 +54,7 @@ async def _boot_wired_services(
     # --- NexusFSGateway: adapter breaking circular dep (Issue #1287) ---
     gateway: Any = None
     try:
-        from nexus.system_services.gateway import NexusFSGateway
+        from nexus.services.gateway import NexusFSGateway
 
         gateway = NexusFSGateway(nx)
         logger.debug("[BOOT:WIRED] NexusFSGateway created")
@@ -122,7 +122,7 @@ async def _boot_wired_services(
     sync_service: Any = None
     if gateway is not None:
         try:
-            from nexus.system_services.sync.sync_service import SyncService
+            from nexus.services.sync.sync_service import SyncService
 
             sync_service = SyncService(gateway)
             logger.debug("[BOOT:WIRED] SyncService created")
@@ -133,7 +133,7 @@ async def _boot_wired_services(
     sync_job_service: Any = None
     if gateway is not None and sync_service is not None:
         try:
-            from nexus.system_services.sync.sync_job_service import SyncJobService
+            from nexus.services.sync.sync_job_service import SyncJobService
 
             sync_job_service = SyncJobService(gateway, sync_service)
             logger.debug("[BOOT:WIRED] SyncJobService created")
@@ -256,7 +256,7 @@ async def _boot_wired_services(
     events_service: Any = None
     if _on("ipc"):
         try:
-            from nexus.system_services.lifecycle.events_service import EventsService
+            from nexus.services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
                 event_bus=services.get("event_bus"),
@@ -274,7 +274,7 @@ async def _boot_wired_services(
     _nx_session_factory: Any = getattr(nx, "SessionLocal", None)
     workspace_rpc_service: Any = None
     try:
-        from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
+        from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
 
         workspace_rpc_service = WorkspaceRPCService(
             workspace_manager=services["workspace_manager"],
@@ -289,7 +289,7 @@ async def _boot_wired_services(
 
     agent_rpc_service: Any = None
     try:
-        from nexus.system_services.agents.agent_rpc_service import AgentRPCService
+        from nexus.services.agents.agent_rpc_service import AgentRPCService
 
         agent_rpc_service = AgentRPCService(
             vfs=nx,
@@ -322,7 +322,7 @@ async def _boot_wired_services(
         _acp_pt = getattr(nx, "_agent_registry", None)
         if _acp_pt is not None:
             try:
-                from nexus.system_services.acp.service import AcpService
+                from nexus.services.acp.service import AcpService
 
                 _acp_service = AcpService(
                     agent_registry=_acp_pt,
@@ -339,7 +339,7 @@ async def _boot_wired_services(
         if hasattr(_acp_service, "bind_pipe_manager"):
             _acp_service.bind_pipe_manager(getattr(nx, "_pipe_manager", None))
         try:
-            from nexus.system_services.acp.acp_rpc_service import AcpRPCService
+            from nexus.services.acp.acp_rpc_service import AcpRPCService
 
             acp_rpc_service = AcpRPCService(acp_service=_acp_service)
             logger.debug("[BOOT:WIRED] AcpRPCService created")
@@ -348,7 +348,7 @@ async def _boot_wired_services(
 
     user_provisioning_service: Any = None
     try:
-        from nexus.system_services.lifecycle.user_provisioning import UserProvisioningService
+        from nexus.services.lifecycle.user_provisioning import UserProvisioningService
 
         user_provisioning_service = UserProvisioningService(
             vfs=nx,
@@ -398,7 +398,7 @@ async def _boot_wired_services(
 
     descendant_checker: Any = None
     try:
-        from nexus.system_services.namespace.descendant_access import DescendantAccessChecker
+        from nexus.services.namespace.descendant_access import DescendantAccessChecker
 
         _rebac_for_dc = services.get("rebac_manager")
         descendant_checker = DescendantAccessChecker(

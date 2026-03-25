@@ -34,7 +34,7 @@ def nexus_fs():
     list_workspaces lives on WorkspaceRPCService (Issue #2033).
     Tests call nx.service("workspace_rpc").list_workspaces() directly.
     """
-    from nexus.system_services.workspace.workspace_rpc_service import WorkspaceRPCService
+    from nexus.services.workspace.workspace_rpc_service import WorkspaceRPCService
 
     mock_registry = MagicMock()
     mock_registry.list_workspaces.return_value = []

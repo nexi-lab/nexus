@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent, FileEventType
 from nexus.lib.revision_notifier import RevisionNotifier
-from nexus.system_services.lifecycle.revision_tracking_observer import (
+from nexus.services.lifecycle.revision_tracking_observer import (
     RevisionTrackingObserver,
 )
 

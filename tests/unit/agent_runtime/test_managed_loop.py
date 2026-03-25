@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.system_services.agent_runtime.observer import AgentObserver
+from nexus.services.agent_runtime.observer import AgentObserver
 
 # =============================================================================
 # AgentObserver tests
@@ -98,7 +98,7 @@ def _make_vfs_loop(
     tools_json: str = "[]",
 ) -> tuple[Any, dict[str, AsyncMock]]:
     """Create ManagedAgentLoop with mocked VFS syscalls."""
-    from nexus.system_services.agent_runtime.managed_loop import ManagedAgentLoop
+    from nexus.services.agent_runtime.managed_loop import ManagedAgentLoop
 
     # Mock sys_read: return different content based on path
     read_store: dict[str, bytes] = {}

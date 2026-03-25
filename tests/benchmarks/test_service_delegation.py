@@ -18,7 +18,7 @@ import pytest
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.service_registry import ServiceRegistry
-from nexus.system_services.gateway import NexusFSGateway
+from nexus.services.gateway import NexusFSGateway
 
 # =============================================================================
 # Fixtures
@@ -363,7 +363,7 @@ class TestServiceInstantiation:
 
     def test_events_service_construction(self, benchmark):
         """Benchmark EventsService construction."""
-        from nexus.system_services.lifecycle.events_service import EventsService
+        from nexus.services.lifecycle.events_service import EventsService
 
         benchmark(EventsService)
 

@@ -15,7 +15,7 @@ Categories:
 References:
     - contracts/constants.py — SYSTEM_PATH_PREFIX
     - core/agent_status_resolver.py — AgentStatusResolver trie patterns
-    - system_services/acp/service.py — AcpService path conventions
+    - services/acp/service.py — AcpService path conventions
 """
 
 

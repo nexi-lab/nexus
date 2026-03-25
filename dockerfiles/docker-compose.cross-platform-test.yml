@@ -289,7 +289,7 @@ services:
         echo "Installing test dependencies..."
         pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf
         echo "Running E2E tests..."
-        python -m pytest tests/e2e/docker/ -v --no-header -o "addopts=" -x --timeout=120
+        python -m pytest tests/e2e/docker/test_federation_e2e.py tests/e2e/docker/test_raft_cluster_smoke.py -v --no-header -o "addopts=" -x --timeout=120
       '
     networks:
       - nexus-network

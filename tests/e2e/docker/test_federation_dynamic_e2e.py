@@ -17,14 +17,14 @@ Run (from inside Docker network):
     docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml logs -f test
 """
 
+import hashlib
 import re
+import struct
 import time
 import uuid
 
 import httpx
 import pytest
-
-from nexus.raft.peer_address import PeerAddress
 
 # All tests share one Docker cluster — run sequentially.
 pytestmark = [pytest.mark.xdist_group("dynamic-federation-e2e")]
@@ -36,10 +36,16 @@ NODE1_URL = "http://nexus-1:2026"
 NODE2_URL = "http://nexus-2:2026"
 HEALTH_TIMEOUT = 120
 
-# Hostname-derived node IDs (SHA-256 of hostname → u64)
+
+def _hostname_to_node_id(hostname: str) -> int:
+    """SHA-256 hostname → u64 (matches Rust/Python PeerAddress)."""
+    digest = hashlib.sha256(hostname.encode()).digest()
+    return struct.unpack("<Q", digest[:8])[0] or 1
+
+
 _NODE_ID_TO_URL: dict[int, str] = {
-    PeerAddress.hostname_to_node_id("nexus-1"): NODE1_URL,
-    PeerAddress.hostname_to_node_id("nexus-2"): NODE2_URL,
+    _hostname_to_node_id("nexus-1"): NODE1_URL,
+    _hostname_to_node_id("nexus-2"): NODE2_URL,
 }
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
 

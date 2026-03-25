@@ -32,6 +32,8 @@ class MountPanel(Widget):
         selected_index: Currently highlighted mount index.
     """
 
+    can_focus = True
+
     DEFAULT_CSS = """
     MountPanel {
         width: 30;

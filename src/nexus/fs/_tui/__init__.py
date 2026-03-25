@@ -192,11 +192,12 @@ class PlaygroundApp(App[None]):
         Binding("a", "show_connector_picker", "Add Mount"),
         Binding("c", "copy_path", "Copy path"),
         Binding("p", "preview_file", "Preview"),
-        Binding("m", "toggle_mount_panel", "Mounts"),
+        Binding("m", "focus_mount_panel", "Mounts"),
         Binding("n", "new_file", "New file"),
         Binding("N", "new_dir", "New dir", key_display="N"),
         Binding("d", "delete_selected", "Delete"),
         Binding("r", "rename_selected", "Rename"),
+        Binding("u", "unmount_selected_mount", "Unmount"),
     ]
 
     show_mount_panel: reactive[bool] = reactive(True)
@@ -466,6 +467,7 @@ class PlaygroundApp(App[None]):
             restored = f"[yellow]Restored {len(self._mount_points)} mount(s) from the previous session.[/yellow]  "
         banner.update(
             f"{restored}[bold]Add Mount:[/bold] `a`  "
+            "[bold]Mounts:[/bold] `m` focus  `u` unmount  "
             "[bold]Open:[/bold] `Enter` selected folder/file  "
             "[bold]Ops:[/bold] `n` file  `N` dir  `r` rename  `d` delete  `p` preview"
         )
@@ -928,6 +930,32 @@ class PlaygroundApp(App[None]):
         with open(mounts_file, "w") as f:
             json.dump(list(self._uris), f)
 
+    def _selected_mount_point(self) -> str | None:
+        """Return the currently selected mount point from the mount panel."""
+        try:
+            panel = self.query_one("#mount-panel", MountPanel)
+            return cast(str | None, panel.selected_mount)
+        except Exception:
+            return self._mount_points[0] if self._mount_points else None
+
+    def _uri_mount_point(self, uri: str) -> str:
+        """Compute the mount point produced by a playground URI."""
+        from pathlib import Path as _Path
+
+        from nexus.fs._uri import derive_mount_point, parse_uri
+
+        if uri.startswith("local://"):
+            raw = uri.removeprefix("local://")
+            root = _Path(raw).expanduser().resolve()
+            name = root.name or "local"
+            return f"/local/{name}"
+        if uri.startswith("s3://"):
+            raw = uri.removeprefix("s3://")
+            bucket = raw.split("/", 1)[0]
+            return f"/s3/{bucket}"
+        spec = parse_uri(uri)
+        return derive_mount_point(spec)
+
     def _mount_error_message(self, uri: str, exc: Exception) -> str:
         """Render actionable mount failures."""
         if uri.startswith("s3://"):
@@ -1287,6 +1315,62 @@ class PlaygroundApp(App[None]):
         """Toggle mount panel visibility."""
         self.show_mount_panel = not self.show_mount_panel
 
+    def action_focus_mount_panel(self) -> None:
+        """Focus the mount list for navigation and unmount actions."""
+        try:
+            panel = self.query_one("#mount-panel", MountPanel)
+        except Exception:
+            return
+        if not self.show_mount_panel:
+            self.show_mount_panel = True
+        panel.focus()
+
+    async def action_unmount_selected_mount(self) -> None:
+        """Remove the currently selected mount from the playground session."""
+        if not self._uris:
+            return
+        mount_point = self._selected_mount_point()
+        if not mount_point:
+            return
+        remaining_uris = tuple(
+            uri for uri in self._uris if self._uri_mount_point(uri) != mount_point
+        )
+        if len(remaining_uris) == len(self._uris):
+            self.notify(
+                f"Unmount failed: no mount found for {mount_point}", severity="warning", timeout=4
+            )
+            return
+
+        self._uris = remaining_uris
+        self._restored_mounts = False
+        if not remaining_uris:
+            self._fs = None
+            self._mount_points = []
+            self._persist_mounts()
+            try:
+                main = self.query_one("#main-area", Horizontal)
+                for child in list(main.children):
+                    await child.remove()
+            except Exception:
+                pass
+            empty = self.query_one("#empty-state", Static)
+            empty.display = True
+            await self._show_connector_picker("No mounts configured")
+            self.notify(f"Unmounted {mount_point}", timeout=3)
+            return
+
+        try:
+            fs = await self._build_filesystem(remaining_uris)
+        except Exception as exc:
+            self.notify(f"Unmount failed: {exc}", severity="error", timeout=4)
+            return
+
+        self._fs = fs
+        self._mount_points = fs.list_mounts()
+        self._persist_mounts()
+        await self._reset_browser_ui()
+        self.notify(f"Unmounted {mount_point}", timeout=3)
+
     def watch_show_mount_panel(self, show: bool) -> None:
         """Show/hide mount panel."""
         try:
@@ -1335,6 +1419,29 @@ class PlaygroundApp(App[None]):
 
     async def on_key(self, event: Any) -> None:
         """Handle global key events (quit, escape)."""
+        focused = self.focused
+        if isinstance(focused, MountPanel):
+            if event.key == "up":
+                focused.action_move_up()
+                event.prevent_default()
+                return
+            if event.key == "down":
+                focused.action_move_down()
+                event.prevent_default()
+                return
+            if event.key in {"enter", "return", "ctrl+m"}:
+                mount_point = focused.selected_mount
+                if mount_point:
+                    browser = self.query_one("#file-browser", FileBrowser)
+                    await browser.load_directory(mount_point)
+                    self._current_path = mount_point
+                    self._update_status_bar()
+                event.prevent_default()
+                return
+            if event.key in {"right", "tab"}:
+                self._refocus_table()
+                event.prevent_default()
+                return
         if event.key in {"enter", "return", "ctrl+m"} and await self._mount_selected_picker_uri():
             event.prevent_default()
             return

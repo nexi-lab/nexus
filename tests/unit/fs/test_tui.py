@@ -486,6 +486,27 @@ class TestPlaygroundApp:
                 assert app._mount_points == []
 
     @pytest.mark.asyncio
+    async def test_unmount_selected_mount_removes_mount(self, tmp_path):
+        """Unmount removes the selected mount from the active playground session."""
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        app = PlaygroundApp(uris=(f"local://{left}", f"local://{right}"))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            app.action_focus_mount_panel()
+            await pilot.pause(delay=0.1)
+            panel = app.query_one("#mount-panel", MountPanel)
+            panel.selected_index = 1
+            await pilot.pause(delay=0.1)
+            await app.action_unmount_selected_mount()
+            await pilot.pause(delay=0.3)
+            assert app._mount_points == [f"/local/{left.name}"]
+            assert app._uris == (f"local://{left}",)
+
+    @pytest.mark.asyncio
     async def test_browser_banner_mentions_restored_mounts(self, tmp_path):
         """Restored sessions should say so explicitly in the top banner."""
         state_dir = tmp_path / "state"

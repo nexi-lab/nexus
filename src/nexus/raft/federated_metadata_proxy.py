@@ -83,7 +83,17 @@ class FederatedMetadataProxy(MetastoreABC):
         root_store = zone_manager.get_store(root_zone_id)
         if root_store is None:
             raise RuntimeError(f"Root zone '{root_zone_id}' not found in ZoneManager")
-        self_addr = getattr(zone_manager, "advertise_addr", None)
+        # Use VFS gRPC port (default 2028) for content addressing, not Raft port (2126).
+        # FederationContentResolver uses NexusVFSService (VFS gRPC), not Raft gRPC.
+        import os as _os
+
+        raft_addr = getattr(zone_manager, "advertise_addr", None)
+        if raft_addr and ":" in raft_addr:
+            hostname = raft_addr.rsplit(":", 1)[0]
+            vfs_port = _os.environ.get("NEXUS_GRPC_PORT", "2028")
+            self_addr = f"{hostname}:{vfs_port}"
+        else:
+            self_addr = raft_addr
         return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================

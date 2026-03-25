@@ -42,7 +42,12 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True, description="Create a new Raft zone")
     def federation_create_zone(self, zone_id: str) -> dict[str, Any]:
-        self._zone_manager.create_zone(zone_id)
+        if self._federation is not None:
+            # Federation.create_zone includes all cluster peers in the Raft group
+            self._federation.create_zone(zone_id)
+        else:
+            # Fallback: single-node (no peers)
+            self._zone_manager.create_zone(zone_id)
         logger.info("Zone '%s' created via RPC", zone_id)
         return {"zone_id": zone_id, "created": True}
 
@@ -87,11 +92,16 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True, description="Mount a zone at a path in another zone")
     def federation_mount(self, parent_zone: str, path: str, target_zone: str) -> dict[str, Any]:
-        self._zone_manager.mount(parent_zone, path, target_zone)
+        # Resolve global path → zone-relative path for non-root zones.
+        # User gives global path (e.g. "/corp/eng"), zone_manager needs
+        # zone-relative path (e.g. "/eng" in zone "corp").
+        zone_path = self._to_zone_relative(parent_zone, path)
+        self._zone_manager.mount(parent_zone, zone_path, target_zone)
         logger.info(
-            "Zone '%s' mounted at '%s' in zone '%s' via RPC",
+            "Zone '%s' mounted at '%s' (zone-relative: '%s') in zone '%s' via RPC",
             target_zone,
             path,
+            zone_path,
             parent_zone,
         )
         return {
@@ -103,10 +113,43 @@ class FederationRPCService:
 
     @rpc_expose(admin_only=True, description="Unmount a zone from a path")
     def federation_unmount(self, parent_zone: str, path: str) -> dict[str, Any]:
-        self._zone_manager.unmount(parent_zone, path)
+        zone_path = self._to_zone_relative(parent_zone, path)
+        self._zone_manager.unmount(parent_zone, zone_path)
         logger.info("Unmounted '%s' from zone '%s' via RPC", path, parent_zone)
         return {
             "parent_zone_id": parent_zone,
             "mount_path": path,
             "unmounted": True,
         }
+
+    def _to_zone_relative(self, zone_id: str, global_path: str) -> str:
+        """Convert global path to zone-relative path.
+
+        For root zone, global and zone-relative are the same.
+        For non-root zones, strip the mount prefix.
+
+        Example: zone="corp" mounted at "/corp" → "/corp/eng" becomes "/eng"
+        """
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        root_zone = self._zone_manager.root_zone_id or ROOT_ZONE_ID
+        if zone_id == root_zone:
+            return global_path
+
+        # Find where this zone is mounted by scanning root zone's metastore
+        root_store = self._zone_manager.get_store(root_zone)
+        if root_store is None:
+            return global_path
+
+        # Walk path prefixes to find mount point for this zone
+        parts = global_path.strip("/").split("/")
+        for i in range(len(parts)):
+            prefix = "/" + "/".join(parts[: i + 1])
+            meta = root_store.get(prefix)
+            if meta is not None and meta.is_mount and meta.target_zone_id == zone_id:
+                # Strip mount prefix
+                relative = global_path[len(prefix) :]
+                return relative if relative else "/"
+
+        # No mount found — assume path is already zone-relative
+        return global_path

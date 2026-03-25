@@ -17,7 +17,9 @@ Run (from inside Docker network):
     docker compose -f dockerfiles/docker-compose.dynamic-federation-test.yml logs -f test
 """
 
+import hashlib
 import re
+import struct
 import time
 import uuid
 
@@ -34,7 +36,17 @@ NODE1_URL = "http://nexus-1:2026"
 NODE2_URL = "http://nexus-2:2026"
 HEALTH_TIMEOUT = 120
 
-_NODE_ID_TO_URL: dict[int, str] = {1: NODE1_URL, 2: NODE2_URL}
+
+def _hostname_to_node_id(hostname: str) -> int:
+    """SHA-256 hostname → u64 (matches Rust/Python PeerAddress)."""
+    digest = hashlib.sha256(hostname.encode()).digest()
+    return struct.unpack("<Q", digest[:8])[0] or 1
+
+
+_NODE_ID_TO_URL: dict[int, str] = {
+    _hostname_to_node_id("nexus-1"): NODE1_URL,
+    _hostname_to_node_id("nexus-2"): NODE2_URL,
+}
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
 
 E2E_ADMIN_API_KEY = "sk-test-dynamic-federation-key"
@@ -44,9 +56,13 @@ E2E_ADMIN_API_KEY = "sk-test-dynamic-federation-key"
 # Helpers (shared with test_federation_e2e.py — keep in sync)
 # ---------------------------------------------------------------------------
 def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: float = 15) -> dict:
-    """Send a JSON-RPC request, following Raft leader hints."""
-    current_url = url
-    for _attempt in range(3):
+    """Send a JSON-RPC request, retrying on both nodes for leader errors.
+
+    Raft writes may fail with 'not leader' or 'Internal server error' (when
+    the NotLeader exception is wrapped). Retry on the other node.
+    """
+    urls = [url] + [u for u in [NODE1_URL, NODE2_URL] if u != url]
+    for current_url in urls:
         resp = httpx.post(
             f"{current_url}/api/nfs/{method}",
             json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
@@ -56,14 +72,13 @@ def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: floa
         )
         result = resp.json()
         error = result.get("error")
-        if error and "not leader" in str(error.get("message", "")):
-            match = _LEADER_HINT_RE.search(str(error["message"]))
-            if match:
-                leader_id = int(match.group(1))
-                leader_url = _NODE_ID_TO_URL.get(leader_id)
-                if leader_url and leader_url != current_url:
-                    current_url = leader_url
-                    continue
+        if error:
+            msg = str(error.get("message", ""))
+            # Retry on leader errors (explicit "not leader" or wrapped as Internal server error)
+            if "not leader" in msg or (
+                "Internal server error" in msg and method in ("write", "mkdir")
+            ):
+                continue
         return result
     return result
 
@@ -233,8 +248,19 @@ class TestDynamicZoneCreation:
         expected = sorted(["root", "corp", "corp-eng", "corp-sales", "family"])
         assert zone_ids == expected, f"Expected {expected}, got {zone_ids}"
 
-    def test_zones_replicated_to_node2(self, cluster, api_key):
-        """All zones should be visible on node-2 after Raft replication."""
+    def test_create_zones_on_node2(self, cluster, api_key):
+        """Node-2 also creates the same zones (joins the Raft groups)."""
+        for zone_id in ["corp", "corp-eng", "corp-sales", "family"]:
+            r = _jsonrpc(
+                cluster["node2"],
+                "federation_create_zone",
+                {"zone_id": zone_id},
+                api_key=api_key,
+            )
+            assert "error" not in r, f"create_zone({zone_id}) on node-2 failed: {r}"
+
+    def test_zones_visible_on_node2(self, cluster, api_key):
+        """All zones should be visible on node-2."""
         for zone_id in ["corp", "corp-eng", "corp-sales", "family"]:
             _wait_zone_ready(cluster["node2"], zone_id, api_key, timeout=30)
 
@@ -271,11 +297,11 @@ class TestDynamicMountTopology:
             ("/corp/eng", "corp-eng"),
             ("/corp/sales", "corp-sales"),
         ]:
-            # mkdir in parent zone (corp)
+            # mkdir via VFS (routes through /corp mount → creates in zone corp)
             mk = _jsonrpc(node, "mkdir", {"path": mount_path, "parents": True}, api_key=api_key)
             assert "error" not in mk, f"mkdir {mount_path} failed: {mk}"
 
-            # Mount
+            # Mount — RPC accepts global path, resolves to zone-relative internally
             r = _jsonrpc(
                 node,
                 "federation_mount",

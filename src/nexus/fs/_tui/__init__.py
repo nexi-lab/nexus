@@ -1175,8 +1175,6 @@ class PlaygroundApp(App[None]):
 
     async def action_submit_command(self) -> None:
         """Submit the current command buffer."""
-        if await self._mount_selected_picker_uri():
-            return
         if self.picker_input_visible:
             picker_input = self.query_one("#picker-input", Input)
             value = picker_input.value.strip()
@@ -1184,6 +1182,8 @@ class PlaygroundApp(App[None]):
                 await self._mount_uri(value)
             else:
                 self.notify("Mount URI is required.", severity="warning", timeout=4)
+            return
+        if await self._mount_selected_picker_uri():
             return
         if not self.command_visible:
             return

@@ -26,7 +26,6 @@ class StartupPhase(StrEnum):
     REALTIME = "realtime"
     SEARCH = "search"
     SERVICES = "services"
-    BRICKS = "bricks"
     UPLOADS = "uploads"
     IPC = "ipc"
     GRPC = "grpc"

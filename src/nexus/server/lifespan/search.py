@@ -200,26 +200,6 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 _dispatch.register_intercept_rename(_SearchRenameHook())
                 logger.info("Search auto-index hooks registered (write/delete/rename)")
 
-        # Issue #2036: Register with BrickLifecycleManager
-        _blm = svc.brick_lifecycle_manager
-        if _blm is not None:
-            try:
-                from nexus.bricks.search.lifecycle_adapter import (
-                    SearchBrickLifecycleAdapter,
-                )
-
-                _blm.register(
-                    "search",
-                    SearchBrickLifecycleAdapter(app.state.search_daemon),
-                    protocol_name="SearchBrickProtocol",
-                )
-            except ImportError:
-                logger.debug("SearchBrickLifecycleAdapter not available, skipping registration")
-            except Exception:
-                logger.warning(
-                    "Failed to register search brick with lifecycle manager", exc_info=True
-                )
-
         stats = app.state.search_daemon.get_stats()
         logger.info(
             "Search Daemon started: backend=%s, startup=%.1fms",

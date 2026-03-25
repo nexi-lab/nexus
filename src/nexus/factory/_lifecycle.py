@@ -162,8 +162,6 @@ async def _do_link(
         ("workspace_registry", "workspace_registry"),
         ("mount_manager", "mount_manager"),
         ("audit_store", "audit_store"),
-        ("brick_lifecycle_manager", "brick_lifecycle_manager"),
-        ("brick_reconciler", "brick_reconciler"),
         ("async_namespace_manager", "async_namespace_manager"),
         ("workspace_manager", "workspace_manager"),
     ):

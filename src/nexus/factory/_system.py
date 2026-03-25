@@ -363,27 +363,6 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
-    # --- Brick Lifecycle Manager (Issue #1704) ---
-    brick_lifecycle_manager: Any = None
-    try:
-        from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
-
-        brick_lifecycle_manager = BrickLifecycleManager()
-        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
-
-    # --- Brick Reconciler (Issue #2060) ---
-    brick_reconciler: Any = None
-    if brick_lifecycle_manager is not None:
-        try:
-            from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
-
-            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
-            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
-
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     tiger_cache_manager: Any = None
     try:
@@ -478,8 +457,6 @@ def _boot_system_services(
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
-        "brick_lifecycle_manager": brick_lifecycle_manager,
-        "brick_reconciler": brick_reconciler,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
     }

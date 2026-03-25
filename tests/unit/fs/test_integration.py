@@ -25,6 +25,7 @@ from nexus.contracts.types import OperationContext
 from nexus.core.config import BrickServices, KernelServices, PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.router import PathRouter
+from nexus.fs import _make_mount_entry
 from nexus.fs._facade import SlimNexusFS
 from nexus.fs._sqlite_meta import SQLiteMetastore
 
@@ -48,26 +49,7 @@ def slim_fs(tmp_path: Path):
     router.add_mount("/local", backend)
 
     # Create DT_MOUNT entry so stat("/local") works
-    from datetime import UTC, datetime
-
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.core.hash_fast import hash_content
-
-    metastore.put(
-        FileMetadata(
-            path="/local",
-            backend_name=backend.name,
-            physical_path=hash_content(b""),
-            size=0,
-            etag=hash_content(b""),
-            mime_type="inode/directory",
-            created_at=datetime.now(UTC),
-            modified_at=datetime.now(UTC),
-            version=1,
-            zone_id=ROOT_ZONE_ID,
-            entry_type=2,  # DT_MOUNT
-        )
-    )
+    metastore.put(_make_mount_entry("/local", backend.name))
 
     # Kernel
     kernel = NexusFS(
@@ -107,27 +89,8 @@ def dual_fs(tmp_path: Path):
     router.add_mount("/b", backend_b)
 
     # Create DT_MOUNT entries
-    from datetime import UTC, datetime
-
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.core.hash_fast import hash_content
-
     for mp, be in [("/a", backend_a), ("/b", backend_b)]:
-        metastore.put(
-            FileMetadata(
-                path=mp,
-                backend_name=be.name,
-                physical_path=hash_content(b""),
-                size=0,
-                etag=hash_content(b""),
-                mime_type="inode/directory",
-                created_at=datetime.now(UTC),
-                modified_at=datetime.now(UTC),
-                version=1,
-                zone_id=ROOT_ZONE_ID,
-                entry_type=2,  # DT_MOUNT
-            )
-        )
+        metastore.put(_make_mount_entry(mp, be.name))
 
     kernel = NexusFS(
         metadata_store=metastore,

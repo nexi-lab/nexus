@@ -111,32 +111,29 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     # Create all backends
     backends = [(mp, _create_backend(spec)) for spec, mp in resolved_mounts]
 
-    # Use first backend as root for factory boot (Issue #1801: unified boot path)
+    # Slim kernel boot — direct construction, no factory dependency.
+    # Factory pulls in nexus.bricks/cache/system_services which are excluded
+    # from the slim wheel. Issue #3326.
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
-    from nexus.core.config import PermissionConfig
-    from nexus.factory import create_nexus_fs
+    from nexus.core.config import BrickServices, KernelServices, PermissionConfig
+    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.router import PathRouter
 
-    _slim_cred = OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True)
+    router = PathRouter(metastore)
     _first_mp, _first_backend = backends[0]
 
-    kernel = await create_nexus_fs(
-        backend=_first_backend,
+    # Mount all backends on the router
+    for mp, backend in backends:
+        router.add_mount(mp, backend)
+
+    kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        is_admin=True,
-        enabled_bricks=frozenset(),  # SLIM profile: no bricks
-        init_cred=_slim_cred,
+        kernel_services=KernelServices(router=router),
+        brick_services=BrickServices(),
+        init_cred=OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
-
-    # Mount remaining backends (factory already mounted first at "/")
-    from datetime import UTC, datetime
-
-    from nexus.contracts.metadata import FileMetadata
-    from nexus.core.hash_fast import hash_content
-
-    empty_hash = hash_content(b"")
-    now = datetime.now(UTC)
 
     # Persist mount URIs so playground can auto-discover them later
     import json
@@ -148,43 +145,9 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     except OSError:
         pass  # Best-effort; don't fail mount() over this
 
-    # Create DT_MOUNT entry for first backend at its derived path
-    if _first_mp != "/":
-        kernel.router.add_mount(_first_mp, _first_backend)
-    metastore.put(
-        FileMetadata(
-            path=_first_mp,
-            backend_name=_first_backend.name,
-            physical_path=empty_hash,
-            size=0,
-            etag=empty_hash,
-            mime_type="inode/directory",
-            created_at=now,
-            modified_at=now,
-            version=1,
-            zone_id=ROOT_ZONE_ID,
-            entry_type=2,  # DT_MOUNT
-        )
-    )
-
-    # Additional mounts
-    for mp, backend in backends[1:]:
-        kernel.router.add_mount(mp, backend)
-        metastore.put(
-            FileMetadata(
-                path=mp,
-                backend_name=backend.name,
-                physical_path=empty_hash,
-                size=0,
-                etag=empty_hash,
-                mime_type="inode/directory",
-                created_at=now,
-                modified_at=now,
-                version=1,
-                zone_id=ROOT_ZONE_ID,
-                entry_type=2,  # DT_MOUNT
-            )
-        )
+    # Create DT_MOUNT metadata entries for each mount point
+    for mp, backend in backends:
+        metastore.put(_make_mount_entry(mp, backend.name))
 
     return SlimNexusFS(kernel)
 
@@ -328,3 +291,31 @@ def _discover_connector_module(scheme: str) -> None:
             return
         except ImportError:
             continue
+
+
+def _make_mount_entry(path: str, backend_name: str) -> Any:
+    """Create a DT_MOUNT FileMetadata entry for a mount point.
+
+    Shared by mount() and tests to avoid repeating the 13-field construction.
+    """
+    from datetime import UTC, datetime
+
+    from nexus.contracts.constants import ROOT_ZONE_ID
+    from nexus.contracts.metadata import FileMetadata
+    from nexus.core.hash_fast import hash_content
+
+    empty_hash = hash_content(b"")
+    now = datetime.now(UTC)
+    return FileMetadata(
+        path=path,
+        backend_name=backend_name,
+        physical_path=empty_hash,
+        size=0,
+        etag=empty_hash,
+        mime_type="inode/directory",
+        created_at=now,
+        modified_at=now,
+        version=1,
+        zone_id=ROOT_ZONE_ID,
+        entry_type=2,  # DT_MOUNT
+    )

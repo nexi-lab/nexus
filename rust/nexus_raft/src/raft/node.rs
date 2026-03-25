@@ -383,21 +383,45 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             .initial_state()
             .map_err(|e| RaftError::Storage(e.to_string()))?;
 
-        if initial_state.conf_state.voters.is_empty() && !config.skip_bootstrap {
-            // Bootstrap: create initial voter set for a NEW cluster.
-            // Joining nodes (skip_bootstrap=true) must NOT bootstrap — they
-            // start uninitialized and receive the correct ConfState via
-            // snapshot from the leader (per raft contract).
+        if !config.skip_bootstrap {
+            // Build the expected voter set from config.
             let mut voters = vec![config.id];
             voters.extend(config.peers.iter());
-            let cs = ConfState {
-                voters: voters.clone(),
-                ..Default::default()
+
+            let needs_bootstrap = if initial_state.conf_state.voters.is_empty() {
+                // Fresh cluster — no ConfState in storage yet.
+                true
+            } else if config.peers.is_empty() && initial_state.conf_state.voters != vec![config.id]
+            {
+                // Single-node restart with STALE ConfState from a previous
+                // multi-node cluster (e.g. Docker container restarted with
+                // different node ID but persistent storage). Force-reset to
+                // just [self.id] so raft-rs doesn't send messages to phantom
+                // peers that no longer exist.
+                tracing::warn!(
+                    "Stale ConfState detected (voters={:?}, expected={:?}) — resetting for single-node",
+                    initial_state.conf_state.voters,
+                    voters,
+                );
+                true
+            } else {
+                false
             };
-            storage
-                .set_conf_state(&cs)
-                .map_err(|e| RaftError::Storage(format!("failed to set initial ConfState: {e}")))?;
-            tracing::info!("Bootstrapped ConfState with voters: {:?}", voters);
+
+            if needs_bootstrap {
+                // Bootstrap: create initial voter set.
+                // Joining nodes (skip_bootstrap=true) must NOT bootstrap — they
+                // start uninitialized and receive the correct ConfState via
+                // snapshot from the leader (per raft contract).
+                let cs = ConfState {
+                    voters: voters.clone(),
+                    ..Default::default()
+                };
+                storage.set_conf_state(&cs).map_err(|e| {
+                    RaftError::Storage(format!("failed to set initial ConfState: {e}"))
+                })?;
+                tracing::info!("Bootstrapped ConfState with voters: {:?}", voters);
+            }
         }
 
         let raft_config = config.to_raft_config();

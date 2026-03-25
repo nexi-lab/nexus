@@ -84,7 +84,9 @@ class VirtualViewResolver(VFSPathResolver):
         """Read virtual parsed view, or return None if not a virtual view."""
         from nexus.lib.virtual_views import get_parsed_content, parse_virtual_path
 
-        original_path, view_type = parse_virtual_path(path, self._metadata.exists)
+        # Single metastore lookup: metadata.get returns FileMetadata (truthy)
+        # or None (falsy). parse_virtual_path passes the result through.
+        original_path, view_type, meta = parse_virtual_path(path, self._metadata.get)
         if view_type != "md":
             return None
 
@@ -96,7 +98,6 @@ class VirtualViewResolver(VFSPathResolver):
         # Route and read original file content
         is_admin = bool(getattr(context, "is_admin", False)) if context else False
         route = self._path_router.route(original_path, is_admin=is_admin, check_write=False)
-        meta = self._metadata.get(original_path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(original_path)
 
@@ -127,7 +128,7 @@ class VirtualViewResolver(VFSPathResolver):
         """Virtual views are read-only — raise if virtual view, else return None."""
         from nexus.lib.virtual_views import parse_virtual_path
 
-        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        _, view_type, _ = parse_virtual_path(path, self._metadata.exists)
         if view_type == "md":
             raise NexusFileNotFoundError(
                 f"Cannot write to virtual view: {path} ({len(content)} bytes)"
@@ -139,7 +140,7 @@ class VirtualViewResolver(VFSPathResolver):
         from nexus.lib.virtual_views import parse_virtual_path
 
         _ = context
-        _, view_type = parse_virtual_path(path, self._metadata.exists)
+        _, view_type, _ = parse_virtual_path(path, self._metadata.exists)
         if view_type == "md":
             raise NexusFileNotFoundError(f"Cannot delete virtual view: {path}")
         return None

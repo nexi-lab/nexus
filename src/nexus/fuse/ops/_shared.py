@@ -285,7 +285,8 @@ def parse_virtual_path_for_fuse(ctx: FUSESharedContext, path: str) -> tuple[str,
     def _sync_access(p: str) -> bool:
         return _run_sync(ctx.nexus_fs.sys_access(p))
 
-    return parse_virtual_path(path, _sync_access)
+    original_path, view_type, _ = parse_virtual_path(path, _sync_access)
+    return original_path, view_type
 
 
 async def get_file_content(

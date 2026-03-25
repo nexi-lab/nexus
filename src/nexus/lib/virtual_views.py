@@ -50,25 +50,30 @@ PARSEABLE_EXTENSIONS = {
 }
 
 
-def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str, str | None]:
-    """Parse virtual path to extract original path and view type.
+def parse_virtual_path(path: str, check_fn: Callable[[str], Any]) -> tuple[str, str | None, Any]:
+    """Parse virtual path to extract original path, view type, and check result.
 
     Args:
         path: Virtual path (e.g., "/file_parsed.xlsx.md" or "/document_parsed.pdf.md")
-        exists_fn: Function to check if a path exists
+        check_fn: Function to verify the original file exists.  Can be:
+            - ``metadata.exists`` (returns bool) — for simple existence checks
+            - ``metadata.get``   (returns FileMetadata | None) — when the caller
+              needs the metadata anyway (avoids a redundant second lookup)
+            The result is tested for truthiness and passed through as the
+            third element of the return tuple.
 
     Returns:
-        Tuple of (original_path, view_type)
+        Tuple of (original_path, view_type, check_result)
         - original_path: Original file path without virtual suffix
         - view_type: "md" or None for raw/binary access
+        - check_result: Return value of check_fn(original_path), or None
+          when the path is not a virtual view
 
     Examples:
         >>> parse_virtual_path("/file_parsed.xlsx.md", exists_fn)
-        ("/file.xlsx", "md")
+        ("/file.xlsx", "md", True)
         >>> parse_virtual_path("/file.txt", exists_fn)
-        ("/file.txt", None)  # Actual .txt file, not a virtual view
-        >>> parse_virtual_path("/file_parsed.xlsx", exists_fn)
-        ("/file_parsed.xlsx", None)  # Missing .md extension
+        ("/file.txt", None, None)
     """
     # Handle _parsed.{ext}.md virtual views
     # Pattern: file_parsed.{ext}.md → file.{ext}
@@ -97,11 +102,13 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
 
                 # Only treat as virtual view if the extension is parseable
                 # and the original file exists
-                if original_ext in PARSEABLE_EXTENSIONS and exists_fn(original_path):
-                    return (original_path, "md")
+                if original_ext in PARSEABLE_EXTENSIONS:
+                    result = check_fn(original_path)
+                    if result:
+                        return (original_path, "md", result)
 
     # Not a virtual view, return as-is
-    return (path, None)
+    return (path, None, None)
 
 
 def get_parsed_content(

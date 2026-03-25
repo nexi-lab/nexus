@@ -12,12 +12,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.contracts.protocols.brick_lifecycle import BrickState
 from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.contracts.protocols.service_lifecycle import HotSwappable, PersistentService
 from nexus.core.kernel_dispatch import KernelDispatch
 from nexus.core.service_registry import ServiceRegistry
-from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -30,20 +28,13 @@ def registry() -> ServiceRegistry:
 
 
 @pytest.fixture()
-def blm() -> BrickLifecycleManager:
-    return BrickLifecycleManager()
-
-
-@pytest.fixture()
 def dispatch() -> KernelDispatch:
     return KernelDispatch()
 
 
 @pytest.fixture()
-def coordinator(blm: BrickLifecycleManager, dispatch: KernelDispatch) -> ServiceRegistry:
-    reg = ServiceRegistry(dispatch=dispatch)
-    reg.set_lifecycle_manager(blm)
-    return reg
+def coordinator(dispatch: KernelDispatch) -> ServiceRegistry:
+    return ServiceRegistry(dispatch=dispatch)
 
 
 class _FakeService:
@@ -149,23 +140,16 @@ class _BothProtocolsService:
 
 
 class TestRegisterService:
-    def test_registers_in_both_registry_and_blm(
+    def test_registers_in_registry(
         self,
         coordinator: ServiceRegistry,
-        blm: BrickLifecycleManager,
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc, exports=("glob", "grep"))
-        # ServiceRegistry
         info = coordinator.service_info("search")
         assert info is not None
         assert info.instance is svc
         assert info.exports == ("glob", "grep")
-        # BLM — protocol_name is now always type(instance).__name__
-        status = blm.get_status("search")
-        assert status is not None
-        assert status.state == BrickState.REGISTERED
-        assert status.protocol_name == "_FakeService"
 
     def test_stores_hook_spec(self, coordinator: ServiceRegistry) -> None:
         svc = _FakeService()
@@ -240,7 +224,6 @@ class TestUnregisterServiceFull:
     async def test_full_unregister(
         self,
         coordinator: ServiceRegistry,
-        blm: BrickLifecycleManager,
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
@@ -249,8 +232,6 @@ class TestUnregisterServiceFull:
 
         # Gone from registry
         assert coordinator.service("search") is None
-        # Gone from BLM
-        assert blm.get_status("search") is None
 
 
 # ---------------------------------------------------------------------------
@@ -923,18 +904,16 @@ class TestEnlist:
     async def test_enlist_with_depends_on(
         self,
         coordinator: ServiceRegistry,
-        blm: BrickLifecycleManager,
     ) -> None:
-        """enlist passes depends_on to BLM for dependency ordering."""
+        """enlist with depends_on registers without error."""
         dep = _FakeService()
         await coordinator.enlist("dep", dep)
 
         svc = _PersistentFakeService()
         await coordinator.enlist("child", svc, depends_on=("dep",))
 
-        spec = blm.get_spec("child")
-        assert spec is not None
-        assert "dep" in spec.depends_on
+        info = coordinator.service_info("child")
+        assert info is not None
 
 
 # ---------------------------------------------------------------------------

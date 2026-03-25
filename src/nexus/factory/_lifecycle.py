@@ -121,9 +121,6 @@ async def _do_link(
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
-    # BLM is optional — inject via set_lifecycle_manager().
-    _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    nx._service_registry.set_lifecycle_manager(_blm)
     await enlist_wired_services(nx._service_registry, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
@@ -359,14 +356,6 @@ async def _do_initialize(
         brick_on=brick_on,
         parse_fn=parse_fn,
     )
-
-    # --- BLM registration for late bricks (Issue #1704, #2991) ---
-    _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    if _blm is not None:
-        from nexus.factory._helpers import _register_late_bricks
-
-        _cache_brick = getattr(nx._brick_services, "cache_brick", None)
-        _register_late_bricks(_blm, {"cache": _cache_brick})
 
     # --- Register background services as bootstrap callbacks ---
     # TL directive: initialize() prepares resources but stays static.

@@ -90,7 +90,6 @@ def create_nexus_services(
     from nexus.core.config import SystemServices as _SystemServices
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
-    from nexus.factory._helpers import _register_factory_bricks
     from nexus.factory._kernel import _boot_kernel_services
     from nexus.factory._system import _boot_system_services
 
@@ -162,11 +161,6 @@ def create_nexus_services(
     _boot_dependent_bricks(ctx, system_dict, brick_dict)
 
     # --- Background threads deferred to NexusFS.initialize() ---
-
-    # --- Register factory-created bricks with lifecycle manager (Issue #1704) ---
-    _blm = system_dict.get("brick_lifecycle_manager")
-    if _blm is not None:
-        _register_factory_bricks(_blm, brick_dict)
 
     # --- Assemble 3-tier containers (Issue #2034, #2193) ---
     kernel_services = _KernelServices(router=router)

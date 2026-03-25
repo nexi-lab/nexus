@@ -228,9 +228,6 @@ class SystemServices:
     # Workspace branching (Issue #1315)
     context_branch_service: Any = None
 
-    # Brick lifecycle (Issue #1704)
-    brick_lifecycle_manager: Any = None
-
     # Event delivery (Issue #1241)
     delivery_worker: Any = None
 
@@ -242,9 +239,6 @@ class SystemServices:
 
     # (EvictionManager is deferred to _do_link() — depends on kernel-owned
     # AgentRegistry.  Stored on nx._eviction_manager, not SystemServices.)
-
-    # Brick reconciler — drift detection and self-healing (Issue #2060)
-    brick_reconciler: Any = None
 
     # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
     zone_lifecycle: Any = None

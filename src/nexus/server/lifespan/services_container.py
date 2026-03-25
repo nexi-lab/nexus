@@ -55,8 +55,6 @@ class LifespanServices:
     agent_registry: Any = None
 
     # --- System services (from nexus_fs._system_services) ----------------
-    brick_lifecycle_manager: Any = None
-    brick_reconciler: Any = None
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
@@ -134,8 +132,6 @@ class LifespanServices:
             # All services from ServiceRegistry
             delivery_worker=_svc("delivery_worker"),
             event_signal=None,
-            brick_lifecycle_manager=_svc("brick_lifecycle_manager"),
-            brick_reconciler=_svc("brick_reconciler"),
             eviction_manager=_svc("eviction_manager"),
             write_observer=_svc("write_observer"),
             zone_lifecycle=_svc("zone_lifecycle"),

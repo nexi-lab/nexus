@@ -58,8 +58,6 @@ class NexusAppState:
 
     # === Flattened from SystemServices ===
     observability_subsystem: Any = None
-    brick_lifecycle_manager: Any = None
-    brick_reconciler: Any = None
     eviction_manager: Any = None
 
     # === Database sessions ===

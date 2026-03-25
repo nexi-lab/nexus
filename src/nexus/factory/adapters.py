@@ -96,32 +96,3 @@ class _NexusFSFileReader:
         with self._nx.SessionLocal() as s:
             content_hash = s.execute(stmt).scalar_one_or_none()
             return content_hash
-
-
-# ---------------------------------------------------------------------------
-# Issue #1704: WorkflowEngine lifecycle adapter
-# ---------------------------------------------------------------------------
-
-
-class _WorkflowLifecycleAdapter:
-    """Adapter: BrickLifecycleProtocol -> WorkflowEngine.
-
-    WorkflowEngine exposes ``startup()`` but BrickLifecycleManager expects
-    ``start()``.  This thin adapter bridges the naming mismatch.
-    """
-
-    def __init__(self, engine: Any) -> None:
-        self._engine = engine
-
-    async def start(self) -> None:
-        if hasattr(self._engine, "startup"):
-            await self._engine.startup()
-
-    async def stop(self) -> None:
-        pass  # WorkflowEngine has no explicit shutdown
-
-    async def health_check(self) -> bool:
-        if hasattr(self._engine, "health_check"):
-            result: bool = await self._engine.health_check()
-            return result
-        return self._engine is not None

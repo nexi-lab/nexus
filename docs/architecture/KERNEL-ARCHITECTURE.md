@@ -100,9 +100,17 @@ kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
 scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
 
-**Service → Kernel wiring pattern:** Factory captures service references in
-`functools.partial` closures. The kernel receives injected callables/sentinels
-— never reads service containers directly.
+**Kernel DI patterns** (two mechanisms, never reads service containers directly):
+
+| Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
+|---------|-------------------|---------------------|---------|
+| **Kernel owns** | Creates instance | — | VFSLockManager, KernelDispatch, PipeManager, StreamManager, ServiceRegistry, DriverLifecycleCoordinator |
+| **Kernel knows** (sentinel) | `self._x = None` (or AllowAll default) | Injects real value; `None` = graceful degrade | `_permission_enforcer`, `_descendant_checker`, `_distributed_lock_manager`, `_agent_registry` |
+
+"Kernel knows" follows the Linux LSM pattern: kernel declares a default (allow-all
+or None), factory overrides at link-time. The kernel never imports service-layer
+modules — it uses what it's given, or degrades gracefully without it.
+
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 

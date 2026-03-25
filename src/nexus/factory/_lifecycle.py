@@ -121,9 +121,6 @@ async def _do_link(
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
-    # BLM is optional — inject via set_lifecycle_manager().
-    _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    nx._service_registry.set_lifecycle_manager(_blm)
     await enlist_wired_services(nx._service_registry, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
@@ -165,8 +162,6 @@ async def _do_link(
         ("workspace_registry", "workspace_registry"),
         ("mount_manager", "mount_manager"),
         ("audit_store", "audit_store"),
-        ("brick_lifecycle_manager", "brick_lifecycle_manager"),
-        ("brick_reconciler", "brick_reconciler"),
         ("async_namespace_manager", "async_namespace_manager"),
         ("workspace_manager", "workspace_manager"),
     ):
@@ -263,7 +258,17 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
-    # Issue #1792: agent_registry close via callback (kernel-owned primitive)
+    # Issue #1792: AgentRegistry — kernel knows, factory provides.
+    # Created here (not in __init__) because no-agent profiles (REMOTE) skip it.
+    # Consumers: EvictionManager, AcpService, AgentStatusResolver.
+    try:
+        from nexus.core.agent_registry import AgentRegistry
+
+        nx._agent_registry = AgentRegistry()
+        logger.debug("[BOOT:LINK] AgentRegistry created (kernel-knows sentinel)")
+    except Exception as exc:
+        logger.debug("[BOOT:LINK] AgentRegistry unavailable: %s", exc)
+
     _pt = getattr(nx, "_agent_registry", None)
     if _pt is not None and hasattr(_pt, "close_all"):
 
@@ -279,9 +284,8 @@ async def _do_link(
     # workspace_registry directly from service registry via nx.service("workspace_registry").
 
     # --- Deferred EvictionManager + AcpService (Issue #1792) ---
-    # AgentRegistry is a kernel-owned primitive (created in NexusFS.__init__).
-    # EvictionManager and AcpService depend on it, so they are created here
-    # at link() time where nx._agent_registry is available.
+    # AgentRegistry is a kernel-knows sentinel (factory-provided at link-time).
+    # EvictionManager and AcpService depend on it — created here if available.
     _agent_reg = getattr(nx, "_agent_registry", None)
     if _agent_reg is not None:
         try:
@@ -359,14 +363,6 @@ async def _do_initialize(
         brick_on=brick_on,
         parse_fn=parse_fn,
     )
-
-    # --- BLM registration for late bricks (Issue #1704, #2991) ---
-    _blm = getattr(system_services, "brick_lifecycle_manager", None)
-    if _blm is not None:
-        from nexus.factory._helpers import _register_late_bricks
-
-        _cache_brick = getattr(nx._brick_services, "cache_brick", None)
-        _register_late_bricks(_blm, {"cache": _cache_brick})
 
     # --- Register background services as bootstrap callbacks ---
     # TL directive: initialize() prepares resources but stays static.

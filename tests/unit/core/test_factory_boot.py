@@ -64,8 +64,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "observability_subsystem",
         "resiliency_manager",
         "context_branch_service",
-        "brick_lifecycle_manager",
-        "brick_reconciler",
         "zone_lifecycle",
         "scheduler_service",
         "event_signal",

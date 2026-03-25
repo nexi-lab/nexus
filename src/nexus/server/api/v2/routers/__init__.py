@@ -2,7 +2,6 @@
 
 from nexus.server.api.v2.routers import (
     aspects,
-    bricks,
     catalog,
     conflicts,
     connectors,
@@ -18,7 +17,6 @@ from nexus.server.api.v2.routers import (
 
 __all__ = [
     "aspects",
-    "bricks",
     "catalog",
     "conflicts",
     "connectors",

@@ -363,27 +363,6 @@ def _boot_system_services(
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
-    # --- Brick Lifecycle Manager (Issue #1704) ---
-    brick_lifecycle_manager: Any = None
-    try:
-        from nexus.system_services.lifecycle.brick_lifecycle import BrickLifecycleManager
-
-        brick_lifecycle_manager = BrickLifecycleManager()
-        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
-    except Exception as exc:
-        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
-
-    # --- Brick Reconciler (Issue #2060) ---
-    brick_reconciler: Any = None
-    if brick_lifecycle_manager is not None:
-        try:
-            from nexus.system_services.lifecycle.brick_reconciler import BrickReconciler
-
-            brick_reconciler = BrickReconciler(lifecycle_manager=brick_lifecycle_manager)
-            logger.debug("[BOOT:SYSTEM] BrickReconciler created")
-        except Exception as exc:
-            logger.warning("[BOOT:SYSTEM] BrickReconciler unavailable: %s", exc)
-
     # --- Tiger Cache Manager (Issue #2133: injected via factory) ---
     tiger_cache_manager: Any = None
     try:
@@ -448,10 +427,9 @@ def _boot_system_services(
 
     # (Federation is created at link time in _lifecycle.py when nx._zone_mgr is available.)
 
-    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
-    # constructed in NexusFS.__init__ — not booted here.
-    # EvictionManager + AcpService are deferred to _do_link() where they can
-    # reference nx._agent_registry.  See Issue #1792.)
+    # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
+    # AgentRegistry is a kernel-knows sentinel, created at link-time.
+    # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 
     # =====================================================================
     # Assemble result
@@ -478,8 +456,6 @@ def _boot_system_services(
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
-        "brick_lifecycle_manager": brick_lifecycle_manager,
-        "brick_reconciler": brick_reconciler,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
     }

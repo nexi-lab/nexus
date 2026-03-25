@@ -12,9 +12,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.system_services.lifecycle.zone_finalizers.brick_drain_finalizer import (
-    BrickDrainFinalizer,
-)
 from nexus.system_services.lifecycle.zone_finalizers.cache_finalizer import CacheZoneFinalizer
 from nexus.system_services.lifecycle.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.system_services.lifecycle.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
@@ -224,72 +221,3 @@ class TestReBACZoneFinalizer:
 
 
 # ---------------------------------------------------------------------------
-# BrickDrainFinalizer (#10A — Issue #2070)
-# ---------------------------------------------------------------------------
-
-
-class TestBrickDrainFinalizer:
-    def test_finalizer_key(self):
-        blm = MagicMock()
-        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
-        assert f.finalizer_key == "nexus.core/brick-drain"
-
-    @pytest.mark.asyncio
-    async def test_delegates_to_blm_deprovision(self):
-        """BrickDrainFinalizer delegates to BrickLifecycleManager.deprovision_zone()."""
-        blm = MagicMock()
-        report = MagicMock()
-        report.bricks_drained = 3
-        report.bricks_finalized = 3
-        report.drain_errors = 0
-        report.finalize_errors = 0
-        blm.deprovision_zone = AsyncMock(return_value=report)
-
-        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
-        await f.finalize_zone("zone-1")
-
-        blm.deprovision_zone.assert_awaited_once_with("zone-1")
-
-    @pytest.mark.asyncio
-    async def test_raises_on_drain_errors(self):
-        """BrickDrainFinalizer raises RuntimeError when drain has errors."""
-        blm = MagicMock()
-        report = MagicMock()
-        report.bricks_drained = 2
-        report.bricks_finalized = 1
-        report.drain_errors = 1
-        report.finalize_errors = 0
-        blm.deprovision_zone = AsyncMock(return_value=report)
-
-        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
-        with pytest.raises(RuntimeError, match="1 error"):
-            await f.finalize_zone("zone-1")
-
-    @pytest.mark.asyncio
-    async def test_raises_on_finalize_errors(self):
-        """BrickDrainFinalizer raises RuntimeError when finalize has errors."""
-        blm = MagicMock()
-        report = MagicMock()
-        report.bricks_drained = 2
-        report.bricks_finalized = 0
-        report.drain_errors = 0
-        report.finalize_errors = 2
-        blm.deprovision_zone = AsyncMock(return_value=report)
-
-        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
-        with pytest.raises(RuntimeError, match="2 error"):
-            await f.finalize_zone("zone-1")
-
-    @pytest.mark.asyncio
-    async def test_no_errors_no_raise(self):
-        """BrickDrainFinalizer does not raise when drain/finalize succeed."""
-        blm = MagicMock()
-        report = MagicMock()
-        report.bricks_drained = 0
-        report.bricks_finalized = 0
-        report.drain_errors = 0
-        report.finalize_errors = 0
-        blm.deprovision_zone = AsyncMock(return_value=report)
-
-        f = BrickDrainFinalizer(brick_lifecycle_manager=blm)
-        await f.finalize_zone("empty-zone")  # Should not raise

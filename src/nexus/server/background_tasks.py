@@ -315,7 +315,7 @@ async def agent_eviction_task(
 
     Uses event-driven wakeup: sleeps for interval_seconds OR wakes immediately
     when eviction_manager.trigger_immediate_cycle() is called (e.g. for
-    premium agent preemption). Matches BrickReconciler pattern.
+    premium agent preemption). Uses event-driven wakeup + periodic fallback.
 
     Args:
         eviction_manager: EvictionManager instance with run_cycle() + urgent_event

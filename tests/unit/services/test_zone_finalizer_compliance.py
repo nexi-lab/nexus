@@ -18,9 +18,6 @@ from nexus.contracts.protocols.zone_lifecycle import (
     ZoneLifecycleStatus,
     ZonePhase,
 )
-from nexus.system_services.lifecycle.zone_finalizers.brick_drain_finalizer import (
-    BrickDrainFinalizer,
-)
 from nexus.system_services.lifecycle.zone_finalizers.cache_finalizer import CacheZoneFinalizer
 from nexus.system_services.lifecycle.zone_finalizers.mount_finalizer import MountZoneFinalizer
 from nexus.system_services.lifecycle.zone_finalizers.rebac_finalizer import ReBACZoneFinalizer
@@ -67,10 +64,6 @@ class TestZoneFinalizerProtocol:
 
     def test_rebac_finalizer_satisfies_protocol(self):
         f = ReBACZoneFinalizer(session_factory=MagicMock())
-        assert isinstance(f, ZoneFinalizerProtocol)
-
-    def test_brick_drain_finalizer_satisfies_protocol(self):
-        f = BrickDrainFinalizer(brick_lifecycle_manager=MagicMock())
         assert isinstance(f, ZoneFinalizerProtocol)
 
     def test_plain_object_does_not_satisfy_protocol(self):

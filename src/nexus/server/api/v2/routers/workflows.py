@@ -128,21 +128,12 @@ def _get_require_auth() -> Any:
 
 
 def _get_workflow_engine(request: Request) -> Any:
-    """Get WorkflowEngine from app state or brick lifecycle."""
+    """Get WorkflowEngine from app state or NexusFS."""
     engine = getattr(request.app.state, "workflow_engine", None)
     if not engine:
-        # Fallback: check NexusFS for workflow_engine attribute, or brick lifecycle
         nx = getattr(request.app.state, "nexus_fs", None)
         if nx is not None:
             engine = getattr(nx, "_workflow_engine", None) or getattr(nx, "workflow_engine", None)
-        if not engine:
-            blm = getattr(request.app.state, "brick_lifecycle_manager", None)
-            if blm is not None:
-                for _name, _spec, _state, _retries, brick_inst in blm.iter_bricks():
-                    if _name == "workflow_engine" and brick_inst is not None:
-                        # Unwrap lifecycle adapter if needed
-                        engine = getattr(brick_inst, "_engine", brick_inst)
-                        break
         if engine:
             request.app.state.workflow_engine = engine
     if not engine:

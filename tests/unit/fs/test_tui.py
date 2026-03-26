@@ -19,6 +19,7 @@ textual = pytest.importorskip("textual")
 from textual.widgets import DataTable  # noqa: E402
 
 from nexus.fs._tui import ContextualNexusFS, PlaygroundApp  # noqa: E402
+from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error  # noqa: E402
 from nexus.fs._tui.file_browser import (  # noqa: E402
     MAX_DISPLAY_ENTRIES,
     FileBrowser,
@@ -538,7 +539,24 @@ class TestPlaygroundApp:
         app = PlaygroundApp(uris=())
         message = app._auth_guidance("s3")
         assert "nexus-fs auth connect s3 native" in message
-        assert "/mount s3://bucket" in message
+        assert "reopen the playground and mount `s3://bucket`" in message
+
+    def test_auth_guidance_for_expired_gws(self):
+        """Expired Google auth gets explicit re-auth steps."""
+        message = auth_guidance("gws", user_email="alice@example.com", expired=True)
+        assert "Google auth expired" in message
+        assert "nexus-fs auth connect gws oauth --user-email alice@example.com" in message
+        assert "nexus-fs auth test gws" in message
+
+    def test_runtime_error_formats_expired_gws_steps(self):
+        """Browse/preview auth failures should render guided steps, not raw backend text."""
+        message = format_runtime_error(
+            "/gws/docs",
+            RuntimeError("[AUTH_EXPIRED] Using keyring backend: keyring"),
+        )
+        assert "Can't access `/gws/docs`." in message
+        assert "Google auth expired" in message
+        assert "nexus-fs auth connect gws oauth" in message
 
     @pytest.mark.asyncio
     async def test_contextual_fs_falls_back_to_backend_list_dir_for_empty_metadata(self):

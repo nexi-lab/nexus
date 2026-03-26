@@ -18,6 +18,7 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error
 from nexus.fs._tui.file_browser import FileBrowser
 from nexus.fs._tui.file_preview import FilePreview
 from nexus.fs._tui.mount_panel import MountPanel
@@ -1107,39 +1108,11 @@ class PlaygroundApp(App[None]):
 
     def _mount_error_message(self, uri: str, exc: Exception) -> str:
         """Render actionable mount failures."""
-        if uri.startswith("s3://"):
-            return f"{exc}. Run `nexus-fs auth connect s3 native` or configure AWS credentials, then retry /mount."
-        if uri.startswith("gws://"):
-            return (
-                f"{exc}. Run /auth gws for step-by-step auth guidance. "
-                "If you use multiple Google accounts, set NEXUS_FS_USER_EMAIL before mounting."
-            )
-        return str(exc)
+        return format_runtime_error(uri, exc)
 
     def _auth_guidance(self, service: str) -> str:
         """Return concise auth guidance for playground-supported backends."""
-        if service == "s3":
-            return (
-                "For S3: 1. run `nexus-fs auth connect s3 native` or set AWS credentials; "
-                "2. run `/auth test s3`; 3. run `/mount s3://bucket`."
-            )
-        if service == "gws":
-            return (
-                "For Google Workspace: 1. set NEXUS_OAUTH_GOOGLE_CLIENT_ID and "
-                "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET; 2. run `nexus-fs auth connect gws oauth "
-                "--user-email you@example.com`; 3. run `/auth test gws`; "
-                "4. if needed set `NEXUS_FS_USER_EMAIL=you@example.com`; "
-                "5. run `/mount gws://drive` or `/mount gws://gmail`; "
-                "6. for `/mount gws://chat`, re-run auth and approve Chat scopes if prompted."
-            )
-        if service == "gcs":
-            return (
-                "For GCS: 1. run `nexus-fs auth connect gcs native` or "
-                "`gcloud auth application-default login`; 2. run `/auth test gcs`."
-            )
-        if service == "local":
-            return "Local mounts do not require auth. Use `/mount local://./data`."
-        return f"No dedicated playground auth guide for {service}. Use `/connectors` to list supported targets."
+        return auth_guidance(service)
 
     def _connector_summary(self) -> str:
         """Concise supported connector summary for the command bar."""

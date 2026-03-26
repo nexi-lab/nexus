@@ -10,6 +10,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import DataTable, Static
 
+from nexus.fs._tui.auth_guidance import format_runtime_error
+
 MAX_DISPLAY_ENTRIES = 500
 
 
@@ -143,7 +145,7 @@ class FileBrowser(Widget):
             self.current_path = path
 
         except Exception as exc:
-            self._error = str(exc)
+            self._error = format_runtime_error(path, exc)
             self._entries = []
             self._total_count = 0
             overflow = self.query_one("#overflow", Static)

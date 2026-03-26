@@ -10,6 +10,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
+from nexus.fs._tui.auth_guidance import format_runtime_error
+
 MAX_PREVIEW_BYTES = 1_048_576  # 1 MB
 
 # File extensions known to be binary
@@ -248,7 +250,7 @@ class FilePreview(Widget):
             content_widget.update(syntax)
 
         except Exception as exc:
-            content_widget.update(f"[red]Preview error: {exc}[/red]")
+            content_widget.update(f"[red]Preview error: {format_runtime_error(path, exc)}[/red]")
 
     def clear_preview(self) -> None:
         """Clear the preview pane."""

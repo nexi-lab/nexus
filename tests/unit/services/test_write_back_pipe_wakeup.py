@@ -136,14 +136,21 @@ class TestPollLoopWakeup:
         """With pipe, poll loop calls wait_for_signal."""
         pm = MagicMock()
         service = _make_service(pipe_manager=pm)
+        wait_calls = 0
+
+        async def fake_wait_for_signal(*args, **kwargs):
+            nonlocal wait_calls
+            wait_calls += 1
+            # Yield so the poll loop does not hot-spin under test.
+            await asyncio.sleep(0.01)
+            return True
 
         with patch(
             "nexus.lib.pipe_wakeup.wait_for_signal",
-            new_callable=AsyncMock,
-            return_value=True,
-        ) as mock_wait:
+            new=fake_wait_for_signal,
+        ):
             await service.start()
             await asyncio.sleep(0.15)
             await service.stop()
 
-            mock_wait.assert_called()
+            assert wait_calls > 0

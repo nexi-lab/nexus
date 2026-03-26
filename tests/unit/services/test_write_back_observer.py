@@ -11,7 +11,7 @@ import pytest
 from nexus.core.file_events import FILE_EVENT_BIT
 from nexus.services.event_bus.types import FileEvent, FileEventType
 from nexus.services.sync.write_back_service import (
-    _WRITE_BACK_EVENT_MASK,
+    _WRITE_BACK_EVENT_TYPES,
     WriteBackService,
 )
 
@@ -58,7 +58,7 @@ class TestVFSObserverProtocol:
 
     def test_event_mask_includes_only_mutation_events(self):
         """event_mask includes FILE_WRITE/DELETE/RENAME/DIR_CREATE/DIR_DELETE only."""
-        mask = _WRITE_BACK_EVENT_MASK
+        mask = _WRITE_BACK_EVENT_TYPES
 
         # Should include these
         assert mask & FILE_EVENT_BIT[FileEventType.FILE_WRITE]

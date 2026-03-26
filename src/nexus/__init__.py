@@ -559,8 +559,8 @@ async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backe
     _coordinator = nx_fs.service_coordinator
 
     # Set TLS config on channel pool now that federation is initialized
-    if hasattr(nx_fs, "_channel_pool") and nx_fs._channel_pool is not None and zone_mgr.tls_config:
-        nx_fs._channel_pool.set_tls_config(zone_mgr.tls_config)
+    if hasattr(nx_fs, "_channel_pool") and nx_fs._channel_pool is not None and _zone_mgr.tls_config:
+        nx_fs._channel_pool.set_tls_config(_zone_mgr.tls_config)
 
     # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
     ipc_resolver = FederationIPCResolver(

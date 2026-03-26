@@ -512,16 +512,36 @@ class ConnectorSyncLoop:
             )
 
     def _collect_directory_entries(self, mp: str, backend: Any) -> list[tuple[str, str, str]]:
-        """BFS-walk backend.list_dir and collect (zone_id, parent_path, entry_name) tuples."""
+        """BFS-walk backend.list_dir with auth context to collect directory entries.
+
+        Uses the backend's configured user_email to build an OperationContext
+        so OAuth token refresh works for subfolder listings.
+        """
+        from nexus.contracts.types import OperationContext
+
+        # Build auth context from backend's configured user
+        user_email = getattr(backend, "user_email", None) or "system"
         entries: list[tuple[str, str, str]] = []
         queue = [("", mp)]  # (backend_path, virtual_parent)
 
         while queue:
             backend_path, virtual_parent = queue.pop(0)
             try:
-                items = backend.list_dir(backend_path, context=None)
+                ctx = OperationContext(
+                    user_id=user_email,
+                    groups=[],
+                    backend_path=backend_path,
+                )
+                items = backend.list_dir(backend_path, context=ctx)
             except Exception:
-                continue
+                # Fall back to no-context for root (Gmail returns hardcoded folders)
+                if not backend_path:
+                    try:
+                        items = backend.list_dir("", context=None)
+                    except Exception:
+                        continue
+                else:
+                    continue
 
             for item in items:
                 is_dir = item.endswith("/")
@@ -535,7 +555,11 @@ class ConnectorSyncLoop:
         return entries
 
     def _write_directory_entries(self, entries: list[tuple[str, str, str]]) -> None:
-        """Batch-write directory entries to the database."""
+        """Batch-write to both directory_entries and file_paths tables.
+
+        directory_entries: sparse index for search service listing
+        file_paths: main metastore queried by NexusFS.sys_readdir (used by TUI)
+        """
         try:
             from sqlalchemy import text
 
@@ -553,6 +577,9 @@ class ConnectorSyncLoop:
                     is_dir = entry_name.endswith("/")
                     clean_name = entry_name.rstrip("/")
                     entry_type = "dir" if is_dir else "file"
+                    virtual_path = f"{parent_path}/{clean_name}"
+
+                    # Write to directory_entries (sparse directory index)
                     conn.execute(
                         text("""
                             INSERT INTO directory_entries (zone_id, parent_path, entry_name, entry_type, created_at, updated_at)
@@ -564,6 +591,22 @@ class ConnectorSyncLoop:
                             "parent_path": parent_path,
                             "entry_name": clean_name,
                             "entry_type": entry_type,
+                        },
+                    )
+
+                    # Write to file_paths (main metastore — queried by sys_readdir / TUI)
+                    file_type = "inode/directory" if is_dir else None
+                    conn.execute(
+                        text("""
+                            INSERT INTO file_paths (path_id, zone_id, virtual_path, backend_id, physical_path, file_type, size_bytes, created_at, updated_at, posix_uid, current_version)
+                            SELECT gen_random_uuid(), :zone_id, :vpath, 'connector', :ppath, :ftype, 0, NOW(), NOW(), 'system', 1
+                            WHERE NOT EXISTS (SELECT 1 FROM file_paths WHERE zone_id = :zone_id AND virtual_path = :vpath)
+                        """),
+                        {
+                            "zone_id": zone_id,
+                            "vpath": virtual_path,
+                            "ppath": clean_name,
+                            "ftype": file_type,
                         },
                     )
         except Exception:

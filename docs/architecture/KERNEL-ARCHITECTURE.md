@@ -161,30 +161,16 @@ business logic**.
 
 `mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
 
-**Syscall × Primitive usage matrix:**
+**Primitive usage pattern:**
 
-| Syscall | VFSRouter | VFSLock | KernelDispatch | Metastore | FileEvent |
-|---------|-----------|---------|----------------|-----------|-----------|
-| `sys_rmdir` | Yes | — | Yes (3-phase) | Yes | Yes |
-| `sys_read` | Yes | Yes (shared) | Yes (3-phase) | Yes | —* |
-| `sys_write` | Yes | Yes (exclusive) | Yes (3-phase) | Yes | Yes |
-| `sys_unlink` | Yes | Yes (exclusive) | Yes (3-phase) | Yes | Yes |
-| `sys_rename` | Yes | Yes (both, sorted) | Yes (2-phase) | Yes | Yes |
-| `sys_stat` | — | — | — | Yes | — |
-| `sys_access` | — | — | — | Yes | — |
-| `sys_setattr` | Yes | Yes (exclusive) | — | Yes | Yes |
-| `sys_readdir` | — | — | — | Yes | — |
-| `sys_is_directory` | — | — | — | Yes | — |
+- **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
+  VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
+- **Read**: same pipeline minus FileEvent (reads are not mutations)
+- **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
+  lookup only — no routing, locking, or dispatch
+- **setattr**: Metastore-only (Tier 2 `mkdir` adds routing + hooks)
 
-*`sys_read` does not emit `FileEvent` (reads are not mutations).
-
-**Bypass paths (intentional):**
-- `sys_stat`, `sys_access`, `sys_is_directory`, `sys_readdir` — read-only metadata
-  queries. Direct metastore lookup, no routing/locking/dispatch. Fast-path: ~5μs.
-- Dynamic connectors in `sys_read` — `user_scoped=True` backends bypass VFSLock
-  (external data source, no local inode to lock).
-
-See `syscall-design.md` for full syscall table and design rationale.
+See `syscall-design.md` for the full per-syscall primitive matrix.
 
 ### 2.3 Tier 2 Convenience Methods
 
@@ -326,7 +312,7 @@ See `ops-scenario-matrix.md` for full proof.
 **Category:** Kernel Primitive (internal) | **Audience:** Kernel-internal | **Package:** `core.*`
 
 Primitives mediate between user-facing syscalls and HAL drivers. Users interact
-with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
+with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
@@ -522,16 +508,18 @@ deployment profiles. Not kernel-owned, but kernel-enabled.
 Like Linux distros select packages from the same kernel, Nexus profiles select
 which bricks to enable and which drivers to inject.
 
-| Profile | Target | Bricks | Metastore | Linux Analogue |
-|---------|--------|--------|-----------|----------------|
-| **slim** | Bare minimum runnable | 1 (storage only) | redb (embedded) | initramfs |
-| **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | redb (embedded) | BusyBox |
-| **lite** | Pi, Jetson, mobile | 8 (+namespace, agent, permissions, ...) | redb (embedded) | Alpine |
-| **full** | Desktop, laptop | 21 (all except federation) | redb (embedded) | Ubuntu Desktop |
-| **cloud** | k8s, serverless | 22 (all, incl. federation) | redb (Raft) | Ubuntu Server |
-| **remote** | Client-side proxy | 0 (zero local bricks) | RemoteMetastore | NFS client |
+| Profile | Target | Metastore | Linux Analogue |
+|---------|--------|-----------|----------------|
+| **slim** | Bare minimum runnable | redb (embedded) | initramfs |
+| **cluster** | Minimal multi-node (Raft + federation, no auth) | redb (Raft) | CoreOS |
+| **embedded** | MCU, WASM (<1 MB) | redb (embedded) | BusyBox |
+| **lite** | Pi, Jetson, mobile | redb (embedded) | Alpine |
+| **full** | Desktop, laptop | redb (embedded) | Ubuntu Desktop |
+| **cloud** | k8s, serverless | redb (Raft) | Ubuntu Server |
+| **innovation** | Experimental tier | redb (Raft) | Ubuntu + PPAs |
+| **remote** | Client-side proxy (zero local bricks) | RemoteMetastore | NFS client |
 
-Profile hierarchy: `slim ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`.
+Profile hierarchy: `slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation`.
 REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.

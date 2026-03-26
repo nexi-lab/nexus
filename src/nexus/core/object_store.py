@@ -23,15 +23,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 # Re-export WriteResult for backward compatibility — canonical home is contracts.types
-# Re-export _validate_hash for backward compatibility — canonical home is backends.base.cas_addressing_engine
-__all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
-
-
-def _validate_hash(content_hash: str) -> None:
-    """Validate SHA-256 hex string — re-export from CAS backend for backward compat."""
-    from nexus.backends.base.cas_addressing_engine import _validate_hash as _cas_validate
-
-    _cas_validate(content_hash)
+__all__ = ["ObjectStoreABC", "WriteResult"]
 
 
 class ObjectStoreABC(ABC):
@@ -106,8 +98,8 @@ class ObjectStoreABC(ABC):
     def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
         """Delete content by identifier.
 
-        Decrements reference count. Only deletes actual data when the
-        reference count reaches zero.
+        Addressing-agnostic: CAS backends may defer actual deletion until
+        garbage collection; PAS backends delete the blob at the given path.
 
         Args:
             content_id: Opaque content identifier.

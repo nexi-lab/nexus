@@ -583,12 +583,24 @@ def create_async_files_router(
                     resolve_fn = getattr(search, "resolve_physical_path", None)
                     physical = resolve_fn(path) if resolve_fn else None
                     if physical:
-                        result = await _read_connector_by_physical_path(
+                        content_bytes = await _read_connector_by_physical_path(
                             fs,
                             path,
                             physical,
                             context,
                         )
+                        if content_bytes is not None:
+                            if include_metadata:
+                                # Preserve metadata contract for connector reads
+                                result = {
+                                    "content": content_bytes,
+                                    "etag": None,
+                                    "version": None,
+                                    "modified_at": None,
+                                    "size": len(content_bytes),
+                                }
+                            else:
+                                result = content_bytes
 
             # Standard VFS read (or fallback if connector read didn't resolve)
             if result is None:

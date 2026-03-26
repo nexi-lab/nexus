@@ -95,6 +95,153 @@ class NexusFederation:
         self._peers = PeerAddress.parse_peer_list(peers_str) if peers_str else []
 
     # =========================================================================
+    # Factory classmethod — called from connect() before create_nexus_fs()
+    # =========================================================================
+
+    @classmethod
+    def bootstrap(
+        cls,
+        *,
+        metadata_path: str,
+    ) -> tuple["NexusFederation", Any]:
+        """Bootstrap federation: create ZoneManager + FederatedMetadataProxy.
+
+        Encapsulates all of connect()'s federation setup (~100 lines):
+        env var parsing, TLS pre-provisioning, join token flow, ZoneManager
+        creation with retry, bootstrap/join detection, static Day-1 topology.
+
+        Args:
+            metadata_path: Path to the metastore directory (used to derive zones_dir).
+
+        Returns:
+            Tuple of (NexusFederation instance, MetastoreABC via FederatedMetadataProxy).
+
+        Raises:
+            ImportError: Rust extensions not available.
+            RuntimeError: Raft bootstrap failed after retries.
+        """
+        import os
+        import socket
+        import time as _time
+        from pathlib import Path
+
+        from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
+        from nexus.raft import FederatedMetadataProxy
+        from nexus.raft.peer_address import PeerAddress, hostname_to_node_id
+        from nexus.raft.zone_manager import ZoneManager
+
+        hostname = os.environ.get("NEXUS_HOSTNAME", socket.gethostname())
+        my_id = hostname_to_node_id(hostname)
+        bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
+        advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
+        zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+
+        # Parse peer addresses
+        peers_str = os.environ.get("NEXUS_PEERS", "")
+        peer_addrs = PeerAddress.parse_peer_list(peers_str) if peers_str else []
+        peers = [p.grpc_target for p in peer_addrs]
+
+        _max_attempts = int(os.environ.get("NEXUS_STARTUP_MAX_RETRIES", "12"))
+        _base_delay = 2.0
+        zone_mgr: ZoneManager | None = None
+
+        for _attempt in range(1, _max_attempts + 1):
+            try:
+                # TLS pre-provision (depends on leader being up)
+                tls_dir_pre = Path(zones_dir) / "tls"
+                token_file = tls_dir_pre / "join-token"
+                if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
+                    join_token = token_file.read_text().strip()
+                    join_peer = next(
+                        (p.grpc_target for p in peer_addrs if p.node_id != my_id),
+                        None,
+                    )
+                    if join_peer:
+                        import importlib
+
+                        _raft_mod = importlib.import_module("_nexus_raft")
+                        _join_cluster = _raft_mod.join_cluster
+
+                        logger.info(
+                            "Join token found — provisioning TLS from %s (attempt %d)",
+                            join_peer,
+                            _attempt,
+                        )
+                        _join_cluster(join_peer, join_token, hostname, str(tls_dir_pre))
+                        logger.info("TLS provisioning complete")
+                    else:
+                        raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
+
+                zone_mgr = ZoneManager(
+                    hostname=hostname,
+                    base_path=zones_dir,
+                    bind_addr=bind_addr,
+                    advertise_addr=advertise_addr,
+                )
+
+                # Detect joiner vs first-node
+                tls_dir = Path(zones_dir) / "tls"
+                is_joiner = (
+                    (tls_dir / "ca.pem").exists()
+                    and (tls_dir / "node.pem").exists()
+                    and (tls_dir / "node-key.pem").exists()
+                    and not (tls_dir / "join-token").exists()
+                )
+
+                if is_joiner:
+                    zone_mgr.join_zone("root", peers=peers if peers else None)
+                    logger.info("Joiner node: joined root zone (certs provisioned)")
+                else:
+                    zone_mgr.bootstrap(peers=peers if peers else None)
+
+                # Static Day-1 topology from env vars (idempotent)
+                zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
+                mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
+                if zones_str:
+                    zones = [z.strip() for z in zones_str.split(",") if z.strip()]
+                    mounts: dict[str, str] = {}
+                    if mounts_str:
+                        for pair in mounts_str.split(","):
+                            path, zone_id = pair.strip().split("=", 1)
+                            mounts[path.strip()] = zone_id.strip()
+                    zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
+
+                break  # Success
+
+            except (RuntimeError, OSError, ConnectionError) as exc:
+                if _attempt >= _max_attempts:
+                    logger.error("Raft startup failed after %d attempts: %s", _max_attempts, exc)
+                    raise
+                delay = min(_base_delay * (2 ** (_attempt - 1)), 30.0)
+                logger.warning(
+                    "Raft startup attempt %d/%d failed: %s — retrying in %.1fs",
+                    _attempt,
+                    _max_attempts,
+                    exc,
+                    delay,
+                )
+                _time.sleep(delay)
+
+        assert zone_mgr is not None  # guaranteed by loop above
+        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
+        federation = cls(zone_manager=zone_mgr)
+        return federation, metadata_store
+
+    # =========================================================================
+    # Properties
+    # =========================================================================
+
+    @property
+    def zone_manager(self) -> Any:
+        """The underlying ZoneManager instance."""
+        return self._mgr
+
+    def ensure_topology(self) -> bool:
+        """Delegate to ZoneManager.ensure_topology() for health checks."""
+        result: bool = self._mgr.ensure_topology()
+        return result
+
+    # =========================================================================
     # Q3 PersistentService lifecycle (auto-managed by ServiceRegistry)
     # =========================================================================
 

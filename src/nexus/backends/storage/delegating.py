@@ -86,10 +86,6 @@ class DelegatingBackend(Backend):
         return self._inner.thread_safe
 
     @property
-    def supports_rename(self) -> bool:
-        return self._inner.supports_rename
-
-    @property
     def has_root_path(self) -> bool:
         return self._inner.has_root_path
 

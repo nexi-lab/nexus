@@ -73,10 +73,6 @@ class PathAddressingEngine(Backend):
     def name(self) -> str:
         return self._backend_name
 
-    @property
-    def supports_rename(self) -> bool:
-        return True
-
     # === Helper Methods ===
 
     def _compute_hash(self, content: bytes) -> str:

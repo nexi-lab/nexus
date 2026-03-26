@@ -146,15 +146,6 @@ class Backend(ObjectStoreABC):
         return False
 
     @property
-    def supports_rename(self) -> bool:
-        """Whether this backend supports direct file rename/move.
-
-        Callers should use try/except on rename_file() instead of checking
-        this flag (EAFP pattern). Retained temporarily for backward compat.
-        """
-        return False
-
-    @property
     def supports_parallel_mmap_read(self) -> bool:
         """Whether this backend supports Rust-accelerated parallel mmap reads.
 

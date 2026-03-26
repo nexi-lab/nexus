@@ -70,18 +70,6 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
-# Lock API Models — re-exported for backward compatibility with tests/consumers.
-# Canonical location: api/v2/models/locks.py (Issue #2056).
-from nexus.server.api.v2.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
-from nexus.server.api.v2.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
-from nexus.server.api.v2.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
-from nexus.server.api.v2.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
-from nexus.server.api.v2.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
-from nexus.server.api.v2.models.locks import LockListResponse as LockListResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockResponse as LockResponse  # noqa: E402
-from nexus.server.api.v2.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
-
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
 # ============================================================================

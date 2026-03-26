@@ -4,12 +4,6 @@ Re-exports every public model so existing imports continue to work:
     from nexus.server.api.v2.models import MemoryStoreRequest  # still works
 """
 
-from nexus.server.api.v2.models.audit import (
-    AuditAggregationResponse,
-    AuditIntegrityResponse,
-    AuditTransactionListResponse,
-    AuditTransactionResponse,
-)
 from nexus.server.api.v2.models.base import ApiModel
 from nexus.server.api.v2.models.conflicts import (
     ConflictDetailResponse,
@@ -138,9 +132,4 @@ __all__ = [
     "OperationResponse",
     "OperationListResponse",
     "AgentActivityResponse",
-    # Audit
-    "AuditTransactionResponse",
-    "AuditTransactionListResponse",
-    "AuditAggregationResponse",
-    "AuditIntegrityResponse",
 ]

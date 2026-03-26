@@ -669,6 +669,28 @@ class CLIConnector(
             logger.debug("Failed to parse CLI list output", exc_info=True)
             return []
 
+    # --- Batch metadata for display_path (optional protocol) ---
+
+    def list_dir_metadata(
+        self,
+        path: str = "/",
+        context: "OperationContext | None" = None,
+    ) -> dict[str, dict[str, Any]] | None:
+        """Return per-file metadata for all items in a directory (batch).
+
+        Optional protocol for connectors that can fetch metadata for an
+        entire directory in a single call (e.g., Gmail ``+triage``,
+        Calendar ``+agenda``).  Returns ``{filename: {metadata_dict}}``
+        where ``filename`` matches the entries returned by ``list_dir()``.
+
+        Returns ``None`` when not implemented — the sync service falls
+        back to per-file ``read_content`` for ``display_path`` resolution.
+
+        Subclasses override this to eliminate N serial HTTP calls during
+        sync by pre-fetching subject/date/labels/etc. in one batch.
+        """
+        return None
+
     # --- Stub implementations for Backend ABC ---
 
     def delete_content(

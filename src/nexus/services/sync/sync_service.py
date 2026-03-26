@@ -413,6 +413,19 @@ class SyncService:
                     f"(backend={type(backend).__name__}, entries_sample={entries[:3] if entries else '[]'})"
                 )
 
+                # Batch metadata for display_path: one call per directory
+                # instead of N serial read_content calls (Issue #3266).
+                dir_metadata: dict[str, dict[str, Any]] | None = None
+                if hasattr(backend, "list_dir_metadata"):
+                    try:
+                        dir_metadata = backend.list_dir_metadata(backend_path, context=ctx.context)
+                    except Exception:
+                        logger.debug(
+                            "list_dir_metadata failed for %s, falling back to per-file",
+                            backend_path,
+                            exc_info=True,
+                        )
+
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
                     entry_name = entry_name.rstrip("/")
@@ -461,6 +474,7 @@ class SyncService:
                             paths_needing_tuples,
                             cached_entries,
                             pending_upserts,
+                            dir_metadata=dir_metadata,
                         )
 
                         # Flush batches if needed
@@ -689,6 +703,7 @@ class SyncService:
         paths_needing_tuples: list[str],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
         pending_upserts: list[ChangeLogEntry] | None = None,
+        dir_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Sync a single file entry.
 
@@ -706,6 +721,7 @@ class SyncService:
             paths_needing_tuples: List to collect paths for batch tuple creation
             cached_entries: Pre-fetched change log entries (batch optimization)
             pending_upserts: Accumulator for batch upsert (batch optimization)
+            dir_metadata: Batch metadata from list_dir_metadata() (Issue #3266)
         """
         from nexus.contracts.metadata import FileMetadata
 
@@ -771,8 +787,8 @@ class SyncService:
                 logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
 
         # Apply display_path() if the backend supports it (Issue #3256).
-        # Reads content to extract metadata (subject, date, labels) and
-        # rewrites virtual_path to a human-readable name.
+        # Uses batch metadata from list_dir_metadata() when available (fast),
+        # falls back to per-file read_content() (slow).
         from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 
         if isinstance(backend, DisplayPathMixin):
@@ -781,6 +797,7 @@ class SyncService:
                 virtual_path,
                 backend_path,
                 ctx,
+                dir_metadata=dir_metadata,
             )
 
         # Check if file exists in metadata
@@ -1532,40 +1549,45 @@ class SyncService:
         virtual_path: str,
         backend_path: str,
         ctx: "SyncContext",
+        dir_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Rewrite virtual_path using backend.display_path() with content metadata.
 
-        Fast path (Issue #3266): If the backend has pre-fetched metadata via
-        ``get_cached_metadata()`` (e.g., from ``gws gmail +triage``), use it
-        directly — no per-message HTTP call needed.
+        Fast path (Issue #3266): If ``dir_metadata`` is provided (from
+        ``list_dir_metadata()``), look up the file's metadata directly —
+        no per-file HTTP call needed.  Works for any connector that
+        implements the ``list_dir_metadata`` protocol.
 
         Slow path (fallback): Reads file content from the backend, parses YAML
         to extract metadata, and calls display_path(). Only used for backends
-        without batch metadata (e.g., Calendar).
+        that don't implement ``list_dir_metadata``.
         """
         try:
-            # Extract item_id from filename.
+            # Extract item_id and filename from backend_path.
             parts = backend_path.rstrip("/").rsplit("/", 1)
             filename = parts[-1]
             item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
 
-            # --- Fast path: use pre-fetched triage metadata (Issue #3266) ---
-            # For Gmail, +triage returns subject+date+labels for 500 messages
-            # in one CLI call (~2s), vs. 200 serial read_content calls (~8min).
-            if hasattr(backend, "get_cached_metadata"):
-                # Extract the message ID from the threadId-msgId filename format.
-                msg_id = item_id.split("-")[-1] if "-" in item_id else item_id
-                cached_meta = backend.get_cached_metadata(msg_id)
-                if cached_meta is not None:
-                    display = backend.display_path(msg_id, cached_meta)
-                    if display != f"{msg_id}.yaml":
+            # --- Fast path: use batch metadata from list_dir_metadata ---
+            if dir_metadata is not None:
+                # Try exact filename match first.
+                file_meta = dir_metadata.get(filename)
+                if file_meta is None:
+                    # Gmail: extract msg_id from "threadId-msgId" and try lookup.
+                    bare_id = item_id.split("-")[-1] if "-" in item_id else item_id
+                    file_meta = dir_metadata.get(bare_id)
+                if file_meta is not None:
+                    # For Gmail threadId-msgId format, pass just the msg_id.
+                    display_id = item_id.split("-")[-1] if "-" in item_id else item_id
+                    display = backend.display_path(display_id, file_meta)
+                    if display != f"{display_id}.yaml":
                         mount_point = ctx.mount_point
                         if mount_point:
                             return f"{mount_point.rstrip('/')}/{display.lstrip('/')}"
                         return f"/{display.lstrip('/')}"
                     return virtual_path
 
-            # --- Slow path: read content per file (Calendar, Drive, etc.) ---
+            # --- Slow path: read content per file ---
             read_ctx = ctx.context
             if read_ctx is not None:
                 from dataclasses import replace as _dc_replace

@@ -4,7 +4,10 @@ Covers:
 - sanitize_filename() edge cases (empty, special chars, long, reserved, Unicode)
 - resolve_collisions() (unique, duplicates, empty, single item)
 - DisplayPathMixin default behavior
+- list_dir_metadata protocol (Issue #3266)
 """
+
+from typing import Any
 
 import pytest
 
@@ -228,3 +231,134 @@ class TestDisplayPathMixin:
         mixin = DisplayPathMixin()
         result = mixin.display_path("abc123", {"subject": "Meeting"})
         assert result == "abc123.yaml"
+
+
+# ---------------------------------------------------------------------------
+# CLIConnector.list_dir_metadata default
+# ---------------------------------------------------------------------------
+
+
+class TestListDirMetadataDefault:
+    """list_dir_metadata returns None by default (opt-in protocol)."""
+
+    def test_base_returns_none(self) -> None:
+        from nexus.backends.connectors.cli.base import CLIConnector
+
+        # Use a minimal subclass so we can call the default method.
+        class StubConnector(CLIConnector):
+            pass
+
+        connector = StubConnector.__new__(StubConnector)
+        result = connector.list_dir_metadata("/some/path")
+        assert result is None
+
+
+# ---------------------------------------------------------------------------
+# GmailConnector.list_dir_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestGmailListDirMetadata:
+    """GmailConnector.list_dir_metadata returns batch metadata."""
+
+    @staticmethod
+    def _make_gmail() -> Any:
+        from nexus.backends.connectors.gws.connector import GmailConnector
+
+        gmail = GmailConnector.__new__(GmailConnector)
+        # Set up minimal state that list_dir_metadata needs.
+        gmail._LABELS = ["INBOX", "SENT", "STARRED", "IMPORTANT", "DRAFTS"]
+        return gmail
+
+    def test_returns_none_for_root(self) -> None:
+        gmail = self._make_gmail()
+        assert gmail.list_dir_metadata("/") is None
+
+    def test_returns_none_for_label_root(self) -> None:
+        gmail = self._make_gmail()
+        assert gmail.list_dir_metadata("INBOX") is None
+
+    def test_returns_none_for_unknown_label(self) -> None:
+        gmail = self._make_gmail()
+        assert gmail.list_dir_metadata("UNKNOWN_LABEL") is None
+
+
+# ---------------------------------------------------------------------------
+# CalendarConnector.list_dir_metadata
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarListDirMetadata:
+    """CalendarConnector.list_dir_metadata returns batch metadata."""
+
+    def test_returns_none_for_root(self) -> None:
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        cal = CalendarConnector.__new__(CalendarConnector)
+        cal._calendar_names = {}
+        assert cal.list_dir_metadata("/") is None
+
+
+# ---------------------------------------------------------------------------
+# CalendarConnector.display_path with human-readable calendar names
+# ---------------------------------------------------------------------------
+
+
+class TestCalendarDisplayPath:
+    """CalendarConnector.display_path uses human-readable folder names."""
+
+    def test_display_path_with_summary_and_datetime(self) -> None:
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        cal = CalendarConnector.__new__(CalendarConnector)
+        cal._calendar_names = {"primary": "My Calendar"}
+
+        meta = {
+            "summary": "Team Standup",
+            "calendarId": "primary",
+            "start": {"dateTime": "2026-03-21T10:00:00-07:00"},
+        }
+        result = cal.display_path("event123", meta)
+        assert result.startswith("My-Calendar/2026-03/")
+        assert "Team-Standup" in result
+        assert result.endswith(".yaml")
+
+    def test_display_path_with_all_day_event(self) -> None:
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        cal = CalendarConnector.__new__(CalendarConnector)
+        cal._calendar_names = {}
+
+        meta = {
+            "summary": "Holiday",
+            "calendarId": "primary",
+            "start": {"date": "2026-12-25"},
+        }
+        result = cal.display_path("event456", meta)
+        assert "primary/" in result
+        assert "Holiday" in result
+
+    def test_display_path_fallback_without_metadata(self) -> None:
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        cal = CalendarConnector.__new__(CalendarConnector)
+        cal._calendar_names = {}
+
+        result = cal.display_path("event789")
+        assert result == "primary/event789.yaml"
+
+    def test_display_path_uses_sanitized_calendar_name(self) -> None:
+        from nexus.backends.connectors.gws.connector import CalendarConnector
+
+        cal = CalendarConnector.__new__(CalendarConnector)
+        cal._calendar_names = {"user@example.com": "Work: Important Meetings"}
+
+        meta = {
+            "summary": "Standup",
+            "calendarId": "user@example.com",
+            "start": {"dateTime": "2026-04-01T09:00:00Z"},
+        }
+        result = cal.display_path("evt1", meta)
+        # Calendar name should be sanitized (no colons)
+        assert ":" not in result.split("/")[0]
+        assert "Standup" in result

@@ -73,6 +73,7 @@ class FederationContentResolver:
         timeout: float = 30.0,
         remote_content_fetcher: "RemoteContentFetcher | None" = None,
         local_object_store: Any = None,
+        auth_token: str = "",
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
@@ -80,6 +81,7 @@ class FederationContentResolver:
         self._timeout = timeout
         self._remote_content_fetcher = remote_content_fetcher
         self._local_object_store = local_object_store
+        self._auth_token = auth_token
 
     # ------------------------------------------------------------------
     # Hook spec (duck-typed) (#1710) — enables coordinator.enlist()
@@ -265,7 +267,7 @@ class FederationContentResolver:
         channel = build_peer_channel(address, self._tls_config)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.DeleteRequest(path=virtual_path, auth_token="")
+            request = vfs_pb2.DeleteRequest(path=virtual_path, auth_token=self._auth_token)
             response = stub.Delete(request, timeout=self._timeout)
 
             if response.is_error:
@@ -289,7 +291,7 @@ class FederationContentResolver:
         channel = build_peer_channel(address, self._tls_config)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.ReadRequest(path=virtual_path, auth_token="")
+            request = vfs_pb2.ReadRequest(path=virtual_path, auth_token=self._auth_token)
             response = stub.Read(request, timeout=self._timeout)
 
             if response.is_error:
@@ -322,7 +324,7 @@ class FederationContentResolver:
         channel = build_peer_channel(address, self._tls_config)
         try:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.StreamReadRequest(path=virtual_path, auth_token="")
+            request = vfs_pb2.StreamReadRequest(path=virtual_path, auth_token=self._auth_token)
             chunks: list[bytes] = []
             for chunk in stub.StreamRead(request, timeout=self._timeout):
                 if chunk.is_error:

@@ -682,12 +682,15 @@ async def write_to_connector(
 
     nx = _get_nx(request)
 
-    # Resolve mount to get backend_path — required for CLI-backed connectors
-    # (gws_gmail, gws_drive, etc.) that use backend_path to determine the operation.
+    # Preflight route resolution to discover backend type and backend_path.
+    # Uses is_admin=True because this is a routing decision, not a permission
+    # check — actual auth is enforced by backend.write_content() (CLI connectors)
+    # or nx.write() (kernel path). Without admin, a non-admin caller's route
+    # lookup could fail and silently fall back to the wrong write path.
     _backend_path = None
     _route = None
     try:
-        _route = nx.router.route(mount_path, is_admin=auth.get("is_admin", False))
+        _route = nx.router.route(mount_path, is_admin=True)
         _backend_path = _route.backend_path if _route else None
     except Exception:
         pass

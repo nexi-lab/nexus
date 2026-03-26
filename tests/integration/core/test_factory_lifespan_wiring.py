@@ -56,7 +56,6 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "cache_ttl_seconds": 300,
         "dist": MagicMock(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         ),
         "zone_id": None,

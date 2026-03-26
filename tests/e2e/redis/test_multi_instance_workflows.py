@@ -129,7 +129,7 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
             permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
             cache=CacheConfig(enable_content_cache=True),
-            distributed=DistributedConfig(enable_locks=True),
+            distributed=DistributedConfig(),
         )
 
     # Inject shared Redis event bus into both the observer and events service.
@@ -173,7 +173,7 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
             permissions=PermissionConfig(enforce=False, enforce_zone_isolation=False),
             zone_id="test",  # Explicit zone for consistent event routing
             cache=CacheConfig(enable_content_cache=True),
-            distributed=DistributedConfig(enable_locks=True),
+            distributed=DistributedConfig(),
         )
 
     # Inject shared Redis event bus.

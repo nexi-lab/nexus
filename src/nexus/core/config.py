@@ -75,7 +75,6 @@ class DistributedConfig:
 
     coordination_url: str | None = None
     enable_events: bool = True
-    enable_locks: bool = True
     enable_workflows: bool = True
     event_bus_backend: str = "redis"
     nats_url: str = DEFAULT_NATS_URL

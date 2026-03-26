@@ -1,6 +1,8 @@
-"""Boot Tier 1 (SYSTEM) — critical + degradable services.
+"""Boot Tier 1 — critical + degradable services.
 
 Issue #2193: Absorbs 11 former-kernel services per Liedtke's test.
+Renamed from ``_boot_system_services`` → ``_boot_services`` after
+the SystemServices/BrickServices unification (PR #3350).
 
 Two severity classes:
 
@@ -11,7 +13,7 @@ Two severity classes:
 **Degradable** (per-service try/except → WARNING + None):
     dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
     workspace_registry, mount_manager, workspace_manager, plus all
-    original system services (agent registry, namespace, etc.).
+    original services (namespace, etc.).
 """
 
 import logging
@@ -26,11 +28,11 @@ from nexus.factory._helpers import _make_gate
 logger = logging.getLogger(__name__)
 
 
-def _boot_system_services(
+def _boot_services(
     ctx: _BootContext,
     svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
-    """Boot Tier 1 (SYSTEM) — critical + degradable services.
+    """Boot Tier 1 — critical + degradable services.
 
     1. **Critical section** — creates ReBAC, permissions, audit, entity
        registry, and write observer.  A single try/except raises
@@ -40,9 +42,8 @@ def _boot_system_services(
        cache, hierarchy manager, deferred permission buffer, workspace
        services.  Per-service try/except logs WARNING and sets None.
 
-    3. **Original system services** — agent registry, namespace,
-       observability, resiliency, lifecycle management.  Same degraded
-       pattern as before.
+    3. **Original services** — namespace, observability, resiliency,
+       lifecycle management.  Same degraded pattern as before.
 
     Args:
         ctx: Boot context with shared dependencies.
@@ -428,8 +429,41 @@ def _boot_system_services(
     # (Federation is created at link time in _lifecycle.py when nx._zone_mgr is available.)
 
     # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
-    # AgentRegistry is a kernel-knows sentinel, created at link-time.
+    # AgentRegistry is lazy-constructed via register_factory().
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
+
+    # =====================================================================
+    # Infrastructure: event bus + lock manager (moved from _bricks.py)
+    # These are infrastructure, not optional bricks.
+    # =====================================================================
+    event_bus: Any = None
+    lock_manager: Any = None
+    if not _on("ipc"):
+        logger.debug("[BOOT:SYSTEM] IPC/EventBus disabled by profile")
+    else:
+        if ctx.dist.enable_events:
+            from nexus.factory._distributed import _create_distributed_infra
+
+            event_bus, lock_manager = _create_distributed_infra(
+                ctx.dist,
+                ctx.metadata_store,
+                ctx.record_store,
+                ctx.dist.coordination_url,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            )
+
+        # Always create lock manager — SemaphoreAdvisoryLockManager wraps
+        # VFSSemaphore directly (no LockStoreProtocol capability check needed).
+        if lock_manager is None:
+            try:
+                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
+                from nexus.lib.semaphore import create_vfs_semaphore
+
+                _zone = ctx.zone_id or ROOT_ZONE_ID
+                lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=_zone)
+                logger.info("Advisory lock manager initialized (standalone, zone=%s)", _zone)
+            except Exception as _lm_exc:
+                logger.debug("[BOOT:SYSTEM] SemaphoreAdvisoryLockManager unavailable: %s", _lm_exc)
 
     # =====================================================================
     # Assemble result
@@ -449,7 +483,7 @@ def _boot_system_services(
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
-        # Original system services
+        # Original services
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,
@@ -458,6 +492,9 @@ def _boot_system_services(
         "context_branch_service": context_branch_service,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        # Infrastructure (moved from bricks)
+        "event_bus": event_bus,
+        "lock_manager": lock_manager,
     }
 
     elapsed = time.perf_counter() - t0

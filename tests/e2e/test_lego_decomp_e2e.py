@@ -97,7 +97,6 @@ async def _create_factory_nexus_fs(
         parsing=ParseConfig(auto_parse=False),
         distributed=DistributedConfig(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         ),
         enable_write_buffer=False,  # Sync writes so versions are immediately visible

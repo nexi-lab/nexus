@@ -57,7 +57,7 @@ class ContextualNexusFS:
         detail: bool = False,
         recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
-        return cast(
+        result = cast(
             list[str] | list[dict[str, Any]],
             await self._kernel.sys_readdir(
                 path,
@@ -66,6 +66,13 @@ class ContextualNexusFS:
                 context=self._ctx,
             ),
         )
+        if result:
+            return result
+        if recursive:
+            return result
+
+        fallback = await self._list_backend_directory(path, detail=detail)
+        return fallback if fallback is not None else result
 
     async def stat(self, path: str) -> dict[str, Any] | None:
         from nexus.fs._facade import SlimNexusFS
@@ -101,6 +108,65 @@ class ContextualNexusFS:
 
     async def close(self) -> None:
         return None
+
+    async def _list_backend_directory(
+        self,
+        path: str,
+        *,
+        detail: bool,
+    ) -> list[str] | list[dict[str, Any]] | None:
+        """Fallback to backend.list_dir() when slim metadata has no children yet."""
+        import asyncio
+        from datetime import UTC, datetime
+
+        try:
+            route = self._kernel.router.route(path, is_admin=True, check_write=False)
+        except Exception:
+            return None
+
+        backend = route.backend
+        if not hasattr(backend, "list_dir"):
+            return None
+
+        try:
+            raw_entries = await asyncio.to_thread(backend.list_dir, route.backend_path, self._ctx)
+        except NotImplementedError:
+            return None
+
+        now = datetime.now(UTC).isoformat()
+        mount_root = path.rstrip("/") or "/"
+        if detail:
+            detailed: list[dict[str, Any]] = []
+            for entry in raw_entries:
+                name = str(entry).rstrip("/")
+                if not name:
+                    continue
+                is_dir = str(entry).endswith("/")
+                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                detailed.append(
+                    {
+                        "path": full_path,
+                        "size": 4096 if is_dir else 0,
+                        "is_directory": is_dir,
+                        "etag": None,
+                        "mime_type": "inode/directory" if is_dir else "application/octet-stream",
+                        "created_at": now,
+                        "modified_at": now,
+                        "version": 0,
+                        "zone_id": "root",
+                        "entry_type": 1 if is_dir else 0,
+                    }
+                )
+            return detailed
+
+        listed: list[str] = []
+        for entry in raw_entries:
+            name = str(entry).rstrip("/")
+            if not name:
+                continue
+            full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+            listed.append(full_path)
+        return listed
 
 
 def _highlight_match(text: str, query_lower: str) -> str:
@@ -983,7 +1049,8 @@ class PlaygroundApp(App[None]):
                 "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET; 2. run `nexus-fs auth connect gws oauth "
                 "--user-email you@example.com`; 3. run `/auth test gws`; "
                 "4. if needed set `NEXUS_FS_USER_EMAIL=you@example.com`; "
-                "5. run `/mount gws://drive` or `/mount gws://gmail`."
+                "5. run `/mount gws://drive` or `/mount gws://gmail`; "
+                "6. for `/mount gws://chat`, re-run auth and approve Chat scopes if prompted."
             )
         if service == "gcs":
             return (
@@ -1097,12 +1164,16 @@ class PlaygroundApp(App[None]):
             return "x://timeline"
         if connector_name == "hn_connector":
             return "hn://top"
+        if connector_name == "gws_github":
+            return None
         if connector_name.startswith("gws_"):
             return f"gws://{connector_name.removeprefix('gws_')}"
         return None
 
     def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
         """Map connector targets to the auth flow users should follow."""
+        if connector_name == "gws_github":
+            return "github"
         if connector_name.startswith("gws_"):
             return "gws"
         if service_name in {"google-drive", "gmail", "google-calendar", "slack", "x", "gcs"}:

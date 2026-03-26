@@ -10,10 +10,11 @@ Human-readable display paths added in Issue #3256.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
@@ -51,9 +52,15 @@ from nexus.backends.connectors.gws.schemas import (
     UploadFileSchema,
 )
 
+if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
+
 logger = logging.getLogger(__name__)
 
 _CONFIGS_DIR = Path(__file__).parent / "configs"
+_DOC_MIME_TYPE = "application/vnd.google-apps.document"
+_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
@@ -108,6 +115,47 @@ class SheetsConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List spreadsheets by querying Drive metadata and filtering by mime type."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+
+        args = [
+            "gws",
+            "drive",
+            "files",
+            "list",
+            "--params",
+            json.dumps({"q": f'mimeType = "{_SHEET_MIME_TYPE}"', "pageSize": 100}),
+        ]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            return []
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        files: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_files = data.get("files", [])
+            files = [item for item in raw_files if isinstance(item, dict)]
+        elif isinstance(data, list):
+            files = [item for item in data if isinstance(item, dict)]
+        else:
+            files = []
+
+        entries = [
+            str(item.get("name", "")).strip()
+            for item in files
+            if item.get("mimeType") == _SHEET_MIME_TYPE and str(item.get("name", "")).strip()
+        ]
+        return sorted(entries)
 
 # ============================================================================
 # Docs
@@ -151,6 +199,54 @@ class DocsConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List Google Docs by querying Drive metadata and filtering to document mime types."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+
+        args = [
+            "gws",
+            "drive",
+            "files",
+            "list",
+            "--params",
+            json.dumps({"q": f'mimeType = "{_DOC_MIME_TYPE}"', "pageSize": 100}),
+        ]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            from nexus.contracts.exceptions import BackendError
+
+            raise BackendError(result.summary(), backend=self.name, path=path)
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception as exc:
+            from nexus.contracts.exceptions import BackendError
+
+            raise BackendError(
+                f"Failed to parse gws docs listing: {exc}", backend=self.name
+            ) from exc
+
+        files: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_files = data.get("files", [])
+            files = [item for item in raw_files if isinstance(item, dict)]
+        elif isinstance(data, list):
+            files = [item for item in data if isinstance(item, dict)]
+        else:
+            files = []
+
+        entries = [
+            str(item.get("name", "")).strip()
+            for item in files
+            if item.get("mimeType") == _DOC_MIME_TYPE and str(item.get("name", "")).strip()
+        ]
+        return sorted(entries)
+
 
 # ============================================================================
 # Chat
@@ -191,6 +287,53 @@ class ChatConnector(CLIConnector):
         config = _load_gws_config("chat.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List chat spaces at root; nested message browsing is delegated to the CLI config."""
+        normalized = path.strip("/")
+        if normalized:
+            return super().list_dir(path, context=context)
+
+        args = ["gws", "chat", "spaces", "list"]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            from nexus.contracts.exceptions import BackendError
+
+            summary = result.summary()
+            combined = f"{result.stderr}\n{result.stdout}".lower()
+            if "insufficient authentication scopes" in combined:
+                raise BackendError(
+                    "Google Chat requires additional OAuth scopes. "
+                    "Run `nexus-fs auth connect gws oauth --user-email you@example.com` again "
+                    "and approve Chat access, then retry `/mount gws://chat`.",
+                    backend=self.name,
+                    path=path,
+                )
+            raise BackendError(summary, backend=self.name, path=path)
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        spaces: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_spaces = data.get("spaces", [])
+            spaces = [item for item in raw_spaces if isinstance(item, dict)]
+        elif isinstance(data, list):
+            spaces = [item for item in data if isinstance(item, dict)]
+        else:
+            spaces = []
+
+        entries = []
+        for item in spaces:
+            name = str(item.get("name", "")).strip()
+            if name:
+                entries.append(f"{name}/")
+        return sorted(entries)
 
 
 # ============================================================================
@@ -242,6 +385,45 @@ class DriveConnector(CLIConnector):
             if name:
                 return sanitize_filename(name)
         return f"{item_id}.yaml"
+
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List Drive root entries with folder suffixes for browseable mounts."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+
+        args = ["gws", "drive", "files", "list"]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            return []
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        files: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_files = data.get("files", [])
+            files = [item for item in raw_files if isinstance(item, dict)]
+        elif isinstance(data, list):
+            files = [item for item in data if isinstance(item, dict)]
+        else:
+            files = []
+
+        entries = []
+        for item in files:
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            if item.get("mimeType") == _FOLDER_MIME_TYPE:
+                entries.append(f"{name}/")
+            else:
+                entries.append(name)
+        return sorted(entries)
 
 
 # ============================================================================

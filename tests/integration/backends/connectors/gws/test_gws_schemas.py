@@ -8,12 +8,24 @@ Covers:
 - YAML configs load and validate via load_connector_config
 """
 
+import json
 from pathlib import Path
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
 from nexus.backends.connectors.cli.loader import load_connector_config
+from nexus.backends.connectors.cli.result import CLIResult, CLIResultStatus
+from nexus.backends.connectors.gws.connector import (
+    CalendarConnector,
+    ChatConnector,
+    DocsConnector,
+    DriveConnector,
+    GmailConnector,
+    SheetsConnector,
+)
 from nexus.backends.connectors.gws.schemas import (
     AppendRowsSchema,
     CreateSpaceSchema,
@@ -36,6 +48,180 @@ CONFIGS_DIR = (
     / "gws"
     / "configs"
 )
+
+
+class TestDocsConnectorListing:
+    def test_list_dir_uses_drive_metadata_and_filters_to_docs(self) -> None:
+        connector = DocsConnector()
+        payload = json.dumps(
+            {
+                "files": [
+                    {"name": "Doc Alpha", "mimeType": "application/vnd.google-apps.document"},
+                    {"name": "Spreadsheet", "mimeType": "application/vnd.google-apps.spreadsheet"},
+                    {"name": "Doc Beta", "mimeType": "application/vnd.google-apps.document"},
+                ]
+            }
+        )
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout=payload,
+                command=["gws", "drive", "files", "list"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["Doc Alpha", "Doc Beta"]
+        connector._execute_cli.assert_called_once()
+        args = connector._execute_cli.call_args.args[0]
+        assert args[:4] == ["gws", "drive", "files", "list"]
+        assert args[4] == "--params"
+        assert "application/vnd.google-apps.document" in args[5]
+
+    def test_list_dir_raises_on_cli_failure(self) -> None:
+        connector = DocsConnector()
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.EXIT_ERROR,
+                exit_code=1,
+                stderr="403 permission denied",
+                command=["gws", "drive", "files", "list"],
+            )
+        )
+
+        with pytest.raises(Exception, match="permission denied"):
+            connector.list_dir("")
+
+
+class TestSheetsConnectorListing:
+    def test_list_dir_uses_drive_metadata_and_filters_to_spreadsheets(self) -> None:
+        connector = SheetsConnector()
+        payload = json.dumps(
+            {
+                "files": [
+                    {
+                        "name": "Quarterly Plan",
+                        "mimeType": "application/vnd.google-apps.spreadsheet",
+                    },
+                    {"name": "Doc Alpha", "mimeType": "application/vnd.google-apps.document"},
+                    {"name": "Pipeline", "mimeType": "application/vnd.google-apps.spreadsheet"},
+                ]
+            }
+        )
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout=payload,
+                command=["gws", "drive", "files", "list"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["Pipeline", "Quarterly Plan"]
+        connector._execute_cli.assert_called_once()
+        args = connector._execute_cli.call_args.args[0]
+        assert args[:4] == ["gws", "drive", "files", "list"]
+        assert args[4] == "--params"
+        assert "application/vnd.google-apps.spreadsheet" in args[5]
+
+
+class TestDriveConnectorListing:
+    def test_list_dir_marks_folders_and_files(self) -> None:
+        connector = DriveConnector()
+        payload = json.dumps(
+            {
+                "files": [
+                    {"name": "Specs", "mimeType": "application/vnd.google-apps.folder"},
+                    {"name": "notes.txt", "mimeType": "text/plain"},
+                    {"name": "Roadmap", "mimeType": "application/vnd.google-apps.document"},
+                ]
+            }
+        )
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout=payload,
+                command=["gws", "drive", "files", "list"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["Roadmap", "Specs/", "notes.txt"]
+
+
+class TestChatConnectorListing:
+    def test_list_dir_root_lists_spaces(self) -> None:
+        connector = ChatConnector()
+        payload = json.dumps(
+            {
+                "spaces": [
+                    {"name": "spaces/AAA"},
+                    {"name": "spaces/BBB"},
+                ]
+            }
+        )
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout=payload,
+                command=["gws", "chat", "spaces", "list"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["spaces/AAA/", "spaces/BBB/"]
+
+    def test_list_dir_raises_actionable_error_on_missing_chat_scopes(self) -> None:
+        connector = ChatConnector()
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.EXIT_ERROR,
+                exit_code=1,
+                stdout='{"error":{"message":"Request had insufficient authentication scopes."}}',
+                stderr="error[api]: Request had insufficient authentication scopes.",
+                command=["gws", "chat", "spaces", "list"],
+            )
+        )
+
+        with pytest.raises(Exception, match="approve Chat access"):
+            connector.list_dir("")
+
+
+class TestGmailConnectorListing:
+    def test_list_dir_root_returns_expected_label_folders(self) -> None:
+        connector = GmailConnector()
+        assert connector.list_dir("") == [
+            "INBOX/",
+            "SENT/",
+            "STARRED/",
+            "IMPORTANT/",
+            "DRAFTS/",
+        ]
+
+
+class TestCalendarConnectorListing:
+    def test_list_dir_root_lists_calendars(self) -> None:
+        connector = CalendarConnector()
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout='items:\n  - id: "primary"\n  - id: "team@example.com"\n',
+                command=["gws", "calendar", "calendarList", "list", "--format", "yaml"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["primary/", "team@example.com/"]
 
 
 # ---------------------------------------------------------------------------

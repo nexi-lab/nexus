@@ -18,7 +18,7 @@ textual = pytest.importorskip("textual")
 
 from textual.widgets import DataTable  # noqa: E402
 
-from nexus.fs._tui import PlaygroundApp  # noqa: E402
+from nexus.fs._tui import ContextualNexusFS, PlaygroundApp  # noqa: E402
 from nexus.fs._tui.file_browser import (  # noqa: E402
     MAX_DISPLAY_ENTRIES,
     FileBrowser,
@@ -540,6 +540,39 @@ class TestPlaygroundApp:
         assert "nexus-fs auth connect s3 native" in message
         assert "/mount s3://bucket" in message
 
+    @pytest.mark.asyncio
+    async def test_contextual_fs_falls_back_to_backend_list_dir_for_empty_metadata(self):
+        """Connector-backed playground mounts should still browse when slim metadata is empty."""
+
+        class _Backend:
+            def list_dir(self, path, context=None):
+                assert path == ""
+                return ["Doc Alpha", "Folder/"]
+
+        class _Route:
+            backend = _Backend()
+            backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path == "/gws/docs"
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                assert path == "/gws/docs"
+                return []
+
+        fs = ContextualNexusFS(_Kernel())
+        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        assert isinstance(rows, list)
+        assert rows[0]["path"] == "/gws/docs/Doc Alpha"
+        assert rows[0]["is_directory"] is False
+        assert rows[1]["path"] == "/gws/docs/Folder"
+        assert rows[1]["is_directory"] is True
+
     def test_supported_connector_rows_include_dynamic_gws_targets(self):
         """The playground lists concrete connector mount targets, not just services."""
         app = PlaygroundApp(uris=())
@@ -550,6 +583,7 @@ class TestPlaygroundApp:
         assert "gws://drive" in names
         assert "gws://gmail" in names
         assert "gws://calendar" in names
+        assert "gws://github" not in names
         assert "calendar://primary" not in names
 
     def test_supported_connector_rows_include_discovered_s3_buckets(self):

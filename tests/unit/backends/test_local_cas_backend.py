@@ -479,8 +479,5 @@ class TestProperties:
     def test_has_root_path(self, backend):
         assert backend.has_root_path is True
 
-    def test_supports_parallel_mmap(self, backend):
-        assert backend.supports_parallel_mmap_read is True
-
     def test_supports_multipart(self, backend):
         assert backend.supports_multipart is True

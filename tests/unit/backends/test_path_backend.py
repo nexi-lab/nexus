@@ -404,9 +404,6 @@ class TestPathAddressingEngineName:
         backend = PathAddressingEngine(transport)
         assert backend.name == "path-memory"
 
-    def test_supports_rename(self, backend: PathAddressingEngine):
-        assert backend.supports_rename is True
-
 
 class TestPathAddressingEngineOffsetWrite:
     """Test offset write (POSIX pwrite semantics) for PAS."""

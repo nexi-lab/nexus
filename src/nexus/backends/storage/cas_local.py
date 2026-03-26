@@ -165,13 +165,37 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
     def has_root_path(self) -> bool:
         return True
 
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return True
-
     def _hash_to_path(self, content_hash: str) -> Path:
-        """Convert content hash to full disk path for parallel mmap reads."""
+        """Convert content hash to full disk path."""
         return self.root_path / self._blob_key(content_hash)
+
+    def batch_read_content(
+        self,
+        content_ids: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes | None]:
+        """Read multiple content items, using Rust parallel mmap when available.
+
+        Overrides ObjectStoreABC default (sequential) with nexus_fast bulk
+        read for local CAS blobs. Falls back to sequential on ImportError.
+        """
+        if len(content_ids) <= 1:
+            return super().batch_read_content(content_ids, context, contexts=contexts)
+
+        try:
+            from nexus_fast import read_files_bulk
+
+            disk_paths = [str(self._hash_to_path(cid)) for cid in content_ids]
+            disk_contents = read_files_bulk(disk_paths)
+
+            result: dict[str, bytes | None] = {}
+            for cid, disk_path in zip(content_ids, disk_paths, strict=True):
+                result[cid] = disk_contents.get(disk_path)
+            return result
+        except ImportError:
+            return super().batch_read_content(content_ids, context, contexts=contexts)
 
     def _is_chunked_content(self, content_hash: str) -> bool:
         """Check if content was stored as CDC chunks."""

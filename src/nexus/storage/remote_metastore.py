@@ -122,10 +122,6 @@ class RemoteMetastore(MetastoreABC):
                 )
         return metadata_list
 
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        """Rename a file path in metadata via server RPC."""
-        self._call_rpc("sys_rename", {"old_path": old_path, "new_path": new_path})
-
     def is_implicit_directory(self, path: str) -> bool:
         """Check if path is an implicit directory (has children but no explicit metadata)."""
         result = self._call_rpc("sys_is_directory", {"path": path})

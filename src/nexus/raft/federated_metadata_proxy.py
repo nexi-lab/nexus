@@ -342,18 +342,6 @@ class FederatedMetadataProxy(MetastoreABC):
     # Store-specific methods (duck-typed by NexusFS)
     # =========================================================================
 
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        """Rename within the same zone. Cross-zone rename is not supported."""
-        old_resolved = self._resolve(old_path)
-        new_resolved = self._resolve(new_path)
-        if old_resolved.zone_id != new_resolved.zone_id:
-            raise ValueError(
-                f"Cross-zone rename not supported: "
-                f"'{old_path}' in zone '{old_resolved.zone_id}', "
-                f"'{new_path}' in zone '{new_resolved.zone_id}'"
-            )
-        old_resolved.store.rename_path(old_resolved.path, new_resolved.path)
-
     def is_implicit_directory(self, path: str) -> bool:
         resolved = self._resolve(path)
         return resolved.store.is_implicit_directory(resolved.path)

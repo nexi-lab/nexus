@@ -328,11 +328,15 @@ class TokenManager:
                     return cached_raw.decode()
 
             with self.SessionLocal() as session:
-                stmt = select(OAuthCredentialModel).where(
-                    OAuthCredentialModel.provider == provider,
-                    OAuthCredentialModel.user_email == user_email,
-                    OAuthCredentialModel.zone_id == zone_id,
-                    OAuthCredentialModel.revoked == 0,
+                stmt = (
+                    select(OAuthCredentialModel)
+                    .where(
+                        OAuthCredentialModel.provider == provider,
+                        OAuthCredentialModel.user_email == user_email,
+                        OAuthCredentialModel.zone_id == zone_id,
+                        OAuthCredentialModel.revoked == 0,
+                    )
+                    .order_by(OAuthCredentialModel.created_at.desc())
                 )
                 model = session.execute(stmt).scalar_one_or_none()
 
@@ -550,11 +554,15 @@ class TokenManager:
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh."""
         with self.SessionLocal() as session:
-            stmt = select(OAuthCredentialModel).where(
-                OAuthCredentialModel.provider == provider,
-                OAuthCredentialModel.user_email == user_email,
-                OAuthCredentialModel.zone_id == zone_id,
-                OAuthCredentialModel.revoked == 0,
+            stmt = (
+                select(OAuthCredentialModel)
+                .where(
+                    OAuthCredentialModel.provider == provider,
+                    OAuthCredentialModel.user_email == user_email,
+                    OAuthCredentialModel.zone_id == zone_id,
+                    OAuthCredentialModel.revoked == 0,
+                )
+                .order_by(OAuthCredentialModel.created_at.desc())
             )
             model = session.execute(stmt).scalar_one_or_none()
 
@@ -631,7 +639,11 @@ class TokenManager:
             elif user_email is not None:
                 stmt = stmt.where(OAuthCredentialModel.user_email == user_email)
 
-            models = session.execute(stmt).scalars().all()
+            models = (
+                session.execute(stmt.order_by(OAuthCredentialModel.created_at.desc()))
+                .scalars()
+                .all()
+            )
 
             return [
                 {

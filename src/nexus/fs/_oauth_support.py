@@ -26,6 +26,28 @@ else:
 _DEFAULT_DB_PATH = Path("~/.nexus/nexus.db").expanduser()
 _DEFAULT_OAUTH_KEY_PATH = Path("~/.nexus/auth/oauth.key").expanduser()
 
+_GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
+    "gws": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+    ],
+    "google-drive": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
+    ],
+    "gmail": [
+        "https://www.googleapis.com/auth/gmail.modify",
+    ],
+    "google-calendar": [
+        "https://www.googleapis.com/auth/calendar",
+    ],
+}
+
 
 def get_fs_database_url() -> str | None:
     """Resolve the standalone nexus-fs database URL.
@@ -68,6 +90,7 @@ def get_token_manager(db_path: str | None = None) -> TokenManager:
 def run_google_oauth_setup(
     *,
     user_email: str,
+    service_name: str = "gws",
     client_id: str | None = None,
     client_secret: str | None = None,
     db_path: str | None = None,
@@ -93,11 +116,8 @@ def run_google_oauth_setup(
         client_id=client_id,
         client_secret=client_secret,
         redirect_uri="http://localhost",
-        scopes=[
-            "https://www.googleapis.com/auth/drive",
-            "https://www.googleapis.com/auth/drive.file",
-        ],
-        provider_name="google-drive",
+        scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
+        provider_name=service_name,
     )
     auth_url = provider.get_authorization_url()
 

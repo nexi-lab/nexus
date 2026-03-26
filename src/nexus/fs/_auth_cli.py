@@ -321,7 +321,7 @@ def connect_auth(
     if auth_type == "oauth":
         user_email = _resolve_user_email(user_email)
         if service_name in {"gws", "google-drive", "gmail", "google-calendar"}:
-            run_google_oauth_setup(user_email=user_email)
+            run_google_oauth_setup(user_email=user_email, service_name=service_name)
             return
         if service_name == "x":
             run_x_oauth_setup(user_email=user_email)

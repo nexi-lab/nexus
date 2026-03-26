@@ -51,11 +51,18 @@ def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
     monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _StubAuthService())
 
     def _fake_google_setup(
-        *, user_email: str, client_id=None, client_secret=None, db_path=None, zone_id=None
+        *,
+        user_email: str,
+        service_name="gws",
+        client_id=None,
+        client_secret=None,
+        db_path=None,
+        zone_id=None,
     ):  # noqa: ANN001
         called.update(
             {
                 "user_email": user_email,
+                "service_name": service_name,
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "db_path": db_path,
@@ -71,6 +78,7 @@ def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Setup steps for gws (oauth)" in result.output
     assert called["user_email"] == "alice@example.com"
+    assert called["service_name"] == "gws"
 
 
 def test_fs_database_url_does_not_inherit_global_nexus_database_url(monkeypatch) -> None:

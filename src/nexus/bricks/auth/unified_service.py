@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.unified_auth import (
     AuthResolution,
     AuthStatus,
@@ -123,6 +125,42 @@ _GWS_TARGET_PROBES: dict[str, list[str]] = {
     ],
     "calendar": ["gws", "calendar", "calendarList", "list", "--format", "json"],
     "chat": ["gws", "chat", "spaces", "list", "--format", "json"],
+}
+
+_GWS_TARGET_SCOPE_MAP: dict[str, tuple[str, ...]] = {
+    "drive": (
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+    ),
+    "docs": (
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/documents.readonly",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+    ),
+    "sheets": (
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive.file",
+    ),
+    "gmail": (
+        "https://www.googleapis.com/auth/gmail.readonly",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/gmail.compose",
+        "https://www.googleapis.com/auth/gmail.send",
+    ),
+    "calendar": (
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/calendar.readonly",
+    ),
+    "chat": (
+        "https://www.googleapis.com/auth/chat.spaces",
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+    ),
 }
 
 
@@ -363,6 +401,24 @@ class UnifiedAuthService:
                         )
                         continue
 
+                    if not expired and service in _SERVICE_TARGET_ALIASES:
+                        target_summary = await self._google_target_summary_for_stored_oauth(
+                            service,
+                            str(matching[0].get("provider", "")),
+                            str(matching[0].get("user_email", "")),
+                        )
+                        summaries.append(
+                            AuthSummary(
+                                service=service,
+                                kind=CredentialKind.OAUTH,
+                                status=target_summary["status"],
+                                source="oauth",
+                                message=target_summary["message"],
+                                details=target_summary["details"],
+                            )
+                        )
+                        continue
+
                     status = AuthStatus.EXPIRED if expired else AuthStatus.AUTHED
                     summaries.append(
                         AuthSummary(
@@ -518,6 +574,15 @@ class UnifiedAuthService:
             }
 
         candidate = matches[0]
+        if desired_targets and not bool(candidate.get("is_expired")):
+            return await self._google_target_test_result_for_stored_oauth(
+                service,
+                desired_targets,
+                provider=str(candidate["provider"]),
+                user_email=str(candidate["user_email"]),
+                default_source="oauth",
+            )
+
         if bool(candidate.get("is_expired")) and native is not None:
             if desired_targets:
                 result = self._google_target_test_result(
@@ -542,12 +607,26 @@ class UnifiedAuthService:
             user_email=str(candidate["user_email"]),
             context=context,
         )
+        valid = bool(result.get("success")) if "success" in result else bool(result.get("valid"))
+        if not valid:
+            message = str(
+                result.get("message") or result.get("error") or "OAuth credential test failed."
+            )
+            return {
+                "success": False,
+                "service": service,
+                "source": "oauth",
+                "message": message,
+            }
         result["service"] = service
         result.setdefault("source", "oauth")
         if desired_targets:
-            result.setdefault(
-                "message",
-                "OAuth credential is valid. Target-specific readiness requires local gws CLI.",
+            return await self._google_target_test_result_for_stored_oauth(
+                service,
+                desired_targets,
+                provider=str(candidate["provider"]),
+                user_email=str(candidate["user_email"]),
+                default_source=str(result.get("source", "oauth")),
             )
         return result
 
@@ -687,40 +766,68 @@ class UnifiedAuthService:
             raise ValueError(f"Target '{normalized}' is not valid for service '{service}'.")
         return (normalized,)
 
+    async def _get_stored_oauth_credential(self, provider: str, user_email: str) -> Any | None:
+        if self._oauth_service is None:
+            return None
+        token_manager_getter = getattr(self._oauth_service, "_get_token_manager", None)
+        if token_manager_getter is None:
+            return None
+        try:
+            token_manager = token_manager_getter()
+        except Exception:
+            return None
+        if token_manager is None:
+            return None
+        getter = getattr(token_manager, "get_credential", None)
+        if getter is None:
+            return None
+        try:
+            return await getter(provider, user_email, ROOT_ZONE_ID)
+        except Exception:
+            return None
+
     def _probe_google_workspace_targets(
         self,
         targets: tuple[str, ...],
         *,
         user_email: str | None = None,
+        access_token: str | None = None,
+        source: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         checks: dict[str, dict[str, Any]] = {}
         native = self._detect_google_workspace_cli_native(user_email=user_email)
-        if native is None:
+        probe_source = source or (native["source"] if native is not None else "oauth")
+        probe_email = user_email or (native.get("email") if native is not None else None)
+        if access_token is None and native is None:
             for target in targets:
                 checks[target] = {
                     "target": target,
                     "success": False,
-                    "source": "native:gws_cli",
-                    "message": "Local gws CLI auth is not available.",
-                    "reason": "missing_native_cli",
+                    "source": probe_source,
+                    "message": "No Google auth is available for target verification.",
+                    "reason": "missing_google_auth",
                 }
             return checks
 
         for target in targets:
             args = _GWS_TARGET_PROBES[target]
             try:
+                env = None
+                if access_token:
+                    env = {"GWS_ACCESS_TOKEN": access_token}
                 result = subprocess.run(
                     args,
                     capture_output=True,
                     text=True,
                     timeout=15,
                     check=False,
+                    env={**os.environ, **(env or {})},
                 )
             except Exception as exc:
                 checks[target] = {
                     "target": target,
                     "success": False,
-                    "source": native["source"],
+                    "source": probe_source,
                     "message": str(exc),
                     "reason": "probe_error",
                 }
@@ -731,21 +838,25 @@ class UnifiedAuthService:
                 checks[target] = {
                     "target": target,
                     "success": True,
-                    "source": native["source"],
-                    "message": f"{target} target is ready via local gws CLI.",
+                    "source": probe_source,
+                    "message": (
+                        f"{target} target is ready via stored OAuth."
+                        if access_token
+                        else f"{target} target is ready via local gws CLI."
+                    ),
                 }
                 continue
 
             if "insufficient authentication scopes" in combined:
                 message = (
                     f"{target} requires additional Google OAuth scopes. Re-run the Google "
-                    f"Workspace OAuth connect flow for {native['email']} and approve the requested access."
+                    f"Workspace OAuth connect flow for {probe_email or 'your account'} and approve the requested access."
                 )
                 reason = "missing_scopes"
             elif "auth_expired" in combined or "expired" in combined:
                 message = (
                     f"{target} auth expired. Re-run the Google Workspace OAuth connect flow "
-                    f"for {native['email']}."
+                    f"for {probe_email or 'your account'}."
                 )
                 reason = "expired"
             else:
@@ -756,11 +867,120 @@ class UnifiedAuthService:
             checks[target] = {
                 "target": target,
                 "success": False,
-                "source": native["source"],
+                "source": probe_source,
                 "message": message,
                 "reason": reason,
             }
         return checks
+
+    async def _google_target_test_result_for_stored_oauth(
+        self,
+        service: str,
+        targets: tuple[str, ...],
+        *,
+        provider: str,
+        user_email: str,
+        default_source: str,
+    ) -> dict[str, Any]:
+        credential = await self._get_stored_oauth_credential(provider, user_email)
+        if credential is None:
+            return {
+                "success": False,
+                "service": service,
+                "source": default_source,
+                "message": "Stored OAuth credential could not be loaded for target verification.",
+            }
+
+        scopes = set(credential.scopes or ())
+        missing_scope_targets = [
+            target
+            for target in targets
+            if not any(scope in scopes for scope in _GWS_TARGET_SCOPE_MAP[target])
+        ]
+        if missing_scope_targets:
+            checks = [
+                {
+                    "target": target,
+                    "success": target not in missing_scope_targets,
+                    "source": "oauth",
+                    "message": (
+                        f"{target} target is ready via stored OAuth."
+                        if target not in missing_scope_targets
+                        else (
+                            f"{target} requires additional Google OAuth scopes. Re-run "
+                            f"`nexus-fs auth connect gws oauth --user-email {user_email}` "
+                            "and approve the requested access."
+                        )
+                    ),
+                    "reason": None if target not in missing_scope_targets else "missing_scopes",
+                }
+                for target in targets
+            ]
+            return {
+                "success": False,
+                "service": service,
+                "source": "oauth",
+                "message": "; ".join(
+                    f"{target}: missing required Google OAuth scope"
+                    for target in missing_scope_targets
+                ),
+                "checks": checks,
+                "stored_oauth_status": AuthStatus.AUTHED.value,
+            }
+
+        return self._google_target_test_result(
+            service,
+            targets,
+            source="oauth",
+            user_email=user_email,
+            access_token=credential.access_token,
+        )
+
+    async def _google_target_summary_for_stored_oauth(
+        self,
+        service: str,
+        provider: str,
+        user_email: str,
+    ) -> dict[str, Any]:
+        result = await self._google_target_test_result_for_stored_oauth(
+            service,
+            self._google_targets_for_service(service),
+            provider=provider,
+            user_email=user_email,
+            default_source="oauth",
+        )
+        checks = result.get("checks", [])
+        if not isinstance(checks, list):
+            checks = []
+        failed = [check for check in checks if not check.get("success")]
+        status = AuthStatus.AUTHED if result.get("success") else AuthStatus.ERROR
+        if service == "gws":
+            if failed:
+                failed_text = ", ".join(
+                    f"{check.get('target')} ({check.get('reason', 'failed')})" for check in failed
+                )
+                message = f"Stored Google OAuth is available, but some targets are not ready: {failed_text}."
+            else:
+                ready = ", ".join(
+                    str(check.get("target")) for check in checks if check.get("success")
+                )
+                message = f"Google Workspace targets ready via stored OAuth: {ready}."
+        else:
+            message = str(result.get("message", "OAuth credential available."))
+        return {
+            "status": status,
+            "message": message,
+            "details": {
+                "target_checks": {
+                    str(check.get("target")): {
+                        "success": bool(check.get("success")),
+                        "reason": check.get("reason"),
+                        "message": check.get("message"),
+                    }
+                    for check in checks
+                },
+            },
+        }
 
     def _google_target_summary(
         self,
@@ -835,8 +1055,14 @@ class UnifiedAuthService:
         *,
         source: str,
         user_email: str | None = None,
+        access_token: str | None = None,
     ) -> dict[str, Any]:
-        checks = self._probe_google_workspace_targets(targets, user_email=user_email)
+        checks = self._probe_google_workspace_targets(
+            targets,
+            user_email=user_email,
+            access_token=access_token,
+            source=source,
+        )
         selected = [checks[target] for target in targets]
         failed = [item for item in selected if not item.get("success")]
         ready = [item["target"] for item in selected if item.get("success")]

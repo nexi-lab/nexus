@@ -31,6 +31,7 @@ from nexus.core.stream import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.grpc.channel_pool import PeerChannelPool
 
 logger = logging.getLogger(__name__)
 
@@ -62,9 +63,11 @@ class StreamManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
+        channel_pool: "PeerChannelPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
+        self._channel_pool = channel_pool
         self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -135,12 +138,15 @@ class StreamManager:
         exists but the buffer was lost (process restart), creates a new
         buffer for the existing inode.
 
+        For remote streams (origin != self_address), installs a
+        RemoteStreamBackend that proxies via persistent gRPC channel.
+
         Args:
             path: VFS path of the stream.
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The StreamBuffer for this stream.
+            The StreamBackend for this stream (StreamBuffer or RemoteStreamBackend).
 
         Raises:
             StreamNotFoundError: No stream inode at this path.
@@ -156,7 +162,24 @@ class StreamManager:
         if metadata is None or metadata.entry_type != DT_STREAM:
             raise StreamNotFoundError(f"no stream at: {path}")
 
-        # Recreate buffer (restart recovery)
+        # Detect remote stream — install RemoteStreamBackend for fast-path
+        if self._channel_pool is not None and metadata.backend_name:
+            from nexus.contracts.backend_address import BackendAddress
+
+            addr = BackendAddress.parse(metadata.backend_name)
+            if addr.has_origin and self._self_address not in addr.origins:
+                from nexus.core.remote_stream import RemoteStreamBackend
+
+                backend: StreamBackend = RemoteStreamBackend(
+                    origin=addr.origins[0],
+                    path=path,
+                    channel_pool=self._channel_pool,
+                )
+                self._buffers[path] = backend
+                logger.debug("stream opened (remote): %s → %s", path, addr.origins[0])
+                return backend
+
+        # Local: recreate buffer (restart recovery)
         buf = StreamBuffer(capacity=capacity)
         self._buffers[path] = buf
 

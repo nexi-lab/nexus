@@ -34,6 +34,7 @@ from nexus.core.pipe import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.grpc.channel_pool import PeerChannelPool
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +70,11 @@ class PipeManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
+        channel_pool: "PeerChannelPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
+        self._channel_pool = channel_pool
         self._buffers: dict[str, PipeBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -172,12 +175,15 @@ class PipeManager:
         exists but the buffer was lost (process restart), creates a new
         buffer for the existing inode.
 
+        For remote pipes (origin != self_address), installs a
+        RemotePipeBackend that proxies via persistent gRPC channel.
+
         Args:
             path: VFS path of the pipe.
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The RingBuffer for this pipe.
+            The PipeBackend for this pipe (RingBuffer or RemotePipeBackend).
 
         Raises:
             PipeNotFoundError: No pipe inode at this path.
@@ -193,7 +199,24 @@ class PipeManager:
         if metadata is None or metadata.entry_type != DT_PIPE:
             raise PipeNotFoundError(f"no pipe at: {path}")
 
-        # Recreate buffer (restart recovery)
+        # Detect remote pipe — install RemotePipeBackend for fast-path
+        if self._channel_pool is not None and metadata.backend_name:
+            from nexus.contracts.backend_address import BackendAddress
+
+            addr = BackendAddress.parse(metadata.backend_name)
+            if addr.has_origin and self._self_address not in addr.origins:
+                from nexus.core.remote_pipe import RemotePipeBackend
+
+                backend: PipeBackend = RemotePipeBackend(
+                    origin=addr.origins[0],
+                    path=path,
+                    channel_pool=self._channel_pool,
+                )
+                self._buffers[path] = backend
+                logger.debug("pipe opened (remote): %s → %s", path, addr.origins[0])
+                return backend
+
+        # Local: recreate buffer (restart recovery)
         buf = RingBuffer(capacity=capacity)
         self._buffers[path] = buf
 

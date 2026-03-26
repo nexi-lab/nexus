@@ -74,6 +74,18 @@ class EventsService:
         zone_id: str | None = None,
     ):
         self._event_bus = event_bus
+        # Fallback: if no lock_manager provided, create local semaphore-based one
+        if lock_manager is None:
+            try:
+                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
+                from nexus.lib.semaphore import create_vfs_semaphore
+
+                lock_manager = SemaphoreAdvisoryLockManager(
+                    create_vfs_semaphore(), zone_id=zone_id or ROOT_ZONE_ID
+                )
+                logger.debug("[EventsService] Using local SemaphoreAdvisoryLockManager fallback")
+            except Exception as exc:
+                logger.debug("[EventsService] Local lock fallback unavailable: %s", exc)
         self._lock_manager = lock_manager
         self._zone_id = zone_id
         self._event_tasks: set[asyncio.Task[Any]] = set()
@@ -306,8 +318,8 @@ class EventsService:
 
         if not self._has_lock_manager():
             raise RuntimeError(
-                "No lock manager available. Advisory lock manager should always "
-                "be created by factory (SemaphoreAdvisoryLockManager or RaftLockManager)."
+                "No lock manager available. EventsService should always have a lock "
+                "manager (local fallback or distributed)."
             )
 
         desc = f"mode={mode}" if max_holders == 1 else f"semaphore({max_holders})"

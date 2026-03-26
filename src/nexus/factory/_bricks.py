@@ -338,36 +338,7 @@ def _boot_independent_bricks(
     else:
         logger.debug("[BOOT:BRICK] Uploads brick disabled by profile")
 
-    # --- Infrastructure: event bus + lock manager ---
-    event_bus: Any = None
-    lock_manager: Any = None
-    if not _on("ipc"):
-        logger.debug("[BOOT:BRICK] IPC/EventBus brick disabled by profile")
-    else:
-        # Event bus requires explicit dist config
-        if ctx.dist.enable_locks or ctx.dist.enable_events:
-            from nexus.factory._distributed import _create_distributed_infra
-
-            event_bus, lock_manager = _create_distributed_infra(
-                ctx.dist,
-                ctx.metadata_store,
-                ctx.record_store,
-                ctx.dist.coordination_url,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-            )
-
-        # Always create lock manager — SemaphoreAdvisoryLockManager wraps
-        # VFSSemaphore directly (no LockStoreProtocol capability check needed).
-        if lock_manager is None:
-            try:
-                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
-                from nexus.lib.semaphore import create_vfs_semaphore
-
-                _zone = ctx.zone_id or ROOT_ZONE_ID
-                lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=_zone)
-                logger.info("Advisory lock manager initialized (standalone, zone=%s)", _zone)
-            except Exception as _lm_exc:
-                logger.debug("[BOOT:BRICK] SemaphoreAdvisoryLockManager unavailable: %s", _lm_exc)
+    # --- Infrastructure: event bus + lock manager moved to _boot_services() ---
 
     # --- Workflow engine ---
     workflow_engine: Any = None
@@ -536,8 +507,6 @@ def _boot_independent_bricks(
         "manifest_metrics": manifest_metrics,
         "tool_namespace_middleware": tool_namespace_middleware,
         "chunked_upload_service": chunked_upload_service,
-        "event_bus": event_bus,
-        "lock_manager": lock_manager,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,

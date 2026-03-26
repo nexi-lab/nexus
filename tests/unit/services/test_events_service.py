@@ -79,10 +79,10 @@ class TestEventsServiceInit:
         assert svc._observe_registered is True  # hooks registered at enlist() time
 
     def test_init_minimal(self):
-        """Service can be created with no dependencies."""
+        """Service can be created with no dependencies — local lock fallback auto-created."""
         svc = EventsService()
         assert svc._event_bus is None
-        assert svc._lock_manager is None
+        assert svc._lock_manager is not None  # local fallback auto-created
         assert svc._zone_id is None
         assert svc._observe_registered is True  # hooks registered at enlist() time
 
@@ -142,10 +142,10 @@ class TestInfrastructureDetection:
         svc = EventsService(lock_manager=mock_lock_manager)
         assert svc._has_lock_manager() is True
 
-    def test_has_lock_manager_false(self):
-        """No lock manager means no distributed locks."""
+    def test_has_lock_manager_always_true(self):
+        """EventsService auto-creates local fallback — always has lock manager."""
         svc = EventsService()
-        assert svc._has_lock_manager() is False
+        assert svc._has_lock_manager() is True
 
 
 # =============================================================================
@@ -414,26 +414,39 @@ class TestDistributedLocking:
 # =============================================================================
 
 
-class TestLockingNoInfrastructure:
-    """Tests for locking when no lock infrastructure is available."""
+class TestLockingLocalFallback:
+    """Tests for locking with local SemaphoreAdvisoryLockManager fallback."""
 
-    def test_lock_raises_runtime_error(self):
-        """Lock raises RuntimeError without any lock manager."""
+    def test_lock_uses_local_fallback(self):
+        """EventsService auto-creates local lock manager when none provided."""
         svc = EventsService()
-        with pytest.raises(RuntimeError, match="No lock manager"):
-            asyncio.run(svc.lock("/data/file.txt"))
+        assert svc._has_lock_manager() is True
+        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=1.0))
+        assert lock_id is not None
 
-    def test_unlock_raises_runtime_error(self):
-        """Unlock raises RuntimeError without any lock manager."""
+    def test_unlock_with_local_fallback(self):
+        """Unlock works with local fallback lock manager."""
         svc = EventsService()
-        with pytest.raises(RuntimeError, match="No lock manager"):
-            asyncio.run(svc.unlock("lock-123", path="/data/file.txt"))
 
-    def test_extend_raises_runtime_error(self):
-        """Extend raises RuntimeError without any lock manager."""
+        async def _test():
+            lock_id = await svc.lock("/data/file.txt", timeout=1.0)
+            assert lock_id is not None
+            result = await svc.unlock(lock_id, path="/data/file.txt")
+            assert result is True
+
+        asyncio.run(_test())
+
+    def test_extend_with_local_fallback(self):
+        """Extend works with local fallback lock manager."""
         svc = EventsService()
-        with pytest.raises(RuntimeError, match="No lock manager"):
-            asyncio.run(svc.extend_lock("lock-123", path="/data/file.txt"))
+
+        async def _test():
+            lock_id = await svc.lock("/data/file.txt", timeout=1.0)
+            assert lock_id is not None
+            result = await svc.extend_lock(lock_id, path="/data/file.txt", ttl=60.0)
+            assert result is True
+
+        asyncio.run(_test())
 
 
 # =============================================================================

@@ -388,7 +388,8 @@ class TestDisplayPathReadResolution:
 
         route = MagicMock()
         route.backend = backend
-        fs._router.route = MagicMock(return_value=route)
+        fs.router = MagicMock()
+        fs.router.route = MagicMock(return_value=route)
 
         context = MagicMock()
         context.user_id = "test"
@@ -417,7 +418,8 @@ class TestDisplayPathReadResolution:
         )
 
         fs = MagicMock()
-        fs._router.route = MagicMock(return_value=None)
+        fs.router = MagicMock()
+        fs.router.route = MagicMock(return_value=None)
 
         result = await _read_connector_by_physical_path(
             fs, "/mnt/gmail/INBOX/test.yaml", "INBOX/test.yaml", MagicMock()

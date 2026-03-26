@@ -71,7 +71,7 @@ async def _read_connector_by_physical_path(
             return None
         mount_point = "/".join(parts[:3])  # /mnt/gmail or /mnt/calendar
 
-        route = fs._router.route(mount_point)
+        route = fs.router.route(mount_point)
         if route is None:
             return None
 

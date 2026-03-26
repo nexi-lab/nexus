@@ -45,8 +45,8 @@ class TestConnectorCapabilityEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """We have exactly 26 capabilities defined (21 base + 5 connector protocol #3148)."""
-        assert len(ConnectorCapability) == 26
+        """We have exactly 27 capabilities defined (21 base + 5 connector protocol #3148 + 1 sync #3266)."""
+        assert len(ConnectorCapability) == 27
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""
@@ -87,6 +87,7 @@ class TestConvenienceFrozensets:
             ConnectorCapability.USER_SCOPED,
             ConnectorCapability.TOKEN_MANAGER,
             ConnectorCapability.OAUTH,
+            ConnectorCapability.SYNC_ELIGIBLE,
         }
         assert expected == OAUTH_CONNECTOR_CAPABILITIES
 

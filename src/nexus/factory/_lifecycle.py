@@ -1,18 +1,34 @@
-"""NexusFS lifecycle implementations — link() / initialize() / bootstrap().
+"""NexusFS lifecycle implementations — _wire_services() / _initialize_services().
 
-These factory-layer functions are injected into NexusFS as callables,
-keeping the kernel free of factory/bricks/system_services imports.
+These factory-layer functions are called directly by create_nexus_fs()
+in the orchestrator, keeping the kernel free of factory/bricks imports.
 
-See NexusFS.link(), NexusFS.initialize(), NexusFS.bootstrap().
+Linearized in PR #3371 Phase 2: partial injection eliminated.
 """
 
+import dataclasses
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-async def _do_link(
+@dataclasses.dataclass(frozen=True)
+class _InitContext:
+    """Context captured during _wire_services() for _initialize_services().
+
+    Replaces the old functools.partial injection pattern. All factory-phase
+    locals that _initialize_services needs are captured here.
+    """
+
+    services: dict[str, Any]
+    svc_on: Callable[[str], bool]
+    parse_fn: Any
+    permission_checker: Any
+
+
+async def _wire_services(
     nx: Any,
     *,
     services: dict[str, Any] | None = None,
@@ -20,12 +36,15 @@ async def _do_link(
     enabled_bricks: "frozenset[str] | None" = None,
     parsing: Any = None,
     workflow_engine: Any = None,
-) -> None:
-    """Phase 1 implementation: wire service topology.  Pure memory — NO I/O.
+    federation: Any = None,
+) -> _InitContext:
+    """Phase 1: wire service topology.  Pure memory — NO I/O.
 
     Creates ParsersBrick, CacheBrick, ContentCache; packs them into
     the services dict; boots wired services that need a NexusFS reference;
     binds them onto ``nx``; creates PermissionChecker.
+
+    Returns _InitContext for _initialize_services().
     """
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_post_kernel_services
@@ -88,7 +107,7 @@ async def _do_link(
 
     # --- PermissionChecker (services layer — Issue #899, #1766) ---
     # Factory-local: _permission_checker is only needed by _register_vfs_hooks()
-    # at initialize() time. Captured via partial — never stored on nx.
+    # at initialize() time. Captured in _InitContext.
     from nexus.bricks.rebac.checker import PermissionChecker as _PC
 
     _permission_checker = _PC(
@@ -96,18 +115,6 @@ async def _do_link(
         metadata_store=nx.metadata,
         default_context=nx._init_cred,
         enforce_permissions=nx._enforce_permissions,
-    )
-
-    # Issue #1740/#1765/#1766: capture factory-phase locals via partial so they
-    # never touch nx.__dict__. _do_initialize receives them as keyword args.
-    import functools
-
-    nx._initialize_fn = functools.partial(
-        _do_initialize,
-        services=services,
-        svc_on=svc_on,
-        parse_fn=_parse_fn,
-        permission_checker=_permission_checker,
     )
 
     # --- Boot wired services → register into ServiceRegistry ---
@@ -147,36 +154,25 @@ async def _do_link(
         _canonical = _CANONICAL_ALIASES.get(_attr, _attr)
         await nx._service_registry.enlist(_canonical, _val)
 
-    # Federation — Q3 PersistentService, created at link time (needs nx._zone_mgr).
-    _zone_mgr = getattr(nx, "_zone_mgr", None)
-    if _zone_mgr is not None:
+    # Federation — wire from parameter (profile-gated, created before kernel).
+    if federation is not None:
+        await nx._service_registry.enlist("federation", federation)
+        nx._zone_mgr = federation.zone_manager  # backward compat for health checks
+        logger.debug("[LINK] Federation service enlisted")
+
+        # Upgrade lock manager: LocalLockManager → RaftLockManager
         try:
-            from nexus.raft.federation import NexusFederation
+            from nexus.raft.lock_manager import RaftLockManager
 
-            _fed = NexusFederation(zone_manager=_zone_mgr)
-            await nx._service_registry.enlist("federation", _fed)
-            logger.debug("[LINK] Federation service enlisted")
-
-            # Upgrade lock manager: LocalLockManager → RaftLockManager
-            # if metadata store supports LockStoreProtocol.
-            try:
-                from nexus.lib.distributed_lock import LockStoreProtocol
-
-                if isinstance(nx.metadata, LockStoreProtocol):
-                    from nexus.raft.lock_manager import RaftLockManager
-
-                    _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
-                    # Find EventsService and upgrade its lock manager.
-                    _events_ref = nx._service_registry.service("events_service")
-                    _events_svc = _events_ref._service_instance if _events_ref is not None else None
-                    if _events_svc is not None and hasattr(_events_svc, "upgrade_lock_manager"):
-                        _events_svc.upgrade_lock_manager(_raft_lm)
-                    logger.debug("[LINK] RaftLockManager created and upgraded into EventsService")
-            except Exception as _lm_exc:
-                logger.debug("[LINK] RaftLockManager upgrade skipped: %s", _lm_exc)
-
+            _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
+            # Find EventsService and upgrade its lock manager.
+            _events_ref = nx._service_registry.service("events_service")
+            _events_svc = _events_ref._service_instance if _events_ref is not None else None
+            if _events_svc is not None and hasattr(_events_svc, "upgrade_lock_manager"):
+                _events_svc.upgrade_lock_manager(_raft_lm)
+            logger.info("[LINK] RaftLockManager upgraded into EventsService")
         except Exception as exc:
-            logger.warning("[LINK] Federation unavailable: %s", exc)
+            logger.debug("[LINK] RaftLockManager upgrade skipped: %s", exc)
 
     # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
     # not an external service — inject directly onto the kernel instance.
@@ -324,16 +320,19 @@ async def _do_link(
         except Exception as exc:
             logger.warning("[BOOT:LINK] AcpService unavailable: %s", exc)
 
+    return _InitContext(
+        services=_svc,
+        svc_on=svc_on,
+        parse_fn=_parse_fn,
+        permission_checker=_permission_checker,
+    )
 
-async def _do_initialize(
+
+async def _initialize_services(
     nx: Any,
-    *,
-    services: Any = None,
-    svc_on: "Any" = None,
-    parse_fn: "Any" = None,
-    permission_checker: "Any" = None,
+    ctx: _InitContext,
 ) -> None:
-    """Phase 2 implementation: one-time side effects.  NO background threads.
+    """Phase 2: one-time side effects.  NO background threads.
 
     Prepares resources but remains static — no active threads or async loops.
     Background .start() calls are deferred to bootstrap() via callbacks.
@@ -361,16 +360,13 @@ async def _do_initialize(
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 
-    # Issue #1811: CAS ref_count observer is now registered via
-    # DriverLifecycleCoordinator.adopt_existing_mount() in _do_link().
-    # The `backend` parameter has been removed from _register_vfs_hooks().
     await _register_vfs_hooks(
         nx,
-        services=services,
-        permission_checker=permission_checker,
+        services=ctx.services,
+        permission_checker=ctx.permission_checker,
         auto_parse=nx._parse_config.auto_parse if nx._parse_config else True,
-        svc_on=svc_on,
-        parse_fn=parse_fn,
+        svc_on=ctx.svc_on,
+        parse_fn=ctx.parse_fn,
     )
 
     # --- Register background services as bootstrap callbacks ---
@@ -381,7 +377,7 @@ async def _do_initialize(
     # implement PersistentService and are auto-started by the coordinator's
     # start_persistent_services() at bootstrap.  Manual callbacks deleted.
 
-    _zl = (services or {}).get("zone_lifecycle")
+    _zl = ctx.services.get("zone_lifecycle")
     if _zl is not None and hasattr(_zl, "load_terminating_zones"):
 
         async def _load_zones() -> None:
@@ -397,3 +393,8 @@ async def _do_initialize(
                 logger.warning("[LIFECYCLE] Failed to load terminating zones: %s", exc)
 
         nx._bootstrap_callbacks.append(_load_zones)
+
+
+# Backward compatibility aliases
+_do_link = _wire_services
+_do_initialize = _initialize_services

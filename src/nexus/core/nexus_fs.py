@@ -243,8 +243,9 @@ class NexusFS(  # type: ignore[misc]
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
         self._runtime_closeables: list[Any] = []
-        # Factory-injected lifecycle implementations.
-        # Keeps nexus.core free of nexus.factory / nexus.bricks imports.
+        # Factory-injected lifecycle implementations (legacy — no longer used).
+        # Linearized in PR #3371 Phase 2: create_nexus_fs() calls
+        # _wire_services() / _initialize_services() directly.
         self._link_fn: Callable[..., Any] | None = None
         self._initialize_fn: Callable[..., Any] | None = None
 

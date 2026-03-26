@@ -189,6 +189,7 @@ async def create_nexus_fs(
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
     init_cred: Any = None,
+    federation: Any = None,
 ) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
@@ -270,10 +271,8 @@ async def create_nexus_fs(
     if services is None:
         services = {}
 
-    import functools
-
     from nexus.contracts.types import OperationContext as _OC
-    from nexus.factory._lifecycle import _do_initialize, _do_link
+    from nexus.factory._lifecycle import _initialize_services, _wire_services
 
     _init_cred = (
         init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
@@ -291,14 +290,22 @@ async def create_nexus_fs(
         router=router,
         init_cred=_init_cred,
     )
-    nx._link_fn = functools.partial(_do_link, services=services, zone_id=zone_id)
-    nx._initialize_fn = _do_initialize
-    await nx.link(
+
+    # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
+    init_ctx = await _wire_services(
+        nx,
+        services=services,
+        zone_id=zone_id,
         enabled_bricks=enabled_bricks,
         parsing=parsing,
         workflow_engine=workflow_engine,
+        federation=federation,
     )
-    await nx.initialize()
+    nx._linked = True
+
+    await _initialize_services(nx, init_ctx)
+    nx._initialized = True
+
     return nx
 
 

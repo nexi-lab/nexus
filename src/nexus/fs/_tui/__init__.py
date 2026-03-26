@@ -1191,18 +1191,6 @@ class PlaygroundApp(App[None]):
         ):
             return "local"
 
-        try:
-            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-            from nexus.cli.commands.oauth import get_token_manager
-        except Exception:
-            return "local"
-
-        try:
-            oauth_service = OAuthCredentialService(token_manager=get_token_manager())
-            creds = await oauth_service.list_credentials()
-        except Exception:
-            return "local"
-
         if uri.startswith(("gws://", "gdrive://", "gmail://", "calendar://")):
             providers = {"google"}
         elif uri.startswith("slack://"):
@@ -1210,14 +1198,51 @@ class PlaygroundApp(App[None]):
         else:
             providers = {"x", "twitter"}
 
-        emails = sorted(
-            {
-                str(cred.get("user_email"))
-                for cred in creds
-                if cred.get("provider") in providers and cred.get("user_email")
-            }
+        try:
+            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
+            from nexus.cli.commands.oauth import get_token_manager
+
+            oauth_service = OAuthCredentialService(token_manager=get_token_manager())
+            creds = await oauth_service.list_credentials()
+            emails = sorted(
+                {
+                    str(cred.get("user_email"))
+                    for cred in creds
+                    if cred.get("provider") in providers and cred.get("user_email")
+                }
+            )
+            if len(emails) == 1:
+                return emails[0]
+        except Exception:
+            pass
+
+        try:
+            from types import SimpleNamespace
+
+            from nexus.fs import _infer_connector_user_email
+        except Exception:
+            return "local"
+
+        scheme = uri.split("://", 1)[0].lower()
+        service_name = None
+        if scheme == "gws":
+            service_name = "gws"
+        elif scheme == "gdrive":
+            service_name = "google-drive"
+        elif scheme == "gmail":
+            service_name = "gmail"
+        elif scheme == "calendar":
+            service_name = "google-calendar"
+        elif scheme == "slack":
+            service_name = "slack"
+        elif scheme == "x":
+            service_name = "x"
+
+        inferred = _infer_connector_user_email(
+            scheme=scheme,
+            info=SimpleNamespace(service_name=service_name),
         )
-        return emails[0] if len(emails) == 1 else "local"
+        return inferred or "local"
 
     def _refocus_table(self) -> None:
         """Return focus to the file table after CRUD operations."""

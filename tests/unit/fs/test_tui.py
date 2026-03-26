@@ -621,6 +621,14 @@ class TestPlaygroundApp:
             assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
 
     @pytest.mark.asyncio
+    async def test_resolve_mount_user_id_uses_shared_fs_inference(self):
+        """Playground should reuse the shared slim-fs inference path."""
+        app = PlaygroundApp(uris=())
+
+        with patch("nexus.fs._infer_connector_user_email", return_value="alice@example.com"):
+            assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
+
+    @pytest.mark.asyncio
     async def test_build_filesystem_uses_generic_mount_for_connector_uri(self):
         """Connector URIs go through nexus.fs.mount instead of the direct-only path."""
         app = PlaygroundApp(uris=())

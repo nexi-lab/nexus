@@ -24,6 +24,8 @@ __version__ = "0.1.0"
 # =============================================================================
 import inspect
 import os
+import shutil
+import subprocess
 from typing import Any
 
 _lazy_cache: dict[str, Any] = {}
@@ -334,7 +336,54 @@ def _infer_connector_user_email(
     )
     if len(emails) == 1:
         return emails[0]
+    if "google" in providers:
+        return _infer_google_workspace_cli_email()
     return None
+
+
+def _infer_google_workspace_cli_email() -> str | None:
+    """Best-effort Google account detection from the local gws CLI auth state."""
+    if shutil.which("gws") is None:
+        return None
+
+    try:
+        result = subprocess.run(
+            [
+                "gws",
+                "gmail",
+                "users",
+                "getProfile",
+                "--params",
+                '{"userId":"me"}',
+                "--format",
+                "json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    stdout = result.stdout.strip()
+    if not stdout:
+        return None
+
+    try:
+        import json
+
+        start = stdout.find("{")
+        payload = stdout[start:] if start >= 0 else stdout
+        data = json.loads(payload)
+    except Exception:
+        return None
+
+    email = str(data.get("emailAddress") or "").strip()
+    return email or None
 
 
 def _instantiate_connector_backend(connector_cls: Any, *, info: Any | None, scheme: str) -> Any:

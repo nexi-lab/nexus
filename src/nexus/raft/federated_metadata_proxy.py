@@ -88,6 +88,7 @@ class FederatedMetadataProxy(MetastoreABC):
         import os as _os
 
         raft_addr = getattr(zone_manager, "advertise_addr", None)
+        self_addr: str | None
         if raft_addr and ":" in raft_addr:
             hostname = raft_addr.rsplit(":", 1)[0]
             vfs_port = _os.environ.get("NEXUS_GRPC_PORT", "2028")

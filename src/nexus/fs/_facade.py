@@ -179,8 +179,15 @@ class SlimNexusFS:
         """
         return await self._kernel.sys_access(path, context=self._ctx)
 
+    # Maximum file size for read-copy before refusing (1 GB).
+    # Native backend copy is planned for a future release.
+    _MAX_COPY_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
+
+        Uses a read-then-write approach.  Files larger than 1 GB are
+        refused — native backend copy is planned for a future release.
 
         Args:
             src: Source file path.
@@ -188,7 +195,19 @@ class SlimNexusFS:
 
         Returns:
             Dict with path, size, etag of the new file.
+
+        Raises:
+            ValueError: If the source file exceeds 1 GB.
         """
+        stat = await self.stat(src)
+        if stat is None:
+            raise FileNotFoundError(src)
+        if stat.get("size", 0) > self._MAX_COPY_SIZE:
+            size_gb = stat["size"] / (1024**3)
+            raise ValueError(
+                f"File too large for read-copy ({size_gb:.1f} GB > 1 GB limit). "
+                f"Native backend copy is planned for a future release."
+            )
         content = await self.read(src)
         return await self.write(dst, content)
 

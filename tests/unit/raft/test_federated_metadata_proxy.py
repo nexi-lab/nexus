@@ -154,9 +154,11 @@ class TestFromZoneManager:
     """from_zone_manager() picks up advertise_addr."""
 
     def test_picks_up_advertise_addr(self):
+        """Raft advertise_addr host is kept, but port is replaced with VFS gRPC port."""
         zone_mgr = MagicMock()
         zone_mgr.advertise_addr = "10.0.0.5:50051"
         zone_mgr.get_store.return_value = MagicMock()
 
         proxy = FederatedMetadataProxy.from_zone_manager(zone_mgr)
-        assert proxy._self_address == "10.0.0.5:50051"
+        # from_zone_manager replaces the Raft port with the VFS gRPC port (default 2028)
+        assert proxy._self_address == "10.0.0.5:2028"

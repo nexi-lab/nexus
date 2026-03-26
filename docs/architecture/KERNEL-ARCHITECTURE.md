@@ -76,31 +76,23 @@ See `factory/orchestrator.py` for implementation.
 
 #### Service Lifecycle Protocols
 
-Two `@runtime_checkable` protocols classify services into a 2×2 matrix.
-Services satisfy the contract by implementing the methods — no inheritance
-required (structural typing).
+One-dimension model: the only user-facing lifecycle dimension is
+**daemon vs on-demand** (`PersistentService` protocol). Hook management
+uses duck-typed `hook_spec()` — the kernel auto-captures hooks via
+`hasattr(instance, 'hook_spec')` at `enlist()` time.
 
-```
-                      On-demand                Persistent-required
-                 ┌─────────────────────┬─────────────────────────┐
-  Restart-req.   │ Q1: register only   │ Q3: auto start()/stop() │
-                 │ (SearchService)     │ (EventDeliveryWorker)   │
-                 ├─────────────────────┼─────────────────────────┤
-  HotSwappable   │ Q2: auto hooks +   │ Q4: hooks + activate +  │
-                 │     activate()      │     start()/stop()      │
-                 │ (ReBACService)      │ (future)                │
-                 └─────────────────────┴─────────────────────────┘
-```
+| Mechanism | Methods | Kernel auto-manages |
+|-----------|---------|---------------------|
+| `PersistentService` protocol | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
+| Duck-typed `hook_spec()` | `hook_spec()` → `HookSpec` | Hook registration into KernelDispatch at `enlist()` time; unregister at shutdown |
 
-| Protocol | Methods | Kernel auto-manages |
-|----------|---------|---------------------|
-| `HotSwappable` | `hook_spec()`, `drain()`, `activate()` | Hook registration into KernelDispatch + activate on bootstrap; drain + unregister on shutdown |
-| `PersistentService` | `start()`, `stop()` | `start()` on bootstrap (dependency order); `stop()` on shutdown (reverse order) |
+One-click contract: implement protocol / `hook_spec()` →
+`ServiceRegistry.enlist()` → kernel handles the rest. `ServiceRegistry`
+(kernel-owned, lifecycle integrated) scans the registry and auto-calls
+the appropriate methods during `NexusFS.bootstrap()` / `NexusFS.close()`.
 
-One-click contract: implement protocol → `ServiceRegistry.enlist()` →
-kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
-scans the registry and auto-calls the appropriate methods during
-`NexusFS.bootstrap()` / `NexusFS.close()`.
+`swap_service()` supports **all services** (#1452). Unified path:
+refcount drain → unhook old → replace → rehook new.
 
 **Kernel DI patterns** (two mechanisms, never reads service containers directly):
 
@@ -343,7 +335,7 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Callback mechanism implementing §2.4: three VFS phases (PRE-DISPATCH / INTERCEPT / OBSERVE) + driver lifecycle hooks (MOUNT / UNMOUNT). Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `core.pipe_manager` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
-| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). Manages all 4 service quadrants — subsumes former ServiceLifecycleCoordinator |
+| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). One-dimension model: PersistentService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |

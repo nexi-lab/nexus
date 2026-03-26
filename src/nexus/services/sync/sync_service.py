@@ -72,6 +72,7 @@ class SyncService:
             gateway: NexusFSGateway for NexusFS access
         """
         self._gw = gateway
+        self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Issue #1127: Initialize change log store for delta sync
         self._change_log = ChangeLogStore(
             record_store=gateway.record_store, is_postgresql=gateway.is_postgresql
@@ -325,7 +326,7 @@ class SyncService:
             """Flush accumulated paths and create parent tuples in batch."""
             nonlocal paths_needing_tuples, total_tuples_created
 
-            if paths_needing_tuples and self._gw.hierarchy_enabled:
+            if paths_needing_tuples and getattr(self._gw, "hierarchy_enabled", False):
                 try:
                     zone_id = self._resolve_zone_id(ctx)
                     logger.info(
@@ -413,6 +414,19 @@ class SyncService:
                     f"(backend={type(backend).__name__}, entries_sample={entries[:3] if entries else '[]'})"
                 )
 
+                # Batch metadata for display_path: one call per directory
+                # instead of N serial read_content calls (Issue #3266).
+                dir_metadata: dict[str, dict[str, Any]] | None = None
+                if hasattr(backend, "list_dir_metadata"):
+                    try:
+                        dir_metadata = backend.list_dir_metadata(backend_path, context=ctx.context)
+                    except Exception:
+                        logger.debug(
+                            "list_dir_metadata failed for %s, falling back to per-file",
+                            backend_path,
+                            exc_info=True,
+                        )
+
                 for entry_name in entries:
                     is_dir = entry_name.endswith("/")
                     entry_name = entry_name.rstrip("/")
@@ -461,6 +475,7 @@ class SyncService:
                             paths_needing_tuples,
                             cached_entries,
                             pending_upserts,
+                            dir_metadata=dir_metadata,
                         )
 
                         # Flush batches if needed
@@ -689,6 +704,7 @@ class SyncService:
         paths_needing_tuples: list[str],
         cached_entries: dict[str, ChangeLogEntry] | None = None,
         pending_upserts: list[ChangeLogEntry] | None = None,
+        dir_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Sync a single file entry.
 
@@ -706,6 +722,7 @@ class SyncService:
             paths_needing_tuples: List to collect paths for batch tuple creation
             cached_entries: Pre-fetched change log entries (batch optimization)
             pending_upserts: Accumulator for batch upsert (batch optimization)
+            dir_metadata: Batch metadata from list_dir_metadata() (Issue #3266)
         """
         from nexus.contracts.metadata import FileMetadata
 
@@ -771,8 +788,8 @@ class SyncService:
                 logger.warning(f"[DELTA_SYNC] Change detection failed for {virtual_path}: {e}")
 
         # Apply display_path() if the backend supports it (Issue #3256).
-        # Reads content to extract metadata (subject, date, labels) and
-        # rewrites virtual_path to a human-readable name.
+        # Uses batch metadata from list_dir_metadata() when available (fast),
+        # falls back to per-file read_content() (slow).
         from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 
         if isinstance(backend, DisplayPathMixin):
@@ -781,6 +798,7 @@ class SyncService:
                 virtual_path,
                 backend_path,
                 ctx,
+                dir_metadata=dir_metadata,
             )
 
         # Check if file exists in metadata
@@ -820,9 +838,14 @@ class SyncService:
 
                 self._gw.metadata_put(meta)
                 result.files_created += 1
+                # Issue #3266: Write to file_paths + directory_entries so
+                # sys_readdir (used by TUI) can serve from Postgres.
+                # _gw.metadata_put writes to Raft metastore but sys_readdir
+                # queries file_paths directly.
+                self._write_to_file_paths(meta)
 
                 # Collect for batch parent tuple creation
-                if self._gw.hierarchy_enabled:
+                if getattr(self._gw, "hierarchy_enabled", False):
                     paths_needing_tuples.append(virtual_path)
 
                 # Issue #1127: Update change log after successful sync
@@ -861,6 +884,27 @@ class SyncService:
                     result.files_updated += 1
                 except Exception:
                     pass
+
+            # Issue #3266: Ensure file_paths + directory_entries are populated
+            # even for files that already exist in the Raft metastore.
+            # Use virtual_path (display name) instead of existing_meta.path (raw ID)
+            # when they differ, so Postgres has human-readable paths.
+            if virtual_path != existing_meta.path:
+                display_meta = FileMetadata(
+                    path=virtual_path,
+                    backend_name=existing_meta.backend_name,
+                    physical_path=existing_meta.physical_path or backend_path,
+                    size=existing_meta.size,
+                    etag=existing_meta.etag,
+                    created_at=existing_meta.created_at,
+                    modified_at=existing_meta.modified_at,
+                    version=existing_meta.version,
+                    created_by=existing_meta.created_by,
+                    zone_id=existing_meta.zone_id or ROOT_ZONE_ID,
+                )
+                self._write_to_file_paths(display_meta)
+            else:
+                self._write_to_file_paths(existing_meta)
 
             # Issue #1127: Update change log even for existing files
             if file_info:
@@ -1017,7 +1061,7 @@ class SyncService:
 
             self._gw.metadata_put(dir_meta)
 
-            if self._gw.hierarchy_enabled:
+            if getattr(self._gw, "hierarchy_enabled", False):
                 paths_needing_tuples.append(virtual_path)
 
         except Exception as e:
@@ -1436,6 +1480,153 @@ class SyncService:
         """
         return check_permission(self._gw, path, permission, context)
 
+    # --- Postgres file_paths + directory_entries write (Issue #3266) ---
+
+    def _write_to_file_paths(self, meta: Any) -> None:
+        """Write FileMetadata to Postgres file_paths + directory_entries tables.
+
+        The Raft metastore (metadata_put) is the primary store, but
+        NexusFS.sys_readdir (used by the TUI) queries the Postgres file_paths
+        table directly. This method keeps them in sync.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return
+
+            from sqlalchemy import text
+
+            # Reuse cached engine to avoid creating a new pool per file.
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+            engine = self._fp_engine
+            zone_id = meta.zone_id or "default"
+            virtual_path = meta.path
+            is_dir = meta.size == 0 and meta.etag is None
+            file_type = "inode/directory" if is_dir else None
+
+            with engine.begin() as conn:
+                # file_paths (for sys_readdir / TUI)
+                conn.execute(
+                    text("""
+                        INSERT INTO file_paths
+                            (path_id, zone_id, virtual_path, backend_id, physical_path,
+                             file_type, size_bytes, content_hash, created_at, updated_at,
+                             posix_uid, current_version)
+                        SELECT gen_random_uuid(), :zone_id, :vpath, :backend, :ppath,
+                               :ftype, :size, :etag, :created, :modified, 'system', 1
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM file_paths
+                            WHERE zone_id = :zone_id AND virtual_path = :vpath
+                        )
+                    """),
+                    {
+                        "zone_id": zone_id,
+                        "vpath": virtual_path,
+                        "backend": (meta.backend_name or "")[:36],
+                        "ppath": meta.physical_path,
+                        "ftype": file_type,
+                        "size": meta.size,
+                        "etag": (meta.etag or "")[:64] or None,
+                        "created": meta.created_at,
+                        "modified": meta.modified_at,
+                    },
+                )
+
+                # directory_entries (parent→child sparse index)
+                parts = virtual_path.rsplit("/", 1)
+                if len(parts) == 2 and parts[0]:
+                    parent_path = parts[0]
+                    entry_name = parts[1]
+                    entry_type = "dir" if is_dir else "file"
+                    conn.execute(
+                        text("""
+                            INSERT INTO directory_entries
+                                (zone_id, parent_path, entry_name, entry_type,
+                                 created_at, updated_at)
+                            VALUES (:zone_id, :parent, :name, :etype, NOW(), NOW())
+                            ON CONFLICT (zone_id, parent_path, entry_name)
+                            DO UPDATE SET updated_at = NOW()
+                        """),
+                        {
+                            "zone_id": zone_id,
+                            "parent": parent_path,
+                            "name": entry_name,
+                            "etype": entry_type,
+                        },
+                    )
+
+                    # Materialize parent directories (e.g. /mnt, /mnt/gmail)
+                    # so the TUI root listing shows connector mounts.
+                    segments = parent_path.split("/")
+                    for depth in range(2, len(segments) + 1):
+                        ancestor_parent = "/".join(segments[: depth - 1]) or "/"
+                        ancestor_name = segments[depth - 1]
+                        if not ancestor_name:
+                            continue
+                        conn.execute(
+                            text("""
+                                INSERT INTO directory_entries
+                                    (zone_id, parent_path, entry_name, entry_type,
+                                     created_at, updated_at)
+                                VALUES (:zone_id, :parent, :name, 'dir', NOW(), NOW())
+                                ON CONFLICT (zone_id, parent_path, entry_name)
+                                DO NOTHING
+                            """),
+                            {
+                                "zone_id": zone_id,
+                                "parent": ancestor_parent,
+                                "name": ancestor_name,
+                            },
+                        )
+        except Exception as _fp_err:
+            # Non-fatal: Raft metastore is the source of truth
+            logger.debug("[SYNC] file_paths write failed for %s: %s", meta.path, _fp_err)
+
+    def _delete_from_file_paths(self, virtual_path: str) -> None:
+        """Remove a path from file_paths + directory_entries (Issue #3266).
+
+        Called by delta-delete to keep Postgres projections in sync.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return
+
+            from sqlalchemy import text
+
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+
+            with self._fp_engine.begin() as conn:
+                conn.execute(
+                    text("DELETE FROM file_paths WHERE virtual_path = :vp"),
+                    {"vp": virtual_path},
+                )
+                parts = virtual_path.rsplit("/", 1)
+                if len(parts) == 2 and parts[0]:
+                    conn.execute(
+                        text(
+                            "DELETE FROM directory_entries "
+                            "WHERE parent_path = :parent AND entry_name = :name"
+                        ),
+                        {"parent": parts[0], "name": parts[1]},
+                    )
+        except Exception:
+            logger.debug("[SYNC] file_paths delete failed for %s", virtual_path)
+
     # --- Display path support (Issue #3256) ---
 
     def _apply_display_path_for_sync(
@@ -1444,18 +1635,51 @@ class SyncService:
         virtual_path: str,
         backend_path: str,
         ctx: "SyncContext",
+        dir_metadata: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Rewrite virtual_path using backend.display_path() with content metadata.
 
-        Reads file content from the backend, parses YAML to extract metadata
-        (subject, date, labels), and calls display_path() to produce a
-        human-readable virtual path. Falls back to the original path on error.
+        Fast path (Issue #3266): If ``dir_metadata`` is provided (from
+        ``list_dir_metadata()``), look up the file's metadata directly —
+        no per-file HTTP call needed.  Works for any connector that
+        implements the ``list_dir_metadata`` protocol.
 
-        Only called during sync (not on every listing), so the extra read
-        is a one-time cost per file.
+        Slow path (fallback): Reads file content from the backend, parses YAML
+        to extract metadata, and calls display_path(). Only used for backends
+        that don't implement ``list_dir_metadata``.
         """
         try:
-            content = backend.read_content(backend_path, context=ctx.context)
+            # Extract item_id and filename from backend_path.
+            parts = backend_path.rstrip("/").rsplit("/", 1)
+            filename = parts[-1]
+            item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+            # --- Fast path: use batch metadata from list_dir_metadata ---
+            if dir_metadata is not None:
+                # Try exact filename match first.
+                file_meta = dir_metadata.get(filename)
+                if file_meta is None:
+                    # Gmail: extract msg_id from "threadId-msgId" and try lookup.
+                    bare_id = item_id.split("-")[-1] if "-" in item_id else item_id
+                    file_meta = dir_metadata.get(bare_id)
+                if file_meta is not None:
+                    # For Gmail threadId-msgId format, pass just the msg_id.
+                    display_id = item_id.split("-")[-1] if "-" in item_id else item_id
+                    display = backend.display_path(display_id, file_meta)
+                    if display != f"{display_id}.yaml":
+                        mount_point = ctx.mount_point
+                        if mount_point:
+                            return f"{mount_point.rstrip('/')}/{display.lstrip('/')}"
+                        return f"/{display.lstrip('/')}"
+                    return virtual_path
+
+            # --- Slow path: read content per file ---
+            read_ctx = ctx.context
+            if read_ctx is not None:
+                from dataclasses import replace as _dc_replace
+
+                read_ctx = _dc_replace(read_ctx, backend_path=backend_path)
+            content = backend.read_content(backend_path, context=read_ctx)
             if not content:
                 return virtual_path
 
@@ -1465,12 +1689,8 @@ class SyncService:
             if not isinstance(parsed, dict):
                 return virtual_path
 
-            # Extract item_id from filename and enrich metadata with
-            # path-derived context (e.g., calendarId from parent directory)
-            # that read_content() doesn't include in the response.
-            parts = backend_path.rstrip("/").rsplit("/", 1)
-            filename = parts[-1]
-            item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+            # Enrich metadata with path-derived context (e.g., calendarId
+            # from parent directory) that read_content() doesn't include.
             if len(parts) > 1 and "calendarId" not in parsed:
                 parsed["calendarId"] = parts[0].split("/")[-1]
 

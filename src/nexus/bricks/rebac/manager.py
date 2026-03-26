@@ -366,6 +366,10 @@ class ReBACManager:
             get_namespace_cb=self.get_namespace,
             compute_permission_cb=self._compute_permission,
             cache_check_result_cb=self._cache_check_result,
+            # Async eager recompute only safe with real connection pools (PostgreSQL).
+            # SQLite + StaticPool shares a single DBAPI connection across threads,
+            # causing segfaults when the background thread closes it mid-query.
+            enable_async_recompute=is_postgresql,
             # Stats / cleanup
             cache_ttl_seconds=self.cache_ttl_seconds,
             get_tuple_version=lambda: self._tuple_version,

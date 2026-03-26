@@ -568,7 +568,7 @@ class GmailConnector(CLIConnector):
     SKILL_NAME = "gmail"
     CLI_NAME = "gws"
     CLI_SERVICE = "gmail"
-    use_metadata_listing = False  # Sync reads from gws CLI, not metadata
+    use_metadata_listing = True  # Issue #3266: prefer synced directory_entries
 
     SCHEMAS: dict[str, type] = {
         "send_email": SendEmailSchema,
@@ -624,6 +624,140 @@ class GmailConnector(CLIConnector):
         config = _load_gws_config("gmail.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+
+    # --- Batch metadata via list_dir_metadata protocol (Issue #3266) ---
+
+    def list_dir_metadata(
+        self,
+        path: str = "/",
+        context: Any = None,
+    ) -> dict[str, dict[str, Any]] | None:
+        """Batch-fetch message metadata using ``gws gmail +triage``.
+
+        One CLI call returns subject, date, sender, and labels for up to 500
+        messages in a directory, keyed by the ``threadId-msgId.yaml`` filename
+        that ``list_dir()`` returns.  The sync service uses this to populate
+        ``display_path()`` without per-message ``read_content`` calls.
+
+        Returns ``None`` for root or label-only paths (no per-file metadata).
+        """
+        import json as _json
+        import re
+
+        path = path.strip("/")
+
+        # Root or label-only listing — no per-file metadata to return.
+        if not path:
+            return None
+        parts = path.split("/")
+        label = parts[0]
+        if label not in self._LABELS:
+            return None
+        # INBOX without a category subfolder — subfolder listing, not files.
+        if label == "INBOX" and len(parts) == 1:
+            return None
+
+        # Determine the query label for +triage.
+        query_label = label
+        category_filter: str | None = None
+        if label == "INBOX" and len(parts) >= 2:
+            category_filter = parts[1]
+
+        # Fetch triage metadata in one call.
+        query = f"label:{query_label}"
+        r = self._execute_cli(
+            [
+                "gws",
+                "gmail",
+                "+triage",
+                "--max",
+                "500",
+                "--query",
+                query,
+                "--labels",
+                "--format",
+                "json",
+            ],
+        )
+        if not r.ok:
+            logger.warning(
+                "[GMAIL_LIST_DIR_META] +triage failed for label=%s: %s",
+                query_label,
+                r.stderr[:200],
+            )
+            return None
+
+        try:
+            raw = r.stdout[r.stdout.index("{") :]
+            data = _json.loads(raw)
+        except Exception:
+            logger.warning(
+                "[GMAIL_LIST_DIR_META] Failed to parse +triage JSON for label=%s", query_label
+            )
+            return None
+
+        # Build metadata dict keyed by message ID.
+        # The list_dir entries have format "threadId-msgId.yaml" — we need to
+        # also index by bare msgId for lookup.
+        id_to_meta: dict[str, dict[str, Any]] = {}
+        messages = data.get("messages", [])
+        for msg in messages:
+            msg_id = msg.get("id", "")
+            if not msg_id:
+                continue
+            meta = {
+                "subject": msg.get("subject", ""),
+                "date": msg.get("date", ""),
+                "from": msg.get("from", ""),
+                "labels": msg.get("labels", []),
+                "labelIds": msg.get("labels", []),
+            }
+            id_to_meta[msg_id] = meta
+
+        # Now map from list_dir filenames to metadata.
+        # We need the actual list_dir entries — fetch message list to get
+        # threadId-msgId pairs, then match against triage metadata.
+        result = self._execute_cli(
+            [
+                "gws",
+                "gmail",
+                "users",
+                "messages",
+                "list",
+                "--params",
+                _json.dumps({"userId": "me", "maxResults": 50, "labelIds": [label]}),
+                "--format",
+                "yaml",
+            ],
+        )
+        if not result.ok:
+            # Return the id-keyed metadata anyway — sync_service can look up
+            # by extracting msg_id from the filename.
+            return id_to_meta
+
+        ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
+        thread_ids = re.findall(r'threadId:\s*"([^"]+)"', result.stdout)
+
+        filename_to_meta: dict[str, dict[str, Any]] = {}
+        for i, msg_id in enumerate(ids):
+            file_meta = id_to_meta.get(msg_id)
+            if not file_meta:
+                continue
+            # Filter by category for INBOX sublists.
+            if category_filter:
+                msg_category = _gmail_category_from_labels(file_meta.get("labels"))
+                if msg_category != category_filter:
+                    continue
+            tid = thread_ids[i] if i < len(thread_ids) else msg_id
+            filename = f"{tid}-{msg_id}.yaml"
+            filename_to_meta[filename] = file_meta
+
+        logger.info(
+            "[GMAIL_LIST_DIR_META] Batch metadata for %d files (label=%s)",
+            len(filename_to_meta),
+            query_label,
+        )
+        return filename_to_meta
 
     # --- Display path (Issue #3256) ---
 
@@ -831,7 +965,7 @@ class GmailConnector(CLIConnector):
         if label == "INBOX" and len(parts) == 1:
             return [f"{cat}/" for cat in _GMAIL_CATEGORY_FOLDERS]
 
-        # Inside a label (or INBOX/CATEGORY): list messages via CLI.
+        # Inside a label (or INBOX/CATEGORY): list messages.
         label_ids = [label]
         if label == "INBOX" and len(parts) >= 2:
             category_name = parts[1]
@@ -841,6 +975,7 @@ class GmailConnector(CLIConnector):
                     label_ids.append(gmail_label)
                     break
 
+        # Use messages.list to get IDs with threadIds.
         result = self._execute_cli(
             [
                 "gws",
@@ -1003,7 +1138,7 @@ class CalendarConnector(CLIConnector):
     SKILL_NAME = "gcalendar"
     CLI_NAME = "gws"
     CLI_SERVICE = "calendar"
-    use_metadata_listing = False  # Sync reads from gws CLI, not metadata
+    use_metadata_listing = True  # Issue #3266: prefer synced directory_entries
 
     DIRECTORY_STRUCTURE = """\
 /mnt/calendar/
@@ -1040,17 +1175,78 @@ class CalendarConnector(CLIConnector):
         config = _load_gws_config("calendar.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+        # Cache mapping calendarId -> human-readable display name.
+        # Populated by _fetch_calendar_names() on first root list_dir.
+        self._calendar_names: dict[str, str] = {}
+
+    # --- Calendar name mapping ---
+
+    def _fetch_calendar_names(self) -> dict[str, str]:
+        """Fetch calendar ID -> display name mapping via calendarList.
+
+        Returns a dict like ``{"primary": "My Calendar",
+        "family@group.calendar.google.com": "Family"}``.
+        """
+        import re
+
+        # Tolerate missing attribute (e.g., __new__ without __init__).
+        if not hasattr(self, "_calendar_names"):
+            self._calendar_names = {}
+        if self._calendar_names:
+            return self._calendar_names
+
+        try:
+            result = self._execute_cli(
+                ["gws", "calendar", "calendarList", "list", "--format", "yaml"],
+            )
+        except Exception:
+            return self._calendar_names
+        if not result.ok:
+            return self._calendar_names
+
+        # Parse id/summary pairs from calendarList YAML output.
+        ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
+        summaries = re.findall(r'summary:\s*"([^"]*)"', result.stdout)
+        for i, cid in enumerate(ids):
+            name = summaries[i] if i < len(summaries) else cid
+            self._calendar_names[cid] = name
+
+        return self._calendar_names
+
+    def _calendar_display_name(self, cal_id: str) -> str:
+        """Return a human-readable folder name for a calendar ID."""
+        names = self._fetch_calendar_names()
+        name = names.get(cal_id, cal_id)
+        return sanitize_filename(name, max_len=60) if name != cal_id else cal_id
+
+    def _resolve_calendar_id(self, folder_name: str) -> str:
+        """Resolve a display folder name back to a calendar ID.
+
+        Handles both raw calendar IDs (``primary``, ``user@gmail.com``)
+        and sanitized display names (``My-Calendar``).
+        """
+        names = self._fetch_calendar_names()
+        # Direct match on calendar ID.
+        if folder_name in names:
+            return folder_name
+        # Reverse lookup: sanitized display name -> calendar ID.
+        for cid, name in names.items():
+            if sanitize_filename(name, max_len=60) == folder_name:
+                return cid
+        # Fallback: treat as literal calendar ID.
+        return folder_name
 
     # --- Display path (Issue #3256) ---
 
     def display_path(self, item_id: str, metadata: dict[str, Any] | None = None) -> str:
         """Generate human-readable event path with month grouping.
 
-        Format: ``{calendarId}/{YYYY-MM}/{date}_{time}_{summary}.yaml``
-        Example: ``primary/2026-03/2026-03-21_10-00_Team-Standup.yaml``
+        Format: ``{calendar_name}/{YYYY-MM}/{date}_{time}_{summary}.yaml``
+        Example: ``My-Calendar/2026-03/2026-03-21_10-00_Team-Standup.yaml``
         """
         meta = metadata or {}
         cal_id = meta.get("calendarId", "primary")
+        cal_folder = self._calendar_display_name(cal_id)
 
         parts: list[str] = []
         month_folder = ""
@@ -1083,8 +1279,104 @@ class CalendarConnector(CLIConnector):
         filename = "_".join(parts) + ".yaml" if parts else f"{item_id}.yaml"
 
         if month_folder:
-            return f"{cal_id}/{month_folder}/{filename}"
-        return f"{cal_id}/{filename}"
+            return f"{cal_folder}/{month_folder}/{filename}"
+        return f"{cal_folder}/{filename}"
+
+    # --- Batch metadata via list_dir_metadata protocol (Issue #3266) ---
+
+    def list_dir_metadata(
+        self,
+        path: str = "/",
+        context: Any = None,
+    ) -> dict[str, dict[str, Any]] | None:
+        """Batch-fetch event metadata using ``gws calendar +agenda``.
+
+        Returns ``{filename: {summary, start, calendarId, ...}}`` for all
+        events in a calendar/month directory.  Returns ``None`` for root
+        (calendar listing) since those are folders, not files.
+        """
+        import json as _json
+        import re
+
+        path = path.strip("/")
+
+        # Root listing — no per-file metadata.
+        if not path:
+            return None
+
+        parts = path.split("/")
+        # Resolve human-readable folder name back to calendar ID.
+        cal_id = self._resolve_calendar_id(parts[0])
+        month_filter = parts[1] if len(parts) >= 2 else None
+
+        # Fetch events from API (same as list_dir).
+        params: dict[str, Any] = {
+            "calendarId": cal_id,
+            "maxResults": 250,
+            "singleEvents": True,
+            "orderBy": "startTime",
+            "timeMin": "2025-01-01T00:00:00Z",
+        }
+        if month_filter and re.match(r"^\d{4}-\d{2}$", month_filter):
+            import calendar as _cal_mod
+
+            year, month = int(month_filter[:4]), int(month_filter[5:7])
+            last_day = _cal_mod.monthrange(year, month)[1]
+            params["timeMin"] = f"{month_filter}-01T00:00:00Z"
+            params["timeMax"] = f"{month_filter}-{last_day}T23:59:59Z"
+
+        result = self._execute_cli(
+            [
+                "gws",
+                "calendar",
+                "events",
+                "list",
+                "--params",
+                _json.dumps(params),
+                "--format",
+                "json",
+            ],
+        )
+        if not result.ok:
+            return None
+
+        try:
+            raw = result.stdout
+            # Skip any preamble before the JSON.
+            idx = raw.index("{")
+            data = _json.loads(raw[idx:])
+        except Exception:
+            return None
+
+        items = data.get("items", [])
+        if not items:
+            return None
+
+        filename_to_meta: dict[str, dict[str, Any]] = {}
+        for event in items:
+            event_id = event.get("id", "")
+            if not event_id:
+                continue
+            meta: dict[str, Any] = {
+                "summary": event.get("summary", ""),
+                "calendarId": cal_id,
+            }
+            start = event.get("start", {})
+            if start:
+                meta["start"] = start
+            end = event.get("end", {})
+            if end:
+                meta["end"] = end
+
+            filename = f"{event_id}.yaml"
+            filename_to_meta[filename] = meta
+
+        logger.info(
+            "[CAL_LIST_DIR_META] Batch metadata for %d events (cal=%s)",
+            len(filename_to_meta),
+            cal_id,
+        )
+        return filename_to_meta
 
     # --- Read/sync operations ---
 
@@ -1093,25 +1385,26 @@ class CalendarConnector(CLIConnector):
         path: str = "/",
         context: Any = None,
     ) -> list[str]:
-        """List calendars or events."""
+        """List calendars or events.
+
+        Root returns human-readable calendar folder names (via calendarList).
+        """
         import json
         import re
 
         path = path.strip("/")
 
         if not path:
-            # Root: list calendars
-            result = self._execute_cli(
-                ["gws", "calendar", "calendarList", "list", "--format", "yaml"],
-            )
-            if not result.ok:
-                return ["primary/"]
-            cal_ids = re.findall(r'id:\s*"([^"]+)"', result.stdout)
-            return [f"{cid}/" for cid in cal_ids] if cal_ids else ["primary/"]
+            # Root: list calendars with human-readable names.
+            names = self._fetch_calendar_names()
+            if names:
+                return [f"{sanitize_filename(name, max_len=60)}/" for name in names.values()]
+            return ["primary/"]
 
         # Inside a calendar (or calendar/month): list events
         parts = path.split("/")
-        cal_id = parts[0]
+        # Resolve human-readable folder name back to calendar ID for API calls.
+        cal_id = self._resolve_calendar_id(parts[0])
         month_filter = parts[1] if len(parts) >= 2 else None
 
         # Fetch events from API
@@ -1173,7 +1466,7 @@ class CalendarConnector(CLIConnector):
         if context and hasattr(context, "backend_path") and context.backend_path:
             parts = context.backend_path.strip("/").split("/")
             if len(parts) >= 2:
-                cal_id = parts[0]
+                cal_id = self._resolve_calendar_id(parts[0])
                 event_id = parts[-1].replace(".yaml", "")
 
         result = self._execute_cli(

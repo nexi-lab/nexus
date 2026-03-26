@@ -91,6 +91,9 @@ class CacheCoordinator:
         invalidation_stream: "InvalidationStream | None" = None,
         # Pub/Sub for cross-zone invalidation hints (Issue #3192)
         pubsub: "PubSubInvalidation | None" = None,
+        # Async eager recompute — disable for SQLite/StaticPool where
+        # background threads share the same DBAPI connection (segfault).
+        enable_async_recompute: bool = True,
         # Stats / cleanup
         cache_ttl_seconds: int = 300,
         get_tuple_version: "Callable[[], int] | None" = None,
@@ -152,7 +155,7 @@ class CacheCoordinator:
 
         # Async eager recompute (Issue #3192)
         self._recompute_executor: concurrent.futures.ThreadPoolExecutor | None = None
-        self._async_recompute_enabled = True
+        self._async_recompute_enabled = enable_async_recompute
         self._recompute_submitted = 0
         self._recompute_completed = 0
         self._recompute_failed = 0
@@ -474,10 +477,6 @@ class CacheCoordinator:
             return  # No DB access configured
 
         try:
-            cursor = self._create_cursor(conn) if self._create_cursor else None
-            if cursor is None:
-                return
-
             # 1. DIRECT: For simple direct relations, try to eagerly recompute
             should_eager_recompute = (
                 expires_at is None
@@ -507,31 +506,11 @@ class CacheCoordinator:
                     self._eager_recompute(subject, relation, obj, zone_id, conn)
 
             # 2. TRANSITIVE (Groups): If subject is a group/set, invalidate cache
-            #    for potential members accessing the object
-            if self._fix_sql:
-                cursor.execute(
-                    self._fix_sql(
-                        """
-                        SELECT subject_relation FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                        LIMIT 1
-                        """
-                    ),
-                    (
-                        subject.entity_type,
-                        subject.entity_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                    ),
-                )
-                row = cursor.fetchone()
-                has_subject_relation = row and row["subject_relation"]
-
-                if has_subject_relation and self._l1_cache:
-                    self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
+            #    for potential members accessing the object.
+            #    Use the already-known subject_relation parameter instead of
+            #    querying the DB (avoids SQLite lock contention under xdist).
+            if subject_relation is not None and self._l1_cache:
+                self._l1_cache.invalidate_object(obj.entity_type, obj.entity_id, zone_id)
 
             # 3. TRANSITIVE (Hierarchy): membership changes invalidate subject's permissions
             if relation in ("member-of", "member", "parent") and self._l1_cache:

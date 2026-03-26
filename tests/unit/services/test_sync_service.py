@@ -745,3 +745,235 @@ class TestSyncContext:
         assert ctx.include_patterns is None
         assert ctx.exclude_patterns is None
         assert ctx.full_sync is False
+
+
+# =============================================================================
+# list_dir_metadata protocol tests (Issue #3266)
+# =============================================================================
+
+
+class TestListDirMetadataProtocol:
+    """Tests for the generic list_dir_metadata protocol in the sync service."""
+
+    def test_sync_calls_list_dir_metadata_when_available(
+        self, sync_service, sync_context, mock_gateway
+    ):
+        """Sync service calls list_dir_metadata when the backend implements it."""
+        mount = mock_gateway.router.route.return_value
+        backend = mount.backend
+        backend.list_dir.return_value = ["msg1.yaml", "msg2.yaml"]
+        backend.list_dir_metadata = MagicMock(
+            return_value={
+                "msg1.yaml": {"subject": "Hello", "date": "2026-03-20"},
+                "msg2.yaml": {"subject": "World", "date": "2026-03-21"},
+            }
+        )
+        # Avoid get_sync_provider trying to use the generic provider
+        backend.get_sync_provider = MagicMock(return_value=None)
+
+        sync_service._get_file_size = MagicMock(return_value=1024)
+        sync_service.sync_mount(sync_context)
+
+        backend.list_dir_metadata.assert_called_once()
+
+    def test_sync_works_without_list_dir_metadata(self, sync_service, sync_context, mock_gateway):
+        """Sync service works normally when backend has no list_dir_metadata."""
+        mount = mock_gateway.router.route.return_value
+        backend = mount.backend
+        backend.list_dir.return_value = ["file.txt"]
+        # Ensure no list_dir_metadata attribute
+        if hasattr(backend, "list_dir_metadata"):
+            delattr(backend, "list_dir_metadata")
+
+        sync_service._get_file_size = MagicMock(return_value=100)
+        result = sync_service.sync_mount(sync_context)
+
+        assert result.files_scanned == 1
+        assert result.files_created == 1
+
+    def test_sync_handles_list_dir_metadata_returning_none(
+        self, sync_service, sync_context, mock_gateway
+    ):
+        """When list_dir_metadata returns None, sync continues via slow path."""
+        mount = mock_gateway.router.route.return_value
+        backend = mount.backend
+        backend.list_dir.return_value = ["file.txt"]
+        backend.list_dir_metadata = MagicMock(return_value=None)
+
+        sync_service._get_file_size = MagicMock(return_value=100)
+        result = sync_service.sync_mount(sync_context)
+
+        assert result.files_scanned == 1
+        assert result.files_created == 1
+
+    def test_sync_handles_list_dir_metadata_exception(
+        self, sync_service, sync_context, mock_gateway
+    ):
+        """When list_dir_metadata raises, sync falls back gracefully."""
+        mount = mock_gateway.router.route.return_value
+        backend = mount.backend
+        backend.list_dir.return_value = ["file.txt"]
+        backend.list_dir_metadata = MagicMock(side_effect=RuntimeError("API error"))
+
+        sync_service._get_file_size = MagicMock(return_value=100)
+        result = sync_service.sync_mount(sync_context)
+
+        assert result.files_scanned == 1
+        assert result.files_created == 1
+
+    def test_dir_metadata_passed_to_apply_display_path(
+        self, sync_service, sync_context, mock_gateway
+    ):
+        """dir_metadata from list_dir_metadata is forwarded to _apply_display_path_for_sync."""
+        # Test via _apply_display_path_for_sync directly to avoid mock class issues.
+        backend = MagicMock()
+        backend.display_path.return_value = "2026-03/2026-03-25_Test.yaml"
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/test"
+
+        dir_metadata = {
+            "msg1.yaml": {"subject": "Test", "date": "2026-03-25"},
+        }
+
+        result = sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/test/msg1.yaml",
+            "msg1.yaml",
+            ctx,
+            dir_metadata=dir_metadata,
+        )
+
+        # display_path should have been called with the batch metadata
+        backend.display_path.assert_called_once_with("msg1", dir_metadata["msg1.yaml"])
+        assert result == "/mnt/test/2026-03/2026-03-25_Test.yaml"
+
+
+# =============================================================================
+# _apply_display_path_for_sync with dir_metadata tests
+# =============================================================================
+
+
+class TestApplyDisplayPathWithDirMetadata:
+    """Tests for _apply_display_path_for_sync using dir_metadata fast path."""
+
+    def test_fast_path_uses_dir_metadata(self, sync_service):
+        """Fast path: dir_metadata lookup avoids read_content call."""
+        backend = MagicMock()
+        backend.display_path.return_value = "INBOX/PRIMARY/2026-03-20_Meeting.yaml"
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/gmail"
+
+        dir_metadata = {
+            "thread1-msg1.yaml": {
+                "subject": "Meeting",
+                "date": "2026-03-20",
+                "labels": ["INBOX"],
+            }
+        }
+
+        result = sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/gmail/INBOX/PRIMARY/thread1-msg1.yaml",
+            "INBOX/PRIMARY/thread1-msg1.yaml",
+            ctx,
+            dir_metadata=dir_metadata,
+        )
+
+        assert result == "/mnt/gmail/INBOX/PRIMARY/2026-03-20_Meeting.yaml"
+        backend.display_path.assert_called_once()
+        backend.read_content.assert_not_called()
+
+    def test_fast_path_extracts_gmail_msg_id(self, sync_service):
+        """For Gmail threadId-msgId format, passes just msg_id to display_path."""
+        backend = MagicMock()
+        backend.display_path.return_value = "INBOX/PRIMARY/2026-03-20_Hello.yaml"
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/gmail"
+
+        dir_metadata = {
+            "tid123-mid456.yaml": {"subject": "Hello", "date": "2026-03-20"},
+        }
+
+        sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/gmail/INBOX/tid123-mid456.yaml",
+            "INBOX/tid123-mid456.yaml",
+            ctx,
+            dir_metadata=dir_metadata,
+        )
+
+        # Should be called with just the msg_id portion
+        backend.display_path.assert_called_once_with("mid456", dir_metadata["tid123-mid456.yaml"])
+
+    def test_slow_path_when_dir_metadata_none(self, sync_service):
+        """Slow path: when dir_metadata is None, falls back to read_content."""
+        backend = MagicMock()
+        backend.display_path.return_value = "primary/2026-03/event.yaml"
+        backend.read_content.return_value = (
+            b"summary: event\ncalendarId: primary\nstart:\n  dateTime: '2026-03-21T10:00:00Z'\n"
+        )
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/cal"
+        ctx.context = None
+
+        result = sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/cal/primary/2026-03/evt123.yaml",
+            "primary/2026-03/evt123.yaml",
+            ctx,
+            dir_metadata=None,
+        )
+
+        assert result == "/mnt/cal/primary/2026-03/event.yaml"
+        backend.read_content.assert_called_once()
+
+    def test_slow_path_when_file_not_in_dir_metadata(self, sync_service):
+        """Slow path: file not found in dir_metadata, falls back to read_content."""
+        backend = MagicMock()
+        backend.display_path.return_value = "folder/file.yaml"
+        backend.read_content.return_value = b"summary: file\n"
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/test"
+        ctx.context = None
+
+        dir_metadata = {
+            "other-file.yaml": {"subject": "Other"},
+        }
+
+        result = sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/test/missing.yaml",
+            "missing.yaml",
+            ctx,
+            dir_metadata=dir_metadata,
+        )
+
+        assert result == "/mnt/test/folder/file.yaml"
+        backend.read_content.assert_called_once()
+
+    def test_default_display_path_no_rewrite(self, sync_service):
+        """When display_path returns default, virtual_path is unchanged."""
+        backend = MagicMock()
+        backend.display_path.return_value = "msg1.yaml"
+
+        ctx = MagicMock()
+        ctx.mount_point = "/mnt/test"
+
+        dir_metadata = {
+            "msg1.yaml": {"subject": ""},
+        }
+
+        result = sync_service._apply_display_path_for_sync(
+            backend,
+            "/mnt/test/msg1.yaml",
+            "msg1.yaml",
+            ctx,
+            dir_metadata=dir_metadata,
+        )
+
+        assert result == "/mnt/test/msg1.yaml"

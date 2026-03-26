@@ -52,6 +52,46 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+async def _read_connector_by_physical_path(
+    fs: Any,
+    display_path: str,
+    physical_path: str,
+    context: Any,
+) -> bytes | None:
+    """Read connector file by resolving display path → physical backend path.
+
+    Routes through the mount point's connector backend using the raw
+    physical_path, not the human-readable display_path. Returns None
+    if routing fails so the caller can fall back to standard fs.read().
+    """
+    try:
+        # Extract mount point from display path (e.g. /mnt/gmail from /mnt/gmail/INBOX/...)
+        parts = display_path.split("/")
+        if len(parts) < 3:
+            return None
+        mount_point = "/".join(parts[:3])  # /mnt/gmail or /mnt/calendar
+
+        route = fs.router.route(mount_point)
+        if route is None:
+            return None
+
+        from nexus.contracts.types import OperationContext
+
+        read_context = OperationContext(
+            user_id=getattr(context, "user_id", "anonymous"),
+            groups=getattr(context, "groups", []),
+            backend_path=physical_path,
+            virtual_path=display_path,
+        )
+
+        content = route.backend.read_content("", context=read_context)
+        if isinstance(content, bytes):
+            return content
+        return bytes(content) if content else None
+    except Exception:
+        return None
+
+
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     """Convert a sys_readdir details dict to a FileItemResponse.
 
@@ -534,35 +574,76 @@ def create_async_files_router(
                             headers={"ETag": f'"{meta.etag}"'},
                         )
 
-            # Read content — fs.read is async, call directly
+            # Issue #3266: For connector display paths (/mnt/*), resolve
+            # virtual_path → physical_path via search service and read
+            # directly from the connector backend. This avoids passing
+            # a backend-relative path into fs.read() which expects VFS paths.
+            connector_content: bytes | None = None
+            if path.startswith("/mnt/"):
+                search = fs.service("search")
+                if search is not None:
+                    resolve_fn = getattr(search, "resolve_physical_path", None)
+                    physical: str | None = resolve_fn(path) if resolve_fn else None
+                    if physical:
+                        connector_content = await _read_connector_by_physical_path(
+                            fs,
+                            path,
+                            physical,
+                            context,
+                        )
+
+            if connector_content is not None:
+                # Connector fast path — return content directly
+                text = connector_content.decode("utf-8", errors="replace")
+                if include_metadata:
+                    resp = ReadResponse(
+                        content=text,
+                        etag=None,
+                        version=None,
+                        modified_at=None,
+                        size=len(connector_content),
+                    )
+                else:
+                    resp = ReadResponse(content=text)
+                return Response(
+                    content=resp.model_dump_json(),
+                    media_type="application/json",
+                )
+
+            # Standard VFS read
             result = await fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
-                content = result["content"]
-                # Decode bytes to string for JSON response
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8", errors="replace")
+                file_content: str = result["content"]
+                if isinstance(file_content, bytes):
+                    file_content = file_content.decode("utf-8", errors="replace")
 
                 response_data = ReadResponse(
-                    content=content,
+                    content=file_content,
                     etag=result.get("etag"),
                     version=result.get("version"),
                     modified_at=result.get("modified_at"),
                     size=result.get("size"),
                 )
+                etag_val = result.get("etag")
                 return Response(
                     content=response_data.model_dump_json(),
                     media_type="application/json",
-                    headers={"ETag": f'"{result.get("etag")}"'} if result.get("etag") else {},
+                    headers={"ETag": f'"{etag_val}"'} if etag_val else {},
                 )
             else:
                 # Simple content response
-                content = result
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8", errors="replace")
-
+                plain: str = (
+                    result
+                    if isinstance(result, str)
+                    else (
+                        result.decode("utf-8", errors="replace")
+                        if isinstance(result, bytes)
+                        else str(result)
+                    )
+                )
                 return Response(
-                    content=ReadResponse(content=content).model_dump_json(),
+                    content=ReadResponse(content=plain).model_dump_json(),
                     media_type="application/json",
                 )
 
@@ -706,7 +787,12 @@ def create_async_files_router(
                 except Exception:
                     raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
-            # sys_readdir is async — call it directly (not via to_thread)
+            # Issue #3266: Prefer search service for listing (metastore-first).
+            # Same pattern as the RPC list handler in filesystem.py.
+            # Note: search.list() returns plain paths for dynamic connectors,
+            # while sys_readdir(details=True) returns detail dicts. We use
+            # sys_readdir as the primary path and only fall back to search
+            # for connector mounts where metastore-first listing is needed.
             result = await fs.sys_readdir(
                 path,
                 recursive=False,
@@ -715,6 +801,36 @@ def create_async_files_router(
                 limit=limit,
                 cursor=cursor_path,
             )
+
+            # Issue #3266: If sys_readdir returned nothing for a connector
+            # mount, try the search service (metastore-first listing).
+            result_items = result.items if hasattr(result, "items") else result
+            if not result_items and path.startswith("/mnt/"):
+                search = fs.service("search")
+                if search is not None:
+                    search_result = search.list(
+                        path=path,
+                        recursive=False,
+                        context=context,
+                    )
+                    if search_result:
+                        # Convert plain paths to detail dicts
+                        prefix = path.rstrip("/") + "/"
+                        detail_list = []
+                        for entry in search_result:
+                            entry_path = entry if isinstance(entry, str) else str(entry)
+                            entry_path = entry_path.rstrip("/")
+                            name = entry_path.split("/")[-1] if "/" in entry_path else entry_path
+                            is_dir = entry.endswith("/") if isinstance(entry, str) else False
+                            detail_list.append(
+                                {
+                                    "path": entry_path,
+                                    "name": name,
+                                    "is_directory": is_dir,
+                                    "size": 0,
+                                }
+                            )
+                        result = detail_list
 
             prefix = path.rstrip("/") + "/"
             # The listed path itself (e.g. "/" → empty name) must not appear

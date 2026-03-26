@@ -40,22 +40,16 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import (
-    CheckpointMixin,
     ConfirmLevel,
     OpTraits,
     Reversibility,
-    SkillDocMixin,
-    TraitBasedMixin,
-    ValidatedMixin,
 )
 from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.backends.connectors.gmail.utils import fetch_emails_batch, list_emails_by_folder
-from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.backends.connectors.oauth_base import OAuthConnectorBase
+from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -83,15 +77,7 @@ logger = logging.getLogger(__name__)
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="gmail",
 )
-class GmailConnectorBackend(
-    Backend,
-    CacheConnectorMixin,
-    OAuthConnectorMixin,
-    SkillDocMixin,
-    ValidatedMixin,
-    TraitBasedMixin,
-    CheckpointMixin,
-):
+class GmailConnectorBackend(OAuthConnectorBase):
     """
     Gmail connector backend with OAuth 2.0 authentication.
 
@@ -123,13 +109,6 @@ class GmailConnectorBackend(
     - Emails are stored as YAML files (not editable)
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
-        {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-        }
-    )
-
     # Gmail system labels to expose as folders (in priority order)
     # Each email appears in exactly ONE folder based on priority
     LABEL_FOLDERS = [
@@ -138,10 +117,6 @@ class GmailConnectorBackend(
         "IMPORTANT",  # Priority 3: Important emails in INBOX (excluding SENT, STARRED)
         "INBOX",  # Priority 4: Remaining INBOX emails
     ]
-
-    # Enable metadata-based listing (use file_paths table like GCS)
-    # This makes Gmail use fast database queries instead of Gmail API calls for list operations
-    use_metadata_listing = True
 
     # Skill documentation settings
     SKILL_NAME = "gmail"
@@ -212,8 +187,7 @@ class GmailConnectorBackend(
         max_message_per_label: int = 200,
         metadata_store: Any = None,
     ):
-        """
-        Initialize Gmail connector backend.
+        """Initialize Gmail connector backend.
 
         Args:
             token_manager_db: Path to TokenManager database (e.g., ~/.nexus/nexus.db)
@@ -226,81 +200,20 @@ class GmailConnectorBackend(
                                   Set to None for unlimited. Useful for testing with small datasets.
             metadata_store: MetastoreABC instance for writing to file_paths table (optional).
                           Required for metadata-based listing (fast database queries).
-
-        Note:
-            For single-user scenarios (demos), set user_email explicitly.
-            For multi-user production, leave user_email=None to auto-detect from context.
-            This ensures each user accesses their own Gmail.
         """
-        super().__init__()
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
-
-        # Store session factory for caching (CacheConnectorMixin)
-        self.session_factory = record_store.session_factory if record_store else None
-
-        # Store max messages per label (for testing with small datasets)
+        super().__init__(
+            token_manager_db=token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            record_store=record_store,
+            metadata_store=metadata_store,
+        )
         self.max_message_per_label = max_message_per_label
-
-        # Store metadata store for file_paths table (enables metadata-based listing)
-        self.metadata_store = metadata_store
-
-        # Initialize CheckpointMixin state (MRO doesn't call CheckpointMixin.__init__)
-        self._checkpoints: dict[str, Any] = {}
-
-        # Register OAuth provider using factory (loads from config)
-        self._register_oauth_provider()
-
-    def _register_oauth_provider(self) -> None:
-        """Register OAuth provider with TokenManager using OAuthProviderFactory."""
-        import logging
-        import traceback
-
-        logger = logging.getLogger(__name__)
-
-        try:
-            import importlib as _il
-
-            OAuthProviderFactory = _il.import_module(
-                "nexus.bricks.auth.oauth.factory"
-            ).OAuthProviderFactory
-
-            # Create factory (loads from oauth.yaml config)
-            factory = OAuthProviderFactory()
-
-            # Create provider instance from config
-            try:
-                provider_instance = factory.create_provider(
-                    name=self.provider,
-                )
-                # Register with TokenManager using the provider name from config
-                self.token_manager.register_provider(self.provider, provider_instance)
-                logger.info(f"✓ Registered OAuth provider '{self.provider}' for Gmail backend")
-            except ValueError as e:
-                # Provider not found in config or credentials not set
-                logger.warning(
-                    f"OAuth provider '{self.provider}' not available: {e}. "
-                    "OAuth flow must be initiated manually via the Integrations page."
-                )
-        except Exception as e:
-            error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
-            logger.error(error_msg)
 
     @property
     def name(self) -> str:
         """Backend identifier name."""
         return "gmail"
-
-    @property
-    def user_scoped(self) -> bool:
-        """This backend requires per-user OAuth credentials."""
-        return True
-
-    # --- Capability flags ---
-
-    @property
-    def has_token_manager(self) -> bool:
-        """Gmail connector manages OAuth tokens."""
-        return True
 
     def generate_skill_doc(self, mount_path: str) -> str:
         """Load SKILL.md from static file with mount path replacement.
@@ -405,11 +318,10 @@ class GmailConnectorBackend(
         from nexus.lib.sync_bridge import run_sync
 
         try:
-            # Default to 'default' zone if not specified to match mount configurations
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(

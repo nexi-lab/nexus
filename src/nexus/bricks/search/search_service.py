@@ -180,6 +180,7 @@ class SearchService:
         """
         self.metadata = metadata_store
         self._record_store = record_store
+        self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Injected file cache (Issue #690 — replaces global singleton)
         self._file_cache = file_cache
         self._zoekt_client = zoekt_client
@@ -730,18 +731,15 @@ class SearchService:
                 user_id="anonymous", groups=[], backend_path=route.backend_path
             )
 
-        # Issue #901: Parallel directory traversal for 5-10x speedup
-        all_paths = self._list_dir_parallel(
-            backend=route.backend,
-            root_path=path,
-            backend_path=route.backend_path,
-            context=list_context,
+        # Issue #3266: Metastore-first listing.
+        # Prefer metastore entries when available (populated by ConnectorSyncLoop).
+        # Fall back to live API on cache miss (empty metastore for this path).
+        all_paths = self._list_from_metastore_or_api(
+            path=path,
+            route=route,
+            list_context=list_context,
             recursive=recursive,
         )
-
-        # NOTE: Metastore-first listing deferred to Issue #3266.
-        # Once CLI connectors sync to metastore with display_path() names,
-        # this code path should prefer metastore entries over live list_dir().
 
         # Permission filtering
         if self._enforce_permissions and context:
@@ -762,6 +760,126 @@ class SearchService:
         if details:
             return self._list_connector_details(all_paths, route, path, list_context)
         return all_paths
+
+    def _list_from_metastore_or_api(
+        self,
+        path: str,
+        route: Any,
+        list_context: Any,
+        recursive: bool,
+    ) -> builtins.list[str]:
+        """Metastore-first listing with cache-miss fallback (Issue #3266, Decision #4C).
+
+        1. Query directory_entries table for entries under this path.
+        2. If entries exist, return them (fast, no API call).
+        3. If empty (cache miss), fall back to live API.
+        """
+        from nexus.contracts.capabilities import ConnectorCapability
+
+        backend = route.backend
+        caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+        use_metastore = ConnectorCapability.SYNC_ELIGIBLE in caps and getattr(
+            backend, "use_metadata_listing", False
+        )
+
+        if use_metastore:
+            try:
+                entries = self._query_directory_entries(path)
+                if entries:
+                    logger.debug("[LIST-METASTORE] HIT: %s returned %d entries", path, len(entries))
+                    return entries
+                logger.debug("[LIST-METASTORE] MISS: %s — falling back to live API", path)
+            except Exception:
+                logger.debug("[LIST-METASTORE] Error querying for %s", path, exc_info=True)
+
+        # Live API fallback (original path)
+        return self._list_dir_parallel(
+            backend=backend,
+            root_path=path,
+            backend_path=route.backend_path,
+            context=list_context,
+            recursive=recursive,
+        )
+
+    def _query_directory_entries(self, path: str) -> builtins.list[str] | None:
+        """Query directory_entries table directly for connector listings.
+
+        Returns list of full virtual paths, or None if no entries found.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return None
+
+            from sqlalchemy import text
+
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+            engine = self._fp_engine
+            parent = path.rstrip("/")
+
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    text(
+                        "SELECT entry_name, entry_type FROM directory_entries "
+                        "WHERE parent_path = :parent"
+                    ),
+                    {"parent": parent},
+                ).fetchall()
+
+            if not rows:
+                return None
+
+            results = []
+            for name, entry_type in rows:
+                full_path = f"{parent}/{name}"
+                if entry_type == "dir":
+                    full_path += "/"
+                results.append(full_path)
+            return results
+        except Exception:
+            logger.debug("[LIST-METASTORE] DB query failed for %s", path, exc_info=True)
+            return None
+
+    def resolve_physical_path(self, virtual_path: str) -> str | None:
+        """Resolve display path → raw backend path via file_paths table.
+
+        Used by API handlers to translate human-readable connector paths
+        back to the raw backend path for read_content(). Keeps the
+        resolution in the service layer, not the kernel.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return None
+
+            from sqlalchemy import text
+
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+
+            with self._fp_engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT physical_path FROM file_paths WHERE virtual_path = :vp LIMIT 1"),
+                    {"vp": virtual_path},
+                ).fetchone()
+                if row and row[0]:
+                    return str(row[0])
+            return None
+        except Exception:
+            return None
 
     def _list_connector_details(
         self,

@@ -1,10 +1,17 @@
 """OAuth token encryption utilities (moved from server/auth/oauth_crypto.py).
 
 Fernet symmetric encryption (AES-128 CBC + HMAC-SHA256) for OAuth tokens.
+
+Key resolution order (first match wins):
+    1. Explicit ``encryption_key`` parameter
+    2. Database-backed ``settings_store``
+    3. ``NEXUS_OAUTH_ENCRYPTION_KEY`` environment variable
+    4. Random ephemeral key (development only — warns loudly)
 """
 
 import asyncio
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -15,6 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 OAUTH_ENCRYPTION_KEY_NAME = "oauth_encryption_key"
+OAUTH_ENCRYPTION_KEY_ENV = "NEXUS_OAUTH_ENCRYPTION_KEY"
 
 
 class OAuthCrypto:
@@ -28,12 +36,14 @@ class OAuthCrypto:
     ) -> None:
         self._settings_store = settings_store
 
+        # 1. Explicit key (highest priority)
         if encryption_key is not None:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("OAuthCrypto: Using explicit encryption key")
             self._init_fernet(encryption_key)
             return
 
+        # 2. Database-backed settings store
         if settings_store:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("OAuthCrypto: Trying to load key from settings store")
@@ -47,10 +57,19 @@ class OAuthCrypto:
                 self._init_fernet(db_key)
                 return
 
+        # 3. Environment variable — shared key between CLI and server processes
+        env_key = os.environ.get(OAUTH_ENCRYPTION_KEY_ENV)
+        if env_key:
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("OAuthCrypto: Using key from %s", OAUTH_ENCRYPTION_KEY_ENV)
+            self._init_fernet(env_key)
+            return
+
+        # 4. Random ephemeral key (development fallback)
         logger.warning(
             "Generating random OAuth encryption key. This key will NOT persist "
-            "across restarts! Pass encryption_key or settings_store "
-            "for production use."
+            "across restarts! Set %s or pass encryption_key for production use.",
+            OAUTH_ENCRYPTION_KEY_ENV,
         )
         key_bytes: bytes = Fernet.generate_key()
         self._init_fernet(key_bytes.decode("utf-8"))

@@ -137,13 +137,18 @@ class TestPollLoopWakeup:
         pm = MagicMock()
         service = _make_service(pipe_manager=pm)
 
+        # The mock must actually suspend (yield to the event loop) to avoid a
+        # CPU-burning tight loop that starves cancellation and exhausts memory.
+        async def _fake_wait(*args, **kwargs):
+            await asyncio.sleep(0.01)
+            return True
+
         with patch(
             "nexus.lib.pipe_wakeup.wait_for_signal",
-            new_callable=AsyncMock,
-            return_value=True,
+            side_effect=_fake_wait,
         ) as mock_wait:
             await service.start()
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(0.05)
             await service.stop()
 
             mock_wait.assert_called()

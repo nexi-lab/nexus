@@ -328,6 +328,37 @@ def check_database_url() -> CheckResult:
     )
 
 
+def _check_auth_service(service_name: str) -> CheckResult:
+    from nexus.bricks.auth.unified_service import UnifiedAuthService
+
+    result = asyncio.run(UnifiedAuthService().test_service(service_name))
+    if result.get("success"):
+        return CheckResult(
+            name=f"auth-{service_name}",
+            status=CheckStatus.OK,
+            message=str(result.get("message", "")),
+        )
+    return CheckResult(
+        name=f"auth-{service_name}",
+        status=CheckStatus.WARNING,
+        message=str(result.get("message", "")),
+        fix_hint=(
+            f"Run `nexus auth connect {service_name} secret` or "
+            f"`nexus auth connect {service_name} native`."
+        ),
+    )
+
+
+def check_s3_auth() -> CheckResult:
+    """Check whether S3 auth is configured via stored or native credentials."""
+    return _check_auth_service("s3")
+
+
+def check_gcs_auth() -> CheckResult:
+    """Check whether GCS auth is configured via stored or native credentials."""
+    return _check_auth_service("gcs")
+
+
 # ---------------------------------------------------------------------------
 # Individual checks — dependencies
 # ---------------------------------------------------------------------------
@@ -420,6 +451,8 @@ CHECKS: dict[str, list[Any]] = {
     "security": [
         check_zone_isolation,
         check_database_url,
+        check_s3_auth,
+        check_gcs_auth,
     ],
     "dependencies": [
         check_python_version,

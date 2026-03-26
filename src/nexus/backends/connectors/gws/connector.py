@@ -10,10 +10,12 @@ Human-readable display paths added in Issue #3256.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.registry import register_connector
 from nexus.backends.connectors.base import (
@@ -51,9 +53,15 @@ from nexus.backends.connectors.gws.schemas import (
     UploadFileSchema,
 )
 
+if TYPE_CHECKING:
+    from nexus.contracts.types import OperationContext
+
 logger = logging.getLogger(__name__)
 
 _CONFIGS_DIR = Path(__file__).parent / "configs"
+_DOC_MIME_TYPE = "application/vnd.google-apps.document"
+_SHEET_MIME_TYPE = "application/vnd.google-apps.spreadsheet"
+_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 
 
 def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
@@ -75,6 +83,7 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     "gws_sheets",
     description="Google Sheets via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class SheetsConnector(CLIConnector):
     """Google Sheets CLI connector via ``gws sheets``."""
@@ -107,6 +116,48 @@ class SheetsConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List spreadsheets by querying Drive metadata and filtering by mime type."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+
+        args = [
+            "gws",
+            "drive",
+            "files",
+            "list",
+            "--params",
+            json.dumps({"q": f'mimeType = "{_SHEET_MIME_TYPE}"', "pageSize": 100}),
+        ]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            return []
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        files: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_files = data.get("files", [])
+            files = [item for item in raw_files if isinstance(item, dict)]
+        elif isinstance(data, list):
+            files = [item for item in data if isinstance(item, dict)]
+        else:
+            files = []
+
+        entries = [
+            str(item.get("name", "")).strip()
+            for item in files
+            if item.get("mimeType") == _SHEET_MIME_TYPE and str(item.get("name", "")).strip()
+        ]
+        return sorted(entries)
+
 
 # ============================================================================
 # Docs
@@ -117,6 +168,7 @@ class SheetsConnector(CLIConnector):
     "gws_docs",
     description="Google Docs via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class DocsConnector(CLIConnector):
     """Google Docs CLI connector via ``gws docs``."""
@@ -149,6 +201,146 @@ class DocsConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def _list_doc_entries(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
+        """Return Drive metadata for Google Docs with stable display names."""
+        args = [
+            "gws",
+            "drive",
+            "files",
+            "list",
+            "--params",
+            json.dumps(
+                {
+                    "q": f'mimeType = "{_DOC_MIME_TYPE}"',
+                    "pageSize": 100,
+                    "fields": "files(id,name,mimeType,modifiedTime,size,quotaBytesUsed)",
+                }
+            ),
+        ]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            from nexus.contracts.exceptions import BackendError
+
+            raise BackendError(result.summary(), backend=self.name, path="/")
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception as exc:
+            from nexus.contracts.exceptions import BackendError
+
+            raise BackendError(
+                f"Failed to parse gws docs listing: {exc}", backend=self.name
+            ) from exc
+
+        raw_files = data.get("files", []) if isinstance(data, dict) else []
+        files = [item for item in raw_files if isinstance(item, dict)]
+
+        counts: dict[str, int] = {}
+        for item in files:
+            if item.get("mimeType") != _DOC_MIME_TYPE:
+                continue
+            name = str(item.get("name", "")).strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+
+        entries: list[dict[str, Any]] = []
+        for item in files:
+            if item.get("mimeType") != _DOC_MIME_TYPE:
+                continue
+            name = str(item.get("name", "")).strip()
+            doc_id = str(item.get("id", "")).strip()
+            if not name or not doc_id:
+                continue
+            display_name = name if counts.get(name, 0) == 1 else f"{name} [{doc_id}]"
+            size = item.get("size") or item.get("quotaBytesUsed") or 0
+            try:
+                size_value = int(size)
+            except Exception:
+                size_value = 0
+            entries.append(
+                {
+                    "id": doc_id,
+                    "name": display_name,
+                    "raw_name": name,
+                    "size": size_value,
+                    "modified_at": item.get("modifiedTime"),
+                    "is_directory": False,
+                }
+            )
+        entries.sort(key=lambda item: str(item["name"]).lower())
+        return entries
+
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List Google Docs by querying Drive metadata and filtering to document mime types."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+        return [str(item["name"]) for item in self._list_doc_entries(context)]
+
+    def list_dir_details(
+        self, path: str = "/", context: "OperationContext | None" = None
+    ) -> list[dict[str, Any]]:
+        """Detailed listing for playground rendering."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+        return self._list_doc_entries(context)
+
+    def _resolve_doc_id(self, backend_path: str, context: "OperationContext | None" = None) -> str:
+        """Resolve a selected docs path back to a concrete document id."""
+        name = backend_path.strip("/").rsplit("/", 1)[-1]
+        if not name:
+            raise ValueError("Google Docs path is required")
+
+        match = re.search(r" \[([A-Za-z0-9_-]+)\]$", name)
+        if match:
+            return match.group(1)
+
+        matches = [item for item in self._list_doc_entries(context) if item["raw_name"] == name]
+        if len(matches) == 1:
+            return str(matches[0]["id"])
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple Google Docs named '{name}'. Re-open the list and select the disambiguated entry."
+            )
+        raise ValueError(f"Document not found: {name}")
+
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:
+        """Read a Google Doc by resolving the selected display name back to a document id."""
+        from nexus.contracts.exceptions import BackendError
+
+        backend_path = ""
+        if context and hasattr(context, "backend_path") and context.backend_path:
+            backend_path = str(context.backend_path)
+        elif content_hash:
+            backend_path = str(content_hash)
+
+        try:
+            doc_id = self._resolve_doc_id(backend_path, context)
+        except Exception as exc:
+            raise BackendError(str(exc), backend=self.name, path=backend_path) from exc
+
+        args = [
+            "gws",
+            "docs",
+            "documents",
+            "get",
+            "--params",
+            json.dumps({"documentId": doc_id}),
+            "--format",
+            "json",
+        ]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            raise BackendError(result.summary(), backend=self.name, path=backend_path)
+        return result.stdout.encode("utf-8")
+
 
 # ============================================================================
 # Chat
@@ -159,6 +351,7 @@ class DocsConnector(CLIConnector):
     "gws_chat",
     description="Google Chat via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class ChatConnector(CLIConnector):
     """Google Chat CLI connector via ``gws chat``."""
@@ -189,6 +382,53 @@ class ChatConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List chat spaces at root; nested message browsing is delegated to the CLI config."""
+        normalized = path.strip("/")
+        if normalized:
+            return super().list_dir(path, context=context)
+
+        args = ["gws", "chat", "spaces", "list"]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            from nexus.contracts.exceptions import BackendError
+
+            summary = result.summary()
+            combined = f"{result.stderr}\n{result.stdout}".lower()
+            if "insufficient authentication scopes" in combined:
+                raise BackendError(
+                    "Google Chat requires additional OAuth scopes. "
+                    "Run `nexus-fs auth connect gws oauth --user-email you@example.com` again "
+                    "and approve Chat access, then retry `/mount gws://chat`.",
+                    backend=self.name,
+                    path=path,
+                )
+            raise BackendError(summary, backend=self.name, path=path)
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        spaces: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_spaces = data.get("spaces", [])
+            spaces = [item for item in raw_spaces if isinstance(item, dict)]
+        elif isinstance(data, list):
+            spaces = [item for item in data if isinstance(item, dict)]
+        else:
+            spaces = []
+
+        entries = []
+        for item in spaces:
+            name = str(item.get("name", "")).strip()
+            if name:
+                entries.append(f"{name}/")
+        return sorted(entries)
+
 
 # ============================================================================
 # Drive
@@ -199,6 +439,7 @@ class ChatConnector(CLIConnector):
     "gws_drive",
     description="Google Drive via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class DriveConnector(CLIConnector):
     """Google Drive CLI connector via ``gws drive``."""
@@ -239,6 +480,45 @@ class DriveConnector(CLIConnector):
                 return sanitize_filename(name)
         return f"{item_id}.yaml"
 
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List Drive root entries with folder suffixes for browseable mounts."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+
+        args = ["gws", "drive", "files", "list"]
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            return []
+
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            return []
+
+        files: list[dict[str, Any]]
+        if isinstance(data, dict):
+            raw_files = data.get("files", [])
+            files = [item for item in raw_files if isinstance(item, dict)]
+        elif isinstance(data, list):
+            files = [item for item in data if isinstance(item, dict)]
+        else:
+            files = []
+
+        entries = []
+        for item in files:
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+            if item.get("mimeType") == _FOLDER_MIME_TYPE:
+                entries.append(f"{name}/")
+            else:
+                entries.append(name)
+        return sorted(entries)
+
 
 # ============================================================================
 # Gmail
@@ -275,6 +555,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     "gws_gmail",
     description="Gmail via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class GmailConnector(CLIConnector):
     """Gmail CLI connector via ``gws gmail``.
@@ -637,9 +918,12 @@ class GmailConnector(CLIConnector):
         if labels:
             fields["labels"] = labels
 
-        import yaml as _yaml
+        import importlib
 
-        return _yaml.dump(fields, default_flow_style=False, allow_unicode=True).encode("utf-8")
+        yaml_module = importlib.import_module("yaml")
+        rendered = str(yaml_module.dump(fields, default_flow_style=False, allow_unicode=True))
+
+        return rendered.encode("utf-8")
 
     def sync_delta(self) -> dict[str, Any]:
         """Perform delta sync using Gmail historyId.
@@ -706,6 +990,7 @@ class GmailConnector(CLIConnector):
     "gws_calendar",
     description="Google Calendar via gws CLI",
     category="cli",
+    service_name="gws",
 )
 class CalendarConnector(CLIConnector):
     """Calendar CLI connector via ``gws calendar``.

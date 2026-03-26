@@ -65,6 +65,7 @@ class AvailableConnector(BaseModel):
     capabilities: list[str]
     user_scoped: bool
     auth_status: str = "unknown"  # "authed", "no_auth", "expired", "unknown"
+    auth_source: str | None = None
     mount_path: str | None = None  # None if not mounted
     sync_status: str | None = None  # "synced", "syncing", "error", None
 
@@ -207,6 +208,7 @@ async def list_available_connectors(
 
     nx = _get_nx(request)
     mount_svc = nx.service("mount")
+    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
     # Get mounted connectors
     mounted: dict[str, str] = {}  # connector_type -> mount_point
@@ -230,6 +232,13 @@ async def list_available_connectors(
                 mount_path = mp
                 break
 
+        auth_state = {"auth_status": "unknown", "auth_source": None}
+        if auth_svc is not None:
+            try:
+                auth_state = await auth_svc.get_connector_auth_state(info.service_name)
+            except Exception:
+                logger.debug("Failed to resolve auth state for %s", info.name, exc_info=True)
+
         result.append(
             AvailableConnector(
                 name=info.name,
@@ -237,6 +246,8 @@ async def list_available_connectors(
                 category=info.category,
                 capabilities=sorted(str(c) for c in info.capabilities),
                 user_scoped=info.user_scoped,
+                auth_status=str(auth_state.get("auth_status", "unknown")),
+                auth_source=auth_state.get("auth_source"),
                 mount_path=mount_path,
             )
         )

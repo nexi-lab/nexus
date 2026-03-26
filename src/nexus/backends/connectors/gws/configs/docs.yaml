@@ -6,8 +6,9 @@ auth:
   provider: google
   scopes:
     - https://www.googleapis.com/auth/documents
+    - https://www.googleapis.com/auth/drive.readonly
 read:
-  list_command: documents.list
+  list_command: drive.files.list
   get_command: documents.get
   format: json
 write:
@@ -26,5 +27,5 @@ write:
       reversibility: partial
       confirm: explicit
 sync:
-  delta_command: "documents.list --modified-after {since}"
+  delta_command: "drive.files.list --modified-after {since}"
   state_field: lastModifiedTime

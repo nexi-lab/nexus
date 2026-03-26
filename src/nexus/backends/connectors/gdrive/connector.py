@@ -53,6 +53,7 @@ from nexus.backends.connectors.gws.schemas import (
     UpdateFileSchema,
     UploadFileSchema,
 )
+from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -109,7 +110,9 @@ EXPORT_FORMATS = {
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="google-drive",
 )
-class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitBasedMixin):
+class GoogleDriveConnectorBackend(
+    Backend, OAuthConnectorMixin, SkillDocMixin, ValidatedMixin, TraitBasedMixin
+):
     """
     Google Drive connector backend with OAuth 2.0 authentication.
 
@@ -248,28 +251,10 @@ class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitB
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Drive.
         """
-        print(f"[GDRIVE-INIT] __init__ called: user_email={user_email}, provider={provider}")
-
-        # Import TokenManager here to avoid circular imports
-        # Support both file paths and database URLs
-        # Resolve database URL (checks TOKEN_MANAGER_DB env var)
-        import importlib as _il
-
-        from nexus.backends.connectors.utils import resolve_database_url
-
-        TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
-
-        resolved_db = resolve_database_url(token_manager_db)
-
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-        self.user_email = user_email  # None means use context.user_id
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.root_folder = root_folder
         self.use_shared_drives = use_shared_drives
         self.shared_drive_id = shared_drive_id
-        self.provider = provider
 
         # Register OAuth provider using factory (loads from config)
         self._register_oauth_provider()
@@ -307,18 +292,15 @@ class GoogleDriveConnectorBackend(Backend, SkillDocMixin, ValidatedMixin, TraitB
                 logger.info(
                     f"✓ Registered OAuth provider '{self.provider}' for Google Drive backend"
                 )
-                print(f"[GDRIVE-INIT] ✓ Registered OAuth provider '{self.provider}' from config")
             except ValueError as e:
                 # Provider not found in config or credentials not set
                 logger.warning(
                     f"OAuth provider '{self.provider}' not available: {e}. "
                     "OAuth flow must be initiated manually via the Integrations page."
                 )
-                print(f"[GDRIVE-INIT] ⚠ OAuth provider '{self.provider}' not available: {e}")
         except Exception as e:
             error_msg = f"Failed to register OAuth provider: {e}\n{traceback.format_exc()}"
             logger.error(error_msg)
-            print(f"[GDRIVE-INIT] ✗ {error_msg}")
 
     def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
         """

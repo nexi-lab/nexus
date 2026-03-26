@@ -7,15 +7,19 @@ Keyboard-only navigation. Responsive: collapses mount panel at < 100 cols.
 from __future__ import annotations
 
 import asyncio
+import importlib
+import json
 import os
-from typing import Any
+from contextlib import suppress
+from typing import Any, cast
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error
 from nexus.fs._tui.file_browser import FileBrowser
 from nexus.fs._tui.file_preview import FilePreview
 from nexus.fs._tui.mount_panel import MountPanel
@@ -23,6 +27,228 @@ from nexus.fs._tui.mount_panel import MountPanel
 MIN_WIDTH = 80
 MIN_HEIGHT = 24
 MOUNT_PANEL_COLLAPSE_WIDTH = 100
+
+
+class ContextualNexusFS:
+    """Kernel wrapper that uses a caller-selected operation context."""
+
+    def __init__(self, kernel: Any, *, user_id: str = "local") -> None:
+        from nexus.contracts.constants import ROOT_ZONE_ID
+        from nexus.contracts.types import OperationContext
+
+        self._kernel = kernel
+        self._ctx = OperationContext(
+            user_id=user_id,
+            groups=[],
+            zone_id=ROOT_ZONE_ID,
+            is_admin=True,
+        )
+
+    async def read(self, path: str) -> bytes:
+        return cast(bytes, await self._kernel.sys_read(path, context=self._ctx))
+
+    async def read_range(self, path: str, start: int, end: int) -> bytes:
+        return cast(bytes, await self._kernel.read_range(path, start, end, context=self._ctx))
+
+    async def write(self, path: str, content: bytes) -> dict[str, Any]:
+        return cast(dict[str, Any], await self._kernel.write(path, content, context=self._ctx))
+
+    async def ls(
+        self,
+        path: str = "/",
+        detail: bool = False,
+        recursive: bool = False,
+    ) -> list[str] | list[dict[str, Any]]:
+        if not recursive and path != "/":
+            backend_result = await self._list_backend_directory(path, detail=detail)
+            if backend_result:
+                return backend_result
+
+        result = cast(
+            list[str] | list[dict[str, Any]],
+            await self._kernel.sys_readdir(
+                path,
+                recursive=recursive,
+                details=detail,
+                context=self._ctx,
+            ),
+        )
+        if result:
+            return result
+        if recursive:
+            return result
+
+        fallback = await self._list_backend_directory(path, detail=detail)
+        return fallback if fallback is not None else result
+
+    async def stat(self, path: str) -> dict[str, Any] | None:
+        from nexus.fs._facade import SlimNexusFS
+
+        try:
+            result = await SlimNexusFS(self._kernel).stat(path)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+        return await self._stat_backend_path(path)
+
+    async def mkdir(self, path: str, parents: bool = True) -> None:
+        await self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
+
+    async def rmdir(self, path: str, recursive: bool = False) -> None:
+        await self._kernel.sys_rmdir(path, recursive=recursive, context=self._ctx)
+
+    async def delete(self, path: str) -> None:
+        await self._kernel.sys_unlink(path, context=self._ctx)
+
+    async def rename(self, old_path: str, new_path: str) -> None:
+        await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
+
+    async def exists(self, path: str) -> bool:
+        return cast(bool, await self._kernel.sys_access(path, context=self._ctx))
+
+    async def copy(self, src: str, dst: str) -> dict[str, Any]:
+        content = await self.read(src)
+        return await self.write(dst, content)
+
+    def list_mounts(self) -> list[str]:
+        mounts = []
+        for item in self._kernel.router.list_mounts():
+            mount_point = getattr(item, "mount_point", item)
+            mounts.append(str(mount_point))
+        filtered = [mount for mount in mounts if mount != "/"]
+        return filtered or mounts
+
+    async def close(self) -> None:
+        return None
+
+    async def _list_backend_directory(
+        self,
+        path: str,
+        *,
+        detail: bool,
+    ) -> list[str] | list[dict[str, Any]] | None:
+        """Fallback to backend.list_dir() when slim metadata has no children yet."""
+        import asyncio
+        from datetime import UTC, datetime
+
+        try:
+            route = self._kernel.router.route(path, is_admin=True, check_write=False)
+        except Exception:
+            return None
+
+        backend = route.backend
+        if not hasattr(backend, "list_dir") and not hasattr(backend, "list_dir_details"):
+            return None
+
+        detailed_entries: list[dict[str, Any]] | None = None
+        if hasattr(backend, "list_dir_details"):
+            try:
+                candidate = await asyncio.to_thread(
+                    backend.list_dir_details, route.backend_path, self._ctx
+                )
+                if isinstance(candidate, list):
+                    detailed_entries = [item for item in candidate if isinstance(item, dict)]
+            except NotImplementedError:
+                detailed_entries = None
+            except Exception:
+                detailed_entries = None
+
+        if detailed_entries is not None:
+            mount_root = path.rstrip("/") or "/"
+            if detail:
+                detailed_rows: list[dict[str, Any]] = []
+                for entry in detailed_entries:
+                    name = str(entry.get("name", "")).rstrip("/")
+                    if not name:
+                        continue
+                    is_dir = bool(entry.get("is_directory", False))
+                    full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                    detailed_rows.append(
+                        {
+                            "path": full_path,
+                            "size": int(entry.get("size", 0) or 0),
+                            "is_directory": is_dir,
+                            "etag": entry.get("etag"),
+                            "mime_type": entry.get(
+                                "mime_type",
+                                "inode/directory" if is_dir else "application/octet-stream",
+                            ),
+                            "created_at": entry.get("created_at"),
+                            "modified_at": entry.get("modified_at"),
+                            "version": entry.get("version", 0),
+                            "zone_id": entry.get("zone_id", "root"),
+                            "entry_type": 1 if is_dir else 0,
+                        }
+                    )
+                return detailed_rows
+
+            listed_paths: list[str] = []
+            for entry in detailed_entries:
+                name = str(entry.get("name", "")).rstrip("/")
+                if not name:
+                    continue
+                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                listed_paths.append(full_path)
+            return listed_paths
+
+        try:
+            raw_entries = await asyncio.to_thread(backend.list_dir, route.backend_path, self._ctx)
+        except NotImplementedError:
+            return None
+
+        now = datetime.now(UTC).isoformat()
+        mount_root = path.rstrip("/") or "/"
+        if detail:
+            fallback_rows: list[dict[str, Any]] = []
+            for entry in raw_entries:
+                name = str(entry).rstrip("/")
+                if not name:
+                    continue
+                is_dir = str(entry).endswith("/")
+                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                fallback_rows.append(
+                    {
+                        "path": full_path,
+                        "size": 4096 if is_dir else 0,
+                        "is_directory": is_dir,
+                        "etag": None,
+                        "mime_type": "inode/directory" if is_dir else "application/octet-stream",
+                        "created_at": now,
+                        "modified_at": now,
+                        "version": 0,
+                        "zone_id": "root",
+                        "entry_type": 1 if is_dir else 0,
+                    }
+                )
+            return fallback_rows
+
+        fallback_paths: list[str] = []
+        for entry in raw_entries:
+            name = str(entry).rstrip("/")
+            if not name:
+                continue
+            full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+            fallback_paths.append(full_path)
+        return fallback_paths
+
+    async def _stat_backend_path(self, path: str) -> dict[str, Any] | None:
+        """Fallback stat for connector-backed entries not materialized in metadata."""
+        normalized = path.rstrip("/") or "/"
+        if normalized == "/":
+            return None
+
+        parent = normalized.rsplit("/", 1)[0] or "/"
+        entries = await self._list_backend_directory(parent, detail=True)
+        if not isinstance(entries, list):
+            return None
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("path")) == normalized:
+                return entry
+        return None
 
 
 def _highlight_match(text: str, query_lower: str) -> str:
@@ -51,6 +277,13 @@ class PlaygroundApp(App[None]):
     #main-area {
         height: 1fr;
     }
+    #playground-banner {
+        width: 100%;
+        height: auto;
+        background: $surface;
+        color: $text;
+        padding: 0 1;
+    }
     #status-bar {
         dock: bottom;
         height: 1;
@@ -62,11 +295,34 @@ class PlaygroundApp(App[None]):
         width: 100%;
         display: none;
     }
+    #command-bar {
+        width: 100%;
+        display: none;
+        background: $surface;
+        padding: 0 1;
+    }
     #empty-state {
         width: 100%;
         content-align: center middle;
         padding: 4 2;
         color: $text-muted;
+    }
+    #connector-picker {
+        width: 1fr;
+        height: 1fr;
+    }
+    #picker-layout {
+        width: 1fr;
+        height: 1fr;
+    }
+    #picker-help {
+        height: auto;
+        padding: 0 1 1 1;
+        color: $text-muted;
+    }
+    #picker-input {
+        width: 100%;
+        display: none;
     }
     #too-small-message {
         width: 100%;
@@ -79,17 +335,25 @@ class PlaygroundApp(App[None]):
         Binding("q", "request_quit", "Quit", priority=True),
         Binding("b", "go_back", "Back"),
         Binding("/", "toggle_search", "Search", key_display="/"),
+        Binding(":", "toggle_command", "Command", key_display=":", priority=True),
+        Binding("backspace", "command_backspace", "", show=False, priority=True),
+        Binding("a", "show_connector_picker", "Add Mount"),
         Binding("c", "copy_path", "Copy path"),
         Binding("p", "preview_file", "Preview"),
-        Binding("m", "toggle_mount_panel", "Mounts"),
+        Binding("m", "focus_mount_panel", "Mounts"),
         Binding("n", "new_file", "New file"),
         Binding("N", "new_dir", "New dir", key_display="N"),
         Binding("d", "delete_selected", "Delete"),
         Binding("r", "rename_selected", "Rename"),
+        Binding("u", "unmount_selected_mount", "Unmount"),
     ]
 
     show_mount_panel: reactive[bool] = reactive(True)
     search_visible: reactive[bool] = reactive(False)
+    command_visible: reactive[bool] = reactive(False)
+    command_buffer: reactive[str] = reactive("")
+    picker_visible: reactive[bool] = reactive(False)
+    picker_input_visible: reactive[bool] = reactive(False)
     _crud_mode: str = ""  # "", "new_file", "new_dir", "rename", "delete_confirm"
 
     def __init__(self, uris: tuple[str, ...] = (), **kwargs: Any) -> None:
@@ -99,6 +363,9 @@ class PlaygroundApp(App[None]):
         self._mount_points: list[str] = []
         self._current_path: str = "/"
         self._crud_rename_source: str = ""
+        self._restored_mounts = False
+        self._picker_title = "Supported connectors"
+        self._picker_pending_uri: str | None = None
 
     async def on_mount(self) -> None:
         """Initialize filesystem and load mounts."""
@@ -111,26 +378,17 @@ class PlaygroundApp(App[None]):
         self._mount_points = fs.list_mounts()
 
         if not self._mount_points:
-            empty = self.query_one("#empty-state", Static)
-            empty.update(
-                "[bold]No mounts configured[/bold]\n\n"
-                'Run: fs = await nexus.fs.mount("s3://bucket")\n'
-                "Then: nexus-fs playground s3://bucket"
-            )
+            await self._show_connector_picker("No mounts configured")
             return
 
         # Build the UI
         await self._build_browser_ui()
 
     async def _resolve_filesystem(self) -> Any:
-        """Mount backends from URIs using direct adapters.
-
-        Always uses direct adapters (LocalDirectFS, S3DirectFS) so users
-        see real files immediately — no NexusFS kernel, no empty metastore.
-        """
+        """Mount backends from URIs using direct or generic adapters."""
         if self._uris:
             try:
-                return self._build_direct_fs(self._uris)
+                return await self._build_filesystem(self._uris)
             except Exception as exc:
                 empty = self.query_one("#empty-state", Static)
                 empty.update(f"[red]Mount failed:[/red] {exc}")
@@ -148,26 +406,16 @@ class PlaygroundApp(App[None]):
                 with open(mounts_file) as f:
                     saved_uris = json.load(f)
                 if saved_uris:
-                    return self._build_direct_fs(tuple(saved_uris))
+                    self._restored_mounts = True
+                    return await self._build_filesystem(tuple(saved_uris))
             except Exception:
                 pass  # Fall through to empty state
 
-        empty = self.query_one("#empty-state", Static)
-        empty.update(
-            "[bold]No mounts found[/bold]\n\n"
-            "nexus-fs playground s3://bucket\n"
-            "nexus-fs playground local://./data\n"
-            "nexus-fs playground s3://bucket local://./data"
-        )
+        await self._show_connector_picker("No mounts found")
         return None
 
     def _build_direct_fs(self, uris: tuple[str, ...]) -> Any:
-        """Build direct filesystem adapters from URIs.
-
-        local:// → LocalDirectFS (pathlib)
-        s3://    → S3DirectFS (boto3)
-        Multiple → MultiDirectFS (combines them)
-        """
+        """Build direct filesystem adapters for local and S3 URIs."""
         from pathlib import Path as _Path
 
         from nexus.fs._tui.direct_fs import LocalDirectFS, MultiDirectFS, S3DirectFS
@@ -191,9 +439,36 @@ class PlaygroundApp(App[None]):
 
             else:
                 raise ValueError(
-                    f"Unsupported scheme in '{uri}'. Playground supports local:// and s3://"
+                    f"Unsupported direct scheme in '{uri}'. Use the generic mount path for connector-backed URIs."
                 )
 
+        if len(backends) == 1:
+            return backends[0]
+        return MultiDirectFS(backends)
+
+    async def _build_filesystem(self, uris: tuple[str, ...]) -> Any:
+        """Build a hybrid filesystem for playground mounts."""
+        from nexus.fs import mount as mount_fs
+        from nexus.fs._tui.direct_fs import MultiDirectFS
+
+        direct_uris = tuple(uri for uri in uris if uri.startswith(("local://", "s3://")))
+        generic_uris = tuple(uri for uri in uris if uri not in direct_uris)
+        backends: list[Any] = []
+
+        if direct_uris:
+            backends.append(self._build_direct_fs(direct_uris))
+
+        for uri in generic_uris:
+            facade = await mount_fs(uri)
+            backends.append(
+                ContextualNexusFS(
+                    facade.kernel,
+                    user_id=await self._resolve_mount_user_id(uri),
+                )
+            )
+
+        if not backends:
+            raise ValueError("No valid mount URIs provided.")
         if len(backends) == 1:
             return backends[0]
         return MultiDirectFS(backends)
@@ -218,6 +493,10 @@ class PlaygroundApp(App[None]):
         # Remove empty state
         empty = self.query_one("#empty-state", Static)
         empty.display = False
+        self.picker_visible = False
+        self.picker_input_visible = False
+        self._picker_pending_uri = None
+        self._update_banner()
 
         # Load first mount and focus the file table
         if self._mount_points:
@@ -226,20 +505,180 @@ class PlaygroundApp(App[None]):
             self._update_status_bar(announce=False)
             browser.query_one("#file-table").focus()
 
+    async def _show_connector_picker(self, title: str = "Supported connectors") -> None:
+        """Render the interactive connector picker in the main area."""
+        main = self.query_one("#main-area", Horizontal)
+        for child in list(main.children):
+            await child.remove()
+
+        empty = self.query_one("#empty-state", Static)
+        empty.display = True
+        empty.update(
+            f"[bold]{title}[/bold]\n"
+            "[dim]Browse connectors below, press Enter to continue, and complete any required values directly in the TUI.[/dim]"
+        )
+
+        layout = Vertical(id="picker-layout")
+        await main.mount(layout)
+
+        picker_help = Static("", id="picker-help")
+        await layout.mount(picker_help)
+
+        picker = DataTable(id="connector-picker")
+        picker.cursor_type = "row"
+        picker.add_columns("Connector", "Mode")
+        for uri, mode in self._supported_connector_rows():
+            picker.add_row(uri, mode)
+        await layout.mount(picker)
+
+        picker_input = self.query_one("#picker-input", Input)
+        picker_input.display = False
+        picker_input.value = ""
+        picker_input.placeholder = ""
+
+        self.picker_visible = True
+        self.picker_input_visible = False
+        self._picker_title = title
+        self._picker_pending_uri = None
+        if picker.row_count:
+            picker.move_cursor(row=0, column=0)
+            self._update_picker_help_for_row(0)
+        picker.focus()
+        self._update_banner()
+        self.query_one("#status-bar", Static).update(
+            "[dim]Mount wizard | arrows to browse | Enter to continue | Esc back | a reopen later[/dim]"
+        )
+
+    async def _mount_selected_picker_uri(self) -> bool:
+        """Mount the currently highlighted connector-picker row."""
+        if not self.picker_visible:
+            return False
+        try:
+            picker = self.query_one("#connector-picker", DataTable)
+        except Exception:
+            return False
+        if self.focused is not picker or picker.row_count <= 0:
+            return False
+        try:
+            cursor_row = max(0, picker.cursor_row)
+            uri = str(picker.get_row_at(cursor_row)[0])
+        except Exception:
+            return False
+        await self._handle_picker_uri(uri)
+        return True
+
+    async def _handle_picker_uri(self, uri: str) -> None:
+        """Either mount directly or prompt for URI details in the picker."""
+        if self._uri_requires_customization(uri):
+            self._show_picker_input(uri)
+            return
+        await self._mount_uri(uri)
+
+    def _uri_requires_customization(self, uri: str) -> bool:
+        """Whether a picker row needs user input before mounting."""
+        return "<" in uri or uri == "local://./data"
+
+    def _picker_input_defaults(self, uri: str) -> tuple[str, str]:
+        """Prefill and placeholder for a wizard URI input."""
+        cwd = os.getcwd()
+        if uri == "local://./data":
+            return (f"local://{cwd}/data", "local:///absolute/path")
+        if uri.startswith("s3://"):
+            return ("s3://", "s3://bucket[/prefix]")
+        if uri.startswith("gcs://"):
+            return ("gcs://", "gcs://project/bucket[/prefix]")
+        return (uri, uri)
+
+    def _show_picker_input(self, uri: str) -> None:
+        """Switch the mount wizard into URI input mode."""
+        picker_input = self.query_one("#picker-input", Input)
+        value, placeholder = self._picker_input_defaults(uri)
+        picker_input.value = value
+        picker_input.placeholder = placeholder
+        self._picker_pending_uri = uri
+        self.picker_input_visible = True
+        self._update_picker_help(uri=uri, awaiting_input=True)
+        picker_input.focus()
+
+    def _update_banner(self) -> None:
+        """Render a visible top-of-screen summary of available actions."""
+        banner = self.query_one("#playground-banner", Static)
+        if self.picker_visible:
+            banner.update(
+                "[bold]Add Mount[/bold] Browse supported connectors, press Enter to continue, "
+                "and finish setup in the TUI. [dim]Keys:[/dim] arrows browse  Enter continue  Esc back"
+            )
+            return
+
+        restored = ""
+        if self._restored_mounts and self._mount_points:
+            restored = f"[yellow]Restored {len(self._mount_points)} mount(s) from the previous session.[/yellow]  "
+        banner.update(
+            f"{restored}[bold]Add Mount:[/bold] `a`  "
+            "[bold]Mounts:[/bold] `m` focus  `u` unmount  "
+            "[bold]Open:[/bold] `Enter` selected folder/file  "
+            "[bold]Ops:[/bold] `n` file  `N` dir  `r` rename  `d` delete  `p` preview"
+        )
+
+    def _update_picker_help_for_row(self, row_index: int) -> None:
+        """Refresh picker help for the highlighted connector row."""
+        try:
+            picker = self.query_one("#connector-picker", DataTable)
+            uri = str(picker.get_row_at(row_index)[0])
+        except Exception:
+            return
+        self._update_picker_help(uri=uri, awaiting_input=self.picker_input_visible)
+
+    def _update_picker_help(self, *, uri: str, awaiting_input: bool) -> None:
+        """Render contextual guidance for the selected picker row."""
+        help_widget = self.query_one("#picker-help", Static)
+        guidance: list[str] = []
+        if uri.startswith("local://"):
+            guidance.append("Local folder mount. Choose any absolute path on disk.")
+            guidance.append(
+                "After mounting you can create files with `n`, directories with `N`, and preview with `p`."
+            )
+        elif uri.startswith("s3://"):
+            guidance.append("S3 mount. Enter `s3://bucket` or `s3://bucket/prefix`.")
+            guidance.append(
+                "If AWS credentials are available, concrete `s3://...` bucket rows appear in this picker and can be mounted directly."
+            )
+            guidance.append(self._auth_guidance("s3"))
+        elif uri.startswith("gcs://"):
+            guidance.append(
+                "GCS mount. Enter `gcs://project/bucket` or `gcs://project/bucket/prefix`."
+            )
+            guidance.append(self._auth_guidance("gcs"))
+        elif uri.startswith(("gws://", "gdrive://", "gmail://", "calendar://")):
+            guidance.append(f"Google mount target: `{uri}`.")
+            guidance.append(self._auth_guidance("gws"))
+        else:
+            guidance.append(f"Mount target: `{uri}`.")
+        if awaiting_input:
+            guidance.append(
+                "Edit the URI below and press Enter to mount, or Esc to return to the list."
+            )
+        else:
+            guidance.append("Press Enter to mount this target.")
+        help_widget.update("\n".join(guidance))
+
     def compose(self) -> ComposeResult:
         yield Header()
+        yield Static("", id="playground-banner")
         yield Static("", id="too-small-message")
         empty = Static(
             "[dim]Loading mounts…[/dim]",
             id="empty-state",
         )
-        empty.can_focus = True
+        empty.can_focus = False
         yield empty
         yield Horizontal(id="main-area")
         yield Input(
             placeholder="Search files… (Enter to search, Escape to cancel)",
             id="search-input",
         )
+        yield Input(placeholder="", id="picker-input")
+        yield Static("", id="command-bar")
         yield Input(placeholder="", id="crud-input")
         yield Static("", id="status-bar")
         yield Footer()
@@ -297,8 +736,32 @@ class PlaygroundApp(App[None]):
         except Exception:
             pass
 
+    async def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        """Handle connector picker selection."""
+        if event.data_table.id != "connector-picker":
+            return
+        try:
+            uri = str(event.data_table.get_row_at(event.cursor_row)[0])
+        except Exception:
+            return
+        await self._handle_picker_uri(uri)
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        """Refresh picker guidance while the selection changes."""
+        if event.data_table.id != "connector-picker":
+            return
+        self._update_picker_help_for_row(event.cursor_row)
+
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Route input submissions to search or CRUD handler."""
+        if event.input.id == "picker-input":
+            value = event.value.strip()
+            if value:
+                await self._mount_uri(value)
+                return
+            self.notify("Mount URI is required.", severity="warning", timeout=4)
+            return
+
         # CRUD input
         if event.input.id == "crud-input":
             await self._on_crud_input_submitted(event.value.strip())
@@ -439,11 +902,410 @@ class PlaygroundApp(App[None]):
 
         self._refocus_table()
 
+    async def _on_command_input_submitted(self, value: str) -> None:
+        """Handle command input submissions."""
+        self.command_visible = False
+        self.command_buffer = ""
+        self.command_visible = False
+
+        if not value:
+            self._refocus_table()
+            return
+
+        normalized = value[1:] if value.startswith("/") else value
+        parts = normalized.split(maxsplit=1)
+        command = parts[0].lower()
+        arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if command == "mount":
+            if not arg:
+                await self._show_connector_picker("Add a mount")
+                return
+            await self._mount_uri(arg)
+            self._refocus_table()
+            return
+
+        if command == "touch":
+            if not arg:
+                self.notify("Usage: /touch <name>", severity="warning", timeout=4)
+                self._refocus_table()
+                return
+            await self._touch_path(arg)
+            self._refocus_table()
+            return
+
+        if command == "rm":
+            if not arg:
+                self.notify("Usage: /rm <name>", severity="warning", timeout=4)
+                self._refocus_table()
+                return
+            await self._delete_path(arg)
+            self._refocus_table()
+            return
+
+        if command == "auth":
+            if arg.lower().startswith("test "):
+                service = arg[5:].strip().lower()
+                await self._test_auth(service)
+                self._refocus_table()
+                return
+            service = arg.lower() if arg else "s3"
+            self.notify(self._auth_guidance(service), severity="information", timeout=6)
+            self._refocus_table()
+            return
+
+        if command == "connectors":
+            self.notify(self._connector_summary(), severity="information", timeout=8)
+            self._refocus_table()
+            return
+
+        self.notify(f"Unknown command: {value}", severity="warning", timeout=4)
+        self._refocus_table()
+
+    async def _mount_uri(self, uri: str) -> None:
+        """Mount a new backend URI into the playground."""
+        error = self._validate_mount_uri(uri)
+        if error:
+            self.notify(error, severity="warning", timeout=5)
+            return
+        next_uris = (*self._uris, uri)
+        try:
+            fs = await self._build_filesystem(next_uris)
+        except Exception as exc:
+            self.notify(self._mount_error_message(uri, exc), severity="error", timeout=6)
+            return
+
+        self._uris = next_uris
+        self._fs = fs
+        self._mount_points = fs.list_mounts()
+        self._restored_mounts = False
+        self._persist_mounts()
+        await self._reset_browser_ui()
+        self.notify(f"Mounted {uri}", timeout=3)
+
+    def _validate_mount_uri(self, uri: str) -> str | None:
+        """Return a user-facing error if the requested mount URI is incomplete."""
+        value = uri.strip()
+        if not value:
+            return "Mount URI is required."
+        if value in {"s3://", "s3:///"}:
+            return "S3 mounts require a bucket, for example `s3://my-bucket`."
+        if value in {"gcs://", "gcs:///"}:
+            return "GCS mounts require a bucket, for example `gcs://project/my-bucket`."
+        return None
+
+    async def _touch_path(self, name: str) -> None:
+        """Create an empty file in the current directory."""
+        if not self._fs:
+            return
+        path = self._resolve_command_path(name)
+        try:
+            await self._fs.write(path, b"")
+            browser = self.query_one("#file-browser", FileBrowser)
+            await browser.load_directory(self._current_path)
+            self._update_status_bar()
+            self.notify(f"Created: {path}", timeout=3)
+        except Exception as exc:
+            self.notify(f"Create failed: {exc}", severity="error", timeout=4)
+
+    async def _delete_path(self, name: str) -> None:
+        """Delete a file in the current directory."""
+        if not self._fs:
+            return
+        path = self._resolve_command_path(name)
+        try:
+            await self._fs.delete(path)
+            browser = self.query_one("#file-browser", FileBrowser)
+            await browser.load_directory(self._current_path)
+            self._update_status_bar()
+            self.notify(f"Deleted: {path}", timeout=3)
+        except Exception as exc:
+            self.notify(f"Delete failed: {exc}", severity="error", timeout=4)
+
+    async def _test_auth(self, service: str) -> None:
+        """Validate auth for a service using the unified auth layer when possible."""
+        if not service:
+            self.notify("Usage: /auth test <service>", severity="warning", timeout=4)
+            return
+        if service == "local":
+            self.notify("local: no auth required", severity="information", timeout=4)
+            return
+
+        try:
+            from nexus.fs._oauth_support import get_token_manager
+
+            oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+            unified_module = importlib.import_module("nexus.bricks.auth.unified_service")
+            oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
+            auth_service = unified_module.UnifiedAuthService(oauth_service=oauth_service)
+            result = await auth_service.test_service(service)
+        except Exception as exc:
+            self.notify(f"{service}: auth test failed to run: {exc}", severity="error", timeout=6)
+            return
+
+        if result.get("success"):
+            self.notify(f"{service}: {result.get('message')}", severity="information", timeout=5)
+            return
+
+        self.notify(f"{service}: {result.get('message')}", severity="warning", timeout=7)
+
+    def _resolve_command_path(self, name: str) -> str:
+        """Resolve a command argument against the current directory."""
+        if name.startswith("/"):
+            return name
+        base = self._current_path.rstrip("/")
+        if not base:
+            return f"/{name}"
+        return f"{base}/{name}"
+
+    async def _reset_browser_ui(self) -> None:
+        """Rebuild mount panel, browser, and preview from current mounts."""
+        try:
+            main = self.query_one("#main-area", Horizontal)
+            for child in list(main.children):
+                await child.remove()
+        except Exception:
+            return
+
+        empty = self.query_one("#empty-state", Static)
+        empty.display = False
+        await self._build_browser_ui()
+
+    def _persist_mounts(self) -> None:
+        """Persist current mount URIs for the next playground launch."""
+        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
+            __import__("tempfile").gettempdir(), "nexus-fs"
+        )
+        os.makedirs(state_dir, exist_ok=True)
+        mounts_file = os.path.join(state_dir, "mounts.json")
+        with open(mounts_file, "w") as f:
+            json.dump(list(self._uris), f)
+
+    def _selected_mount_point(self) -> str | None:
+        """Return the currently selected mount point from the mount panel."""
+        try:
+            panel = self.query_one("#mount-panel", MountPanel)
+            return cast(str | None, panel.selected_mount)
+        except Exception:
+            return self._mount_points[0] if self._mount_points else None
+
+    def _uri_mount_point(self, uri: str) -> str:
+        """Compute the mount point produced by a playground URI."""
+        from pathlib import Path as _Path
+
+        from nexus.fs._uri import derive_mount_point, parse_uri
+
+        if uri.startswith("local://"):
+            raw = uri.removeprefix("local://")
+            root = _Path(raw).expanduser().resolve()
+            name = root.name or "local"
+            return f"/local/{name}"
+        if uri.startswith("s3://"):
+            raw = uri.removeprefix("s3://")
+            bucket = raw.split("/", 1)[0]
+            return f"/s3/{bucket}"
+        spec = parse_uri(uri)
+        return derive_mount_point(spec)
+
+    def _mount_error_message(self, uri: str, exc: Exception) -> str:
+        """Render actionable mount failures."""
+        return format_runtime_error(uri, exc)
+
+    def _auth_guidance(self, service: str) -> str:
+        """Return concise auth guidance for playground-supported backends."""
+        return auth_guidance(service)
+
+    def _connector_summary(self) -> str:
+        """Concise supported connector summary for the command bar."""
+        items = self._supported_connector_rows()
+        return " | ".join(f"{name}:{mode}" for name, mode in items[:8])
+
+    def _supported_connectors_text(self, title: str) -> str:
+        """Empty-state help for supported playground connectors."""
+        rows = self._supported_connector_rows()
+        rendered = "\n".join(
+            f"{idx}. {name} [{mode}]" for idx, (name, mode) in enumerate(rows, start=1)
+        )
+        return (
+            f"[bold]{title}[/bold]\n\n"
+            "[bold]Supported playground connectors[/bold]\n"
+            f"{rendered}\n\n"
+            "[bold]Auth guidance[/bold]\n"
+            "1. /auth s3\n"
+            "2. /auth gws\n\n"
+            "[bold]Examples[/bold]\n"
+            "1. : then /mount local://./data\n"
+            "2. : then /mount s3://bucket\n"
+            "3. : then /mount gws://drive\n"
+            "4. : then /connectors\n"
+            "5. : then /auth test s3"
+        )
+
+    def _supported_connector_rows(self) -> list[tuple[str, str]]:
+        """Dynamically render concrete playground connector targets."""
+        from nexus.backends import _register_optional_backends
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        _register_optional_backends()
+
+        rows: list[tuple[str, str]] = [("local://./data", "mountable")]
+        rows.extend(self._discovered_s3_bucket_rows())
+        rows.extend(
+            [
+                ("s3://<enter bucket manually>", "mountable auth:s3 manual"),
+                ("gcs://project/bucket", "mountable auth:gcs"),
+            ]
+        )
+        for info in ConnectorRegistry.list_all():
+            uri = self._connector_uri_example(info.name)
+            if uri is None:
+                continue
+            auth_service = self._connector_auth_service(info.name, info.service_name)
+            mode = "mountable" if auth_service is None else f"mountable auth:{auth_service}"
+            rows.append((uri, mode))
+        deduped: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for row in rows:
+            if row[0] in seen:
+                continue
+            seen.add(row[0])
+            deduped.append(row)
+        return deduped
+
+    def _discovered_s3_bucket_rows(self) -> list[tuple[str, str]]:
+        """Return concrete S3 buckets when AWS credentials can enumerate them."""
+        try:
+            import boto3
+            from botocore.config import Config
+        except Exception:
+            return []
+
+        try:
+            client = boto3.client("s3", config=Config(connect_timeout=2, read_timeout=3))
+            response = client.list_buckets()
+        except Exception:
+            return []
+
+        buckets = response.get("Buckets") or []
+        rows: list[tuple[str, str]] = []
+        for bucket in buckets:
+            name = str(bucket.get("Name") or "").strip()
+            if not name:
+                continue
+            rows.append((f"s3://{name}", "mountable auth:s3 discovered"))
+        return rows
+
+    def _connector_uri_example(self, connector_name: str) -> str | None:
+        """Concrete URI example for a registered connector."""
+        if connector_name in {
+            "cas_gcs",
+            "cas_local",
+            "local_connector",
+            "path_gcs",
+            "path_local",
+            "path_s3",
+        }:
+            return None
+        if connector_name == "gdrive_connector":
+            return "gdrive://root"
+        if connector_name == "gmail_connector":
+            return "gmail://inbox"
+        if connector_name == "gcalendar_connector":
+            return "gws://calendar"
+        if connector_name == "slack_connector":
+            return "slack://workspace"
+        if connector_name == "x_connector":
+            return "x://timeline"
+        if connector_name == "hn_connector":
+            return "hn://top"
+        if connector_name == "gws_github":
+            return None
+        if connector_name.startswith("gws_"):
+            return f"gws://{connector_name.removeprefix('gws_')}"
+        return None
+
+    def _connector_auth_service(self, connector_name: str, service_name: str | None) -> str | None:
+        """Map connector targets to the auth flow users should follow."""
+        if connector_name == "gws_github":
+            return "github"
+        if connector_name.startswith("gws_"):
+            return "gws"
+        if service_name in {"google-drive", "gmail", "google-calendar", "slack", "x", "gcs"}:
+            return service_name
+        return None
+
+    async def _resolve_mount_user_id(self, uri: str) -> str:
+        """Choose a user identity for connector-backed mounts."""
+        explicit = os.getenv("NEXUS_FS_USER_EMAIL")
+        if explicit:
+            return explicit
+
+        if not uri.startswith(
+            ("gws://", "gdrive://", "gmail://", "calendar://", "slack://", "x://")
+        ):
+            return "local"
+
+        if uri.startswith(("gws://", "gdrive://", "gmail://", "calendar://")):
+            providers = {"google"}
+        elif uri.startswith("slack://"):
+            providers = {"slack"}
+        else:
+            providers = {"x", "twitter"}
+
+        try:
+            from nexus.fs._oauth_support import get_token_manager
+
+            oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+            oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
+            creds = await oauth_service.list_credentials()
+            emails = sorted(
+                {
+                    str(cred.get("user_email"))
+                    for cred in creds
+                    if cred.get("provider") in providers and cred.get("user_email")
+                }
+            )
+            if len(emails) == 1:
+                return emails[0]
+        except Exception:
+            pass
+
+        try:
+            from types import SimpleNamespace
+
+            from nexus.fs import _infer_connector_user_email
+        except Exception:
+            return "local"
+
+        scheme = uri.split("://", 1)[0].lower()
+        service_name = None
+        if scheme == "gws":
+            service_name = "gws"
+        elif scheme == "gdrive":
+            service_name = "google-drive"
+        elif scheme == "gmail":
+            service_name = "gmail"
+        elif scheme == "calendar":
+            service_name = "google-calendar"
+        elif scheme == "slack":
+            service_name = "slack"
+        elif scheme == "x":
+            service_name = "x"
+
+        inferred = _infer_connector_user_email(
+            scheme=scheme,
+            info=SimpleNamespace(service_name=service_name),
+        )
+        return inferred or "local"
+
     def _refocus_table(self) -> None:
         """Return focus to the file table after CRUD operations."""
         import contextlib
 
         with contextlib.suppress(Exception):
+            if self.picker_visible:
+                self.query_one("#connector-picker", DataTable).focus()
+                return
             self.query_one("#file-table").focus()
 
     def _show_crud_input(self, mode: str, placeholder: str, prefill: str = "") -> None:
@@ -512,6 +1374,9 @@ class PlaygroundApp(App[None]):
 
     def action_go_back(self) -> None:
         """Navigate back."""
+        if self.picker_visible and self._mount_points:
+            self.call_later(self._reset_browser_ui)
+            return
         try:
             browser = self.query_one("#file-browser", FileBrowser)
             browser.go_back()
@@ -522,6 +1387,53 @@ class PlaygroundApp(App[None]):
         """Toggle search input."""
         self.search_visible = not self.search_visible
 
+    def action_toggle_command(self) -> None:
+        """Toggle command input."""
+        self.command_visible = not self.command_visible
+
+    async def action_show_connector_picker(self) -> None:
+        """Open the interactive connector picker."""
+        await self._show_connector_picker("Mount another connector")
+
+    async def action_submit_command(self) -> None:
+        """Submit the current command buffer."""
+        if self.picker_input_visible:
+            picker_input = self.query_one("#picker-input", Input)
+            value = picker_input.value.strip()
+            if value:
+                await self._mount_uri(value)
+            else:
+                self.notify("Mount URI is required.", severity="warning", timeout=4)
+            return
+        if await self._mount_selected_picker_uri():
+            return
+        if not self.command_visible:
+            return
+        await self._on_command_input_submitted(self.command_buffer.strip())
+
+    def action_command_backspace(self) -> None:
+        """Delete the last command character."""
+        if self.command_visible:
+            self.command_buffer = self.command_buffer[:-1]
+
+    def action_cancel_command(self) -> None:
+        """Close the command bar and clear the buffer."""
+        if not self.command_visible:
+            return
+        self.command_visible = False
+        self.command_buffer = ""
+        self._refocus_table()
+
+    def watch_picker_input_visible(self, visible: bool) -> None:
+        """Show or hide the mount wizard URI input."""
+        try:
+            picker_input = self.query_one("#picker-input", Input)
+            picker_input.display = visible
+            if visible:
+                picker_input.focus()
+        except Exception:
+            pass
+
     def watch_search_visible(self, visible: bool) -> None:
         """Show/hide search input."""
         try:
@@ -529,6 +1441,23 @@ class PlaygroundApp(App[None]):
             search.display = visible
             if visible:
                 search.focus()
+        except Exception:
+            pass
+
+    def watch_command_visible(self, visible: bool) -> None:
+        """Show/hide command bar."""
+        try:
+            command = self.query_one("#command-bar", Static)
+            command.display = visible
+        except Exception:
+            pass
+
+    def watch_command_buffer(self, value: str) -> None:
+        """Render the current command buffer."""
+        try:
+            command = self.query_one("#command-bar", Static)
+            cursor = "█" if self.command_visible else ""
+            command.update(f"> {value}{cursor}")
         except Exception:
             pass
 
@@ -565,6 +1494,62 @@ class PlaygroundApp(App[None]):
         """Toggle mount panel visibility."""
         self.show_mount_panel = not self.show_mount_panel
 
+    def action_focus_mount_panel(self) -> None:
+        """Focus the mount list for navigation and unmount actions."""
+        try:
+            panel = self.query_one("#mount-panel", MountPanel)
+        except Exception:
+            return
+        if not self.show_mount_panel:
+            self.show_mount_panel = True
+        panel.focus()
+
+    async def action_unmount_selected_mount(self) -> None:
+        """Remove the currently selected mount from the playground session."""
+        if not self._uris:
+            return
+        mount_point = self._selected_mount_point()
+        if not mount_point:
+            return
+        remaining_uris = tuple(
+            uri for uri in self._uris if self._uri_mount_point(uri) != mount_point
+        )
+        if len(remaining_uris) == len(self._uris):
+            self.notify(
+                f"Unmount failed: no mount found for {mount_point}", severity="warning", timeout=4
+            )
+            return
+
+        self._uris = remaining_uris
+        self._restored_mounts = False
+        if not remaining_uris:
+            self._fs = None
+            self._mount_points = []
+            self._persist_mounts()
+            try:
+                main = self.query_one("#main-area", Horizontal)
+                for child in list(main.children):
+                    await child.remove()
+            except Exception:
+                pass
+            empty = self.query_one("#empty-state", Static)
+            empty.display = True
+            await self._show_connector_picker("No mounts configured")
+            self.notify(f"Unmounted {mount_point}", timeout=3)
+            return
+
+        try:
+            fs = await self._build_filesystem(remaining_uris)
+        except Exception as exc:
+            self.notify(f"Unmount failed: {exc}", severity="error", timeout=4)
+            return
+
+        self._fs = fs
+        self._mount_points = fs.list_mounts()
+        self._persist_mounts()
+        await self._reset_browser_ui()
+        self.notify(f"Unmounted {mount_point}", timeout=3)
+
     def watch_show_mount_panel(self, show: bool) -> None:
         """Show/hide mount panel."""
         try:
@@ -586,6 +1571,9 @@ class PlaygroundApp(App[None]):
 
         if width < MIN_WIDTH or height < MIN_HEIGHT:
             too_small.display = True
+            for widget_id in ("#playground-banner", "#empty-state", "#main-area", "#status-bar"):
+                with suppress(Exception):
+                    self.query_one(widget_id).display = False
             too_small.update(
                 f"[bold]Terminal too small[/bold]\n"
                 f"Need {MIN_WIDTH}x{MIN_HEIGHT}, got {width}x{height}\n"
@@ -594,6 +1582,13 @@ class PlaygroundApp(App[None]):
             return
         else:
             too_small.display = False
+            try:
+                self.query_one("#playground-banner", Static).display = True
+                self.query_one("#main-area", Horizontal).display = True
+                self.query_one("#status-bar", Static).display = True
+                self.query_one("#empty-state", Static).display = not bool(self._mount_points)
+            except Exception:
+                pass
 
         # Auto-collapse mount panel at narrow widths
         if width < MOUNT_PANEL_COLLAPSE_WIDTH:
@@ -603,6 +1598,68 @@ class PlaygroundApp(App[None]):
 
     async def on_key(self, event: Any) -> None:
         """Handle global key events (quit, escape)."""
+        focused = self.focused
+        if isinstance(focused, MountPanel):
+            if event.key == "up":
+                focused.action_move_up()
+                event.prevent_default()
+                return
+            if event.key == "down":
+                focused.action_move_down()
+                event.prevent_default()
+                return
+            if event.key in {"enter", "return", "ctrl+m"}:
+                mount_point = focused.selected_mount
+                if mount_point:
+                    browser = self.query_one("#file-browser", FileBrowser)
+                    await browser.load_directory(mount_point)
+                    self._current_path = mount_point
+                    self._update_status_bar()
+                event.prevent_default()
+                return
+            if event.key in {"right", "tab"}:
+                self._refocus_table()
+                event.prevent_default()
+                return
+        if event.key in {"enter", "return", "ctrl+m"} and await self._mount_selected_picker_uri():
+            event.prevent_default()
+            return
+        if self.command_visible:
+            if event.key in {"enter", "return", "ctrl+m"}:
+                await self.action_submit_command()
+                event.prevent_default()
+                return
+            if event.key == "backspace":
+                self.action_command_backspace()
+                event.prevent_default()
+                return
+            if event.key == "escape":
+                self.action_cancel_command()
+                event.prevent_default()
+                return
+            if getattr(event, "is_printable", False) and getattr(event, "character", None):
+                if event.character == ":" and not self.command_buffer:
+                    event.prevent_default()
+                    return
+                self.command_buffer += event.character
+                event.prevent_default()
+                return
+            if event.key == "space":
+                self.command_buffer += " "
+                event.prevent_default()
+                return
+            if len(event.key) == 1:
+                self.command_buffer += event.key
+                event.prevent_default()
+                return
+
+        if event.key == ":":
+            focused = self.focused
+            if not isinstance(focused, Input):
+                self.command_visible = True
+                self.command_buffer = ""
+                event.prevent_default()
+                return
         if event.key == "q":
             # Don't quit if user is typing in an input
             focused = self.focused
@@ -611,6 +1668,18 @@ class PlaygroundApp(App[None]):
             self.exit()
             return
         if event.key == "escape":
+            if self.picker_visible and self.picker_input_visible:
+                self.picker_input_visible = False
+                self._picker_pending_uri = None
+                picker_input = self.query_one("#picker-input", Input)
+                picker_input.value = ""
+                self._update_picker_help_for_row(
+                    self.query_one("#connector-picker", DataTable).cursor_row
+                )
+                self._refocus_table()
+                event.prevent_default()
+                return
+
             # Close CRUD input
             if self._crud_mode:
                 self._crud_mode = ""
@@ -623,6 +1692,13 @@ class PlaygroundApp(App[None]):
 
             if self.search_visible:
                 self.search_visible = False
+                self._refocus_table()
+                event.prevent_default()
+                return
+
+            if self.command_visible:
+                self.command_visible = False
+                self.command_buffer = ""
                 self._refocus_table()
                 event.prevent_default()
                 return

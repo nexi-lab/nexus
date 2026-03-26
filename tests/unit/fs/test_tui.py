@@ -6,6 +6,8 @@ large files, empty state, rapid interaction), and widget-level tests.
 
 from __future__ import annotations
 
+import json
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +16,10 @@ import pytest
 textual = pytest.importorskip("textual")
 
 
-from nexus.fs._tui import PlaygroundApp  # noqa: E402
+from textual.widgets import DataTable  # noqa: E402
+
+from nexus.fs._tui import ContextualNexusFS, PlaygroundApp  # noqa: E402
+from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error  # noqa: E402
 from nexus.fs._tui.file_browser import (  # noqa: E402
     MAX_DISPLAY_ENTRIES,
     FileBrowser,
@@ -201,6 +206,12 @@ class TestMountPanel:
         info = panel._mount_infos[0]
         assert info.status == "checking"
 
+    def test_error_render_includes_auth_hint(self):
+        """Auth-backed mount errors include inline next-step guidance."""
+        panel = MountPanel(_make_mock_fs(), ["/s3/bucket"])
+        rendered = panel._render_mount(MountInfo(mount_point="/s3/bucket", status="error"))
+        assert "run /auth s3" in rendered
+
 
 # ---------------------------------------------------------------------------
 # File browser tests
@@ -289,6 +300,8 @@ class TestPlaygroundApp:
                 # App should show empty state
                 empty = app.query_one("#empty-state")
                 assert empty is not None
+                picker = app.query_one("#connector-picker", DataTable)
+                assert picker is not None
 
     @pytest.mark.asyncio
     async def test_mount_failure_shows_error(self):
@@ -333,6 +346,469 @@ class TestPlaygroundApp:
             assert app.show_mount_panel is False
             app.action_toggle_mount_panel()
             assert app.show_mount_panel is True
+
+    @pytest.mark.asyncio
+    async def test_command_toggle_via_action(self):
+        """Toggle command action changes command_visible state."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            assert not app.command_visible
+            app.action_toggle_command()
+            assert app.command_visible
+            app.action_toggle_command()
+            assert not app.command_visible
+
+    @pytest.mark.asyncio
+    async def test_mount_uri_adds_local_mount(self, tmp_path):
+        """The command-path mount helper adds a local mount and rebuilds the UI."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            await app._mount_uri(f"local://{tmp_path}")
+            await pilot.pause(delay=0.3)
+            assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+
+    @pytest.mark.asyncio
+    async def test_submit_command_mounts_local_uri(self, tmp_path):
+        """Submitting the command buffer mounts a local URI."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            app.command_visible = True
+            app.command_buffer = f"/mount local://{tmp_path}"
+            await app.action_submit_command()
+            await pilot.pause(delay=0.3)
+            assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_mounts_selected_uri(self, tmp_path):
+        """Selecting a connector picker row mounts it and transitions to browser UI."""
+        app = PlaygroundApp(uris=())
+        target_uri = f"local://{tmp_path}"
+        state_dir = tmp_path / "state"
+
+        with (
+            patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False),
+            patch.object(
+                app, "_supported_connector_rows", return_value=[(target_uri, "mountable")]
+            ),
+        ):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                picker = app.query_one("#connector-picker", DataTable)
+                assert picker.row_count == 1
+                await pilot.press("enter")
+                await pilot.pause(delay=0.5)
+                assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+                assert app.picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_show_connector_picker_action_from_browser(self, tmp_path):
+        """The add-mount action reopens the connector picker from browser mode."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            assert app.picker_visible is False
+            await app.action_show_connector_picker()
+            await pilot.pause(delay=0.2)
+            picker = app.query_one("#connector-picker", DataTable)
+            assert picker is not None
+            assert app.picker_visible is True
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_prompts_for_custom_local_uri(self, tmp_path):
+        """The local picker row opens an editable URI input before mounting."""
+        app = PlaygroundApp(uris=())
+        state_dir = tmp_path / "state"
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                await pilot.press("enter")
+                await pilot.pause(delay=0.2)
+                picker_input = app.query_one("#picker-input")
+                assert app.picker_input_visible is True
+                assert "local://" in picker_input.value
+
+    @pytest.mark.asyncio
+    async def test_connector_picker_local_input_mounts_custom_uri(self, tmp_path):
+        """The mount wizard can complete a local mount without raw command entry."""
+        app = PlaygroundApp(uris=())
+        target_uri = f"local://{tmp_path}"
+        state_dir = tmp_path / "state"
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                await pilot.press("enter")
+                await pilot.pause(delay=0.2)
+                picker_input = app.query_one("#picker-input")
+                picker_input.value = target_uri
+                await app.action_submit_command()
+                await pilot.pause(delay=0.3)
+                assert any(mp.endswith(tmp_path.name) for mp in app._mount_points)
+                assert app.picker_visible is False
+
+    @pytest.mark.asyncio
+    async def test_browser_enter_opens_selected_directory(self, tmp_path):
+        """Pressing Enter in the file browser should navigate into the selected directory."""
+        (tmp_path / "skills").mkdir()
+        (tmp_path / "skills" / "nested.txt").write_text("hi")
+        (tmp_path / "hello.txt").write_text("hello")
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            browser = app.query_one("#file-browser", FileBrowser)
+            table = browser.query_one("#file-table", DataTable)
+            table.focus()
+            await pilot.pause(delay=0.1)
+            await pilot.press("enter")
+            await pilot.pause(delay=0.3)
+            assert browser.current_path.endswith("/skills")
+            assert app._current_path.endswith("/skills")
+
+    @pytest.mark.asyncio
+    async def test_mount_uri_rejects_empty_s3_bucket(self):
+        """Incomplete S3 URIs should be rejected instead of creating a broken /s3/ mount."""
+        app = PlaygroundApp(uris=())
+        state_dir = tempfile.mkdtemp(prefix="playground-empty-s3-")
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": state_dir}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.3)
+                await app._mount_uri("s3://")
+                await pilot.pause(delay=0.2)
+                assert app._mount_points == []
+
+    @pytest.mark.asyncio
+    async def test_unmount_selected_mount_removes_mount(self, tmp_path):
+        """Unmount removes the selected mount from the active playground session."""
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        app = PlaygroundApp(uris=(f"local://{left}", f"local://{right}"))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            app.action_focus_mount_panel()
+            await pilot.pause(delay=0.1)
+            panel = app.query_one("#mount-panel", MountPanel)
+            panel.selected_index = 1
+            await pilot.pause(delay=0.1)
+            await app.action_unmount_selected_mount()
+            await pilot.pause(delay=0.3)
+            assert app._mount_points == [f"/local/{left.name}"]
+            assert app._uris == (f"local://{left}",)
+
+    @pytest.mark.asyncio
+    async def test_browser_banner_mentions_restored_mounts(self, tmp_path):
+        """Restored sessions should say so explicitly in the top banner."""
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        mounts_file = state_dir / "mounts.json"
+        mounts_file.write_text(json.dumps([f"local://{tmp_path}"]))
+        app = PlaygroundApp(uris=())
+
+        with patch.dict("os.environ", {"NEXUS_FS_STATE_DIR": str(state_dir)}, clear=False):
+            async with app.run_test(size=(120, 40)) as pilot:
+                await pilot.pause(delay=0.5)
+                banner = app.query_one("#playground-banner")
+                assert "Restored 1 mount" in str(banner.render())
+
+    @pytest.mark.asyncio
+    async def test_too_small_hides_main_content(self, tmp_path):
+        """Too-small terminals should show only the warning, not stacked content underneath."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(99, 22)) as pilot:
+            await pilot.pause(delay=0.5)
+            assert app.query_one("#too-small-message").display is True
+            assert app.query_one("#playground-banner").display is False
+            assert app.query_one("#main-area").display is False
+            assert app.query_one("#status-bar").display is False
+
+    def test_auth_guidance_for_s3(self):
+        """S3 auth guidance points users to the guided CLI flow."""
+        app = PlaygroundApp(uris=())
+        message = app._auth_guidance("s3")
+        assert "nexus-fs auth connect s3 native" in message
+        assert "reopen the playground and mount `s3://bucket`" in message
+
+    def test_auth_guidance_for_expired_gws(self):
+        """Expired Google auth gets explicit re-auth steps."""
+        message = auth_guidance("gws", user_email="alice@example.com", expired=True)
+        assert "Google auth expired" in message
+        assert "nexus-fs auth connect gws oauth --user-email alice@example.com" in message
+        assert "nexus-fs auth test gws" in message
+
+    def test_runtime_error_formats_expired_gws_steps(self):
+        """Browse/preview auth failures should render guided steps, not raw backend text."""
+        message = format_runtime_error(
+            "/gws/docs",
+            RuntimeError("[AUTH_EXPIRED] Using keyring backend: keyring"),
+        )
+        assert "Can't access `/gws/docs`." in message
+        assert "Google auth expired" in message
+        assert "nexus-fs auth connect gws oauth" in message
+
+    @pytest.mark.asyncio
+    async def test_contextual_fs_falls_back_to_backend_list_dir_for_empty_metadata(self):
+        """Connector-backed playground mounts should still browse when slim metadata is empty."""
+
+        class _Backend:
+            def list_dir(self, path, context=None):
+                assert path == ""
+                return ["Doc Alpha", "Folder/"]
+
+        class _Route:
+            backend = _Backend()
+            backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path == "/gws/docs"
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                assert path == "/gws/docs"
+                return []
+
+        fs = ContextualNexusFS(_Kernel())
+        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        assert isinstance(rows, list)
+        assert rows[0]["path"] == "/gws/docs/Doc Alpha"
+        assert rows[0]["is_directory"] is False
+        assert rows[1]["path"] == "/gws/docs/Folder"
+        assert rows[1]["is_directory"] is True
+
+    @pytest.mark.asyncio
+    async def test_contextual_fs_prefers_detailed_backend_entries(self):
+        """Detailed connector metadata should flow through to the browser rows."""
+
+        class _Backend:
+            def list_dir_details(self, path, context=None):
+                assert path == ""
+                return [
+                    {
+                        "name": "Doc Alpha [docA]",
+                        "size": 123,
+                        "modified_at": "2026-03-26T00:40:00Z",
+                        "is_directory": False,
+                    }
+                ]
+
+        class _Route:
+            def __init__(self):
+                self.backend = _Backend()
+                self.backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path == "/gws/docs"
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                assert path == "/gws/docs"
+                return []
+
+        fs = ContextualNexusFS(_Kernel())
+        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        assert rows[0]["path"] == "/gws/docs/Doc Alpha [docA]"
+        assert rows[0]["size"] == 123
+        assert rows[0]["modified_at"] == "2026-03-26T00:40:00Z"
+
+    @pytest.mark.asyncio
+    async def test_contextual_fs_prefers_live_backend_rows_over_stale_metadata(self):
+        """Connector root browsing should prefer live backend listings over synthetic VFS rows."""
+
+        class _Backend:
+            def list_dir_details(self, path, context=None):
+                assert path == ""
+                return [
+                    {
+                        "name": "Fresh Doc [docA]",
+                        "size": 456,
+                        "modified_at": "2026-03-26T01:00:00Z",
+                        "is_directory": False,
+                    }
+                ]
+
+        class _Route:
+            def __init__(self):
+                self.backend = _Backend()
+                self.backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path == "/gws/docs"
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                assert path == "/gws/docs"
+                return [
+                    {
+                        "path": "/gws/docs/Stale Doc",
+                        "size": 0,
+                        "modified_at": "2026-03-26T00:00:00Z",
+                        "is_directory": False,
+                    }
+                ]
+
+        fs = ContextualNexusFS(_Kernel())
+        rows = await fs.ls("/gws/docs", detail=True, recursive=False)
+        assert rows == [
+            {
+                "path": "/gws/docs/Fresh Doc [docA]",
+                "size": 456,
+                "is_directory": False,
+                "etag": None,
+                "mime_type": "application/octet-stream",
+                "created_at": None,
+                "modified_at": "2026-03-26T01:00:00Z",
+                "version": 0,
+                "zone_id": "root",
+                "entry_type": 0,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_contextual_fs_stat_falls_back_to_backend_directory_entries(self):
+        """Preview should be able to stat connector-backed files from live backend rows."""
+
+        class _Backend:
+            def list_dir_details(self, path, context=None):
+                assert path == ""
+                return [
+                    {
+                        "name": "Doc Alpha [docA]",
+                        "size": 123,
+                        "modified_at": "2026-03-26T00:40:00Z",
+                        "is_directory": False,
+                    }
+                ]
+
+        class _Route:
+            def __init__(self):
+                self.backend = _Backend()
+                self.backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path in {"/gws/docs", "/gws/docs/Doc Alpha [docA]"}
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                return []
+
+            async def sys_stat(self, path, context=None):
+                return None
+
+        fs = ContextualNexusFS(_Kernel())
+        stat = await fs.stat("/gws/docs/Doc Alpha [docA]")
+        assert stat == {
+            "path": "/gws/docs/Doc Alpha [docA]",
+            "size": 123,
+            "is_directory": False,
+            "etag": None,
+            "mime_type": "application/octet-stream",
+            "created_at": None,
+            "modified_at": "2026-03-26T00:40:00Z",
+            "version": 0,
+            "zone_id": "root",
+            "entry_type": 0,
+        }
+
+    def test_supported_connector_rows_include_dynamic_gws_targets(self):
+        """The playground lists concrete connector mount targets, not just services."""
+        app = PlaygroundApp(uris=())
+        rows = app._supported_connector_rows()
+        names = {name for name, _mode in rows}
+        assert "s3://<enter bucket manually>" in names
+        assert "gcs://project/bucket" in names
+        assert "gws://drive" in names
+        assert "gws://gmail" in names
+        assert "gws://calendar" in names
+        assert "gws://github" not in names
+        assert "calendar://primary" not in names
+
+    def test_supported_connector_rows_include_discovered_s3_buckets(self):
+        """Discovered S3 buckets should appear as directly mountable picker rows."""
+        app = PlaygroundApp(uris=())
+        with patch.object(
+            app,
+            "_discovered_s3_bucket_rows",
+            return_value=[("s3://nexus-888", "mountable auth:s3 discovered")],
+        ):
+            rows = app._supported_connector_rows()
+        names = [name for name, _mode in rows]
+        assert "s3://nexus-888" in names
+        assert names.index("s3://nexus-888") < names.index("s3://<enter bucket manually>")
+
+    @pytest.mark.asyncio
+    async def test_resolve_mount_user_id_prefers_single_google_credential(self):
+        """A single stored Google credential becomes the mount user identity."""
+        app = PlaygroundApp(uris=())
+
+        with (
+            patch("nexus.fs._oauth_support.get_token_manager", return_value=MagicMock()),
+            patch(
+                "nexus.bricks.auth.oauth.credential_service.OAuthCredentialService.list_credentials",
+                new=AsyncMock(
+                    return_value=[
+                        {
+                            "provider": "google",
+                            "user_email": "alice@example.com",
+                        }
+                    ]
+                ),
+            ),
+        ):
+            assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_resolve_mount_user_id_uses_shared_fs_inference(self):
+        """Playground should reuse the shared slim-fs inference path."""
+        app = PlaygroundApp(uris=())
+
+        with patch("nexus.fs._infer_connector_user_email", return_value="alice@example.com"):
+            assert await app._resolve_mount_user_id("gws://drive") == "alice@example.com"
+
+    @pytest.mark.asyncio
+    async def test_build_filesystem_uses_generic_mount_for_connector_uri(self):
+        """Connector URIs go through nexus.fs.mount instead of the direct-only path."""
+        app = PlaygroundApp(uris=())
+        kernel = MagicMock()
+        kernel.router.list_mounts.return_value = ["/gws/drive"]
+        facade = MagicMock(kernel=kernel)
+
+        with (
+            patch("nexus.fs.mount", new=AsyncMock(return_value=facade)) as mock_mount,
+            patch.object(
+                app, "_resolve_mount_user_id", new=AsyncMock(return_value="alice@example.com")
+            ),
+        ):
+            fs = await app._build_filesystem(("gws://drive",))
+            mock_mount.assert_awaited_once_with("gws://drive")
+            assert fs.list_mounts() == ["/gws/drive"]
 
 
 # ---------------------------------------------------------------------------

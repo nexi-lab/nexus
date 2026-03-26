@@ -104,6 +104,15 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
         capabilities=["read", "write", "list", "delete", "tools"],
         description="Google Calendar events with full CRUD support",
     ),
+    "gws": ServiceInfo(
+        name="gws",
+        display_name="Google Workspace",
+        connector=None,  # auto-derived: prefers one canonical gws_* connector
+        klavis_mcp=None,
+        oauth_provider="google",
+        capabilities=["read", "write", "list", "delete", "tools"],
+        description="Google Workspace CLI-backed connectors using shared Google auth",
+    ),
     # Cloud storage — connector fields auto-derived from ConnectorRegistry
     "gcs": ServiceInfo(
         name="gcs",
@@ -226,8 +235,11 @@ def _sync_from_connector_registry() -> None:
     # Auto-populate connector fields from ConnectorRegistry
     from nexus.backends.base.registry import ConnectorRegistry
 
+    connector_to_service: dict[str, str] = {}
+
     for info in ConnectorRegistry.list_all():
         if info.service_name and info.service_name in SERVICE_REGISTRY:
+            connector_to_service[info.name] = info.service_name
             service = SERVICE_REGISTRY[info.service_name]
             if _service_is_mcp_only(service):
                 continue
@@ -248,6 +260,7 @@ def _sync_from_connector_registry() -> None:
     # Rebuild reverse lookup maps
     _CONNECTOR_TO_SERVICE.clear()
     _MCP_TO_SERVICE.clear()
+    _CONNECTOR_TO_SERVICE.update(connector_to_service)
     for service_name, service_info in SERVICE_REGISTRY.items():
         if service_info.connector:
             _CONNECTOR_TO_SERVICE[service_info.connector] = service_name

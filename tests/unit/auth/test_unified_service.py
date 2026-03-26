@@ -1,0 +1,430 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from nexus.bricks.auth.oauth.types import OAuthCredential
+from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
+from nexus.contracts.unified_auth import AuthStatus, CredentialKind
+
+
+class _FakeOAuthService:
+    def __init__(self) -> None:
+        self._credentials = [
+            {
+                "provider": "google",
+                "user_email": "alice@example.com",
+                "is_expired": False,
+            }
+        ]
+
+    async def list_credentials(self, context=None):  # noqa: ANN001, ARG002
+        return list(self._credentials)
+
+    async def test_credential(self, provider: str, user_email: str, context=None):  # noqa: ANN001, ARG002
+        return {
+            "success": provider == "google" and user_email == "alice@example.com",
+            "provider": provider,
+            "user_email": user_email,
+            "message": "OAuth credential is valid.",
+        }
+
+
+@pytest.fixture
+def secret_store(tmp_path: Path) -> FileSecretCredentialStore:
+    return FileSecretCredentialStore(tmp_path / "credentials.json")
+
+
+@pytest.fixture
+def auth_service(secret_store: FileSecretCredentialStore) -> UnifiedAuthService:
+    return UnifiedAuthService(oauth_service=_FakeOAuthService(), secret_store=secret_store)
+
+
+def test_connect_secret_persists_record(auth_service: UnifiedAuthService) -> None:
+    record = auth_service.connect_secret(
+        "s3",
+        {
+            "access_key_id": "AKIA...",
+            "secret_access_key": "secret",
+            "region_name": "us-east-1",
+        },
+    )
+
+    assert record.kind == CredentialKind.SECRET
+    assert record.data["access_key_id"] == "AKIA..."
+
+
+def test_resolve_backend_config_uses_stored_secret(auth_service: UnifiedAuthService) -> None:
+    auth_service.connect_secret(
+        "s3",
+        {
+            "access_key_id": "AKIA...",
+            "secret_access_key": "secret",
+        },
+    )
+
+    resolution = auth_service.resolve_backend_config("path_s3", {"bucket": "demo"})
+
+    assert resolution.status == AuthStatus.AUTHED
+    assert resolution.source == "stored:secret"
+    assert resolution.resolved_config["access_key_id"] == "AKIA..."
+
+
+def test_list_summaries_includes_oauth_and_secret(
+    auth_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    async def _fake_get_stored_oauth_credential(provider: str, user_email: str):  # noqa: ANN001
+        assert provider == "google"
+        assert user_email == "alice@example.com"
+        return OAuthCredential(
+            access_token="ya29.test",
+            refresh_token="1//refresh",
+            scopes=(
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/drive.file",
+                "https://www.googleapis.com/auth/documents",
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/chat.spaces.readonly",
+            ),
+            provider="google",
+            user_email="alice@example.com",
+        )
+
+    monkeypatch.setattr(
+        auth_service, "_get_stored_oauth_credential", _fake_get_stored_oauth_credential
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": source or "oauth",
+                "message": f"{target} target is ready via stored OAuth.",
+            }
+            for target in targets
+        },
+    )
+
+    auth_service.connect_secret(
+        "gcs",
+        {
+            "credentials_path": "/tmp/gcs.json",
+        },
+    )
+
+    summaries = asyncio.run(auth_service.list_summaries())
+
+    summary_by_service = {summary.service: summary for summary in summaries}
+    assert summary_by_service["gcs"].status == AuthStatus.AUTHED
+    assert summary_by_service["google-drive"].status == AuthStatus.AUTHED
+    assert summary_by_service["gws"].status == AuthStatus.AUTHED
+
+
+def test_test_service_reports_missing_secret(
+    auth_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    monkeypatch.setattr(auth_service, "_detect_native", lambda service: None)
+    result = asyncio.run(auth_service.test_service("s3"))
+
+    assert result["success"] is False
+    assert "nexus auth connect s3" in result["message"]
+
+
+def test_file_store_delete(secret_store: FileSecretCredentialStore) -> None:
+    secret_store.upsert("s3", CredentialKind.NATIVE, {})
+
+    assert secret_store.delete("s3") is True
+    assert secret_store.get("s3") is None
+
+
+def test_test_service_supports_gws_alias(
+    auth_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    async def _fake_get_stored_oauth_credential(provider: str, user_email: str):  # noqa: ANN001
+        assert provider == "google"
+        assert user_email == "alice@example.com"
+        return OAuthCredential(
+            access_token="ya29.test",
+            refresh_token="1//refresh",
+            scopes=(
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/drive.file",
+                "https://www.googleapis.com/auth/documents",
+                "https://www.googleapis.com/auth/spreadsheets",
+                "https://www.googleapis.com/auth/gmail.modify",
+                "https://www.googleapis.com/auth/calendar",
+                "https://www.googleapis.com/auth/chat.spaces.readonly",
+            ),
+            provider="google",
+            user_email="alice@example.com",
+        )
+
+    monkeypatch.setattr(
+        auth_service, "_get_stored_oauth_credential", _fake_get_stored_oauth_credential
+    )
+    monkeypatch.setattr(
+        auth_service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": source or "oauth",
+                "message": f"{target} target is ready via stored OAuth.",
+            }
+            for target in targets
+        },
+    )
+
+    result = asyncio.run(auth_service.test_service("gws", user_email="alice@example.com"))
+
+    assert result["success"] is True
+    assert result["service"] == "gws"
+    assert result["source"] == "oauth"
+    assert "targets ready" in result["message"].lower()
+
+
+def test_list_summaries_prefers_native_gws_when_stored_oauth_expired(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": source or "native:gws_cli",
+                "message": f"{target} target is ready via local gws CLI.",
+            }
+            for target in targets
+        },
+    )
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+
+    assert summary_by_service["gws"].status == AuthStatus.AUTHED
+    assert summary_by_service["gws"].kind == CredentialKind.NATIVE
+    assert summary_by_service["gws"].source == "native:gws_cli"
+    assert summary_by_service["gws"].details["stored_oauth_status"] == AuthStatus.EXPIRED.value
+
+
+def test_test_service_prefers_native_gws_when_stored_oauth_expired(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": source or "native:gws_cli",
+                "message": f"{target} target is ready via local gws CLI.",
+            }
+            for target in targets
+        },
+    )
+
+    result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
+
+    assert result["success"] is True
+    assert result["source"] == "native:gws_cli"
+    assert "expired" in result["message"].lower()
+
+
+def test_test_service_gws_reports_target_failures(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": target != "chat",
+                "source": source or "native:gws_cli",
+                "message": f"{target} ok" if target != "chat" else "chat scopes missing",
+                "reason": None if target != "chat" else "missing_scopes",
+            }
+            for target in targets
+        },
+    )
+
+    result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
+
+    assert result["success"] is False
+    assert "chat" in result["message"]
+    assert any(check["target"] == "chat" and not check["success"] for check in result["checks"])
+
+
+def test_list_summaries_marks_gws_error_when_some_targets_fail(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None, access_token=None, source=None: {
+            target: {
+                "target": target,
+                "success": target in {"drive", "docs", "sheets", "gmail", "calendar"},
+                "source": source or "native:gws_cli",
+                "message": f"{target} ok"
+                if target != "chat"
+                else "chat requires additional Google OAuth scopes",
+                "reason": None if target != "chat" else "missing_scopes",
+            }
+            for target in targets
+        },
+    )
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+
+    assert summary_by_service["gws"].status == AuthStatus.ERROR
+    assert "chat" in summary_by_service["gws"].message
+    assert summary_by_service["google-drive"].status == AuthStatus.AUTHED
+
+
+def test_test_service_gws_target_reports_missing_stored_scope(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+
+    async def _fake_get_stored_oauth_credential(provider: str, user_email: str):  # noqa: ANN001
+        assert provider == "google"
+        assert user_email == "alice@example.com"
+        return OAuthCredential(
+            access_token="ya29.test",
+            refresh_token="1//refresh",
+            scopes=(
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/drive.file",
+            ),
+            provider="google",
+            user_email="alice@example.com",
+        )
+
+    monkeypatch.setattr(service, "_get_stored_oauth_credential", _fake_get_stored_oauth_credential)
+
+    result = asyncio.run(service.test_service("gws", user_email="alice@example.com", target="chat"))
+
+    assert result["success"] is False
+    assert result["source"] == "oauth"
+    assert "missing required google oauth scope" in result["message"].lower()
+    assert result["checks"][0]["target"] == "chat"
+    assert result["checks"][0]["reason"] == "missing_scopes"
+
+
+def test_native_marker_requires_live_provider_chain_for_summary_and_resolution(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    service = UnifiedAuthService(oauth_service=_FakeOAuthService(), secret_store=secret_store)
+    service.connect_native("s3")
+    monkeypatch.setattr(service, "_detect_native", lambda service_name: None)
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+    resolution = service.resolve_backend_config("path_s3", {"bucket": "demo"})
+
+    assert summary_by_service["s3"].status == AuthStatus.NO_AUTH
+    assert summary_by_service["s3"].source == "missing"
+    assert resolution.status == AuthStatus.NO_AUTH
+    assert resolution.source == "missing"

@@ -71,7 +71,10 @@ than 100 columns.
 | ++slash++ | Search files in current directory |
 | ++escape++ | Clear search / close preview |
 | `c` | Copy file path to clipboard |
-| `r` | Refresh current directory |
+| `r` | Rename selected file or directory |
+| `d` | Delete selected file or directory |
+| `n` | Create new file |
+| ++shift+n++ | Create new directory |
 | `q` | Quit |
 | `?` | Show help |
 

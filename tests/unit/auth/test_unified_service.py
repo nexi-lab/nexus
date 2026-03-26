@@ -115,3 +115,67 @@ def test_test_service_supports_gws_alias(auth_service: UnifiedAuthService) -> No
     assert result["success"] is True
     assert result["service"] == "gws"
     assert result["provider"] == "google"
+
+
+def test_list_summaries_prefers_native_gws_when_stored_oauth_expired(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+
+    assert summary_by_service["gws"].status == AuthStatus.AUTHED
+    assert summary_by_service["gws"].kind == CredentialKind.NATIVE
+    assert summary_by_service["gws"].source == "native:gws_cli"
+    assert summary_by_service["gws"].details["stored_oauth_status"] == AuthStatus.EXPIRED.value
+
+
+def test_test_service_prefers_native_gws_when_stored_oauth_expired(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+
+    result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
+
+    assert result["success"] is True
+    assert result["source"] == "native:gws_cli"
+    assert "expired" in result["message"].lower()

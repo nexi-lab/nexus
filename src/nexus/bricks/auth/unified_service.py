@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -58,6 +60,10 @@ _OAUTH_PROVIDER_ALIASES: dict[str, tuple[str, ...]] = {
     "slack": ("slack",),
     "x": ("x", "twitter"),
 }
+
+_GOOGLE_OAUTH_SERVICES = frozenset(
+    service for service, providers in _OAUTH_PROVIDER_ALIASES.items() if "google" in providers
+)
 
 
 def _utcnow_iso() -> str:
@@ -266,8 +272,31 @@ class UnifiedAuthService:
             for service, providers in _OAUTH_PROVIDER_ALIASES.items():
                 seen_services.add(service)
                 matching = [cred for cred in oauth_creds if cred.get("provider") in providers]
+                native = self._detect_oauth_native(service)
                 if matching:
                     expired = all(bool(cred.get("is_expired")) for cred in matching)
+                    if expired and native is not None:
+                        summaries.append(
+                            AuthSummary(
+                                service=service,
+                                kind=CredentialKind.NATIVE,
+                                status=AuthStatus.AUTHED,
+                                source=native["source"],
+                                message=(
+                                    "Stored OAuth credentials are expired; using local native CLI auth."
+                                ),
+                                details={
+                                    **{k: v for k, v in native.items() if k not in {"message"}},
+                                    "stored_oauth_status": AuthStatus.EXPIRED.value,
+                                    "providers": sorted(
+                                        {str(cred.get("provider")) for cred in matching}
+                                    ),
+                                    "accounts": len(matching),
+                                },
+                            )
+                        )
+                        continue
+
                     status = AuthStatus.EXPIRED if expired else AuthStatus.AUTHED
                     summaries.append(
                         AuthSummary(
@@ -286,6 +315,17 @@ class UnifiedAuthService:
                                 ),
                                 "accounts": len(matching),
                             },
+                        )
+                    )
+                elif native is not None:
+                    summaries.append(
+                        AuthSummary(
+                            service=service,
+                            kind=CredentialKind.NATIVE,
+                            status=AuthStatus.AUTHED,
+                            source=native["source"],
+                            message=native["message"],
+                            details={k: v for k, v in native.items() if k != "message"},
                         )
                     )
                 else:
@@ -383,6 +423,14 @@ class UnifiedAuthService:
         if user_email is not None:
             matches = [cred for cred in matches if cred.get("user_email") == user_email]
         if not matches:
+            native = self._detect_oauth_native(service, user_email=user_email)
+            if native is not None:
+                return {
+                    "success": True,
+                    "service": service,
+                    "source": native["source"],
+                    "message": native["message"],
+                }
             return {
                 "success": False,
                 "service": service,
@@ -391,6 +439,15 @@ class UnifiedAuthService:
             }
 
         candidate = matches[0]
+        if bool(candidate.get("is_expired")):
+            native = self._detect_oauth_native(service, user_email=user_email)
+            if native is not None:
+                return {
+                    "success": True,
+                    "service": service,
+                    "source": native["source"],
+                    "message": "Stored OAuth credential is expired; using local native CLI auth.",
+                }
         result = await self._oauth_service.test_credential(
             provider=str(candidate["provider"]),
             user_email=str(candidate["user_email"]),
@@ -451,6 +508,70 @@ class UnifiedAuthService:
             return None
         message = f"Native provider chain available via {details.get('source', 'native')}."
         return {**{k: str(v) for k, v in details.items()}, "message": message}
+
+    def _detect_oauth_native(
+        self,
+        service: str,
+        *,
+        user_email: str | None = None,
+    ) -> dict[str, str] | None:
+        if service not in _GOOGLE_OAUTH_SERVICES:
+            return None
+        return self._detect_google_workspace_cli_native(user_email=user_email)
+
+    def _detect_google_workspace_cli_native(
+        self,
+        *,
+        user_email: str | None = None,
+    ) -> dict[str, str] | None:
+        if shutil.which("gws") is None:
+            return None
+
+        try:
+            result = subprocess.run(
+                [
+                    "gws",
+                    "gmail",
+                    "users",
+                    "getProfile",
+                    "--params",
+                    '{"userId":"me"}',
+                    "--format",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception:
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        stdout = result.stdout.strip()
+        if not stdout:
+            return None
+
+        try:
+            start = stdout.find("{")
+            payload = stdout[start:] if start >= 0 else stdout
+            data = json.loads(payload)
+        except Exception:
+            return None
+
+        email = str(data.get("emailAddress") or "").strip()
+        if not email:
+            return None
+        if user_email and user_email != email:
+            return None
+
+        return {
+            "source": "native:gws_cli",
+            "email": email,
+            "message": f"Local gws CLI profile available for {email}.",
+        }
 
     def _validate_secret_record(self, record: SecretCredentialRecord) -> str | None:
         if record.kind == CredentialKind.NATIVE:

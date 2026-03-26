@@ -1,3 +1,4 @@
+# Tests updated for nexus.services rename
 """Tests for DT_PIPE wakeup integration in WriteBackService (Issue #3194, #9A).
 
 Tests the pipe-driven poll loop wakeup and on_enqueue callback wiring.

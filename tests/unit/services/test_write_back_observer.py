@@ -1,3 +1,4 @@
+# Tests updated for nexus.services rename
 """Tests for WriteBackService VFSObserver protocol (Issue #3194, #10A).
 
 Tests the OBSERVE hook integration: on_mutation(), event_mask, hook_spec().

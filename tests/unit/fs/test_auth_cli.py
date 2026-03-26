@@ -6,6 +6,7 @@ from click.testing import CliRunner
 
 from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
 from nexus.fs._auth_cli import auth
+from nexus.fs._oauth_support import get_fs_database_url
 
 
 class _FakeOAuthService:
@@ -70,3 +71,9 @@ def test_fs_auth_connect_gws_uses_local_oauth_setup(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "Setup steps for gws (oauth)" in result.output
     assert called["user_email"] == "alice@example.com"
+
+
+def test_fs_database_url_does_not_inherit_global_nexus_database_url(monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:46702/nexus")
+    monkeypatch.delenv("NEXUS_FS_DATABASE_URL", raising=False)
+    assert get_fs_database_url() is None

@@ -6,12 +6,15 @@ import asyncio
 import importlib as _il
 import os
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import click
+from cryptography.fernet import Fernet
 
 from nexus.cli.utils import console
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.security.secret_file import write_secret_file
 
 if TYPE_CHECKING:
     from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
@@ -20,21 +23,46 @@ else:
     XOAuthProvider = _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
     TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
 
+_DEFAULT_DB_PATH = Path("~/.nexus/nexus.db").expanduser()
+_DEFAULT_OAUTH_KEY_PATH = Path("~/.nexus/auth/oauth.key").expanduser()
+
+
+def get_fs_database_url() -> str | None:
+    """Resolve the standalone nexus-fs database URL.
+
+    Unlike the full Nexus CLI, nexus-fs defaults to local SQLite. It only
+    uses a network/shared database when explicitly pointed there.
+    """
+    return os.getenv("NEXUS_FS_DATABASE_URL")
+
+
+def get_oauth_encryption_key() -> str:
+    """Load or create the local persisted OAuth encryption key for nexus-fs."""
+    env_key = os.getenv("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    if _DEFAULT_OAUTH_KEY_PATH.exists():
+        return _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
+
+    key = Fernet.generate_key().decode("utf-8")
+    write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
+    console.print(f"[dim]Created local OAuth encryption key: {_DEFAULT_OAUTH_KEY_PATH}[/dim]")
+    return key
+
 
 def get_token_manager(db_path: str | None = None) -> TokenManager:
     """Create the OAuth token manager for nexus-fs."""
-    from nexus.lib.env import get_database_url
-
-    db_url = get_database_url()
+    db_url = get_fs_database_url()
+    encryption_key = get_oauth_encryption_key()
     if db_url:
-        return TokenManager(db_url=db_url)
+        return TokenManager(db_url=db_url, encryption_key=encryption_key)
     if db_path is None:
-        home = os.path.expanduser("~")
-        db_path = os.path.join(home, ".nexus", "nexus.db")
+        db_path = str(_DEFAULT_DB_PATH)
     parent_dir = os.path.dirname(db_path)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
-    return TokenManager(db_path=db_path)
+    return TokenManager(db_path=db_path, encryption_key=encryption_key)
 
 
 def run_google_oauth_setup(

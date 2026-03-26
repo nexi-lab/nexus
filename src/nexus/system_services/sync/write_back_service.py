@@ -285,7 +285,7 @@ class WriteBackService:
             # Wait for wakeup signal OR timeout (safety net)
             if self._pipe_manager is not None:
                 try:
-                    from nexus.bricks.ipc.wakeup import wait_for_signal
+                    from nexus.lib.pipe_wakeup import wait_for_signal
 
                     await wait_for_signal(
                         self._pipe_manager, _BACKLOG_WAKEUP_PIPE, timeout=self._poll_interval

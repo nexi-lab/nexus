@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from nexus.bricks.ipc.wakeup import wait_for_signal
+from nexus.lib.pipe_wakeup import wait_for_signal
 
 
 class _FakePipeManager:

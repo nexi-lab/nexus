@@ -103,20 +103,43 @@ class TestIdempotency:
         """Running seed twice should not duplicate files in manifest."""
         from nexus.cli.commands.demo import _seed_files
 
+        total_files = len(DEMO_FILES) + len(HERB_CORPUS)
         mock_nx = MagicMock()
         mock_nx.sys_write = AsyncMock()
         mock_nx.write = AsyncMock()
         mock_nx.mkdir = AsyncMock()
         mock_nx.sys_readdir = AsyncMock(return_value=[])
+        mock_nx.sys_access = AsyncMock(side_effect=[True] * total_files)
         manifest: dict = {"files": []}
 
         # First seed — includes both DEMO_FILES and HERB_CORPUS
         count1 = await _seed_files(mock_nx, manifest)
-        assert count1 == len(DEMO_FILES) + len(HERB_CORPUS)
+        assert count1 == total_files
 
         # Second seed — all paths already in manifest
         count2 = await _seed_files(mock_nx, manifest)
         assert count2 == 0
+
+    @pytest.mark.asyncio
+    async def test_seed_files_recreates_missing_manifest_entries(self) -> None:
+        """Manifest hits should be recreated when the remote path no longer exists."""
+        from nexus.cli.commands.demo import _seed_files
+
+        total_files = len(DEMO_FILES) + len(HERB_CORPUS)
+        seeded_paths = [path for path, _, _ in [*DEMO_FILES, *HERB_CORPUS]]
+
+        mock_nx = MagicMock()
+        mock_nx.sys_write = AsyncMock()
+        mock_nx.write = AsyncMock()
+        mock_nx.mkdir = AsyncMock()
+        mock_nx.sys_readdir = AsyncMock(return_value=[])
+        mock_nx.sys_access = AsyncMock(side_effect=[False] * total_files)
+        manifest: dict = {"files": list(seeded_paths)}
+
+        recreated = await _seed_files(mock_nx, manifest)
+
+        assert recreated == total_files
+        assert manifest["files"] == seeded_paths + seeded_paths
 
     @pytest.mark.asyncio
     async def test_seed_versions_idempotent(self) -> None:

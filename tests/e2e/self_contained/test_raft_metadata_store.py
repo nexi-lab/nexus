@@ -246,22 +246,23 @@ class TestCRUD:
         store = _make_store()
         assert store.delete("/no/file") is None
 
-    def test_rename_path(self) -> None:
+    def test_rename_via_get_put_delete(self) -> None:
+        """Rename is a composite operation: get + put(new_path) + delete(old)."""
+        from dataclasses import replace
+
         store = _make_store()
         store.put(_make_meta(path="/old.txt", size=42))
 
-        store.rename_path("/old.txt", "/new.txt")
+        old = store.get("/old.txt")
+        assert old is not None
+        store.put(replace(old, path="/new.txt"))
+        store.delete("/old.txt")
 
         assert store.get("/old.txt") is None
         result = store.get("/new.txt")
         assert result is not None
         assert result.path == "/new.txt"
         assert result.size == 42
-
-    def test_rename_nonexistent_raises(self) -> None:
-        store = _make_store()
-        with pytest.raises(FileNotFoundError):
-            store.rename_path("/nope", "/dest")
 
     def test_put_preserves_timestamps(self) -> None:
         store = _make_store()

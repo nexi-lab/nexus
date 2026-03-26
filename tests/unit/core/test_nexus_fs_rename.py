@@ -15,8 +15,12 @@ from tests.helpers.failing_backend import FailingBackend
 
 @pytest.fixture()
 async def nx(tmp_path):
-    """Create a NexusFS instance with permissions disabled for unit tests."""
-    return await make_test_nexus(tmp_path)
+    """Create a NexusFS instance with CAS backend for unit tests.
+
+    Uses CASLocalBackend because rename is a metadata-only operation —
+    content is addressed by hash, so reads work after path changes.
+    """
+    return await make_test_nexus(tmp_path, backend=_create_local_backend(tmp_path))
 
 
 class TestRenameHappyPath:
@@ -61,7 +65,7 @@ class TestRenameDirectoryWithChildren:
     async def test_rename_implicit_directory(self, nx):
         """Implicit directories (created by writing children) should be renameable.
 
-        Recursive rename in DictMetastore and PathLocalBackend ensures children
+        Recursive rename via MetastoreABC get/put/delete ensures children
         are moved to the new path.
         """
         await nx.write("/files/folder/a.txt", b"a")

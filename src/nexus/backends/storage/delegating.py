@@ -86,10 +86,6 @@ class DelegatingBackend(Backend):
         return self._inner.thread_safe
 
     @property
-    def supports_rename(self) -> bool:
-        return self._inner.supports_rename
-
-    @property
     def has_root_path(self) -> bool:
         return self._inner.has_root_path
 
@@ -100,10 +96,6 @@ class DelegatingBackend(Backend):
     @property
     def has_data_dir(self) -> bool:
         return self._inner.has_data_dir
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return self._inner.supports_parallel_mmap_read
 
     # === Capability Discovery (Issue #2069) ===
 

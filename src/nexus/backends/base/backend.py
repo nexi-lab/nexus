@@ -125,12 +125,25 @@ class Backend(ObjectStoreABC):
     # ------------------------------------------------------------------
     # ``name`` is inherited as abstract from ObjectStoreABC -- subclasses
     # must implement it.  No redeclaration needed here.
-    #
-    # Capability flags that ARE on ObjectStoreABC (user_scoped,
-    # has_token_manager, supports_rename,
-    # supports_parallel_mmap_read) are inherited with default False.
-    # Subclasses override as needed.
     # ------------------------------------------------------------------
+
+    # === Backend-level capability flags (not on ObjectStoreABC) ===
+
+    @property
+    def user_scoped(self) -> bool:
+        """Whether this backend requires per-user credentials (OAuth-based).
+
+        TODO(#1824): Move to Connector Protocol after external connector redesign.
+        """
+        return False
+
+    @property
+    def has_token_manager(self) -> bool:
+        """Whether this backend manages OAuth tokens.
+
+        TODO(#1824): Move to Connector Protocol after external connector redesign.
+        """
+        return False
 
     # === Service-level properties (not on ObjectStoreABC) ===
 

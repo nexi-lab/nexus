@@ -1603,111 +1603,44 @@ class NexusFS(  # type: ignore[misc]
                             else:
                                 raise
             else:
-                # Try parallel I/O for CASLocalBackend using nexus_fast
-                if backend.supports_parallel_mmap_read is True and len(paths_for_backend) > 1:
-                    # Use Rust parallel mmap reads for CASLocalBackend
-                    try:
-                        from nexus_fast import read_files_bulk
+                # Batch read via ObjectStoreABC.batch_read_content() —
+                # CASLocalBackend overrides with Rust parallel mmap;
+                # other backends use default sequential fallback.
+                content_ids = []
+                id_to_path: dict[str, tuple[str, Any]] = {}
+                for path in paths_for_backend:
+                    meta, route = path_info[path]
+                    assert meta.etag is not None
+                    content_ids.append(meta.etag)
+                    id_to_path[meta.etag] = (path, meta)
 
-                        # Build mapping: disk_path -> (virtual_path, meta)
-                        disk_to_virtual: dict[str, tuple[str, Any]] = {}
-                        disk_paths: list[str] = []
-                        for path in paths_for_backend:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None
-                            disk_path = str(backend.root_path / backend._blob_key(meta.etag))
-                            disk_to_virtual[disk_path] = (path, meta)
-                            disk_paths.append(disk_path)
+                bulk = backend.batch_read_content(content_ids, context=context)
 
-                        # Parallel mmap read
-                        logger.info(
-                            f"[READ-BULK] Using parallel mmap for {len(disk_paths)} CASLocalBackend files"
-                        )
-                        disk_contents = read_files_bulk(disk_paths)
+                for cid, content in bulk.items():
+                    vpath, meta = id_to_path[cid]
+                    if content is None:
+                        if skip_errors:
+                            results[vpath] = None
+                        else:
+                            raise NexusFileNotFoundError(vpath)
+                    elif return_metadata:
+                        results[vpath] = {
+                            "content": content,
+                            "etag": meta.etag,
+                            "version": meta.version,
+                            "modified_at": meta.modified_at,
+                            "size": len(content),
+                        }
+                    else:
+                        results[vpath] = content
 
-                        # Map results back to virtual paths
-                        for disk_path, content in disk_contents.items():
-                            vpath, meta = disk_to_virtual[disk_path]
-                            assert meta is not None  # Guaranteed by check above
-                            if return_metadata:
-                                results[vpath] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[vpath] = content
-
-                        # Mark missing files as None if skip_errors
-                        for path in paths_for_backend:
-                            if path not in results:
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise NexusFileNotFoundError(path)
-                    except ImportError:
-                        logger.warning(
-                            "[READ-BULK] nexus_fast not available, falling back to sequential"
-                        )
-                        # Fall through to sequential reads below
-                        for path in paths_for_backend:
-                            if path in results:
-                                continue
-                            try:
-                                meta, route = path_info[path]
-                                assert meta.etag is not None
-                                content = route.backend.read_content(meta.etag, context=None)
-                                results[path] = (
-                                    content
-                                    if not return_metadata
-                                    else {
-                                        "content": content,
-                                        "etag": meta.etag,
-                                        "version": meta.version,
-                                        "modified_at": meta.modified_at,
-                                        "size": len(content),
-                                    }
-                                )
-                            except Exception as exc:
-                                logger.debug(
-                                    "Failed to read content for %s during batch read: %s", path, exc
-                                )
-                                if skip_errors:
-                                    results[path] = None
-                                else:
-                                    raise
-                else:
-                    # Sequential reads for other backends or single files
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
+                # Handle any missing ids not in bulk result
+                for path in paths_for_backend:
+                    if path not in results:
+                        if skip_errors:
+                            results[path] = None
+                        else:
+                            raise NexusFileNotFoundError(path)
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start
@@ -3276,11 +3209,9 @@ class NexusFS(  # type: ignore[misc]
                 meta = self.metadata.get(old_path)
                 is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
-                # Check destination — use backend.file_exists() for connector backends
+                # Check destination — use backend.file_exists() for PAS backends
                 if self.metadata.exists(new_path):
-                    if new_route.backend.supports_rename is True and hasattr(
-                        new_route.backend, "file_exists"
-                    ):
+                    if hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
                         # Stale metadata — file gone from backend, clean up
@@ -3292,22 +3223,28 @@ class NexusFS(  # type: ignore[misc]
                     else:
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
-                # ── Backend rename (under lock) ──
-                if old_route.backend.supports_rename is True:
-                    try:
-                        old_route.backend.rename_file(
-                            old_route.backend_path, new_route.backend_path
-                        )
-                    except FileExistsError:
-                        raise
-                    except Exception as e:
-                        raise BackendError(
-                            f"Failed to rename in backend: {e}",
-                            backend=old_route.backend.name,
-                        ) from e
-
                 # ── Metadata rename (under lock) ──
-                self.metadata.rename_path(old_path, new_path)
+                # Rename is a pure metadata operation — get/put/delete on
+                # MetastoreABC primitives. Put-first for crash safety (#3062).
+                from dataclasses import replace as _replace
+
+                _old_meta = self.metadata.get(old_path)
+                if _old_meta is not None:
+                    # Single entry (file or explicit directory)
+                    _new_meta = _replace(_old_meta, path=new_path)
+                    self.metadata.put(_new_meta)
+                    self.metadata.delete(old_path)
+                elif not is_directory:
+                    raise NexusFileNotFoundError(old_path)
+
+                # Rename children (for directories — explicit or implicit)
+                if is_directory:
+                    _prefix = old_path.rstrip("/") + "/"
+                    for child in self.metadata.list(_prefix, recursive=True):
+                        _child_new = new_path + child.path[len(old_path) :]
+                        _child_new_meta = _replace(child, path=_child_new)
+                        self.metadata.put(_child_new_meta)
+                        self.metadata.delete(child.path)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

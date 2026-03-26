@@ -180,16 +180,6 @@ class DictMetastore(MetastoreABC):
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         return {p: (m.etag if (m := self._store.get(p)) else None) for p in paths}
 
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        meta = self._store.pop(old_path, None)
-        if meta is not None:
-            from dataclasses import replace
-
-            self._store[new_path] = replace(meta, path=new_path)
-            if old_path in self._file_metadata:
-                self._file_metadata[new_path] = self._file_metadata.pop(old_path)
-            self._flush()
-
     def set_file_metadata(self, path: str, key: str, value: Any) -> None:
         if path not in self._file_metadata:
             self._file_metadata[path] = {}

@@ -69,10 +69,6 @@ class IsolatedBackend(Backend):
         return bool(self._cached_prop("thread_safe"))
 
     @property
-    def supports_rename(self) -> bool:
-        return bool(self._cached_prop("supports_rename"))
-
-    @property
     def has_root_path(self) -> bool:
         return bool(self._cached_prop("has_root_path"))
 
@@ -83,10 +79,6 @@ class IsolatedBackend(Backend):
     @property
     def has_data_dir(self) -> bool:
         return bool(self._cached_prop("has_data_dir"))
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return bool(self._cached_prop("supports_parallel_mmap_read"))
 
     # ── Capability Discovery (Issue #2069) ─────────────────────────────
 

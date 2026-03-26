@@ -290,25 +290,6 @@ class SQLiteMetastore(MetastoreABC):
         return {p: found.get(p) for p in paths}
 
     @_retry_on_busy
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        """Rename a path (and all children if it's a directory)."""
-        from dataclasses import replace
-
-        meta = self.get(old_path)
-        if meta is not None:
-            self.delete(old_path)
-            self.put(replace(meta, path=new_path))
-
-        # Also rename children (directory rename)
-        old_prefix = old_path.rstrip("/") + "/"
-        new_prefix = new_path.rstrip("/") + "/"
-        children = self.list(old_prefix, recursive=True)
-        for child in children:
-            child_new_path = new_prefix + child.path[len(old_prefix) :]
-            self.delete(child.path)
-            self.put(replace(child, path=child_new_path))
-
-    @_retry_on_busy
     def delete_directory_entries_recursive(self, path: str) -> None:
         """Delete all directory index entries under a path."""
         prefix = path.rstrip("/") + "/"

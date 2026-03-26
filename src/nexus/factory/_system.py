@@ -1,8 +1,8 @@
-"""Boot Tier 1 — critical + degradable services.
+"""Boot Tier 1 — critical + degradable services (pre-kernel).
 
 Issue #2193: Absorbs 11 former-kernel services per Liedtke's test.
-Renamed from ``_boot_system_services`` → ``_boot_services`` after
-the SystemServices/BrickServices unification (PR #3350).
+Renamed ``_boot_system_services`` → ``_boot_services`` → ``_boot_pre_kernel_services``
+(PR #3350, PR #3371 Phase 2).
 
 Two severity classes:
 
@@ -28,7 +28,7 @@ from nexus.factory._helpers import _make_gate
 logger = logging.getLogger(__name__)
 
 
-def _boot_services(
+def _boot_pre_kernel_services(
     ctx: _BootContext,
     svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
@@ -433,37 +433,60 @@ def _boot_services(
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 
     # =====================================================================
-    # Infrastructure: event bus + lock manager (moved from _bricks.py)
-    # These are infrastructure, not optional bricks.
+    # Infrastructure: event bus (moved from _bricks.py)
+    # Lock manager is now owned by EventsService (LocalLockManager by default,
+    # upgraded to RaftLockManager at link time if federation is available).
     # =====================================================================
     event_bus: Any = None
-    lock_manager: Any = None
     if not _on("ipc"):
         logger.debug("[BOOT:SYSTEM] IPC/EventBus disabled by profile")
-    else:
-        if ctx.dist.enable_events:
-            from nexus.factory._distributed import _create_distributed_infra
+    elif ctx.dist.enable_events:
+        # Inline event bus creation (previously in _create_distributed_infra)
+        _settings_store = None
+        try:
+            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
 
-            event_bus, lock_manager = _create_distributed_infra(
-                ctx.dist,
-                ctx.metadata_store,
-                ctx.record_store,
-                ctx.dist.coordination_url,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+            _settings_store = MetastoreSettingsStore(ctx.metadata_store)
+        except Exception:
+            logger.debug(
+                "MetastoreSettingsStore unavailable; event bus checkpoints will not persist"
             )
 
-        # Always create lock manager — SemaphoreAdvisoryLockManager wraps
-        # VFSSemaphore directly (no LockStoreProtocol capability check needed).
-        if lock_manager is None:
-            try:
-                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
-                from nexus.lib.semaphore import create_vfs_semaphore
+        try:
+            if ctx.dist.event_bus_backend == "nats" and ctx.dist.enable_events:
+                from nexus.services.event_bus.factory import create_event_bus
 
-                _zone = ctx.zone_id or ROOT_ZONE_ID
-                lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=_zone)
-                logger.info("Advisory lock manager initialized (standalone, zone=%s)", _zone)
-            except Exception as _lm_exc:
-                logger.debug("[BOOT:SYSTEM] SemaphoreAdvisoryLockManager unavailable: %s", _lm_exc)
+                event_bus = create_event_bus(
+                    backend="nats",
+                    nats_url=ctx.dist.nats_url,
+                    record_store=ctx.record_store,
+                    settings_store=_settings_store,
+                )
+                logger.info(
+                    "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
+                    ctx.dist.nats_url,
+                )
+            elif ctx.dist.enable_events:
+                from nexus.lib.env import get_dragonfly_url, get_redis_url
+
+                _coord_url = ctx.dist.coordination_url or get_redis_url()
+                _event_url = _coord_url or get_dragonfly_url()
+                if _event_url:
+                    from nexus.cache.dragonfly import DragonflyClient
+                    from nexus.services.event_bus import RedisEventBus
+
+                    _event_client = DragonflyClient(url=_event_url)
+                    event_bus = RedisEventBus(
+                        _event_client,
+                        record_store=ctx.record_store,
+                        settings_store=_settings_store,
+                    )
+                    logger.info(
+                        "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
+                        _event_url,
+                    )
+        except ImportError as e:
+            logger.warning("Could not initialize distributed event system: %s", e)
 
     # =====================================================================
     # Assemble result
@@ -494,7 +517,6 @@ def _boot_services(
         "scheduler_service": scheduler_service,
         # Infrastructure (moved from bricks)
         "event_bus": event_bus,
-        "lock_manager": lock_manager,
     }
 
     elapsed = time.perf_counter() - t0
@@ -507,3 +529,7 @@ def _boot_services(
         "active" if svc_on is not None else "off",
     )
     return result
+
+
+# Backward compatibility alias
+_boot_services = _boot_pre_kernel_services

@@ -81,7 +81,7 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
-    from nexus.factory._system import _boot_services
+    from nexus.factory._system import _boot_pre_kernel_services
 
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
@@ -150,7 +150,7 @@ def create_nexus_services(
     logger.info("[BOOT:KERNEL] Storage pillars validated")
 
     # --- Tier 1: Services (critical + degradable, gated by profile) ---
-    system_dict = _boot_services(ctx, svc_on)
+    system_dict = _boot_pre_kernel_services(ctx, svc_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_independent_bricks(ctx, system_dict, svc_on)

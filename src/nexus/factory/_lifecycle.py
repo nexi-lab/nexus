@@ -28,7 +28,7 @@ async def _do_link(
     binds them onto ``nx``; creates PermissionChecker.
     """
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
-    from nexus.factory._wired import _boot_wired_services
+    from nexus.factory._wired import _boot_post_kernel_services
     from nexus.factory.service_routing import enlist_wired_services
 
     _svc = services or {}
@@ -111,7 +111,7 @@ async def _do_link(
     )
 
     # --- Boot wired services → register into ServiceRegistry ---
-    _wired = await _boot_wired_services(
+    _wired = await _boot_post_kernel_services(
         nx,
         nx.router,
         _svc,
@@ -156,6 +156,25 @@ async def _do_link(
             _fed = NexusFederation(zone_manager=_zone_mgr)
             await nx._service_registry.enlist("federation", _fed)
             logger.debug("[LINK] Federation service enlisted")
+
+            # Upgrade lock manager: LocalLockManager → RaftLockManager
+            # if metadata store supports LockStoreProtocol.
+            try:
+                from nexus.lib.distributed_lock import LockStoreProtocol
+
+                if isinstance(nx.metadata, LockStoreProtocol):
+                    from nexus.raft.lock_manager import RaftLockManager
+
+                    _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
+                    # Find EventsService and upgrade its lock manager.
+                    _events_ref = nx._service_registry.service("events_service")
+                    _events_svc = _events_ref._service_instance if _events_ref is not None else None
+                    if _events_svc is not None and hasattr(_events_svc, "upgrade_lock_manager"):
+                        _events_svc.upgrade_lock_manager(_raft_lm)
+                    logger.debug("[LINK] RaftLockManager created and upgraded into EventsService")
+            except Exception as _lm_exc:
+                logger.debug("[LINK] RaftLockManager upgrade skipped: %s", _lm_exc)
+
         except Exception as exc:
             logger.warning("[LINK] Federation unavailable: %s", exc)
 
@@ -165,8 +184,8 @@ async def _do_link(
     if _dc is not None:
         nx._descendant_checker = _dc
 
-    # Issue #1788: _distributed_lock_manager removed — EventsService owns lock routing.
-    # EventsService auto-creates local SemaphoreAdvisoryLockManager fallback.
+    # Issue #1788: Lock manager owned by EventsService (LocalLockManager by default).
+    # Upgraded to RaftLockManager above if federation is available.
 
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here.

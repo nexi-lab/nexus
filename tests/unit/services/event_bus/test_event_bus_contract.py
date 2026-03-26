@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.system_services.event_bus.base import EventBusBase
-from nexus.system_services.event_bus.protocol import EventBusProtocol
-from nexus.system_services.event_bus.redis import RedisEventBus
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
+from nexus.services.event_bus.base import EventBusBase
+from nexus.services.event_bus.protocol import EventBusProtocol
+from nexus.services.event_bus.redis import RedisEventBus
+from nexus.services.event_bus.types import FileEvent, FileEventType
 
 # ============================================================================
 # Fixtures
@@ -44,7 +44,7 @@ def mock_redis_client():
 def mock_nats_connect():
     """Patch nats.connect and return mock objects."""
     with patch(
-        "nexus.system_services.event_bus.nats.nats.connect", new_callable=AsyncMock
+        "nexus.services.event_bus.nats.nats.connect", new_callable=AsyncMock
     ) as mock_connect:
         nc = AsyncMock()
         nc.is_connected = True
@@ -75,7 +75,7 @@ async def event_bus(request, mock_redis_client, mock_nats_connect):
         yield bus
         await bus.stop()
     else:
-        from nexus.system_services.event_bus.nats import NatsEventBus
+        from nexus.services.event_bus.nats import NatsEventBus
 
         bus = NatsEventBus(nats_url="nats://mock:4222")
         await bus.start()

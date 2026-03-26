@@ -81,15 +81,14 @@ async def _startup_async_rebac(app: "FastAPI", svc: "LifespanServices") -> None:
 async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
     """Initialize cache for Dragonfly/Redis or NullCacheStore fallback (Issue #1075, #1251, #1524).
 
-    Prefers CacheBrick from BrickServices (injected by factory). Falls back to
+    Prefers CacheBrick from ServiceRegistry (injected by factory). Falls back to
     creating a CacheBrick from environment settings if not available.
     """
     try:
-        # Prefer CacheBrick already in BrickServices (set by create_nexus_fs → lifespan)
         cache_brick = app.state.cache_brick
-        if cache_brick is None:
-            brk = svc.brick_services
-            cache_brick = getattr(brk, "cache_brick", None) if brk else None
+        if cache_brick is None and svc.nexus_fs is not None:
+            _svc_fn = getattr(svc.nexus_fs, "service", None)
+            cache_brick = _svc_fn("cache_brick") if _svc_fn else None
 
         from nexus.cache.settings import CacheSettings
 
@@ -124,9 +123,7 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
             )
 
         coord = svc.service_coordinator
-        if coord is not None:
-            await coord.enlist("cache_brick", cache_brick)
-        else:
+        if coord is None:
             await cache_brick.start()
         app.state.cache_brick = cache_brick
         logger.info("CacheBrick initialized with %s backend", cache_brick.backend_name)
@@ -294,15 +291,8 @@ def _startup_cache_warmup(_app: "FastAPI", svc: "LifespanServices") -> None:
 
 
 async def _startup_circuit_breaker(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Wire circuit breaker and manifest resolver from factory (Issue #726, #2130)."""
+    """Wire circuit breaker and manifest resolver onto app.state from ServiceRegistry."""
     if svc.nexus_fs:
-        brk = svc.brick_services
-        app.state.rebac_circuit_breaker = getattr(brk, "rebac_circuit_breaker", None)
-        app.state.manifest_resolver = getattr(brk, "manifest_resolver", None) if brk else None
-        # Enlist Q1 — restart-required, no lifecycle
-        coord = svc.service_coordinator
-        if coord is not None:
-            if app.state.rebac_circuit_breaker is not None:
-                await coord.enlist("rebac_circuit_breaker", app.state.rebac_circuit_breaker)
-            if app.state.manifest_resolver is not None:
-                await coord.enlist("manifest_resolver", app.state.manifest_resolver)
+        _svc_fn = getattr(svc.nexus_fs, "service", None)
+        app.state.rebac_circuit_breaker = _svc_fn("rebac_circuit_breaker") if _svc_fn else None
+        app.state.manifest_resolver = _svc_fn("manifest_resolver") if _svc_fn else None

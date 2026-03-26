@@ -19,9 +19,9 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.core.object_store import WriteResult
+from nexus.services.workspace.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
-from nexus.system_services.workspace.context_branch import ContextBranchService
 
 
 @pytest.fixture

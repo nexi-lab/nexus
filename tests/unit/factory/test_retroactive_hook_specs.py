@@ -80,13 +80,13 @@ class TestHookSpecConformance:
         assert hasattr(hook, "hook_spec")
 
     def test_event_bus_observer(self) -> None:
-        from nexus.system_services.event_bus.observer import EventBusObserver
+        from nexus.services.event_bus.observer import EventBusObserver
 
         hook = EventBusObserver()
         assert hasattr(hook, "hook_spec")
 
     def test_revision_tracking_observer(self) -> None:
-        from nexus.system_services.lifecycle.revision_tracking_observer import (
+        from nexus.services.lifecycle.revision_tracking_observer import (
             RevisionTrackingObserver,
         )
 
@@ -192,7 +192,7 @@ class TestHookSpecDeclarations:
         assert spec.total_hooks == 1
 
     def test_event_bus_observer_1_channel(self) -> None:
-        from nexus.system_services.event_bus.observer import EventBusObserver
+        from nexus.services.event_bus.observer import EventBusObserver
 
         hook = EventBusObserver()
         spec = hook.hook_spec()
@@ -200,7 +200,7 @@ class TestHookSpecDeclarations:
         assert spec.total_hooks == 1
 
     def test_revision_observer_1_channel(self) -> None:
-        from nexus.system_services.lifecycle.revision_tracking_observer import (
+        from nexus.services.lifecycle.revision_tracking_observer import (
             RevisionTrackingObserver,
         )
 

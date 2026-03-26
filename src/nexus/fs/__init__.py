@@ -121,7 +121,7 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     # from the slim wheel. Issue #3326.
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
-    from nexus.core.config import BrickServices, KernelServices, PermissionConfig
+    from nexus.core.config import PermissionConfig
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
@@ -135,8 +135,7 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     kernel = NexusFS(
         metadata_store=metastore,
         permissions=PermissionConfig(enforce=False),
-        kernel_services=KernelServices(router=router),
-        brick_services=BrickServices(),
+        router=router,
         init_cred=OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
     )
 

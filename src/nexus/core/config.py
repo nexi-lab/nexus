@@ -2,7 +2,7 @@
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
 Issue #1391: Builder pattern — frozen config dataclasses as SSOT for defaults.
-Issue #2034: Slim KernelServices — 3-tier split (Kernel / System / Brick).
+Issue #2034: Unified services dict (formerly 3-tier split).
 
 These frozen dataclasses group related constructor parameters so that
 the kernel receives a single config object instead of 50 keyword args.
@@ -14,25 +14,15 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 Service container hierarchy (matches NEXUS-LEGO-ARCHITECTURE §2):
 
-    KernelServices  — Tier 0: boot-fatal, always present
-    SystemServices  — Tier 1: degraded-mode on failure, always started
-    BrickServices   — Tier 2: optional, silent on failure, hot-swappable
+    ServiceRegistry — Tier 1+2: all services accessed via nx.service("name")
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.constants import DEFAULT_NATS_URL
-
-if TYPE_CHECKING:
-    from nexus.bricks.workflows.protocol import WorkflowProtocol
-    from nexus.contracts.write_observer import WriteObserverProtocol
-    from nexus.core.protocols.entity_registry import EntityRegistryProtocol
-    from nexus.core.protocols.permission_enforcer import PermissionEnforcerProtocol
-    from nexus.core.protocols.rebac_manager import ReBACManagerProtocol
-    from nexus.core.protocols.workspace_manager import WorkspaceManagerProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -135,200 +125,6 @@ class IPCConfig:
     # Retry configuration
     max_retries: int = 3
     retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0)
-
-
-# ---------------------------------------------------------------------------
-# KernelServices — Tier 0: Storage Pillar validation
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class KernelServices:
-    """Tier 0 (KERNEL) — Storage Pillar handles only.
-
-    Per NEXUS-LEGO-ARCHITECTURE §2 and Liedtke's microkernel test, only
-    VFS routing and Metastore belong in the kernel.  Both are injected as
-    constructor arguments; this container simply carries the router handle.
-
-    All former kernel services (ReBAC, permissions, workspace, write-sync)
-    have been moved to ``SystemServices`` (Issue #2193) where they are
-    classified as *critical* (BootError on failure) or *degradable*
-    (WARNING + None on failure).
-
-    Frozen — all wiring must happen at construction time in factory.py.
-    Use ``dataclasses.replace()`` to create modified copies if needed.
-    """
-
-    # VFS routing — the only kernel-level mechanism
-    router: Any = None
-
-
-# ---------------------------------------------------------------------------
-# SystemServices — Tier 1: degraded-mode on failure
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class SystemServices:
-    """Tier 1 (SYSTEM) — critical + degradable services.
-
-    Contains two severity classes (Issue #2193):
-
-    **Critical** (BootError on failure):
-        rebac_manager, audit_store, entity_registry, permission_enforcer,
-        write_observer — the "Trusted Computing Base outside the kernel"
-        per microkernel terminology (seL4/MINIX 3 pattern).
-
-    **Degradable** (WARNING + None on failure):
-        dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
-        workspace_registry, mount_manager, workspace_manager, and all
-        remaining system services (agent registry, namespace, observability,
-        resiliency, lifecycle management).
-
-    Created by ``nexus.factory._boot_system_services()``.
-
-    Issue #2034: Extracted from the monolithic KernelServices.
-    Issue #2193: Absorbed former Tier 0 services per Liedtke's test.
-    """
-
-    # =================================================================
-    # Former-kernel CRITICAL services (BootError on failure)
-    # =================================================================
-
-    # ReBAC permission subsystem — critical (Issue #2133: typed with Protocols)
-    rebac_manager: ReBACManagerProtocol | None = None
-    audit_store: Any = None
-    entity_registry: EntityRegistryProtocol | None = None
-    permission_enforcer: PermissionEnforcerProtocol | None = None
-
-    # Write sync — critical
-    write_observer: WriteObserverProtocol | None = None
-
-    # =================================================================
-    # Former-kernel DEGRADABLE services (WARNING + None on failure)
-    # =================================================================
-
-    # ReBAC caching / hierarchy — now internalized into ReBACManager:
-    # hierarchy_manager, dir_visibility_cache → rebac_manager.hierarchy_manager, .dir_visibility_cache
-    # namespace_manager → rebac_manager.namespace_manager (created via .create_namespace_manager())
-    deferred_permission_buffer: Any = None
-
-    # Workspace subsystem — degradable
-    workspace_registry: Any = None
-    mount_manager: Any = None
-    workspace_manager: WorkspaceManagerProtocol | None = None
-
-    # =================================================================
-    # Original system services (all degradable)
-    # =================================================================
-
-    # Namespace visibility (Issue #1502) — async wrapper still needed at system level
-    async_namespace_manager: Any = None
-
-    # Workspace branching (Issue #1315)
-    context_branch_service: Any = None
-
-    # Event delivery (Issue #1241)
-    delivery_worker: Any = None
-
-    # Query observability (Issue #1301)
-    observability_subsystem: Any = None
-
-    # Resiliency policies (Issue #1366)
-    resiliency_manager: Any = None
-
-    # (EvictionManager is deferred to _do_link() — depends on kernel-owned
-    # AgentRegistry.  Stored on nx._eviction_manager, not SystemServices.)
-
-    # Zone lifecycle — ordered zone deprovisioning (Issue #2061)
-    zone_lifecycle: Any = None
-
-    # (PipeManager + StreamManager + AgentRegistry are kernel-internal primitives,
-    # constructed in NexusFS.__init__ — not injected via SystemServices.)
-
-    # Scheduler — task scheduling service (Issue #2195, #2360)
-    scheduler_service: Any = None
-
-    # (AcpService is deferred to _do_link() — depends on kernel-owned
-    # AgentRegistry.  Stored on nx._acp_service, not SystemServices.)
-
-    # Distributed event bus — infrastructure messaging (Issue #1701: promoted from Tier 2)
-    # EventBusObserver (VFSObserver hook) publishes KernelDispatch OBSERVE events to Redis/NATS.
-    # Tier 1 because it is infrastructure (like write_observer), not an application feature.
-    event_bus: Any = None
-
-    # Distributed lock manager — infrastructure locking (Issue #1702: promoted from Tier 2)
-    # Used in kernel write path for distributed mutual exclusion (Redis/Raft).
-    # Tier 1 because it is infrastructure (like vfs_lock_manager), not an application feature.
-    lock_manager: Any = None
-
-    # (Federation is a Q3 PersistentService, created at link time in _lifecycle.py
-    # and enlisted directly via ServiceRegistry — not in SystemServices.)
-
-
-# ---------------------------------------------------------------------------
-# BrickServices — Tier 2: optional, silent on failure
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class BrickServices:
-    """Tier 2 (BRICK) — optional, removable, silent on failure.
-
-    Contains feature bricks that can fail independently without affecting
-    the kernel or system services. The system continues without them.
-
-    Created by ``nexus.factory._boot_brick_services()``.
-
-    Issue #2034: Extracted from the monolithic KernelServices.
-    """
-
-    # Infrastructure bricks
-    workflow_engine: WorkflowProtocol | None = None
-    rebac_circuit_breaker: Any = None
-
-    # Feature bricks
-    wallet_provisioner: Any = None  # PAY brick
-    chunked_upload_service: Any = None  # UPLOADS brick
-    manifest_resolver: Any = None  # MANIFEST brick
-    tool_namespace_middleware: Any = None  # MCP brick
-    api_key_creator: Any = None  # AUTH brick (Issue #1519, 3A)
-    snapshot_service: Any = None  # SNAPSHOT brick (Issue #1752)
-    # --- Cache Brick (Issue #1524) ---
-    cache_brick: Any = None  # CacheBrick — owns all cache domain services
-
-    # --- IPC Brick (Issue #1727, LEGO §8) ---
-    ipc_storage_driver: Any = None  # KernelVFSAdapter (async bridge to NexusFS)
-    ipc_provisioner: Any = None  # AgentProvisioner
-
-    # --- Sandbox Brick (Issue #1307) ---
-    agent_event_log: Any = None  # AgentEventLog (sandbox lifecycle audit)
-
-    # --- Delegation Brick (Issue #2131) ---
-    delegation_service: Any = None  # DELEGATION brick
-
-    # --- Version Brick (Issue #2034: moved from KernelServices) ---
-    version_service: Any = None  # VersionService (file history, rollback, diff)
-
-    # --- Search Brick (Issue #810) ---
-    zoekt_pipe_consumer: Any = None  # DT_PIPE consumer for Zoekt index notifications
-
-    # --- Task Manager Brick ---
-    task_dispatch_consumer: Any = None  # TaskDispatchPipeConsumer (DT_PIPE lifecycle signals)
-
-    # --- Factory-created bricks (Issue #2134: moved from NexusFS flat params) ---
-    parse_fn: Any = None  # Callable for parsing files (ParsersBrick)
-    content_cache: Any = None  # ContentCache instance
-    parser_registry: Any = None  # ParserRegistry (file format detection)
-    provider_registry: Any = None  # ProviderRegistry (parsing providers)
-    # NOTE: VFSLockManager is kernel-internal (created in NexusFS.__init__),
-    # not injected via BrickServices. See write-path-extraction-design.md.
-
-    # --- Governance Brick (Issue #2129) ---
-    governance_anomaly_service: Any = None
-    governance_collusion_service: Any = None
-    governance_graph_service: Any = None
-    governance_response_service: Any = None
 
 
 # ---------------------------------------------------------------------------

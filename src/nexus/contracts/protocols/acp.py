@@ -1,6 +1,6 @@
 """AcpServiceProtocol — stateless coding agent CLI caller contract.
 
-Defines the contract for the ACP (Agent CLI Protocol) system service,
+Defines the contract for the ACP (Agent CLI Protocol) service,
 which calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.)
 as stateless one-shot subprocesses tracked by the kernel AgentRegistry.
 """

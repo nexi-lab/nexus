@@ -46,19 +46,18 @@ Follows Linux's monolithic kernel model, not microkernel:
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Config-time DI + runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `register_filesystem()` + `kern_mount()` / `kill_sb()` |
+| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
 | Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
-has **zero reads** of `_system_services` attributes — all service wiring flows
-through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
+has zero reads of service containers — all service wiring flows through
+`ServiceRegistry` (`nx.service("name")`), factory-injected closures
+(`functools.partial`), or KernelDispatch hooks. Services flow as a single
+`dict[str, Any]` from factory to `ServiceRegistry.enlist()`.
 
 **Drivers** use constructor DI at startup — same binary, different config
-(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). MetastoreABC is
-immutable after init; ObjectStore backends support runtime mount/unmount via
-`DriverLifecycleCoordinator` (routing table update + hook_spec registration +
-KernelDispatch notification). Like Linux `mount`/`umount` — no restart needed.
+(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
 
 ### Service Lifecycle
 
@@ -68,8 +67,8 @@ and injects them via DI. `DeploymentProfile` gates which bricks are constructed
 
 Factory boot sequence:
 
-1. **`create_nexus_services()`** — Build 3-tier service containers (Kernel/System/Brick)
-2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O)
+1. **`create_nexus_services()`** — Build unified services dict (core infra + features)
+2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O, `router` passed directly)
 3. **`link()`** — Wire service topology via DI closures (memory only)
 4. **`initialize()`** — Register VFS hooks, IPC adapter bind
 
@@ -102,9 +101,6 @@ One-click contract: implement protocol → `ServiceRegistry.enlist()` →
 kernel handles the rest. `ServiceRegistry` (kernel-owned, lifecycle integrated)
 scans the registry and auto-calls the appropriate methods during
 `NexusFS.bootstrap()` / `NexusFS.close()`.
-
-`swap_service()` supports **all quadrants** (#1452). `HotSwappable` determines
-*how* to swap (full lifecycle vs refcount-only drain), not *whether*.
 
 **Kernel DI patterns** (two mechanisms, never reads service containers directly):
 

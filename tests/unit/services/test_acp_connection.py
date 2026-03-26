@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from nexus.system_services.acp.connection import AcpConnection, AcpRpcError
+from nexus.services.acp.connection import AcpConnection, AcpRpcError
 
 # ---------------------------------------------------------------------------
 # Mock PipeBackend (same as test_agent_loop.py)
@@ -277,7 +277,7 @@ class TestAcpRpcError:
     """Test AcpRpcError alias."""
 
     def test_acp_rpc_error_is_agent_rpc_error(self):
-        from nexus.system_services.agent_runtime.loop import AgentRpcError
+        from nexus.services.agent_runtime.loop import AgentRpcError
 
         assert AcpRpcError is AgentRpcError
 

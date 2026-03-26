@@ -145,8 +145,8 @@ def _startup_agent_lifecycle(app: "FastAPI", svc: "LifespanServices") -> None:
 
     # Issue #2172: Create AgentWarmupService with step registry
     try:
-        from nexus.system_services.agents.agent_warmup import AgentWarmupService
-        from nexus.system_services.agents.warmup_steps import register_standard_steps
+        from nexus.services.agents.agent_warmup import AgentWarmupService
+        from nexus.services.agents.warmup_steps import register_standard_steps
 
         app.state.agent_warmup_service = AgentWarmupService(
             agent_registry=agent_registry,
@@ -267,19 +267,13 @@ def _startup_credential_service(app: "FastAPI", svc: "LifespanServices") -> None
 
 
 def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose DelegationService from factory brick_dict (Issue #2131).
-
-    The DelegationService is created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires it onto ``app.state``
-    for backward-compatible access by routers and dependencies.
-    """
+    """Expose DelegationService from ServiceRegistry (Issue #2131)."""
     if svc.nexus_fs is None:
         app.state.delegation_service = None
         return
 
-    # Get from BrickServices (created by factory)
-    brk = svc.brick_services
-    app.state.delegation_service = getattr(brk, "delegation_service", None) if brk else None
+    _svc_fn = getattr(svc.nexus_fs, "service", None)
+    app.state.delegation_service = _svc_fn("delegation_service") if _svc_fn else None
 
     if app.state.delegation_service is not None:
         # Wire system-tier dependencies that weren't available during factory boot
@@ -292,28 +286,17 @@ def _startup_delegation_from_bricks(app: "FastAPI", svc: "LifespanServices") -> 
 
 
 def _startup_governance(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Expose governance brick services from factory BrickServices (Issue #2129).
-
-    Governance services are created in ``factory._boot_brick_services()`` and
-    stored in ``BrickServices``. This function wires them onto ``app.state``
-    for backward-compatible access by the governance router.
-    """
+    """Expose governance services from ServiceRegistry (Issue #2129)."""
     if svc.nexus_fs is None:
         return
 
-    brk = svc.brick_services
-    app.state.governance_anomaly_service = (
-        getattr(brk, "governance_anomaly_service", None) if brk else None
-    )
-    app.state.governance_collusion_service = (
-        getattr(brk, "governance_collusion_service", None) if brk else None
-    )
-    app.state.governance_graph_service = (
-        getattr(brk, "governance_graph_service", None) if brk else None
-    )
-    app.state.governance_response_service = (
-        getattr(brk, "governance_response_service", None) if brk else None
-    )
+    _svc_fn = getattr(svc.nexus_fs, "service", None)
+    if _svc_fn is None:
+        return
+    app.state.governance_anomaly_service = _svc_fn("governance_anomaly_service")
+    app.state.governance_collusion_service = _svc_fn("governance_collusion_service")
+    app.state.governance_graph_service = _svc_fn("governance_graph_service")
+    app.state.governance_response_service = _svc_fn("governance_response_service")
 
     if app.state.governance_response_service is not None:
         logger.info("[GOV] Governance services wired from brick_dict")
@@ -340,9 +323,9 @@ def _startup_sandbox_auth(app: "FastAPI", svc: "LifespanServices") -> None:
         if not (_sandbox_rs and session_factory and callable(session_factory)):
             return
 
-        # Get AgentEventLog from factory (preferred) or create fallback
-        brk = svc.brick_services
-        _factory_event_log = getattr(brk, "agent_event_log", None) if brk else None
+        # Get AgentEventLog from ServiceRegistry (preferred) or create fallback
+        _svc_fn = getattr(svc.nexus_fs, "service", None) if svc.nexus_fs else None
+        _factory_event_log = _svc_fn("agent_event_log") if _svc_fn else None
         if _factory_event_log is not None:
             app.state.agent_event_log = _factory_event_log
         else:
@@ -475,9 +458,9 @@ def _startup_agent_tasks(app: "FastAPI", svc: "LifespanServices") -> list[asynci
         # Fallback: construct EvictionManager here if factory didn't create one
         try:
             from nexus.server.background_tasks import agent_eviction_task
-            from nexus.system_services.agents.eviction_manager import EvictionManager
-            from nexus.system_services.agents.eviction_policy import LRUEvictionPolicy
-            from nexus.system_services.agents.resource_monitor import ResourceMonitor
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import LRUEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
 
             resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
             eviction_policy = LRUEvictionPolicy()
@@ -520,7 +503,7 @@ async def _startup_scheduler(app: "FastAPI", svc: "LifespanServices") -> None:
     app.state.scheduler_service = scheduler
 
     # InMemoryScheduler doesn't need PostgreSQL init
-    from nexus.system_services.scheduler.in_memory import InMemoryScheduler
+    from nexus.services.scheduler.in_memory import InMemoryScheduler
 
     if isinstance(scheduler, InMemoryScheduler):
         logger.info("Scheduler service started (InMemoryScheduler fallback)")

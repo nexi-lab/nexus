@@ -23,10 +23,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.services.event_bus.types import FileEventType
+from nexus.services.event_log.delivery import EventDeliveryWorker
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_bus.types import FileEventType
-from nexus.system_services.event_log.delivery import EventDeliveryWorker
 
 
 @pytest.fixture

@@ -2,8 +2,7 @@
 
 Wraps ``DeferredPermissionBuffer.queue_hierarchy()`` /
 ``queue_owner_grant()`` as proper KernelDispatch hooks, eliminating
-the kernel's getattr() calls to
-``_system_services.deferred_permission_buffer``.
+direct kernel coupling to the deferred permission buffer.
 
 Data mapping:
     ctx.path          → path

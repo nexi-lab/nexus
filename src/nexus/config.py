@@ -58,7 +58,7 @@ class FeaturesConfig(BaseModel):
     Issue #1389: Expanded from 6 hard-coded flags to per-brick overrides.
     """
 
-    # System services
+    # Services
     eventlog: bool | None = Field(default=None, description="Enable event log service")
     namespace: bool | None = Field(default=None, description="Enable namespace manager")
     permissions: bool | None = Field(default=None, description="Enable permission enforcement")

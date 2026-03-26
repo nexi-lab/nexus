@@ -82,7 +82,7 @@ def _discover_brick_factories(tier: str = "independent") -> list[BrickFactoryDes
 def _boot_independent_bricks(
     ctx: _BootContext,
     system: dict[str, Any],
-    brick_on: Callable[[str], bool] | None = None,
+    svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
 
@@ -92,16 +92,16 @@ def _boot_independent_bricks(
 
     Args:
         ctx: Boot context with shared dependencies.
-        system: System services dict from Tier 1 (provides rebac_manager,
+        system: Services dict (provides rebac_manager,
             entity_registry, etc.).
-        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+        svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
             When None, all bricks are enabled (backward-compatible default).
 
     Returns:
-        Dict with brick service entries (some may be None).
+        Dict with service entries (some may be None).
     """
     t0 = time.perf_counter()
-    _on = _make_gate(brick_on)
+    _on = _make_gate(svc_on)
 
     # === Auto-discovered bricks ===
     auto_results: dict[str, Any] = {}

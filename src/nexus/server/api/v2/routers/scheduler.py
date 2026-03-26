@@ -17,7 +17,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.system_services.scheduler.constants import TIER_ALIASES, OverlapPolicy, RequestState
+from nexus.services.scheduler.constants import TIER_ALIASES, OverlapPolicy, RequestState
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ async def submit_task(
     Returns the task details with computed effective priority.
     """
     from nexus.contracts.protocols.scheduler import AgentRequest
-    from nexus.system_services.scheduler.exceptions import (
+    from nexus.services.scheduler.exceptions import (
         CapacityExceeded,
         RateLimitExceeded,
         TaskAlreadyRunning,

@@ -19,12 +19,12 @@ from nexus.contracts.process_types import (
     ExternalProcessInfo,
 )
 from nexus.contracts.qos import EvictionContext, QoSClass
-from nexus.system_services.agents.eviction_policy import (
+from nexus.services.agents.eviction_policy import (
     EvictionPolicy,
     LRUEvictionPolicy,
     QoSEvictionPolicy,
 )
-from nexus.system_services.agents.resource_monitor import PressureLevel
+from nexus.services.agents.resource_monitor import PressureLevel
 
 
 def _make_agent(

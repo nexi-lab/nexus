@@ -83,13 +83,14 @@ class EvaluateRequest(BaseModel):
 
 
 def _get_manifest_service(request: Request) -> Any:
-    """Get AccessManifestService from app.state brick_services or auto-discovery."""
-    # Check brick_services first (auto-discovered)
-    brick_svc = getattr(request.app.state, "brick_services", None)
-    if brick_svc is not None:
-        svc = getattr(brick_svc, "access_manifest_service", None)
-        if svc is not None:
-            return svc
+    """Get AccessManifestService from ServiceRegistry or app.state."""
+    nx = getattr(request.app.state, "nexus_fs", None)
+    if nx is not None:
+        _svc_fn = getattr(nx, "service", None)
+        if _svc_fn is not None:
+            svc = _svc_fn("manifest_resolver")
+            if svc is not None:
+                return svc
 
     # Fallback: check direct app.state
     svc = getattr(request.app.state, "access_manifest_service", None)

@@ -4,7 +4,7 @@ Pure value objects for agent identity and lifecycle. These types have zero
 runtime dependencies on kernel, services, or bricks — only stdlib imports
 (plus ``nexus.contracts.process_types`` for the unified ``AgentState``).
 
-Originally in ``nexus.system_services.agents.agent_record``; moved here so bricks
+Originally in ``nexus.services.agents.agent_record``; moved here so bricks
 can import them without violating the zero-core-imports rule.
 
 Issue #1800: The old ``AgentState`` enum (UNKNOWN, CONNECTED, IDLE, SUSPENDED)

@@ -19,14 +19,14 @@ from nexus.server.api.v2.dependencies import (
     get_conflict_log_store,
 )
 from nexus.server.api.v2.routers.conflicts import router
-from nexus.storage.models import Base
-from nexus.system_services.sync.conflict_log_store import ConflictLogStore
-from nexus.system_services.sync.conflict_resolution import (
+from nexus.services.sync.conflict_log_store import ConflictLogStore
+from nexus.services.sync.conflict_resolution import (
     ConflictRecord,
     ConflictStatus,
     ConflictStrategy,
     ResolutionOutcome,
 )
+from nexus.storage.models import Base
 
 # =============================================================================
 # Helpers

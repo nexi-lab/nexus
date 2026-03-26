@@ -6,7 +6,7 @@ burst capacity, empty bucket rejection, and clock mockability.
 
 import pytest
 
-from nexus.system_services.scheduler.policies.rate_limiter import TokenBucketLimiter
+from nexus.services.scheduler.policies.rate_limiter import TokenBucketLimiter
 
 
 class TestTokenBucketBasic:

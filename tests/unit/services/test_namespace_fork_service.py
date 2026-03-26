@@ -15,7 +15,7 @@ pytest.importorskip("pyroaring")
 from nexus.bricks.rebac.namespace_manager import MountEntry
 from nexus.contracts.exceptions import NamespaceForkNotFoundError
 from nexus.contracts.namespace_fork_types import ForkMode
-from nexus.system_services.namespace.namespace_fork_service import (
+from nexus.services.namespace.namespace_fork_service import (
     AgentNamespaceForkService,
 )
 

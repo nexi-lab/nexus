@@ -34,7 +34,7 @@ class SearchBrickProtocol(Protocol):
     Defines the interface that search brick implementations must satisfy.
     ``SearchDaemon`` is the canonical implementation.
 
-    Used by the kernel/services layer to interact with the search brick
+    Used by the kernel layer to interact with the search service
     without hard-coupling to its internals.
     """
 

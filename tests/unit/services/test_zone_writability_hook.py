@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.system_services.lifecycle.zone_writability_hook import ZoneWritabilityHook
+from nexus.services.lifecycle.zone_writability_hook import ZoneWritabilityHook
 
 
 @pytest.fixture

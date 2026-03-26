@@ -1,7 +1,7 @@
 """Workspace manager service protocol (Issue #2133).
 
 Service contract for workspace snapshot management.
-Existing implementation: ``nexus.system_services.workspace.workspace_manager.WorkspaceManager`` (sync).
+Existing implementation: ``nexus.services.workspace.workspace_manager.WorkspaceManager`` (sync).
 
 References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3

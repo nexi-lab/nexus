@@ -53,7 +53,7 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
-        assert fs._brick_services.version_service is not None, "VersionService not instantiated"
+        assert fs.service("version_service") is not None, "VersionService not instantiated"
         assert fs.service("rebac") is not None, "ReBACService not instantiated"
         assert fs.service("mount") is not None, "MountService not instantiated"
         assert fs.service("mcp") is not None, "MCPService not instantiated"
@@ -63,7 +63,7 @@ class TestNexusFSServiceComposition:
         assert fs.service("events") is not None, "EventsService not instantiated"
 
         # Verify services are not None
-        assert fs._brick_services.version_service is not None
+        assert fs.service("version_service") is not None
         assert fs.service("rebac") is not None
         assert fs.service("mount") is not None
         assert fs.service("mcp") is not None
@@ -78,8 +78,8 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path)
 
         # VersionService dependencies (injected by _make_fs, mimicking factory)
-        assert fs._brick_services.version_service.metadata == fs.metadata
-        assert fs._brick_services.version_service.cas == fs.router.route("/").backend
+        assert fs.service("version_service")._service_instance.metadata == fs.metadata
+        assert fs.service("version_service")._service_instance.cas == fs.router.route("/").backend
 
         # ReBACService should have rebac_manager
         assert fs.service("rebac")._rebac_manager == fs.service("rebac_manager")._service_instance
@@ -106,4 +106,4 @@ class TestNexusFSServiceComposition:
         fs = await _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify version_service exists and is not None
-        assert fs._brick_services.version_service is not None, "VersionService not instantiated"
+        assert fs.service("version_service") is not None, "VersionService not instantiated"

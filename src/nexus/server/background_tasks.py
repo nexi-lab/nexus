@@ -9,11 +9,11 @@ import logging
 from datetime import timedelta
 from typing import Any
 
-from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
-from nexus.system_services.lifecycle.sessions import (
+from nexus.services.lifecycle.sessions import (
     cleanup_expired_sessions,
     cleanup_inactive_sessions,
 )
+from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
 
 logger = logging.getLogger(__name__)
 

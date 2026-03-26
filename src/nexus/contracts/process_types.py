@@ -1,7 +1,7 @@
 """Agent lifecycle types — kernel-level agent management (Issue #1509, #1800).
 
 Pure value objects for the kernel AgentRegistry. Zero runtime dependencies
-on kernel/services/bricks — only stdlib + contracts.
+on other layers — only stdlib + contracts.
 
     contracts/process_types.py = include/linux/sched.h (task_struct fields)
 

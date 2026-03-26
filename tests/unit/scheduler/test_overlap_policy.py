@@ -16,17 +16,17 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.contracts.protocols.scheduler import AgentRequest
-from nexus.system_services.scheduler.constants import TASK_STATUS_RUNNING, PriorityTier
-from nexus.system_services.scheduler.exceptions import (
+from nexus.services.scheduler.constants import TASK_STATUS_RUNNING, PriorityTier
+from nexus.services.scheduler.exceptions import (
     CapacityExceeded,
     RateLimitExceeded,
     TaskAlreadyRunning,
 )
-from nexus.system_services.scheduler.models import ScheduledTask
-from nexus.system_services.scheduler.policies.admission import AdmissionPolicy
-from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
-from nexus.system_services.scheduler.policies.rate_limiter import TokenBucketLimiter
-from nexus.system_services.scheduler.service import SchedulerService
+from nexus.services.scheduler.models import ScheduledTask
+from nexus.services.scheduler.policies.admission import AdmissionPolicy
+from nexus.services.scheduler.policies.fair_share import FairShareCounter
+from nexus.services.scheduler.policies.rate_limiter import TokenBucketLimiter
+from nexus.services.scheduler.service import SchedulerService
 
 # =============================================================================
 # Fixtures

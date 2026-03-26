@@ -6,10 +6,10 @@ and fair-share concurrency checks.
 
 import pytest
 
-from nexus.system_services.scheduler.exceptions import CapacityExceeded, RateLimitExceeded
-from nexus.system_services.scheduler.policies.admission import AdmissionPolicy
-from nexus.system_services.scheduler.policies.fair_share import FairShareCounter
-from nexus.system_services.scheduler.policies.rate_limiter import TokenBucketLimiter
+from nexus.services.scheduler.exceptions import CapacityExceeded, RateLimitExceeded
+from nexus.services.scheduler.policies.admission import AdmissionPolicy
+from nexus.services.scheduler.policies.fair_share import FairShareCounter
+from nexus.services.scheduler.policies.rate_limiter import TokenBucketLimiter
 
 
 @pytest.fixture

@@ -6,8 +6,8 @@ Verifies behavioral parity with SchedulerService for overlap policies.
 import pytest
 
 from nexus.contracts.protocols.scheduler import AgentRequest
-from nexus.system_services.scheduler.exceptions import TaskAlreadyRunning
-from nexus.system_services.scheduler.in_memory import InMemoryScheduler
+from nexus.services.scheduler.exceptions import TaskAlreadyRunning
+from nexus.services.scheduler.in_memory import InMemoryScheduler
 
 
 def _make_request(

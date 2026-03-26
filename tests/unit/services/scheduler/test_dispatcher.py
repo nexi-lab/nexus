@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.system_services.scheduler.dispatcher import TaskDispatcher
+from nexus.services.scheduler.dispatcher import TaskDispatcher
 
 
 @pytest.fixture()

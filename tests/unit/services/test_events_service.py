@@ -11,7 +11,7 @@ import pytest
 
 from nexus.contracts.types import OperationContext
 from nexus.core.file_events import FileEvent
-from nexus.system_services.lifecycle.events_service import EventsService
+from nexus.services.lifecycle.events_service import EventsService
 
 # =============================================================================
 # Fixtures

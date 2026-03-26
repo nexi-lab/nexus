@@ -54,13 +54,13 @@ class LifespanServices:
     # --- Process table (kernel process lifecycle) -------------------------
     agent_registry: Any = None
 
-    # --- System services (from nexus_fs._system_services) ----------------
+    # --- System services (from ServiceRegistry) ----------------
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
     pipe_manager: Any = None  # DT_PIPE manager — kernel-internal primitive (§4.2)
 
-    # --- Issue #2195, #2360: Scheduler (from SystemServices) ----
+    # --- Scheduler (from ServiceRegistry) ----
     scheduler_service: "SchedulerProtocol | None" = None
 
     # --- Issue #3193: delivery worker + event signal -------------------------
@@ -70,9 +70,6 @@ class LifespanServices:
     # --- DT_PIPE consumers (Issue #810) -----------------------------------
     zoekt_pipe_consumer: Any = None
     task_dispatch_consumer: Any = None  # Task Manager DT_PIPE consumer
-
-    # --- Brick services container ----------------------------------------
-    brick_services: Any = None  # The whole BrickServices dataclass
 
     # --- NexusFS internals (extracted once, never re-probed) --------------
     session_factory: Any = None  # NexusFS.SessionLocal
@@ -100,8 +97,6 @@ class LifespanServices:
         lifespan modules access services via typed attributes.
         """
         nx = getattr(app.state, "nexus_fs", None)
-        # Issue #1801: ALL services now in ServiceRegistry — no _system_services fallback.
-        _brk = getattr(nx, "_brick_services", None) if nx else None
         _coord = getattr(nx, "service_coordinator", None) if nx else None
 
         # Helper: nx.service() with None safety (also handles test mocks without service())
@@ -136,12 +131,9 @@ class LifespanServices:
             write_observer=_svc("write_observer"),
             zone_lifecycle=_svc("zone_lifecycle"),
             pipe_manager=(getattr(nx, "_pipe_manager", None) if nx else None),
-            zoekt_pipe_consumer=(getattr(_brk, "zoekt_pipe_consumer", None) if _brk else None),
-            task_dispatch_consumer=(
-                getattr(_brk, "task_dispatch_consumer", None) if _brk else None
-            ),
+            zoekt_pipe_consumer=_svc("zoekt_pipe_consumer"),
+            task_dispatch_consumer=_svc("task_dispatch_consumer"),
             scheduler_service=_svc("scheduler_service"),
-            brick_services=_brk,
             # NexusFS internals
             session_factory=getattr(nx, "SessionLocal", None) if nx else None,
             sql_engine=getattr(nx, "_sql_engine", None) if nx else None,
@@ -151,10 +143,7 @@ class LifespanServices:
             event_bus=_svc("event_bus"),
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),
             workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
-            snapshot_service=(
-                getattr(_brk, "snapshot_service", None)
-                or (getattr(nx, "_snapshot_service", None) if nx else None)
-            ),
+            snapshot_service=_svc("snapshot_service"),
             namespace_manager=_svc("async_namespace_manager"),
             nexus_config=getattr(nx, "config", None) if nx else None,
             observability_subsystem=_svc("observability_subsystem"),

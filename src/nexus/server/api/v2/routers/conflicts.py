@@ -21,7 +21,7 @@ from nexus.server.api.v2.models import (
     ConflictResolveRequest,
     ConflictResolveResponse,
 )
-from nexus.system_services.sync.conflict_resolution import ConflictStatus
+from nexus.services.sync.conflict_resolution import ConflictStatus
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ async def resolve_conflict(
     store: Any = Depends(get_conflict_log_store),
 ) -> ConflictResolveResponse:
     """Manually resolve a pending conflict."""
-    from nexus.system_services.sync.conflict_resolution import ResolutionOutcome
+    from nexus.services.sync.conflict_resolution import ResolutionOutcome
 
     try:
         outcome = ResolutionOutcome(request.outcome)

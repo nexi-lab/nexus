@@ -21,7 +21,7 @@ import pytest
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.overlay_config import OverlayConfig
 from nexus.contracts.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.system_services.workspace.overlay_resolver import OverlayResolver
+from nexus.services.workspace.overlay_resolver import OverlayResolver
 
 
 class InMemoryMetadata:

@@ -11,27 +11,27 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def _make_gate(brick_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
+def _make_gate(svc_on: Callable[[str], bool] | None) -> Callable[[str], bool]:
     """Create a profile gate closure.
 
     Replaces the repeated ``_on()`` inner function pattern across tier modules.
 
     Args:
-        brick_on: Callable ``(name: str) -> bool`` for profile-based gating.
+        svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
             When None, returns a gate that enables everything.
 
     Returns:
         A ``(name: str) -> bool`` callable for gating service creation.
     """
-    if brick_on is None:
+    if svc_on is None:
         return lambda _name: True
-    return brick_on
+    return svc_on
 
 
 def _safe_create(
     name: str,
     factory_fn: Callable[[], Any],
-    brick_on: Callable[[str], bool],
+    svc_on: Callable[[str], bool],
     tier: str = "BRICK",
     severity: str = "debug",
 ) -> Any:
@@ -44,7 +44,7 @@ def _safe_create(
 
     Returns the created service, or None if gated or on non-critical failure.
     """
-    if not brick_on(name):
+    if not svc_on(name):
         logger.debug("[BOOT:%s] %s disabled by profile", tier, name)
         return None
     try:

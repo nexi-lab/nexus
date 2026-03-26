@@ -616,9 +616,9 @@ module = [
     "nexus.bricks.rebac.zone_graph_loader",
     "nexus.bricks.rebac.namespace_manager",
     "nexus.bricks.rebac.manager",
-    "nexus.system_services.event_subsystem.bus.redis",
-    "nexus.system_services.scheduler.policies.fair_share",
-    "nexus.system_services.scheduler.policies.rate_limiter",
+    "nexus.services.event_subsystem.bus.redis",
+    "nexus.services.scheduler.policies.fair_share",
+    "nexus.services.scheduler.policies.rate_limiter",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -685,7 +685,7 @@ module = [
     "nexus.core.nexus_fs_search",
     "nexus.bricks.versioning.version_service",
     "nexus.bricks.search.search_service",
-    "nexus.system_services.gateway",
+    "nexus.services.gateway",
     "nexus.server.fastapi_server",
     "nexus.storage.database",
     "nexus.factory.orchestrator",
@@ -719,7 +719,7 @@ disable_error_code = ["no-any-return"]
 module = [
     "nexus.bricks.mount.mount_manager",
     "nexus.bricks.mount.mount_service",
-    "nexus.system_services.event_subsystem.log.exporters.factory",
+    "nexus.services.event_subsystem.log.exporters.factory",
     "nexus.bricks.portability.import_service",
     "nexus.server.lifespan.realtime",
 ]
@@ -734,7 +734,7 @@ disable_error_code = ["arg-type", "return-value"]
 
 
 [[tool.mypy.overrides]]
-module = "nexus.system_services.agents.agent_rpc_service"
+module = "nexus.services.agents.agent_rpc_service"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
@@ -858,9 +858,9 @@ ignore_imports = [
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.enforcer",
     "nexus.bricks.search.search_service -> nexus.bricks.rebac.manager",
     # search -> gateway (TYPE_CHECKING): NexusFSGateway type hint — transitive to workflows/parsers
-    "nexus.bricks.search.search_service -> nexus.system_services.gateway",
+    "nexus.bricks.search.search_service -> nexus.services.gateway",
     # mount -> permission_utils -> gateway: transitive chain to workflows/parsers
-    "nexus.lib.permission_utils -> nexus.system_services.gateway",
+    "nexus.lib.permission_utils -> nexus.services.gateway",
     # parsers -> sandbox: TYPE_CHECKING imports for sandbox provider (Issue #2429)
     "nexus.bricks.parsers.validation.runner -> nexus.bricks.sandbox.sandbox_provider",
     "nexus.bricks.parsers.validation.detector -> nexus.bricks.sandbox.sandbox_provider",
@@ -872,17 +872,17 @@ ignore_imports = [
 unmatched_ignore_imports_alerting = "warn"
 
 # Contract 2: Five-tier layered architecture
-# contracts (include/linux) < lib+security (lib/) < kernel (core) < system_services < bricks
+# contracts (include/linux) < lib+security (lib/) < kernel (core) < services  bricks
 # contracts is the type-definition base — everyone can depend on it.
 # lib and security provide utilities that may use contract types, like Linux lib/ includes include/linux/.
 # security is tier-neutral (TLS, TOFU, prompt sanitizer) — zero kernel/service/brick deps.
 [[tool.importlinter.contracts]]
 id = "four-tier-layers"
-name = "Five-tier architecture: contracts < lib+security < kernel < system_services < bricks"
+name = "Five-tier architecture: contracts < lib+security < kernel < services  bricks"
 type = "layers"
 layers = [
     "nexus.bricks",
-    "nexus.system_services",
+    "nexus.services",
     "nexus.core",
     "nexus.lib | nexus.security",
     "nexus.contracts",
@@ -902,15 +902,15 @@ ignore_imports = [
     "nexus.contracts.types -> nexus.storage.read_set",
     # WirableFS TYPE_CHECKING imports (cross-tier wiring contract, #2359)
     "nexus.contracts.wirable_fs -> nexus.storage.record_store",
-    # --- lib importing system_services (upward — legacy, to be fixed) ---
-    "nexus.lib.permission_utils -> nexus.system_services.gateway",
+    # --- lib importing services (upward — legacy, to be fixed) ---
+    "nexus.lib.permission_utils -> nexus.services.gateway",
     # --- kernel (core) importing bricks ---
     "nexus.core.config -> nexus.bricks.workflows.protocol",
-    # --- system_services importing bricks ---
-    "nexus.system_services.workspace.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
-    "nexus.system_services.lifecycle.workflow_dispatch_service -> nexus.bricks.workflows.protocol",
-    "nexus.system_services.namespace.agent_namespace -> nexus.bricks.rebac.namespace_manager",
-    "nexus.system_services.namespace.namespace_fork_service -> nexus.bricks.rebac.namespace_manager",
+    # --- services importing bricks ---
+    "nexus.services.workspace.workspace_rpc_service -> nexus.bricks.workspace.workspace_registry",
+    "nexus.services.lifecycle.workflow_dispatch_service -> nexus.bricks.workflows.protocol",
+    "nexus.services.namespace.agent_namespace -> nexus.bricks.rebac.namespace_manager",
+    "nexus.services.namespace.namespace_fork_service -> nexus.bricks.rebac.namespace_manager",
     # search_semantic → factory._semantic_search → bricks (transitive chain)
     "nexus.factory._semantic_search -> nexus.bricks.search.chunking",
     "nexus.factory._semantic_search -> nexus.bricks.search.indexing",
@@ -922,7 +922,7 @@ ignore_imports = [
     "nexus.factory -> nexus.factory.orchestrator",
     "nexus.factory -> nexus.factory.wallet",
     "nexus.factory.wallet -> nexus.bricks.pay.constants",
-    # (removed: nexus.system_services.sync.sync_service -> glob_fast; now uses importlib)
+    # (removed: nexus.services.sync.sync_service -> glob_fast; now uses importlib)
 ]
 unmatched_ignore_imports_alerting = "warn"
 

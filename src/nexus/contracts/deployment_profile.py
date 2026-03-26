@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # Kernel-level (always present, never gated)
 BRICK_STORAGE = "storage"
 
-# System services (gated by profile)
+# Services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
 BRICK_NAMESPACE = "namespace"
 BRICK_PERMISSIONS = "permissions"
@@ -73,7 +73,7 @@ BRICK_PARSERS = "parsers"
 BRICK_SNAPSHOT = "snapshot"
 BRICK_TASK_MANAGER = "task_manager"
 
-# (Federation is a system service, not a brick — auto-detected from ZoneManager)
+# (Federation is auto-detected from ZoneManager, not a brick)
 
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
@@ -122,7 +122,7 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - slim: Bare minimum runnable — storage only, no system services (Issue #1801)
+    - slim: Bare minimum runnable — storage only (Issue #1801)
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
     - embedded: MCU / WASM (<1 MB) — storage + eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
@@ -221,9 +221,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     }
 )
 
-_CLOUD_BRICKS: frozenset[str] = (
-    _FULL_BRICKS  # Federation is a system service, auto-detected from ZoneManager
-)
+_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS  # Federation is auto-detected from ZoneManager
 
 _INNOVATION_BRICKS: frozenset[str] = (
     _CLOUD_BRICKS  # same as cloud; future experimental bricks added here

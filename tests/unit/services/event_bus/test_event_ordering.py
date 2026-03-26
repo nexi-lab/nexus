@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from nexus.core.file_events import FileEvent, FileEventType
-from nexus.system_services.event_log.delivery import EventDeliveryWorker
+from nexus.services.event_log.delivery import EventDeliveryWorker
 
 
 def _make_record(
@@ -170,7 +170,7 @@ class TestKafkaExporterPartitionKey:
 
     def test_publish_uses_zone_id_key(self):
         """Single publish uses zone_id as Kafka key."""
-        from nexus.system_services.event_log.exporters.kafka_exporter import (
+        from nexus.services.event_log.exporters.kafka_exporter import (
             KafkaExporter,
         )
 
@@ -199,7 +199,7 @@ class TestKafkaExporterPartitionKey:
 
     def test_publish_batch_uses_zone_id_key(self):
         """Batch publish uses zone_id as Kafka key for each event."""
-        from nexus.system_services.event_log.exporters.kafka_exporter import (
+        from nexus.services.event_log.exporters.kafka_exporter import (
             KafkaExporter,
         )
 

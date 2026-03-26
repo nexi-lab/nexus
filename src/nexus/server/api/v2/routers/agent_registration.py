@@ -105,7 +105,7 @@ def _get_registration_service(request: Request) -> Any:
     if record_store is None:
         raise HTTPException(status_code=503, detail="RecordStore not available")
 
-    from nexus.system_services.agents.agent_registration import AgentRegistrationService
+    from nexus.services.agents.agent_registration import AgentRegistrationService
 
     service = AgentRegistrationService(
         record_store=record_store,
@@ -142,7 +142,7 @@ async def register_agent(
 
     Use ``POST /agents/{id}/warmup`` to warm up the agent after registration.
     """
-    from nexus.system_services.agents.agent_registration import AgentAlreadyExistsError
+    from nexus.services.agents.agent_registration import AgentAlreadyExistsError
 
     owner_id = auth_result.get("user_id") or auth_result.get("subject_id", "")
     zone_id = auth_result.get("zone_id")

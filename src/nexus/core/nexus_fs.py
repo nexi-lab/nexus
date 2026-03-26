@@ -22,10 +22,8 @@ from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import DT_DIR, FileMetadata
 from nexus.contracts.types import OperationContext, Permission
 from nexus.core.config import (
-    BrickServices,
     CacheConfig,
     DistributedConfig,
-    KernelServices,
     MemoryConfig,
     ParseConfig,
     PermissionConfig,
@@ -69,17 +67,18 @@ class NexusFS(  # type: ignore[misc]
         distributed: DistributedConfig | None = None,
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
-        kernel_services: KernelServices | None = None,
-        brick_services: BrickServices | None = None,
+        router: Any = None,
         init_cred: OperationContext | None = None,
     ):
         """Initialize NexusFS kernel.
 
-        Kernel boots with MetastoreABC (inode layer) and an optional router
-        (via KernelServices). Backends are mounted externally via
-        ``router.add_mount()`` — like Linux VFS, no global backend.
+        Kernel boots with MetastoreABC (inode layer) and an optional router.
+        Backends are mounted externally via ``router.add_mount()`` — like
+        Linux VFS, no global backend.
 
         Args:
+            router: PathRouter instance for VFS routing. When None, a default
+                router is created from metadata_store.
             init_cred: Kernel process credential — like Linux ``init_task.cred``.
                 Used as fallback identity for internal operations (audit pipe
                 writes, service bootstrap mkdir). Immutable after construction.
@@ -91,8 +90,6 @@ class NexusFS(  # type: ignore[misc]
         distributed = distributed or DistributedConfig()
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
-        ksvc = kernel_services or KernelServices()
-        brk_svc = brick_services or BrickServices()
 
         # Per-instance VFS revision counter (H21: must not be class-level)
         import threading as _threading
@@ -105,9 +102,6 @@ class NexusFS(  # type: ignore[misc]
         self._distributed_config = distributed
         self._memory_config_obj = memory
         self._parse_config = parsing
-        # Issue #1767: _kernel_services wrapper removed — only field was router,
-        # which is already stored as self.router (set a few lines below).
-        self._brick_services = brk_svc
         self._config: Any | None = None
 
         # Map config fields to flat attributes
@@ -136,8 +130,8 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Path router (metastore-backed mount table)
-        if ksvc.router is not None:
-            self.router = ksvc.router
+        if router is not None:
+            self.router = router
         else:
             self.router = PathRouter(metadata_store)
 
@@ -400,7 +394,6 @@ class NexusFS(  # type: ignore[misc]
 
     # Issue #1790: _check_zone_writable() deleted — now handled by
     # ZoneWriteGuardHook (pre-intercept on all write-like operations).
-    # Kernel no longer reads zone_lifecycle from _system_services.
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
         """Parse context dict or OperationContext into OperationContext."""
@@ -4434,8 +4427,7 @@ class NexusFS(  # type: ignore[misc]
             self._stream_manager.close_all()
 
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
-        # Replaces direct _system_services reads for write_observer, rebac_manager,
-        # audit_store. Runs BEFORE pillar close so DB connections are still open.
+        # Runs BEFORE pillar close so DB connections are still open.
         for _close_cb in self._close_callbacks:
             try:
                 _close_cb()

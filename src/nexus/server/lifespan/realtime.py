@@ -165,8 +165,8 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
 
     try:
         # Always initialize ConflictLogStore for the REST API, even when write-back is disabled
-        from nexus.system_services.gateway import NexusFSGateway
-        from nexus.system_services.sync.conflict_log_store import ConflictLogStore
+        from nexus.services.gateway import NexusFSGateway
+        from nexus.services.sync.conflict_log_store import ConflictLogStore
 
         gw = NexusFSGateway(svc.nexus_fs)
         _is_pg = gw.is_postgresql
@@ -174,10 +174,10 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
         app.state.conflict_log_store = conflict_log_store
 
         if write_back_enabled:
-            from nexus.system_services.sync.change_log_store import ChangeLogStore
-            from nexus.system_services.sync.conflict_resolution import ConflictStrategy
-            from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
-            from nexus.system_services.sync.write_back_service import WriteBackService
+            from nexus.services.sync.change_log_store import ChangeLogStore
+            from nexus.services.sync.conflict_resolution import ConflictStrategy
+            from nexus.services.sync.sync_backlog_store import SyncBacklogStore
+            from nexus.services.sync.write_back_service import WriteBackService
 
             wb_event_bus = svc.event_bus
             if wb_event_bus:
@@ -204,7 +204,7 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                 if _pm is not None:
                     import contextlib
 
-                    from nexus.system_services.sync.write_back_service import (
+                    from nexus.services.sync.write_back_service import (
                         _BACKLOG_WAKEUP_PIPE,
                     )
 
@@ -230,7 +230,6 @@ async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
                     change_log_store=change_log_store,
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
-                    pipe_manager=_pm,
                 )
                 await app.state.write_back_service.start()
 
@@ -294,9 +293,9 @@ def _startup_exporter_registry(app: "FastAPI", _svc: "LifespanServices") -> None
         return
 
     try:
-        from nexus.system_services.event_log.exporter_registry import ExporterRegistry
-        from nexus.system_services.event_log.exporters.config import EventStreamConfig
-        from nexus.system_services.event_log.exporters.factory import create_exporter
+        from nexus.services.event_log.exporter_registry import ExporterRegistry
+        from nexus.services.event_log.exporters.config import EventStreamConfig
+        from nexus.services.event_log.exporters.factory import create_exporter
 
         exporter_type = os.getenv("NEXUS_EVENT_STREAM_EXPORTER", "kafka")
         config = EventStreamConfig(enabled=True, exporter=exporter_type)

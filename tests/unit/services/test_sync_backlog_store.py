@@ -14,11 +14,11 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.storage.models._base import Base
-from nexus.system_services.sync.sync_backlog_store import (
+from nexus.services.sync.sync_backlog_store import (
     SyncBacklogEntry,
     SyncBacklogStore,
 )
+from nexus.storage.models._base import Base
 
 # =============================================================================
 # Fixtures

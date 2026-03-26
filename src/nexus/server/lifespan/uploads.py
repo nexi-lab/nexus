@@ -19,18 +19,14 @@ async def startup_uploads(app: "FastAPI", svc: "LifespanServices") -> list[async
     """Initialize chunked upload service and return background tasks."""
     bg_tasks: list[asyncio.Task] = []
 
-    # Get the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars)
-    brk = svc.brick_services
-    _factory_upload_svc = getattr(brk, "chunked_upload_service", None) if brk else None
+    # Get the pre-configured service from ServiceRegistry
+    _svc_fn = getattr(svc.nexus_fs, "service", None) if svc.nexus_fs else None
+    _factory_upload_svc = _svc_fn("chunked_upload_service") if _svc_fn else None
 
     if _factory_upload_svc is not None:
         app.state.chunked_upload_service = _factory_upload_svc
         cleanup_task = asyncio.create_task(app.state.chunked_upload_service.start_cleanup_loop())
         bg_tasks.append(cleanup_task)
-        # Enlist with coordinator (Q1 — cleanup loop is a bg task, not PersistentService)
-        coord = svc.service_coordinator
-        if coord is not None:
-            await coord.enlist("chunked_upload", app.state.chunked_upload_service)
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
     elif svc.nexus_fs and svc.record_store is not None:
         # Fallback: create from env vars when factory didn't provide the service
@@ -68,10 +64,6 @@ async def startup_uploads(app: "FastAPI", svc: "LifespanServices") -> list[async
                     app.state.chunked_upload_service.start_cleanup_loop()
                 )
                 bg_tasks.append(cleanup_task)
-                # Enlist with coordinator (Q1)
-                coord = svc.service_coordinator
-                if coord is not None:
-                    await coord.enlist("chunked_upload", app.state.chunked_upload_service)
                 logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
         except Exception as e:
             logger.warning("[TUS] Failed to initialize ChunkedUploadService: %s", e)

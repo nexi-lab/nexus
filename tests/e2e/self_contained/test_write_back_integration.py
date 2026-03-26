@@ -11,13 +11,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.services.event_bus.types import FileEvent, FileEventType
+from nexus.services.sync.change_log_store import ChangeLogStore
+from nexus.services.sync.conflict_log_store import ConflictLogStore
+from nexus.services.sync.conflict_resolution import ConflictStrategy
+from nexus.services.sync.sync_backlog_store import SyncBacklogStore
+from nexus.services.sync.write_back_service import WriteBackService
 from nexus.storage.record_store import SQLAlchemyRecordStore
-from nexus.system_services.event_bus.types import FileEvent, FileEventType
-from nexus.system_services.sync.change_log_store import ChangeLogStore
-from nexus.system_services.sync.conflict_log_store import ConflictLogStore
-from nexus.system_services.sync.conflict_resolution import ConflictStrategy
-from nexus.system_services.sync.sync_backlog_store import SyncBacklogStore
-from nexus.system_services.sync.write_back_service import WriteBackService
 
 # =============================================================================
 # Fixtures
@@ -394,7 +394,7 @@ class TestConflictIntegration:
         self, mock_gateway, mock_event_bus
     ):
         """Full conflict lifecycle: enqueue -> detect -> auto-resolve -> log -> query -> manual resolve."""
-        from nexus.system_services.sync.conflict_resolution import ConflictStatus, ResolutionOutcome
+        from nexus.services.sync.conflict_resolution import ConflictStatus, ResolutionOutcome
 
         backlog_store = SyncBacklogStore(record_store=mock_gateway.record_store)
         change_log_store = ChangeLogStore(record_store=mock_gateway.record_store)

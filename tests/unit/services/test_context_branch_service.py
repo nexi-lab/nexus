@@ -18,14 +18,14 @@ from nexus.contracts.exceptions import (
     BranchProtectedError,
     BranchStateError,
 )
-from nexus.storage.models import WorkspaceSnapshotModel
-from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
-from nexus.system_services.workspace.context_branch import (
+from nexus.services.workspace.context_branch import (
     DEFAULT_BRANCH,
     ContextBranchService,
     _slugify,
 )
+from nexus.storage.models import WorkspaceSnapshotModel
+from nexus.storage.models._base import Base
+from nexus.storage.models.context_branch import ContextBranchModel
 
 
 @pytest.fixture

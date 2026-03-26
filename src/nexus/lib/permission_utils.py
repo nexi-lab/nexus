@@ -11,7 +11,7 @@ from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.system_services.gateway import NexusFSGateway
+    from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +62,13 @@ def check_permission(
     zone_id = get_zone_id(context)
 
     try:
-        return gw.rebac_check(
-            subject=(subject_type, subject_id),
-            permission=permission,
-            object=("file", path),
-            zone_id=zone_id,
+        return bool(
+            gw.rebac_check(
+                subject=(subject_type, subject_id),
+                permission=permission,
+                object=("file", path),
+                zone_id=zone_id,
+            )
         )
     except (ConnectionError, TimeoutError, OSError) as e:
         # Infrastructure failures should propagate so callers know

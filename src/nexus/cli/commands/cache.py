@@ -192,7 +192,7 @@ def stats(
                 if cc and hasattr(cc, "get_stats"):
                     cache_stats["content_cache"] = cc.get_stats()
 
-            # Permission cache stats (Issue #1771: nx.service() replaces _system_services)
+            # Permission cache stats
             rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
             if rm is not None:
                 if hasattr(rm, "_permission_cache") and rm._permission_cache:

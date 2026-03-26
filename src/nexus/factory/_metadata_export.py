@@ -16,7 +16,7 @@ def create_metadata_export_service(nx: Any) -> Any:
         MetadataExportService instance, or None if dependencies are unavailable.
     """
     try:
-        from nexus.system_services.metadata_export import MetadataExportService
+        from nexus.services.metadata_export import MetadataExportService
 
         metadata = getattr(nx, "metadata", None)
         if metadata is None:

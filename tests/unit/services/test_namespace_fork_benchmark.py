@@ -12,7 +12,7 @@ pytest.importorskip("pyroaring")
 
 
 from nexus.bricks.rebac.namespace_manager import MountEntry
-from nexus.system_services.namespace.namespace_fork_service import (
+from nexus.services.namespace.namespace_fork_service import (
     AgentNamespaceForkService,
 )
 

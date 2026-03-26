@@ -15,13 +15,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.contracts.exceptions import BranchNotFoundError, StalePointerError
-from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
-from nexus.system_services.workspace.context_branch import (
+from nexus.services.workspace.context_branch import (
     _BASE_BACKOFF_MS,
     _MAX_RETRIES,
     ContextBranchService,
 )
+from nexus.storage.models._base import Base
+from nexus.storage.models.context_branch import ContextBranchModel
 
 
 @pytest.fixture
@@ -151,7 +151,7 @@ class TestStalePointerDetection:
 
 
 class TestRetryWithBackoff:
-    @patch("nexus.system_services.workspace.context_branch.time.sleep")
+    @patch("nexus.services.workspace.context_branch.time.sleep")
     def test_retry_succeeds_on_second_attempt(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
@@ -172,7 +172,7 @@ class TestRetryWithBackoff:
         # First backoff: 10ms
         mock_sleep.assert_called_once_with(_BASE_BACKOFF_MS / 1000.0)
 
-    @patch("nexus.system_services.workspace.context_branch.time.sleep")
+    @patch("nexus.services.workspace.context_branch.time.sleep")
     def test_retry_exhaustion_raises(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
@@ -189,7 +189,7 @@ class TestRetryWithBackoff:
         # Should have retried MAX_RETRIES - 1 times (last attempt doesn't sleep)
         assert mock_sleep.call_count == _MAX_RETRIES - 1
 
-    @patch("nexus.system_services.workspace.context_branch.time.sleep")
+    @patch("nexus.services.workspace.context_branch.time.sleep")
     def test_exponential_backoff_timing(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 

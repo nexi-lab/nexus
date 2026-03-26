@@ -4,8 +4,7 @@ Covers:
 - _boot_kernel_services validates Storage Pillars (returns empty dict)
 - _boot_system_services returns critical services + degrades on non-critical failure
 - BootError raised with tier="system-critical" on critical service failure
-- KernelServices is frozen (attribute assignment raises FrozenInstanceError)
-- create_nexus_services returns a KernelServices instance
+- create_nexus_services returns a flat dict
 - _BootContext is frozen (attribute assignment raises error)
 
 Issue #2193: Former kernel services moved to system tier.
@@ -20,11 +19,8 @@ from nexus.contracts.deployment_profile import DeploymentProfile
 from nexus.contracts.exceptions import BootError
 from nexus.contracts.types import AuditConfig
 from nexus.core.config import (
-    BrickServices,
     DistributedConfig,
-    KernelServices,
     PermissionConfig,
-    SystemServices,
 )
 from nexus.factory import (
     _boot_brick_services,
@@ -286,32 +282,6 @@ class TestBootBrickServices:
             assert key in result, f"Missing brick key: {key}"
 
 
-class TestKernelServicesFrozen:
-    """Tests for KernelServices frozen dataclass."""
-
-    def test_kernel_services_frozen(self) -> None:
-        """KernelServices is a frozen dataclass — setting an attribute raises error."""
-        ks = KernelServices()
-        with pytest.raises(dataclasses.FrozenInstanceError):
-            ks.router = MagicMock()  # type: ignore[misc]
-
-    def test_kernel_services_replace_returns_new_instance(self) -> None:
-        """dataclasses.replace() on KernelServices returns a new copy."""
-        ks = KernelServices()
-        sentinel = MagicMock()
-        ks2 = dataclasses.replace(ks, router=sentinel)
-
-        assert ks2 is not ks
-        assert ks2.router is sentinel
-        assert ks.router is None
-
-    def test_kernel_services_has_only_router(self) -> None:
-        """Issue #2193: KernelServices has only the router field."""
-        ks = KernelServices()
-        field_names = {f.name for f in dataclasses.fields(ks)}
-        assert field_names == {"router"}
-
-
 class TestBootContextFrozen:
     """Tests for _BootContext frozen dataclass."""
 
@@ -325,8 +295,8 @@ class TestBootContextFrozen:
 class TestCreateNexusServices:
     """Tests for the top-level create_nexus_services() function."""
 
-    def test_create_nexus_services_returns_three_tier_tuple(self) -> None:
-        """Full create_nexus_services() returns (KernelServices, SystemServices, BrickServices)."""
+    def test_create_nexus_services_returns_single_dict(self) -> None:
+        """Full create_nexus_services() returns a single flat dict."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
         record_store.read_engine = MagicMock()
@@ -363,15 +333,12 @@ class TestCreateNexusServices:
             enable_write_buffer=False,
         )
 
-        assert isinstance(result, tuple)
-        assert len(result) == 3
-        kernel, system, brick = result
-        assert isinstance(kernel, KernelServices)
-        assert isinstance(system, SystemServices)
-        assert isinstance(brick, BrickServices)
+        assert isinstance(result, dict)
+        assert "rebac_manager" in result
+        assert "permission_enforcer" in result
 
-    def test_create_nexus_services_populates_system_fields(self) -> None:
-        """Issue #2193: create_nexus_services() populates system fields."""
+    def test_create_nexus_services_populates_fields(self) -> None:
+        """Issue #2193: create_nexus_services() populates service fields."""
         record_store = MagicMock()
         record_store.engine = MagicMock()
         record_store.read_engine = MagicMock()
@@ -390,7 +357,7 @@ class TestCreateNexusServices:
 
         router = MagicMock()
 
-        kernel, system, brick = create_nexus_services(
+        services = create_nexus_services(
             record_store=record_store,
             metadata_store=metadata_store,
             backend=backend,
@@ -408,15 +375,14 @@ class TestCreateNexusServices:
             enable_write_buffer=False,
         )
 
-        # Issue #2193: Former-kernel fields now on SystemServices
-        assert system.rebac_manager is not None
-        assert system.permission_enforcer is not None
+        # Issue #2193: Former-kernel fields now in flat services dict
+        assert services["rebac_manager"] is not None
+        assert services["permission_enforcer"] is not None
         # workspace_registry may be None with mock session_factory (degradable)
-        assert system.write_observer is not None
-        assert kernel.router is router
+        assert services["write_observer"] is not None
 
-        # Issue #2034: version_service moved to brick tier
-        assert brick.version_service is not None
+        # Issue #2034: version_service in the unified dict
+        assert services["version_service"] is not None
 
 
 class TestBrickServicesFieldCompleteness:
@@ -460,12 +426,14 @@ class TestBrickServicesFieldCompleteness:
             enable_write_buffer=False,
         )
 
-        brk = nx._brick_services
-
-        # Issue #2134: These fields now live in BrickServices, not as flat params
-        assert brk.parse_fn is not None, "parse_fn should be packed into BrickServices"
-        assert brk.parser_registry is not None, "parser_registry should be in BrickServices"
-        assert brk.provider_registry is not None, "provider_registry should be in BrickServices"
+        # Issue #2134: These fields now live in service registry, not as flat params
+        assert nx.service("parse_fn") is not None, "parse_fn should be packed into service registry"
+        assert nx.service("parser_registry") is not None, (
+            "parser_registry should be in service registry"
+        )
+        assert nx.service("provider_registry") is not None, (
+            "provider_registry should be in service registry"
+        )
         # NOTE: vfs_lock_manager removed from BrickServices — now kernel-internal
         # (created in NexusFS.__init__). See write-path-extraction-design.md.
         # NOTE: content_cache may be None when router.route("/") fails during
@@ -511,4 +479,6 @@ class TestBrickServicesFieldCompleteness:
             workflow_engine=sentinel_engine,
         )
 
-        assert nx._brick_services.workflow_engine is sentinel_engine
+        _ref = nx.service("workflow_engine")
+        assert _ref is not None
+        assert _ref._service_instance is sentinel_engine

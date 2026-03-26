@@ -3,18 +3,8 @@ name: Test
 on:
   push:
     branches: [main, develop, SETUP]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
   pull_request:
     branches: [main, develop]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.github/ISSUE_TEMPLATE/**'
   merge_group:
 
 concurrency:
@@ -22,8 +12,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether only docs/non-code files changed.
+  # Downstream jobs skip heavy work when code_changed == 'false',
+  # but still report SUCCESS so required checks pass on doc-only PRs.
+  detect-changes:
+    name: Detect Code Changes
+    runs-on: ubuntu-latest
+    outputs:
+      code_changed: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'src/**'
+              - 'tests/**'
+              - 'rust/**'
+              - 'pyproject.toml'
+              - 'Cargo.*'
+              - '.github/workflows/**'
+
   rpc-parity:
     name: RPC Parity Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -58,6 +72,8 @@ jobs:
   # Build Rust extensions once per OS, share wheels with downstream jobs
   build-rust:
     name: Build Rust Extensions (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -89,7 +105,8 @@ jobs:
 
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    needs: build-rust
+    needs: [detect-changes, build-rust]
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -165,7 +182,8 @@ jobs:
 
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
-    needs: build-rust
+    needs: [detect-changes, build-rust]
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code

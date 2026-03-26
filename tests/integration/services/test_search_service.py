@@ -166,6 +166,47 @@ class TestSearchServiceInit:
         svc = SearchService(metadata_store=mock_metadata_store, record_store=mock_record_store)
         assert svc._record_store is mock_record_store
 
+    def test_list_slow_path_passes_zone_id_to_tiger_pushdown(
+        self, mock_metadata_store, mock_permission_enforcer, mock_router, mock_gateway
+    ):
+        """Predicate pushdown must request the bitmap for the current list zone."""
+        meta = MagicMock()
+        meta.path = "/visible.txt"
+        mock_metadata_store.list.return_value = [meta]
+
+        tiger_cache = MagicMock()
+        tiger_cache.get_accessible_int_ids.return_value = {1}
+        tiger_cache._resource_map.get_or_create_int_id.return_value = 1
+        rebac_manager = MagicMock()
+        rebac_manager._tiger_cache = tiger_cache
+
+        svc = SearchService(
+            metadata_store=mock_metadata_store,
+            permission_enforcer=mock_permission_enforcer,
+            router=mock_router,
+            gateway=mock_gateway,
+            enforce_permissions=True,
+        )
+
+        all_files, accessible_ids = svc._list_slow_path(
+            list_prefix="",
+            list_zone_id="test_zone",
+            subject_type="user",
+            subject_id="test_user",
+            _revision_before=None,
+            _rebac_manager=rebac_manager,
+        )
+
+        assert all_files == [meta]
+        assert accessible_ids == {1}
+        tiger_cache.get_accessible_int_ids.assert_called_once_with(
+            subject_type="user",
+            subject_id="test_user",
+            permission="read",
+            resource_type="file",
+            zone_id="test_zone",
+        )
+
 
 # =============================================================================
 # Gitignore filtering (module-level helpers)

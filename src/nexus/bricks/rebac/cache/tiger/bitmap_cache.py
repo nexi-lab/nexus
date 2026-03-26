@@ -189,7 +189,8 @@ class TigerCache:
     @staticmethod
     def _bloom_key(key: CacheKey) -> str:
         """Canonical bloom filter key — same format as Dragonfly redis key."""
-        return f"tiger:{key.subject_type}:{key.subject_id}:{key.permission}:{key.resource_type}"
+        base = f"tiger:{key.subject_type}:{key.subject_id}:{key.permission}:{key.resource_type}"
+        return f"{base}:{key.zone_id}" if key.zone_id else base
 
     def _bloom_add(self, key: CacheKey) -> None:
         """Add a key to the bloom filter (call on every L1/L2 cache set)."""
@@ -228,6 +229,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
+        zone_id: str = "",
         bitmap_data: bytes | None = None,
         revision: int = 0,
     ) -> Any:
@@ -236,8 +238,7 @@ class TigerCache:
         Uses a persistent thread pool and sync Redis client to avoid
         event loop conflicts with FastAPI's async context.
 
-        Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}
-        Note: zone_id excluded per Issue #979 for cross-zone resource sharing.
+        Key format: tiger:{subject_type}:{subject_id}:{permission}:{resource_type}[:{zone_id}]
 
         Args:
             operation: One of "get", "set", "invalidate"
@@ -245,6 +246,7 @@ class TigerCache:
             subject_id: Subject ID for cache key
             permission: Permission for cache key
             resource_type: Resource type for cache key
+            zone_id: Zone ID for cache partitioning
             bitmap_data: Bitmap data for set operations
             revision: Revision for set operations
 
@@ -272,8 +274,11 @@ class TigerCache:
                 socket_connect_timeout=2.0,
             )
             try:
-                # Key format: exclude zone_id per Issue #979
-                key = f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
+                key = (
+                    f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}:{zone_id}"
+                    if zone_id
+                    else f"tiger:{subject_type}:{subject_id}:{permission}:{resource_type}"
+                )
 
                 if operation == "get":
                     result = client.hgetall(key)
@@ -292,7 +297,9 @@ class TigerCache:
                     pipe.expire(key, ttl)
                     pipe.execute()
                     # Update bloom filter using canonical key (Issue #3192)
-                    self._bloom_add(CacheKey(subject_type, subject_id, permission, resource_type))
+                    self._bloom_add(
+                        CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
+                    )
                     return True
 
                 elif operation == "invalidate":
@@ -305,6 +312,8 @@ class TigerCache:
                         permission if permission else "*",
                         resource_type if resource_type else "*",
                     ]
+                    if zone_id:
+                        parts.append(zone_id)
                     pattern = ":".join(parts)
                     count = 0
                     # Use SCAN for safe iteration
@@ -717,6 +726,7 @@ class TigerCache:
                     subject_id=key.subject_id,
                     permission=key.permission,
                     resource_type=key.resource_type,
+                    zone_id=key.zone_id,
                 )
                 if result:
                     bitmap_data, revision = result
@@ -744,6 +754,8 @@ class TigerCache:
             TC.permission == key.permission,
             TC.resource_type == key.resource_type,
         )
+        if key.zone_id:
+            stmt = stmt.where(TC.zone_id == key.zone_id)
 
         def execute(connection: "Connection") -> Any:  # Returns Bitmap or None
             result = connection.execute(stmt)
@@ -765,6 +777,7 @@ class TigerCache:
                         subject_id=key.subject_id,
                         permission=key.permission,
                         resource_type=key.resource_type,
+                        zone_id=key.zone_id,
                         bitmap_data=bytes(row.bitmap_data),
                         revision=revision,
                     )
@@ -1022,6 +1035,7 @@ class TigerCache:
                 subject_id=subject_id,
                 permission=permission,
                 resource_type=resource_type,
+                zone_id=zone_id,
                 bitmap_data=bytes(bitmap_data),
                 revision=revision,
             )
@@ -1096,7 +1110,7 @@ class TigerCache:
             with self._engine.begin() as new_conn:
                 count = execute(new_conn)
 
-        # L2: Invalidate from Dragonfly cache (zone_id excluded per Issue #979)
+        # L2: Invalidate from Dragonfly cache
         dragonfly_count = 0
         if self._dragonfly:
             dragonfly_count = (
@@ -1106,6 +1120,7 @@ class TigerCache:
                     subject_id=subject_id or "",
                     permission=permission or "",
                     resource_type=resource_type or "",
+                    zone_id=zone_id or "",
                 )
                 or 0
             )
@@ -1483,6 +1498,7 @@ class TigerCache:
                     subject_id=subject_id,
                     permission=permission,
                     resource_type=resource_type,
+                    zone_id=zone_id,
                     bitmap_data=bitmap_data,
                     revision=revision,
                 )
@@ -1644,6 +1660,7 @@ class TigerCache:
                     subject_id=subject_id,
                     permission=permission,
                     resource_type=resource_type,
+                    zone_id=zone_id,
                     bitmap_data=bitmap_data,
                     revision=revision,
                 )
@@ -1881,6 +1898,7 @@ class TigerCache:
                     subject_id=subject_id,
                     permission=permission,
                     resource_type=resource_type,
+                    zone_id=zone_id,
                     bitmap_data=bytes(bitmap_data),
                     revision=revision,
                 )

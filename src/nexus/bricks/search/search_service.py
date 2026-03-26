@@ -1520,8 +1520,13 @@ class SearchService:
         if cached is not None:
             return cached
 
+        get_paths = getattr(self._rebac_manager, "get_cross_zone_shared_paths", None)
+        if not callable(get_paths):
+            self._cross_zone_cache[cache_key] = []
+            return []
+
         try:
-            paths = self._rebac_manager.get_cross_zone_shared_paths(
+            paths = get_paths(
                 subject_type=subject_type,
                 subject_id=subject_id,
                 zone_id=zone_id,

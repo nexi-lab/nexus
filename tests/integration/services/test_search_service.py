@@ -207,6 +207,41 @@ class TestSearchServiceInit:
             zone_id="test_zone",
         )
 
+    def test_cross_zone_sharing_uses_public_rebac_method(self, mock_metadata_store):
+        """Cross-zone search should rely on the public ReBAC API."""
+        rebac_manager = MagicMock()
+        rebac_manager.get_cross_zone_shared_paths.return_value = ["/shared/file.txt"]
+        svc = SearchService(metadata_store=mock_metadata_store, rebac_manager=rebac_manager)
+
+        result = svc._get_cross_zone_shared_paths(
+            subject_type="user",
+            subject_id="alice",
+            zone_id="zone-a",
+            prefix="/shared",
+        )
+
+        assert result == ["/shared/file.txt"]
+        rebac_manager.get_cross_zone_shared_paths.assert_called_once_with(
+            subject_type="user",
+            subject_id="alice",
+            zone_id="zone-a",
+            prefix="/shared",
+        )
+
+    def test_cross_zone_sharing_missing_public_method_returns_empty(self, mock_metadata_store):
+        """Managers without cross-zone sharing support should degrade cleanly."""
+        rebac_manager = MagicMock(spec=[])
+        svc = SearchService(metadata_store=mock_metadata_store, rebac_manager=rebac_manager)
+
+        result = svc._get_cross_zone_shared_paths(
+            subject_type="user",
+            subject_id="alice",
+            zone_id="zone-a",
+            prefix="/shared",
+        )
+
+        assert result == []
+
 
 # =============================================================================
 # Gitignore filtering (module-level helpers)

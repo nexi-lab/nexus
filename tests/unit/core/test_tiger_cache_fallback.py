@@ -102,8 +102,8 @@ class TestL1CacheFallback:
 
         assert result == {1, 2}
 
-    def test_get_accessible_int_ids_falls_back_to_compat_key(self, tiger_cache):
-        """Legacy zone-agnostic bitmaps should still be readable as fallback."""
+    def test_get_accessible_int_ids_does_not_fall_back_to_compat_key(self, tiger_cache):
+        """Zone-scoped predicate pushdown must not reuse an unscoped bitmap."""
         compat_key = CacheKey("user", "alice", "read", "file")
         tiger_cache._cache[compat_key] = (RoaringBitmap([7, 8]), 1, time.time())
 
@@ -115,7 +115,7 @@ class TestL1CacheFallback:
             zone_id="zone-1",
         )
 
-        assert result == {7, 8}
+        assert result is None
 
     def test_get_accessible_int_ids_cold_db_load_is_zone_scoped(self, tiger_cache):
         """Cold DB loads must respect zone_id to avoid cross-zone bitmap hydration."""
@@ -153,6 +153,43 @@ class TestL1CacheFallback:
         )
 
         assert result == {1, 2}
+
+    def test_get_accessible_int_ids_zone_miss_does_not_load_other_zone_bitmap(self, tiger_cache):
+        """A missing zone row must not hydrate another zone's bitmap."""
+        with tiger_cache._engine.begin() as conn:
+            conn.execute(
+                TC.__table__.insert(),
+                [
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-a",
+                        "bitmap_data": bytes(RoaringBitmap([1, 2]).serialize()),
+                        "revision": 11,
+                    },
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-b",
+                        "bitmap_data": bytes(RoaringBitmap([99]).serialize()),
+                        "revision": 12,
+                    },
+                ],
+            )
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-c",
+        )
+
+        assert result is None
 
 
 class TestCacheKey:

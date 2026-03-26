@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.rate_limiting import limiter
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,15 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
             return True, ""
         if not _fed.ensure_topology():
             return False, "Raft topology not ready"
+        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
+        if zone_mgr is None:
+            return True, ""
+        root_zone_id = getattr(zone_mgr, "root_zone_id", None) or ROOT_ZONE_ID
+        root_store = zone_mgr.get_store(root_zone_id)
+        if root_store is None:
+            return False, "Raft root store not ready"
+        if hasattr(root_store, "is_leader") and not root_store.is_leader():
+            return False, "Raft leader not ready"
         return True, ""
     except Exception:
         return True, ""
@@ -99,7 +109,7 @@ async def readiness(request: Request) -> JSONResponse:
 
     Checks:
     1. Required startup phases completed (StartupTracker)
-    2. Raft topology initialised (if applicable)
+    2. Raft topology initialised and root zone is leader-writeable
     3. DB pool has at least one idle connection
     """
     try:

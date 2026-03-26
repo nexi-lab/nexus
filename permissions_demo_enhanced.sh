@@ -118,7 +118,7 @@ import sys, os
 sys.path.insert(0, 'src')
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -376,7 +376,7 @@ python3 << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 rebac.rebac_create_sync(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
@@ -476,7 +476,7 @@ python3 << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
@@ -505,7 +505,7 @@ python3 << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 try:
@@ -606,7 +606,7 @@ import sys, os
 sys.path.insert(0, 'src')
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync()
 
@@ -731,7 +731,7 @@ TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, 'src')
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
@@ -785,7 +785,7 @@ import sys, os, time, statistics
 sys.path.insert(0, 'src')
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 

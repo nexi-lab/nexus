@@ -588,8 +588,8 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID for cache partitioning. Falls back to the
-                legacy zone-agnostic key for compatibility with older cache rows.
+            zone_id: Zone ID for cache partitioning. Zone-scoped predicate pushdown
+                must only read the matching zone-scoped bitmap.
 
         Returns:
             Set of integer IDs the subject can access, or None if no bitmap cached.
@@ -610,40 +610,12 @@ class TigerCache:
                         )
                     return set(bitmap)  # RoaringBitmap is iterable
 
-            # Compatibility fallback for older zone-agnostic cache entries.
-            if zone_id:
-                compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
-                if compat_key in self._cache:
-                    bitmap, revision, cached_at = self._cache[compat_key]
-                    if time.time() - cached_at < self._cache_ttl:
-                        if logger.isEnabledFor(logging.DEBUG):
-                            logger.debug(
-                                "[TIGER-PUSHDOWN] Memory compat hit for %s via %s, %d entries",
-                                key,
-                                compat_key,
-                                len(bitmap),
-                            )
-                        return set(bitmap)
-
         # Load from database
         bitmap = self._load_from_db(key)
         if bitmap is not None:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("[TIGER-PUSHDOWN] DB hit for %s, %d entries", key, len(bitmap))
             return set(bitmap)
-
-        if zone_id:
-            compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
-            bitmap = self._load_from_db(compat_key)
-            if bitmap is not None:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "[TIGER-PUSHDOWN] DB compat hit for %s via %s, %d entries",
-                        key,
-                        compat_key,
-                        len(bitmap),
-                    )
-                return set(bitmap)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("[TIGER-PUSHDOWN] No bitmap found for %s", key)

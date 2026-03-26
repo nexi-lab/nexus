@@ -38,7 +38,7 @@ services:
       -c effective_io_concurrency=16
       -c maintenance_io_concurrency=16
       -c wal_compression=lz4
-      -c shared_buffers=1GB
+      -c shared_buffers=128MB
       -c effective_cache_size=3GB
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

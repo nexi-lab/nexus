@@ -64,7 +64,7 @@ services:
     # pgvector HNSW tuning (Issue #1004):
     # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
     # - max_parallel_maintenance_workers=7: Parallel index build (up to 30x faster)
-    # - shared_buffers=1GB: Cache HNSW index in memory
+    # - shared_buffers=128MB: Keep dev-stack Postgres memory modest
     # See: docs/performance/vector-search-tuning.md
     command: >
       postgres
@@ -78,7 +78,7 @@ services:
       -c archive_timeout=300
       -c maintenance_work_mem=2GB
       -c max_parallel_maintenance_workers=7
-      -c shared_buffers=1GB
+      -c shared_buffers=128MB
       -c effective_cache_size=3GB
     ports:
       - "${POSTGRES_PORT:-5432}:5432"

@@ -67,14 +67,14 @@ fs = nexus.fs.mount_sync("local://./my-data")
 fs.write("/local/my-data/a.txt", b"a")
 fs.write("/local/my-data/b.txt", b"b")
 
-# Simple listing
+# Simple listing (returns paths)
 files = fs.ls("/local/my-data/")
 print(files)
 
 # Detailed listing with metadata
 entries = fs.ls("/local/my-data/", detail=True)
 for entry in entries:
-    print(entry.get("name"), entry.get("size"))
+    print(entry["path"], entry["size"])
 ```
 
 ### Check if a file exists

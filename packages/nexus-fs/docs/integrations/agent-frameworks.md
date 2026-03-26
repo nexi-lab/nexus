@@ -21,11 +21,11 @@ def load_documents(path: str) -> list[Document]:
     files = fs.ls(path, detail=True)
     docs = []
     for entry in files:
-        if entry.get("type") == "file":
-            content = fs.read(entry["name"])
+        if entry.get("entry_type") == 0:  # 0 = file, 1 = directory
+            content = fs.read(entry["path"])
             docs.append(Document(
                 page_content=content.decode(errors="replace"),
-                metadata={"source": entry["name"], "size": entry.get("size", 0)},
+                metadata={"source": entry["path"], "size": entry.get("size", 0)},
             ))
     return docs
 ```

@@ -744,6 +744,7 @@ async def write_to_connector(
                 _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
             )
 
+            assert backend is not None  # guaranteed by is_cli_connector check
             result = await asyncio.to_thread(backend.write_content, data, write_context)
         else:
             result = await nx.write(mount_path, data, context=write_context)

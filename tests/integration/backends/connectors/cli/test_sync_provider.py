@@ -393,7 +393,9 @@ class TestParseListOutputMetadata:
 
         import yaml
 
-        connector = MagicMock()
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        connector = MagicMock(spec=DisplayPathMixin)
         connector._config = None
         connector.display_path.return_value = "INBOX/PRIMARY/2026-03-20_Meeting.yaml"
 
@@ -426,7 +428,9 @@ class TestParseListOutputMetadata:
 
         import yaml
 
-        connector = MagicMock()
+        from nexus.backends.connectors.cli.display_path import DisplayPathMixin
+
+        connector = MagicMock(spec=DisplayPathMixin)
         connector._config = None
         connector.display_path.return_value = "issues/42_bug-fix.yaml"
 

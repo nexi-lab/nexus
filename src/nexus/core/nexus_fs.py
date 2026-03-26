@@ -3214,14 +3214,25 @@ class NexusFS(  # type: ignore[misc]
                 # ── Metadata rename (under lock) ──
                 # Rename is a pure metadata operation — get/put/delete on
                 # MetastoreABC primitives. Put-first for crash safety (#3062).
-                _old_meta = self.metadata.get(old_path)
-                if _old_meta is None:
-                    raise NexusFileNotFoundError(old_path)
                 from dataclasses import replace as _replace
 
-                _new_meta = _replace(_old_meta, path=new_path)
-                self.metadata.put(_new_meta)
-                self.metadata.delete(old_path)
+                _old_meta = self.metadata.get(old_path)
+                if _old_meta is not None:
+                    # Single entry (file or explicit directory)
+                    _new_meta = _replace(_old_meta, path=new_path)
+                    self.metadata.put(_new_meta)
+                    self.metadata.delete(old_path)
+                elif not is_directory:
+                    raise NexusFileNotFoundError(old_path)
+
+                # Rename children (for directories — explicit or implicit)
+                if is_directory:
+                    _prefix = old_path.rstrip("/") + "/"
+                    for child in self.metadata.list(_prefix, recursive=True):
+                        _child_new = new_path + child.path[len(old_path) :]
+                        _child_new_meta = _replace(child, path=_child_new)
+                        self.metadata.put(_child_new_meta)
+                        self.metadata.delete(child.path)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

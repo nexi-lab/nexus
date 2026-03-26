@@ -777,25 +777,48 @@ def create_async_files_router(
 
             # Issue #3266: Prefer search service for listing (metastore-first).
             # Same pattern as the RPC list handler in filesystem.py.
-            search = fs.service("search")
-            if search is not None:
-                result = search.list(
-                    path=path,
-                    recursive=False,
-                    details=True,
-                    context=context,
-                    limit=limit,
-                    cursor=cursor_path,
-                )
-            else:
-                result = await fs.sys_readdir(
-                    path,
-                    recursive=False,
-                    details=True,
-                    context=context,
-                    limit=limit,
-                    cursor=cursor_path,
-                )
+            # Note: search.list() returns plain paths for dynamic connectors,
+            # while sys_readdir(details=True) returns detail dicts. We use
+            # sys_readdir as the primary path and only fall back to search
+            # for connector mounts where metastore-first listing is needed.
+            result = await fs.sys_readdir(
+                path,
+                recursive=False,
+                details=True,
+                context=context,
+                limit=limit,
+                cursor=cursor_path,
+            )
+
+            # Issue #3266: If sys_readdir returned nothing for a connector
+            # mount, try the search service (metastore-first listing).
+            result_items = result.items if hasattr(result, "items") else result
+            if not result_items and path.startswith("/mnt/"):
+                search = fs.service("search")
+                if search is not None:
+                    search_result = search.list(
+                        path=path,
+                        recursive=False,
+                        context=context,
+                    )
+                    if search_result:
+                        # Convert plain paths to detail dicts
+                        prefix = path.rstrip("/") + "/"
+                        detail_list = []
+                        for entry in search_result:
+                            entry_path = entry if isinstance(entry, str) else str(entry)
+                            entry_path = entry_path.rstrip("/")
+                            name = entry_path.split("/")[-1] if "/" in entry_path else entry_path
+                            is_dir = entry.endswith("/") if isinstance(entry, str) else False
+                            detail_list.append(
+                                {
+                                    "path": entry_path,
+                                    "name": name,
+                                    "is_directory": is_dir,
+                                    "size": 0,
+                                }
+                            )
+                        result = detail_list
 
             prefix = path.rstrip("/") + "/"
             # The listed path itself (e.g. "/" → empty name) must not appear

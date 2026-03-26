@@ -36,7 +36,7 @@ class SyncPermissionWriteHook:
     name = "sync_permission"
     __slots__ = ("_hierarchy", "_rebac")
 
-    # ── HotSwappable protocol (Issue #1773) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1773) ──────────────────────────
 
     def hook_spec(self) -> HookSpec:
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -47,12 +47,6 @@ class SyncPermissionWriteHook:
             write_batch_hooks=(self,),
             rename_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(
         self,

@@ -39,12 +39,6 @@ class TaskAgentResolver:
 
         return HookSpec(resolvers=(self,))
 
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
-
     def notify_worker_assigned(self, task_id: str, worker_pid: int) -> None:
         """Called by dispatch consumer when a worker is assigned to a task."""
         self._worker_pids[task_id] = worker_pid

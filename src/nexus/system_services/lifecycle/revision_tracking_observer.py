@@ -41,18 +41,12 @@ class RevisionTrackingObserver:
 
     event_mask: int = ALL_FILE_EVENTS
 
-    # ── HotSwappable protocol (Issue #1616) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1616) ──────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(observers=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, revision_notifier: RevisionNotifierBase) -> None:
         self._notifier = revision_notifier

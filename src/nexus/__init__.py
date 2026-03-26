@@ -660,7 +660,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
     DT_PIPE/DT_STREAM are intercepted before the content resolver.  Content
     resolver is registered LAST as a generic fallback for CAS-backed content.
 
-    Both resolvers implement HotSwappable and are enlisted via the unified
+    Both resolvers declare hook_spec() and are enlisted via the unified
     coordinator.enlist() entry point (#1710).
 
     When the local backend supports CAS (content_exists/read_content), a

@@ -47,16 +47,10 @@ class AgentStatusResolver:
     def __init__(self, agent_registry: AgentRegistry) -> None:
         self._agent_registry = agent_registry
 
-    # -- HotSwappable protocol (registered via coordinator.enlist) --
+    # -- Hook spec (duck-typed) (registered via coordinator.enlist) --
 
     def hook_spec(self) -> HookSpec:
         return HookSpec(resolvers=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def _match_pid(self, path: str) -> str | None:
         """Extract PID from path if it matches and process exists."""

@@ -32,10 +32,10 @@ def _make_meta(**overrides: object) -> MagicMock:
     return meta
 
 
-# ── HotSwappable protocol ────────────────────────────────────────────
+# ── HookSpec protocol ────────────────────────────────────────────────
 
 
-class TestHotSwappable:
+class TestHookSpec:
     def test_hook_spec_declares_write_and_delete(self, hook: SnapshotWriteHook) -> None:
         spec = hook.hook_spec()
         assert hook in spec.write_hooks
@@ -43,14 +43,6 @@ class TestHotSwappable:
 
     def test_name(self, hook: SnapshotWriteHook) -> None:
         assert hook.name == "snapshot_write_tracker"
-
-    @pytest.mark.asyncio()
-    async def test_drain_is_noop(self, hook: SnapshotWriteHook) -> None:
-        await hook.drain()
-
-    @pytest.mark.asyncio()
-    async def test_activate_is_noop(self, hook: SnapshotWriteHook) -> None:
-        await hook.activate()
 
 
 # ── on_post_write ─────────────────────────────────────────────────────

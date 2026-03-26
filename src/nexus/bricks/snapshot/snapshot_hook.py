@@ -28,18 +28,12 @@ class SnapshotWriteHook:
     name = "snapshot_write_tracker"
     __slots__ = ("_svc",)
 
-    # ── HotSwappable protocol (Issue #1770) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1770) ──────────────────────────
 
     def hook_spec(self) -> HookSpec:
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(write_hooks=(self,), delete_hooks=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, snapshot_service: Any) -> None:
         self._svc = snapshot_service

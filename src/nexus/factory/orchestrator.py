@@ -625,8 +625,8 @@ async def _register_vfs_hooks(
     )
     await _enlist("event_bus_observer", _bus_observer)
 
-    # EventsService observer: self-registered via HotSwappable.hook_spec()
-    # at bootstrap() → activate_hot_swappable_services() (Issue #1611).
+    # EventsService observer: self-registered via duck-typed hook_spec()
+    # at enlist() time (Issue #1611).
 
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).

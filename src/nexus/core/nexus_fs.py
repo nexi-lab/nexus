@@ -303,12 +303,11 @@ class NexusFS(  # type: ignore[misc]
             await self.initialize()
         for cb in self._bootstrap_callbacks:
             await cb()
-        # Auto-lifecycle: activate HotSwappable hooks, start PersistentService (Issue #1580)
+        # Auto-lifecycle: start PersistentService instances (Issue #1580)
         coord = self.service_coordinator
         if coord is not None:
-            await coord.activate_hot_swappable_services()
             await coord.start_persistent_services()
-            coord.mark_bootstrapped()  # future enlist() calls auto-start Q3
+            coord.mark_bootstrapped()  # future enlist() calls auto-start
         self._bootstrapped = True
 
     def _register_runtime_closeable(self, resource: Any) -> None:
@@ -4414,7 +4413,7 @@ class NexusFS(  # type: ignore[misc]
         return {}
 
     async def aclose(self) -> None:
-        """Async shutdown: stop PersistentService + deactivate HotSwappable, then close.
+        """Async shutdown: stop PersistentService + unregister hooks, then close.
 
         Preferred over close() when an event loop is available.
         Calls coordinator lifecycle methods first (async), then
@@ -4423,7 +4422,7 @@ class NexusFS(  # type: ignore[misc]
         coord = self.service_coordinator
         if coord is not None:
             await coord.stop_persistent_services()
-            await coord.deactivate_hot_swappable_services()
+            coord._unregister_all_hooks()
         self.close()
 
     def close(self) -> None:

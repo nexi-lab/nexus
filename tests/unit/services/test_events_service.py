@@ -76,7 +76,7 @@ class TestEventsServiceInit:
         assert svc._event_bus is mock_event_bus
         assert svc._lock_manager is mock_lock_manager
         assert svc._zone_id == "z1"
-        assert svc._observe_registered is False
+        assert svc._observe_registered is True  # hooks registered at enlist() time
 
     def test_init_minimal(self):
         """Service can be created with no dependencies."""
@@ -84,23 +84,21 @@ class TestEventsServiceInit:
         assert svc._event_bus is None
         assert svc._lock_manager is None
         assert svc._zone_id is None
-        assert svc._observe_registered is False
+        assert svc._observe_registered is True  # hooks registered at enlist() time
 
 
 # =============================================================================
-# HotSwappable protocol (Q2 — Issue #1611)
+# HookSpec (Issue #1611)
 # =============================================================================
 
 
-class TestHotSwappableProtocol:
-    """EventsService satisfies HotSwappable protocol."""
+class TestHookSpec:
+    """EventsService exposes hook_spec."""
 
     def test_isinstance_hot_swappable(self):
-        """isinstance check passes — coordinator auto-detects Q2."""
-        from nexus.contracts.protocols.service_lifecycle import HotSwappable
-
+        """hasattr check passes — coordinator auto-detects hook_spec."""
         svc = EventsService()
-        assert isinstance(svc, HotSwappable)
+        assert hasattr(svc, "hook_spec")
 
     def test_hook_spec_returns_observer(self):
         """hook_spec() declares self as the sole observer."""
@@ -108,21 +106,6 @@ class TestHotSwappableProtocol:
         spec = svc.hook_spec()
         assert spec.observers == (svc,)
         assert spec.total_hooks == 1
-
-    @pytest.mark.asyncio
-    async def test_drain_disables_observe(self):
-        """drain() sets _observe_registered = False."""
-        svc = EventsService()
-        svc._observe_registered = True
-        await svc.drain()
-        assert svc._observe_registered is False
-
-    @pytest.mark.asyncio
-    async def test_activate_enables_observe(self):
-        """activate() sets _observe_registered = True."""
-        svc = EventsService()
-        await svc.activate()
-        assert svc._observe_registered is True
 
 
 # =============================================================================
@@ -133,10 +116,10 @@ class TestHotSwappableProtocol:
 class TestInfrastructureDetection:
     """Tests for layer detection methods."""
 
-    def test_has_internal_observe_false_by_default(self):
-        """Not registered as observer by default."""
+    def test_has_internal_observe_true_by_default(self):
+        """Observer registered at enlist() time — defaults to True."""
         svc = EventsService()
-        assert svc._has_internal_observe() is False
+        assert svc._has_internal_observe() is True
 
     def test_has_internal_observe_true_after_registration(self):
         """True after factory sets _observe_registered."""
@@ -378,6 +361,7 @@ class TestWaitForChangesNoInfra:
     def test_raises_not_implemented(self):
         """Raises NotImplementedError without any event source."""
         svc = EventsService()
+        svc._observe_registered = False  # simulate pre-enlist state
         with pytest.raises(NotImplementedError, match="No event source"):
             asyncio.run(svc.wait_for_changes("/data"))
 

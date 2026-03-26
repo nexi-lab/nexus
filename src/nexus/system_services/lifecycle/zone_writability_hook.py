@@ -17,7 +17,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.contracts.protocols.service_lifecycle import HotSwappable
 
 if TYPE_CHECKING:
     from nexus.contracts.vfs_hooks import (
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ZoneWritabilityHook(HotSwappable):
+class ZoneWritabilityHook:
     """PRE hook: block writes to zones being deprovisioned.
 
     Registered on write, delete, rename, mkdir, rmdir — all mutating ops.
@@ -46,7 +45,7 @@ class ZoneWritabilityHook(HotSwappable):
     def __init__(self, zone_lifecycle: Any) -> None:
         self._zone_lifecycle = zone_lifecycle
 
-    # --- HotSwappable protocol ---
+    # --- Hook spec (duck-typed) ---
 
     def hook_spec(self) -> HookSpec:
         return HookSpec(
@@ -56,12 +55,6 @@ class ZoneWritabilityHook(HotSwappable):
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     # --- PRE hooks (raise to abort) ---
 

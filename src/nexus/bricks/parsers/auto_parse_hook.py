@@ -30,18 +30,12 @@ class AutoParseWriteHook:
       - metadata:    MetastoreABC (optional, for cache invalidation)
     """
 
-    # ── HotSwappable protocol (Issue #1612) ────────────────────────────
+    # ── Hook spec (duck-typed, Issue #1612) ─────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(write_hooks=(self,))
-
-    async def drain(self) -> None:
-        self.shutdown()
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(
         self,

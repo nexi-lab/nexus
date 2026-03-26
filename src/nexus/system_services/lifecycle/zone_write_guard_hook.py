@@ -30,11 +30,11 @@ logger = logging.getLogger(__name__)
 class ZoneWriteGuardHook:
     """Pre-intercept hook that rejects writes to terminating zones.
 
-    Implements HotSwappable so it can be enlisted via coordinator.
+    Declares hook_spec() for VFS hooks so it can be enlisted via coordinator.
     Registered for all write-like operations.
     """
 
-    # ── HotSwappable protocol ───────────────────────────────────────────
+    # ── Hook spec (duck-typed) ─────────────────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -47,12 +47,6 @@ class ZoneWriteGuardHook:
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     # ── Constructor ─────────────────────────────────────────────────────
 

@@ -736,8 +736,12 @@ async def write_to_connector(
 
             from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
+            # Load existing metadata so permission hooks can distinguish
+            # overwrite (check WRITE on file) vs create (check WRITE on parent).
+            _old_meta = nx.metadata.get(mount_path)
+
             nx._dispatch.intercept_pre_write(
-                _WHC(path=mount_path, content=data, context=write_context, old_metadata=None)
+                _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
             )
 
             result = await asyncio.to_thread(backend.write_content, data, write_context)

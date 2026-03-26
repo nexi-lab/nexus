@@ -20,6 +20,18 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export NEXUS_REPO_ROOT="$SCRIPT_DIR"
+export PYTHONPATH="$NEXUS_REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+nexus() {
+    uv run python -m nexus.cli.main "$@"
+}
+
+nexus_python() {
+    uv run python "$@"
+}
+
 # Colors
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
@@ -28,6 +40,7 @@ RED='\033[0;31m'
 CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
+FAILURES=0
 
 print_section() {
     echo ""
@@ -46,13 +59,20 @@ print_subsection() {
 print_success() { echo -e "${GREEN}✓${NC} $1"; }
 print_info() { echo -e "${BLUE}ℹ${NC} $1"; }
 print_warning() { echo -e "${YELLOW}⚠${NC} $1"; }
-print_error() { echo -e "${RED}✗${NC} $1"; }
+print_error() {
+    FAILURES=$((FAILURES + 1))
+    echo -e "${RED}✗${NC} $1"
+}
 print_test() { echo -e "${MAGENTA}TEST:${NC} $1"; }
 
 # Check prerequisites
 if [ -z "$NEXUS_URL" ] || [ -z "$NEXUS_API_KEY" ]; then
     print_error "NEXUS_URL and NEXUS_API_KEY not set. Run: source .nexus-admin-env"
     exit 1
+fi
+
+if [ -n "$DATABASE_URL" ] && [ -z "$NEXUS_DATABASE_URL" ]; then
+    export NEXUS_DATABASE_URL="$DATABASE_URL"
 fi
 
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -70,7 +90,7 @@ export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Pyt
 # scoping — meaning files created by root-zone admin live at /workspace/... while
 # non-admin users see /zone/default/workspace/... (zone-scoped). Using a
 # default-zone admin key ensures consistent path scoping across all operations.
-ADMIN_KEY=$(python3 scripts/create-api-key.py admin "Demo Admin (default zone)" --days 1 --zone-id default --admin 2>/dev/null | grep "API Key:" | awk '{print $3}')
+ADMIN_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" admin "Demo Admin (default zone)" --days 1 --zone-id default --admin 2>/dev/null | grep "API Key:" | awk '{print $3}')
 if [ -z "$ADMIN_KEY" ]; then
     echo "WARNING: Failed to create default-zone admin key, falling back to root admin"
     ADMIN_KEY="$ROOT_ADMIN_KEY"
@@ -113,12 +133,12 @@ print_info "Cleaning up stale test data..."
 nexus rmdir -r -f $DEMO_BASE 2>/dev/null || true
 nexus rmdir -r -f /shared-readonly-test 2>/dev/null || true
 
-python3 << 'CLEANUP'
+nexus_python << 'CLEANUP'
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -228,9 +248,14 @@ echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
 # Create test users
-ALICE_KEY=$(python3 scripts/create-api-key.py alice "Alice Owner" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-BOB_KEY=$(python3 scripts/create-api-key.py bob "Bob Editor" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-CHARLIE_KEY=$(python3 scripts/create-api-key.py charlie "Charlie Viewer" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+ALICE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" alice "Alice Owner" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+BOB_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" bob "Bob Editor" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+CHARLIE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" charlie "Charlie Viewer" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+
+if [ -z "$ALICE_KEY" ] || [ -z "$BOB_KEY" ] || [ -z "$CHARLIE_KEY" ]; then
+    print_error "Failed to create one or more demo user API keys"
+    exit 1
+fi
 
 # BUGFIX: Ensure test resources exist before assigning permissions
 echo "test content" | nexus write $DEMO_BASE/test-file.txt - 2>/dev/null
@@ -372,11 +397,11 @@ print_success "Created: $DEMO_BASE/project1/docs/guides/advanced"
 nexus rebac create user bob direct_editor file $DEMO_BASE/project1
 
 # Set up parent relations
-python3 << 'PYTHON_PARENTS'
+nexus_python << 'PYTHON_PARENTS'
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 rebac.rebac_create_sync(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
@@ -472,11 +497,11 @@ fi
 
 print_subsection "5.2 List all tuples for a user"
 print_info "Listing all permissions for bob..."
-python3 << 'PYTHON_LIST'
+nexus_python << 'PYTHON_LIST'
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
@@ -501,11 +526,11 @@ fi
 
 print_subsection "6.2 Attempt to create cycle in parent relations"
 print_test "Creating cycle: A→B→A should fail"
-python3 << 'PYTHON_CYCLE'
+nexus_python << 'PYTHON_CYCLE'
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 try:
@@ -601,12 +626,12 @@ print_info "Note: Shared dir is at top-level (outside /workspace) to isolate fro
 # and re-adding his group membership. This triggers tiger_persist_revoke()
 # which clears bob's materialized write-everywhere bitmap. Without this,
 # the enforcer's parent walk finds bob has cached write on "/" via parent_editor.
-python3 << 'CACHE_INVALIDATE'
+nexus_python << 'CACHE_INVALIDATE'
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync()
 
@@ -727,11 +752,11 @@ fi
 
 print_subsection "8.2 Test cache invalidation on permission DELETE"
 # Get tuple ID via Python SDK
-TUPLE_ID=$(python3 << PYTHON_TUPLE_ID
+TUPLE_ID=$(nexus_python << PYTHON_TUPLE_ID
 import sys, os
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
@@ -754,7 +779,7 @@ fi
 print_section "9. Multi-Tenant Isolation"
 
 print_subsection "9.1 Create user in different tenant"
-TENANT_ACME_KEY=$(python3 scripts/create-api-key.py acme_user "ACME Corp User" --days 1 --zone-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
+TENANT_ACME_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" acme_user "ACME Corp User" --days 1 --zone-id acme 2>/dev/null | grep "API Key:" | awk '{print $3}')
 print_success "Created acme_user (tenant: acme)"
 print_info "Alice, Bob, Charlie are in tenant: default"
 
@@ -780,12 +805,12 @@ print_info "Benchmarking rebac_check latency (single connection, excludes connec
 print_info "Dragonfly URL: ${NEXUS_DRAGONFLY_URL:-not set (fallback to PG)}"
 print_info "TigerCache: enabled by default (NEXUS_ENABLE_TIGER_CACHE)"
 
-python3 << 'PYTHON_BENCH'
+nexus_python << 'PYTHON_BENCH'
 import sys, os, time, statistics
-sys.path.insert(0, 'src')
+sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.get_event_loop().run_until_complete(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -866,4 +891,9 @@ echo "║  ✅ Multi-Tenant Isolation                                        ║
 echo "║  ✅ Permission Check Latency (sub-ms server-side)                 ║"
 echo "╚═══════════════════════════════════════════════════════════════════╝"
 echo ""
-print_info "All tests passed! ReBAC system is production-ready."
+if [ "$FAILURES" -eq 0 ]; then
+    print_info "All tests passed! ReBAC system is production-ready."
+else
+    print_error "$FAILURES checks failed in the ReBAC demo."
+    exit 1
+fi

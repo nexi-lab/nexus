@@ -119,6 +119,25 @@ class _FakePersistentHookService:
         self.stopped = True
 
 
+class _DynamicProxyLikeService:
+    """Proxy-shaped object that synthesizes arbitrary public attributes."""
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def _synthetic(*_args, **_kwargs):
+            return None
+
+        return _synthetic
+
+    def glob(self, pattern: str) -> list[str]:
+        return [pattern]
+
+    def grep(self, pattern: str) -> list[str]:
+        return [pattern]
+
+
 # ---------------------------------------------------------------------------
 # insmod — _register_service
 # ---------------------------------------------------------------------------
@@ -143,6 +162,18 @@ class TestRegisterService:
         coordinator._register_service("search", svc)
         coordinator._set_hook_spec("search", spec)
         assert coordinator._get_hook_spec("search") is spec
+
+    @pytest.mark.asyncio()
+    async def test_enlist_ignores_synthetic_hook_spec(
+        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
+    ) -> None:
+        svc = _DynamicProxyLikeService()
+
+        await coordinator.enlist("search", svc, exports=("glob", "grep"))
+
+        assert coordinator._get_hook_spec("search") is None
+        assert dispatch.read_hook_count == 0
+        assert dispatch.observer_count == 0
 
 
 # ---------------------------------------------------------------------------

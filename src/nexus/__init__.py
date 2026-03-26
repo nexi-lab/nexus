@@ -319,9 +319,13 @@ async def connect(
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards
         # method calls to the server via gRPC.
-        from nexus.factory._remote import _boot_remote_services
+        from nexus.factory._remote import (
+            _boot_remote_services,
+            install_remote_kernel_rpc_overrides,
+        )
 
         await _boot_remote_services(nfs, call_rpc=transport.call_rpc)
+        install_remote_kernel_rpc_overrides(nfs, transport)
         nfs._register_runtime_closeable(transport)
 
         return nfs

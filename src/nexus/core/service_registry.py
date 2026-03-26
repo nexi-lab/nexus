@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -43,6 +44,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_DRAIN_TIMEOUT: float = 10.0
+
+
+def _declares_hook_spec(instance: Any) -> bool:
+    """Return True only when ``hook_spec`` is a real attribute on the object.
+
+    Dynamic proxies can synthesize arbitrary public attributes via
+    ``__getattr__``. Lifecycle detection must ignore those synthetic attrs,
+    otherwise bootstrap can try to call a non-existent ``hook_spec`` method.
+    """
+    try:
+        attr = inspect.getattr_static(instance, "hook_spec")
+    except AttributeError:
+        return False
+    return callable(attr)
 
 
 # ---------------------------------------------------------------------------
@@ -417,13 +432,13 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
         # Auto-capture hooks via duck-typed hook_spec()
-        if hasattr(instance, "hook_spec"):
+        if _declares_hook_spec(instance):
             spec = self._ensure_hook_spec(name, instance)
             if spec is not None and not spec.is_empty:
                 self._register_hooks(name)
             logger.info("[COORDINATOR] enlist %r — hooks registered", name)
 
-        if not isinstance(instance, PersistentService) and not hasattr(instance, "hook_spec"):
+        if not isinstance(instance, PersistentService) and not _declares_hook_spec(instance):
             logger.info("[COORDINATOR] enlist %r — registered (on-demand)", name)
 
     # -- mount — register VFS hooks ----------------------------------------
@@ -472,7 +487,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Resolve old hook spec
         old_hook_spec = self._hook_specs.get(name)
-        if old_hook_spec is None and hasattr(old_instance, "hook_spec"):
+        if old_hook_spec is None and _declares_hook_spec(old_instance):
             old_hook_spec = old_instance.hook_spec()
             if old_hook_spec is not None and not old_hook_spec.is_empty:
                 self._hook_specs[name] = old_hook_spec
@@ -490,7 +505,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         # Step 4: Register new hooks — explicit param > duck-type > clear
         new_hook_spec = hook_spec
-        if new_hook_spec is None and hasattr(new_instance, "hook_spec"):
+        if new_hook_spec is None and _declares_hook_spec(new_instance):
             new_hook_spec = new_instance.hook_spec()
 
         if new_hook_spec is not None and not new_hook_spec.is_empty:
@@ -563,7 +578,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
     def _ensure_hook_spec(self, name: str, instance: Any) -> HookSpec | None:
         """Capture HookSpec via duck-typed hook_spec() if not already stored."""
         spec = self._hook_specs.get(name)
-        if spec is None and hasattr(instance, "hook_spec"):
+        if spec is None and _declares_hook_spec(instance):
             spec = instance.hook_spec()
             if spec is not None:
                 self._hook_specs[name] = spec

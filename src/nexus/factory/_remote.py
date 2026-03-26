@@ -21,12 +21,36 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.remote.rpc_transport import RPCTransport
 
 logger = logging.getLogger(__name__)
+
+
+def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport") -> None:
+    """Route kernel ops that require server-side hooks through direct RPC.
+
+    Most REMOTE filesystem operations already hit the server kernel through
+    RemoteBackend / RemoteMetastore. Rename is the exception: the client-side
+    kernel emulates it as metadata put/delete, which bypasses server-side
+    post-rename hooks like ReBAC path updates. Override it to call the
+    authoritative server ``sys_rename`` RPC directly.
+    """
+    import types
+
+    async def _remote_sys_rename(
+        _self: Any,
+        old_path: str,
+        new_path: str,
+        **_: Any,
+    ) -> dict[str, Any]:
+        transport.call_rpc("sys_rename", {"old_path": old_path, "new_path": new_path})
+        return {}
+
+    cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)
 
 
 async def _boot_remote_services(nfs: "NexusFS", call_rpc: Callable[..., Any]) -> None:

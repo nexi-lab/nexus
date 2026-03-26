@@ -58,9 +58,11 @@ class PathUpdater:
             ``should_bump_version`` to decide whether to increment
             ``_tuple_version``.
         """
-        # Unscope zone-prefixed paths — tuples store unscoped paths
-        # (e.g., /workspace/...) while rename operations may pass
-        # zone-scoped paths (e.g., /zone/default/workspace/...).
+        requested_zone_id = self._extract_zone_id(old_path) or self._extract_zone_id(new_path)
+
+        # Normalize to the user-facing virtual path. Some tuples are stored
+        # unscoped and others preserve /zone/{id}/..., so the rewrite logic
+        # below updates whichever representation each tuple currently uses.
         try:
             from nexus.lib.path_utils import unscope_internal_path
 
@@ -88,6 +90,7 @@ class PathUpdater:
                 conn,
                 old_path,
                 new_path,
+                requested_zone_id,
                 object_type,
                 is_directory,
             )
@@ -99,6 +102,7 @@ class PathUpdater:
                 conn,
                 old_path,
                 new_path,
+                requested_zone_id,
                 object_type,
                 is_directory,
             )
@@ -108,6 +112,7 @@ class PathUpdater:
             self._cleanup_tiger_resource_map(
                 cursor,
                 old_path,
+                requested_zone_id,
                 object_type,
                 is_directory,
             )
@@ -127,6 +132,7 @@ class PathUpdater:
         conn: Any,
         old_path: str,
         new_path: str,
+        requested_zone_id: str | None,
         object_type: str,
         is_directory: bool,
     ) -> int:
@@ -134,35 +140,24 @@ class PathUpdater:
             logger.debug("STEP 1: Looking for tuples with object_id matching %s", old_path)
 
         now_iso = datetime.now(UTC).isoformat()
+        candidates = self._path_candidates(old_path, requested_zone_id)
+        where_sql, params = self._build_path_match_clause("object_id", candidates, is_directory)
+        zone_sql, zone_params = self._build_zone_clause(requested_zone_id)
 
-        if is_directory:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, zone_id
-                    FROM rebac_tuples
-                    WHERE object_type = ?
-                      AND (object_id = ? OR object_id LIKE ?)
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (object_type, old_path, old_path + "/%", now_iso),
-            )
-        else:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, zone_id
-                    FROM rebac_tuples
-                    WHERE object_type = ?
-                      AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (object_type, old_path, now_iso),
-            )
+        cursor.execute(
+            self._fix_sql(
+                f"""
+                SELECT tuple_id, subject_type, subject_id, subject_relation,
+                       relation, object_type, object_id, zone_id
+                FROM rebac_tuples
+                WHERE object_type = ?
+                  AND ({where_sql})
+                  {zone_sql}
+                  AND (expires_at IS NULL OR expires_at >= ?)
+                """
+            ),
+            (object_type, *params, *zone_params, now_iso),
+        )
 
         rows = cursor.fetchall()
         if logger.isEnabledFor(logging.DEBUG):
@@ -171,57 +166,35 @@ class PathUpdater:
         if not rows:
             return 0
 
-        old_prefix_len = len(old_path)
         now_iso = datetime.now(UTC).isoformat()
-
-        # Batch UPDATE
-        if is_directory:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    UPDATE rebac_tuples
-                    SET object_id = CASE
-                        WHEN object_id = ? THEN ?
-                        ELSE ? || SUBSTR(object_id, ?)
-                    END
-                    WHERE object_type = ?
-                      AND (object_id = ? OR object_id LIKE ?)
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    old_path,
-                    new_path,
-                    new_path,
-                    old_prefix_len + 1,
-                    object_type,
-                    old_path,
-                    old_path + "/%",
-                    now_iso,
-                ),
-            )
-        else:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    UPDATE rebac_tuples
-                    SET object_id = ?
-                    WHERE object_type = ?
-                      AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (new_path, object_type, old_path, now_iso),
-            )
 
         # Batch changelog INSERT
         changelog_entries = []
         for row in rows:
             old_object_id = row["object_id"]
-            new_object_id = (
-                new_path + old_object_id[old_prefix_len:]
-                if is_directory and old_object_id.startswith(old_path + "/")
-                else new_path
+            new_object_id = self._rewrite_stored_path(
+                old_object_id,
+                old_path,
+                new_path,
+                row["zone_id"],
+                is_directory,
+            )
+            if new_object_id is None:
+                logger.warning(
+                    "Skipping object_id tuple %s during rename; no rewrite match for %s",
+                    row["tuple_id"],
+                    old_object_id,
+                )
+                continue
+            cursor.execute(
+                self._fix_sql(
+                    """
+                    UPDATE rebac_tuples
+                    SET object_id = ?
+                    WHERE tuple_id = ?
+                    """
+                ),
+                (new_object_id, row["tuple_id"]),
             )
             changelog_entries.append(
                 (
@@ -237,27 +210,32 @@ class PathUpdater:
                 )
             )
 
-        cursor.executemany(
-            self._fix_sql(
-                """
-                INSERT INTO rebac_changelog (
-                    change_type, tuple_id, subject_type, subject_id,
-                    relation, object_type, object_id, zone_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            ),
-            changelog_entries,
-        )
+        if changelog_entries:
+            cursor.executemany(
+                self._fix_sql(
+                    """
+                    INSERT INTO rebac_changelog (
+                        change_type, tuple_id, subject_type, subject_id,
+                        relation, object_type, object_id, zone_id, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                changelog_entries,
+            )
 
         # Cache invalidation
         for row in rows:
             old_object_id = row["object_id"]
-            new_object_id = (
-                new_path + old_object_id[old_prefix_len:]
-                if is_directory and old_object_id.startswith(old_path + "/")
-                else new_path
+            new_object_id = self._rewrite_stored_path(
+                old_object_id,
+                old_path,
+                new_path,
+                row["zone_id"],
+                is_directory,
             )
+            if new_object_id is None:
+                continue
 
             subject = Entity(row["subject_type"], row["subject_id"])
             old_obj = Entity(object_type, old_object_id)
@@ -281,7 +259,7 @@ class PathUpdater:
 
             self._invalidate_cache(subject, relation, new_obj, zone_id, subject_relation, conn=conn)
 
-        return len(rows)
+        return len(changelog_entries)
 
     # ------------------------------------------------------------------
     # STEP 2 — subject_id updates
@@ -293,6 +271,7 @@ class PathUpdater:
         conn: Any,
         old_path: str,
         new_path: str,
+        requested_zone_id: str | None,
         object_type: str,
         is_directory: bool,
     ) -> int:
@@ -300,35 +279,24 @@ class PathUpdater:
             logger.debug("STEP 2: Looking for tuples with subject_id matching %s", old_path)
 
         now_iso = datetime.now(UTC).isoformat()
+        candidates = self._path_candidates(old_path, requested_zone_id)
+        where_sql, params = self._build_path_match_clause("subject_id", candidates, is_directory)
+        zone_sql, zone_params = self._build_zone_clause(requested_zone_id)
 
-        if is_directory:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, zone_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ?
-                      AND (subject_id = ? OR subject_id LIKE ?)
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (object_type, old_path, old_path + "/%", now_iso),
-            )
-        else:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    SELECT tuple_id, subject_type, subject_id, subject_relation,
-                           relation, object_type, object_id, zone_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ?
-                      AND subject_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (object_type, old_path, now_iso),
-            )
+        cursor.execute(
+            self._fix_sql(
+                f"""
+                SELECT tuple_id, subject_type, subject_id, subject_relation,
+                       relation, object_type, object_id, zone_id
+                FROM rebac_tuples
+                WHERE subject_type = ?
+                  AND ({where_sql})
+                  {zone_sql}
+                  AND (expires_at IS NULL OR expires_at >= ?)
+                """
+            ),
+            (object_type, *params, *zone_params, now_iso),
+        )
 
         subject_rows = cursor.fetchall()
         if logger.isEnabledFor(logging.DEBUG):
@@ -340,57 +308,35 @@ class PathUpdater:
         if not subject_rows:
             return 0
 
-        old_prefix_len = len(old_path)
         now_iso = datetime.now(UTC).isoformat()
-
-        # Batch UPDATE
-        if is_directory:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    UPDATE rebac_tuples
-                    SET subject_id = CASE
-                        WHEN subject_id = ? THEN ?
-                        ELSE ? || SUBSTR(subject_id, ?)
-                    END
-                    WHERE subject_type = ?
-                      AND (subject_id = ? OR subject_id LIKE ?)
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    old_path,
-                    new_path,
-                    new_path,
-                    old_prefix_len + 1,
-                    object_type,
-                    old_path,
-                    old_path + "/%",
-                    now_iso,
-                ),
-            )
-        else:
-            cursor.execute(
-                self._fix_sql(
-                    """
-                    UPDATE rebac_tuples
-                    SET subject_id = ?
-                    WHERE subject_type = ?
-                      AND subject_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (new_path, object_type, old_path, now_iso),
-            )
 
         # Batch changelog INSERT
         changelog_entries = []
         for row in subject_rows:
             old_subject_id = row["subject_id"]
-            new_subject_id = (
-                new_path + old_subject_id[old_prefix_len:]
-                if is_directory and old_subject_id.startswith(old_path + "/")
-                else new_path
+            new_subject_id = self._rewrite_stored_path(
+                old_subject_id,
+                old_path,
+                new_path,
+                row["zone_id"],
+                is_directory,
+            )
+            if new_subject_id is None:
+                logger.warning(
+                    "Skipping subject_id tuple %s during rename; no rewrite match for %s",
+                    row["tuple_id"],
+                    old_subject_id,
+                )
+                continue
+            cursor.execute(
+                self._fix_sql(
+                    """
+                    UPDATE rebac_tuples
+                    SET subject_id = ?
+                    WHERE tuple_id = ?
+                    """
+                ),
+                (new_subject_id, row["tuple_id"]),
             )
             changelog_entries.append(
                 (
@@ -406,27 +352,32 @@ class PathUpdater:
                 )
             )
 
-        cursor.executemany(
-            self._fix_sql(
-                """
-                INSERT INTO rebac_changelog (
-                    change_type, tuple_id, subject_type, subject_id,
-                    relation, object_type, object_id, zone_id, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-            ),
-            changelog_entries,
-        )
+        if changelog_entries:
+            cursor.executemany(
+                self._fix_sql(
+                    """
+                    INSERT INTO rebac_changelog (
+                        change_type, tuple_id, subject_type, subject_id,
+                        relation, object_type, object_id, zone_id, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                changelog_entries,
+            )
 
         # Cache invalidation
         for row in subject_rows:
             old_subject_id = row["subject_id"]
-            new_subject_id = (
-                new_path + old_subject_id[old_prefix_len:]
-                if is_directory and old_subject_id.startswith(old_path + "/")
-                else new_path
+            new_subject_id = self._rewrite_stored_path(
+                old_subject_id,
+                old_path,
+                new_path,
+                row["zone_id"],
+                is_directory,
             )
+            if new_subject_id is None:
+                continue
             old_subj = Entity(object_type, old_subject_id)
             new_subj = Entity(object_type, new_subject_id)
             obj = Entity(row["object_type"], row["object_id"])
@@ -437,7 +388,7 @@ class PathUpdater:
             self._invalidate_cache(old_subj, relation, obj, zone_id, subject_relation, conn=conn)
             self._invalidate_cache(new_subj, relation, obj, zone_id, subject_relation, conn=conn)
 
-        return len(subject_rows)
+        return len(changelog_entries)
 
     # ------------------------------------------------------------------
     # Tiger resource map cleanup
@@ -447,6 +398,7 @@ class PathUpdater:
         self,
         cursor: Any,
         old_path: str,
+        requested_zone_id: str | None,
         object_type: str,
         is_directory: bool,
     ) -> None:
@@ -454,26 +406,34 @@ class PathUpdater:
             return
 
         try:
+            candidates = self._path_candidates(old_path, requested_zone_id)
+            where_sql, params = self._build_path_match_clause(
+                "resource_id", candidates, is_directory
+            )
+            zone_sql, zone_params = self._build_zone_clause(requested_zone_id)
             if is_directory:
                 cursor.execute(
                     self._fix_sql(
-                        """
+                        f"""
                         DELETE FROM tiger_resource_map
                         WHERE resource_type = ?
-                          AND (resource_id = ? OR resource_id LIKE ?)
+                          AND ({where_sql})
+                          {zone_sql}
                         """
                     ),
-                    (object_type, old_path, old_path + "/%"),
+                    (object_type, *params, *zone_params),
                 )
             else:
                 cursor.execute(
                     self._fix_sql(
-                        """
+                        f"""
                         DELETE FROM tiger_resource_map
-                        WHERE resource_type = ? AND resource_id = ?
+                        WHERE resource_type = ?
+                          AND ({where_sql})
+                          {zone_sql}
                         """
                     ),
-                    (object_type, old_path),
+                    (object_type, *params, *zone_params),
                 )
             deleted = cursor.rowcount
             if deleted and deleted > 0:
@@ -488,15 +448,88 @@ class PathUpdater:
                 keys_to_remove = []
                 for key in resource_map._uuid_to_int:
                     res_type, res_id = key
-                    if res_type == object_type:
-                        if is_directory:
-                            if res_id == old_path or res_id.startswith(old_path + "/"):
-                                keys_to_remove.append(key)
-                        elif res_id == old_path:
-                            keys_to_remove.append(key)
+                    if res_type == object_type and self._matches_any_candidate(
+                        res_id, candidates, is_directory
+                    ):
+                        keys_to_remove.append(key)
                 for key in keys_to_remove:
                     int_id = resource_map._uuid_to_int.pop(key, None)
                     if int_id is not None and hasattr(resource_map, "_int_to_uuid"):
                         resource_map._int_to_uuid.pop(int_id, None)
         except (RuntimeError, ValueError, KeyError, OSError) as e:
             logger.warning("[UPDATE-OBJECT-PATH] Failed to update tiger_resource_map: %s", e)
+
+    def _extract_zone_id(self, path: str) -> str | None:
+        if not path.startswith("/zone/"):
+            return None
+        parts = path.split("/", 3)
+        if len(parts) < 3 or not parts[2]:
+            return None
+        return parts[2]
+
+    def _scope_path_for_zone(self, path: str, zone_id: str | None) -> str | None:
+        if not zone_id or zone_id == ROOT_ZONE_ID:
+            return None
+        return f"/zone/{zone_id}{path}"
+
+    def _path_candidates(self, path: str, zone_id: str | None) -> list[str]:
+        candidates = [path]
+        scoped = self._scope_path_for_zone(path, zone_id)
+        if scoped and scoped not in candidates:
+            candidates.append(scoped)
+        return candidates
+
+    def _matches_any_candidate(
+        self,
+        stored_path: str,
+        candidates: list[str],
+        is_directory: bool,
+    ) -> bool:
+        for candidate in candidates:
+            if stored_path == candidate:
+                return True
+            if is_directory and stored_path.startswith(candidate + "/"):
+                return True
+        return False
+
+    def _rewrite_stored_path(
+        self,
+        stored_path: str,
+        old_path: str,
+        new_path: str,
+        zone_id: str | None,
+        is_directory: bool,
+    ) -> str | None:
+        old_candidates = self._path_candidates(old_path, zone_id)
+        new_candidates = self._path_candidates(new_path, zone_id)
+
+        for old_candidate, new_candidate in zip(old_candidates, new_candidates, strict=False):
+            if stored_path == old_candidate:
+                return new_candidate
+            if is_directory and stored_path.startswith(old_candidate + "/"):
+                return new_candidate + stored_path[len(old_candidate) :]
+        return None
+
+    def _build_path_match_clause(
+        self,
+        column: str,
+        candidates: list[str],
+        is_directory: bool,
+    ) -> tuple[str, list[str]]:
+        clauses: list[str] = []
+        params: list[str] = []
+        for candidate in candidates:
+            if is_directory:
+                clauses.append(f"({column} = ? OR {column} LIKE ?)")
+                params.extend([candidate, candidate + "/%"])
+            else:
+                clauses.append(f"{column} = ?")
+                params.append(candidate)
+        return " OR ".join(clauses), params
+
+    def _build_zone_clause(self, zone_id: str | None) -> tuple[str, list[str]]:
+        if zone_id is None:
+            return "", []
+        if zone_id == ROOT_ZONE_ID:
+            return " AND (zone_id = ? OR zone_id IS NULL)", [ROOT_ZONE_ID]
+        return " AND zone_id = ?", [zone_id]

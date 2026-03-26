@@ -212,7 +212,12 @@ async def _seed_files(
     all_files = list(DEMO_FILES) + list(HERB_CORPUS)
     for path, content, _description in all_files:
         if path in seeded:
-            continue
+            try:
+                if await nx.sys_access(path):
+                    continue
+            except Exception:
+                # Stale manifest entry; fall through and recreate the file.
+                pass
         try:
             # Ensure parent directory exists
             parent = "/".join(path.split("/")[:-1])
@@ -230,11 +235,14 @@ async def _seed_files(
 
 async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     """Create version history for plan.md. Returns count of versions created."""
-    if manifest.get("versions_seeded"):
-        return 0
-
     created = 0
     plan_path = "/workspace/demo/plan.md"
+    if manifest.get("versions_seeded"):
+        try:
+            if await nx.sys_access(plan_path):
+                return 0
+        except Exception:
+            pass
     for version_content in PLAN_VERSIONS:
         try:
             await nx.write(plan_path, version_content.encode())
@@ -1527,8 +1535,11 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(
             f"  Identities:   {len(DEMO_USERS)} users, {len(DEMO_AGENTS)} agents (pre-existing or skipped)"
         )
+    existing_perms = int(manifest.get("permissions_count", 0) or 0)
     if perms_created > 0:
         console.print(f"  Permissions:  {perms_created} tuples")
+    elif manifest.get("permissions_seeded") and existing_perms > 0:
+        console.print(f"  Permissions:  {existing_perms} tuples (already present)")
     else:
         console.print("  Permissions:  skipped (not available)")
     if any(coord_counts.get(k, 0) > 0 for k in ("provisioned", "delegated", "messages")):

@@ -145,15 +145,6 @@ class Backend(ObjectStoreABC):
         """
         return False
 
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        """Whether this backend supports Rust-accelerated parallel mmap reads.
-
-        TODO: Internalize into batch_read_content() override instead of
-        exposing implementation detail to kernel.
-        """
-        return False
-
     # === Service-level properties (not on ObjectStoreABC) ===
 
     @property

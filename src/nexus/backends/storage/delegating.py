@@ -97,10 +97,6 @@ class DelegatingBackend(Backend):
     def has_data_dir(self) -> bool:
         return self._inner.has_data_dir
 
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        return self._inner.supports_parallel_mmap_read
-
     # === Capability Discovery (Issue #2069) ===
 
     @property

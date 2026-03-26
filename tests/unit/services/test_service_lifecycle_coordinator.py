@@ -506,7 +506,7 @@ class TestProtocolConformance:
 
 
 # ---------------------------------------------------------------------------
-# Auto-lifecycle — four-quadrant "one-click" management (Issue #1580)
+# Auto-lifecycle — PersistentService management (Issue #1580)
 # ---------------------------------------------------------------------------
 
 

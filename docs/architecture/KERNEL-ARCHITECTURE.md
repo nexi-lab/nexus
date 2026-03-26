@@ -474,7 +474,7 @@ See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matchin
 | Modes | Counting (N holders), mutex (max_holders=1) |
 | Latency | ~200ns (Rust PyO3) / ~500ns-1us (Python fallback) |
 | Scope | In-memory, process-scoped, TTL-based lazy expiry |
-| Consumers | Advisory lock layer (`SemaphoreAdvisoryLockManager`), CAS metadata RMW |
+| Consumers | Advisory lock layer (`LocalLockManager`), CAS metadata RMW |
 
 Advisory lock layer uses two semaphores per path for RW gate pattern
 (shared/exclusive). See `lock-architecture.md` §3.

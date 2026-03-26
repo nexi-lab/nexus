@@ -182,7 +182,6 @@ class TestBootSystemServices:
             "event_signal",
             # Infrastructure (moved from bricks)
             "event_bus",
-            "lock_manager",
         }
         assert expected_keys == set(result.keys())
 

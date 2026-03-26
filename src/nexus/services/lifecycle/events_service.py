@@ -70,23 +70,22 @@ class EventsService:
     def __init__(
         self,
         event_bus: "EventBusBase | None" = None,
-        lock_manager: "AdvisoryLockManager | None" = None,
         zone_id: str | None = None,
     ):
         self._event_bus = event_bus
-        # Fallback: if no lock_manager provided, create local semaphore-based one
-        if lock_manager is None:
-            try:
-                from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
-                from nexus.lib.semaphore import create_vfs_semaphore
+        # Always create LocalLockManager — may be upgraded to RaftLockManager
+        # at link time via upgrade_lock_manager().
+        try:
+            from nexus.lib.distributed_lock import LocalLockManager
+            from nexus.lib.semaphore import create_vfs_semaphore
 
-                lock_manager = SemaphoreAdvisoryLockManager(
-                    create_vfs_semaphore(), zone_id=zone_id or ROOT_ZONE_ID
-                )
-                logger.debug("[EventsService] Using local SemaphoreAdvisoryLockManager fallback")
-            except Exception as exc:
-                logger.debug("[EventsService] Local lock fallback unavailable: %s", exc)
-        self._lock_manager = lock_manager
+            self._lock_manager: "AdvisoryLockManager | None" = LocalLockManager(
+                create_vfs_semaphore(), zone_id=zone_id or ROOT_ZONE_ID
+            )
+            logger.debug("[EventsService] LocalLockManager created")
+        except Exception as exc:
+            logger.debug("[EventsService] LocalLockManager unavailable: %s", exc)
+            self._lock_manager = None
         self._zone_id = zone_id
         self._event_tasks: set[asyncio.Task[Any]] = set()
 
@@ -121,6 +120,19 @@ class EventsService:
     def _has_lock_manager(self) -> bool:
         """Check if advisory lock manager is available."""
         return self._lock_manager is not None
+
+    def upgrade_lock_manager(self, lock_manager: "AdvisoryLockManager") -> None:
+        """Hot-swap LocalLockManager → RaftLockManager at link time.
+
+        Safe because this runs during _do_link(), before bootstrap/serve —
+        no concurrent access to ``self._lock_manager``.
+        """
+        logger.info(
+            "[EventsService] Lock manager upgraded: %s → %s",
+            type(self._lock_manager).__name__,
+            type(lock_manager).__name__,
+        )
+        self._lock_manager = lock_manager
 
     def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""

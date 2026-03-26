@@ -66,25 +66,33 @@ def _make_event(path: str = "/inbox/test.txt", event_type: str = "file_write") -
 class TestEventsServiceInit:
     """Tests for EventsService construction."""
 
-    def test_init_stores_all_dependencies(self, mock_event_bus, mock_lock_manager):
-        """Service stores all injected dependencies."""
+    def test_init_stores_event_bus(self, mock_event_bus):
+        """Service stores event bus dependency."""
         svc = EventsService(
             event_bus=mock_event_bus,
-            lock_manager=mock_lock_manager,
             zone_id="z1",
         )
         assert svc._event_bus is mock_event_bus
-        assert svc._lock_manager is mock_lock_manager
+        assert svc._lock_manager is not None  # LocalLockManager auto-created
         assert svc._zone_id == "z1"
         assert svc._observe_registered is True  # hooks registered at enlist() time
 
     def test_init_minimal(self):
-        """Service can be created with no dependencies — local lock fallback auto-created."""
+        """Service can be created with no dependencies — LocalLockManager auto-created."""
         svc = EventsService()
         assert svc._event_bus is None
-        assert svc._lock_manager is not None  # local fallback auto-created
+        assert svc._lock_manager is not None  # LocalLockManager auto-created
         assert svc._zone_id is None
         assert svc._observe_registered is True  # hooks registered at enlist() time
+
+    def test_upgrade_lock_manager(self, mock_lock_manager):
+        """upgrade_lock_manager() replaces the default LocalLockManager."""
+        svc = EventsService()
+        original = svc._lock_manager
+        assert original is not None
+        svc.upgrade_lock_manager(mock_lock_manager)
+        assert svc._lock_manager is mock_lock_manager
+        assert svc._lock_manager is not original
 
 
 # =============================================================================
@@ -137,9 +145,10 @@ class TestInfrastructureDetection:
         svc = EventsService()
         assert svc._has_distributed_events() is False
 
-    def test_has_lock_manager_true(self, mock_lock_manager):
-        """Lock manager present means distributed locks available."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+    def test_has_lock_manager_true_after_upgrade(self, mock_lock_manager):
+        """Lock manager present after upgrade means distributed locks available."""
+        svc = EventsService()
+        svc.upgrade_lock_manager(mock_lock_manager)
         assert svc._has_lock_manager() is True
 
     def test_has_lock_manager_always_true(self):
@@ -372,11 +381,17 @@ class TestWaitForChangesNoInfra:
 
 
 class TestDistributedLocking:
-    """Tests for locking via distributed lock manager."""
+    """Tests for locking via upgraded (distributed) lock manager."""
+
+    def _make_svc(self, mock_lock_manager):
+        """Create EventsService and upgrade to distributed lock manager."""
+        svc = EventsService()
+        svc.upgrade_lock_manager(mock_lock_manager)
+        return svc
 
     def test_lock_acquires_distributed(self, mock_lock_manager):
         """Lock uses distributed lock manager when available."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = self._make_svc(mock_lock_manager)
         lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0, ttl=10.0))
         assert lock_id == "dist-lock-456"
         mock_lock_manager.acquire.assert_called_once()
@@ -384,26 +399,26 @@ class TestDistributedLocking:
     def test_lock_returns_none_on_timeout(self, mock_lock_manager):
         """Lock returns None when distributed lock times out."""
         mock_lock_manager.acquire = AsyncMock(return_value=None)
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = self._make_svc(mock_lock_manager)
         lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=1.0))
         assert lock_id is None
 
     def test_unlock_releases_distributed(self, mock_lock_manager):
         """Unlock releases distributed lock."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = self._make_svc(mock_lock_manager)
         result = asyncio.run(svc.unlock("dist-lock-456", path="/data/file.txt"))
         assert result is True
         mock_lock_manager.release.assert_called_once()
 
     def test_unlock_requires_path_for_distributed(self, mock_lock_manager):
         """Distributed unlock requires path parameter."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = self._make_svc(mock_lock_manager)
         with pytest.raises(ValueError, match="path is required"):
             asyncio.run(svc.unlock("dist-lock-456", path=None))
 
     def test_extend_lock_distributed(self, mock_lock_manager):
         """Extend lock uses distributed lock manager."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = self._make_svc(mock_lock_manager)
         result = asyncio.run(svc.extend_lock("dist-lock-456", path="/data/file.txt", ttl=60.0))
         assert result is True
         mock_lock_manager.extend.assert_called_once()
@@ -415,7 +430,7 @@ class TestDistributedLocking:
 
 
 class TestLockingLocalFallback:
-    """Tests for locking with local SemaphoreAdvisoryLockManager fallback."""
+    """Tests for locking with LocalLockManager (auto-created)."""
 
     def test_lock_uses_local_fallback(self):
         """EventsService auto-creates local lock manager when none provided."""
@@ -462,7 +477,8 @@ class TestLockedContextManager:
         from nexus.contracts.exceptions import LockTimeout
 
         mock_lock_manager.acquire = AsyncMock(return_value=None)
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = EventsService()
+        svc.upgrade_lock_manager(mock_lock_manager)
 
         async def _test():
             async with svc.locked("/data/file.txt", timeout=1.0):
@@ -473,7 +489,8 @@ class TestLockedContextManager:
 
     def test_locked_releases_on_exit(self, mock_lock_manager):
         """locked() releases lock on context exit."""
-        svc = EventsService(lock_manager=mock_lock_manager)
+        svc = EventsService()
+        svc.upgrade_lock_manager(mock_lock_manager)
 
         async def _test():
             async with svc.locked("/data/file.txt") as lock_id:

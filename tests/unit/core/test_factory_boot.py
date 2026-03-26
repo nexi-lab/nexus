@@ -65,7 +65,6 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "event_signal",
         # Infrastructure (moved from bricks)
         "event_bus",
-        "lock_manager",
     }
 )
 
@@ -218,7 +217,6 @@ class TestBootSystemServices:
             "workspace_registry",  # degradable — None with mock session_factory
             "scheduler_service",  # degradable — None if SchedulerService unavailable
             "event_bus",  # None when enable_events=False
-            "lock_manager",  # may be None if IPC disabled
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

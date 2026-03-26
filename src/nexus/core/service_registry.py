@@ -7,12 +7,13 @@ registry — like Linux ``kernel/module/main.c`` handling both symbol table and
 lifecycle in one module.
 
 ``enlist()`` is the **single public entry point** for all service registration.
-It auto-detects the service quadrant and applies appropriate lifecycle:
+It auto-detects lifecycle requirements:
 
-    Q1 (restart-required) — register only
-    Q2 (HotSwappable)   — register + capture hook_spec + activate
-    Q3 (Persistent)     — register + start (deferred pre-bootstrap)
-    Q4 (both)           — register + start + hooks + activate
+    On-demand service       — register only, duck-type hook_spec() for hooks
+    PersistentService       — register + start (deferred pre-bootstrap)
+
+Hook management is automatic: if an instance has a ``hook_spec()`` method
+(duck-typed), the kernel captures and registers hooks at enlist() time.
 
 Linux analogy:
 
@@ -33,11 +34,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
-from nexus.contracts.protocols.service_lifecycle import (
-    HotSwappable,
-    PersistentService,
-    ServiceQuadrant,
-)
+from nexus.contracts.protocols.service_lifecycle import PersistentService
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
@@ -173,10 +170,6 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         # Lifecycle orchestration state (formerly SLC)
         self._dispatch: KernelDispatch | None = dispatch
         self._hook_specs: dict[str, HookSpec] = {}
-        # Tracks services whose hooks were pre-registered on dispatch at
-        # initialize() time by _enlist_hook().  activate_hot_swappable_services()
-        # skips _register_hooks() for these to avoid double registration.
-        self._hooks_on_dispatch: set[str] = set()
         self._bootstrapped: bool = False
 
     # -- registration ------------------------------------------------------
@@ -353,7 +346,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             len(exports),
         )
 
-    # -- enlist — the ONE entry point for all four quadrants ---------------
+    # -- enlist — the ONE entry point for all services --------------------
 
     async def enlist(
         self,
@@ -364,19 +357,17 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         depends_on: tuple[str, ...] = (),
         allow_overwrite: bool = False,
     ) -> None:
-        """Enlist a service into the four-quadrant lifecycle system.
+        """Enlist a service into the lifecycle system.
 
-        This is the **single entry point** all services must call — the
-        "strong label" that marks a service as migrated to the new contract.
-        The coordinator auto-detects the quadrant via ``isinstance`` checks:
+        This is the **single entry point** all services must call.
+        Auto-detects lifecycle requirements:
 
-        - **Q1** (neither protocol): register only — no lifecycle, no hooks.
-        - **Q2** (HotSwappable): register + capture ``hook_spec()`` + activate.
-        - **Q3** (PersistentService): register + ``start()``.
-        - **Q4** (both): register + ``start()`` + capture hooks + activate.
+        - **On-demand**: register only.
+        - **PersistentService**: register + ``start()`` (post-bootstrap).
+        - **Duck-typed hook_spec()**: auto-capture and register hooks.
 
-        Post-bootstrap, Q3 services are auto-started immediately.
-        Pre-bootstrap, Q3 start() is deferred to start_persistent_services().
+        Post-bootstrap, PersistentService instances are auto-started immediately.
+        Pre-bootstrap, start() is deferred to start_persistent_services().
 
         Args:
             depends_on: Accepted for call-site compatibility; currently unused
@@ -385,22 +376,20 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         del depends_on  # accepted but unused (BLM removed)
         self._register_service(name, instance, exports=exports, allow_overwrite=allow_overwrite)
 
-        # Q3 / Q4: auto-start persistent background work (only post-bootstrap)
+        # Auto-start persistent background work (only post-bootstrap)
         if isinstance(instance, PersistentService) and self._bootstrapped:
             await instance.start()
             logger.info("[COORDINATOR] enlist %r — started (PersistentService)", name)
 
-        # Q2 / Q4: auto-capture hooks and activate
-        if isinstance(instance, HotSwappable):
+        # Auto-capture hooks via duck-typed hook_spec()
+        if hasattr(instance, "hook_spec"):
             spec = self._ensure_hook_spec(name, instance)
             if spec is not None and not spec.is_empty:
                 self._register_hooks(name)
-                self._hooks_on_dispatch.add(name)
-            await instance.activate()
-            logger.info("[COORDINATOR] enlist %r — activated (HotSwappable)", name)
+            logger.info("[COORDINATOR] enlist %r — hooks registered", name)
 
-        if not isinstance(instance, PersistentService) and not isinstance(instance, HotSwappable):
-            logger.info("[COORDINATOR] enlist %r — registered (Q1 restart-required)", name)
+        if not isinstance(instance, PersistentService) and not hasattr(instance, "hook_spec"):
+            logger.info("[COORDINATOR] enlist %r — registered (on-demand)", name)
 
     # -- mount — register VFS hooks ----------------------------------------
 
@@ -436,13 +425,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         hook_spec: HookSpec | None = None,
         drain_timeout: float = DEFAULT_DRAIN_TIMEOUT,
     ) -> None:
-        """Hot-swap a service: drain → atomic replace → hook swap → activate.
+        """Hot-swap a service: refcount drain → unhook → replace → rehook.
 
-        All quadrants supported (#1452).  HotSwappable controls *how* to swap
-        (full lifecycle vs refcount-only), not *whether*.
-
-        HotSwappable (Q2/Q4): drain() → refcount drain → unhook → replace → rehook → activate()
-        Non-HotSwappable (Q1/Q3): refcount drain → replace → rehook if new is Hot → activate if new is Hot
+        Unified path for all services (#1452).  No separate drain()/activate().
         """
         # --- Resolve old instance ---
         old_info = self.service_info(name)
@@ -450,36 +435,27 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             raise KeyError(f"swap_service: {name!r} not registered")
         old_instance = old_info.instance
 
-        # --- Branch: HotSwappable determines swap strategy ---
-        quadrant = ServiceQuadrant.of(old_instance)
-        old_is_hot = quadrant.is_hot_swappable
-
-        # Resolve old hook spec (HotSwappable only)
+        # Resolve old hook spec
         old_hook_spec = self._hook_specs.get(name)
-        if old_hook_spec is None and old_is_hot:
+        if old_hook_spec is None and hasattr(old_instance, "hook_spec"):
             old_hook_spec = old_instance.hook_spec()
             if old_hook_spec is not None and not old_hook_spec.is_empty:
                 self._hook_specs[name] = old_hook_spec
 
-        # Step 1: Protocol drain (HotSwappable only)
-        if old_is_hot:
-            await old_instance.drain()
-            logger.debug("[COORDINATOR] swap %r — old service drained", name)
-
-        # Step 2: Drain ServiceRef refcount (wait for in-flight calls)
+        # Step 1: Drain ServiceRef refcount (wait for in-flight calls)
         await self._drain(name, timeout=drain_timeout)
 
-        # Step 3: Unregister old hooks
+        # Step 2: Unregister old hooks
         if old_hook_spec is not None:
             self._unregister_hooks_for_spec(old_hook_spec)
 
-        # Step 4: Atomic replace — nx.service(name) now returns new instance
+        # Step 3: Atomic replace — nx.service(name) now returns new instance
         self.replace_service(name, new_instance, exports=exports)
         logger.info("[COORDINATOR] swap %r — atomic replace done", name)
 
-        # Step 5: Register new hooks — explicit param > protocol > clear
+        # Step 4: Register new hooks — explicit param > duck-type > clear
         new_hook_spec = hook_spec
-        if new_hook_spec is None and isinstance(new_instance, HotSwappable):
+        if new_hook_spec is None and hasattr(new_instance, "hook_spec"):
             new_hook_spec = new_instance.hook_spec()
 
         if new_hook_spec is not None and not new_hook_spec.is_empty:
@@ -489,50 +465,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         self._register_hooks(name)
 
-        # Step 6: Activate new service if HotSwappable
-        if isinstance(new_instance, HotSwappable):
-            await new_instance.activate()
-
         logger.info("[COORDINATOR] swap %r — complete", name)
-
-    # -- Diagnostics — quadrant classification -----------------------------
-
-    def classify_all(self) -> dict[str, ServiceQuadrant]:
-        """Return quadrant classification for all registered services."""
-        return {info.name: ServiceQuadrant.of(info.instance) for info in self.list_all()}
-
-    # -- Single-service activate / deactivate (internal) -------------------
-
-    async def _activate_service(self, name: str) -> None:
-        """Activate a single HotSwappable service: register hooks + activate()."""
-        info = self.service_info(name)
-        if info is None:
-            raise KeyError(f"activate_service: {name!r} not registered")
-        quadrant = ServiceQuadrant.of(info.instance)
-        if not quadrant.is_hot_swappable:
-            raise TypeError(
-                f"activate_service: {name!r} is {quadrant.label} — cannot activate. "
-                f"Only Q2/Q4 services (HotSwappable) support activate/drain."
-            )
-        self._ensure_hook_spec(name, info.instance)
-        self._register_hooks(name)
-        await info.instance.activate()
-        logger.info("[COORDINATOR] _activate_service %r — done (%s)", name, quadrant.label)
-
-    async def _deactivate_service(self, name: str) -> None:
-        """Deactivate a single HotSwappable service: drain + unregister hooks."""
-        info = self.service_info(name)
-        if info is None:
-            raise KeyError(f"deactivate_service: {name!r} not registered")
-        quadrant = ServiceQuadrant.of(info.instance)
-        if not quadrant.is_hot_swappable:
-            raise TypeError(
-                f"deactivate_service: {name!r} is {quadrant.label} — cannot deactivate. "
-                f"Only Q2/Q4 services (HotSwappable) support activate/drain."
-            )
-        await info.instance.drain()
-        self._unregister_hooks(name)
-        logger.info("[COORDINATOR] _deactivate_service %r — done (%s)", name, quadrant.label)
 
     # -- Auto-lifecycle — four-quadrant management -------------------------
 
@@ -578,58 +511,10 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             logger.info("[COORDINATOR] stopped %d persistent services: %s", len(stopped), stopped)
         return stopped
 
-    async def activate_hot_swappable_services(self) -> list[str]:
-        """Auto-activate all HotSwappable services: register hooks + activate()."""
-        activated: list[str] = []
-        for name in self._ordered_names():
-            info = self.service_info(name)
-            if info is None:
-                continue
-            if not isinstance(info.instance, HotSwappable):
-                continue
-            try:
-                # Auto-capture hook_spec from protocol if not already set
-                self._ensure_hook_spec(name, info.instance)
-                # Register hooks into dispatch (skip if pre-registered by _enlist_hook)
-                if name not in self._hooks_on_dispatch:
-                    self._register_hooks(name)
-                # Activate service
-                await info.instance.activate()
-                activated.append(name)
-                logger.info("[COORDINATOR] auto-activated hot-swappable service %r", name)
-            except Exception as exc:
-                logger.error("[COORDINATOR] failed to activate %r: %s", name, exc)
-        if activated:
-            logger.info(
-                "[COORDINATOR] activated %d hot-swappable services: %s",
-                len(activated),
-                activated,
-            )
-        return activated
-
-    async def deactivate_hot_swappable_services(self) -> list[str]:
-        """Auto-deactivate all HotSwappable services: drain + unregister hooks."""
-        deactivated: list[str] = []
-        for name in self._ordered_names(reverse=True):
-            info = self.service_info(name)
-            if info is None:
-                continue
-            if not isinstance(info.instance, HotSwappable):
-                continue
-            try:
-                await info.instance.drain()
-                self._unregister_hooks(name)
-                deactivated.append(name)
-                logger.info("[COORDINATOR] auto-deactivated hot-swappable service %r", name)
-            except Exception as exc:
-                logger.error("[COORDINATOR] failed to deactivate %r: %s", name, exc)
-        if deactivated:
-            logger.info(
-                "[COORDINATOR] deactivated %d hot-swappable services: %s",
-                len(deactivated),
-                deactivated,
-            )
-        return deactivated
+    def _unregister_all_hooks(self) -> None:
+        """Unregister all hooks from dispatch. Used by aclose()."""
+        for name in list(self._hook_specs):
+            self._unregister_hooks(name)
 
     def _ordered_names(self, *, reverse: bool = False) -> list[str]:
         """Return service names in registration order (or reverse for shutdown)."""
@@ -641,9 +526,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
     # -- Hook spec management ----------------------------------------------
 
     def _ensure_hook_spec(self, name: str, instance: Any) -> HookSpec | None:
-        """Capture HookSpec from protocol if not already stored."""
+        """Capture HookSpec via duck-typed hook_spec() if not already stored."""
         spec = self._hook_specs.get(name)
-        if spec is None and isinstance(instance, HotSwappable):
+        if spec is None and hasattr(instance, "hook_spec"):
             spec = instance.hook_spec()
             if spec is not None:
                 self._hook_specs[name] = spec

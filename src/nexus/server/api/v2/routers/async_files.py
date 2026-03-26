@@ -52,6 +52,44 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+async def _read_connector_by_physical_path(
+    fs: Any,
+    display_path: str,
+    physical_path: str,
+    context: Any,
+) -> bytes | None:
+    """Read connector file by resolving display path → physical backend path.
+
+    Routes through the mount point's connector backend using the raw
+    physical_path, not the human-readable display_path. Returns None
+    if routing fails so the caller can fall back to standard fs.read().
+    """
+    try:
+        # Extract mount point from display path (e.g. /mnt/gmail from /mnt/gmail/INBOX/...)
+        parts = display_path.split("/")
+        if len(parts) < 3:
+            return None
+        mount_point = "/".join(parts[:3])  # /mnt/gmail or /mnt/calendar
+
+        route = fs._router.route(mount_point)
+        if route is None:
+            return None
+
+        from nexus.contracts.types import OperationContext
+
+        read_context = OperationContext(
+            user_id=getattr(context, "user_id", "anonymous"),
+            groups=getattr(context, "groups", []),
+            backend_path=physical_path,
+            virtual_path=display_path,
+        )
+
+        content = route.backend.read_content("", context=read_context)
+        return content
+    except Exception:
+        return None
+
+
 def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     """Convert a sys_readdir details dict to a FileItemResponse.
 
@@ -535,19 +573,26 @@ def create_async_files_router(
                         )
 
             # Issue #3266: For connector display paths (/mnt/*), resolve
-            # virtual_path → physical_path via search service before reading.
-            # This keeps the resolution in the service layer, not the kernel.
-            read_path = path
+            # virtual_path → physical_path via search service and read
+            # directly from the connector backend. This avoids passing
+            # a backend-relative path into fs.read() which expects VFS paths.
+            result = None
             if path.startswith("/mnt/"):
                 search = fs.service("search")
                 if search is not None:
                     resolve_fn = getattr(search, "resolve_physical_path", None)
                     physical = resolve_fn(path) if resolve_fn else None
                     if physical:
-                        read_path = physical
+                        result = await _read_connector_by_physical_path(
+                            fs,
+                            path,
+                            physical,
+                            context,
+                        )
 
-            # Read content — fs.read is async, call directly
-            result = await fs.read(read_path, return_metadata=include_metadata, context=context)
+            # Standard VFS read (or fallback if connector read didn't resolve)
+            if result is None:
+                result = await fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
                 content = result["content"]

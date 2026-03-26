@@ -362,3 +362,64 @@ class TestCalendarDisplayPath:
         # Calendar name should be sanitized (no colons)
         assert ":" not in result.split("/")[0]
         assert "Standup" in result
+
+
+# =============================================================================
+# Tests for display-path read resolution (Issue #3266)
+# =============================================================================
+
+
+class TestDisplayPathReadResolution:
+    """Test that display-path reads resolve physical_path correctly."""
+
+    @pytest.mark.asyncio
+    async def test_read_connector_by_physical_path(self) -> None:
+        """_read_connector_by_physical_path routes through backend."""
+        from unittest.mock import MagicMock
+
+        from nexus.server.api.v2.routers.async_files import (
+            _read_connector_by_physical_path,
+        )
+
+        # Mock FS with a router that returns a backend
+        fs = MagicMock()
+        backend = MagicMock()
+        backend.read_content = MagicMock(return_value=b"email content")
+
+        route = MagicMock()
+        route.backend = backend
+        fs._router.route = MagicMock(return_value=route)
+
+        context = MagicMock()
+        context.user_id = "test"
+        context.groups = []
+
+        result = await _read_connector_by_physical_path(
+            fs,
+            "/mnt/gmail/INBOX/PRIMARY/2026-03-09_Interview.yaml",
+            "INBOX/PRIMARY/19cd169023eb3f2b.yaml",
+            context,
+        )
+
+        assert result == b"email content"
+        # Backend should be called with physical path in context
+        call_args = backend.read_content.call_args
+        assert call_args.args[0] == ""  # content_id is empty for connectors
+        assert call_args.kwargs["context"].backend_path == "INBOX/PRIMARY/19cd169023eb3f2b.yaml"
+
+    @pytest.mark.asyncio
+    async def test_read_connector_fallback_on_no_route(self) -> None:
+        """Returns None when route doesn't resolve."""
+        from unittest.mock import MagicMock
+
+        from nexus.server.api.v2.routers.async_files import (
+            _read_connector_by_physical_path,
+        )
+
+        fs = MagicMock()
+        fs._router.route = MagicMock(return_value=None)
+
+        result = await _read_connector_by_physical_path(
+            fs, "/mnt/gmail/INBOX/test.yaml", "INBOX/test.yaml", MagicMock()
+        )
+        assert result is None

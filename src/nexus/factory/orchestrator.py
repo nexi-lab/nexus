@@ -45,10 +45,10 @@ def create_nexus_services(
     Orchestrates 3-tier boot sequence:
 
     1. **Kernel** — validates Storage Pillars (VFS router, Metastore).
-       Failure raises ``BootError``.
-    2. **System** — critical services (ReBAC, permissions, write-sync →
-       ``BootError``) + degradable services (workspace, agent registry,
-       namespace, observability → WARNING + ``None``).
+       Failure raises ``BootError``.  Inlined (no separate function).
+    2. **Services** — critical services (ReBAC, permissions, write-sync →
+       ``BootError``) + degradable services (workspace, namespace,
+       observability → WARNING + ``None``).
     3. **Brick** — optional (search, wallet, manifest, upload, distributed).
        Failure is silent (DEBUG) + ``None``.
 
@@ -81,8 +81,7 @@ def create_nexus_services(
     from nexus.core.config import PermissionConfig as _PermissionConfig
     from nexus.factory._boot_context import _BootContext
     from nexus.factory._bricks import _boot_dependent_bricks, _boot_independent_bricks
-    from nexus.factory._kernel import _boot_kernel_services
-    from nexus.factory._system import _boot_system_services
+    from nexus.factory._system import _boot_pre_kernel_services
 
     if enabled_bricks is None:
         enabled_bricks = DeploymentProfile.FULL.default_bricks()
@@ -139,11 +138,19 @@ def create_nexus_services(
         profile_tuning=_profile_tuning,
     )
 
-    # --- Tier 0: KERNEL (validate Storage Pillars) ---
-    _boot_kernel_services(ctx)
+    # --- Tier 0: KERNEL (validate Storage Pillars — inlined from _kernel.py) ---
+    from nexus.contracts.exceptions import BootError
 
-    # --- Tier 1: SYSTEM (critical + degradable, gated by profile) ---
-    system_dict = _boot_system_services(ctx, svc_on)
+    if ctx.router is None:
+        raise BootError("VFS router is None", tier="kernel")
+    if ctx.metadata_store is None:
+        raise BootError("Metadata store is None", tier="kernel")
+    if ctx.record_store is None:
+        logger.warning("[BOOT:KERNEL] RecordStore is None — services layer disabled")
+    logger.info("[BOOT:KERNEL] Storage pillars validated")
+
+    # --- Tier 1: Services (critical + degradable, gated by profile) ---
+    system_dict = _boot_pre_kernel_services(ctx, svc_on)
 
     # --- Tier 2: BRICK (optional, gated by profile) ---
     brick_dict = _boot_independent_bricks(ctx, system_dict, svc_on)
@@ -155,14 +162,9 @@ def create_nexus_services(
 
     # --- Assemble unified services dict (Issue #2034, #2193) ---
 
-    # Merge Tier 1 infrastructure from brick_dict into system_dict.
-    system_dict["event_bus"] = brick_dict["event_bus"]
-    system_dict["lock_manager"] = brick_dict["lock_manager"]
-
-    # Merge remaining brick services into the unified dict
-    system_dict.update(
-        {k: v for k, v in brick_dict.items() if k not in ("event_bus", "lock_manager")}
-    )
+    # Merge brick services into the unified dict (event_bus/lock_manager
+    # already in system_dict after boot phase unification).
+    system_dict.update(brick_dict)
 
     return system_dict
 
@@ -187,6 +189,7 @@ async def create_nexus_fs(
     agent_id: str | None = None,
     workflow_engine: "WorkflowProtocol | None" = None,
     init_cred: Any = None,
+    federation: Any = None,
 ) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
@@ -268,10 +271,8 @@ async def create_nexus_fs(
     if services is None:
         services = {}
 
-    import functools
-
     from nexus.contracts.types import OperationContext as _OC
-    from nexus.factory._lifecycle import _do_initialize, _do_link
+    from nexus.factory._lifecycle import _initialize_services, _wire_services
 
     _init_cred = (
         init_cred if init_cred is not None else _OC(user_id="system", groups=[], is_admin=is_admin)
@@ -289,14 +290,22 @@ async def create_nexus_fs(
         router=router,
         init_cred=_init_cred,
     )
-    nx._link_fn = functools.partial(_do_link, services=services, zone_id=zone_id)
-    nx._initialize_fn = _do_initialize
-    await nx.link(
+
+    # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
+    init_ctx = await _wire_services(
+        nx,
+        services=services,
+        zone_id=zone_id,
         enabled_bricks=enabled_bricks,
         parsing=parsing,
         workflow_engine=workflow_engine,
+        federation=federation,
     )
-    await nx.initialize()
+    nx._linked = True
+
+    await _initialize_services(nx, init_ctx)
+    nx._initialized = True
+
     return nx
 
 
@@ -451,7 +460,8 @@ async def _register_vfs_hooks(
     await _enlist("virtual_view", _vview_resolver)
 
     # ── AgentStatusResolver (procfs virtual filesystem for AgentRegistry — Issue #1570, #1810) ──
-    _proc_table = getattr(nx, "_agent_registry", None)
+    _proc_ref = nx.service("agent_registry") if hasattr(nx, "service") else None
+    _proc_table = _proc_ref._service_instance if _proc_ref is not None else None
     if _proc_table is not None:
         try:
             from nexus.core.agent_status_resolver import AgentStatusResolver

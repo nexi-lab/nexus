@@ -1,4 +1,4 @@
-"""Boot Tier 2b (WIRED) — services needing NexusFS reference."""
+"""Boot Tier 2b (POST-KERNEL) — services needing NexusFS reference."""
 
 import logging
 import time
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _boot_wired_services(
+async def _boot_post_kernel_services(
     nx: Any,
     router: "PathRouter",
     services: dict[str, Any],
@@ -260,7 +260,6 @@ async def _boot_wired_services(
 
             events_service = EventsService(
                 event_bus=services.get("event_bus"),
-                lock_manager=services.get("lock_manager"),
             )
             logger.debug("[BOOT:WIRED] EventsService created")
         except Exception as exc:
@@ -534,3 +533,7 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
             )
         except Exception as exc:
             logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)
+
+
+# Backward compatibility alias
+_boot_wired_services = _boot_post_kernel_services

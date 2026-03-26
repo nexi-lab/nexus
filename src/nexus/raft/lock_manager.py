@@ -24,7 +24,6 @@ from nexus.lib.distributed_lock import (
     HolderInfo,
     LockInfo,
     LockManagerBase,
-    LockStoreProtocol,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,11 +66,11 @@ class RaftLockManager(LockManagerBase):
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
     RETRY_MULTIPLIER = 2.0  # Double each retry
 
-    def __init__(self, raft_store: LockStoreProtocol, *, zone_id: str = "root") -> None:
+    def __init__(self, raft_store: Any, *, zone_id: str = "root") -> None:
         """Initialize RaftLockManager.
 
         Args:
-            raft_store: LockStoreProtocol instance for lock storage
+            raft_store: Lock-capable metadata store (e.g., RaftMetadataStore)
             zone_id: Zone ID for key scoping (bound at construction)
         """
         super().__init__(zone_id=zone_id)
@@ -148,7 +147,7 @@ class RaftLockManager(LockManagerBase):
     async def release(self, lock_id: str, path: str) -> bool:
         lock_key = self._lock_key(path)
         try:
-            released = self._store.release_lock(lock_key, lock_id)
+            released: bool = self._store.release_lock(lock_key, lock_id)
             if released:
                 logger.debug("Raft lock released: %s", lock_key)
             else:
@@ -207,7 +206,7 @@ class RaftLockManager(LockManagerBase):
     async def force_release(self, path: str) -> bool:
         lock_key = self._lock_key(path)
         try:
-            released = self._store.force_release_lock(lock_key)
+            released: bool = self._store.force_release_lock(lock_key)
             if released:
                 logger.warning("Raft lock force-released: %s", lock_key)
             else:

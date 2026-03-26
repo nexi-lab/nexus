@@ -145,6 +145,27 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
+def _open_local_metastore(metadata_path: str) -> "MetastoreABC":
+    """Open a local metadata store — RaftMetadataStore.embedded → DictMetastore fallback."""
+    from pathlib import Path
+
+    try:
+        from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+        return RaftMetadataStore.embedded(metadata_path)
+    except (RuntimeError, ImportError):
+        from nexus.storage.dict_metastore import DictMetastore
+
+        dict_metastore_path = Path(metadata_path).with_suffix(".json")
+        logger.info(
+            "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
+            "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
+            "--features python for the durable metastore.",
+            dict_metastore_path,
+        )
+        return DictMetastore(dict_metastore_path)
+
+
 async def connect(
     config: "str | Path | dict | NexusConfig | None" = None,
 ) -> "NexusFilesystem":
@@ -349,153 +370,61 @@ async def connect(
     metadata_path = cfg.metastore_path or cfg.db_path or str(Path(nexus_root) / "metastore")
     record_store_path = cfg.record_store_path or None
 
-    # Create metadata store — auto-detect federation capability
-    metadata_store: MetastoreABC
-    zone_mgr = None
+    # --- Profile resolution (Issue #1708, moved before metadata store for federation gating) ---
+    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
 
-    try:
-        import socket
+    if cfg.profile == "auto":
+        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
 
-        from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
-        from nexus.raft import FederatedMetadataProxy
-        from nexus.raft.peer_address import PeerAddress, hostname_to_node_id
-        from nexus.raft.zone_manager import ZoneManager
-
-        hostname = os.environ.get("NEXUS_HOSTNAME", socket.gethostname())
-        my_id = hostname_to_node_id(hostname)
-        bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
-        advertise_addr = os.environ.get("NEXUS_ADVERTISE_ADDR")
-        zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
-
-        # Parse peer addresses (host:port format — PeerAddress derives node IDs)
-        peers_str = os.environ.get("NEXUS_PEERS", "")
-        peer_addrs = PeerAddress.parse_peer_list(peers_str) if peers_str else []
-        peers = [p.grpc_target for p in peer_addrs]
-
-        # Retry loop for Raft bootstrap — CockroachDB pattern:
-        # nodes start independently, retry until cluster forms.
-        import time as _time
-
-        _max_attempts = int(os.environ.get("NEXUS_STARTUP_MAX_RETRIES", "12"))
-        _base_delay = 2.0
-
-        for _attempt in range(1, _max_attempts + 1):
-            try:
-                # TLS pre-provision (depends on leader being up)
-                tls_dir_pre = Path(zones_dir) / "tls"
-                token_file = tls_dir_pre / "join-token"
-                if token_file.exists() and not (tls_dir_pre / "node.pem").exists():
-                    join_token = token_file.read_text().strip()
-                    join_peer = next(
-                        (p.grpc_target for p in peer_addrs if p.node_id != my_id),
-                        None,
-                    )
-                    if join_peer:
-                        from _nexus_raft import join_cluster as _join_cluster
-
-                        logger.info(
-                            "Join token found — provisioning TLS from %s (attempt %d)",
-                            join_peer,
-                            _attempt,
-                        )
-                        _join_cluster(join_peer, join_token, hostname, str(tls_dir_pre))
-                        logger.info("TLS provisioning complete")
-                    else:
-                        raise RuntimeError("Join token found but no peer in NEXUS_PEERS to join")
-
-                zone_mgr = ZoneManager(
-                    hostname=hostname,
-                    base_path=zones_dir,
-                    bind_addr=bind_addr,
-                    advertise_addr=advertise_addr,
-                )
-
-                # Detect joiner vs first-node
-                tls_dir = Path(zones_dir) / "tls"
-                is_joiner = (
-                    (tls_dir / "ca.pem").exists()
-                    and (tls_dir / "node.pem").exists()
-                    and (tls_dir / "node-key.pem").exists()
-                    and not (tls_dir / "join-token").exists()
-                )
-
-                if is_joiner:
-                    zone_mgr.join_zone("root", peers=peers if peers else None)
-                    logger.info("Joiner node: joined root zone (certs provisioned)")
-                else:
-                    zone_mgr.bootstrap(peers=peers if peers else None)
-
-                # Static Day-1 topology from env vars (idempotent)
-                zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
-                mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
-                if zones_str:
-                    zones = [z.strip() for z in zones_str.split(",") if z.strip()]
-                    mounts: dict[str, str] = {}
-                    if mounts_str:
-                        for pair in mounts_str.split(","):
-                            path, zone_id = pair.strip().split("=", 1)
-                            mounts[path.strip()] = zone_id.strip()
-                    zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
-
-                break  # Success
-
-            except (RuntimeError, OSError, ConnectionError) as exc:
-                if _attempt >= _max_attempts:
-                    logger.error("Raft startup failed after %d attempts: %s", _max_attempts, exc)
-                    raise
-                delay = min(_base_delay * (2 ** (_attempt - 1)), 30.0)
-                logger.warning(
-                    "Raft startup attempt %d/%d failed: %s — retrying in %.1fs",
-                    _attempt,
-                    _max_attempts,
-                    exc,
-                    delay,
-                )
-                _time.sleep(delay)
-
-        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
-    except ImportError:
-        zone_mgr = None
-        # Raft extensions not available — single-node embedded Raft, with fallback
-        try:
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-            metadata_store = RaftMetadataStore.embedded(metadata_path)
-        except (RuntimeError, ImportError):
-            from nexus.storage.dict_metastore import DictMetastore
-
-            dict_metastore_path = Path(metadata_path).with_suffix(".json")
-            logger.info(
-                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
-                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
-                "--features python for the durable metastore.",
-                dict_metastore_path,
-            )
-            metadata_store = DictMetastore(dict_metastore_path)
-    except RuntimeError as exc:
-        if "ZoneManager requires PyO3 build with --features full" not in str(exc):
-            raise
-
-        zone_mgr = None
+        caps = detect_capabilities()
+        resolved_profile = suggest_profile(caps)
         logger.info(
-            "Federation extensions unavailable for local connect(); "
-            "falling back to single-node metadata store"
+            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
+            resolved_profile,
+            caps.memory_mb,
+            caps.has_gpu,
+            caps.cpu_cores,
         )
+    else:
+        resolved_profile = DeploymentProfile(cfg.profile)
+        # Warn if explicit profile may exceed device capabilities
+        from nexus.lib.device_capabilities import (
+            detect_capabilities,
+            warn_if_profile_exceeds_device,
+        )
+
+        caps = detect_capabilities()
+        warn_if_profile_exceeds_device(resolved_profile, caps)
+
+    # Apply FeaturesConfig overrides (Issue #1389)
+    overrides = cfg.features.to_overrides() if cfg.features else {}
+    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
+
+    # Create metadata store — profile-gated federation (PR #3371 Phase 2)
+    metadata_store: MetastoreABC
+    federation = None
+
+    # Federation gating: only attempt if "federation" brick is enabled
+    if "federation" in enabled_bricks:
         try:
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
+            from nexus.raft.federation import NexusFederation
 
-            metadata_store = RaftMetadataStore.embedded(metadata_path)
-        except (RuntimeError, ImportError):
-            from nexus.storage.dict_metastore import DictMetastore
-
-            dict_metastore_path = Path(metadata_path).with_suffix(".json")
+            federation, metadata_store = NexusFederation.bootstrap(metadata_path=metadata_path)
+        except ImportError:
+            logger.warning("Federation brick enabled but Rust extensions unavailable")
+            federation = None
+            metadata_store = _open_local_metastore(metadata_path)
+        except RuntimeError as exc:
+            if "ZoneManager requires PyO3 build with --features full" not in str(exc):
+                raise
             logger.info(
-                "Rust metastore not available; using JSON-backed DictMetastore fallback at %s. "
-                "Build rust/nexus_raft with maturin develop -m rust/nexus_raft/Cargo.toml "
-                "--features python for the durable metastore.",
-                dict_metastore_path,
+                "Federation extensions unavailable for local connect(); "
+                "falling back to single-node metadata store"
             )
-            metadata_store = DictMetastore(dict_metastore_path)
+            federation = None
+            metadata_store = _open_local_metastore(metadata_path)
+    else:
+        metadata_store = _open_local_metastore(metadata_path)
 
     # Permission defaults: standalone without explicit config → permissive
     enforce_permissions = cfg.enforce_permissions
@@ -559,36 +488,6 @@ async def connect(
         providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
     )
 
-    # --- Profile resolution (Issue #1708) ---
-    from nexus.contracts.deployment_profile import DeploymentProfile, resolve_enabled_bricks
-
-    if cfg.profile == "auto":
-        from nexus.lib.device_capabilities import detect_capabilities, suggest_profile
-
-        caps = detect_capabilities()
-        resolved_profile = suggest_profile(caps)
-        logger.info(
-            "Auto-detected profile: %s (RAM=%dMB, GPU=%s, cores=%d)",
-            resolved_profile,
-            caps.memory_mb,
-            caps.has_gpu,
-            caps.cpu_cores,
-        )
-    else:
-        resolved_profile = DeploymentProfile(cfg.profile)
-        # Warn if explicit profile may exceed device capabilities
-        from nexus.lib.device_capabilities import (
-            detect_capabilities,
-            warn_if_profile_exceeds_device,
-        )
-
-        caps = detect_capabilities()
-        warn_if_profile_exceeds_device(resolved_profile, caps)
-
-    # Apply FeaturesConfig overrides (Issue #1389 — was unused in connect())
-    overrides = cfg.features.to_overrides() if cfg.features else {}
-    enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
-
     # Audit strict mode: env var override (default True for compliance)
     from nexus.contracts.types import AuditConfig
 
@@ -613,6 +512,7 @@ async def connect(
         parsing=parse_cfg,
         enabled_bricks=enabled_bricks,
         audit=audit_cfg,
+        federation=federation,
     )
 
     # Set memory config for Memory API
@@ -626,23 +526,11 @@ async def connect(
     # Store config for OAuth factory and other components that need it
     nx_fs._config = cfg
 
-    # Store zone manager for federation topology initialization (health check)
-    if zone_mgr is not None:
-        nx_fs._zone_mgr = zone_mgr
-
-        # Enlist federation as Q3 PersistentService
-        try:
-            from nexus.raft.federation import NexusFederation
-
-            _fed = NexusFederation(zone_manager=zone_mgr)
-            await nx_fs._service_registry.enlist("federation", _fed)
-            logger.info("Federation service enlisted")
-        except Exception as exc:
-            logger.warning("Federation service unavailable: %s", exc)
-
-        # Register federation content resolver (PRE-DISPATCH, Issue #163)
-        # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
-        await _register_federation_resolver(nx_fs, zone_mgr, backend)
+    # Register federation content resolver (PRE-DISPATCH, Issue #163)
+    # Registered LAST so Pipe/Memory/VirtualView resolvers get priority.
+    # Federation is already enlisted in ServiceRegistry by _wire_services().
+    if federation is not None:
+        await _register_federation_resolver(nx_fs, federation, backend)
 
     # Restore saved mounts (application-layer startup I/O)
     await _restore_mounts(nx_fs)
@@ -650,7 +538,7 @@ async def connect(
     return nx_fs
 
 
-async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend: Any) -> None:
+async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:
     """Register federation resolvers via coordinator.enlist() (#163, #1625, #1710).
 
     Registration order matters — IPC resolver is registered FIRST so remote
@@ -667,17 +555,18 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
     from nexus.raft.federation_content_resolver import FederationContentResolver
     from nexus.raft.federation_ipc_resolver import FederationIPCResolver
 
+    _zone_mgr = federation.zone_manager
     _coordinator = nx_fs.service_coordinator
 
     # Set TLS config on channel pool now that federation is initialized
-    if hasattr(nx_fs, "_channel_pool") and nx_fs._channel_pool is not None and zone_mgr.tls_config:
-        nx_fs._channel_pool.set_tls_config(zone_mgr.tls_config)
+    if hasattr(nx_fs, "_channel_pool") and nx_fs._channel_pool is not None and _zone_mgr.tls_config:
+        nx_fs._channel_pool.set_tls_config(_zone_mgr.tls_config)
 
     # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
     ipc_resolver = FederationIPCResolver(
         metastore=nx_fs.metadata,
-        self_address=zone_mgr.advertise_addr,
-        tls_config=zone_mgr.tls_config,
+        self_address=_zone_mgr.advertise_addr,
+        tls_config=_zone_mgr.tls_config,
         pipe_manager=nx_fs._pipe_manager,
         stream_manager=nx_fs._stream_manager,
     )
@@ -692,7 +581,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
         from nexus.remote.peer_blob_client import PeerBlobClient
 
         _peer_auth = _os_peer.environ.get("NEXUS_API_KEY", "")
-        peer_blob_client = PeerBlobClient(tls_config=zone_mgr.tls_config, auth_token=_peer_auth)
+        peer_blob_client = PeerBlobClient(tls_config=_zone_mgr.tls_config, auth_token=_peer_auth)
         remote_content_fetcher = CASRemoteContentFetcher(
             peer_blob_client=peer_blob_client,
             local_object_store=backend,
@@ -702,7 +591,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
     # Content resolver — remote CAS content (#163)
     # self_address uses VFS gRPC port (default 2028), not Raft port (2126).
     # Content fetcher connects via NexusVFSService (VFS gRPC), not Raft gRPC.
-    _raft_addr = zone_mgr.advertise_addr  # e.g. "nexus-1:2126"
+    _raft_addr = _zone_mgr.advertise_addr  # e.g. "nexus-1:2126"
     _hostname = _raft_addr.rsplit(":", 1)[0] if ":" in _raft_addr else _raft_addr
     import os as _os_mod
 
@@ -712,7 +601,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
     content_resolver = FederationContentResolver(
         metastore=nx_fs.metadata,
         self_address=_content_addr,
-        tls_config=zone_mgr.tls_config,
+        tls_config=_zone_mgr.tls_config,
         remote_content_fetcher=remote_content_fetcher,
         local_object_store=backend,
         auth_token=_content_auth,

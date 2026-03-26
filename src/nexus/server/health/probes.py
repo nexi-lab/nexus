@@ -41,10 +41,10 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         nx_fs = getattr(request.app.state, "nexus_fs", None)
         if nx_fs is None:
             return True, ""
-        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-        if zone_mgr is None:
+        _fed = nx_fs.service("federation") if hasattr(nx_fs, "service") else None
+        if _fed is None:
             return True, ""
-        if not zone_mgr.ensure_topology():
+        if not _fed.ensure_topology():
             return False, "Raft topology not ready"
         return True, ""
     except Exception:

@@ -57,11 +57,17 @@ from nexus.factory._helpers import (
 from nexus.factory._kernel import _boot_kernel_services
 from nexus.factory._metadata_export import create_metadata_export_service
 from nexus.factory._record_store import create_record_store
-from nexus.factory._system import _boot_system_services
-from nexus.factory._wired import _boot_wired_services
+from nexus.factory._system import _boot_pre_kernel_services
+from nexus.factory._wired import _boot_post_kernel_services
 from nexus.factory.adapters import _NexusFSFileReader
 from nexus.factory.orchestrator import create_nexus_fs, create_nexus_services
 from nexus.factory.wallet import WalletProvisioner
+
+# Backward compatibility aliases (must follow imports)
+_boot_services = _boot_pre_kernel_services
+_boot_system_services = _boot_pre_kernel_services
+_boot_core_services = _boot_pre_kernel_services
+_boot_wired_services = _boot_post_kernel_services
 
 __all__ = [
     "create_nexus_fs",

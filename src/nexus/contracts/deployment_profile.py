@@ -73,7 +73,7 @@ BRICK_PARSERS = "parsers"
 BRICK_SNAPSHOT = "snapshot"
 BRICK_TASK_MANAGER = "task_manager"
 
-# (Federation is auto-detected from ZoneManager, not a brick)
+BRICK_FEDERATION = "federation"
 
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
@@ -110,6 +110,7 @@ ALL_BRICK_NAMES: frozenset[str] = frozenset(
         BRICK_TASK_MANAGER,
         BRICK_AGENT_RUNTIME,
         BRICK_ACP,
+        BRICK_FEDERATION,
     }
 )
 
@@ -221,7 +222,7 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
     }
 )
 
-_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS  # Federation is auto-detected from ZoneManager
+_CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset({BRICK_FEDERATION})
 
 _INNOVATION_BRICKS: frozenset[str] = (
     _CLOUD_BRICKS  # same as cloud; future experimental bricks added here

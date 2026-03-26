@@ -41,8 +41,8 @@ async def health_check(request: Request) -> HealthResponse | Any:
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
         # Federation mode: ensure topology is initialized (standard Raft lifecycle).
-        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-        if zone_mgr is not None and not zone_mgr.ensure_topology():
+        _fed = nx_fs.service("federation") if hasattr(nx_fs, "service") else None
+        if _fed is not None and not _fed.ensure_topology():
             from fastapi.responses import JSONResponse
 
             return JSONResponse(

@@ -344,13 +344,11 @@ def create_app(
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
         # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
-        # Federation is enlisted via ServiceRegistry.
-        _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
         _fed = nexus_fs.service("federation") if hasattr(nexus_fs, "service") else None
-        if _zone_mgr is not None and _fed is not None:
+        if _fed is not None:
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-            _rpc_sources.append(FederationRPCService(_zone_mgr, _fed))
+            _rpc_sources.append(FederationRPCService(_fed))
         # --- Locks (Issue #1133) ---
         _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
         if _lock_mgr is not None:

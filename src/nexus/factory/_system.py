@@ -1,6 +1,8 @@
-"""Boot Tier 1 (SYSTEM) — critical + degradable services.
+"""Boot Tier 1 — critical + degradable services (pre-kernel).
 
 Issue #2193: Absorbs 11 former-kernel services per Liedtke's test.
+Renamed ``_boot_system_services`` → ``_boot_services`` → ``_boot_pre_kernel_services``
+(PR #3350, PR #3371 Phase 2).
 
 Two severity classes:
 
@@ -11,7 +13,7 @@ Two severity classes:
 **Degradable** (per-service try/except → WARNING + None):
     dir_visibility_cache, hierarchy_manager, deferred_permission_buffer,
     workspace_registry, mount_manager, workspace_manager, plus all
-    original system services (agent registry, namespace, etc.).
+    original services (namespace, etc.).
 """
 
 import logging
@@ -26,11 +28,11 @@ from nexus.factory._helpers import _make_gate
 logger = logging.getLogger(__name__)
 
 
-def _boot_system_services(
+def _boot_pre_kernel_services(
     ctx: _BootContext,
     svc_on: Callable[[str], bool] | None = None,
 ) -> dict[str, Any]:
-    """Boot Tier 1 (SYSTEM) — critical + degradable services.
+    """Boot Tier 1 — critical + degradable services.
 
     1. **Critical section** — creates ReBAC, permissions, audit, entity
        registry, and write observer.  A single try/except raises
@@ -40,9 +42,8 @@ def _boot_system_services(
        cache, hierarchy manager, deferred permission buffer, workspace
        services.  Per-service try/except logs WARNING and sets None.
 
-    3. **Original system services** — agent registry, namespace,
-       observability, resiliency, lifecycle management.  Same degraded
-       pattern as before.
+    3. **Original services** — namespace, observability, resiliency,
+       lifecycle management.  Same degraded pattern as before.
 
     Args:
         ctx: Boot context with shared dependencies.
@@ -428,8 +429,64 @@ def _boot_system_services(
     # (Federation is created at link time in _lifecycle.py when nx._zone_mgr is available.)
 
     # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
-    # AgentRegistry is a kernel-knows sentinel, created at link-time.
+    # AgentRegistry is lazy-constructed via register_factory().
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
+
+    # =====================================================================
+    # Infrastructure: event bus (moved from _bricks.py)
+    # Lock manager is now owned by EventsService (LocalLockManager by default,
+    # upgraded to RaftLockManager at link time if federation is available).
+    # =====================================================================
+    event_bus: Any = None
+    if not _on("ipc"):
+        logger.debug("[BOOT:SYSTEM] IPC/EventBus disabled by profile")
+    elif ctx.dist.enable_events:
+        # Inline event bus creation (previously in _create_distributed_infra)
+        _settings_store = None
+        try:
+            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+            _settings_store = MetastoreSettingsStore(ctx.metadata_store)
+        except Exception:
+            logger.debug(
+                "MetastoreSettingsStore unavailable; event bus checkpoints will not persist"
+            )
+
+        try:
+            if ctx.dist.event_bus_backend == "nats" and ctx.dist.enable_events:
+                from nexus.services.event_bus.factory import create_event_bus
+
+                event_bus = create_event_bus(
+                    backend="nats",
+                    nats_url=ctx.dist.nats_url,
+                    record_store=ctx.record_store,
+                    settings_store=_settings_store,
+                )
+                logger.info(
+                    "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
+                    ctx.dist.nats_url,
+                )
+            elif ctx.dist.enable_events:
+                from nexus.lib.env import get_dragonfly_url, get_redis_url
+
+                _coord_url = ctx.dist.coordination_url or get_redis_url()
+                _event_url = _coord_url or get_dragonfly_url()
+                if _event_url:
+                    from nexus.cache.dragonfly import DragonflyClient
+                    from nexus.services.event_bus import RedisEventBus
+
+                    _event_client = DragonflyClient(url=_event_url)
+                    event_bus = RedisEventBus(
+                        _event_client,
+                        record_store=ctx.record_store,
+                        settings_store=_settings_store,
+                    )
+                    logger.info(
+                        "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
+                        _event_url,
+                    )
+        except ImportError as e:
+            logger.warning("Could not initialize distributed event system: %s", e)
 
     # =====================================================================
     # Assemble result
@@ -449,7 +506,7 @@ def _boot_system_services(
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
-        # Original system services
+        # Original services
         "async_namespace_manager": async_namespace_manager,
         "delivery_worker": delivery_worker,
         "event_signal": ctx.event_signal,
@@ -458,6 +515,8 @@ def _boot_system_services(
         "context_branch_service": context_branch_service,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
+        # Infrastructure (moved from bricks)
+        "event_bus": event_bus,
     }
 
     elapsed = time.perf_counter() - t0
@@ -470,3 +529,7 @@ def _boot_system_services(
         "active" if svc_on is not None else "off",
     )
     return result
+
+
+# Backward compatibility alias
+_boot_services = _boot_pre_kernel_services

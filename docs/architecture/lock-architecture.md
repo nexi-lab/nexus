@@ -13,7 +13,7 @@
 | **VFSLockManager** | `core/lock_fast.py` | ~200ns Rust / ~500ns Python | Local, path-level RW, hierarchical |
 | **VFSSemaphore** | `lib/semaphore.py` | ~200ns Rust / Python | Local, holder-tracked counting semaphore |
 | **AdvisoryLockManager** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
-| **SemaphoreAdvisoryLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
+| **LocalLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
 | **LockStoreProtocol** | `lib/distributed_lock.py` | — | Low-level store interface (MetastoreABC lock methods) |
 | ~12 `asyncio.Semaphore` | scattered | — | Ad-hoc concurrency bounding |
@@ -31,7 +31,7 @@
 | VFSLockManager | `i_rwsem` (inode RW semaphore) |
 | VFSSemaphore | `sem_t` (named counting semaphore + TTL) |
 | AdvisoryLockManager | `flock(2)` advisory lock ABC |
-| SemaphoreAdvisoryLockManager | Local `flock` via VFSSemaphore |
+| LocalLockManager | Local `flock` via VFSSemaphore |
 | RaftLockManager | Distributed `flock` via Raft |
 
 ---
@@ -124,25 +124,25 @@ TTL expires → auto-released. No orphans.
 ### 3.3 DI Model
 
 ```python
-# factory/_bricks.py (actual pattern)
+# EventsService.__init__ always creates LocalLockManager
+from nexus.lib.distributed_lock import LocalLockManager
 from nexus.lib.semaphore import create_vfs_semaphore
-from nexus.lib.distributed_lock import SemaphoreAdvisoryLockManager
 
-# Always available — no capability check needed
-lock_manager = SemaphoreAdvisoryLockManager(create_vfs_semaphore(), zone_id=zone_id)
+self._lock_manager = LocalLockManager(create_vfs_semaphore(), zone_id=zone_id)
 
-# Federation: RaftLockManager (if dist.enable_locks)
-if dist and dist.enable_locks:
-    lock_manager = RaftLockManager(metadata_store, zone_id=zone_id)
+# Federation: RaftLockManager upgrade at link time
+if isinstance(nx.metadata, LockStoreProtocol):
+    raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id)
+    events_service.upgrade_lock_manager(raft_lm)
 ```
 
-Note: capability detection via `LockStoreProtocol` is no longer needed —
-`SemaphoreAdvisoryLockManager` uses `VFSSemaphore` (always available), not MetastoreABC.
+Two paths only: EventsService always starts with `LocalLockManager`.
+Federation upgrades to `RaftLockManager` at link time via `upgrade_lock_manager()`.
 
 | Profile | Metastore | lock_manager → |
 |---------|-----------|----------------|
-| minimal / embedded | redb | SemaphoreAdvisoryLockManager |
-| lite / full | redb | SemaphoreAdvisoryLockManager |
+| minimal / embedded | redb | LocalLockManager |
+| lite / full | redb | LocalLockManager |
 | cloud / federation | redb + Raft | RaftLockManager |
 | remote | RemoteMetastore | None (server-side) |
 
@@ -156,7 +156,7 @@ Callers see only `AdvisoryLockManager`. Same async API regardless of backend.
 |-----------|----------|---------|------------|-----|-------|
 | VFSLockManager | `core/lock_fast.py` | ~200ns | Kernel-internal | No | Local |
 | VFSSemaphore | `lib/semaphore.py` | ~200ns | Kernel-authored stdlib | Yes | Local |
-| SemaphoreAdvisoryLockManager | `lib/distributed_lock.py` | ~500ns–1μs | Internal | Yes | Local (standalone) |
+| LocalLockManager | `lib/distributed_lock.py` | ~500ns–1μs | Internal | Yes | Local (standalone) |
 | RaftLockManager | `raft/lock_manager.py` | ~5-10ms | Internal | Yes | Distributed (zone) |
 
 ---
@@ -171,12 +171,13 @@ Like Linux `i_rwsem` vs `flock(2)`.
 queryable, Raft-replicated in federation. Like HDFS leases in NameNode FSImage+EditLog.
 `LockStoreProtocol` is a capability protocol — MetastoreABC does NOT own lock methods.
 
-**D3: Factory DI, not runtime routing** — `SemaphoreAdvisoryLockManager` or `RaftLockManager`
-injected at boot. No `_LockRouter`, no runtime auto-detect. Simpler, testable.
+**D3: Two paths, not runtime routing** — EventsService always starts with
+`LocalLockManager`. Federation upgrades to `RaftLockManager` at link time.
+No `_LockRouter`, no runtime auto-detect. Simpler, testable.
 
 **D4: PassthroughBackend.lock() deleted** — duplicated kernel lock logic.
 `_StripeLock` also deleted — CAS metadata RMW now uses `VFSSemaphore` directly.
-EventsService now uses `AdvisoryLockManager` exclusively (SemaphoreAdvisoryLockManager or RaftLockManager).
+EventsService owns lock manager lifecycle (`LocalLockManager` → `RaftLockManager` upgrade).
 
 **D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not advisory
 locks). No names, TTL, or cross-node semantics needed.

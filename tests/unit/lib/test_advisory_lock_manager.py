@@ -1,4 +1,4 @@
-"""Unit tests for SemaphoreAdvisoryLockManager (standalone advisory lock manager).
+"""Unit tests for LocalLockManager (standalone advisory lock manager).
 
 Tests use a real PythonVFSSemaphore — no mocks needed.
 """
@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from nexus.lib.distributed_lock import ExtendResult, SemaphoreAdvisoryLockManager
+from nexus.lib.distributed_lock import ExtendResult, LocalLockManager
 from nexus.lib.semaphore import PythonVFSSemaphore
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ def sem():
 
 @pytest.fixture
 def mgr(sem):
-    return SemaphoreAdvisoryLockManager(sem, zone_id="z1")
+    return LocalLockManager(sem, zone_id="z1")
 
 
 # ---------------------------------------------------------------------------

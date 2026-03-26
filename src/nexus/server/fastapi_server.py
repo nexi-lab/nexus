@@ -364,7 +364,7 @@ def create_app(
 
             _rpc_sources.append(FederationRPCService(_zone_mgr, _fed))
         # --- Locks (Issue #1133) ---
-        _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
+        _lock_mgr = getattr(nexus_fs, "_distributed_lock_manager", None)
         if _lock_mgr is not None:
             from nexus.server.rpc.services.locks_rpc import LocksRPCService
 

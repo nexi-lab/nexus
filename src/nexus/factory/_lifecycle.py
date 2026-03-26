@@ -165,8 +165,8 @@ async def _do_link(
     if _dc is not None:
         nx._descendant_checker = _dc
 
-    # Issue #1788: inject distributed lock_manager directly (kernel knows pattern)
-    nx._distributed_lock_manager = _svc.get("lock_manager")
+    # Issue #1788: _distributed_lock_manager removed — EventsService owns lock routing.
+    # EventsService auto-creates local SemaphoreAdvisoryLockManager fallback.
 
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here.
@@ -236,35 +236,39 @@ async def _do_link(
 
         nx._close_callbacks.append(_close_audit)
 
-    # Issue #1792: AgentRegistry — kernel knows, factory provides.
-    # Created here (not in __init__) because no-agent profiles (REMOTE) skip it.
-    # Consumers: EvictionManager, AcpService, AgentStatusResolver.
-    try:
+    # Issue #1792: AgentRegistry — lazy construct via ServiceRegistry.register_factory().
+    # Only created on first access (ACP/TaskManager/EvictionManager need it).
+    # No-agent profiles (REMOTE) never access it → never created.
+    def _create_agent_registry() -> Any:
         from nexus.core.agent_registry import AgentRegistry
 
-        nx._agent_registry = AgentRegistry()
-        logger.debug("[BOOT:LINK] AgentRegistry created (kernel-knows sentinel)")
-    except Exception as exc:
-        logger.debug("[BOOT:LINK] AgentRegistry unavailable: %s", exc)
+        _ar = AgentRegistry()
+        # Wire close callback
+        if hasattr(_ar, "close_all"):
 
-    _pt = getattr(nx, "_agent_registry", None)
-    if _pt is not None and hasattr(_pt, "close_all"):
+            def _close_agent_registry() -> None:
+                try:
+                    _ar.close_all()
+                except Exception as exc:
+                    logger.debug("close: agent_registry.close_all() failed: %s", exc)
 
-        def _close_agent_registry() -> None:
-            try:
-                _pt.close_all()
-            except Exception as exc:
-                logger.debug("close: agent_registry.close_all() failed: %s", exc)
+            nx._close_callbacks.append(_close_agent_registry)
 
-        nx._close_callbacks.append(_close_agent_registry)
+        # Keep kernel sentinel in sync for backward compat
+        nx._agent_registry = _ar
+        logger.debug("[BOOT:LINK] AgentRegistry lazy-constructed on first access")
+        return _ar
+
+    nx._service_registry.register_factory("agent_registry", _create_agent_registry)
 
     # Issue #1801: _overlay_config_fn closure removed — kernel now reads
     # workspace_registry directly from service registry via nx.service("workspace_registry").
 
     # --- Deferred EvictionManager + AcpService (Issue #1792) ---
-    # AgentRegistry is a kernel-knows sentinel (factory-provided at link-time).
-    # EvictionManager and AcpService depend on it — created here if available.
-    _agent_reg = getattr(nx, "_agent_registry", None)
+    # AgentRegistry is lazy-constructed via register_factory().
+    # Accessing it here triggers construction only if EvictionManager/AcpService exist.
+    _agent_ref = nx._service_registry.service("agent_registry")
+    _agent_reg = _agent_ref._service_instance if _agent_ref is not None else None
     if _agent_reg is not None:
         try:
             from nexus.contracts.deployment_profile import DeploymentProfile as _DP

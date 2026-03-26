@@ -54,7 +54,7 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "workspace_registry",
         "mount_manager",
         "workspace_manager",
-        # Original system services
+        # Original services
         "async_namespace_manager",
         "delivery_worker",
         "observability_subsystem",
@@ -63,6 +63,9 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "zone_lifecycle",
         "scheduler_service",
         "event_signal",
+        # Infrastructure (moved from bricks)
+        "event_bus",
+        "lock_manager",
     }
 )
 
@@ -102,7 +105,6 @@ def _make_boot_context(**overrides: object) -> _BootContext:
         "cache_ttl_seconds": 300,
         "dist": DistributedConfig(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         ),
         "zone_id": None,
@@ -215,6 +217,8 @@ class TestBootSystemServices:
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
             "scheduler_service",  # degradable — None if SchedulerService unavailable
+            "event_bus",  # None when enable_events=False
+            "lock_manager",  # may be None if IPC disabled
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:
@@ -267,13 +271,12 @@ class TestBootBrickServices:
         result = _boot_brick_services(ctx, system)
 
         # These keys should always be present (even if values are None)
+        # event_bus/lock_manager moved to _boot_services()
         expected_keys = {
             "wallet_provisioner",
             "manifest_resolver",
             "tool_namespace_middleware",
             "chunked_upload_service",
-            "event_bus",
-            "lock_manager",
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
@@ -327,7 +330,6 @@ class TestCreateNexusServices:
             ),
             distributed=DistributedConfig(
                 enable_events=False,
-                enable_locks=False,
                 enable_workflows=False,
             ),
             enable_write_buffer=False,
@@ -369,7 +371,6 @@ class TestCreateNexusServices:
             ),
             distributed=DistributedConfig(
                 enable_events=False,
-                enable_locks=False,
                 enable_workflows=False,
             ),
             enable_write_buffer=False,
@@ -420,7 +421,6 @@ class TestBrickServicesFieldCompleteness:
             ),
             distributed=DistributedConfig(
                 enable_events=False,
-                enable_locks=False,
                 enable_workflows=False,
             ),
             enable_write_buffer=False,
@@ -472,7 +472,6 @@ class TestBrickServicesFieldCompleteness:
             ),
             distributed=DistributedConfig(
                 enable_events=False,
-                enable_locks=False,
                 enable_workflows=False,
             ),
             enable_write_buffer=False,

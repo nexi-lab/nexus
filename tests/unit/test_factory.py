@@ -81,7 +81,6 @@ def _make_mock_ctx(**overrides: Any) -> Any:
         "cache_ttl_seconds": 300,
         "dist": MagicMock(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         ),
         "zone_id": None,
@@ -170,17 +169,20 @@ class TestBootSystemServices:
             "workspace_registry",
             "mount_manager",
             "workspace_manager",
-            # Original system services
+            # Original services
             "async_namespace_manager",
             "delivery_worker",
             "observability_subsystem",
             "resiliency_manager",
             "context_branch_service",
             "zone_lifecycle",
-            # (PipeManager + AgentRegistry are kernel-internal §4.2, not in SystemServices)
+            # (PipeManager + AgentRegistry are kernel-internal §4.2)
             "scheduler_service",
             # Issue #3193: shared notification signal
             "event_signal",
+            # Infrastructure (moved from bricks)
+            "event_bus",
+            "lock_manager",
         }
         assert expected_keys == set(result.keys())
 
@@ -257,8 +259,6 @@ class TestBootBrickServices:
             "manifest_metrics",
             "tool_namespace_middleware",
             "chunked_upload_service",
-            "event_bus",
-            "lock_manager",
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",

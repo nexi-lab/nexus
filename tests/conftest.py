@@ -146,7 +146,6 @@ async def make_test_nexus(
     if distributed is None:
         distributed = DistributedConfig(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         )
 

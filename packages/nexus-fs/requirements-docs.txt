@@ -1,0 +1,10 @@
+mkdocs-material>=9.5
+mkdocstrings[python]>=0.24
+mkdocs-gen-files>=0.5
+mkdocs-literate-nav>=0.6
+mkdocs-section-index>=0.3
+mkdocs-git-revision-date-localized-plugin>=1.2
+mkdocs-minify-plugin>=0.7
+mike>=2.0
+pytest-examples>=0.0.10
+typos>=1.0

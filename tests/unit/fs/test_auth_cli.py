@@ -77,3 +77,40 @@ def test_fs_database_url_does_not_inherit_global_nexus_database_url(monkeypatch)
     monkeypatch.setenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:46702/nexus")
     monkeypatch.delenv("NEXUS_FS_DATABASE_URL", raising=False)
     assert get_fs_database_url() is None
+
+
+def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
+    class _Service:
+        async def test_service(self, service_name, user_email=None, target=None, context=None):  # noqa: ANN001, ARG002
+            assert service_name == "gws"
+            assert target is None
+            return {
+                "success": False,
+                "service": "gws",
+                "source": "native:gws_cli",
+                "message": "chat: chat scopes missing",
+                "checks": [
+                    {
+                        "target": "drive",
+                        "success": True,
+                        "source": "native:gws_cli",
+                        "message": "drive target is ready via local gws CLI.",
+                    },
+                    {
+                        "target": "chat",
+                        "success": False,
+                        "source": "native:gws_cli",
+                        "message": "chat scopes missing",
+                    },
+                ],
+            }
+
+    monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _Service())
+
+    runner = CliRunner()
+    result = runner.invoke(auth, ["test", "gws"])
+
+    assert result.exit_code != 0
+    assert "gws target readiness" in result.output
+    assert "drive" in result.output
+    assert "chat" in result.output

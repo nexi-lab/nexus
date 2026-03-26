@@ -140,6 +140,19 @@ def test_list_summaries_prefers_native_gws_when_stored_oauth_expired(
             "message": "Local gws CLI profile available for alice@example.com.",
         },
     )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": "native:gws_cli",
+                "message": f"{target} target is ready via local gws CLI.",
+            }
+            for target in targets
+        },
+    )
 
     summaries = asyncio.run(service.list_summaries())
     summary_by_service = {summary.service: summary for summary in summaries}
@@ -173,9 +186,115 @@ def test_test_service_prefers_native_gws_when_stored_oauth_expired(
             "message": "Local gws CLI profile available for alice@example.com.",
         },
     )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None: {
+            target: {
+                "target": target,
+                "success": True,
+                "source": "native:gws_cli",
+                "message": f"{target} target is ready via local gws CLI.",
+            }
+            for target in targets
+        },
+    )
 
     result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
 
     assert result["success"] is True
     assert result["source"] == "native:gws_cli"
     assert "expired" in result["message"].lower()
+
+
+def test_test_service_gws_reports_target_failures(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None: {
+            target: {
+                "target": target,
+                "success": target != "chat",
+                "source": "native:gws_cli",
+                "message": f"{target} ok" if target != "chat" else "chat scopes missing",
+                "reason": None if target != "chat" else "missing_scopes",
+            }
+            for target in targets
+        },
+    )
+
+    result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
+
+    assert result["success"] is False
+    assert "chat" in result["message"]
+    assert any(check["target"] == "chat" and not check["success"] for check in result["checks"])
+
+
+def test_list_summaries_marks_gws_error_when_some_targets_fail(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    oauth = _FakeOAuthService()
+    oauth._credentials = [
+        {
+            "provider": "google",
+            "user_email": "alice@example.com",
+            "is_expired": True,
+        }
+    ]
+    service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
+    monkeypatch.setattr(
+        service,
+        "_detect_google_workspace_cli_native",
+        lambda user_email=None: {
+            "source": "native:gws_cli",
+            "email": "alice@example.com",
+            "message": "Local gws CLI profile available for alice@example.com.",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_probe_google_workspace_targets",
+        lambda targets, user_email=None: {
+            target: {
+                "target": target,
+                "success": target in {"drive", "docs", "sheets", "gmail", "calendar"},
+                "source": "native:gws_cli",
+                "message": f"{target} ok"
+                if target != "chat"
+                else "chat requires additional Google OAuth scopes",
+                "reason": None if target != "chat" else "missing_scopes",
+            }
+            for target in targets
+        },
+    )
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+
+    assert summary_by_service["gws"].status == AuthStatus.ERROR
+    assert "chat" in summary_by_service["gws"].message
+    assert summary_by_service["google-drive"].status == AuthStatus.AUTHED

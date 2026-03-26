@@ -210,10 +210,42 @@ def list_auth() -> None:
 @auth.command("test")
 @click.argument("service_name", type=str)
 @click.option("--user-email", type=str, default=None, help="OAuth account email override.")
-def test_auth(service_name: str, user_email: str | None) -> None:
+@click.option(
+    "--target",
+    type=click.Choice(
+        ["drive", "docs", "sheets", "gmail", "calendar", "chat"], case_sensitive=False
+    ),
+    default=None,
+    help="Google Workspace target readiness check.",
+)
+def test_auth(service_name: str, user_email: str | None, target: str | None) -> None:
     """Validate auth for a service."""
     service = _build_auth_service()
-    result = asyncio.run(service.test_service(service_name, user_email=user_email))
+    try:
+        result = asyncio.run(
+            service.test_service(service_name, user_email=user_email, target=target)
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    checks = result.get("checks")
+    if isinstance(checks, list) and checks:
+        table = Table(
+            title=f"{service_name} target readiness", show_header=True, header_style="bold cyan"
+        )
+        table.add_column("Target", style="green")
+        table.add_column("Status", style="yellow")
+        table.add_column("Source", style="blue")
+        table.add_column("Message")
+        for check in checks:
+            table.add_row(
+                str(check.get("target", "")),
+                "ok" if check.get("success") else "error",
+                str(check.get("source", result.get("source", ""))),
+                str(check.get("message", "")),
+            )
+        console.print(table)
+
     if result.get("success"):
         console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")
         return

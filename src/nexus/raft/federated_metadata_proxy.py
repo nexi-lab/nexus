@@ -93,7 +93,7 @@ class FederatedMetadataProxy(MetastoreABC):
             vfs_port = _os.environ.get("NEXUS_GRPC_PORT", "2028")
             self_addr = f"{hostname}:{vfs_port}"
         else:
-            self_addr = raft_addr
+            self_addr = raft_addr or ""
         return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================

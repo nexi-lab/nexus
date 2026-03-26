@@ -72,12 +72,29 @@ async def startup_grpc(app: "FastAPI", _svc: "LifespanServices") -> list[asyncio
     import nexus.grpc.vfs.vfs_pb2_grpc as vfs_pb2_grpc
     from nexus.grpc.servicer import VFSServicer
 
+    # Get the default backend for ReadBlob (driver-to-driver content fetch)
+    _object_store = None
+    _router = getattr(nexus_fs, "router", None)
+    if _router is not None:
+        _default_mount = getattr(_router, "_default_backend", None)
+        if _default_mount is not None:
+            _object_store = _default_mount
+        else:
+            # Try getting the backend from the first mount entry
+            _backends = getattr(_router, "_backends", {})
+            for _entry in _backends.values():
+                _be = getattr(_entry, "backend", None)
+                if _be is not None and hasattr(_be, "read_content"):
+                    _object_store = _be
+                    break
+
     servicer = VFSServicer(
         nexus_fs=nexus_fs,
         exposed_methods=exposed_methods,
         auth_provider=auth_provider,
         api_key=api_key,
         subscription_manager=subscription_manager,
+        object_store=_object_store,
     )
 
     server = grpc.aio.server()

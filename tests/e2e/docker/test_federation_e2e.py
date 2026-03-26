@@ -828,6 +828,12 @@ class TestLeaderFailoverAndRecovery:
     """
 
     def test_failover_and_recovery(self, cluster, api_key):
+        # Requires Docker CLI inside test container (docker stop/start)
+        import shutil
+
+        if shutil.which("docker") is None:
+            pytest.skip("Docker CLI not available in test container")
+
         uid = _uid()
         node1 = cluster["node1"]
         node2 = cluster["node2"]

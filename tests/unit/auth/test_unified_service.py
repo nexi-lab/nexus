@@ -409,3 +409,22 @@ def test_test_service_gws_target_reports_missing_stored_scope(
     assert "missing required google oauth scope" in result["message"].lower()
     assert result["checks"][0]["target"] == "chat"
     assert result["checks"][0]["reason"] == "missing_scopes"
+
+
+def test_native_marker_requires_live_provider_chain_for_summary_and_resolution(
+    secret_store: FileSecretCredentialStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    service = UnifiedAuthService(oauth_service=_FakeOAuthService(), secret_store=secret_store)
+    service.connect_native("s3")
+    monkeypatch.setattr(service, "_detect_native", lambda service_name: None)
+
+    summaries = asyncio.run(service.list_summaries())
+    summary_by_service = {summary.service: summary for summary in summaries}
+    resolution = service.resolve_backend_config("path_s3", {"bucket": "demo"})
+
+    assert summary_by_service["s3"].status == AuthStatus.NO_AUTH
+    assert summary_by_service["s3"].source == "missing"
+    assert resolution.status == AuthStatus.NO_AUTH
+    assert resolution.source == "missing"

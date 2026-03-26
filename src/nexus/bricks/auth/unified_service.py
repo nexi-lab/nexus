@@ -290,6 +290,24 @@ class UnifiedAuthService:
 
         record = self._secret_store.get(service)
         if record is not None:
+            if record.kind == CredentialKind.NATIVE:
+                native = self._detect_native(service)
+                if native is not None:
+                    return AuthResolution(
+                        service=service,
+                        status=AuthStatus.AUTHED,
+                        source="native",
+                        resolved_config=dict(config),
+                        message=native["message"],
+                    )
+                spec = _SECRET_SERVICE_SPECS[service]
+                return AuthResolution(
+                    service=service,
+                    status=AuthStatus.NO_AUTH,
+                    source="missing",
+                    resolved_config=dict(config),
+                    message=spec["action_hint"],
+                )
             resolved = self._merge_secret_data(dict(config), record.data)
             return AuthResolution(
                 service=service,
@@ -331,6 +349,30 @@ class UnifiedAuthService:
             seen_services.add(service)
             record = self._secret_store.get(service)
             if record is not None:
+                if record.kind == CredentialKind.NATIVE:
+                    native = self._detect_native(service)
+                    if native is not None:
+                        summaries.append(
+                            AuthSummary(
+                                service=service,
+                                kind=CredentialKind.NATIVE,
+                                status=AuthStatus.AUTHED,
+                                source="native",
+                                message=native["message"],
+                                details={k: v for k, v in native.items() if k != "message"},
+                            )
+                        )
+                    else:
+                        summaries.append(
+                            AuthSummary(
+                                service=service,
+                                kind=CredentialKind.NATIVE,
+                                status=AuthStatus.NO_AUTH,
+                                source="missing",
+                                message=_SECRET_SERVICE_SPECS[service]["action_hint"],
+                            )
+                        )
+                    continue
                 summaries.append(
                     AuthSummary(
                         service=service,

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from click.testing import CliRunner
 
 from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
 from nexus.fs._auth_cli import auth
-from nexus.fs._oauth_support import get_fs_database_url
+from nexus.fs._oauth_support import get_fs_database_url, run_google_oauth_setup
 
 
 class _FakeOAuthService:
@@ -125,3 +126,55 @@ def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
     assert "Next steps" in result.output
     assert "drive" in result.output
     assert "chat" in result.output
+
+
+def test_fs_google_oauth_setup_stores_service_specific_provider(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: dict[str, str] = {}
+
+    class _Provider:
+        def __init__(self, **kwargs):  # noqa: ANN003
+            calls["provider_name"] = str(kwargs["provider_name"])
+            calls["scope_text"] = " ".join(kwargs["scopes"])
+
+        def get_authorization_url(self) -> str:
+            return "https://example.test/oauth"
+
+        async def exchange_code(self, code: str):  # noqa: ANN001
+            calls["auth_code"] = code
+            return SimpleNamespace(
+                access_token="ya29.test",
+                refresh_token="1//refresh",
+                token_type="Bearer",
+                expires_at=None,
+                scopes=None,
+                client_id=None,
+                token_uri=None,
+            )
+
+    class _Manager:
+        async def store_credential(self, **kwargs):  # noqa: ANN003
+            calls["stored_provider"] = str(kwargs["provider"])
+            return "cred-123"
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setattr(
+        "nexus.fs._oauth_support.get_token_manager", lambda db_path=None: _Manager()
+    )
+    monkeypatch.setattr(
+        "nexus.fs._oauth_support._il.import_module",
+        lambda name: SimpleNamespace(GoogleOAuthProvider=_Provider)
+        if name == "nexus.bricks.auth.oauth.providers.google"
+        else None,
+    )
+
+    monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "code-123")
+    run_google_oauth_setup(user_email="alice@example.com", service_name="google-drive")
+
+    assert calls["provider_name"] == "google-drive"
+    assert calls["stored_provider"] == "google-drive"

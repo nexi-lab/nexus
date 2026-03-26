@@ -87,24 +87,15 @@ def test_connect_gws_prompts_for_user_email_and_runs_google_setup(
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "client-id")
     monkeypatch.setenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "client-secret")
 
-    def _fake_setup(
-        client_id: str | None,
-        client_secret: str | None,
-        user_email: str | None,
-        db_path: str | None,
-        zone_id: str | None,
-    ) -> None:
+    def _fake_setup(service_name: str, user_email: str | None) -> None:
         called.update(
             {
-                "client_id": client_id,
-                "client_secret": client_secret,
+                "service_name": service_name,
                 "user_email": user_email,
-                "db_path": db_path,
-                "zone_id": zone_id,
             }
         )
 
-    monkeypatch.setattr("nexus.cli.commands.auth_cli.setup_gdrive.callback", _fake_setup)
+    monkeypatch.setattr("nexus.cli.commands.auth_cli._run_google_oauth_setup", _fake_setup)
 
     runner = CliRunner()
     result = runner.invoke(auth, ["connect", "gws"], input="alice@example.com\n")
@@ -112,6 +103,7 @@ def test_connect_gws_prompts_for_user_email_and_runs_google_setup(
     assert result.exit_code == 0
     assert "Setup steps for gws (oauth)" in result.output
     assert called["user_email"] == "alice@example.com"
+    assert called["service_name"] == "gws"
 
 
 def test_test_auth_reports_actionable_guidance_for_missing_gws_oauth(

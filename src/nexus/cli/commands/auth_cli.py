@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib as _il
 import os
+import sys
 from collections.abc import Callable
 from typing import cast
 
@@ -11,8 +13,9 @@ import click
 from rich.table import Table
 
 from nexus.bricks.auth.unified_service import UnifiedAuthService
-from nexus.cli.commands.oauth import setup_gdrive, setup_x
+from nexus.cli.commands.oauth import get_token_manager, setup_x
 from nexus.cli.utils import console
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 
 _SERVICE_AUTH_TYPES: dict[str, tuple[str, ...]] = {
@@ -93,6 +96,31 @@ _SERVICE_HELP: dict[str, dict[str, tuple[str, ...] | str]] = {
             "Follow the browser/code flow, then run `nexus auth test x --user-email you@example.com`.",
         ),
     },
+}
+
+_GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
+    "gws": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
+        "https://www.googleapis.com/auth/documents",
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/gmail.modify",
+        "https://www.googleapis.com/auth/calendar",
+        "https://www.googleapis.com/auth/chat.spaces.readonly",
+    ],
+    "google-drive": [
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.file",
+    ],
+    "gmail": ["https://www.googleapis.com/auth/gmail.modify"],
+    "google-calendar": ["https://www.googleapis.com/auth/calendar"],
+}
+
+_GOOGLE_SERVICE_PROVIDER_NAMES: dict[str, str] = {
+    "gws": "google",
+    "google-drive": "google-drive",
+    "gmail": "gmail",
+    "google-calendar": "google-calendar",
 }
 
 
@@ -203,18 +231,59 @@ def _resolve_user_email(user_email: str | None) -> str:
     return str(click.prompt("user_email"))
 
 
-def _run_google_oauth_setup(user_email: str) -> None:
-    callback = cast(
-        Callable[[str | None, str | None, str, str | None, str | None], None],
-        setup_gdrive.callback,
+def _run_google_oauth_setup(service_name: str, user_email: str) -> None:
+    GoogleOAuthProvider = _il.import_module(
+        "nexus.bricks.auth.oauth.providers.google"
+    ).GoogleOAuthProvider
+
+    client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise click.ClickException(
+            "Google OAuth client ID/secret not provided. Set "
+            "NEXUS_OAUTH_GOOGLE_CLIENT_ID and NEXUS_OAUTH_GOOGLE_CLIENT_SECRET first."
+        )
+
+    provider = GoogleOAuthProvider(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri="http://localhost",
+        scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
+        provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
     )
-    callback(
-        None,
-        None,
-        user_email,
-        None,
-        None,
+    auth_url = provider.get_authorization_url()
+
+    console.print("\n[bold green]Google OAuth Setup[/bold green]")
+    console.print(f"\n[bold]Service:[/bold] {service_name}")
+    console.print(f"[bold]User:[/bold] {user_email}")
+    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print(f"\n{auth_url}\n")
+    console.print(
+        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost."
     )
+    console.print("[bold yellow]Step 3:[/bold yellow] Copy the `code` parameter from that URL.")
+    auth_code = click.prompt("\nEnter authorization code")
+
+    async def _exchange_and_store() -> str:
+        credential = await provider.exchange_code(auth_code)
+        manager = get_token_manager()
+        cred_id = await manager.store_credential(
+            provider=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
+            user_email=user_email,
+            credential=credential,
+            zone_id=ROOT_ZONE_ID,
+            created_by=user_email,
+        )
+        manager.close()
+        return cred_id
+
+    try:
+        cred_id = asyncio.run(_exchange_and_store())
+        console.print(f"\n[green]ok[/green] stored Google OAuth credentials for {user_email}")
+        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
+    except Exception as exc:
+        console.print(f"\n[red]OAuth setup failed:[/red] {exc}")
+        sys.exit(1)
 
 
 def _run_x_oauth_setup(user_email: str) -> None:
@@ -299,7 +368,7 @@ def connect_auth(
         if service_name in {"gws", "google-drive", "gmail", "google-calendar"}:
             user_email = _resolve_user_email(user_email)
             _ensure_google_oauth_env()
-            _run_google_oauth_setup(user_email)
+            _run_google_oauth_setup(service_name, user_email)
             return
         if service_name == "x":
             user_email = _resolve_user_email(user_email)

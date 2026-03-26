@@ -48,6 +48,13 @@ _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     ],
 }
 
+_GOOGLE_SERVICE_PROVIDER_NAMES: dict[str, str] = {
+    "gws": "google",
+    "google-drive": "google-drive",
+    "gmail": "gmail",
+    "google-calendar": "google-calendar",
+}
+
 
 def get_fs_database_url() -> str | None:
     """Resolve the standalone nexus-fs database URL.
@@ -117,7 +124,7 @@ def run_google_oauth_setup(
         client_secret=client_secret,
         redirect_uri="http://localhost",
         scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
-        provider_name=service_name,
+        provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
     )
     auth_url = provider.get_authorization_url()
 
@@ -136,7 +143,7 @@ def run_google_oauth_setup(
         credential = await provider.exchange_code(auth_code)
         manager = get_token_manager(db_path)
         cred_id = await manager.store_credential(
-            provider="google",
+            provider=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
             user_email=user_email,
             credential=credential,
             zone_id=zone_id or ROOT_ZONE_ID,

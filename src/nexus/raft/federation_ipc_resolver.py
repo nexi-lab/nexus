@@ -30,6 +30,8 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.metastore import MetastoreABC
+    from nexus.core.pipe_manager import PipeManager
+    from nexus.core.stream_manager import StreamManager
     from nexus.security.tls.config import ZoneTlsConfig
 
 logger = logging.getLogger(__name__)
@@ -38,15 +40,21 @@ logger = logging.getLogger(__name__)
 class FederationIPCResolver:
     """VFSPathResolver for remote DT_PIPE and DT_STREAM federation.
 
-    Handles read/write/delete for pipes and streams hosted on remote nodes.
-    Local pipes/streams are not matched (returns None) and fall through
-    to the kernel's PipeManager/StreamManager.
+    Acts as a **lazy installer**: on first remote pipe/stream access, calls
+    PipeManager.open() / StreamManager.open() to install a RemotePipeBackend /
+    RemoteStreamBackend in the fast-path buffer registry. Subsequent calls hit
+    the fast-path dict lookup and never reach this resolver again.
+
+    Falls back to one-shot gRPC for operations where no manager is available.
+    try_delete stays unchanged (control-plane, not data-path).
 
     Args:
         metastore: MetastoreABC for metadata lookup.
         self_address: This node's advertise address (e.g., "10.0.0.5:50051").
         tls_config: Optional ZoneTlsConfig for mTLS peer channels.
         timeout: RPC timeout in seconds.
+        pipe_manager: Optional PipeManager ref for lazy backend installation.
+        stream_manager: Optional StreamManager ref for lazy backend installation.
     """
 
     name = "federation-ipc"
@@ -57,11 +65,15 @@ class FederationIPCResolver:
         self_address: str | None,
         tls_config: "ZoneTlsConfig | None" = None,
         timeout: float = 30.0,
+        pipe_manager: "PipeManager | None" = None,
+        stream_manager: "StreamManager | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
         self._tls_config = tls_config
         self._timeout = timeout
+        self._pipe_manager = pipe_manager
+        self._stream_manager = stream_manager
 
     # ------------------------------------------------------------------
     # Hook spec (duck-typed) (#1710) — enables coordinator.enlist()
@@ -98,6 +110,28 @@ class FederationIPCResolver:
 
         return meta, addr.origins[0]  # remote IPC — resolver handles
 
+    def _try_install_backend(self, path: str, meta: Any) -> bool:
+        """Try to install a remote backend in PipeManager/StreamManager.
+
+        Returns True if a backend was installed (caller should delegate to
+        the now-installed fast-path backend), False if fallback RPC needed.
+        """
+        if meta.is_pipe and self._pipe_manager is not None:
+            try:
+                self._pipe_manager.open(path)
+                return True
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to install RemotePipeBackend for %s, using fallback", path)
+                return False
+        if meta.is_stream and self._stream_manager is not None:
+            try:
+                self._stream_manager.open(path)
+                return True
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to install RemoteStreamBackend for %s, using fallback", path)
+                return False
+        return False
+
     def try_read(
         self,
         path: str,
@@ -106,17 +140,33 @@ class FederationIPCResolver:
     ) -> bytes | None:
         """Read from remote DT_PIPE/DT_STREAM via gRPC Call RPC.
 
+        On first access, installs a RemotePipeBackend/RemoteStreamBackend
+        so subsequent calls hit the fast-path and skip this resolver.
+
         Returns None if path is not a remote IPC inode (decline).
         """
         _ = context  # Protocol-required; not used for IPC
         resolved = self._resolve_remote(path)
         if resolved is None:
             return None
-        _meta, origin = resolved
+        meta, origin = resolved
+
+        # Lazy install: install remote backend, then delegate to it
+        if self._try_install_backend(path, meta):
+            if meta.is_pipe and self._pipe_manager is not None:
+                return self._pipe_manager._get_buffer(path).read_nowait()
+            if meta.is_stream and self._stream_manager is not None:
+                data, _ = self._stream_manager.stream_read_at(path, 0)
+                return data
+
+        # Fallback: one-shot gRPC (no manager or install failed)
         return self._read_remote(origin, path)
 
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None:
         """Write to remote DT_PIPE/DT_STREAM via gRPC Call RPC.
+
+        On first access, installs a RemotePipeBackend/RemoteStreamBackend
+        so subsequent calls hit the fast-path and skip this resolver.
 
         Returns None if path is not a remote IPC inode (decline).
         """
@@ -124,8 +174,18 @@ class FederationIPCResolver:
         if resolved is None:
             return None
         meta, origin = resolved
+
+        # Lazy install: install remote backend, then delegate to it
+        if self._try_install_backend(path, meta):
+            if meta.is_pipe and self._pipe_manager is not None:
+                self._pipe_manager._get_buffer(path).write_nowait(content)
+                return {}
+            if meta.is_stream and self._stream_manager is not None:
+                offset = self._stream_manager.stream_write_nowait(path, content)
+                return {"offset": offset}
+
+        # Fallback: one-shot gRPC (no manager or install failed)
         result = self._write_remote(origin, path, content)
-        # For streams, result may contain offset info
         if meta.is_stream:
             return {"offset": result}
         return {}

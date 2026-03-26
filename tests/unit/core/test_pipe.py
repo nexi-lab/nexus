@@ -890,6 +890,96 @@ SELF_ADDR = "10.0.0.1:50051"
 REMOTE_ADDR = "10.0.0.2:50051"
 
 
+class _MockChannelPool:
+    """Minimal PeerChannelPool duck-type for PipeManager tests."""
+
+    def __init__(self) -> None:
+        from unittest.mock import MagicMock
+
+        self.channel = MagicMock()
+
+    def get(self, address: str) -> object:
+        return self.channel
+
+
+class TestPipeManagerRemoteDetection:
+    """Test PipeManager.open() remote pipe detection and RemotePipeBackend install."""
+
+    def _make_manager_with_pool(
+        self,
+    ) -> tuple[PipeManager, MockMetastore, _MockChannelPool]:
+        ms = MockMetastore()
+        pool = _MockChannelPool()
+        mgr = PipeManager(ms, self_address=SELF_ADDR, channel_pool=pool)
+        return mgr, ms, pool
+
+    def test_open_remote_pipe_installs_remote_backend(self) -> None:
+        """open() on a remote pipe should install RemotePipeBackend."""
+        from nexus.core.remote_pipe import RemotePipeBackend
+
+        mgr, ms, _ = self._make_manager_with_pool()
+        # Manually create a remote pipe inode (origin is REMOTE_ADDR)
+        meta = FileMetadata(
+            path="/nexus/pipes/remote",
+            backend_name=f"pipe@{REMOTE_ADDR}",
+            physical_path="mem://",
+            size=65536,
+            entry_type=DT_PIPE,
+        )
+        ms.put(meta)
+
+        backend = mgr.open("/nexus/pipes/remote")
+        assert isinstance(backend, RemotePipeBackend)
+        assert backend.stats["origin"] == REMOTE_ADDR
+        assert "/nexus/pipes/remote" in mgr._buffers
+
+    def test_open_local_pipe_installs_ringbuffer(self) -> None:
+        """open() on a local pipe should install RingBuffer (not RemotePipeBackend)."""
+        mgr, ms, _ = self._make_manager_with_pool()
+        meta = FileMetadata(
+            path="/nexus/pipes/local",
+            backend_name=f"pipe@{SELF_ADDR}",
+            physical_path="mem://",
+            size=65536,
+            entry_type=DT_PIPE,
+        )
+        ms.put(meta)
+
+        backend = mgr.open("/nexus/pipes/local")
+        assert isinstance(backend, RingBuffer)
+
+    def test_open_plain_pipe_installs_ringbuffer(self) -> None:
+        """open() on a plain pipe (no origin) should install RingBuffer."""
+        mgr, ms, _ = self._make_manager_with_pool()
+        meta = FileMetadata(
+            path="/nexus/pipes/plain",
+            backend_name="pipe",
+            physical_path="mem://",
+            size=65536,
+            entry_type=DT_PIPE,
+        )
+        ms.put(meta)
+
+        backend = mgr.open("/nexus/pipes/plain")
+        assert isinstance(backend, RingBuffer)
+
+    def test_open_without_pool_always_ringbuffer(self) -> None:
+        """Without channel_pool, open() always creates RingBuffer even for remote."""
+        ms = MockMetastore()
+        mgr = PipeManager(ms, self_address=SELF_ADDR)  # no channel_pool
+        meta = FileMetadata(
+            path="/nexus/pipes/remote-no-pool",
+            backend_name=f"pipe@{REMOTE_ADDR}",
+            physical_path="mem://",
+            size=65536,
+            entry_type=DT_PIPE,
+        )
+        ms.put(meta)
+
+        backend = mgr.open("/nexus/pipes/remote-no-pool")
+        assert isinstance(backend, RingBuffer)
+
+
 class TestPipeManagerSelfAddress:
     """Test PipeManager.self_address and backend_name embedding (#1576)."""
 

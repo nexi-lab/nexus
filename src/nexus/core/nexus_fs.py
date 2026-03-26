@@ -193,13 +193,25 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.stream_manager import StreamManager
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
+
+        # PeerChannelPool for remote pipe/stream fast-path (persistent gRPC channels).
+        # Created when NEXUS_ADVERTISE_ADDR is set (federation mode); TLS config is
+        # deferred via set_tls_config() after federation bootstrap.
+        from nexus.grpc.channel_pool import PeerChannelPool as _PeerChannelPool
+
+        self._channel_pool: _PeerChannelPool | None = None
+        if _ipc_self_addr:
+            self._channel_pool = _PeerChannelPool()
+
         self._pipe_manager = PipeManager(
             metadata_store,
             self_address=_ipc_self_addr,
+            channel_pool=self._channel_pool,
         )
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
+            channel_pool=self._channel_pool,
         )
         logger.info(
             "IPC primitives initialized: PipeManager + StreamManager (self_address=%s)",
@@ -4425,6 +4437,9 @@ class NexusFS(  # type: ignore[misc]
             self._pipe_manager.close_all()
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
+        # Close peer channel pool (persistent gRPC channels)
+        if hasattr(self, "_channel_pool") and self._channel_pool is not None:
+            self._channel_pool.close_all()
 
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
         # Runs BEFORE pillar close so DB connections are still open.

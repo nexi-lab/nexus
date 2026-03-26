@@ -33,18 +33,12 @@ class TigerCacheWriteHook:
       - tiger_cache: The TigerCache instance (bitmap_cache)
     """
 
-    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1610) ──────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(write_hooks=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, tiger_cache: Any) -> None:
         self._tiger_cache = tiger_cache

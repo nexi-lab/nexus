@@ -32,18 +32,12 @@ class TaskWriteHook:
     cache — all state comes from the written content and ``ctx.is_new_file``.
     """
 
-    # ── HotSwappable protocol ──────────────────────────────────────────
+    # ── Hook spec (duck-typed) ────────────────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(write_hooks=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self) -> None:
         self._handlers: list[TaskSignalHandler] = []

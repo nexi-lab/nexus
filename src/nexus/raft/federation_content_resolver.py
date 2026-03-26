@@ -82,19 +82,13 @@ class FederationContentResolver:
         self._local_object_store = local_object_store
 
     # ------------------------------------------------------------------
-    # HotSwappable protocol (#1710) — enables coordinator.enlist()
+    # Hook spec (duck-typed) (#1710) — enables coordinator.enlist()
     # ------------------------------------------------------------------
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
 
         return HookSpec(resolvers=(self,))
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     # ------------------------------------------------------------------
     # VFSPathResolver single-call try_* protocol (#1665)

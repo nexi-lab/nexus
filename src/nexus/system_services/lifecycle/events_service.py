@@ -82,25 +82,17 @@ class EventsService:
         self._waiters: list[_Waiter] = []
         self._waiters_lock = threading.Lock()
         # Set to True after factory registers us as VFSObserver
-        self._observe_registered = False
+        self._observe_registered = True  # hooks registered at enlist() time
 
         logger.info("[EventsService] Initialized")
 
     # =========================================================================
-    # HotSwappable protocol (Q2 — Issue #1611)
+    # Hook spec (duck-typed, Issue #1611)
     # =========================================================================
 
     def hook_spec(self) -> HookSpec:
         """Declare VFS hooks: EventsService registers itself as an OBSERVE observer."""
         return HookSpec(observers=(self,))
-
-    async def drain(self) -> None:
-        """Stop accepting new waiter registrations."""
-        self._observe_registered = False
-
-    async def activate(self) -> None:
-        """Resume accepting waiter registrations."""
-        self._observe_registered = True
 
     # =========================================================================
     # Infrastructure Detection

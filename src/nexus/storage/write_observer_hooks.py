@@ -54,7 +54,7 @@ class SyncAuditWriteInterceptor:
 
     __slots__ = ("_observer", "_strict_mode")
 
-    # ── HotSwappable protocol ──────────────────────────────────────────
+    # ── Hook spec (duck-typed) ────────────────────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -67,12 +67,6 @@ class SyncAuditWriteInterceptor:
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, observer: Any, *, strict_mode: bool = True) -> None:
         self._observer = observer
@@ -164,7 +158,7 @@ class AuditWriteInterceptor:
 
     __slots__ = ("_nx", "_pipe_path", "_strict_mode", "_pipe_buffer")
 
-    # ── HotSwappable protocol (Issue #1613) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1613) ──────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -177,12 +171,6 @@ class AuditWriteInterceptor:
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, nx: "NexusFS", pipe_path: str, *, strict_mode: bool = True) -> None:
         self._nx = nx

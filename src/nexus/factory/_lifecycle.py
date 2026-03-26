@@ -336,9 +336,9 @@ async def _do_initialize(
     _initialize_wired_ipc(nx, nx._brick_services)
 
     # --- Register VFS hooks (INTERCEPT + OBSERVE — Issue #900) ---
-    # Issue #1610/#1612/#1613/#1616: All hooks now implement HotSwappable.
+    # Issue #1610/#1612/#1613/#1616: All hooks declare hook_spec() (duck-typed).
     # When coordinator exists, hooks are registered as services here and
-    # dispatch-registered at bootstrap via activate_hot_swappable_services().
+    # dispatch-registered immediately at enlist() time.
     # _build_retroactive_hook_specs() has been deleted — hooks self-describe.
     from nexus.factory.orchestrator import _register_vfs_hooks
 

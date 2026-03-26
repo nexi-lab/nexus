@@ -48,7 +48,7 @@ class PermissionCheckHook:
 
     name = "permission_check"
 
-    # ── HotSwappable protocol (Issue #1610) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1610) ──────────────────────────
 
     def hook_spec(self) -> "HookSpec":
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -63,12 +63,6 @@ class PermissionCheckHook:
             stat_hooks=(self,),
             access_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(
         self,

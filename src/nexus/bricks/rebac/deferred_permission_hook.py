@@ -40,7 +40,7 @@ class DeferredPermissionHook:
     name = "deferred_permission"
     __slots__ = ("_buf", "_rebac")
 
-    # ── HotSwappable protocol (Issue #1773) ────────────────────────────
+    # ── Hook spec (duck-typed) (Issue #1773) ──────────────────────────
 
     def hook_spec(self) -> HookSpec:
         from nexus.contracts.protocols.service_hooks import HookSpec
@@ -51,12 +51,6 @@ class DeferredPermissionHook:
             write_batch_hooks=(self,),
             rename_hooks=(self,),
         )
-
-    async def drain(self) -> None:
-        pass
-
-    async def activate(self) -> None:
-        pass
 
     def __init__(self, deferred_buffer: Any, rebac_manager: Any | None = None) -> None:
         self._buf = deferred_buffer

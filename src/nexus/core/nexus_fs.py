@@ -3264,11 +3264,9 @@ class NexusFS(  # type: ignore[misc]
                 meta = self.metadata.get(old_path)
                 is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
-                # Check destination — use backend.file_exists() for connector backends
+                # Check destination — use backend.file_exists() for PAS backends
                 if self.metadata.exists(new_path):
-                    if new_route.backend.supports_rename is True and hasattr(
-                        new_route.backend, "file_exists"
-                    ):
+                    if hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
                         # Stale metadata — file gone from backend, clean up
@@ -3280,19 +3278,18 @@ class NexusFS(  # type: ignore[misc]
                     else:
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
-                # ── Backend rename (under lock) ──
-                if old_route.backend.supports_rename is True:
-                    try:
-                        old_route.backend.rename_file(
-                            old_route.backend_path, new_route.backend_path
-                        )
-                    except FileExistsError:
-                        raise
-                    except Exception as e:
-                        raise BackendError(
-                            f"Failed to rename in backend: {e}",
-                            backend=old_route.backend.name,
-                        ) from e
+                # ── Backend rename (under lock, EAFP) ──
+                try:
+                    old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
+                except NotImplementedError:
+                    pass  # CAS/content-addressed backends — metadata rename is sufficient
+                except FileExistsError:
+                    raise
+                except Exception as e:
+                    raise BackendError(
+                        f"Failed to rename in backend: {e}",
+                        backend=old_route.backend.name,
+                    ) from e
 
                 # ── Metadata rename (under lock) ──
                 self.metadata.rename_path(old_path, new_path)

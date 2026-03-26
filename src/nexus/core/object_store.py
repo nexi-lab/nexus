@@ -284,28 +284,6 @@ class ObjectStoreABC(ABC):
                 result[content_id] = None
         return result
 
-    # === Capability Flags (concrete defaults, all False) ===
-
-    @property
-    def user_scoped(self) -> bool:
-        """Whether this backend requires per-user credentials (OAuth-based)."""
-        return False
-
-    @property
-    def has_token_manager(self) -> bool:
-        """Whether this backend manages OAuth tokens."""
-        return False
-
-    @property
-    def supports_rename(self) -> bool:
-        """Whether this backend supports direct file rename/move."""
-        return False
-
-    @property
-    def supports_parallel_mmap_read(self) -> bool:
-        """Whether this backend supports Rust-accelerated parallel mmap reads."""
-        return False
-
     # === Lifecycle ===
 
     def close(self) -> None:  # noqa: B027

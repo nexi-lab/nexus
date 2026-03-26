@@ -70,6 +70,18 @@ logger = logging.getLogger(__name__)
 # Module-level limiter instance; initialized in create_app().
 limiter: Limiter
 
+# Lock API Models — re-exported for backward compatibility with tests/consumers.
+# Canonical location: api/v2/models/locks.py (Issue #2056).
+from nexus.server.api.v2.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
+from nexus.server.api.v2.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
+from nexus.server.api.v2.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
+from nexus.server.api.v2.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
+from nexus.server.api.v2.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
+from nexus.server.api.v2.models.locks import LockListResponse as LockListResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockResponse as LockResponse  # noqa: E402
+from nexus.server.api.v2.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
+
 # ============================================================================
 # Thread Pool Utilities (Issue #932)
 # ============================================================================
@@ -285,7 +297,7 @@ def create_app(
         app.state.read_session_factory = None
         app.state.async_read_session_factory = None
 
-    # Expose services on app.state so routers never reach into
+    # Expose kernel services on app.state so routers never reach into
     # NexusFS private attributes (Issue #701).
     app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
     app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
@@ -315,6 +327,7 @@ def create_app(
             _brick_svc = nexus_fs.service(_svc_name)
             if _brick_svc is not None:
                 _rpc_sources.append(_brick_svc)
+        # version_service is on BrickServices, not in ServiceRegistry
         _version_svc = getattr(nexus_fs, "version_service", None)
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
@@ -340,15 +353,23 @@ def create_app(
         except Exception as _exc:
             logger.debug("MetadataExportService unavailable: %s", _exc)
         # Issue #1410: VersionService @rpc_expose methods (moved from NexusFS)
-        _version_svc = nexus_fs.service("version_service") if hasattr(nexus_fs, "service") else None
+        # Issue #3192: version_service lives on _brick_services, not as a direct
+        # NexusFS attribute. getattr(nexus_fs, "version_service") misses it.
+        _version_svc = getattr(nexus_fs, "version_service", None)
+        if _version_svc is None:
+            _brk = getattr(nexus_fs, "_brick_services", None)
+            if _brk is not None:
+                _version_svc = getattr(_brk, "version_service", None)
         if _version_svc is not None:
             _rpc_sources.append(_version_svc)
         # Issue #1520: FederationRPCService — zone lifecycle, share/join, mounts
+        # Federation is a Q1 system service, enlisted via ServiceRegistry.
+        _zone_mgr = getattr(nexus_fs, "_zone_mgr", None)
         _fed = nexus_fs.service("federation") if hasattr(nexus_fs, "service") else None
-        if _fed is not None:
+        if _zone_mgr is not None and _fed is not None:
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
-            _rpc_sources.append(FederationRPCService(_fed))
+            _rpc_sources.append(FederationRPCService(_zone_mgr, _fed))
         # --- Locks (Issue #1133) ---
         _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
         if _lock_mgr is not None:
@@ -376,10 +397,10 @@ def create_app(
             except Exception as _exc:
                 logger.debug("AuditRPCService unavailable: %s", _exc)
         # --- Governance (Issue #1133) ---
-        _svc_fn = getattr(nexus_fs, "service", None)
-        if _svc_fn is not None:
-            _anomaly = _svc_fn("governance_anomaly_service")
-            _collusion = _svc_fn("governance_collusion_service")
+        _brk = getattr(nexus_fs, "_brick_services", None)
+        if _brk is not None:
+            _anomaly = getattr(_brk, "governance_anomaly_service", None)
+            _collusion = getattr(_brk, "governance_collusion_service", None)
             if _anomaly is not None or _collusion is not None:
                 from nexus.server.rpc.services.governance_rpc import GovernanceRPCService
 
@@ -388,20 +409,198 @@ def create_app(
         if _record_store is not None:
             try:
                 from nexus.server.rpc.services.events_rpc import EventsRPCService
-                from nexus.services.event_log.replay import EventReplayService
+                from nexus.system_services.event_log.replay import EventReplayService
 
-                _evt_signal = None
+                _sys = getattr(nexus_fs, "_system_services", None)
+                _evt_signal = getattr(_sys, "event_signal", None) if _sys else None
                 _rpc_sources.append(
                     EventsRPCService(EventReplayService(_record_store, event_signal=_evt_signal))
                 )
             except Exception as _exc:
                 logger.debug("EventsRPCService unavailable: %s", _exc)
         # --- Snapshots (Issue #1133) ---
-        _snap = nexus_fs.service("snapshot_service") if hasattr(nexus_fs, "service") else None
-        if _snap is not None:
-            from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
+        if _brk is not None:
+            _snap = getattr(_brk, "snapshot_service", None)
+            if _snap is not None:
+                from nexus.server.rpc.services.snapshots_rpc import SnapshotsRPCService
 
-            _rpc_sources.append(SnapshotsRPCService(_snap))
+                _rpc_sources.append(SnapshotsRPCService(_snap))
+
+        # --- PR 3 RPC services (Issue #3346) ---
+        # Wire all new RPC services created during HTTP→gRPC migration.
+        # Each is conditional on its dependency being available.
+
+        # AuthKeys — needs record_store
+        if _record_store is not None:
+            try:
+                from nexus.server.rpc.services.auth_keys_rpc import AuthKeysRPCService
+
+                _rebac_mgr = getattr(nexus_fs, "_rebac_manager", None)
+                _rpc_sources.append(AuthKeysRPCService(_record_store, _rebac_mgr))
+            except Exception as _exc:
+                logger.debug("AuthKeysRPCService unavailable: %s", _exc)
+
+        # Identity — needs key_service
+        _key_svc = getattr(app.state, "key_service", None)
+        if _key_svc is None and _brk is not None:
+            _key_svc = getattr(_brk, "key_service", None)
+        if _key_svc is not None:
+            try:
+                from nexus.server.rpc.services.identity_rpc import IdentityRPCService
+
+                _rpc_sources.append(IdentityRPCService(_key_svc))
+            except Exception as _exc:
+                logger.debug("IdentityRPCService unavailable: %s", _exc)
+
+        # Conflicts — needs conflict_log_store
+        _conflict_store = getattr(app.state, "conflict_log_store", None)
+        if _conflict_store is None and _brk is not None:
+            _conflict_store = getattr(_brk, "conflict_log_store", None)
+        if _conflict_store is not None:
+            try:
+                from nexus.server.rpc.services.conflicts_rpc import ConflictsRPCService
+
+                _rpc_sources.append(ConflictsRPCService(_conflict_store))
+            except Exception as _exc:
+                logger.debug("ConflictsRPCService unavailable: %s", _exc)
+
+        # Delegation — needs delegation_service
+        _deleg_svc = getattr(app.state, "delegation_service", None)
+        if _deleg_svc is None and _brk is not None:
+            _deleg_svc = getattr(_brk, "delegation_service", None)
+        if _deleg_svc is not None:
+            try:
+                from nexus.server.rpc.services.delegation_rpc import DelegationRPCService
+
+                _rpc_sources.append(DelegationRPCService(_deleg_svc))
+            except Exception as _exc:
+                logger.debug("DelegationRPCService unavailable: %s", _exc)
+
+        # Scheduler — needs scheduler_service
+        _sched_svc = getattr(app.state, "scheduler_service", None)
+        if _sched_svc is None and _brk is not None:
+            _sched_svc = getattr(_brk, "scheduler_service", None)
+        if _sched_svc is not None:
+            try:
+                from nexus.server.rpc.services.scheduler_rpc import SchedulerRPCService
+
+                _rpc_sources.append(SchedulerRPCService(_sched_svc))
+            except Exception as _exc:
+                logger.debug("SchedulerRPCService unavailable: %s", _exc)
+
+        # Graph — needs record_store
+        if _record_store is not None:
+            try:
+                from nexus.server.rpc.services.graph_rpc import GraphRPCService
+
+                _rpc_sources.append(GraphRPCService(_record_store))
+            except Exception as _exc:
+                logger.debug("GraphRPCService unavailable: %s", _exc)
+
+        # Cache — needs nexus_fs
+        try:
+            from nexus.server.rpc.services.cache_rpc import CacheRPCService
+
+            _rpc_sources.append(CacheRPCService(nexus_fs))
+        except Exception as _exc:
+            logger.debug("CacheRPCService unavailable: %s", _exc)
+
+        # Catalog — needs catalog_service
+        _catalog_svc = getattr(_brk, "catalog_service", None) if _brk else None
+        if _catalog_svc is not None:
+            try:
+                from nexus.server.rpc.services.catalog_rpc import CatalogRPCService
+
+                _rpc_sources.append(CatalogRPCService(_catalog_svc))
+            except Exception as _exc:
+                logger.debug("CatalogRPCService unavailable: %s", _exc)
+
+        # Aspects — needs aspect_service
+        _aspect_svc = getattr(_brk, "aspect_service", None) if _brk else None
+        if _aspect_svc is not None:
+            try:
+                from nexus.server.rpc.services.aspects_rpc import AspectsRPCService
+
+                _rpc_sources.append(AspectsRPCService(_aspect_svc))
+            except Exception as _exc:
+                logger.debug("AspectsRPCService unavailable: %s", _exc)
+
+        # Subscriptions — needs subscription_manager
+        _sub_mgr = getattr(_brk, "subscription_manager", None) if _brk else None
+        if _sub_mgr is not None:
+            try:
+                from nexus.server.rpc.services.subscriptions_rpc import SubscriptionsRPCService
+
+                _rpc_sources.append(SubscriptionsRPCService(_sub_mgr))
+            except Exception as _exc:
+                logger.debug("SubscriptionsRPCService unavailable: %s", _exc)
+
+        # Workflows — needs workflow_engine
+        _wf_engine = getattr(_brk, "workflow_engine", None) if _brk else None
+        if _wf_engine is not None:
+            try:
+                from nexus.server.rpc.services.workflows_rpc import WorkflowsRPCService
+
+                _rpc_sources.append(WorkflowsRPCService(_wf_engine))
+            except Exception as _exc:
+                logger.debug("WorkflowsRPCService unavailable: %s", _exc)
+
+        # AccessManifests — needs access_manifest_service
+        _manifest_svc = getattr(_brk, "access_manifest_service", None) if _brk else None
+        if _manifest_svc is not None:
+            try:
+                from nexus.server.rpc.services.access_manifests_rpc import (
+                    AccessManifestsRPCService,
+                )
+
+                _rpc_sources.append(AccessManifestsRPCService(_manifest_svc))
+            except Exception as _exc:
+                logger.debug("AccessManifestsRPCService unavailable: %s", _exc)
+
+        # Bricks — needs brick_lifecycle_manager
+        _brick_mgr = getattr(_brk, "brick_lifecycle_manager", None) if _brk else None
+        if _brick_mgr is not None:
+            try:
+                from nexus.server.rpc.services.bricks_rpc import BricksRPCService
+
+                _brick_reconciler = getattr(_brk, "brick_reconciler", None)
+                _rpc_sources.append(BricksRPCService(_brick_mgr, _brick_reconciler))
+            except Exception as _exc:
+                logger.debug("BricksRPCService unavailable: %s", _exc)
+
+        # TaskManager — needs task_manager_service
+        _task_svc = getattr(app.state, "task_manager_service", None)
+        if _task_svc is None and _brk is not None:
+            _task_svc = getattr(_brk, "task_manager_service", None)
+        if _task_svc is not None:
+            try:
+                from nexus.server.rpc.services.task_manager_rpc import TaskManagerRPCService
+
+                _rpc_sources.append(TaskManagerRPCService(_task_svc))
+            except Exception as _exc:
+                logger.debug("TaskManagerRPCService unavailable: %s", _exc)
+
+        # IPC — needs nexus_fs + ipc_provisioner
+        try:
+            from nexus.server.rpc.services.ipc_rpc import IpcRPCService
+
+            _ipc_prov = getattr(app.state, "ipc_provisioner", None)
+            _rpc_sources.append(IpcRPCService(nexus_fs, _ipc_prov))
+        except Exception as _exc:
+            logger.debug("IpcRPCService unavailable: %s", _exc)
+
+        # SecretsAudit — needs secrets_audit_logger
+        _secrets_logger = getattr(app.state, "secrets_audit_logger", None)
+        if _secrets_logger is None and _brk is not None:
+            _secrets_logger = getattr(_brk, "secrets_audit_logger", None)
+        if _secrets_logger is not None:
+            try:
+                from nexus.server.rpc.services.secrets_audit_rpc import SecretsAuditRPCService
+
+                _rpc_sources.append(SecretsAuditRPCService(_secrets_logger))
+            except Exception as _exc:
+                logger.debug("SecretsAuditRPCService unavailable: %s", _exc)
+
         app.state.exposed_methods = _discover_exposed_methods(nexus_fs, *_rpc_sources)
     else:
         logger.info("create_app() started without NexusFS; service discovery disabled")
@@ -618,15 +817,6 @@ def _register_routes(app: FastAPI) -> None:
 
     app.include_router(probes_router)
     app.include_router(features_router)
-
-    # Issue #3266: Bricks health endpoint (required by TUI connection check)
-    try:
-        from nexus.server.api.v2.routers.bricks import health_router as bricks_health_router
-
-        app.include_router(bricks_health_router)
-    except Exception:
-        pass
-
     app.include_router(debug_router)
     app.include_router(streaming_router)
     app.include_router(rpc_router)

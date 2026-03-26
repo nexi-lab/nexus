@@ -534,8 +534,20 @@ def create_async_files_router(
                             headers={"ETag": f'"{meta.etag}"'},
                         )
 
+            # Issue #3266: For connector display paths (/mnt/*), resolve
+            # virtual_path → physical_path via search service before reading.
+            # This keeps the resolution in the service layer, not the kernel.
+            read_path = path
+            if path.startswith("/mnt/"):
+                search = fs.service("search")
+                if search is not None:
+                    resolve_fn = getattr(search, "resolve_physical_path", None)
+                    physical = resolve_fn(path) if resolve_fn else None
+                    if physical:
+                        read_path = physical
+
             # Read content — fs.read is async, call directly
-            result = await fs.read(path, return_metadata=include_metadata, context=context)
+            result = await fs.read(read_path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
                 content = result["content"]
@@ -706,15 +718,27 @@ def create_async_files_router(
                 except Exception:
                     raise HTTPException(status_code=400, detail="Invalid cursor") from None
 
-            # sys_readdir is async — call it directly (not via to_thread)
-            result = await fs.sys_readdir(
-                path,
-                recursive=False,
-                details=True,
-                context=context,
-                limit=limit,
-                cursor=cursor_path,
-            )
+            # Issue #3266: Prefer search service for listing (metastore-first).
+            # Same pattern as the RPC list handler in filesystem.py.
+            search = fs.service("search")
+            if search is not None:
+                result = search.list(
+                    path=path,
+                    recursive=False,
+                    details=True,
+                    context=context,
+                    limit=limit,
+                    cursor=cursor_path,
+                )
+            else:
+                result = await fs.sys_readdir(
+                    path,
+                    recursive=False,
+                    details=True,
+                    context=context,
+                    limit=limit,
+                    cursor=cursor_path,
+                )
 
             prefix = path.rstrip("/") + "/"
             # The listed path itself (e.g. "/" → empty name) must not appear

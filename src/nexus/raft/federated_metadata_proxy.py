@@ -15,7 +15,6 @@ Usage:
     await fs.sys_read("/local/file.txt")          # → stays in root zone
 """
 
-import builtins
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -88,7 +87,7 @@ class FederatedMetadataProxy(MetastoreABC):
         # FederationContentResolver uses NexusVFSService (VFS gRPC), not Raft gRPC.
         import os as _os
 
-        raft_addr: str | None = getattr(zone_manager, "advertise_addr", None)
+        raft_addr = getattr(zone_manager, "advertise_addr", None)
         self_addr: str | None
         if raft_addr and ":" in raft_addr:
             hostname = raft_addr.rsplit(":", 1)[0]
@@ -266,158 +265,8 @@ class FederatedMetadataProxy(MetastoreABC):
         **kwargs: Any,
     ) -> list[FileMetadata]:
         resolve_path = prefix if prefix else "/"
-
-        # Issue #3266: For synced connector mounts (/mnt/*), prefer the
-        # Postgres file_paths table which has human-readable display names
-        # written by the sync layer. Falls back to Raft on cache miss.
-        if resolve_path.startswith("/mnt/"):
-            fp_results = self._list_from_file_paths(resolve_path, recursive)
-            if fp_results is not None:
-                return fp_results
-
         resolved = self._resolve(resolve_path)
-        raft_results = self._walk_mount_tree(resolved, recursive, **kwargs)
-
-        # Issue #3266: Inject /mnt into root listing so TUI shows connector mounts.
-        if resolve_path == "/" and not recursive:
-            # Root non-recursive: just add /mnt as a directory, children load on expand
-            existing = {m.path for m in raft_results}
-            if "/mnt" not in existing:
-                fp_check = self._list_from_file_paths("/mnt/", recursive=False)
-                if fp_check:
-                    from datetime import UTC, datetime
-
-                    raft_results.append(
-                        FileMetadata(
-                            path="/mnt",
-                            backend_name="__mount__",
-                            physical_path="/mnt",
-                            size=0,
-                            etag=None,
-                            created_at=datetime.now(UTC),
-                            modified_at=datetime.now(UTC),
-                            version=1,
-                            zone_id=ROOT_ZONE_ID,
-                        )
-                    )
-        elif resolve_path == "/" and recursive:
-            # Root recursive: merge all connector files
-            fp_results = self._list_from_file_paths("/mnt/", recursive=True)
-            if fp_results:
-                existing = {m.path for m in raft_results}
-                for fp in fp_results:
-                    if fp.path not in existing:
-                        raft_results.append(fp)
-
-        return raft_results
-
-    _fp_engine: Any = None
-
-    def _list_from_file_paths(
-        self,
-        prefix: str,
-        recursive: bool,
-    ) -> "builtins.list[FileMetadata] | None":
-        """Query Postgres file_paths table for synced connector display names.
-
-        Returns None on cache miss (no rows or DB error) so the caller
-        falls back to the Raft store / live backend listing.
-        """
-        try:
-            import os
-
-            from sqlalchemy import text
-
-            db_url = os.environ.get("NEXUS_DATABASE_URL", "")
-            if not db_url:
-                return None
-
-            # Reuse cached engine to avoid creating a new pool per call.
-            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
-                from sqlalchemy import create_engine
-
-                self._fp_engine = create_engine(
-                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
-                )
-            engine = self._fp_engine
-            norm = prefix.rstrip("/")
-
-            with engine.connect() as conn:
-                if recursive:
-                    rows = conn.execute(
-                        text(
-                            "SELECT virtual_path, physical_path, size_bytes "
-                            "FROM file_paths "
-                            "WHERE virtual_path LIKE :pat "
-                            "ORDER BY virtual_path"
-                        ),
-                        {"pat": f"{norm}/%"},
-                    ).fetchall()
-                else:
-                    # Non-recursive: get direct children only.
-                    # First try exact one-level children.
-                    rows = conn.execute(
-                        text(
-                            "SELECT virtual_path, physical_path, size_bytes "
-                            "FROM file_paths "
-                            "WHERE virtual_path LIKE :pat "
-                            "AND virtual_path NOT LIKE :deep "
-                            "ORDER BY virtual_path"
-                        ),
-                        {"pat": f"{norm}/%", "deep": f"{norm}/%/%"},
-                    ).fetchall()
-
-                    # If no direct children found, synthesize directory entries
-                    # from distinct next-level path components.
-                    if not rows:
-                        depth = norm.count("/") + 1
-                        child_rows = conn.execute(
-                            text(
-                                "SELECT DISTINCT split_part(virtual_path, '/', :depth) "
-                                "FROM file_paths "
-                                "WHERE virtual_path LIKE :pat "
-                                "AND split_part(virtual_path, '/', :depth) != ''"
-                            ),
-                            {"pat": f"{norm}/%", "depth": depth + 1},
-                        ).fetchall()
-                        if child_rows:
-                            # Synthesize as directory entries
-                            synth: list[Any] = [
-                                (f"{norm}/{name}", f"{norm}/{name}", 0) for (name,) in child_rows
-                            ]
-                            rows = synth
-
-            if not rows:
-                return None
-
-            from datetime import UTC, datetime
-
-            now = datetime.now(UTC)
-            results: list[FileMetadata] = []
-            for vpath, ppath, size in rows:
-                results.append(
-                    FileMetadata(
-                        path=vpath,
-                        backend_name="__sync__",
-                        physical_path=ppath or vpath,
-                        size=size or 0,
-                        etag=None,
-                        created_at=now,
-                        modified_at=now,
-                        version=1,
-                        zone_id=ROOT_ZONE_ID,
-                    )
-                )
-            logger.debug(
-                "[FILE_PATHS] %s returned %d entries (recursive=%s)",
-                prefix,
-                len(results),
-                recursive,
-            )
-            return results
-        except Exception:
-            logger.debug("[FILE_PATHS] Query failed for %s", prefix, exc_info=True)
-            return None
+        return self._walk_mount_tree(resolved, recursive, **kwargs)
 
     def list_iter(
         self,
@@ -426,37 +275,8 @@ class FederatedMetadataProxy(MetastoreABC):
         **kwargs: Any,
     ) -> Iterator[FileMetadata]:
         resolve_path = prefix if prefix else "/"
-
-        if resolve_path.startswith("/mnt/"):
-            fp_results = self._list_from_file_paths(resolve_path, recursive)
-            if fp_results is not None:
-                yield from fp_results
-                return
-
         resolved = self._resolve(resolve_path)
         yield from self._walk_mount_tree(resolved, recursive, **kwargs)
-
-        # Issue #3266: Inject /mnt into root listing
-        if resolve_path == "/" and not recursive:
-            fp_check = self._list_from_file_paths("/mnt/", recursive=False)
-            if fp_check:
-                from datetime import UTC, datetime
-
-                yield FileMetadata(
-                    path="/mnt",
-                    backend_name="__mount__",
-                    physical_path="/mnt",
-                    size=0,
-                    etag=None,
-                    created_at=datetime.now(UTC),
-                    modified_at=datetime.now(UTC),
-                    version=1,
-                    zone_id=ROOT_ZONE_ID,
-                )
-        elif resolve_path == "/" and recursive:
-            fp_results = self._list_from_file_paths("/mnt/", recursive=True)
-            if fp_results:
-                yield from fp_results
 
     def close(self) -> None:
         self._root_store.close()

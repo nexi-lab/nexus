@@ -847,6 +847,40 @@ class SearchService:
             logger.debug("[LIST-METASTORE] DB query failed for %s", path, exc_info=True)
             return None
 
+    def resolve_physical_path(self, virtual_path: str) -> str | None:
+        """Resolve display path → raw backend path via file_paths table.
+
+        Used by API handlers to translate human-readable connector paths
+        back to the raw backend path for read_content(). Keeps the
+        resolution in the service layer, not the kernel.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return None
+
+            from sqlalchemy import text
+
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+
+            with self._fp_engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT physical_path FROM file_paths WHERE virtual_path = :vp LIMIT 1"),
+                    {"vp": virtual_path},
+                ).fetchone()
+                if row and row[0]:
+                    return str(row[0])
+            return None
+        except Exception:
+            return None
+
     def _list_connector_details(
         self,
         all_paths: builtins.list[str],

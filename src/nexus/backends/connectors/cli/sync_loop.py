@@ -427,6 +427,14 @@ class ConnectorSyncLoop:
                     except Exception:
                         logger.debug("[CONNECTOR_SYNC] metastore.set failed for %s", virtual_path)
 
+                    # Issue #3266: Also write to file_paths + directory_entries
+                    # so metastore-first listing reflects delta changes.
+                    if sync_svc is not None and hasattr(sync_svc, "_write_to_file_paths"):
+                        import contextlib
+
+                        with contextlib.suppress(Exception):
+                            sync_svc._write_to_file_paths(meta)
+
                 # Write to content cache if backend supports it
                 if hasattr(backend, "_has_caching") and backend._has_caching():
                     try:
@@ -480,12 +488,22 @@ class ConnectorSyncLoop:
         if metastore is None:
             return
 
+        sync_svc = getattr(self._mount_service, "_sync_service", None)
+
         for path in deleted_paths:
             virtual_path = f"{mp}/{path}" if not path.startswith(mp) else path
             try:
                 metastore.delete(virtual_path)
             except Exception:
                 logger.debug("[CONNECTOR_SYNC] delete failed for %s", virtual_path)
+
+            # Issue #3266: Also clean file_paths + directory_entries
+            # so metastore-first listing doesn't show stale entries.
+            if sync_svc is not None and hasattr(sync_svc, "_delete_from_file_paths"):
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    sync_svc._delete_from_file_paths(virtual_path)
 
     # --- Directory entry population (Issue #3266) ---
 

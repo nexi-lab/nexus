@@ -1589,6 +1589,44 @@ class SyncService:
             # Non-fatal: Raft metastore is the source of truth
             logger.debug("[SYNC] file_paths write failed for %s: %s", meta.path, _fp_err)
 
+    def _delete_from_file_paths(self, virtual_path: str) -> None:
+        """Remove a path from file_paths + directory_entries (Issue #3266).
+
+        Called by delta-delete to keep Postgres projections in sync.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return
+
+            from sqlalchemy import text
+
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+
+            with self._fp_engine.begin() as conn:
+                conn.execute(
+                    text("DELETE FROM file_paths WHERE virtual_path = :vp"),
+                    {"vp": virtual_path},
+                )
+                parts = virtual_path.rsplit("/", 1)
+                if len(parts) == 2 and parts[0]:
+                    conn.execute(
+                        text(
+                            "DELETE FROM directory_entries "
+                            "WHERE parent_path = :parent AND entry_name = :name"
+                        ),
+                        {"parent": parts[0], "name": parts[1]},
+                    )
+        except Exception:
+            logger.debug("[SYNC] file_paths delete failed for %s", virtual_path)
+
     # --- Display path support (Issue #3256) ---
 
     def _apply_display_path_for_sync(

@@ -82,7 +82,13 @@ class ContextualNexusFS:
     async def stat(self, path: str) -> dict[str, Any] | None:
         from nexus.fs._facade import SlimNexusFS
 
-        return await SlimNexusFS(self._kernel).stat(path)
+        try:
+            result = await SlimNexusFS(self._kernel).stat(path)
+            if result is not None:
+                return result
+        except Exception:
+            pass
+        return await self._stat_backend_path(path)
 
     async def mkdir(self, path: str, parents: bool = True) -> None:
         await self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
@@ -223,6 +229,24 @@ class ContextualNexusFS:
             full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
             fallback_paths.append(full_path)
         return fallback_paths
+
+    async def _stat_backend_path(self, path: str) -> dict[str, Any] | None:
+        """Fallback stat for connector-backed entries not materialized in metadata."""
+        normalized = path.rstrip("/") or "/"
+        if normalized == "/":
+            return None
+
+        parent = normalized.rsplit("/", 1)[0] or "/"
+        entries = await self._list_backend_directory(parent, detail=True)
+        if not isinstance(entries, list):
+            return None
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("path")) == normalized:
+                return entry
+        return None
 
 
 def _highlight_match(text: str, query_lower: str) -> str:

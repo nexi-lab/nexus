@@ -669,6 +669,56 @@ class TestPlaygroundApp:
             }
         ]
 
+    @pytest.mark.asyncio
+    async def test_contextual_fs_stat_falls_back_to_backend_directory_entries(self):
+        """Preview should be able to stat connector-backed files from live backend rows."""
+
+        class _Backend:
+            def list_dir_details(self, path, context=None):
+                assert path == ""
+                return [
+                    {
+                        "name": "Doc Alpha [docA]",
+                        "size": 123,
+                        "modified_at": "2026-03-26T00:40:00Z",
+                        "is_directory": False,
+                    }
+                ]
+
+        class _Route:
+            def __init__(self):
+                self.backend = _Backend()
+                self.backend_path = ""
+
+        class _Router:
+            def route(self, path, is_admin=True, check_write=False):
+                assert path in {"/gws/docs", "/gws/docs/Doc Alpha [docA]"}
+                return _Route()
+
+        class _Kernel:
+            router = _Router()
+
+            async def sys_readdir(self, path, recursive=False, details=False, context=None):
+                return []
+
+            async def sys_stat(self, path, context=None):
+                return None
+
+        fs = ContextualNexusFS(_Kernel())
+        stat = await fs.stat("/gws/docs/Doc Alpha [docA]")
+        assert stat == {
+            "path": "/gws/docs/Doc Alpha [docA]",
+            "size": 123,
+            "is_directory": False,
+            "etag": None,
+            "mime_type": "application/octet-stream",
+            "created_at": None,
+            "modified_at": "2026-03-26T00:40:00Z",
+            "version": 0,
+            "zone_id": "root",
+            "entry_type": 0,
+        }
+
     def test_supported_connector_rows_include_dynamic_gws_targets(self):
         """The playground lists concrete connector mount targets, not just services."""
         app = PlaygroundApp(uris=())

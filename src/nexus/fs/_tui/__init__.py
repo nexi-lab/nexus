@@ -57,6 +57,11 @@ class ContextualNexusFS:
         detail: bool = False,
         recursive: bool = False,
     ) -> list[str] | list[dict[str, Any]]:
+        if not recursive and path != "/":
+            backend_result = await self._list_backend_directory(path, detail=detail)
+            if backend_result:
+                return backend_result
+
         result = cast(
             list[str] | list[dict[str, Any]],
             await self._kernel.sys_readdir(
@@ -125,8 +130,59 @@ class ContextualNexusFS:
             return None
 
         backend = route.backend
-        if not hasattr(backend, "list_dir"):
+        if not hasattr(backend, "list_dir") and not hasattr(backend, "list_dir_details"):
             return None
+
+        detailed_entries: list[dict[str, Any]] | None = None
+        if hasattr(backend, "list_dir_details"):
+            try:
+                candidate = await asyncio.to_thread(
+                    backend.list_dir_details, route.backend_path, self._ctx
+                )
+                if isinstance(candidate, list):
+                    detailed_entries = [item for item in candidate if isinstance(item, dict)]
+            except NotImplementedError:
+                detailed_entries = None
+            except Exception:
+                detailed_entries = None
+
+        if detailed_entries is not None:
+            mount_root = path.rstrip("/") or "/"
+            if detail:
+                detailed_rows: list[dict[str, Any]] = []
+                for entry in detailed_entries:
+                    name = str(entry.get("name", "")).rstrip("/")
+                    if not name:
+                        continue
+                    is_dir = bool(entry.get("is_directory", False))
+                    full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                    detailed_rows.append(
+                        {
+                            "path": full_path,
+                            "size": int(entry.get("size", 0) or 0),
+                            "is_directory": is_dir,
+                            "etag": entry.get("etag"),
+                            "mime_type": entry.get(
+                                "mime_type",
+                                "inode/directory" if is_dir else "application/octet-stream",
+                            ),
+                            "created_at": entry.get("created_at"),
+                            "modified_at": entry.get("modified_at"),
+                            "version": entry.get("version", 0),
+                            "zone_id": entry.get("zone_id", "root"),
+                            "entry_type": 1 if is_dir else 0,
+                        }
+                    )
+                return detailed_rows
+
+            listed_paths: list[str] = []
+            for entry in detailed_entries:
+                name = str(entry.get("name", "")).rstrip("/")
+                if not name:
+                    continue
+                full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
+                listed_paths.append(full_path)
+            return listed_paths
 
         try:
             raw_entries = await asyncio.to_thread(backend.list_dir, route.backend_path, self._ctx)
@@ -136,14 +192,14 @@ class ContextualNexusFS:
         now = datetime.now(UTC).isoformat()
         mount_root = path.rstrip("/") or "/"
         if detail:
-            detailed: list[dict[str, Any]] = []
+            fallback_rows: list[dict[str, Any]] = []
             for entry in raw_entries:
                 name = str(entry).rstrip("/")
                 if not name:
                     continue
                 is_dir = str(entry).endswith("/")
                 full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
-                detailed.append(
+                fallback_rows.append(
                     {
                         "path": full_path,
                         "size": 4096 if is_dir else 0,
@@ -157,16 +213,16 @@ class ContextualNexusFS:
                         "entry_type": 1 if is_dir else 0,
                     }
                 )
-            return detailed
+            return fallback_rows
 
-        listed: list[str] = []
+        fallback_paths: list[str] = []
         for entry in raw_entries:
             name = str(entry).rstrip("/")
             if not name:
                 continue
             full_path = f"{mount_root}/{name}" if mount_root != "/" else f"/{name}"
-            listed.append(full_path)
-        return listed
+            fallback_paths.append(full_path)
+        return fallback_paths
 
 
 def _highlight_match(text: str, query_lower: str) -> str:

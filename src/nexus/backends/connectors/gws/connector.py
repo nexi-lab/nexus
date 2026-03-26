@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -199,19 +200,21 @@ class DocsConnector(CLIConnector):
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
 
-    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
-        """List Google Docs by querying Drive metadata and filtering to document mime types."""
-        normalized = path.strip("/")
-        if normalized:
-            return []
-
+    def _list_doc_entries(self, context: "OperationContext | None" = None) -> list[dict[str, Any]]:
+        """Return Drive metadata for Google Docs with stable display names."""
         args = [
             "gws",
             "drive",
             "files",
             "list",
             "--params",
-            json.dumps({"q": f'mimeType = "{_DOC_MIME_TYPE}"', "pageSize": 100}),
+            json.dumps(
+                {
+                    "q": f'mimeType = "{_DOC_MIME_TYPE}"',
+                    "pageSize": 100,
+                    "fields": "files(id,name,mimeType,modifiedTime,size,quotaBytesUsed)",
+                }
+            ),
         ]
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
@@ -220,7 +223,7 @@ class DocsConnector(CLIConnector):
         if not result.ok:
             from nexus.contracts.exceptions import BackendError
 
-            raise BackendError(result.summary(), backend=self.name, path=path)
+            raise BackendError(result.summary(), backend=self.name, path="/")
 
         try:
             data = json.loads(result.stdout)
@@ -231,21 +234,111 @@ class DocsConnector(CLIConnector):
                 f"Failed to parse gws docs listing: {exc}", backend=self.name
             ) from exc
 
-        files: list[dict[str, Any]]
-        if isinstance(data, dict):
-            raw_files = data.get("files", [])
-            files = [item for item in raw_files if isinstance(item, dict)]
-        elif isinstance(data, list):
-            files = [item for item in data if isinstance(item, dict)]
-        else:
-            files = []
+        raw_files = data.get("files", []) if isinstance(data, dict) else []
+        files = [item for item in raw_files if isinstance(item, dict)]
 
-        entries = [
-            str(item.get("name", "")).strip()
-            for item in files
-            if item.get("mimeType") == _DOC_MIME_TYPE and str(item.get("name", "")).strip()
+        counts: dict[str, int] = {}
+        for item in files:
+            if item.get("mimeType") != _DOC_MIME_TYPE:
+                continue
+            name = str(item.get("name", "")).strip()
+            if name:
+                counts[name] = counts.get(name, 0) + 1
+
+        entries: list[dict[str, Any]] = []
+        for item in files:
+            if item.get("mimeType") != _DOC_MIME_TYPE:
+                continue
+            name = str(item.get("name", "")).strip()
+            doc_id = str(item.get("id", "")).strip()
+            if not name or not doc_id:
+                continue
+            display_name = name if counts.get(name, 0) == 1 else f"{name} [{doc_id}]"
+            size = item.get("size") or item.get("quotaBytesUsed") or 0
+            try:
+                size_value = int(size)
+            except Exception:
+                size_value = 0
+            entries.append(
+                {
+                    "id": doc_id,
+                    "name": display_name,
+                    "raw_name": name,
+                    "size": size_value,
+                    "modified_at": item.get("modifiedTime"),
+                    "is_directory": False,
+                }
+            )
+        entries.sort(key=lambda item: str(item["name"]).lower())
+        return entries
+
+    def list_dir(self, path: str = "/", context: "OperationContext | None" = None) -> list[str]:
+        """List Google Docs by querying Drive metadata and filtering to document mime types."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+        return [str(item["name"]) for item in self._list_doc_entries(context)]
+
+    def list_dir_details(
+        self, path: str = "/", context: "OperationContext | None" = None
+    ) -> list[dict[str, Any]]:
+        """Detailed listing for playground rendering."""
+        normalized = path.strip("/")
+        if normalized:
+            return []
+        return self._list_doc_entries(context)
+
+    def _resolve_doc_id(self, backend_path: str, context: "OperationContext | None" = None) -> str:
+        """Resolve a selected docs path back to a concrete document id."""
+        name = backend_path.strip("/").rsplit("/", 1)[-1]
+        if not name:
+            raise ValueError("Google Docs path is required")
+
+        match = re.search(r" \[([A-Za-z0-9_-]+)\]$", name)
+        if match:
+            return match.group(1)
+
+        matches = [item for item in self._list_doc_entries(context) if item["raw_name"] == name]
+        if len(matches) == 1:
+            return str(matches[0]["id"])
+        if len(matches) > 1:
+            raise ValueError(
+                f"Multiple Google Docs named '{name}'. Re-open the list and select the disambiguated entry."
+            )
+        raise ValueError(f"Document not found: {name}")
+
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:
+        """Read a Google Doc by resolving the selected display name back to a document id."""
+        from nexus.contracts.exceptions import BackendError
+
+        backend_path = ""
+        if context and hasattr(context, "backend_path") and context.backend_path:
+            backend_path = str(context.backend_path)
+        elif content_hash:
+            backend_path = str(content_hash)
+
+        try:
+            doc_id = self._resolve_doc_id(backend_path, context)
+        except Exception as exc:
+            raise BackendError(str(exc), backend=self.name, path=backend_path) from exc
+
+        args = [
+            "gws",
+            "docs",
+            "documents",
+            "get",
+            "--params",
+            json.dumps({"documentId": doc_id}),
+            "--format",
+            "json",
         ]
-        return sorted(entries)
+        token = self._get_user_token(context)
+        auth_env = self._build_auth_env(token) if token else None
+        result = self._execute_cli(args, context=context, env=auth_env)
+        result = self._error_mapper.classify_result(result)
+        if not result.ok:
+            raise BackendError(result.summary(), backend=self.name, path=backend_path)
+        return result.stdout.encode("utf-8")
 
 
 # ============================================================================

@@ -56,9 +56,17 @@ class TestDocsConnectorListing:
         payload = json.dumps(
             {
                 "files": [
-                    {"name": "Doc Alpha", "mimeType": "application/vnd.google-apps.document"},
+                    {
+                        "id": "docAlpha",
+                        "name": "Doc Alpha",
+                        "mimeType": "application/vnd.google-apps.document",
+                    },
                     {"name": "Spreadsheet", "mimeType": "application/vnd.google-apps.spreadsheet"},
-                    {"name": "Doc Beta", "mimeType": "application/vnd.google-apps.document"},
+                    {
+                        "id": "docBeta",
+                        "name": "Doc Beta",
+                        "mimeType": "application/vnd.google-apps.document",
+                    },
                 ]
             }
         )
@@ -93,6 +101,65 @@ class TestDocsConnectorListing:
 
         with pytest.raises(Exception, match="permission denied"):
             connector.list_dir("")
+
+    def test_list_dir_disambiguates_duplicate_names(self) -> None:
+        connector = DocsConnector()
+        payload = json.dumps(
+            {
+                "files": [
+                    {
+                        "id": "docA",
+                        "name": "Shared Name",
+                        "mimeType": "application/vnd.google-apps.document",
+                    },
+                    {
+                        "id": "docB",
+                        "name": "Shared Name",
+                        "mimeType": "application/vnd.google-apps.document",
+                    },
+                ]
+            }
+        )
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout=payload,
+                command=["gws", "drive", "files", "list"],
+            )
+        )
+
+        result = connector.list_dir("")
+
+        assert result == ["Shared Name [docA]", "Shared Name [docB]"]
+
+    def test_read_content_uses_disambiguated_id_suffix(self) -> None:
+        connector = DocsConnector()
+        cast(Any, connector)._execute_cli = MagicMock(
+            return_value=CLIResult(
+                status=CLIResultStatus.SUCCESS,
+                exit_code=0,
+                stdout='{"documentId":"docA","title":"Shared Name"}',
+                command=["gws", "docs", "documents", "get"],
+            )
+        )
+
+        from nexus.contracts.types import OperationContext
+
+        context = OperationContext(
+            user_id="alice@example.com",
+            groups=[],
+            backend_path="Shared Name [docA]",
+            virtual_path="/gws/docs/Shared Name [docA]",
+        )
+        result = connector.read_content("", context=context)
+
+        assert b'"documentId":"docA"' in result
+        args = cast(Any, connector)._execute_cli.call_args.args[0]
+        assert args[:3] == ["gws", "docs", "documents"]
+        assert args[3] == "get"
+        assert args[4] == "--params"
+        assert '"documentId": "docA"' in args[5]
 
 
 class TestSheetsConnectorListing:

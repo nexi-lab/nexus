@@ -87,14 +87,14 @@ class FederatedMetadataProxy(MetastoreABC):
         # FederationContentResolver uses NexusVFSService (VFS gRPC), not Raft gRPC.
         import os as _os
 
-        raft_addr = getattr(zone_manager, "advertise_addr", None)
+        raft_addr: str | None = getattr(zone_manager, "advertise_addr", None)
         self_addr: str | None
         if raft_addr and ":" in raft_addr:
             hostname = raft_addr.rsplit(":", 1)[0]
             vfs_port = _os.environ.get("NEXUS_GRPC_PORT", "2028")
             self_addr = f"{hostname}:{vfs_port}"
         else:
-            self_addr = raft_addr or ""
+            self_addr = raft_addr
         return cls(resolver, root_store, zone_manager=zone_manager, self_address=self_addr)
 
     # =========================================================================

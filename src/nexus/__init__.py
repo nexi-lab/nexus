@@ -683,10 +683,13 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
     # Build CAS remote content fetcher if backend supports CAS (#1744)
     remote_content_fetcher = None
     if hasattr(backend, "content_exists") and hasattr(backend, "read_content"):
+        import os as _os_peer
+
         from nexus.backends.base.remote_content_fetcher import CASRemoteContentFetcher
         from nexus.remote.peer_blob_client import PeerBlobClient
 
-        peer_blob_client = PeerBlobClient(tls_config=zone_mgr.tls_config)
+        _peer_auth = _os_peer.environ.get("NEXUS_API_KEY", "")
+        peer_blob_client = PeerBlobClient(tls_config=zone_mgr.tls_config, auth_token=_peer_auth)
         remote_content_fetcher = CASRemoteContentFetcher(
             peer_blob_client=peer_blob_client,
             local_object_store=backend,

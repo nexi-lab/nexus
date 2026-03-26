@@ -39,17 +39,19 @@ class PeerBlobClient:
         workers: Max parallel ReadBlob RPCs for chunk fetching.
     """
 
-    __slots__ = ("_tls_config", "_timeout", "_workers")
+    __slots__ = ("_tls_config", "_timeout", "_workers", "_auth_token")
 
     def __init__(
         self,
         tls_config: ZoneTlsConfig | None = None,
         timeout: float = 30.0,
         workers: int = _DEFAULT_WORKERS,
+        auth_token: str = "",
     ) -> None:
         self._tls_config = tls_config
         self._timeout = timeout
         self._workers = workers
+        self._auth_token = auth_token
 
     def fetch_blob(self, address: str, content_hash: str) -> bytes:
         """Fetch a single CAS blob by content hash from a remote peer.
@@ -67,7 +69,7 @@ class PeerBlobClient:
             stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
             request = vfs_pb2.ReadBlobRequest(
                 content_hash=content_hash,
-                auth_token="",
+                auth_token=self._auth_token,
             )
             response = stub.ReadBlob(request, timeout=self._timeout)
             if response.is_error:

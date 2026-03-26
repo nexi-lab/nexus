@@ -306,7 +306,19 @@ class CLIConnector(
                 backend=self.name,
             )
 
-        # Parse YAML
+        # Parse YAML — extract comment-based metadata first (agent_intent,
+        # confirm, user_confirmed) since yaml.safe_load strips comments.
+        text = content.decode("utf-8") if isinstance(content, bytes) else content
+        comment_meta: dict[str, Any] = {}
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("# agent_intent:"):
+                comment_meta["agent_intent"] = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("# confirm:"):
+                comment_meta["confirm"] = stripped.split(":", 1)[1].strip().lower() == "true"
+            elif stripped.startswith("# user_confirmed:"):
+                comment_meta["user_confirmed"] = stripped.split(":", 1)[1].strip().lower() == "true"
+
         data = yaml.safe_load(content)
         if not isinstance(data, dict):
             from nexus.contracts.exceptions import BackendError
@@ -315,6 +327,11 @@ class CLIConnector(
                 f"Expected YAML mapping, got {type(data).__name__}",
                 backend=self.name,
             )
+
+        # Merge comment metadata (comments take precedence for backward compat)
+        for key, val in comment_meta.items():
+            if key not in data:
+                data[key] = val
 
         # Validate traits (agent_intent, confirm, etc.)
         warnings = self.validate_traits(operation, data)

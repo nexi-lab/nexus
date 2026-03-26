@@ -126,13 +126,30 @@ jobs:
           # Wait for server to be ready
           echo "Waiting for Nexus to start..."
           for i in $(seq 1 90); do
+            if ! docker ps --format '{{.Names}}' | grep -qx nexus-e2e; then
+              echo "::error::nexus-e2e exited before becoming healthy"
+              docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+              echo "Crash signatures from container logs:"
+              docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+              echo "Last 200 container log lines:"
+              docker logs nexus-e2e 2>&1 | tail -200 || true
+              exit 1
+            fi
             if curl -sf http://localhost:2026/health > /dev/null 2>&1; then
               echo "Nexus is ready (${i}s)"
               break
             fi
             sleep 1
           done
-          curl -sf http://localhost:2026/health || (docker logs nexus-e2e && exit 1)
+          if ! curl -sf http://localhost:2026/health > /dev/null 2>&1; then
+            echo "::error::nexus-e2e never became healthy within 90 seconds"
+            docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+            echo "Crash signatures from container logs:"
+            docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+            echo "Last 200 container log lines:"
+            docker logs nexus-e2e 2>&1 | tail -200 || true
+            exit 1
+          fi
 
       - name: Initialize and extract credentials
         run: |
@@ -177,7 +194,12 @@ jobs:
 
       - name: Collect container logs on failure
         if: failure()
-        run: docker logs nexus-e2e 2>&1 | tail -200
+        run: |
+          docker inspect nexus-e2e --format 'exit_code={{.State.ExitCode}} status={{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} error={{json .State.Error}}' || true
+          echo "Crash signatures from container logs:"
+          docker logs nexus-e2e 2>&1 | grep -E -m 20 'Illegal instruction|Traceback|ERROR:|FATAL:|panic|segmentation fault|core dumped' || true
+          echo "Last 200 container log lines:"
+          docker logs nexus-e2e 2>&1 | tail -200 || true
 
       - name: Cleanup
         if: always()

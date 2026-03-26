@@ -46,8 +46,8 @@ Follows Linux's monolithic kernel model, not microkernel:
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Init-time DI + runtime hot-swap (all quadrants, #1452) | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
+| Drivers | Config-time DI + runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `register_filesystem()` + `kern_mount()` / `kill_sb()` |
+| Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
@@ -55,7 +55,10 @@ has **zero reads** of `_system_services` attributes — all service wiring flows
 through factory-injected closures (`functools.partial`) or KernelDispatch hooks.
 
 **Drivers** use constructor DI at startup — same binary, different config
-(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
+(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). MetastoreABC is
+immutable after init; ObjectStore backends support runtime mount/unmount via
+`DriverLifecycleCoordinator` (routing table update + hook_spec registration +
+KernelDispatch notification). Like Linux `mount`/`umount` — no restart needed.
 
 ### Service Lifecycle
 

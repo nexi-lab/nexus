@@ -610,7 +610,101 @@ class TestFederationAdminIntrospection:
 # ---------------------------------------------------------------------------
 # Class 3: Snapshot Atomic Operations
 # ---------------------------------------------------------------------------
-# (TestSnapshotAtomicOperations removed — snapshot testing deferred)
+class TestSnapshotAtomicOperations:
+    """Developer uses transactional snapshots for safe multi-file atomic changes.
+
+    Covers: snapshots (create, get, list, entries, commit, rollback)
+    """
+
+    def test_snapshot_workflow(self, cluster, api_key):
+        uid = _uid()
+        grpc1 = cluster["grpc1"]
+
+        # --- Step 1-2: Write baseline files ---
+        file_a = f"/corp/snap-{uid}-a.txt"
+        file_b = f"/corp/snap-{uid}-b.txt"
+        for path, content in [(file_a, f"baseline-a-{uid}"), (file_b, f"baseline-b-{uid}")]:
+            w = _grpc_call(grpc1, "write", {"path": path, "content": content}, api_key=api_key)
+            assert "error" not in w, f"Write {path} failed: {w}"
+
+        # --- Step 3: Begin transaction — skip entire test if unavailable ---
+        begin_r = _grpc_call_or_skip(
+            grpc1,
+            "snapshot_create",
+            {"description": f"E2E commit {uid}", "ttl_seconds": 3600},
+            api_key=api_key,
+            skip_msg="Snapshot API not available",
+        )
+        if "error" in begin_r:
+            pytest.skip(f"snapshot_create returned error: {begin_r}")
+        txn_data = begin_r.get("result", begin_r)
+        txn_id = txn_data["transaction_id"]
+
+        # --- Step 4-5: Get transaction status ---
+        status_r = _grpc_call(grpc1, "snapshot_get", {"transaction_id": txn_id}, api_key=api_key)
+        assert "error" not in status_r, f"snapshot_get failed: {status_r}"
+        status_data = status_r.get("result", status_r)
+        assert "status" in status_data
+
+        # --- Step 6: List transactions — our txn in list ---
+        list_r = _grpc_call(grpc1, "snapshot_list", {}, api_key=api_key)
+        assert "error" not in list_r, f"snapshot_list failed: {list_r}"
+        list_data = list_r.get("result", list_r)
+        txn_ids_in_list = [
+            t["transaction_id"] for t in list_data.get("transactions", list_data.get("items", []))
+        ]
+        assert txn_id in txn_ids_in_list, f"Txn {txn_id} not in list: {txn_ids_in_list}"
+
+        # --- Step 7: Write file C ---
+        file_c = f"/corp/snap-{uid}-c.txt"
+        w = _grpc_call(grpc1, "write", {"path": file_c, "content": f"new-c-{uid}"}, api_key=api_key)
+        assert "error" not in w
+
+        # --- Step 8: List entries ---
+        entries_r = _grpc_call(
+            grpc1, "snapshot_list_entries", {"transaction_id": txn_id}, api_key=api_key
+        )
+        if "error" not in entries_r:
+            entries_data = entries_r.get("result", entries_r)
+            assert isinstance(entries_data, dict)
+
+        # --- Step 9: Commit ---
+        commit_r = _grpc_call(grpc1, "snapshot_commit", {"transaction_id": txn_id}, api_key=api_key)
+        assert "error" not in commit_r, f"Commit failed: {commit_r}"
+
+        # --- Step 10: Read file C → exists ---
+        r = _grpc_call(grpc1, "read", {"path": file_c}, api_key=api_key)
+        assert "error" not in r, f"Read file C after commit failed: {r}"
+        assert _decode_content(r) == f"new-c-{uid}"
+
+        # --- Step 11: Begin 2nd transaction (rollback) ---
+        begin2_r = _grpc_call(
+            grpc1,
+            "snapshot_create",
+            {"description": f"E2E rollback {uid}", "ttl_seconds": 3600},
+            api_key=api_key,
+        )
+        assert "error" not in begin2_r, f"Begin txn2 failed: {begin2_r}"
+        txn2_data = begin2_r.get("result", begin2_r)
+        txn2_id = txn2_data["transaction_id"]
+
+        # --- Step 12: Write file D ---
+        file_d = f"/corp/snap-{uid}-d.txt"
+        w = _grpc_call(
+            grpc1, "write", {"path": file_d, "content": f"temp-d-{uid}"}, api_key=api_key
+        )
+        assert "error" not in w
+
+        # --- Step 13: Rollback ---
+        rollback_r = _grpc_call(grpc1, "snapshot_restore", {"txn_id": txn2_id}, api_key=api_key)
+        assert "error" not in rollback_r, f"Rollback failed: {rollback_r}"
+
+        # --- Step 14: Get rolled-back txn status ---
+        final_r = _grpc_call(grpc1, "snapshot_get", {"transaction_id": txn2_id}, api_key=api_key)
+        assert "error" not in final_r
+        final_data = final_r.get("result", final_r)
+        final_status = final_data.get("status", "")
+        assert final_status != "active", f"Expected non-active status, got: {final_status}"
 
 
 # ---------------------------------------------------------------------------

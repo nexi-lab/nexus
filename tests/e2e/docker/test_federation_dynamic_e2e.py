@@ -37,7 +37,6 @@ NODE2_URL = "http://nexus-2:2026"
 HEALTH_TIMEOUT = 120
 
 
-
 def _hostname_to_node_id(hostname: str) -> int:
     """SHA-256 hostname → u64 (matches Rust/Python PeerAddress)."""
     digest = hashlib.sha256(hostname.encode()).digest()

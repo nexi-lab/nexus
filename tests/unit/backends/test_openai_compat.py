@@ -2,8 +2,8 @@
 
 Tests cover:
 - LLMBlobTransport: in-memory blob operations
-- OpenAICompatibleBackend: thin CASBackend subclass (no write_content override)
-  - write_content(): inherited from CASBackend (pure CAS, no LLM call)
+- OpenAICompatibleBackend: thin CASAddressingEngine subclass (no write_content override)
+  - write_content(): inherited from CASAddressingEngine (pure CAS, no LLM call)
   - generate_streaming(): pure LLM compute, yields tokens
   - persist_session(): CAS persist request + response + session envelope
 - LLMStreamingService: DT_STREAM orchestration + CAS flush
@@ -175,7 +175,7 @@ class TestOpenAICompatibleBackend:
         assert backend.name == "openai_compatible"
 
     def test_write_content_is_pure_cas(self) -> None:
-        """write_content() is inherited from CASBackend — no LLM call."""
+        """write_content() is inherited from CASAddressingEngine — no LLM call."""
         backend, client = _make_backend()
 
         data = b"hello world"

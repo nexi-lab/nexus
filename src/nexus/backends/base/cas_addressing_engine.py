@@ -751,8 +751,3 @@ class CASAddressingEngine(Backend):
                 backend=self.name,
                 path=path,
             ) from e
-
-
-# Backward-compat alias (will be removed in a future cleanup)
-CASBackend = CASAddressingEngine
-CAS_BACKEND_CAPABILITIES = CAS_ADDRESSING_CAPABILITIES

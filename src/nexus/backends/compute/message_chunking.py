@@ -10,7 +10,7 @@ sharing the first N messages deduplicate those N chunks in CAS.
     B chunks: [hash(sys), hash(u1), hash(a1), hash(u3)]
                   shared     shared     shared    different
 
-Implements ChunkingStrategy protocol — plugged into CASBackend via
+Implements ChunkingStrategy protocol — plugged into CASAddressingEngine via
 Feature DI (cdc_engine parameter). Always-chunk mode: every
 conversation is chunked regardless of size (unlike CDCEngine's 16MB
 threshold), because LLM conversations are < 4MB but benefit from
@@ -34,7 +34,7 @@ from nexus.backends.engines.cdc import ChunkedReference, ChunkInfo
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.backends.base.cas_backend import CASBackend
+    from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ class MessageBoundaryStrategy:
 
     __slots__ = ("_backend",)
 
-    def __init__(self, backend: "CASBackend") -> None:
+    def __init__(self, backend: "CASAddressingEngine") -> None:
         self._backend = backend
 
     # ------------------------------------------------------------------

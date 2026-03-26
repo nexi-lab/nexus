@@ -18,7 +18,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.server.api.v2.routers import governance, mobile_search
+from nexus.server.api.v2.routers import mobile_search
 from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
 from nexus.server.api.v2.routers.x402 import router as x402_router
 from nexus.server.api.v2.routers.x402 import webhook_router as x402_webhook_router
@@ -33,8 +33,7 @@ def secured_app() -> FastAPI:
     """FastAPI app with api_key set — triggers real auth checks."""
     app = FastAPI()
 
-    # Register all routers we protect
-    app.include_router(governance.router)
+    # Register all routers we protect (governance deleted — gRPC-only #1529)
     app.include_router(mobile_search.router)
 
     tus_public, tus_auth = create_tus_uploads_router(get_upload_service=lambda: MagicMock())
@@ -76,28 +75,6 @@ def authed(secured_app: FastAPI) -> TestClient:
 # ===========================================================================
 # Governance — require_admin
 # ===========================================================================
-
-
-class TestGovernanceAuthEnforcement:
-    """governance endpoints must reject unauthenticated requests."""
-
-    @pytest.mark.parametrize(
-        "method,path",
-        [
-            ("GET", "/api/v2/governance/alerts"),
-            ("GET", "/api/v2/governance/constraints"),
-            ("GET", "/api/v2/governance/fraud-scores"),
-            ("POST", "/api/v2/governance/alerts/fake-id/resolve"),
-            ("POST", "/api/v2/governance/constraints"),
-            ("POST", "/api/v2/governance/suspensions"),
-            ("POST", "/api/v2/governance/suspensions/fake-id/decide"),
-        ],
-    )
-    def test_unauthenticated_returns_401(
-        self, unauthed: TestClient, method: str, path: str
-    ) -> None:
-        resp = getattr(unauthed, method.lower())(path)
-        assert resp.status_code == 401, f"{method} {path} returned {resp.status_code}"
 
 
 # ===========================================================================
@@ -175,11 +152,6 @@ class TestX402AuthEnforcement:
 
 class TestAuthenticatedRequestsPass:
     """Verify that authenticated requests are not blocked by auth."""
-
-    def test_governance_with_auth_passes(self, authed: TestClient) -> None:
-        resp = authed.get("/api/v2/governance/alerts")
-        # May fail later (500 due to mock), but NOT 401
-        assert resp.status_code != 401
 
     def test_x402_config_with_auth_passes(self, authed: TestClient) -> None:
         resp = authed.get("/api/v2/x402/config")

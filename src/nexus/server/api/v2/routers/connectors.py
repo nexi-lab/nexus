@@ -680,18 +680,74 @@ async def write_to_connector(
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
+    nx = _get_nx(request)
+
+    # Preflight route resolution to discover backend type and backend_path.
+    # Uses is_admin=True because this is a routing decision, not a permission
+    # check — actual auth is enforced by backend.write_content() (CLI connectors)
+    # or nx.write() (kernel path). Without admin, a non-admin caller's route
+    # lookup could fail and silently fall back to the wrong write path.
+    _backend_path = None
+    _route = None
+    try:
+        _route = nx.router.route(mount_path, is_admin=True)
+        _backend_path = _route.backend_path if _route else None
+    except Exception:
+        pass
+
     write_context = OperationContext(
         user_id=auth.get("subject_id", "system"),
         groups=[],
-        is_admin=auth.get("is_admin", True),
-        is_system=True,
+        is_admin=auth.get("is_admin", False),
         zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
+        backend_path=_backend_path,
+        virtual_path=mount_path,
     )
 
-    nx = _get_nx(request)
     try:
         data = req.yaml_content.encode("utf-8")
-        result = await nx.write(mount_path, data, context=write_context)
+
+        # CLI-backed connectors dispatch YAML operations (send_email, create_draft,
+        # etc.) via write_content() — they must NOT go through nx.write() which
+        # stores to CAS. Gate on the "cli_backed" capability to avoid bypassing
+        # the kernel write path for ordinary path-addressed backends.
+        import asyncio
+
+        from nexus.contracts.capabilities import ConnectorCapability
+
+        backend = _route.backend if _route else None
+        _caps: frozenset[str] = (
+            getattr(backend, "capabilities", frozenset()) if backend else frozenset()
+        )
+        is_cli_connector = ConnectorCapability.CLI_BACKED in _caps
+
+        if is_cli_connector and _backend_path:
+            # Enforce the same write-access checks that nx.write() performs:
+            # 1. Route with check_write=True (zone/agent isolation)
+            # 2. Read-only mount check
+            # 3. Pre-write intercept hooks (permission hooks)
+            _write_route = nx.router.route(
+                mount_path,
+                is_admin=write_context.is_admin,
+                check_write=True,
+            )
+            if _write_route.readonly:
+                raise PermissionError(f"Path is read-only: {mount_path}")
+
+            from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
+
+            # Load existing metadata so permission hooks can distinguish
+            # overwrite (check WRITE on file) vs create (check WRITE on parent).
+            _old_meta = nx.metadata.get(mount_path)
+
+            nx._dispatch.intercept_pre_write(
+                _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
+            )
+
+            assert backend is not None  # guaranteed by is_cli_connector check
+            result = await asyncio.to_thread(backend.write_content, data, write_context)
+        else:
+            result = await nx.write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

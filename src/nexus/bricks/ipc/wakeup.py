@@ -9,6 +9,10 @@ Issue #3197:
   - PipeWakeupListener: drain-and-process pattern for signal coalescing
   - PipeNotifyFactory: creates small-capacity notify pipes on provisioning
 
+Issue #3194:
+  - wait_for_signal(): generic drain-and-process utility with timeout fallback
+    Reused by PipeWakeupListener (IPC) and WriteBackService (sync).
+
 Architecture:
   - DT_PIPE for same-node wakeup (us latency, no Redis dependency)
   - EventBus retained for cross-node notifications
@@ -25,6 +29,7 @@ import logging
 from typing import Any
 
 from nexus.bricks.ipc.conventions import notify_pipe_path
+from nexus.lib.pipe_wakeup import wait_for_signal  # re-export for backward compat
 
 logger = logging.getLogger(__name__)
 
@@ -94,15 +99,7 @@ class PipeWakeupListener:
         2. Drain remaining signals (pipe_read, blocking=False)
         3. Return — caller processes inbox once for all coalesced signals
         """
-        # Block until first signal
-        await self._pm.pipe_read(self._path)
-        # Drain remaining signals (non-blocking)
-        while True:
-            try:
-                await self._pm.pipe_read(self._path, blocking=False)
-            except Exception:
-                # PipeEmptyError — no more pending signals
-                break
+        await wait_for_signal(self._pm, self._path)
 
     def close(self) -> None:
         """Signal the listener to stop. Wakes any blocked wait_for_wakeup()."""

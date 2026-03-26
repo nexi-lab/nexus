@@ -1,12 +1,15 @@
-"""Write-Back Service for bidirectional sync (Issue #1129, #1130).
+"""Write-Back Service for bidirectional sync (Issue #1129, #1130, #3194).
 
-Subscribes to file events on mounted paths and writes changes back
-to source backends. Handles conflict detection/resolution, retry,
+Subscribes to kernel VFS mutations via KernelDispatch OBSERVE hook and writes
+changes back to source backends. Handles conflict detection/resolution, retry,
 and rate-limiting per backend.
 
-Architecture:
-- Event-driven: subscribes to EventBus for file write/delete/rename events
-- Polling fallback: periodic sweep of pending backlog entries
+Architecture (Issue #3194):
+- OBSERVE hook: receives FILE_WRITE/DELETE/RENAME/DIR_CREATE/DIR_DELETE events
+  directly from KernelDispatch (us latency, replaces EventBus subscription)
+- DT_PIPE wakeup: backlog enqueue signals the poll loop via pipe (us wakeup,
+  replaces 30s asyncio.sleep polling)
+- Polling fallback: 30s safety net if pipe unavailable or signal missed
 - Rate-limited: per-backend asyncio.Semaphore
 - Conflict-aware: 6 configurable strategies via ConflictStrategy (Issue #1130)
 """
@@ -22,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.types import OperationContext
+from nexus.core.file_events import FILE_EVENT_BIT
 from nexus.system_services.event_bus.types import FileEvent, FileEventType
 
 from .conflict_resolution import (
@@ -37,6 +41,7 @@ from .conflict_resolution import (
 from .write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
+    from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.system_services.event_bus.base import EventBusBase
     from nexus.system_services.gateway import NexusFSGateway
 
@@ -57,17 +62,65 @@ _WRITE_BACK_EVENT_TYPES = frozenset(
     }
 )
 
+# Rust-side bitmask for OBSERVE filtering (Issue #3194, #4A).
+# Only mutation events — excludes SYNC_TO_BACKEND_*, CONFLICT_DETECTED
+# to prevent feedback loops.
+_WRITE_BACK_EVENT_MASK: int = 0
+for _evt in _WRITE_BACK_EVENT_TYPES:
+    _WRITE_BACK_EVENT_MASK |= FILE_EVENT_BIT.get(_evt, 0)
+
+# DT_PIPE path for backlog wakeup signalling (Issue #3194)
+_BACKLOG_WAKEUP_PIPE = "/nexus/pipes/sync-backlog-wakeup"
+_BACKLOG_PIPE_CAPACITY = 256  # 256 signals, matching NOTIFY_PIPE_CAPACITY convention
+
+# VFSSemaphore TTL for per-backend rate limiting (Issue #3194).
+# If a worker crashes mid-write-back, the permit auto-expires after this duration.
+# 5 minutes is generous — typical backend I/O is seconds, not minutes.
+_SEMAPHORE_TTL_MS = 300_000  # 5 minutes
+
+# Retry interval when waiting for a semaphore permit
+_SEMAPHORE_RETRY_INTERVAL = 0.1  # 100ms
+
 
 class WriteBackService:
     """Orchestrates bidirectional sync from Nexus to source backends.
 
+    Implements the VFSObserver protocol (Issue #3194) to receive file mutation
+    events directly from KernelDispatch OBSERVE phase, replacing the previous
+    EventBus subscription loop.
+
     Responsibilities:
-    1. Subscribe to event bus for write/delete/rename events on mounted paths
+    1. Receive VFS mutation events via on_mutation() (OBSERVE hook)
     2. Enqueue events to SyncBacklogStore
     3. Process pending entries: call backend write/delete/mkdir
     4. Handle conflicts via conflict_resolution module
     5. Rate-limit per backend via asyncio.Semaphore
     """
+
+    # ── VFSObserver protocol (Issue #3194, #4A) ──────────────────────────
+    # Rust ObserverRegistry pre-filters by bitmask before calling Python.
+    event_mask: int = _WRITE_BACK_EVENT_MASK
+
+    def hook_spec(self) -> "HookSpec":
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(observers=(self,))
+
+    async def drain(self) -> None:
+        pass
+
+    async def activate(self) -> None:
+        pass
+
+    async def on_mutation(self, event: "FileEvent") -> None:
+        """OBSERVE-phase handler — receive FileEvent from KernelDispatch.
+
+        Replaces _subscribe_loop() EventBus subscription (Issue #3194).
+        KernelDispatch guarantees typed FileEventType (no string conversion needed).
+        """
+        await self._on_file_event(event)
+
+    # ── Constructor & lifecycle ──────────────────────────────────────────
 
     def __init__(
         self,
@@ -80,19 +133,22 @@ class WriteBackService:
         max_concurrent_per_backend: int = 10,
         poll_interval_seconds: float = 30.0,
         batch_size: int = 50,
+        pipe_manager: Any = None,
     ) -> None:
         """Initialize WriteBackService.
 
         Args:
             gateway: NexusFSGateway for mount/file resolution
-            event_bus: Event bus for subscribing to file events
+            event_bus: Event bus for publishing completion/failure events
             backlog_store: SyncBacklogStore for pending operations
             change_log_store: ChangeLogStore for conflict detection
             default_strategy: Global default conflict strategy
             conflict_log_store: Optional store for conflict audit logging
             max_concurrent_per_backend: Max concurrent write-backs per backend
-            poll_interval_seconds: Interval between polling sweeps
+            poll_interval_seconds: Interval between polling sweeps (safety net)
             batch_size: Max entries fetched per backend per poll cycle
+            pipe_manager: Optional PipeManager for DT_PIPE wakeup (Issue #3194).
+                          None = polling-only fallback.
         """
         self._gw = gateway
         self._event_bus = event_bus
@@ -103,53 +159,71 @@ class WriteBackService:
         self._max_concurrent = max_concurrent_per_backend
         self._poll_interval = poll_interval_seconds
         self._batch_size = batch_size
+        self._pipe_manager = pipe_manager
 
-        # Per-backend semaphores for rate limiting
-        self._semaphores: dict[str, asyncio.Semaphore] = {}
+        # Issue #3194: VFSSemaphore replaces dict[str, asyncio.Semaphore] for
+        # per-backend rate limiting. Provides TTL auto-release on crash,
+        # holder tracking (who's writing?), and force_release() for stuck workers.
+        from nexus.lib.semaphore import create_vfs_semaphore
+
+        self._vfs_sem = create_vfs_semaphore()
         self._metrics = WriteBackMetrics()
         # Pre-built system context template — avoids UUID generation per-operation
         self._system_ctx = OperationContext(user_id="system", groups=[], is_system=True)
         self._running = False
         self._poll_task: asyncio.Task[None] | None = None
-        self._subscribe_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        """Start event subscription and polling loop."""
+        """Start the pipe-driven poll loop.
+
+        The OBSERVE hook (on_mutation) is registered separately via the factory
+        coordinator — it does not require start() to function.
+        """
         if self._running:
             return
         self._running = True
+
+        # Create DT_PIPE for backlog wakeup (Issue #3194, best-effort)
+        if self._pipe_manager is not None:
+            try:
+                self._pipe_manager.ensure(_BACKLOG_WAKEUP_PIPE, capacity=_BACKLOG_PIPE_CAPACITY)
+                logger.debug("[WRITE_BACK] Backlog wakeup pipe created at %s", _BACKLOG_WAKEUP_PIPE)
+            except Exception as e:
+                logger.debug(
+                    "[WRITE_BACK] Failed to create backlog pipe: %s (polling fallback active)", e
+                )
+                self._pipe_manager = None  # Disable pipe path; fall back to timer
+
         self._poll_task = asyncio.create_task(self._poll_loop())
-        self._subscribe_task = asyncio.create_task(self._subscribe_loop())
         logger.info("[WRITE_BACK] Service started")
 
     async def stop(self) -> None:
         """Gracefully shut down the service."""
         self._running = False
-        for task in (self._poll_task, self._subscribe_task):
-            if task and not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+
+        # Close pipe to unblock any waiting poll loop iteration
+        if self._pipe_manager is not None:
+            with contextlib.suppress(Exception):
+                self._pipe_manager.signal_close(_BACKLOG_WAKEUP_PIPE)
+
+        if self._poll_task and not self._poll_task.done():
+            self._poll_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._poll_task
         self._poll_task = None
-        self._subscribe_task = None
         logger.info("[WRITE_BACK] Service stopped")
 
-    async def _subscribe_loop(self) -> None:
-        """Subscribe to event bus and enqueue matching events."""
-        try:
-            # Subscribe to all zones (use "*" or a default zone)
-            async for event in self._event_bus.subscribe("*"):
-                if not self._running:
-                    break
-                await self._on_file_event(event)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"[WRITE_BACK] Subscribe loop error: {e}")
+    # ── Event handling ───────────────────────────────────────────────────
 
     async def _on_file_event(self, event: FileEvent) -> None:
-        """Handle an incoming file event: filter and enqueue if applicable."""
-        event_type = FileEventType(event.type) if isinstance(event.type, str) else event.type
+        """Handle an incoming file event: filter and enqueue if applicable.
+
+        Called by on_mutation() from KernelDispatch OBSERVE phase.
+        Kernel guarantees typed FileEventType — no string conversion needed (#7A).
+        """
+        event_type = (
+            event.type if isinstance(event.type, FileEventType) else FileEventType(event.type)
+        )
         if event_type not in _WRITE_BACK_EVENT_TYPES:
             return
 
@@ -188,8 +262,18 @@ class WriteBackService:
             new_path=event.old_path if event_type == FileEventType.FILE_RENAME else None,
         )
 
+    # ── Poll loop (pipe-driven with timer fallback) ──────────────────────
+
     async def _poll_loop(self) -> None:
-        """Periodically process pending backlog entries."""
+        """Process pending backlog entries, woken by DT_PIPE or 30s timer.
+
+        Two-tier wakeup (Issue #3194):
+        1. DT_PIPE: immediate wakeup from enqueue() callback (us latency)
+        2. Timer: 30s fallback if pipe unavailable or signal missed
+
+        Follows the Kubernetes informer pattern: event-driven primary + periodic
+        reconciliation as safety net.
+        """
         while self._running:
             try:
                 await self._process_all_backends()
@@ -197,7 +281,22 @@ class WriteBackService:
                 break
             except Exception as e:
                 logger.error(f"[WRITE_BACK] Poll loop error: {e}")
-            await asyncio.sleep(self._poll_interval)
+
+            # Wait for wakeup signal OR timeout (safety net)
+            if self._pipe_manager is not None:
+                try:
+                    from nexus.lib.pipe_wakeup import wait_for_signal
+
+                    await wait_for_signal(
+                        self._pipe_manager, _BACKLOG_WAKEUP_PIPE, timeout=self._poll_interval
+                    )
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    # Pipe error (closed, not found) — fall back to timer
+                    await asyncio.sleep(self._poll_interval)
+            else:
+                await asyncio.sleep(self._poll_interval)
 
     async def _process_all_backends(self) -> None:
         """Process pending entries for all backends with pending work.
@@ -220,13 +319,36 @@ class WriteBackService:
         if not entries:
             return
 
-        sem = self._get_semaphore(backend_name)
-        tasks = [self._process_entry(entry, sem) for entry in entries]
+        tasks = [self._process_entry(entry) for entry in entries]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _process_entry(self, entry: "SyncBacklogEntry", sem: asyncio.Semaphore) -> None:
-        """Process a single backlog entry with semaphore rate limiting."""
-        async with sem:
+    async def _process_entry(self, entry: "SyncBacklogEntry") -> None:
+        """Process a single backlog entry with VFSSemaphore rate limiting.
+
+        Issue #3194: Uses VFSSemaphore instead of asyncio.Semaphore for
+        TTL auto-release on crash and holder tracking observability.
+        """
+        # Acquire a semaphore permit for this backend (async retry loop)
+        sem_name = f"write_back:{entry.backend_name}"
+        holder_id: str | None = None
+        for _ in range(int(_SEMAPHORE_TTL_MS / (_SEMAPHORE_RETRY_INTERVAL * 1000))):
+            holder_id = self._vfs_sem.acquire(
+                sem_name,
+                max_holders=self._max_concurrent,
+                timeout_ms=0,
+                ttl_ms=_SEMAPHORE_TTL_MS,
+            )
+            if holder_id is not None:
+                break
+            if not self._running:
+                return  # Service shutting down, don't wait
+            await asyncio.sleep(_SEMAPHORE_RETRY_INTERVAL)
+
+        if holder_id is None:
+            logger.warning("[WRITE_BACK] Timed out acquiring semaphore for %s", entry.backend_name)
+            return
+
+        try:
             if not self._backlog_store.mark_in_progress(entry.id):
                 return  # Another worker claimed it
             try:
@@ -263,6 +385,8 @@ class WriteBackService:
                         zone_id=entry.zone_id,
                     )
                 )
+        finally:
+            self._vfs_sem.release(sem_name, holder_id)
 
     async def _write_back_single(self, entry: "SyncBacklogEntry") -> None:
         """Execute a single write-back operation to the backend.
@@ -600,12 +724,6 @@ class WriteBackService:
         except Exception as e:
             logger.warning(f"[WRITE_BACK] Failed to read {path}: {e}")
             return None
-
-    def _get_semaphore(self, backend_name: str) -> asyncio.Semaphore:
-        """Get or create a rate-limiting semaphore for a backend."""
-        if backend_name not in self._semaphores:
-            self._semaphores[backend_name] = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphores[backend_name]
 
     def get_stats(self) -> dict[str, Any]:
         """Get write-back service statistics."""

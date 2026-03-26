@@ -20,7 +20,6 @@ Example:
 import bisect
 import logging
 import re
-import threading
 from collections import deque
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -77,25 +76,13 @@ class SyncService:
         self._change_log = ChangeLogStore(
             record_store=gateway.record_store, is_postgresql=gateway.is_postgresql
         )
-        # Issue #1127: Per-mount sync locks to prevent concurrent races
-        self._mount_locks: dict[str, threading.Lock] = {}
-        self._lock_guard = threading.Lock()
+        # Issue #3194: VFSLockManager replaces dict[str, threading.Lock] for
+        # per-mount sync locks. Provides hierarchical conflict detection
+        # (prevents concurrent syncs on parent/child mounts) and crash-safe
+        # release (in-process, auto-released on process exit).
+        from nexus.core.lock_fast import create_vfs_lock_manager
 
-    def _get_mount_lock(self, mount_point: str) -> "threading.Lock":
-        """Get or create a lock for a specific mount point.
-
-        Thread-safe: uses a guard lock to protect the mount_locks dict.
-
-        Args:
-            mount_point: Mount point path
-
-        Returns:
-            Lock for the given mount point
-        """
-        with self._lock_guard:
-            if mount_point not in self._mount_locks:
-                self._mount_locks[mount_point] = threading.Lock()
-            return self._mount_locks[mount_point]
+        self._vfs_lock_mgr = create_vfs_lock_manager()
 
     def _resolve_zone_id(self, ctx: SyncContext) -> str | None:
         """Resolve zone ID from context or mount point path.
@@ -138,8 +125,10 @@ class SyncService:
             return self._sync_all_mounts(ctx)
 
         # Step 1.5: Acquire per-mount lock (non-blocking to avoid queueing)
-        lock = self._get_mount_lock(ctx.mount_point)
-        if not lock.acquire(blocking=False):
+        # Issue #3194: VFSLockManager provides hierarchical conflict detection —
+        # a sync on /mnt/gcs blocks concurrent syncs on /mnt/gcs/subdir.
+        handle = self._vfs_lock_mgr.acquire(ctx.mount_point, "write", timeout_ms=0)
+        if handle == 0:
             logger.info(f"[SYNC_MOUNT] Sync already in progress for {ctx.mount_point}")
             result = SyncResult()
             result.errors.append(f"Sync already in progress for {ctx.mount_point}")
@@ -177,7 +166,7 @@ class SyncService:
 
             return result
         finally:
-            lock.release()
+            self._vfs_lock_mgr.release(handle)
 
     def _validate_mount(self, ctx: SyncContext) -> Any:
         """Validate mount exists and supports sync.

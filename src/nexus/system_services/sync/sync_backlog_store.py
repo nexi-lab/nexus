@@ -2,9 +2,13 @@
 
 Manages the sync_backlog table: enqueue, fetch, status transitions, and expiry.
 Inherits shared session/dialect logic from SyncStoreBase.
+
+Issue #3194: optional ``on_enqueue`` callback for DT_PIPE wakeup signalling.
 """
 
+import contextlib
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -51,8 +55,10 @@ class SyncBacklogStore(SyncStoreBase):
         record_store: "RecordStoreABC | None",
         *,
         is_postgresql: bool = False,
+        on_enqueue: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(record_store, is_postgresql=is_postgresql)
+        self._on_enqueue = on_enqueue
 
     def enqueue(
         self,
@@ -116,6 +122,12 @@ class SyncBacklogStore(SyncStoreBase):
                 update_set=update_set,
             )
             session.commit()
+
+            # Signal wakeup (best-effort — poll fallback catches any missed signals)
+            if self._on_enqueue is not None:
+                with contextlib.suppress(Exception):
+                    self._on_enqueue()
+
             return True
         except Exception as e:
             logger.warning(f"Failed to enqueue backlog for {path}: {e}")

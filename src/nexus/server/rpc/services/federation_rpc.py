@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class FederationRPCService:
     """RPC surface for federation zone lifecycle, mounts, share, and join."""
 
-    def __init__(self, zone_manager: Any, federation: Any | None = None) -> None:
-        self._zone_manager = zone_manager
+    def __init__(self, federation: Any) -> None:
+        self._zone_manager = federation.zone_manager
         self._federation = federation
 
     @rpc_expose(admin_only=True, description="List all federation zones with link counts")

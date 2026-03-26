@@ -112,5 +112,8 @@ def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
 
     assert result.exit_code != 0
     assert "gws target readiness" in result.output
+    assert "Ready:" in result.output
+    assert "Needs action:" in result.output
+    assert "Next steps" in result.output
     assert "drive" in result.output
     assert "chat" in result.output

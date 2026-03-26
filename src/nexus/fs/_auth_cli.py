@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 
 import click
 from rich.table import Table
@@ -179,6 +181,46 @@ def _print_connect_success(
     console.print(f"[dim]Next: nexus-fs auth test {service_name}[/dim]")
 
 
+def _print_target_readiness_summary(
+    service_name: str,
+    checks: list[dict[str, object]],
+    *,
+    user_email: str | None = None,
+) -> None:
+    ready = [str(check.get("target", "")) for check in checks if check.get("success")]
+    failed = [check for check in checks if not check.get("success")]
+
+    if ready:
+        console.print(f"[green]Ready:[/green] {', '.join(ready)}")
+
+    if not failed:
+        console.print(f"[green]ok[/green] {service_name}: all checked targets are ready.")
+        return
+
+    console.print(
+        f"[yellow]{service_name} is partially ready.[/yellow] "
+        f"{len(failed)} target(s) still need action."
+    )
+    for check in failed:
+        target = str(check.get("target", ""))
+        message = str(check.get("message", ""))
+        console.print(f"[red]Needs action:[/red] {target}: {message}")
+
+    if service_name == "gws":
+        email = user_email or os.environ.get("NEXUS_FS_USER_EMAIL")
+        if not email:
+            joined_messages = "\n".join(str(check.get("message", "")) for check in checks)
+            match = re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", joined_messages)
+            email = match.group(0) if match else "you@example.com"
+        console.print(
+            "[bold]Next steps[/bold]\n"
+            f"1. Run `nexus-fs auth connect gws oauth --user-email {email}`\n"
+            "2. Approve the requested Google scopes for the failing target(s)\n"
+            "3. Re-run `nexus-fs auth test gws`\n"
+            "4. Use `nexus-fs auth test gws --target <target>` to verify one target at a time"
+        )
+
+
 @click.group(name="auth")
 def auth() -> None:
     """Unified auth commands for nexus-fs."""
@@ -245,6 +287,10 @@ def test_auth(service_name: str, user_email: str | None, target: str | None) -> 
                 str(check.get("message", "")),
             )
         console.print(table)
+        _print_target_readiness_summary(service_name, checks, user_email=user_email)
+        if result.get("success"):
+            return
+        raise SystemExit(1)
 
     if result.get("success"):
         console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")

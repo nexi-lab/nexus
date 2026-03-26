@@ -1535,16 +1535,37 @@ class SyncService:
     ) -> str:
         """Rewrite virtual_path using backend.display_path() with content metadata.
 
-        Reads file content from the backend, parses YAML to extract metadata
-        (subject, date, labels), and calls display_path() to produce a
-        human-readable virtual path. Falls back to the original path on error.
+        Fast path (Issue #3266): If the backend has pre-fetched metadata via
+        ``get_cached_metadata()`` (e.g., from ``gws gmail +triage``), use it
+        directly — no per-message HTTP call needed.
 
-        Only called during sync (not on every listing), so the extra read
-        is a one-time cost per file.
+        Slow path (fallback): Reads file content from the backend, parses YAML
+        to extract metadata, and calls display_path(). Only used for backends
+        without batch metadata (e.g., Calendar).
         """
         try:
-            # Build a context with backend_path set — CLIConnector.read_content
-            # returns empty bytes if backend_path is missing.
+            # Extract item_id from filename.
+            parts = backend_path.rstrip("/").rsplit("/", 1)
+            filename = parts[-1]
+            item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+
+            # --- Fast path: use pre-fetched triage metadata (Issue #3266) ---
+            # For Gmail, +triage returns subject+date+labels for 500 messages
+            # in one CLI call (~2s), vs. 200 serial read_content calls (~8min).
+            if hasattr(backend, "get_cached_metadata"):
+                # Extract the message ID from the threadId-msgId filename format.
+                msg_id = item_id.split("-")[-1] if "-" in item_id else item_id
+                cached_meta = backend.get_cached_metadata(msg_id)
+                if cached_meta is not None:
+                    display = backend.display_path(msg_id, cached_meta)
+                    if display != f"{msg_id}.yaml":
+                        mount_point = ctx.mount_point
+                        if mount_point:
+                            return f"{mount_point.rstrip('/')}/{display.lstrip('/')}"
+                        return f"/{display.lstrip('/')}"
+                    return virtual_path
+
+            # --- Slow path: read content per file (Calendar, Drive, etc.) ---
             read_ctx = ctx.context
             if read_ctx is not None:
                 from dataclasses import replace as _dc_replace
@@ -1560,12 +1581,8 @@ class SyncService:
             if not isinstance(parsed, dict):
                 return virtual_path
 
-            # Extract item_id from filename and enrich metadata with
-            # path-derived context (e.g., calendarId from parent directory)
-            # that read_content() doesn't include in the response.
-            parts = backend_path.rstrip("/").rsplit("/", 1)
-            filename = parts[-1]
-            item_id = filename.rsplit(".", 1)[0] if "." in filename else filename
+            # Enrich metadata with path-derived context (e.g., calendarId
+            # from parent directory) that read_content() doesn't include.
             if len(parts) > 1 and "calendarId" not in parsed:
                 parsed["calendarId"] = parts[0].split("/")[-1]
 

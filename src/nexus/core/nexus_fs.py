@@ -1289,6 +1289,21 @@ class NexusFS(  # type: ignore[misc]
         if is_dynamic_connector:
             # Dynamic connector - read directly from backend without metadata check
             # The backend handles authentication and API calls (no VFS lock needed)
+            #
+            # Issue #3266: For display-path-rewritten files (e.g., Gmail human-
+            # readable names), the route.backend_path is the display path, not the
+            # original backend path. Look up physical_path from metastore so
+            # read_content() can extract the real item ID (e.g., Gmail message ID).
+            meta_hint = self.metadata.get(path)
+            if (
+                meta_hint
+                and meta_hint.physical_path
+                and meta_hint.physical_path != route.backend_path
+            ):
+                from dataclasses import replace as _dc_replace
+
+                read_context = _dc_replace(read_context, backend_path=meta_hint.physical_path)
+
             content = route.backend.read_content("", context=read_context)
 
             if offset or count is not None:

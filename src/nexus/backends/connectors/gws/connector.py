@@ -624,6 +624,69 @@ class GmailConnector(CLIConnector):
         config = _load_gws_config("gmail.yaml")
         kwargs.setdefault("config", config)
         super().__init__(**kwargs)
+        # Metadata cache populated by _prefetch_triage_metadata (Issue #3266).
+        # Maps message_id -> {subject, date, from, labels} from gws +triage.
+        self._metadata_cache: dict[str, dict[str, Any]] = {}
+
+    # --- Batch metadata via +triage (Issue #3266) ---
+
+    def _prefetch_triage_metadata(self, label: str = "INBOX", max_messages: int = 500) -> None:
+        """Batch-fetch message metadata using ``gws gmail +triage``.
+
+        One CLI call returns subject, date, sender, and labels for up to 500
+        messages. Results are stored in ``_metadata_cache`` keyed by message ID.
+        This replaces 200+ serial ``read_content`` calls during sync.
+        """
+        import json as _json
+
+        query = f"label:{label}"
+        r = self._execute_cli(
+            [
+                "gws",
+                "gmail",
+                "+triage",
+                "--max",
+                str(max_messages),
+                "--query",
+                query,
+                "--labels",
+                "--format",
+                "json",
+            ],
+        )
+        if not r.ok:
+            logger.warning("[GMAIL_TRIAGE] +triage failed for label=%s: %s", label, r.stderr[:200])
+            return
+
+        try:
+            raw = r.stdout[r.stdout.index("{") :]
+            data = _json.loads(raw)
+        except Exception:
+            logger.warning("[GMAIL_TRIAGE] Failed to parse +triage JSON for label=%s", label)
+            return
+
+        messages = data.get("messages", [])
+        for msg in messages:
+            msg_id = msg.get("id", "")
+            if msg_id:
+                self._metadata_cache[msg_id] = {
+                    "subject": msg.get("subject", ""),
+                    "date": msg.get("date", ""),
+                    "from": msg.get("from", ""),
+                    "labels": msg.get("labels", []),
+                    "labelIds": msg.get("labels", []),
+                }
+        logger.info(
+            "[GMAIL_TRIAGE] Cached metadata for %d messages (label=%s)", len(messages), label
+        )
+
+    def get_cached_metadata(self, item_id: str) -> dict[str, Any] | None:
+        """Return pre-fetched metadata for a message ID, or None if not cached.
+
+        Called by ``_apply_display_path_for_sync`` to avoid per-message
+        ``read_content`` calls when triage metadata is available.
+        """
+        return self._metadata_cache.get(item_id)
 
     # --- Display path (Issue #3256) ---
 
@@ -831,16 +894,24 @@ class GmailConnector(CLIConnector):
         if label == "INBOX" and len(parts) == 1:
             return [f"{cat}/" for cat in _GMAIL_CATEGORY_FOLDERS]
 
-        # Inside a label (or INBOX/CATEGORY): list messages via CLI.
+        # Inside a label (or INBOX/CATEGORY): list messages via +triage.
+        # +triage returns subject+date+labels in one call (Issue #3266),
+        # eliminating per-message read_content during sync.
         label_ids = [label]
+        category_filter: str | None = None
         if label == "INBOX" and len(parts) >= 2:
             category_name = parts[1]
+            category_filter = category_name
             # Map category folder name back to Gmail label ID.
             for gmail_label, folder in _GMAIL_CATEGORIES.items():
                 if folder == category_name:
                     label_ids.append(gmail_label)
                     break
 
+        # Prefetch metadata for this label (populates _metadata_cache).
+        self._prefetch_triage_metadata(label=label, max_messages=500)
+
+        # Now use messages.list to get the actual IDs with threadIds.
         result = self._execute_cli(
             [
                 "gws",
@@ -861,6 +932,14 @@ class GmailConnector(CLIConnector):
         thread_ids = re.findall(r'threadId:\s*"([^"]+)"', result.stdout)
         entries = []
         for i, msg_id in enumerate(ids):
+            # If we have cached metadata, filter by category for INBOX sublists.
+            if category_filter:
+                cached = self._metadata_cache.get(msg_id)
+                if cached:
+                    msg_category = _gmail_category_from_labels(cached.get("labels"))
+                    if msg_category != category_filter:
+                        continue
+
             tid = thread_ids[i] if i < len(thread_ids) else msg_id
             entries.append(f"{tid}-{msg_id}.yaml")
         return entries

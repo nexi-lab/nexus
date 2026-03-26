@@ -7,27 +7,43 @@ Each example below shows a minimal working integration.
 
 Use nexus-fs as a document loader or as a tool in a LangChain agent.
 
-### Document loader
+### NexusDocumentLoader
+
+A reusable LangChain document loader backed by nexus-fs:
 
 ```python
 # skip-test
+from langchain_core.document_loaders import BaseLoader
 from langchain_core.documents import Document
 import nexus.fs
 
-fs = nexus.fs.mount_sync("local://./docs")
 
-def load_documents(path: str) -> list[Document]:
-    """Load all files under a path as LangChain documents."""
-    files = fs.ls(path, detail=True)
-    docs = []
-    for entry in files:
-        if entry.get("entry_type") == 0:  # 0 = file, 1 = directory
-            content = fs.read(entry["path"])
-            docs.append(Document(
-                page_content=content.decode(errors="replace"),
-                metadata={"source": entry["path"], "size": entry.get("size", 0)},
-            ))
-    return docs
+class NexusDocumentLoader(BaseLoader):
+    """Load files from any nexus-fs mount as LangChain documents."""
+
+    def __init__(self, path: str, *uris: str) -> None:
+        self.path = path
+        self.fs = nexus.fs.mount_sync(*uris)
+
+    def load(self) -> list[Document]:
+        entries = self.fs.ls(self.path, detail=True)
+        docs = []
+        for entry in entries:
+            if entry.get("entry_type") == 0:  # 0 = file, 1 = directory
+                content = self.fs.read(entry["path"])
+                docs.append(Document(
+                    page_content=content.decode(errors="replace"),
+                    metadata={
+                        "source": entry["path"],
+                        "size": entry.get("size", 0),
+                    },
+                ))
+        return docs
+
+
+# Usage:
+loader = NexusDocumentLoader("/local/docs/", "local://./docs")
+documents = loader.load()
 ```
 
 ### As a tool

@@ -23,8 +23,10 @@ nexus-fs playground local://./data s3://my-bucket
 nexus-fs playground
 ```
 
-When no URIs are provided, playground reads from `~/.nexus/fs/mounts.json`
-to find previously mounted backends.
+When no URIs are provided, playground reads from the nexus-fs state
+directory (`$TMPDIR/nexus-fs/mounts.json` by default, or
+`$NEXUS_FS_STATE_DIR/mounts.json` if set) to find previously mounted
+backends.
 
 ## Layout
 

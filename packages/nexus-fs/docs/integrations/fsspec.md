@@ -42,10 +42,11 @@ If you already have a `SlimNexusFS` instance, pass it directly:
 
 ```python
 # skip-test
+import asyncio
 import nexus.fs
-from nexus.fs import NexusFileSystem
+from nexus.fs._fsspec import NexusFileSystem
 
-async_fs = await nexus.fs.mount("local://./data")
+async_fs = asyncio.run(nexus.fs.mount("local://./data"))
 fsspec_fs = NexusFileSystem(nexus_fs=async_fs)
 
 data = fsspec_fs.cat("/local/data/file.txt")
@@ -54,9 +55,12 @@ data = fsspec_fs.cat("/local/data/file.txt")
 ### Auto-discovery
 
 When no `SlimNexusFS` instance is provided, `NexusFileSystem`
-auto-discovers mounts from the local state directory
-(`~/.nexus/fs/mounts.json`). This means you can mount backends via the
-CLI and then access them from any fsspec-compatible library.
+auto-discovers mounts from the local state directory. By default,
+mounts are persisted to `$TMPDIR/nexus-fs/mounts.json` (e.g.,
+`/tmp/nexus-fs/mounts.json` on Linux/macOS). Override this with the
+`NEXUS_FS_STATE_DIR` environment variable. This means you can mount
+backends via Python or the CLI, and then access them from any
+fsspec-compatible library in the same session.
 
 ## Supported operations
 

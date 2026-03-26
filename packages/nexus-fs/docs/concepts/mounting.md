@@ -116,4 +116,5 @@ locally. This avoids re-listing remote backends on every operation and
 enables features like `stat()` and `exists()` without network calls for
 recently accessed files.
 
-The database is stored at `~/.nexus/fs/metadata.db` by default.
+The database is stored in the nexus-fs state directory
+(`$TMPDIR/nexus-fs/` by default, or `$NEXUS_FS_STATE_DIR/` if set).

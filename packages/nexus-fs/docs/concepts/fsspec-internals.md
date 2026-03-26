@@ -38,7 +38,7 @@ graph LR
 When `NexusFileSystem` is created without an explicit `SlimNexusFS`
 instance, it auto-discovers mounts from the local state directory:
 
-1. Reads `~/.nexus/fs/mounts.json` (if it exists)
+1. Reads `$TMPDIR/nexus-fs/mounts.json` (or `$NEXUS_FS_STATE_DIR/mounts.json` if set)
 2. Reconstructs mount URIs from the saved state
 3. Calls `mount()` to create a `SlimNexusFS` instance
 

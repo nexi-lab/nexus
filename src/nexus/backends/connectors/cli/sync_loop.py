@@ -519,8 +519,9 @@ class ConnectorSyncLoop:
         """
         from nexus.contracts.types import OperationContext
 
-        # Build auth context from backend's configured user
+        # Build auth context from backend's configured user + zone
         user_email = getattr(backend, "user_email", None) or "system"
+        zone_id = getattr(backend, "zone_id", None) or "root"
         entries: list[tuple[str, str, str]] = []
         queue = [("", mp)]  # (backend_path, virtual_parent)
 
@@ -531,6 +532,7 @@ class ConnectorSyncLoop:
                     user_id=user_email,
                     groups=[],
                     backend_path=backend_path,
+                    zone_id=zone_id,
                 )
                 items = backend.list_dir(backend_path, context=ctx)
             except Exception:
@@ -545,11 +547,21 @@ class ConnectorSyncLoop:
 
             for item in items:
                 is_dir = item.endswith("/")
-                name = item.rstrip("/")
-                entries.append(("default", virtual_parent, name + ("/" if is_dir else "")))
+                raw_name = item.rstrip("/")
+
+                # Apply display_path for human-readable names (Issue #3256)
+                if not is_dir and hasattr(backend, "display_path"):
+                    try:
+                        display = backend.display_path(raw_name, None)
+                        if display:
+                            raw_name = display
+                    except Exception:
+                        pass
+
+                entries.append(("default", virtual_parent, raw_name + ("/" if is_dir else "")))
                 if is_dir:
-                    child_backend = f"{backend_path}/{name}" if backend_path else name
-                    child_virtual = f"{virtual_parent}/{name}"
+                    child_backend = f"{backend_path}/{raw_name}" if backend_path else raw_name
+                    child_virtual = f"{virtual_parent}/{raw_name}"
                     queue.append((child_backend, child_virtual))
 
         return entries

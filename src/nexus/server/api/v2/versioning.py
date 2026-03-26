@@ -91,7 +91,6 @@ def build_v2_registry(
     # ---- Core v2 routers ----
     try:
         from nexus.server.api.v2.routers import (
-            audit,
             conflicts,
             mobile_search,
             operations,
@@ -102,7 +101,6 @@ def build_v2_registry(
             RouterEntry(router=mobile_search.router, name="mobile_search", endpoint_count=2),
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
-            RouterEntry(router=audit.router, name="audit", endpoint_count=5),
             RouterEntry(router=sync_push.router, name="sync_push", endpoint_count=1),
         ]
         for entry in _core_routers:
@@ -125,14 +123,6 @@ def build_v2_registry(
         registry.add(RouterEntry(router=watch_router, name="watch", endpoint_count=1))
     except ImportError as e:
         logger.warning("Failed to import Events replay routes: %s", e)
-
-    # ---- Pay router ----
-    try:
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        registry.add(RouterEntry(router=pay_router, name="pay", endpoint_count=8))
-    except ImportError as e:
-        logger.warning("Failed to import Pay routes: %s", e)
 
     # ---- Scheduler router ----
     try:
@@ -320,22 +310,6 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Agent status routes: %s", e)
 
-    # ---- Governance router (Issue #1359) — admin auth required ----
-    try:
-        from nexus.server.api.v2.routers.governance import router as governance_router
-
-        registry.add(RouterEntry(router=governance_router, name="governance", endpoint_count=16))
-    except ImportError as e:
-        logger.warning("Failed to import Governance routes: %s", e)
-
-    # ---- Locks router (Issue #2056 — ported from v1) ----
-    try:
-        from nexus.server.api.v2.routers.locks import router as locks_router
-
-        registry.add(RouterEntry(router=locks_router, name="locks", endpoint_count=4))
-    except ImportError as e:
-        logger.warning("Failed to import Locks routes: %s", e)
-
     # ---- Subscriptions router (Issue #2056 — ported from v1) ----
     try:
         from nexus.server.api.v2.routers.subscriptions import router as subscriptions_router
@@ -429,24 +403,12 @@ def register_v2_routers(
     app: "FastAPI",
     registry: RouterRegistry,
 ) -> None:
-    """Mount every router in *registry* onto *app*.
-
-    Also registers per-router exception handlers where needed
-    (e.g. Pay's custom exception handlers).
-    """
+    """Mount every router in *registry* onto *app*."""
     for entry in registry.entries:
         if entry.prefix is not None:
             app.include_router(entry.router, prefix=entry.prefix)
         else:
             app.include_router(entry.router)
-
-    # Pay-specific exception handlers
-    try:
-        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
-
-        _register_pay_exception_handlers(app)
-    except ImportError:
-        pass  # Pay module not available — nothing to register.
 
     total = registry.total_endpoints()
     logger.info("API v2 routers registered (%d endpoints)", total)

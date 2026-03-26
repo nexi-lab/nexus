@@ -1,13 +1,15 @@
-"""E2E tests for new CLI command groups against a real HTTP server.
+"""E2E tests for CLI command groups against a real HTTP server.
 
-Issue #2811: Verifies that CLI commands (pay, audit, lock, governance,
-events, snapshot, exchange) work end-to-end by:
+Issue #2811: Verifies that CLI commands (events, snapshot, exchange)
+work end-to-end by:
 1. Starting a real FastAPI server (uvicorn) with actual routers on a real port
-2. Seeding test data (audit records)
-3. Running CLI commands via subprocess pointing at the server
-4. Verifying exit codes and output
+2. Running CLI commands via subprocess pointing at the server
+3. Verifying exit codes and output
 
 Exchange commands are Phase 2 stubs that don't need a server.
+
+Note: pay, audit, lock, governance CLI tests removed — those routers
+have been fully replaced by gRPC (Issue #1528, #1529).
 """
 
 import json
@@ -18,7 +20,6 @@ import sys
 import threading
 import time
 from contextlib import closing
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -133,7 +134,6 @@ def cli_server(tmp_path_factory):
 
     # --- Mount routers ---
 
-    # Audit router
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
 
@@ -146,10 +146,6 @@ def cli_server(tmp_path_factory):
 
     session_factory = sessionmaker(bind=engine)
 
-    from nexus.server.api.v2.routers.audit import router as audit_router
-
-    app.include_router(audit_router)
-
     # Snapshot router
     from nexus.server.api.v2.routers.snapshots import router as snapshots_router
 
@@ -159,21 +155,6 @@ def cli_server(tmp_path_factory):
     from nexus.server.api.v2.routers.events_replay import router as events_router
 
     app.include_router(events_router)
-
-    # Governance router (admin-only)
-    from nexus.server.api.v2.routers.governance import router as governance_router
-
-    app.include_router(governance_router)
-
-    # Pay router
-    from nexus.server.api.v2.routers.pay import router as pay_router
-
-    app.include_router(pay_router)
-
-    # Locks router
-    from nexus.server.api.v2.routers.locks import router as locks_router
-
-    app.include_router(locks_router)
 
     # Health endpoint
     @app.get("/health")
@@ -189,88 +170,9 @@ def cli_server(tmp_path_factory):
     mock_record_store.session_factory = session_factory
     app.state.record_store = mock_record_store
 
-    # Override get_exchange_audit_logger (used by audit router)
-    from nexus.server.api.v2.dependencies import get_exchange_audit_logger
-    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger as _EAL
-
-    _eal_instance = _EAL(record_store=mock_record_store)
-    app.dependency_overrides[get_exchange_audit_logger] = lambda: (_eal_instance, ROOT_ZONE_ID)
-
-    # Wire audit logger for seeding
-    from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
-
-    audit_logger = ExchangeAuditLogger(record_store=mock_record_store)
-
-    # Wire governance services
-    try:
-        from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-        from sqlalchemy.ext.asyncio import async_sessionmaker as AsyncSessionMaker
-
-        import nexus.bricks.governance.db_models  # noqa: F401
-        from nexus.bricks.governance.anomaly_service import (
-            AnomalyService,
-            StatisticalAnomalyDetector,
-        )
-        from nexus.bricks.governance.collusion_service import CollusionService
-        from nexus.bricks.governance.governance_graph_service import GovernanceGraphService
-        from nexus.bricks.governance.response_service import ResponseService
-        from nexus.lib.db_base import Base as GovBase
-
-        async_engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", echo=False)
-
-        import asyncio
-
-        async def _create_gov_tables():
-            async with async_engine.begin() as conn:
-                await conn.run_sync(GovBase.metadata.create_all)
-
-        asyncio.get_event_loop_policy().new_event_loop().run_until_complete(_create_gov_tables())
-
-        async_session_factory = AsyncSessionMaker(
-            async_engine, class_=AsyncSession, expire_on_commit=False
-        )
-
-        detector = StatisticalAnomalyDetector()
-        anomaly_svc = AnomalyService(session_factory=async_session_factory, detector=detector)
-        collusion_svc = CollusionService(session_factory=async_session_factory)
-        graph_svc = GovernanceGraphService(session_factory=async_session_factory)
-        response_svc = ResponseService(
-            session_factory=async_session_factory,
-            anomaly_service=anomaly_svc,
-            collusion_service=collusion_svc,
-            graph_service=graph_svc,
-        )
-
-        app.state.governance_anomaly_service = anomaly_svc
-        app.state.governance_collusion_service = collusion_svc
-        app.state.governance_graph_service = graph_svc
-        app.state.governance_response_service = response_svc
-        governance_wired = True
-    except Exception:
-        governance_wired = False
-
     # Snapshot router requires nexus_fs._snapshot_service (needs CAS + metadata
     # stores). Without a full server stack we can't wire it, so snapshot
     # endpoints will return 503 and tests handle this gracefully.
-
-    # Seed audit records
-    audit_seeded = False
-    try:
-        for i in range(5):
-            audit_logger.record(
-                protocol="internal" if i < 3 else "x402",
-                buyer_agent_id=f"buyer-{i % 2}",
-                seller_agent_id=f"seller-{i % 3}",
-                amount=Decimal(str(10 * (i + 1))),
-                currency="credits",
-                status="settled" if i < 4 else "failed",
-                application="gateway",
-                zone_id="root",
-                transfer_id=f"cli-e2e-tx-{i}",
-            )
-        audit_seeded = True
-    except Exception:
-        pass
 
     # Start uvicorn in background thread
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
@@ -298,8 +200,6 @@ def cli_server(tmp_path_factory):
         "base_url": base_url,
         "api_key": api_key,
         "env": env,
-        "audit_seeded": audit_seeded,
-        "governance_wired": governance_wired,
     }
 
     server.should_exit = True
@@ -318,260 +218,6 @@ class TestServerHealth:
 
         resp = httpx.get(f"{cli_server['base_url']}/health", trust_env=False)
         assert resp.status_code == 200
-
-
-# =============================================================================
-# Audit CLI
-# =============================================================================
-
-
-class TestAuditCLI:
-    """Test `nexus audit` commands against real server."""
-
-    def test_audit_list_json(self, cli_server):
-        if not cli_server["audit_seeded"]:
-            pytest.skip("Audit records not seeded")
-        result = _run_cli(
-            "audit",
-            "list",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert "transactions" in data
-        assert len(data["transactions"]) >= 1
-
-    def test_audit_list_rich(self, cli_server):
-        if not cli_server["audit_seeded"]:
-            pytest.skip("Audit records not seeded")
-        result = _run_cli(
-            "audit",
-            "list",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        assert "Audit" in result.stdout or "Time" in result.stdout
-
-    def test_audit_list_with_limit(self, cli_server):
-        if not cli_server["audit_seeded"]:
-            pytest.skip("Audit records not seeded")
-        result = _run_cli(
-            "audit",
-            "list",
-            "--limit",
-            "2",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0
-        data = json.loads(result.stdout)
-        assert len(data["transactions"]) <= 2
-
-    def test_audit_export_json(self, cli_server):
-        if not cli_server["audit_seeded"]:
-            pytest.skip("Audit records not seeded")
-        result = _run_cli(
-            "audit",
-            "export",
-            "--format",
-            "json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-
-    def test_audit_export_csv(self, cli_server):
-        if not cli_server["audit_seeded"]:
-            pytest.skip("Audit records not seeded")
-        result = _run_cli(
-            "audit",
-            "export",
-            "--format",
-            "csv",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-
-
-# =============================================================================
-# Governance CLI (admin-only)
-# =============================================================================
-
-
-class TestGovernanceCLI:
-    """Test `nexus governance` commands against real server (admin API key)."""
-
-    def test_governance_alerts_json(self, cli_server):
-        if not cli_server["governance_wired"]:
-            pytest.skip("Governance services not wired")
-        result = _run_cli(
-            "governance",
-            "alerts",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert "alerts" in data
-
-    def test_governance_alerts_rich(self, cli_server):
-        if not cli_server["governance_wired"]:
-            pytest.skip("Governance services not wired")
-        result = _run_cli(
-            "governance",
-            "alerts",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-
-    def test_governance_rings_json(self, cli_server):
-        if not cli_server["governance_wired"]:
-            pytest.skip("Governance services not wired")
-        result = _run_cli(
-            "governance",
-            "rings",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-
-    def test_governance_status_json(self, cli_server):
-        if not cli_server["governance_wired"]:
-            pytest.skip("Governance services not wired")
-        result = _run_cli(
-            "governance",
-            "status",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert "recent_alerts" in data
-        assert "fraud_rings" in data
-
-    def test_governance_status_rich(self, cli_server):
-        if not cli_server["governance_wired"]:
-            pytest.skip("Governance services not wired")
-        result = _run_cli(
-            "governance",
-            "status",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        assert "Governance" in result.stdout
-
-
-# =============================================================================
-# Pay CLI
-# =============================================================================
-
-
-class TestPayCLI:
-    """Test `nexus pay` commands against real server.
-
-    Pay endpoints depend on CreditsService (TigerBeetle). Without it,
-    /api/v2/pay/balance returns 500/503. We test that the CLI handles
-    the response correctly either way.
-    """
-
-    def test_pay_balance_graceful(self, cli_server):
-        result = _run_cli(
-            "pay",
-            "balance",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # Either shows balance (if CreditsService available) or error exit
-        if result.returncode == 0:
-            assert "Balance" in result.stdout or "available" in result.stdout
-        else:
-            assert result.returncode == 1
-            assert "Error" in result.stdout
-
-    def test_pay_history_json(self, cli_server):
-        result = _run_cli(
-            "pay",
-            "history",
-            "--json",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # pay history calls /api/v2/audit/transactions
-        assert result.returncode == 0, f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        data = json.loads(result.stdout)
-        assert "transactions" in data
-
-    def test_pay_transfer_graceful(self, cli_server):
-        result = _run_cli(
-            "pay",
-            "transfer",
-            "agent-bob",
-            "10.00",
-            "--memo",
-            "e2e test",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # Transfer requires CreditsService; either succeeds or fails gracefully
-        assert result.returncode in (0, 1)
-
-
-# =============================================================================
-# Lock CLI
-# =============================================================================
-
-
-class TestLockCLI:
-    """Test `nexus lock` commands against real server.
-
-    Lock endpoints require Redis/Dragonfly. Without it, server returns 503.
-    We test that the CLI handles the response correctly.
-    """
-
-    def test_lock_list_graceful(self, cli_server):
-        result = _run_cli(
-            "lock",
-            "list",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        # 503 from missing lock manager → CLI error exit 1
-        assert result.returncode in (0, 1)
-
-    def test_lock_info_graceful(self, cli_server):
-        result = _run_cli(
-            "lock",
-            "info",
-            "/data/test.txt",
-            base_url=cli_server["base_url"],
-            api_key=cli_server["api_key"],
-            env=cli_server["env"],
-        )
-        assert result.returncode in (0, 1)
 
 
 # =============================================================================

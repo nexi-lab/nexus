@@ -1,26 +1,23 @@
 """End-to-end tests for prompt injection hardening (Issue #1756).
 
 Tests the full security stack:
-- FastAPI app with pay router + auth + permissions enabled
-- Unauthenticated requests rejected (401)
-- DSL rules rejected via Pydantic validator (422)
 - SSRF URL validation blocks internal IPs
 - Injection payloads flow through the full pipeline
 - BashAction sandbox requirement enforced end-to-end
 - Performance: sanitization of 10KB input < 5ms
 - Performance: safe_interpolate 100 calls < 10ms
+
+Note: FastAPI pay-router permission tests removed — pay HTTP router
+has been deleted in favour of gRPC (Issue #1528, #1529).
 """
 
 import time
 import uuid
 from dataclasses import dataclass
-from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
 
 from nexus.bricks.workflows.actions import BashAction
 from nexus.bricks.workflows.types import ActionResult, TriggerType, WorkflowContext
@@ -198,153 +195,8 @@ class TestMemoSafetyInvariant:
 # FastAPI + Permissions E2E Tests
 # =============================================================================
 
-
-def _make_pay_app(*, require_auth: bool = True) -> FastAPI:
-    """Create a FastAPI app with the pay router and optional auth."""
-    from nexus.server.api.v2.routers.pay import (
-        _register_pay_exception_handlers,
-        get_nexuspay,
-    )
-    from nexus.server.api.v2.routers.pay import (
-        router as pay_router,
-    )
-
-    app = FastAPI(title="Nexus Injection E2E")
-    # Router already has prefix="/api/v2/pay" built in
-    app.include_router(pay_router)
-    _register_pay_exception_handlers(app)
-
-    # Mock services on app.state
-    mock_credits = AsyncMock()
-    mock_credits.get_balance = AsyncMock(return_value=Decimal("100.00"))
-    mock_credits.transfer = AsyncMock(return_value="tx-123")
-    mock_credits.provision_wallet = AsyncMock()
-    app.state.credits_service = mock_credits
-    app.state.x402_client = None
-    app.state.spending_policy_service = AsyncMock()
-
-    if require_auth:
-        # Override auth to simulate rejection for unauthenticated requests
-        async def _reject_auth() -> None:
-            raise HTTPException(status_code=401, detail="Authentication required")
-
-        app.dependency_overrides[get_nexuspay] = _reject_auth
-
-    return app
-
-
-def _make_authenticated_pay_app() -> FastAPI:
-    """Create a FastAPI app with auth that accepts requests."""
-    from nexus.bricks.pay.sdk import NexusPay
-    from nexus.server.api.v2.routers.pay import (
-        _register_pay_exception_handlers,
-        get_nexuspay,
-    )
-    from nexus.server.api.v2.routers.pay import (
-        router as pay_router,
-    )
-
-    app = FastAPI(title="Nexus Injection E2E Authed")
-    app.include_router(pay_router)
-    _register_pay_exception_handlers(app)
-
-    mock_credits = AsyncMock()
-    mock_credits.get_balance = AsyncMock(return_value=Decimal("100.00"))
-    mock_credits.transfer = AsyncMock(return_value="tx-123")
-    mock_credits.provision_wallet = AsyncMock()
-    app.state.credits_service = mock_credits
-    app.state.x402_client = None
-
-    mock_policy_service = AsyncMock()
-    mock_policy_service.create_policy = AsyncMock()
-    app.state.spending_policy_service = mock_policy_service
-
-    # Override get_nexuspay to return a real NexusPay with mock credits
-    from nexus.bricks.pay.credits import CreditsService
-
-    service = CreditsService(enabled=False)
-
-    async def _authed_nexuspay() -> NexusPay:
-        return NexusPay(
-            api_key="nx_live_e2e_test",
-            credits_service=service,
-            x402_enabled=False,
-        )
-
-    app.dependency_overrides[get_nexuspay] = _authed_nexuspay
-
-    return app
-
-
-class TestFastAPIPermissionsE2E:
-    """E2E: FastAPI app with pay router + auth enforcement."""
-
-    def test_unauthenticated_balance_rejected(self):
-        app = _make_pay_app(require_auth=True)
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.get("/api/v2/pay/balance")
-        assert resp.status_code == 401
-
-    def test_unauthenticated_transfer_rejected(self):
-        app = _make_pay_app(require_auth=True)
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.post(
-            "/api/v2/pay/transfer",
-            json={"to": "agent-bob", "amount": "1.00"},
-        )
-        assert resp.status_code == 401
-
-    def test_unauthenticated_policy_create_rejected(self):
-        app = _make_pay_app(require_auth=True)
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.post(
-            "/api/v2/pay/policies",
-            json={"daily_limit": "100.00"},
-        )
-        # Policy endpoint uses _get_require_auth() directly (not get_nexuspay),
-        # and requires is_admin=True — unauthenticated gets 401 or 403.
-        assert resp.status_code in (401, 403)
-
-    def test_policy_dsl_rules_rejected_with_422(self):
-        """DSL rules field must be rejected via Pydantic validator."""
-        app = _make_authenticated_pay_app()
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.post(
-            "/api/v2/pay/policies",
-            json={"rules": [{"type": "limit", "value": 100}]},
-        )
-        # Pydantic validation error → 422
-        assert resp.status_code == 422
-        body = resp.json()
-        assert "Phase 4" in str(body)
-
-    def test_policy_empty_rules_rejected_with_422(self):
-        app = _make_authenticated_pay_app()
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.post(
-            "/api/v2/pay/policies",
-            json={"rules": []},
-        )
-        assert resp.status_code == 422
-        body = resp.json()
-        assert "Phase 4" in str(body)
-
-    def test_policy_rules_none_accepted(self):
-        """rules=null (or absent) should pass validation."""
-        app = _make_authenticated_pay_app()
-        client = TestClient(app, raise_server_exceptions=False)
-
-        resp = client.post(
-            "/api/v2/pay/policies",
-            json={"rules": None, "daily_limit": "100.00"},
-        )
-        # May be 403 (admin check) or 201, but NOT 422
-        assert resp.status_code != 422
+# Pay HTTP router has been deleted — gRPC-only (Issue #1528, #1529).
+# The TestFastAPIPermissionsE2E class that tested pay endpoints was removed.
 
 
 class TestSSRFValidationE2E:

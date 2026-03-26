@@ -169,30 +169,16 @@ business logic**.
 
 `mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
 
-**Syscall × Primitive usage matrix:**
+**Primitive usage pattern:**
 
-| Syscall | VFSRouter | VFSLock | KernelDispatch | Metastore | FileEvent |
-|---------|-----------|---------|----------------|-----------|-----------|
-| `sys_rmdir` | Yes | — | Yes (3-phase) | Yes | Yes |
-| `sys_read` | Yes | Yes (shared) | Yes (3-phase) | Yes | —* |
-| `sys_write` | Yes | Yes (exclusive) | Yes (3-phase) | Yes | Yes |
-| `sys_unlink` | Yes | Yes (exclusive) | Yes (3-phase) | Yes | Yes |
-| `sys_rename` | Yes | Yes (both, sorted) | Yes (2-phase) | Yes | Yes |
-| `sys_stat` | — | — | — | Yes | — |
-| `sys_access` | — | — | — | Yes | — |
-| `sys_setattr` | Yes | Yes (exclusive) | — | Yes | Yes |
-| `sys_readdir` | — | — | — | Yes | — |
-| `sys_is_directory` | — | — | — | Yes | — |
+- **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
+  VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
+- **Read**: same pipeline minus FileEvent (reads are not mutations)
+- **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore
+  lookup only — no routing, locking, or dispatch
+- **setattr**: Metastore-only (Tier 2 `mkdir` adds routing + hooks)
 
-*`sys_read` does not emit `FileEvent` (reads are not mutations).
-
-**Bypass paths (intentional):**
-- `sys_stat`, `sys_access`, `sys_is_directory`, `sys_readdir` — read-only metadata
-  queries. Direct metastore lookup, no routing/locking/dispatch. Fast-path: ~5μs.
-- Dynamic connectors in `sys_read` — `user_scoped=True` backends bypass VFSLock
-  (external data source, no local inode to lock).
-
-See `syscall-design.md` for full syscall table and design rationale.
+See `syscall-design.md` for the full per-syscall primitive matrix.
 
 ### 2.3 Tier 2 Convenience Methods
 
@@ -343,9 +329,9 @@ with them indirectly through syscalls. See §2.2 matrix for per-syscall usage.
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Callback mechanism implementing §2.4: three VFS phases (PRE-DISPATCH / INTERCEPT / OBSERVE) + driver lifecycle hooks (MOUNT / UNMOUNT). Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
 | **PipeManager + RingBuffer** | `core.pipe_manager` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
 | **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
-| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). Manages all 4 service quadrants — subsumes former ServiceLifecycleCoordinator |
+| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration. Manages all 4 service quadrants (§1) |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
-| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
+| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Sentinel — `None` in `__init__`, injected by factory. Details in §4.4 |
 | **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
@@ -406,11 +392,10 @@ See `federation-memo.md` §7j for design rationale.
 | Linux analogue | `task_struct` list (`for_each_process()`) |
 | Package | `core.agent_registry` |
 | Storage | In-memory dict (process heap) — no persistence |
-| Lifecycle | Created in `NexusFS.__init__()`, closed via factory close callback |
+| Lifecycle | Sentinel (`None` in `__init__`), factory injects at link-time; `None` = graceful degrade |
 
 In-memory registry of all active agent descriptors (spawn, status, close).
-Like Linux's `task_struct`, it is infrastructure that services consume but
-never create.
+Profiles without agents (e.g. REMOTE) operate without it.
 
 ---
 
@@ -440,9 +425,8 @@ automatically with any service that conforms.
 | Service Protocols | `@runtime_checkable` typed interfaces | Concrete service implementations | Typed contracts for service implementors |
 
 **Integration mechanisms:** Factory auto-discovers bricks via `brick_factory.py`
-convention (`RESULT_KEY` + `PROTOCOL` + `create()`), validates protocol
-conformance at registration, and resolves kernel dependencies via
-`EXPORT_SYMBOL()` pattern (see §1 Service Lifecycle).
+convention (`BRICK_NAME` + `TIER` + `RESULT_KEY` + `create()`). Services are
+enlisted into `ServiceRegistry` and looked up via `nx.service("name")`.
 
 ### 5.2 RecordStoreABC — Relational Storage Standard
 
@@ -530,16 +514,18 @@ deployment profiles. Not kernel-owned, but kernel-enabled.
 Like Linux distros select packages from the same kernel, Nexus profiles select
 which bricks to enable and which drivers to inject.
 
-| Profile | Target | Bricks | Metastore | Linux Analogue |
-|---------|--------|--------|-----------|----------------|
-| **slim** | Bare minimum runnable | 1 (storage only) | redb (embedded) | initramfs |
-| **embedded** | MCU, WASM (<1 MB) | 2 (storage + eventlog) | redb (embedded) | BusyBox |
-| **lite** | Pi, Jetson, mobile | 8 (+namespace, agent, permissions, ...) | redb (embedded) | Alpine |
-| **full** | Desktop, laptop | 21 (all except federation) | redb (embedded) | Ubuntu Desktop |
-| **cloud** | k8s, serverless | 22 (all, incl. federation) | redb (Raft) | Ubuntu Server |
-| **remote** | Client-side proxy | 0 (zero local bricks) | RemoteMetastore | NFS client |
+| Profile | Target | Metastore | Linux Analogue |
+|---------|--------|-----------|----------------|
+| **slim** | Bare minimum runnable | redb (embedded) | initramfs |
+| **cluster** | Minimal multi-node (Raft + federation, no auth) | redb (Raft) | CoreOS |
+| **embedded** | MCU, WASM (<1 MB) | redb (embedded) | BusyBox |
+| **lite** | Pi, Jetson, mobile | redb (embedded) | Alpine |
+| **full** | Desktop, laptop | redb (embedded) | Ubuntu Desktop |
+| **cloud** | k8s, serverless | redb (Raft) | Ubuntu Server |
+| **innovation** | Experimental tier | redb (Raft) | Ubuntu + PPAs |
+| **remote** | Client-side proxy (zero local bricks) | RemoteMetastore | NFS client |
 
-Profile hierarchy: `slim ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`.
+Profile hierarchy: `slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation`.
 REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.

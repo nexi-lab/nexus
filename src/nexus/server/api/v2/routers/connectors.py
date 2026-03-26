@@ -685,9 +685,10 @@ async def write_to_connector(
     # Resolve mount to get backend_path — required for CLI-backed connectors
     # (gws_gmail, gws_drive, etc.) that use backend_path to determine the operation.
     _backend_path = None
+    _route = None
     try:
-        route = nx.router.route(mount_path, is_admin=True)
-        _backend_path = route.backend_path if route else None
+        _route = nx.router.route(mount_path, is_admin=auth.get("is_admin", False))
+        _backend_path = _route.backend_path if _route else None
     except Exception:
         pass
 
@@ -704,14 +705,22 @@ async def write_to_connector(
     try:
         data = req.yaml_content.encode("utf-8")
 
-        # CLI-backed connectors (gws_gmail, gws_drive, etc.) need their
-        # write_content() called directly — nx.write() would store to CAS
-        # instead of dispatching to the connector's send/create pipeline.
+        # CLI-backed connectors dispatch YAML operations (send_email, create_draft,
+        # etc.) via write_content() — they must NOT go through nx.write() which
+        # stores to CAS. Gate on the "cli_backed" capability to avoid bypassing
+        # the kernel write path (metadata, observers, permission checks) for
+        # ordinary path-addressed backends.
         import asyncio
 
-        route = nx.router.route(mount_path, is_admin=True)
-        backend = route.backend if route else None
-        if backend and hasattr(backend, "write_content") and _backend_path:
+        from nexus.contracts.capabilities import ConnectorCapability
+
+        backend = _route.backend if _route else None
+        _caps: frozenset[str] = (
+            getattr(backend, "capabilities", frozenset()) if backend else frozenset()
+        )
+        is_cli_connector = ConnectorCapability.CLI_BACKED in _caps
+
+        if is_cli_connector and _backend_path:
             result = await asyncio.to_thread(backend.write_content, data, write_context)
         else:
             result = await nx.write(mount_path, data, context=write_context)

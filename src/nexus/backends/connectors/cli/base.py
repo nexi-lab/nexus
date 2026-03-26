@@ -306,18 +306,24 @@ class CLIConnector(
                 backend=self.name,
             )
 
-        # Parse YAML — extract comment-based metadata first (agent_intent,
-        # confirm, user_confirmed) since yaml.safe_load strips comments.
+        # Parse YAML — extract comment-based metadata from the header block only.
+        # Stop at the first non-comment, non-blank line to avoid matching
+        # comments inside literal block scalars (e.g. body: |\n  # confirm: true).
         text = content.decode("utf-8") if isinstance(content, bytes) else content
         comment_meta: dict[str, Any] = {}
         for line in text.split("\n"):
             stripped = line.strip()
-            if stripped.startswith("# agent_intent:"):
-                comment_meta["agent_intent"] = stripped.split(":", 1)[1].strip()
-            elif stripped.startswith("# confirm:"):
-                comment_meta["confirm"] = stripped.split(":", 1)[1].strip().lower() == "true"
-            elif stripped.startswith("# user_confirmed:"):
-                comment_meta["user_confirmed"] = stripped.split(":", 1)[1].strip().lower() == "true"
+            if not stripped or stripped.startswith("#"):
+                if stripped.startswith("# agent_intent:"):
+                    comment_meta["agent_intent"] = stripped.split(":", 1)[1].strip()
+                elif stripped.startswith("# confirm:"):
+                    comment_meta["confirm"] = stripped.split(":", 1)[1].strip().lower() == "true"
+                elif stripped.startswith("# user_confirmed:"):
+                    comment_meta["user_confirmed"] = (
+                        stripped.split(":", 1)[1].strip().lower() == "true"
+                    )
+            else:
+                break  # First non-comment line — stop scanning
 
         data = yaml.safe_load(content)
         if not isinstance(data, dict):

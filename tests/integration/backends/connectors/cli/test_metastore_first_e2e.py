@@ -296,7 +296,10 @@ class TestMetastoreFirstE2E:
         await sync_loop._sync_all()
 
         # sync_mount should be called (full BFS fallback)
-        mount_svc.sync_mount.assert_called_once_with(mount_point="/mnt/calendar", recursive=True)
+        mount_svc.sync_mount.assert_called_once()
+        call_kwargs = mount_svc.sync_mount.call_args.kwargs
+        assert call_kwargs["mount_point"] == "/mnt/calendar"
+        assert call_kwargs["recursive"] is True
 
         state = sync_loop.get_mount_state("/mnt/calendar")
         assert state.is_healthy

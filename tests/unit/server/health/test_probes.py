@@ -90,9 +90,11 @@ class TestReadinessProbe:
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
-        # Mock NexusFS with zone_mgr that returns False
+        # Mock NexusFS with federation service that returns topology not ready
+        mock_fed = MagicMock()
+        mock_fed.ensure_topology.return_value = False
         mock_fs = MagicMock()
-        mock_fs._zone_mgr.ensure_topology.return_value = False
+        mock_fs.service.return_value = mock_fed
 
         app = _make_app(tracker)
         app.state.nexus_fs = mock_fs
@@ -106,8 +108,10 @@ class TestReadinessProbe:
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
+        mock_fed = MagicMock()
+        mock_fed.ensure_topology.return_value = True
         mock_fs = MagicMock()
-        mock_fs._zone_mgr.ensure_topology.return_value = True
+        mock_fs.service.return_value = mock_fed
 
         app = _make_app(tracker)
         app.state.nexus_fs = mock_fs

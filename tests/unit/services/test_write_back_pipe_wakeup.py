@@ -138,7 +138,7 @@ class TestPollLoopWakeup:
         service = _make_service(pipe_manager=pm)
 
         with patch(
-            "nexus.bricks.ipc.wakeup.wait_for_signal",
+            "nexus.lib.pipe_wakeup.wait_for_signal",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_wait:

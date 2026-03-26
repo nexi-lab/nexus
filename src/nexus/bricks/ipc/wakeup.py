@@ -24,12 +24,12 @@ import boundary (bricks must not import from nexus.core directly).
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
 from typing import Any
 
 from nexus.bricks.ipc.conventions import notify_pipe_path
+from nexus.lib.pipe_wakeup import wait_for_signal  # re-export for backward compat
 
 logger = logging.getLogger(__name__)
 
@@ -39,48 +39,6 @@ _WAKEUP_SIGNAL = b"\x01"
 # Notify pipe capacity — small because wakeup signals are 1 byte each.
 # 256 bytes = 256 pending signals, far more than needed with drain-and-process.
 NOTIFY_PIPE_CAPACITY = 256
-
-
-async def wait_for_signal(
-    pipe_manager: Any,
-    path: str,
-    timeout: float | None = None,
-) -> bool:
-    """Wait for a DT_PIPE wakeup signal with drain-and-process pattern.
-
-    Blocks until at least one signal arrives (or timeout expires), then drains
-    all remaining signals so the caller processes once for all coalesced signals.
-
-    This is the generic primitive used by both IPC ``PipeWakeupListener`` and
-    the sync ``WriteBackService`` poll loop (Issue #3194).
-
-    Args:
-        pipe_manager: PipeManager instance (duck-typed to avoid core imports).
-        path: DT_PIPE path to listen on.
-        timeout: Max seconds to wait. None = wait forever. 0 = non-blocking poll.
-
-    Returns:
-        True if at least one signal was received, False if timed out.
-    """
-    try:
-        if timeout is not None:
-            await asyncio.wait_for(pipe_manager.pipe_read(path), timeout=timeout)
-        else:
-            await pipe_manager.pipe_read(path)
-    except TimeoutError:
-        return False
-    except Exception:
-        # PipeClosedError, PipeNotFoundError, CancelledError — caller handles
-        raise
-
-    # Drain remaining signals (non-blocking)
-    while True:
-        try:
-            await pipe_manager.pipe_read(path, blocking=False)
-        except Exception:
-            # PipeEmptyError — no more pending signals
-            break
-    return True
 
 
 class PipeWakeupNotifier:

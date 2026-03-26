@@ -168,9 +168,11 @@ def test_fs_google_oauth_setup_stores_service_specific_provider(
     )
     monkeypatch.setattr(
         "nexus.fs._oauth_support._il.import_module",
-        lambda name: SimpleNamespace(GoogleOAuthProvider=_Provider)
-        if name == "nexus.bricks.auth.oauth.providers.google"
-        else None,
+        lambda name: (
+            SimpleNamespace(GoogleOAuthProvider=_Provider)
+            if name == "nexus.bricks.auth.oauth.providers.google"
+            else None
+        ),
     )
 
     monkeypatch.setattr("click.prompt", lambda *args, **kwargs: "code-123")

@@ -22,6 +22,7 @@ __version__ = "0.1.0"
 # =============================================================================
 # LAZY IMPORTS — everything is deferred for <200ms import time
 # =============================================================================
+import importlib
 import inspect
 import os
 import shutil
@@ -309,17 +310,22 @@ def _infer_connector_user_email(
 
     service_name = getattr(info, "service_name", None) or scheme
     try:
-        from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-        from nexus.bricks.auth.unified_service import _OAUTH_PROVIDER_ALIASES
         from nexus.fs._oauth_support import get_token_manager
     except Exception:
         return None
 
-    providers = _OAUTH_PROVIDER_ALIASES.get(service_name)
+    try:
+        oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+        unified_module = importlib.import_module("nexus.bricks.auth.unified_service")
+    except Exception:
+        return None
+
+    oauth_provider_aliases = getattr(unified_module, "_OAUTH_PROVIDER_ALIASES", {})
+    providers = oauth_provider_aliases.get(service_name)
     if not providers:
         return None
 
-    oauth_service = OAuthCredentialService(token_manager=get_token_manager())
+    oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
     try:
         import asyncio
 

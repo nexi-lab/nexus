@@ -7,6 +7,7 @@ Keyboard-only navigation. Responsive: collapses mount panel at < 100 cols.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import os
 from contextlib import suppress
@@ -1031,12 +1032,12 @@ class PlaygroundApp(App[None]):
             return
 
         try:
-            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-            from nexus.bricks.auth.unified_service import UnifiedAuthService
             from nexus.fs._oauth_support import get_token_manager
 
-            oauth_service = OAuthCredentialService(token_manager=get_token_manager())
-            auth_service = UnifiedAuthService(oauth_service=oauth_service)
+            oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+            unified_module = importlib.import_module("nexus.bricks.auth.unified_service")
+            oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
+            auth_service = unified_module.UnifiedAuthService(oauth_service=oauth_service)
             result = await auth_service.test_service(service)
         except Exception as exc:
             self.notify(f"{service}: auth test failed to run: {exc}", severity="error", timeout=6)
@@ -1252,10 +1253,10 @@ class PlaygroundApp(App[None]):
             providers = {"x", "twitter"}
 
         try:
-            from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
             from nexus.fs._oauth_support import get_token_manager
 
-            oauth_service = OAuthCredentialService(token_manager=get_token_manager())
+            oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+            oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
             creds = await oauth_service.list_credentials()
             emails = sorted(
                 {

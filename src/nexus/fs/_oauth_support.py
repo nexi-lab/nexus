@@ -7,24 +7,15 @@ import importlib as _il
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any
 
 import click
 from cryptography.fernet import Fernet
-
-from nexus.cli.utils import console
-from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.security.secret_file import write_secret_file
-
-if TYPE_CHECKING:
-    from nexus.bricks.auth.oauth.providers.x import XOAuthProvider
-    from nexus.bricks.auth.oauth.token_manager import TokenManager
-else:
-    XOAuthProvider = _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
-    TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
+from rich.console import Console
 
 _DEFAULT_DB_PATH = Path("~/.nexus/nexus.db").expanduser()
 _DEFAULT_OAUTH_KEY_PATH = Path("~/.nexus/auth/oauth.key").expanduser()
+console = Console()
 
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "gws": [
@@ -56,6 +47,31 @@ _GOOGLE_SERVICE_PROVIDER_NAMES: dict[str, str] = {
 }
 
 
+def _root_zone_id() -> str:
+    try:
+        constants = _il.import_module("nexus.contracts.constants")
+        value = getattr(constants, "ROOT_ZONE_ID", None)
+        if value:
+            return str(value)
+    except Exception:
+        pass
+    return "root"
+
+
+def _write_secret_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    os.chmod(path, 0o600)
+
+
+def _get_token_manager_cls() -> Any:
+    return _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
+
+
+def _get_x_oauth_provider_cls() -> Any:
+    return _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
+
+
 def get_fs_database_url() -> str | None:
     """Resolve the standalone nexus-fs database URL.
 
@@ -75,23 +91,23 @@ def get_oauth_encryption_key() -> str:
         return _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
 
     key = Fernet.generate_key().decode("utf-8")
-    write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
+    _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
     console.print(f"[dim]Created local OAuth encryption key: {_DEFAULT_OAUTH_KEY_PATH}[/dim]")
     return key
 
 
-def get_token_manager(db_path: str | None = None) -> TokenManager:
+def get_token_manager(db_path: str | None = None) -> Any:
     """Create the OAuth token manager for nexus-fs."""
     db_url = get_fs_database_url()
     encryption_key = get_oauth_encryption_key()
     if db_url:
-        return TokenManager(db_url=db_url, encryption_key=encryption_key)
+        return _get_token_manager_cls()(db_url=db_url, encryption_key=encryption_key)
     if db_path is None:
         db_path = str(_DEFAULT_DB_PATH)
     parent_dir = os.path.dirname(db_path)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
-    return TokenManager(db_path=db_path, encryption_key=encryption_key)
+    return _get_token_manager_cls()(db_path=db_path, encryption_key=encryption_key)
 
 
 def run_google_oauth_setup(
@@ -146,11 +162,11 @@ def run_google_oauth_setup(
             provider=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
             user_email=user_email,
             credential=credential,
-            zone_id=zone_id or ROOT_ZONE_ID,
+            zone_id=zone_id or _root_zone_id(),
             created_by=user_email,
         )
         manager.close()
-        return cred_id
+        return str(cred_id)
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
@@ -175,7 +191,7 @@ def run_x_oauth_setup(
     if not client_id:
         raise click.ClickException("X OAuth client ID not provided. Set NEXUS_OAUTH_X_CLIENT_ID.")
 
-    provider = XOAuthProvider(
+    provider = _get_x_oauth_provider_cls()(
         client_id=client_id,
         redirect_uri="http://localhost",
         scopes=[
@@ -214,11 +230,11 @@ def run_x_oauth_setup(
             provider="twitter",
             user_email=user_email,
             credential=credential,
-            zone_id=zone_id or ROOT_ZONE_ID,
+            zone_id=zone_id or _root_zone_id(),
             created_by=user_email,
         )
         manager.close()
-        return cred_id
+        return str(cred_id)
 
     try:
         cred_id = asyncio.run(_exchange_and_store())

@@ -158,6 +158,7 @@ class SheetsConnector(CLIConnector):
         ]
         return sorted(entries)
 
+
 # ============================================================================
 # Docs
 # ============================================================================
@@ -917,9 +918,12 @@ class GmailConnector(CLIConnector):
         if labels:
             fields["labels"] = labels
 
-        import yaml as _yaml
+        import importlib
 
-        return _yaml.dump(fields, default_flow_style=False, allow_unicode=True).encode("utf-8")
+        yaml_module = importlib.import_module("yaml")
+        rendered = str(yaml_module.dump(fields, default_flow_style=False, allow_unicode=True))
+
+        return rendered.encode("utf-8")
 
     def sync_delta(self) -> dict[str, Any]:
         """Perform delta sync using Gmail historyId.

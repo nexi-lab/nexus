@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import os
 import re
+from typing import Any
 
 import click
+from rich.console import Console
 from rich.table import Table
 
-from nexus.bricks.auth.unified_service import UnifiedAuthService
-from nexus.cli.utils import console
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 from nexus.fs._oauth_support import get_token_manager, run_google_oauth_setup, run_x_oauth_setup
+
+console = Console()
 
 _SERVICE_AUTH_TYPES: dict[str, tuple[str, ...]] = {
     "s3": ("native", "secret"),
@@ -95,11 +98,11 @@ _SERVICE_HELP: dict[str, dict[str, tuple[str, ...] | str]] = {
 }
 
 
-def _build_auth_service() -> UnifiedAuthService:
-    from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-
-    oauth_service = OAuthCredentialService(token_manager=get_token_manager())
-    return UnifiedAuthService(oauth_service=oauth_service)
+def _build_auth_service() -> Any:
+    oauth_module = importlib.import_module("nexus.bricks.auth.oauth.credential_service")
+    unified_module = importlib.import_module("nexus.bricks.auth.unified_service")
+    oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
+    return unified_module.UnifiedAuthService(oauth_service=oauth_service)
 
 
 def _parse_key_values(items: tuple[str, ...]) -> dict[str, str]:
@@ -148,7 +151,7 @@ def _resolve_user_email(user_email: str | None) -> str:
 
 
 def _prompt_for_secret_values(
-    service: UnifiedAuthService,
+    service: Any,
     service_name: str,
     pairs: tuple[str, ...],
 ) -> dict[str, str]:

@@ -119,14 +119,15 @@ class TestAutoDerive:
     def test_connectors_with_service_name_populate_service_map(self) -> None:
         """Test that registered connectors with service_name populate service_map."""
         _sync_from_connector_registry()
-        # All connectors that declare service_name should have their connector
-        # field populated in SERVICE_REGISTRY
+        # All connectors that declare service_name should reverse-map to that
+        # service, even when several connectors share one umbrella service
+        # like gws.
         for info in ConnectorRegistry.list_all():
             if info.service_name and info.service_name in SERVICE_REGISTRY:
-                service = SERVICE_REGISTRY[info.service_name]
-                assert service.connector == info.name, (
-                    f"Service '{info.service_name}' should have connector='{info.name}', "
-                    f"got '{service.connector}'"
+                service_name = ServiceMap.get_service_name(connector=info.name)
+                assert service_name == info.service_name, (
+                    f"Connector '{info.name}' should map to service '{info.service_name}', "
+                    f"got '{service_name}'"
                 )
 
     def test_connector_registry_service_name_round_trip(self) -> None:
@@ -141,9 +142,13 @@ class TestAutoDerive:
                 )
                 # Service name → connector
                 connector = ServiceMap.get_connector(info.service_name)
-                assert connector == info.name, (
-                    f"Service '{info.service_name}' should map to connector '{info.name}', "
-                    f"got '{connector}'"
+                assert connector is not None, (
+                    f"Service '{info.service_name}' should have a canonical connector"
+                )
+                canonical_service = ServiceMap.get_service_name(connector=connector)
+                assert canonical_service == info.service_name, (
+                    f"Canonical connector '{connector}' should map back to "
+                    f"service '{info.service_name}', got '{canonical_service}'"
                 )
 
 

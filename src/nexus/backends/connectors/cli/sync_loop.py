@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SYNC_INTERVAL = 60  # seconds
 DEFAULT_THREAD_POOL_SIZE = 20  # Decision #16B: sized for concurrent syncs
-DEFAULT_PER_MOUNT_TIMEOUT = 120  # seconds — Decision #16B
+DEFAULT_PER_MOUNT_TIMEOUT = 600  # seconds — generous for GWS CLI bulk listing
 DELTA_BATCH_WARNING_THRESHOLD = 500  # Decision #13A: log warning above this
 
 
@@ -189,18 +189,30 @@ class ConnectorSyncLoop:
                     "[CONNECTOR_SYNC] %s: delta failed, falling back to full sync: %s", mp, e
                 )
 
-        # Full sync fallback
+        # Full sync fallback — sync_mount now writes to file_paths +
+        # directory_entries directly via _write_to_file_paths (Issue #3266).
+        # Pass OperationContext with the backend's user so _apply_display_path_for_sync
+        # can read content via the gws CLI (needs OAuth token from context).
         try:
-            result = await self._mount_service.sync_mount(mount_point=mp, recursive=True)
+            from nexus.contracts.types import OperationContext
+
+            user_email = getattr(backend, "user_email", None) or "system"
+            zone_id = getattr(backend, "zone_id", None) or "root"
+            sync_ctx = OperationContext(
+                user_id=user_email,
+                groups=[],
+                zone_id=zone_id,
+                is_admin=True,
+            )
+            result = await self._mount_service.sync_mount(
+                mount_point=mp,
+                recursive=True,
+                context=sync_ctx,
+            )
             scanned = result.get("files_scanned", 0)
             state.record_success(files_synced=scanned)
             if scanned > 0:
                 logger.debug("[CONNECTOR_SYNC] %s: full sync scanned %d files", mp, scanned)
-
-            # Populate directory_entries for metastore-first listing (Issue #3266).
-            # sync_mount writes to file_paths/content cache but not to the sparse
-            # directory index. Without this, sys_readdir falls through to the live API.
-            await self._populate_directory_entries(mp, backend)
         except Exception as e:
             state.record_failure(str(e))
             logger.warning("[CONNECTOR_SYNC] %s: full sync failed: %s", mp, e)
@@ -249,9 +261,6 @@ class ConnectorSyncLoop:
         start = time.monotonic()
         synced = await self._write_delta_to_metastore(mp, backend, delta)
         elapsed_ms = (time.monotonic() - start) * 1000
-
-        # Populate directory entries for metastore-first listing
-        await self._populate_directory_entries(mp, backend)
 
         # Notify search daemon for indexing
         await self._notify_new_files(mp, delta.added)
@@ -479,150 +488,6 @@ class ConnectorSyncLoop:
                 logger.debug("[CONNECTOR_SYNC] delete failed for %s", virtual_path)
 
     # --- Directory entry population (Issue #3266) ---
-
-    async def _populate_directory_entries(self, mp: str, backend: Any) -> None:
-        """Populate the sparse directory index for metastore-first listing.
-
-        The BFS sync (sync_mount) writes to file_paths and content cache but
-        NOT to directory_entries. Without directory_entries, sys_readdir falls
-        through to the live API which is slow. This method fills the gap by
-        walking the connector's list_dir and inserting DirectoryEntryModel rows.
-        """
-        loop = asyncio.get_event_loop()
-        try:
-            entries = await loop.run_in_executor(
-                self._executor,
-                lambda: self._collect_directory_entries(mp, backend),
-            )
-            if entries:
-                await loop.run_in_executor(
-                    self._executor,
-                    lambda: self._write_directory_entries(entries),
-                )
-                logger.info(
-                    "[CONNECTOR_SYNC] %s: populated %d directory entries",
-                    mp,
-                    len(entries),
-                )
-        except Exception:
-            logger.debug(
-                "[CONNECTOR_SYNC] %s: directory entry population failed",
-                mp,
-                exc_info=True,
-            )
-
-    def _collect_directory_entries(self, mp: str, backend: Any) -> list[tuple[str, str, str]]:
-        """BFS-walk backend.list_dir with auth context to collect directory entries.
-
-        Uses the backend's configured user_email to build an OperationContext
-        so OAuth token refresh works for subfolder listings.
-        """
-        from nexus.contracts.types import OperationContext
-
-        # Build auth context from backend's configured user + zone
-        user_email = getattr(backend, "user_email", None) or "system"
-        zone_id = getattr(backend, "zone_id", None) or "root"
-        entries: list[tuple[str, str, str]] = []
-        queue = [("", mp)]  # (backend_path, virtual_parent)
-
-        while queue:
-            backend_path, virtual_parent = queue.pop(0)
-            try:
-                ctx = OperationContext(
-                    user_id=user_email,
-                    groups=[],
-                    backend_path=backend_path,
-                    zone_id=zone_id,
-                )
-                items = backend.list_dir(backend_path, context=ctx)
-            except Exception:
-                # Fall back to no-context for root (Gmail returns hardcoded folders)
-                if not backend_path:
-                    try:
-                        items = backend.list_dir("", context=None)
-                    except Exception:
-                        continue
-                else:
-                    continue
-
-            for item in items:
-                is_dir = item.endswith("/")
-                raw_name = item.rstrip("/")
-
-                # Apply display_path for human-readable names (Issue #3256)
-                if not is_dir and hasattr(backend, "display_path"):
-                    try:
-                        display = backend.display_path(raw_name, None)
-                        if display:
-                            raw_name = display
-                    except Exception:
-                        pass
-
-                entries.append(("default", virtual_parent, raw_name + ("/" if is_dir else "")))
-                if is_dir:
-                    child_backend = f"{backend_path}/{raw_name}" if backend_path else raw_name
-                    child_virtual = f"{virtual_parent}/{raw_name}"
-                    queue.append((child_backend, child_virtual))
-
-        return entries
-
-    def _write_directory_entries(self, entries: list[tuple[str, str, str]]) -> None:
-        """Batch-write to both directory_entries and file_paths tables.
-
-        directory_entries: sparse index for search service listing
-        file_paths: main metastore queried by NexusFS.sys_readdir (used by TUI)
-        """
-        try:
-            from sqlalchemy import text
-
-            from nexus.lib.env import get_database_url
-
-            db_url = get_database_url()
-            if not db_url:
-                return
-
-            from sqlalchemy import create_engine
-
-            engine = create_engine(db_url)
-            with engine.begin() as conn:
-                for zone_id, parent_path, entry_name in entries:
-                    is_dir = entry_name.endswith("/")
-                    clean_name = entry_name.rstrip("/")
-                    entry_type = "dir" if is_dir else "file"
-                    virtual_path = f"{parent_path}/{clean_name}"
-
-                    # Write to directory_entries (sparse directory index)
-                    conn.execute(
-                        text("""
-                            INSERT INTO directory_entries (zone_id, parent_path, entry_name, entry_type, created_at, updated_at)
-                            VALUES (:zone_id, :parent_path, :entry_name, :entry_type, NOW(), NOW())
-                            ON CONFLICT (zone_id, parent_path, entry_name) DO UPDATE SET updated_at = NOW()
-                        """),
-                        {
-                            "zone_id": zone_id,
-                            "parent_path": parent_path,
-                            "entry_name": clean_name,
-                            "entry_type": entry_type,
-                        },
-                    )
-
-                    # Write to file_paths (main metastore — queried by sys_readdir / TUI)
-                    file_type = "inode/directory" if is_dir else None
-                    conn.execute(
-                        text("""
-                            INSERT INTO file_paths (path_id, zone_id, virtual_path, backend_id, physical_path, file_type, size_bytes, created_at, updated_at, posix_uid, current_version)
-                            SELECT gen_random_uuid(), :zone_id, :vpath, 'connector', :ppath, :ftype, 0, NOW(), NOW(), 'system', 1
-                            WHERE NOT EXISTS (SELECT 1 FROM file_paths WHERE zone_id = :zone_id AND virtual_path = :vpath)
-                        """),
-                        {
-                            "zone_id": zone_id,
-                            "vpath": virtual_path,
-                            "ppath": clean_name,
-                            "ftype": file_type,
-                        },
-                    )
-        except Exception:
-            logger.debug("[CONNECTOR_SYNC] Failed to write directory entries", exc_info=True)
 
     # --- Search notification (Decision #6A: uses full display paths) ---
 

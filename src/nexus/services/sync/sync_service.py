@@ -821,6 +821,12 @@ class SyncService:
                 self._gw.metadata_put(meta)
                 result.files_created += 1
 
+                # Issue #3266: Write to file_paths + directory_entries so
+                # sys_readdir (used by TUI) can serve from Postgres.
+                # _gw.metadata_put writes to Raft metastore but sys_readdir
+                # queries file_paths directly.
+                self._write_to_file_paths(meta)
+
                 # Collect for batch parent tuple creation
                 if self._gw.hierarchy_enabled:
                     paths_needing_tuples.append(virtual_path)
@@ -861,6 +867,10 @@ class SyncService:
                     result.files_updated += 1
                 except Exception:
                     pass
+
+            # Issue #3266: Ensure file_paths + directory_entries are populated
+            # even for files that already exist in the Raft metastore.
+            self._write_to_file_paths(existing_meta)
 
             # Issue #1127: Update change log even for existing files
             if file_info:
@@ -1436,6 +1446,84 @@ class SyncService:
         """
         return check_permission(self._gw, path, permission, context)
 
+    # --- Postgres file_paths + directory_entries write (Issue #3266) ---
+
+    def _write_to_file_paths(self, meta: Any) -> None:
+        """Write FileMetadata to Postgres file_paths + directory_entries tables.
+
+        The Raft metastore (metadata_put) is the primary store, but
+        NexusFS.sys_readdir (used by the TUI) queries the Postgres file_paths
+        table directly. This method keeps them in sync.
+        """
+        try:
+            from nexus.lib.env import get_database_url
+
+            db_url = get_database_url()
+            if not db_url:
+                return
+
+            from sqlalchemy import create_engine, text
+
+            engine = create_engine(db_url)
+            zone_id = meta.zone_id or "default"
+            virtual_path = meta.path
+            is_dir = meta.size == 0 and meta.etag is None
+            file_type = "inode/directory" if is_dir else None
+
+            with engine.begin() as conn:
+                # file_paths (for sys_readdir / TUI)
+                conn.execute(
+                    text("""
+                        INSERT INTO file_paths
+                            (path_id, zone_id, virtual_path, backend_id, physical_path,
+                             file_type, size_bytes, content_hash, created_at, updated_at,
+                             posix_uid, current_version)
+                        SELECT gen_random_uuid(), :zone_id, :vpath, :backend, :ppath,
+                               :ftype, :size, :etag, :created, :modified, 'system', 1
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM file_paths
+                            WHERE zone_id = :zone_id AND virtual_path = :vpath
+                        )
+                    """),
+                    {
+                        "zone_id": zone_id,
+                        "vpath": virtual_path,
+                        "backend": meta.backend_name,
+                        "ppath": meta.physical_path,
+                        "ftype": file_type,
+                        "size": meta.size,
+                        "etag": meta.etag,
+                        "created": meta.created_at,
+                        "modified": meta.modified_at,
+                    },
+                )
+
+                # directory_entries (parent→child sparse index)
+                parts = virtual_path.rsplit("/", 1)
+                if len(parts) == 2 and parts[0]:
+                    parent_path = parts[0]
+                    entry_name = parts[1]
+                    entry_type = "dir" if is_dir else "file"
+                    conn.execute(
+                        text("""
+                            INSERT INTO directory_entries
+                                (zone_id, parent_path, entry_name, entry_type,
+                                 created_at, updated_at)
+                            VALUES (:zone_id, :parent, :name, :etype, NOW(), NOW())
+                            ON CONFLICT (zone_id, parent_path, entry_name)
+                            DO UPDATE SET updated_at = NOW()
+                        """),
+                        {
+                            "zone_id": zone_id,
+                            "parent": parent_path,
+                            "name": entry_name,
+                            "etype": entry_type,
+                        },
+                    )
+        except Exception:
+            # Non-fatal: Raft metastore is the source of truth
+            logger.debug("[SYNC] file_paths write failed for %s", meta.path, exc_info=True)
+
     # --- Display path support (Issue #3256) ---
 
     def _apply_display_path_for_sync(
@@ -1455,7 +1543,14 @@ class SyncService:
         is a one-time cost per file.
         """
         try:
-            content = backend.read_content(backend_path, context=ctx.context)
+            # Build a context with backend_path set — CLIConnector.read_content
+            # returns empty bytes if backend_path is missing.
+            read_ctx = ctx.context
+            if read_ctx is not None:
+                from dataclasses import replace as _dc_replace
+
+                read_ctx = _dc_replace(read_ctx, backend_path=backend_path)
+            content = backend.read_content(backend_path, context=read_ctx)
             if not content:
                 return virtual_path
 

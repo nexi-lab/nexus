@@ -156,7 +156,11 @@ class TestCapabilityFiltering:
         await loop._sync_all()
 
         # Full sync should be called (no sync_delta on backend)
-        mount_svc.sync_mount.assert_called_once_with(mount_point="/mnt/test", recursive=True)
+        mount_svc.sync_mount.assert_called_once()
+        call_kwargs = mount_svc.sync_mount.call_args.kwargs
+        assert call_kwargs["mount_point"] == "/mnt/test"
+        assert call_kwargs["recursive"] is True
+        assert call_kwargs["context"] is not None  # Auth context passed
 
     @pytest.mark.asyncio
     async def test_skips_root_mount(self) -> None:
@@ -304,7 +308,8 @@ class TestDeltaSyncToMetastore:
         await loop._sync_all()
 
         # Full sync should be called as fallback
-        mount_svc.sync_mount.assert_called_once_with(mount_point="/mnt/gmail", recursive=True)
+        mount_svc.sync_mount.assert_called_once()
+        assert mount_svc.sync_mount.call_args.kwargs["mount_point"] == "/mnt/gmail"
 
 
 # ============================================================================
@@ -355,7 +360,8 @@ class TestErrorHandling:
         await loop._sync_all()
 
         # Full sync should be called as fallback
-        mount_svc.sync_mount.assert_called_once_with(mount_point="/mnt/gmail", recursive=True)
+        mount_svc.sync_mount.assert_called_once()
+        assert mount_svc.sync_mount.call_args.kwargs["mount_point"] == "/mnt/gmail"
 
     @pytest.mark.asyncio
     async def test_health_endpoint(self) -> None:

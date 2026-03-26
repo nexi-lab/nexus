@@ -467,7 +467,7 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
 
         logger.info("[COORDINATOR] swap %r — complete", name)
 
-    # -- Auto-lifecycle — four-quadrant management -------------------------
+    # -- Auto-lifecycle — PersistentService management ----------------------
 
     async def start_persistent_services(self, *, timeout: float = 30.0) -> list[str]:
         """Auto-start all PersistentService instances in dependency order."""

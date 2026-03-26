@@ -1033,7 +1033,7 @@ class PlaygroundApp(App[None]):
         try:
             from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
             from nexus.bricks.auth.unified_service import UnifiedAuthService
-            from nexus.cli.commands.oauth import get_token_manager
+            from nexus.fs._oauth_support import get_token_manager
 
             oauth_service = OAuthCredentialService(token_manager=get_token_manager())
             auth_service = UnifiedAuthService(oauth_service=oauth_service)
@@ -1253,7 +1253,7 @@ class PlaygroundApp(App[None]):
 
         try:
             from nexus.bricks.auth.oauth.credential_service import OAuthCredentialService
-            from nexus.cli.commands.oauth import get_token_manager
+            from nexus.fs._oauth_support import get_token_manager
 
             oauth_service = OAuthCredentialService(token_manager=get_token_manager())
             creds = await oauth_service.list_credentials()

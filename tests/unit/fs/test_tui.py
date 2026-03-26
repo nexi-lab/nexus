@@ -769,7 +769,7 @@ class TestPlaygroundApp:
         app = PlaygroundApp(uris=())
 
         with (
-            patch("nexus.cli.commands.oauth.get_token_manager", return_value=MagicMock()),
+            patch("nexus.fs._oauth_support.get_token_manager", return_value=MagicMock()),
             patch(
                 "nexus.bricks.auth.oauth.credential_service.OAuthCredentialService.list_credentials",
                 new=AsyncMock(

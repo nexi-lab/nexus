@@ -16,7 +16,7 @@ import sys
 
 import click
 
-from nexus.cli.commands.auth_cli import auth as auth_group
+from nexus.fs._auth_cli import auth as auth_group
 
 
 @click.group(invoke_without_command=True)

@@ -152,9 +152,9 @@ class NexusFS(  # type: ignore[misc]
         self._descendant_checker: Any = None
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
-        # Issue #1788: distributed lock manager — kernel knows, factory provides.
-        # In-process locks use _vfs_lock_manager (kernel owns); distributed locks use this.
-        self._distributed_lock_manager: Any = None
+        # Issue #1788: distributed lock manager removed — now routed through EventsService.
+        # In-process locks use _vfs_lock_manager (kernel owns); advisory locks use
+        # nx.service("events_service").lock() which auto-creates local fallback.
         # Issue #1792: agent registry — kernel knows, factory provides.
         # Kernel does NOT own AgentRegistry (no-agent profiles like REMOTE work without it).
         # Factory creates and injects at link-time; None = graceful degrade.
@@ -986,18 +986,18 @@ class NexusFS(  # type: ignore[misc]
         timeout: float,
         context: OperationContext | None,
     ) -> str | None:
-        """Acquire distributed lock synchronously (for use in sync write()).
+        """Acquire advisory lock synchronously via EventsService.
 
         This method bridges sync write() with async lock operations.
-        For async contexts, use `async with locked()` instead.
+        For async contexts, use `async with events_service.locked()` instead.
         """
         import asyncio
 
-        _lm = self._distributed_lock_manager
-        if _lm is None:
+        _events_ref = self.service("events_service") if hasattr(self, "service") else None
+        if _events_ref is None:
             raise RuntimeError(
-                "write(lock=True) called but distributed lock manager not configured. "
-                "Ensure NexusFS is initialized with enable_distributed_locks=True."
+                "write(lock=True) called but EventsService not available. "
+                "Ensure NexusFS is initialized with services."
             )
 
         from nexus.contracts.exceptions import LockTimeout
@@ -1006,17 +1006,14 @@ class NexusFS(  # type: ignore[misc]
             asyncio.get_running_loop()
             raise RuntimeError(
                 "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
+                "Use `async with nx.service('events_service').locked(path):` and `write(lock=False)` instead."
             )
         except RuntimeError as e:
             if "event loop detected" in str(e):
                 raise
 
         async def acquire_lock() -> str | None:
-            return await _lm.acquire(
-                path=path,
-                timeout=timeout,
-            )
+            return await _events_ref.lock(path=path, timeout=timeout)
 
         from nexus.lib.sync_bridge import run_sync
 
@@ -1033,16 +1030,16 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None,
     ) -> None:
-        """Release distributed lock synchronously."""
+        """Release advisory lock synchronously via EventsService."""
         if not lock_id:
             return
 
-        _lm = self._distributed_lock_manager
-        if _lm is None:
+        _events_ref = self.service("events_service") if hasattr(self, "service") else None
+        if _events_ref is None:
             return
 
         async def release_lock() -> None:
-            await _lm.release(lock_id, path)
+            await _events_ref.unlock(lock_id, path)
 
         from nexus.lib.sync_bridge import run_sync
 
@@ -2537,21 +2534,17 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        _lm = self._distributed_lock_manager
-        if _lm is None:
+        _events_ref = self.service("events_service") if hasattr(self, "service") else None
+        if _events_ref is None:
             raise RuntimeError(
-                "atomic_update() requires distributed lock manager. "
-                "Set NEXUS_REDIS_URL environment variable "
-                "or pass coordination_url to NexusFS constructor."
+                "atomic_update() requires EventsService. "
+                "Ensure NexusFS is initialized with services."
             )
 
-        lock_id = await _lm.acquire(path, timeout=timeout, ttl=ttl)
-        try:
+        async with _events_ref.locked(path, timeout=timeout, ttl=ttl) as lock_id:  # noqa: F841
             content = await self.sys_read(path, context=context)
             new_content = update_fn(content)
             return await self.write(path, new_content, context=context)
-        finally:
-            await _lm.release(lock_id, path)
 
     @rpc_expose(description="Append content to an existing file or create if it doesn't exist")
     async def append(

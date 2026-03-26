@@ -167,6 +167,9 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         self._refcounts: dict[str, int] = {}
         self._drain_events: dict[str, asyncio.Event] = {}
 
+        # Lazy-construct factories: name → callable that produces the instance
+        self._factories: dict[str, tuple[Any, dict[str, Any]]] = {}
+
         # Lifecycle orchestration state (formerly SLC)
         self._dispatch: KernelDispatch | None = dispatch
         self._hook_specs: dict[str, HookSpec] = {}
@@ -217,6 +220,26 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             metadata=MappingProxyType(metadata or {}),
         )
         self.register(name, info, allow_overwrite=allow_overwrite)
+
+    def register_factory(
+        self,
+        name: str,
+        factory_fn: Any,
+        **kwargs: Any,
+    ) -> None:
+        """Register a lazy-construct factory for *name*.
+
+        The factory function is called on first ``service(name)`` lookup.
+        The result is auto-registered via ``register_service()`` and the
+        factory is removed.
+
+        Args:
+            name: Service name.
+            factory_fn: Zero-arg callable that returns the service instance.
+            **kwargs: Forwarded to ``register_service()`` (exports, etc.).
+        """
+        self._factories[name] = (factory_fn, kwargs)
+        logger.debug("[REGISTRY] factory registered for %r (lazy)", name)
 
     def replace_service(
         self,
@@ -276,10 +299,22 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
         is transparent — all attribute/method access delegates to the
         underlying instance — but adds per-call ref-counting so that
         ``swap_service()`` can drain in-flight operations before unmount.
+
+        On miss, checks ``_factories`` for a lazy-construct entry.
+        If found, calls the factory, auto-registers, and returns.
         """
         info = self.get(name)
         if info is None:
-            return None
+            # Lazy-construct: check factory registry
+            factory_entry = self._factories.pop(name, None)
+            if factory_entry is not None:
+                factory_fn, kwargs = factory_entry
+                instance = factory_fn()
+                self.register_service(name, instance, **kwargs)
+                logger.info("[REGISTRY] lazy-constructed %r on first access", name)
+                info = self.get(name)
+            if info is None:
+                return None
         return ServiceRef(info.instance, name, self._refcounts, self._drain_events)
 
     def service_or_raise(self, name: str) -> Any:

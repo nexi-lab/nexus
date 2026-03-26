@@ -108,7 +108,6 @@ class TestDistributedConfig:
         cfg = DistributedConfig()
         assert cfg.coordination_url is None
         assert cfg.enable_events is True
-        assert cfg.enable_locks is True
         assert cfg.enable_workflows is True
         assert cfg.event_bus_backend == "redis"
         assert cfg.nats_url == "nats://localhost:4222"
@@ -122,11 +121,9 @@ class TestDistributedConfig:
         """Test pattern used by make_test_nexus: all distributed features off."""
         cfg = DistributedConfig(
             enable_events=False,
-            enable_locks=False,
             enable_workflows=False,
         )
         assert cfg.enable_events is False
-        assert cfg.enable_locks is False
         assert cfg.enable_workflows is False
 
 

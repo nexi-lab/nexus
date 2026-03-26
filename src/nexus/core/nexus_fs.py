@@ -3279,17 +3279,20 @@ class NexusFS(  # type: ignore[misc]
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
                 # ── Backend rename (under lock, EAFP) ──
-                try:
-                    old_route.backend.rename_file(old_route.backend_path, new_route.backend_path)
-                except NotImplementedError:
-                    pass  # CAS/content-addressed backends — metadata rename is sufficient
-                except FileExistsError:
-                    raise
-                except Exception as e:
-                    raise BackendError(
-                        f"Failed to rename in backend: {e}",
-                        backend=old_route.backend.name,
-                    ) from e
+                # PAS backends have rename_file(); CAS backends don't (AttributeError).
+                # Metadata rename (below) handles the rename for all backends.
+                if hasattr(old_route.backend, "rename_file"):
+                    try:
+                        old_route.backend.rename_file(
+                            old_route.backend_path, new_route.backend_path
+                        )
+                    except FileExistsError:
+                        raise
+                    except Exception as e:
+                        raise BackendError(
+                            f"Failed to rename in backend: {e}",
+                            backend=old_route.backend.name,
+                        ) from e
 
                 # ── Metadata rename (under lock) ──
                 self.metadata.rename_path(old_path, new_path)

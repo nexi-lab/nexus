@@ -19,7 +19,9 @@ jobs:
     name: Detect Code Changes
     runs-on: ubuntu-latest
     outputs:
-      code_changed: ${{ steps.filter.outputs.code }}
+      # Merge queue always runs full CI — paths-filter can't diff correctly
+      # on the temporary merge commit created by the queue.
+      code_changed: ${{ github.event_name == 'merge_group' && 'true' || steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3

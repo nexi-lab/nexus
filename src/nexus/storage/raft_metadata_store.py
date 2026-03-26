@@ -321,50 +321,6 @@ class RaftMetadataStore(MetastoreABC):
         """
         return self.get(path) is not None
 
-    def rename_path(self, old_path: str, new_path: str) -> None:
-        """Rename a file by updating its path in metadata.
-
-        Ordering is put-first, then delete so that a crash between the two
-        operations leaves a recoverable duplicate (both old and new exist)
-        rather than an irrecoverable loss (neither exists).  Issue #3062.
-
-        Note: A true atomic rename requires a compound Raft proposal
-        (get+delete+put in a single log entry).  This requires adding a
-        ``rename_metadata`` command to the Rust engine.  Until then, this
-        two-step approach is the safest available.
-
-        Args:
-            old_path: Current path
-            new_path: New path
-
-        Raises:
-            FileNotFoundError: If old_path doesn't exist
-        """
-        metadata = self.get(old_path)
-        if metadata is None:
-            raise FileNotFoundError(f"No metadata found for {old_path}")
-
-        new_metadata = FileMetadata(
-            path=new_path,
-            backend_name=metadata.backend_name,
-            physical_path=metadata.physical_path,
-            size=metadata.size,
-            version=metadata.version,
-            created_at=metadata.created_at,
-            modified_at=metadata.modified_at,
-            etag=metadata.etag,
-            mime_type=metadata.mime_type,
-            zone_id=metadata.zone_id,
-            created_by=metadata.created_by,
-            entry_type=metadata.entry_type,
-            target_zone_id=metadata.target_zone_id,
-            owner_id=metadata.owner_id,
-        )
-
-        # Put new FIRST, then delete old — crash-safe ordering (Issue #3062)
-        self.put(new_metadata)
-        self.delete(old_path)
-
     def is_implicit_directory(self, path: str) -> bool:
         """Check if a path is an implicit directory.
 

@@ -3279,9 +3279,16 @@ class NexusFS(  # type: ignore[misc]
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
                 # ── Metadata rename (under lock) ──
-                # Rename is a pure metadata operation — update path mapping,
-                # content stays at the same backend_path.
-                self.metadata.rename_path(old_path, new_path)
+                # Rename is a pure metadata operation — get/put/delete on
+                # MetastoreABC primitives. Put-first for crash safety (#3062).
+                _old_meta = self.metadata.get(old_path)
+                if _old_meta is None:
+                    raise NexusFileNotFoundError(old_path)
+                from dataclasses import replace as _replace
+
+                _new_meta = _replace(_old_meta, path=new_path)
+                self.metadata.put(_new_meta)
+                self.metadata.delete(old_path)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

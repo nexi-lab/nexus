@@ -609,10 +609,12 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
 
         Driver-to-driver protocol for federation chunk assembly and
         content replication.  Bypasses VFS path routing entirely.
+
+        No auth required — this is an internal cluster RPC (like NFS
+        kernel-to-kernel), not a user-facing API. Access is controlled
+        by network-level isolation (Docker network / VPC).
         """
         try:
-            await self._auth_and_context(request.auth_token)
-
             if self._object_store is None:
                 return vfs_pb2.ReadBlobResponse(
                     is_error=True,

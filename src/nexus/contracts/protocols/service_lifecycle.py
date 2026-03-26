@@ -1,4 +1,4 @@
-"""Service lifecycle contracts — PersistentService protocol (Issue #1577).
+"""Service lifecycle contract — PersistentService protocol (Issue #1577).
 
 One-dimension model: the only user-facing lifecycle dimension is
 **daemon vs on-demand** (PersistentService).  Hook management uses

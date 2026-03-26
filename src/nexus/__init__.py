@@ -702,12 +702,14 @@ async def _register_federation_resolver(nx_fs: "NexusFS", zone_mgr: Any, backend
 
     _vfs_grpc_port = _os_mod.environ.get("NEXUS_GRPC_PORT", "2028")
     _content_addr = f"{_hostname}:{_vfs_grpc_port}"
+    _content_auth = _os_mod.environ.get("NEXUS_API_KEY", "")
     content_resolver = FederationContentResolver(
         metastore=nx_fs.metadata,
         self_address=_content_addr,
         tls_config=zone_mgr.tls_config,
         remote_content_fetcher=remote_content_fetcher,
         local_object_store=backend,
+        auth_token=_content_auth,
     )
     await _coordinator.enlist("federation_content", content_resolver)
 

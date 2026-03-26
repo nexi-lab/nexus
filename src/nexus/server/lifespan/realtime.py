@@ -59,9 +59,13 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
         except Exception as e:
             logger.warning("Error shutting down WebSocket manager: %s", e, exc_info=True)
 
-    # Stop WriteBack Service (Issue #1129)
+    # Stop WriteBack Service (Issue #1129) and unregister OBSERVE hook (#3194)
     if app.state.write_back_service:
         try:
+            # Unregister OBSERVE hook to prevent duplicate observers on hot reload
+            _dispatch = getattr(svc.nexus_fs, "_dispatch", None) if svc.nexus_fs else None
+            if _dispatch is not None:
+                _dispatch.unregister_observe(app.state.write_back_service)
             await app.state.write_back_service.stop()
             logger.info("WriteBack service stopped")
         except Exception as e:

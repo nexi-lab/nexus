@@ -1057,6 +1057,7 @@ class SearchService:
                         subject_id=subject_id,
                         permission="read",
                         resource_type="file",
+                        zone_id=list_zone_id,
                     )
                     if _accessible_int_ids is not None:
                         if len(_accessible_int_ids) > 0:

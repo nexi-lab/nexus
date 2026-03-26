@@ -82,6 +82,38 @@ class TestL1CacheFallback:
             )
             mock_db.assert_called_once()
 
+    def test_get_accessible_int_ids_prefers_zone_scoped_l1_entry(self, tiger_cache):
+        """Predicate pushdown should use the zone-scoped bitmap when available."""
+        zone_key = CacheKey("user", "alice", "read", "file", "zone-1")
+        compat_key = CacheKey("user", "alice", "read", "file")
+        tiger_cache._cache[zone_key] = (RoaringBitmap([1, 2]), 1, time.time())
+        tiger_cache._cache[compat_key] = (RoaringBitmap([99]), 1, time.time())
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+
+        assert result == {1, 2}
+
+    def test_get_accessible_int_ids_falls_back_to_compat_key(self, tiger_cache):
+        """Legacy zone-agnostic bitmaps should still be readable as fallback."""
+        compat_key = CacheKey("user", "alice", "read", "file")
+        tiger_cache._cache[compat_key] = (RoaringBitmap([7, 8]), 1, time.time())
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+
+        assert result == {7, 8}
+
 
 class TestCacheKey:
     """Tests for CacheKey hash and equality."""

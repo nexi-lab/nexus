@@ -566,6 +566,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
+        zone_id: str = "",
     ) -> set[int] | None:
         """Get all accessible resource integer IDs from bitmap (Polars-style predicate pushdown).
 
@@ -578,12 +579,14 @@ class TigerCache:
             subject_id: ID of subject
             permission: Permission to check (e.g., "read", "write")
             resource_type: Type of resource (e.g., "file")
+            zone_id: Zone ID for cache partitioning. Falls back to the
+                legacy zone-agnostic key for compatibility with older cache rows.
 
         Returns:
             Set of integer IDs the subject can access, or None if no bitmap cached.
             Returns empty set if bitmap exists but has no entries.
         """
-        key = CacheKey(subject_type, subject_id, permission, resource_type)
+        key = CacheKey(subject_type, subject_id, permission, resource_type, zone_id)
 
         # Check in-memory cache first
         with self._lock:
@@ -598,12 +601,40 @@ class TigerCache:
                         )
                     return set(bitmap)  # RoaringBitmap is iterable
 
+            # Compatibility fallback for older zone-agnostic cache entries.
+            if zone_id:
+                compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+                if compat_key in self._cache:
+                    bitmap, revision, cached_at = self._cache[compat_key]
+                    if time.time() - cached_at < self._cache_ttl:
+                        if logger.isEnabledFor(logging.DEBUG):
+                            logger.debug(
+                                "[TIGER-PUSHDOWN] Memory compat hit for %s via %s, %d entries",
+                                key,
+                                compat_key,
+                                len(bitmap),
+                            )
+                        return set(bitmap)
+
         # Load from database
         bitmap = self._load_from_db(key)
         if bitmap is not None:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug("[TIGER-PUSHDOWN] DB hit for %s, %d entries", key, len(bitmap))
             return set(bitmap)
+
+        if zone_id:
+            compat_key = CacheKey(subject_type, subject_id, permission, resource_type)
+            bitmap = self._load_from_db(compat_key)
+            if bitmap is not None:
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "[TIGER-PUSHDOWN] DB compat hit for %s via %s, %d entries",
+                        key,
+                        compat_key,
+                        len(bitmap),
+                    )
+                return set(bitmap)
 
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("[TIGER-PUSHDOWN] No bitmap found for %s", key)
@@ -615,6 +646,7 @@ class TigerCache:
         subject_id: str,
         permission: str,
         resource_type: str,
+        zone_id: str = "",
     ) -> set[str] | None:
         """Get all accessible resource paths from bitmap (for SQL WHERE clause).
 
@@ -630,7 +662,13 @@ class TigerCache:
         Returns:
             Set of paths the subject can access, or None if no bitmap cached.
         """
-        int_ids = self.get_accessible_int_ids(subject_type, subject_id, permission, resource_type)
+        int_ids = self.get_accessible_int_ids(
+            subject_type,
+            subject_id,
+            permission,
+            resource_type,
+            zone_id=zone_id,
+        )
         if int_ids is None:
             return None
 

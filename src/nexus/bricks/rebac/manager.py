@@ -2318,6 +2318,47 @@ class ReBACManager:
                 for row in cursor.fetchall()
             ]
 
+    def get_cross_zone_shared_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str,
+        object_type: str = "file",
+        prefix: str = "",
+    ) -> list[str]:
+        """Return distinct object paths shared with a subject from other zones."""
+        cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+        placeholders = ", ".join("?" for _ in cross_zone_relations)
+        query = f"""
+            SELECT DISTINCT object_id
+            FROM rebac_tuples
+            WHERE relation IN ({placeholders})
+              AND subject_type = ? AND subject_id = ?
+              AND object_type = ?
+              AND zone_id != ?
+              AND (expires_at IS NULL OR expires_at > ?)
+        """
+        params: tuple[Any, ...] = (
+            *cross_zone_relations,
+            subject_type,
+            subject_id,
+            object_type,
+            zone_id,
+            datetime.now(UTC).isoformat(),
+        )
+        if prefix:
+            query += " AND object_id LIKE ?"
+            params = (*params, f"{prefix}%")
+
+        with self._connection(readonly=True) as conn:
+            cursor = self._create_cursor(conn)
+            cursor.execute(self._fix_sql_placeholders(query), params)
+            paths: list[str] = []
+            for row in cursor.fetchall():
+                path = row["object_id"] if hasattr(row, "keys") else row[0]
+                paths.append(path)
+            return paths
+
     def _rebac_list_objects_python(
         self,
         subject_type: str,

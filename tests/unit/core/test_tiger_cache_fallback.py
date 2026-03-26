@@ -15,6 +15,8 @@ from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import create_engine
 
 from nexus.bricks.rebac.cache.tiger.bitmap_cache import CacheKey, TigerCache
+from nexus.storage.models import Base
+from nexus.storage.models import TigerCacheModel as TC
 
 
 def _make_key(**overrides):
@@ -32,6 +34,7 @@ def _make_key(**overrides):
 @pytest.fixture
 def tiger_cache():
     engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine, tables=[TC.__table__])
     cache = TigerCache(engine=engine)
     return cache
 
@@ -81,6 +84,112 @@ class TestL1CacheFallback:
                 zone_id="zone-1",
             )
             mock_db.assert_called_once()
+
+    def test_get_accessible_int_ids_prefers_zone_scoped_l1_entry(self, tiger_cache):
+        """Predicate pushdown should use the zone-scoped bitmap when available."""
+        zone_key = CacheKey("user", "alice", "read", "file", "zone-1")
+        compat_key = CacheKey("user", "alice", "read", "file")
+        tiger_cache._cache[zone_key] = (RoaringBitmap([1, 2]), 1, time.time())
+        tiger_cache._cache[compat_key] = (RoaringBitmap([99]), 1, time.time())
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+
+        assert result == {1, 2}
+
+    def test_get_accessible_int_ids_does_not_fall_back_to_compat_key(self, tiger_cache):
+        """Zone-scoped predicate pushdown must not reuse an unscoped bitmap."""
+        compat_key = CacheKey("user", "alice", "read", "file")
+        tiger_cache._cache[compat_key] = (RoaringBitmap([7, 8]), 1, time.time())
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+
+        assert result is None
+
+    def test_get_accessible_int_ids_cold_db_load_is_zone_scoped(self, tiger_cache):
+        """Cold DB loads must respect zone_id to avoid cross-zone bitmap hydration."""
+        with tiger_cache._engine.begin() as conn:
+            conn.execute(
+                TC.__table__.insert(),
+                [
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-a",
+                        "bitmap_data": bytes(RoaringBitmap([1, 2]).serialize()),
+                        "revision": 11,
+                    },
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-b",
+                        "bitmap_data": bytes(RoaringBitmap([99]).serialize()),
+                        "revision": 12,
+                    },
+                ],
+            )
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-a",
+        )
+
+        assert result == {1, 2}
+
+    def test_get_accessible_int_ids_zone_miss_does_not_load_other_zone_bitmap(self, tiger_cache):
+        """A missing zone row must not hydrate another zone's bitmap."""
+        with tiger_cache._engine.begin() as conn:
+            conn.execute(
+                TC.__table__.insert(),
+                [
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-a",
+                        "bitmap_data": bytes(RoaringBitmap([1, 2]).serialize()),
+                        "revision": 11,
+                    },
+                    {
+                        "subject_type": "user",
+                        "subject_id": "alice",
+                        "permission": "read",
+                        "resource_type": "file",
+                        "zone_id": "zone-b",
+                        "bitmap_data": bytes(RoaringBitmap([99]).serialize()),
+                        "revision": 12,
+                    },
+                ],
+            )
+
+        result = tiger_cache.get_accessible_int_ids(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-c",
+        )
+
+        assert result is None
 
 
 class TestCacheKey:
@@ -246,7 +355,7 @@ class TestBloomFilterIntegration:
     def test_bloom_consistent_encoding(self, tiger_cache):
         """_bloom_key produces same format as Dragonfly redis key."""
         key = CacheKey("user", "alice", "read", "file", "zone-1")
-        assert tiger_cache._bloom_key(key) == "tiger:user:alice:read:file"
+        assert tiger_cache._bloom_key(key) == "tiger:user:alice:read:file:zone-1"
 
     def test_bloom_rebuild_from_l1(self, tiger_cache):
         """_rebuild_l2_bloom rebuilds from L1 cache entries."""

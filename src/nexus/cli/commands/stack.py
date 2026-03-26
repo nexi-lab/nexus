@@ -335,7 +335,7 @@ def _run_compose(
 
 # Service health endpoints (service_name -> (url_template, timeout_seconds))
 HEALTH_ENDPOINTS: dict[str, tuple[str, int]] = {
-    "nexus": ("http://localhost:{http}/health", 120),
+    "nexus": ("http://localhost:{http}/healthz/ready", 120),
     "postgres": ("", 30),  # checked via pg_isready in container
     "dragonfly": ("", 15),
     "zoekt": ("http://localhost:{zoekt}/", 30),

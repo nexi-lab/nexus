@@ -680,18 +680,41 @@ async def write_to_connector(
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
+    nx = _get_nx(request)
+
+    # Resolve mount to get backend_path — required for CLI-backed connectors
+    # (gws_gmail, gws_drive, etc.) that use backend_path to determine the operation.
+    _backend_path = None
+    try:
+        route = nx.router.route(mount_path, is_admin=True)
+        _backend_path = route.backend_path if route else None
+    except Exception:
+        pass
+
     write_context = OperationContext(
         user_id=auth.get("subject_id", "system"),
         groups=[],
         is_admin=auth.get("is_admin", True),
         is_system=True,
         zone_id=auth.get("zone_id") or ROOT_ZONE_ID,
+        backend_path=_backend_path,
+        virtual_path=mount_path,
     )
 
-    nx = _get_nx(request)
     try:
         data = req.yaml_content.encode("utf-8")
-        result = await nx.write(mount_path, data, context=write_context)
+
+        # CLI-backed connectors (gws_gmail, gws_drive, etc.) need their
+        # write_content() called directly — nx.write() would store to CAS
+        # instead of dispatching to the connector's send/create pipeline.
+        import asyncio
+
+        route = nx.router.route(mount_path, is_admin=True)
+        backend = route.backend if route else None
+        if backend and hasattr(backend, "write_content") and _backend_path:
+            result = await asyncio.to_thread(backend.write_content, data, write_context)
+        else:
+            result = await nx.write(mount_path, data, context=write_context)
 
         return WriteResponse(
             success=True,

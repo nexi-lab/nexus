@@ -85,7 +85,9 @@ async def _read_connector_by_physical_path(
         )
 
         content = route.backend.read_content("", context=read_context)
-        return content
+        if isinstance(content, bytes):
+            return content
+        return bytes(content) if content else None
     except Exception:
         return None
 
@@ -576,62 +578,72 @@ def create_async_files_router(
             # virtual_path → physical_path via search service and read
             # directly from the connector backend. This avoids passing
             # a backend-relative path into fs.read() which expects VFS paths.
-            result = None
+            connector_content: bytes | None = None
             if path.startswith("/mnt/"):
                 search = fs.service("search")
                 if search is not None:
                     resolve_fn = getattr(search, "resolve_physical_path", None)
-                    physical = resolve_fn(path) if resolve_fn else None
+                    physical: str | None = resolve_fn(path) if resolve_fn else None
                     if physical:
-                        content_bytes = await _read_connector_by_physical_path(
+                        connector_content = await _read_connector_by_physical_path(
                             fs,
                             path,
                             physical,
                             context,
                         )
-                        if content_bytes is not None:
-                            if include_metadata:
-                                # Preserve metadata contract for connector reads
-                                result = {
-                                    "content": content_bytes,
-                                    "etag": None,
-                                    "version": None,
-                                    "modified_at": None,
-                                    "size": len(content_bytes),
-                                }
-                            else:
-                                result = content_bytes
 
-            # Standard VFS read (or fallback if connector read didn't resolve)
-            if result is None:
-                result = await fs.read(path, return_metadata=include_metadata, context=context)
+            if connector_content is not None:
+                # Connector fast path — return content directly
+                text = connector_content.decode("utf-8", errors="replace")
+                if include_metadata:
+                    resp = ReadResponse(
+                        content=text,
+                        etag=None,
+                        version=None,
+                        modified_at=None,
+                        size=len(connector_content),
+                    )
+                else:
+                    resp = ReadResponse(content=text)
+                return Response(
+                    content=resp.model_dump_json(),
+                    media_type="application/json",
+                )
+
+            # Standard VFS read
+            result = await fs.read(path, return_metadata=include_metadata, context=context)
 
             if include_metadata and isinstance(result, dict):
-                content = result["content"]
-                # Decode bytes to string for JSON response
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8", errors="replace")
+                file_content: str = result["content"]
+                if isinstance(file_content, bytes):
+                    file_content = file_content.decode("utf-8", errors="replace")
 
                 response_data = ReadResponse(
-                    content=content,
+                    content=file_content,
                     etag=result.get("etag"),
                     version=result.get("version"),
                     modified_at=result.get("modified_at"),
                     size=result.get("size"),
                 )
+                etag_val = result.get("etag")
                 return Response(
                     content=response_data.model_dump_json(),
                     media_type="application/json",
-                    headers={"ETag": f'"{result.get("etag")}"'} if result.get("etag") else {},
+                    headers={"ETag": f'"{etag_val}"'} if etag_val else {},
                 )
             else:
                 # Simple content response
-                content = result
-                if isinstance(content, bytes):
-                    content = content.decode("utf-8", errors="replace")
-
+                plain: str = (
+                    result
+                    if isinstance(result, str)
+                    else (
+                        result.decode("utf-8", errors="replace")
+                        if isinstance(result, bytes)
+                        else str(result)
+                    )
+                )
                 return Response(
-                    content=ReadResponse(content=content).model_dump_json(),
+                    content=ReadResponse(content=plain).model_dump_json(),
                     media_type="application/json",
                 )
 

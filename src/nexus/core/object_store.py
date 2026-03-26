@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
 # Re-export WriteResult for backward compatibility — canonical home is contracts.types
-# Re-export _validate_hash for backward compatibility — canonical home is backends.base.cas_backend
+# Re-export _validate_hash for backward compatibility — canonical home is backends.base.cas_addressing_engine
 __all__ = ["ObjectStoreABC", "WriteResult", "_validate_hash"]
 
 

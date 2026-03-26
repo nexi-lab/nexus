@@ -1,6 +1,6 @@
 """OpenAI-compatible LLM backend — CAS addressing + LLM transport.
 
-Thin CASBackend subclass: registration + CONNECTION_ARGS + OpenAI client.
+Thin CASAddressingEngine subclass: registration + CONNECTION_ARGS + OpenAI client.
 Follows the same composition pattern as CASLocalBackend (CAS + LocalBlobTransport)
 and CASGCSBackend (CAS + GCSBlobTransport).
 
@@ -9,7 +9,7 @@ and CASGCSBackend (CAS + GCSBlobTransport).
     nexus mount /zone/llm/local  --backend=openai_compatible \
         --config='{"base_url":"http://localhost:11434/v1"}'
 
-write_content() is inherited from CASBackend — pure CAS storage,
+write_content() is inherited from CASAddressingEngine — pure CAS storage,
 no LLM logic. LLM call orchestration lives in the service layer
 (LLMStreamingService), not in the storage driver.
 
@@ -31,7 +31,7 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.backends.base.cas_addressing_engine import CASBackend
+from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
 from nexus.contracts.capabilities import ConnectorCapability
@@ -67,11 +67,11 @@ def _build_openai_client(base_url: str, api_key: str, timeout: float) -> Any:
     category="compute",
     requires=["openai"],
 )
-class OpenAICompatibleBackend(CASBackend):
+class OpenAICompatibleBackend(CASAddressingEngine):
     """CAS addressing + OpenAI-compatible LLM transport.
 
     Thin subclass for connector registration and OpenAI client holder.
-    ``write_content()`` is inherited from CASBackend — pure CAS, no override.
+    ``write_content()`` is inherited from CASAddressingEngine — pure CAS, no override.
     LLM orchestration lives in ``LLMStreamingService``.
 
     LLM-specific methods (additions, not overrides):

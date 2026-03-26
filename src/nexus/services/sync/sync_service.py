@@ -72,6 +72,7 @@ class SyncService:
             gateway: NexusFSGateway for NexusFS access
         """
         self._gw = gateway
+        self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Issue #1127: Initialize change log store for delta sync
         self._change_log = ChangeLogStore(
             record_store=gateway.record_store, is_postgresql=gateway.is_postgresql
@@ -325,7 +326,7 @@ class SyncService:
             """Flush accumulated paths and create parent tuples in batch."""
             nonlocal paths_needing_tuples, total_tuples_created
 
-            if paths_needing_tuples and self._gw.hierarchy_enabled:
+            if paths_needing_tuples and getattr(self._gw, "hierarchy_enabled", False):
                 try:
                     zone_id = self._resolve_zone_id(ctx)
                     logger.info(
@@ -837,7 +838,6 @@ class SyncService:
 
                 self._gw.metadata_put(meta)
                 result.files_created += 1
-
                 # Issue #3266: Write to file_paths + directory_entries so
                 # sys_readdir (used by TUI) can serve from Postgres.
                 # _gw.metadata_put writes to Raft metastore but sys_readdir
@@ -845,7 +845,7 @@ class SyncService:
                 self._write_to_file_paths(meta)
 
                 # Collect for batch parent tuple creation
-                if self._gw.hierarchy_enabled:
+                if getattr(self._gw, "hierarchy_enabled", False):
                     paths_needing_tuples.append(virtual_path)
 
                 # Issue #1127: Update change log after successful sync
@@ -887,7 +887,24 @@ class SyncService:
 
             # Issue #3266: Ensure file_paths + directory_entries are populated
             # even for files that already exist in the Raft metastore.
-            self._write_to_file_paths(existing_meta)
+            # Use virtual_path (display name) instead of existing_meta.path (raw ID)
+            # when they differ, so Postgres has human-readable paths.
+            if virtual_path != existing_meta.path:
+                display_meta = FileMetadata(
+                    path=virtual_path,
+                    backend_name=existing_meta.backend_name,
+                    physical_path=existing_meta.physical_path or backend_path,
+                    size=existing_meta.size,
+                    etag=existing_meta.etag,
+                    created_at=existing_meta.created_at,
+                    modified_at=existing_meta.modified_at,
+                    version=existing_meta.version,
+                    created_by=existing_meta.created_by,
+                    zone_id=existing_meta.zone_id or ROOT_ZONE_ID,
+                )
+                self._write_to_file_paths(display_meta)
+            else:
+                self._write_to_file_paths(existing_meta)
 
             # Issue #1127: Update change log even for existing files
             if file_info:
@@ -1044,7 +1061,7 @@ class SyncService:
 
             self._gw.metadata_put(dir_meta)
 
-            if self._gw.hierarchy_enabled:
+            if getattr(self._gw, "hierarchy_enabled", False):
                 paths_needing_tuples.append(virtual_path)
 
         except Exception as e:
@@ -1479,9 +1496,16 @@ class SyncService:
             if not db_url:
                 return
 
-            from sqlalchemy import create_engine, text
+            from sqlalchemy import text
 
-            engine = create_engine(db_url)
+            # Reuse cached engine to avoid creating a new pool per file.
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+            engine = self._fp_engine
             zone_id = meta.zone_id or "default"
             virtual_path = meta.path
             is_dir = meta.size == 0 and meta.etag is None
@@ -1505,11 +1529,11 @@ class SyncService:
                     {
                         "zone_id": zone_id,
                         "vpath": virtual_path,
-                        "backend": meta.backend_name,
+                        "backend": (meta.backend_name or "")[:36],
                         "ppath": meta.physical_path,
                         "ftype": file_type,
                         "size": meta.size,
-                        "etag": meta.etag,
+                        "etag": (meta.etag or "")[:64] or None,
                         "created": meta.created_at,
                         "modified": meta.modified_at,
                     },
@@ -1537,9 +1561,33 @@ class SyncService:
                             "etype": entry_type,
                         },
                     )
-        except Exception:
+
+                    # Materialize parent directories (e.g. /mnt, /mnt/gmail)
+                    # so the TUI root listing shows connector mounts.
+                    segments = parent_path.split("/")
+                    for depth in range(2, len(segments) + 1):
+                        ancestor_parent = "/".join(segments[: depth - 1]) or "/"
+                        ancestor_name = segments[depth - 1]
+                        if not ancestor_name:
+                            continue
+                        conn.execute(
+                            text("""
+                                INSERT INTO directory_entries
+                                    (zone_id, parent_path, entry_name, entry_type,
+                                     created_at, updated_at)
+                                VALUES (:zone_id, :parent, :name, 'dir', NOW(), NOW())
+                                ON CONFLICT (zone_id, parent_path, entry_name)
+                                DO NOTHING
+                            """),
+                            {
+                                "zone_id": zone_id,
+                                "parent": ancestor_parent,
+                                "name": ancestor_name,
+                            },
+                        )
+        except Exception as _fp_err:
             # Non-fatal: Raft metastore is the source of truth
-            logger.debug("[SYNC] file_paths write failed for %s", meta.path, exc_info=True)
+            logger.debug("[SYNC] file_paths write failed for %s: %s", meta.path, _fp_err)
 
     # --- Display path support (Issue #3256) ---
 

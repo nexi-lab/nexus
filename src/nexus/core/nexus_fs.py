@@ -96,6 +96,7 @@ class NexusFS(  # type: ignore[misc]
 
         self._vfs_revision: int = 0
         self._vfs_revision_lock = _threading.Lock()
+        self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
 
         self._cache_config = cache
         self._perm_config = permissions
@@ -1295,6 +1296,43 @@ class NexusFS(  # type: ignore[misc]
             # original backend path. Look up physical_path from metastore so
             # read_content() can extract the real item ID (e.g., Gmail message ID).
             meta_hint = self.metadata.get(path)
+            # Issue #3266: If Raft doesn't have the display-path entry,
+            # look up physical_path from Postgres file_paths table.
+            if meta_hint is None and path.startswith("/mnt/"):
+                try:
+                    import os
+
+                    from sqlalchemy import create_engine, text
+
+                    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+                    if db_url:
+                        if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                            self._fp_engine = create_engine(
+                                db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                            )
+                        with self._fp_engine.connect() as conn:
+                            row = conn.execute(
+                                text(
+                                    "SELECT physical_path FROM file_paths WHERE virtual_path = :vp LIMIT 1"
+                                ),
+                                {"vp": path},
+                            ).fetchone()
+                            if row and row[0]:
+                                from nexus.contracts.metadata import FileMetadata as _FM
+
+                                meta_hint = _FM(
+                                    path=path,
+                                    backend_name="__sync__",
+                                    physical_path=row[0],
+                                    size=0,
+                                    etag=None,
+                                    created_at=None,
+                                    modified_at=None,
+                                    version=1,
+                                    zone_id="root",
+                                )
+                except Exception:
+                    pass
             if (
                 meta_hint
                 and meta_hint.physical_path
@@ -1319,6 +1357,46 @@ class NexusFS(  # type: ignore[misc]
             # Check if file exists in metadata (for regular backends)
             # _resolve_hint may carry prefetched metadata from a resolver
             meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
+
+            # Issue #3266: For connector display paths, look up physical_path
+            # from Postgres file_paths so read resolves to the raw backend path.
+            if meta is None and path.startswith("/mnt/"):
+                try:
+                    import os
+
+                    from sqlalchemy import create_engine, text
+
+                    db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+                    if db_url:
+                        if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                            self._fp_engine = create_engine(
+                                db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                            )
+                        with self._fp_engine.connect() as conn:
+                            row = conn.execute(
+                                text(
+                                    "SELECT physical_path, size_bytes FROM file_paths WHERE virtual_path = :vp LIMIT 1"
+                                ),
+                                {"vp": path},
+                            ).fetchone()
+                            if row and row[0]:
+                                meta = FileMetadata(
+                                    path=path,
+                                    backend_name="__sync__",
+                                    physical_path=row[0],
+                                    size=row[1] or 1,
+                                    etag="",  # Empty: connector reads via context.backend_path, not CAS
+                                    created_at=None,
+                                    modified_at=None,
+                                    version=1,
+                                    zone_id="root",
+                                )
+                                # Set backend_path to physical_path for the connector
+                                from dataclasses import replace as _dc_replace
+
+                                read_context = _dc_replace(read_context, backend_path=row[0])
+                except Exception:
+                    pass
 
             # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
             if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):

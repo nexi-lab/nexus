@@ -618,6 +618,15 @@ def _register_routes(app: FastAPI) -> None:
 
     app.include_router(probes_router)
     app.include_router(features_router)
+
+    # Issue #3266: Bricks health endpoint (required by TUI connection check)
+    try:
+        from nexus.server.api.v2.routers.bricks import health_router as bricks_health_router
+
+        app.include_router(bricks_health_router)
+    except Exception:
+        pass
+
     app.include_router(debug_router)
     app.include_router(streaming_router)
     app.include_router(rpc_router)

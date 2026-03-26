@@ -180,6 +180,7 @@ class SearchService:
         """
         self.metadata = metadata_store
         self._record_store = record_store
+        self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Injected file cache (Issue #690 — replaces global singleton)
         self._file_cache = file_cache
         self._zoekt_client = zoekt_client
@@ -812,9 +813,15 @@ class SearchService:
             if not db_url:
                 return None
 
-            from sqlalchemy import create_engine, text
+            from sqlalchemy import text
 
-            engine = create_engine(db_url)
+            if not hasattr(self, "_fp_engine") or self._fp_engine is None:
+                from sqlalchemy import create_engine
+
+                self._fp_engine = create_engine(
+                    db_url, pool_size=2, max_overflow=3, pool_pre_ping=True
+                )
+            engine = self._fp_engine
             parent = path.rstrip("/")
 
             with engine.connect() as conn:

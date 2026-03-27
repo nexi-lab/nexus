@@ -244,7 +244,7 @@ jobs:
   # ── nexus-fs slim package publish ──────────────────────────────────────
   # Builds and publishes the standalone nexus-fs package alongside nexus-ai-fs.
   # Uses its own pyproject.toml (packages/nexus-fs/) and hatchling build backend.
-  # Requires NEXUS_FS_PYPI_API_TOKEN secret (separate from PYPI_API_TOKEN).
+  # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
   publish-nexus-fs:
     name: Publish nexus-fs to PyPI
     needs: [verify-version]
@@ -279,17 +279,10 @@ jobs:
           /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
           /tmp/nexus-fs-release-test/bin/nexus-fs --help
 
-      - name: Check for PyPI token
-        env:
-          NEXUS_FS_PYPI_API_TOKEN: ${{ secrets.NEXUS_FS_PYPI_API_TOKEN }}
-        if: ${{ env.NEXUS_FS_PYPI_API_TOKEN == '' }}
-        run: echo "::warning::NEXUS_FS_PYPI_API_TOKEN not configured; skipping nexus-fs publish."
-
       - name: Publish nexus-fs to PyPI
-        if: ${{ secrets.NEXUS_FS_PYPI_API_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.NEXUS_FS_PYPI_API_TOKEN }}
+          password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist-nexus-fs
 
       - name: Upload nexus-fs artifacts

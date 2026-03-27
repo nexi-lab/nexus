@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 from typing import TYPE_CHECKING, Any, cast
 
 try:
@@ -63,16 +62,18 @@ if TYPE_CHECKING:
     from nexus.fs._facade import SlimNexusFS
     from nexus.fs._sync import PortalRunner
 
+from nexus.fs._constants import DEFAULT_MAX_FILE_SIZE
+
 logger = logging.getLogger(__name__)
 
-# Maximum file size for _cat_file before refusing (1 GB).
+# Maximum file size for _cat_file before refusing.
 # Files larger than this should use _open() with buffered access.
-MAX_CAT_FILE_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+MAX_CAT_FILE_SIZE = DEFAULT_MAX_FILE_SIZE
 
-# Maximum buffer size for write-mode _open() (1 GB).
+# Maximum buffer size for write-mode _open().
 # Writes exceeding this should use _pipe_file() with pre-built bytes
 # or wait for streaming write support.
-MAX_WRITE_BUFFER_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+MAX_WRITE_BUFFER_SIZE = DEFAULT_MAX_FILE_SIZE
 
 # Supported modes for _open().
 _SUPPORTED_MODES = frozenset({"rb", "wb", "r", "w"})
@@ -125,27 +126,24 @@ class NexusFileSystem(AbstractFileSystem):
             ValueError: If ``mounts.json`` is empty or invalid.
         """
         import json
-        import tempfile
 
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            tempfile.gettempdir(), "nexus-fs"
-        )
-        mounts_file = os.path.join(state_dir, "mounts.json")
+        from nexus.fs._paths import mounts_file
 
-        if not os.path.exists(mounts_file):
+        mf = mounts_file()
+
+        if not mf.exists():
             raise FileNotFoundError(
                 "No nexus-fs mounts found. Run nexus.fs.mount() or "
                 "nexus.fs.mount_sync() first to register backends, "
                 "then use fsspec.open('nexus:///...')."
             )
 
-        with open(mounts_file) as f:
+        with open(mf) as f:
             uris = json.load(f)
 
         if not uris or not isinstance(uris, list):
             raise ValueError(
-                f"Invalid mounts.json at {mounts_file}. "
-                "Run nexus.fs.mount() to re-register backends."
+                f"Invalid mounts.json at {mf}. Run nexus.fs.mount() to re-register backends."
             )
 
         from nexus.fs import mount
@@ -441,7 +439,7 @@ class NexusBufferedFile:
 
         chunks: list[bytes] = []
         bytes_read = 0
-        chunk_size = min(self.block_size, 8192)
+        chunk_size = min(self.block_size, 256 * 1024)  # 256 KB to reduce round trips
 
         while self._pos < self.size:
             if 0 <= size <= bytes_read:

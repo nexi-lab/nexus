@@ -241,6 +241,63 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist-main
 
+  # ── nexus-fs slim package publish ──────────────────────────────────────
+  # Builds and publishes the standalone nexus-fs package alongside nexus-ai-fs.
+  # Uses its own pyproject.toml (packages/nexus-fs/) and hatchling build backend.
+  # Uses the same PYPI_API_TOKEN as nexus-ai-fs (org-scoped token).
+  publish-nexus-fs:
+    name: Publish nexus-fs to PyPI
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: python -m pip install build hatchling
+
+      - name: Build nexus-fs wheel and sdist
+        run: |
+          ln -s ../../src src
+          sed -i 's|"../../src/nexus"|"src/nexus"|' pyproject.toml
+          python -m hatchling build -d ../../dist-nexus-fs
+          git checkout pyproject.toml
+          rm -f src
+        working-directory: packages/nexus-fs
+
+      - name: Validate wheel
+        run: |
+          pip install twine check-wheel-contents pydistcheck
+          twine check --strict dist-nexus-fs/*
+          check-wheel-contents dist-nexus-fs/*.whl
+          pydistcheck --max-allowed-size-compressed '5M' dist-nexus-fs/*.whl
+
+      - name: Smoke test — install in clean environment
+        run: |
+          python -m venv /tmp/nexus-fs-release-test
+          /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
+          /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
+          /tmp/nexus-fs-release-test/bin/nexus-fs --help
+
+      - name: Publish nexus-fs to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-nexus-fs
+
+      - name: Upload nexus-fs artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-fs-dist
+          path: dist-nexus-fs/*
+          retention-days: 90
+
   # Docker build, smoke test, and GHCR push — inline in release.yml so
   # create-release can depend on it directly (Issue #2946 atomic release).
   # docker-publish.yml handles branch pushes (develop/main) separately.
@@ -369,7 +426,7 @@ jobs:
   # doesn't appear on the releases page or trigger notifications.
   create-release:
     name: Create GitHub Release
-    needs: [publish-pypi, publish-rust, build-docker]
+    needs: [publish-pypi, publish-rust, publish-nexus-fs, build-docker]
     runs-on: ubuntu-latest
 
     steps:
@@ -394,12 +451,20 @@ jobs:
           pattern: rust-*
           path: artifacts
 
+      - name: Download nexus-fs artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nexus-fs-dist
+          path: artifacts/nexus-fs
+        continue-on-error: true
+
       - name: Collect release artifacts
         run: |
           mkdir -p dist-release
           cp artifacts/sdist/* dist-release/ 2>/dev/null || true
           cp artifacts/wheel/* dist-release/ 2>/dev/null || true
           cp artifacts/rust-sdist/* dist-release/ 2>/dev/null || true
+          cp artifacts/nexus-fs/* dist-release/ 2>/dev/null || true
           find artifacts -path "*/rust-wheel-*/*.whl" -exec cp {} dist-release/ \;
           ls -lh dist-release/
 

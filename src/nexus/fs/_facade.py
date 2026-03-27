@@ -22,6 +22,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
+from nexus.fs._constants import STREAMING_COPY_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -179,15 +180,15 @@ class SlimNexusFS:
         """
         return await self._kernel.sys_access(path, context=self._ctx)
 
-    # Maximum file size for read-copy before refusing (1 GB).
-    # Native backend copy is planned for a future release.
-    _MAX_COPY_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
-
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
 
-        Uses a read-then-write approach.  Files larger than 1 GB are
-        refused — native backend copy is planned for a future release.
+        Reads the source in STREAMING_COPY_CHUNK_SIZE (64 MB) chunks to
+        bound peak memory during the read phase.  The kernel ``write()``
+        API requires the full content, so the file is assembled into a
+        single ``bytearray`` before writing.  True streaming writes
+        (never materializing the full file) require kernel API changes
+        and are planned for a future release with backend-native copy.
 
         Args:
             src: Source file path.
@@ -197,19 +198,31 @@ class SlimNexusFS:
             Dict with path, size, etag of the new file.
 
         Raises:
-            ValueError: If the source file exceeds 1 GB.
+            FileNotFoundError: If the source file does not exist.
         """
         stat = await self.stat(src)
         if stat is None:
             raise FileNotFoundError(src)
-        if stat.get("size", 0) > self._MAX_COPY_SIZE:
-            size_gb = stat["size"] / (1024**3)
-            raise ValueError(
-                f"File too large for read-copy ({size_gb:.1f} GB > 1 GB limit). "
-                f"Native backend copy is planned for a future release."
-            )
-        content = await self.read(src)
-        return await self.write(dst, content)
+
+        file_size = stat.get("size", 0)
+
+        # Small files: single read-write (avoids bytearray overhead)
+        if file_size <= STREAMING_COPY_CHUNK_SIZE:
+            content = await self.read(src)
+            return await self.write(dst, content)
+
+        # Large files: chunked read into pre-allocated bytearray.
+        # This bounds peak memory to ~file_size + one chunk (vs 2x with
+        # list-of-chunks + join). True streaming requires kernel changes.
+        buf = bytearray(file_size)
+        offset = 0
+        while offset < file_size:
+            end = min(offset + STREAMING_COPY_CHUNK_SIZE, file_size)
+            chunk = await self.read_range(src, offset, end)
+            buf[offset : offset + len(chunk)] = chunk
+            offset = end
+
+        return await self.write(dst, bytes(buf))
 
     # -- Metadata (optimized single-lookup) --
 

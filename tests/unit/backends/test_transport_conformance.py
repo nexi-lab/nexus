@@ -1,0 +1,243 @@
+"""BlobTransport conformance test suite — parametrized across transports.
+
+Verifies that LocalBlobTransport and VolumeLocalTransport both implement
+the BlobTransport protocol identically from the engine's perspective.
+
+Issue #3403: CAS volume packing — transport conformance.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from nexus.backends.transports.local_transport import LocalBlobTransport
+
+
+def _make_local_transport(tmp_path):
+    return LocalBlobTransport(root_path=tmp_path, fsync=False)
+
+
+def _make_volume_transport(tmp_path):
+    try:
+        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+
+        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+    except Exception:
+        pytest.skip("VolumeLocalTransport not available (nexus_fast not built)")
+
+
+@pytest.fixture(params=["local", "volume"], ids=["LocalBlobTransport", "VolumeLocalTransport"])
+def transport(request, tmp_path):
+    if request.param == "local":
+        return _make_local_transport(tmp_path)
+    else:
+        return _make_volume_transport(tmp_path)
+
+
+@pytest.fixture
+def local_transport(tmp_path):
+    return _make_local_transport(tmp_path)
+
+
+@pytest.fixture
+def volume_transport(tmp_path):
+    return _make_volume_transport(tmp_path)
+
+
+# ─── BlobTransport Protocol Conformance ──────────────────────────────────────
+
+
+class TestPutGetRoundtrip:
+    def test_put_get_basic(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        data = b"hello world"
+        transport.put_blob(key, data)
+        result, version = transport.get_blob(key)
+        assert result == data
+
+    def test_put_get_empty(self, transport):
+        key = "cas/00/00/0000000000000000000000000000000000000000000000000000000000000000"
+        data = b""
+        transport.put_blob(key, data)
+        result, _ = transport.get_blob(key)
+        assert result == data
+
+    def test_put_get_large(self, transport):
+        key = "cas/ff/ff/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        data = b"x" * (1024 * 1024)  # 1MB
+        transport.put_blob(key, data)
+        result, _ = transport.get_blob(key)
+        assert result == data
+
+    def test_put_overwrites(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        transport.put_blob(key, b"first")
+        transport.put_blob(key, b"second")
+        result, _ = transport.get_blob(key)
+        # Both transports should have the data (CAS is idempotent)
+        assert result in (b"first", b"second")
+
+
+class TestBlobExists:
+    def test_exists_true(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        transport.put_blob(key, b"data")
+        assert transport.blob_exists(key) is True
+
+    def test_exists_false(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        assert transport.blob_exists(key) is False
+
+
+class TestGetBlobSize:
+    def test_size(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        data = b"hello"
+        transport.put_blob(key, data)
+        assert transport.get_blob_size(key) == 5
+
+    def test_size_not_found(self, transport):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        with pytest.raises(NexusFileNotFoundError):
+            transport.get_blob_size(key)
+
+
+class TestDeleteBlob:
+    def test_delete(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        transport.put_blob(key, b"to delete")
+        assert transport.blob_exists(key) is True
+        transport.delete_blob(key)
+        assert transport.blob_exists(key) is False
+
+    def test_delete_not_found(self, transport):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        with pytest.raises(NexusFileNotFoundError):
+            transport.delete_blob(key)
+
+
+class TestGetBlobNotFound:
+    def test_get_not_found(self, transport):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        with pytest.raises(NexusFileNotFoundError):
+            transport.get_blob(key)
+
+
+class TestStreamBlob:
+    def test_stream(self, transport):
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        data = b"streaming data here"
+        transport.put_blob(key, data)
+        chunks = list(transport.stream_blob(key, chunk_size=5))
+        assert b"".join(chunks) == data
+
+    def test_stream_not_found(self, transport):
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        key = "cas/ab/cd/nonexistent"
+        with pytest.raises(NexusFileNotFoundError):
+            list(transport.stream_blob(key))
+
+
+class TestDirectoryMarker:
+    def test_create_dir_marker(self, transport):
+        key = "dirs/test/subdir/"
+        transport.create_directory_marker(key)
+        assert transport.blob_exists(key) is True
+
+
+class TestCopyBlob:
+    def test_copy(self, transport):
+        src = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        dst = "cas/ef/gh/efgh1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        data = b"copy me"
+        transport.put_blob(src, data)
+        transport.copy_blob(src, dst)
+        result, _ = transport.get_blob(dst)
+        assert result == data
+
+
+# ─── Extended Methods ────────────────────────────────────────────────────────
+
+
+class TestListContentHashes:
+    def test_empty(self, transport):
+        if not hasattr(transport, "list_content_hashes"):
+            pytest.skip("Transport does not support list_content_hashes")
+        result = transport.list_content_hashes()
+        assert result == []
+
+    def test_after_put(self, transport):
+        if not hasattr(transport, "list_content_hashes"):
+            pytest.skip("Transport does not support list_content_hashes")
+
+        hash_hex = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = f"cas/{hash_hex[:2]}/{hash_hex[2:4]}/{hash_hex}"
+        transport.put_blob(key, b"test data")
+
+        # For volume transport, seal first to make entries visible
+        if hasattr(transport, "seal_active_volume"):
+            transport.seal_active_volume()
+
+        result = transport.list_content_hashes()
+        hashes = [h for h, _ts in result]
+        assert hash_hex in hashes
+
+
+class TestBatchGetBlobs:
+    def test_batch_get(self, transport):
+        if not hasattr(transport, "batch_get_blobs"):
+            pytest.skip("Transport does not support batch_get_blobs")
+
+        keys = []
+        for i in range(5):
+            h = f"{i:064x}"
+            key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+            transport.put_blob(key, f"data_{i}".encode())
+            keys.append(key)
+
+        # Seal for volume transport
+        if hasattr(transport, "seal_active_volume"):
+            transport.seal_active_volume()
+
+        result = transport.batch_get_blobs(keys)
+        assert len(result) == 5
+        for i, key in enumerate(keys):
+            assert result[key] == f"data_{i}".encode()
+
+    def test_batch_get_missing(self, transport):
+        if not hasattr(transport, "batch_get_blobs"):
+            pytest.skip("Transport does not support batch_get_blobs")
+
+        key = "cas/ff/ff/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        result = transport.batch_get_blobs([key])
+        assert result[key] is None
+
+
+class TestGetBlobMtime:
+    def test_mtime(self, transport):
+        if not hasattr(transport, "get_blob_mtime"):
+            pytest.skip("Transport does not support get_blob_mtime")
+
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        transport.put_blob(key, b"data")
+        mtime = transport.get_blob_mtime(key)
+        assert isinstance(mtime, float)
+        assert mtime > 0
+
+
+class TestPutBlobNosync:
+    def test_nosync(self, transport):
+        if not hasattr(transport, "put_blob_nosync"):
+            pytest.skip("Transport does not support put_blob_nosync")
+
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        transport.put_blob_nosync(key, b"nosync data")
+        result, _ = transport.get_blob(key)
+        assert result == b"nosync data"

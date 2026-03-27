@@ -3,20 +3,22 @@
 Two-phase GC:
   Phase 1 (collect): Scan metastore → build set of all referenced etags.
           For CDC manifests, parse manifest → add chunk hashes to referenced set.
-  Phase 2 (sweep):   Enumerate CAS blobs, delete unreferenced blobs older than
-          grace period (mtime check).
+  Phase 2 (sweep):   Enumerate CAS blobs via transport.list_content_hashes(),
+          delete unreferenced blobs older than grace period.
 
 Each CASAddressingEngine instance owns its own GC — no shared state, no
 federation concerns (each node GCs its own local transport).
 
 Design:
-    - Grace period: uses blob mtime (filesystem stat)
+    - Grace period: uses write timestamp from transport (volume index or file mtime)
     - Scan interval is configurable (default 60s)
     - GC runs as an asyncio.Task, started/stopped by the engine owner
     - Thread-safe: blob deletion is idempotent (already-deleted = no-op)
+    - Transport-agnostic: works with both file-per-blob and volume-packed storage
 
 Issue #1320: CAS async GC.
 Issue #1772: Reachability-based GC replacing ref_count.
+Issue #3403: Transport-agnostic GC for volume packing.
 """
 
 from __future__ import annotations
@@ -110,8 +112,10 @@ class CASGarbageCollector:
 
         Phase 1: Scan metastore to collect all referenced etags.
                  For CDC manifests, expand to include chunk hashes.
-        Phase 2: Enumerate all CAS blobs, delete unreferenced blobs
-                 older than grace period.
+        Phase 2: Enumerate all CAS blobs via transport.list_content_hashes(),
+                 delete unreferenced blobs older than grace period.
+                 Transport-agnostic — works with both file-per-blob and
+                 volume-packed storage (Issue #3403).
         """
         if self._metastore is None:
             logger.debug("CAS GC: metastore not set, skipping collection")
@@ -129,41 +133,32 @@ class CASGarbageCollector:
             logger.warning("CAS GC: metastore scan failed for %s", engine.name, exc_info=True)
             return
 
-        # Phase 2: Sweep CAS blobs
+        # Phase 2: Sweep CAS blobs — transport-agnostic enumeration
         try:
-            blob_keys, _ = transport.list_blobs(prefix="cas/", delimiter="")
+            if hasattr(transport, "list_content_hashes"):
+                # Preferred: transport provides (hash, timestamp) pairs directly
+                content_entries = transport.list_content_hashes()
+            else:
+                # Legacy fallback: walk filesystem via list_blobs
+                content_entries = self._list_blobs_fallback(transport)
         except Exception:
-            logger.debug("CAS GC: list_blobs failed for %s", engine.name, exc_info=True)
+            logger.debug("CAS GC: enumeration failed for %s", engine.name, exc_info=True)
             return
 
         collected = 0
-        for blob_key in blob_keys:
-            # Skip .meta sidecars — they follow their parent blob
-            if blob_key.endswith(".meta"):
-                continue
-
-            # Extract hash from path: cas/ab/cd/<hash>
-            content_hash = blob_key.split("/")[-1]
+        for content_hash, write_time in content_entries:
             if content_hash in referenced:
                 continue
 
-            # Unreferenced — check grace period via mtime
-            try:
-                if hasattr(transport, "get_blob_mtime"):
-                    mtime = transport.get_blob_mtime(blob_key)
-                else:
-                    # Fallback: no mtime support, skip grace period check
-                    mtime = 0.0
+            # Unreferenced — check grace period
+            if write_time > 0 and (now - write_time) < self._grace_period:
+                continue  # Too fresh — within grace period
 
-                if mtime > 0 and (now - mtime) < self._grace_period:
-                    continue  # Too fresh — within grace period
-            except Exception:
-                continue  # Skip on stat failure
-
-            # Delete blob + meta
+            # Delete blob + meta sidecar
+            blob_key = engine._blob_key(content_hash)
             with contextlib.suppress(Exception):
                 transport.delete_blob(blob_key)
-            meta_key = blob_key + ".meta"
+            meta_key = engine._meta_key(content_hash)
             with contextlib.suppress(Exception):
                 transport.delete_blob(meta_key)
 
@@ -175,6 +170,28 @@ class CASGarbageCollector:
 
         if collected > 0:
             logger.info("CAS GC: collected %d unreferenced blobs for %s", collected, engine.name)
+
+    @staticmethod
+    def _list_blobs_fallback(transport: Any) -> list[tuple[str, float]]:
+        """Legacy fallback: enumerate blobs via list_blobs + mtime.
+
+        Used when transport doesn't support list_content_hashes().
+        """
+        blob_keys, _ = transport.list_blobs(prefix="cas/", delimiter="")
+        entries: list[tuple[str, float]] = []
+        for blob_key in blob_keys:
+            if blob_key.endswith(".meta"):
+                continue
+            content_hash = blob_key.split("/")[-1]
+            try:
+                if hasattr(transport, "get_blob_mtime"):
+                    mtime = transport.get_blob_mtime(blob_key)
+                else:
+                    mtime = 0.0
+            except Exception:
+                mtime = 0.0
+            entries.append((content_hash, mtime))
+        return entries
 
     def _scan_metastore(self, referenced: set[str]) -> None:
         """Scan metastore to collect all referenced etags.

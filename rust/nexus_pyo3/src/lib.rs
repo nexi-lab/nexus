@@ -24,6 +24,7 @@ mod shm_stream;
 mod simd;
 mod stream;
 mod trigram;
+mod volume_engine;
 
 use pyo3::prelude::*;
 
@@ -101,5 +102,7 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<dispatch::PathTrie>()?;
     m.add_class::<dispatch::HookRegistry>()?;
     m.add_class::<dispatch::ObserverRegistry>()?;
+    // CAS Volume Engine (Issue #3403)
+    m.add_class::<volume_engine::VolumeEngine>()?;
     Ok(())
 }

@@ -1,36 +1,23 @@
-"""Events Service — file watching and advisory locking.
+"""Events Service — file watching RPC wrapper + advisory locking.
 
-Dual-track event delivery for wait_for_changes():
+Thin service-layer wrapper around kernel FileWatcher (§4.5).
+Exposes ``wait_for_changes()`` via RPC and manages advisory locks.
 
-- **Internal (OBSERVE)**: EventsService registers as a VFSObserver on
-  KernelDispatch.  Local mutations trigger ``on_mutation()`` which resolves
-  pending waiters via in-memory futures (~0µs).
-- **EventBus (distributed)**: Remote mutations arrive via Dragonfly/NATS
-  pub/sub through ``EventBusBase.wait_for_event()``.
-
-When both paths are available, ``wait_for_changes()`` races them via
-``asyncio.wait(FIRST_COMPLETED)`` — local writes resolve instantly via
-the internal observer; remote writes arrive via EventBus.
-
-Known limitation: Raft apply on followers writes to redb directly via Rust
-and does NOT call dispatch.notify().  The EventBus path covers this gap.
-A future task should add a PyO3 callback from Rust apply → Python
-dispatch.notify() for full internal-only coverage.
+Architecture:
+    - File watching delegated to kernel FileWatcher (local OBSERVE + optional remote)
+    - Advisory locking (flock-style) managed here (service-tier concern)
+    - ``@rpc_expose`` methods are the only service-layer additions
 
 Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
 """
 
-import asyncio
 import contextlib
-import dataclasses
 import logging
-import threading
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.core.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 
@@ -38,41 +25,26 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.core.file_events import FileEvent
+    from nexus.core.file_watcher import FileWatcher
     from nexus.lib.distributed_lock import AdvisoryLockManager
-    from nexus.services.event_bus.base import EventBusBase
-
-
-@dataclasses.dataclass
-class _Waiter:
-    """Internal waiter for OBSERVE-path event delivery."""
-
-    path_pattern: str
-    future: asyncio.Future["FileEvent"]
-    loop: asyncio.AbstractEventLoop
 
 
 class EventsService:
-    """Events service — file watching via kernel OBSERVE + EventBus.
+    """Events service — RPC wrapper for kernel FileWatcher + advisory locking.
 
-    Implements VFSObserver (``on_mutation``) so that KernelDispatch.notify()
-    delivers FileEvents directly.  Also consumes EventBus for remote writes.
-
-    Architecture:
-        - Registers as VFSObserver on KernelDispatch (OBSERVE phase)
-        - on_mutation() resolves pending waiters in-memory (~0µs)
-        - EventBus covers remote writes (Raft followers)
-        - Races both when available (FIRST_COMPLETED)
+    File watching is fully delegated to the kernel FileWatcher primitive.
+    This service adds:
+    - ``@rpc_expose`` for gRPC/HTTP access
+    - Advisory locking (lock/unlock/extend_lock/locked)
+    - Zone ID resolution from OperationContext
     """
-
-    event_mask: int = (1 << 10) - 1  # ALL_FILE_EVENTS
 
     def __init__(
         self,
-        event_bus: "EventBusBase | None" = None,
+        file_watcher: "FileWatcher",
         zone_id: str | None = None,
     ):
-        self._event_bus = event_bus
+        self._file_watcher = file_watcher
         # Always create LocalLockManager — may be upgraded to RaftLockManager
         # at link time via upgrade_lock_manager().
         try:
@@ -87,35 +59,12 @@ class EventsService:
             logger.debug("[EventsService] LocalLockManager unavailable: %s", exc)
             self._lock_manager = None
         self._zone_id = zone_id
-        self._event_tasks: set[asyncio.Task[Any]] = set()
 
-        # OBSERVE-path waiter state (thread-safe: dispatch.notify is sync)
-        self._waiters: list[_Waiter] = []
-        self._waiters_lock = threading.Lock()
-        # Set to True after factory registers us as VFSObserver
-        self._observe_registered = True  # hooks registered at enlist() time
-
-        logger.info("[EventsService] Initialized")
-
-    # =========================================================================
-    # Hook spec (duck-typed, Issue #1611)
-    # =========================================================================
-
-    def hook_spec(self) -> HookSpec:
-        """Declare VFS hooks: EventsService registers itself as an OBSERVE observer."""
-        return HookSpec(observers=(self,))
+        logger.info("[EventsService] Initialized (delegates to kernel FileWatcher)")
 
     # =========================================================================
     # Infrastructure Detection
     # =========================================================================
-
-    def _has_internal_observe(self) -> bool:
-        """Check if kernel OBSERVE path is active (registered as VFSObserver)."""
-        return self._observe_registered
-
-    def _has_distributed_events(self) -> bool:
-        """Check if distributed event bus is available."""
-        return self._event_bus is not None
 
     def _has_lock_manager(self) -> bool:
         """Check if advisory lock manager is available."""
@@ -143,63 +92,6 @@ class EventsService:
         return ROOT_ZONE_ID
 
     # =========================================================================
-    # VFSObserver implementation (OBSERVE phase)
-    # =========================================================================
-
-    async def on_mutation(self, event: "FileEvent") -> None:
-        """Called by KernelDispatch.notify() on every local mutation.
-
-        Matches the event against pending waiters and resolves their futures.
-        Now guaranteed to run on the event loop (via gather in KernelDispatch).
-        """
-        with self._waiters_lock:
-            for w in self._waiters:
-                if not w.future.done() and event.matches_path_pattern(w.path_pattern):
-                    w.future.set_result(event)
-
-    # =========================================================================
-    # Internal wait (OBSERVE path)
-    # =========================================================================
-
-    async def _wait_internal(
-        self,
-        path: str,
-        timeout: float,
-    ) -> "FileEvent | None":
-        """Wait for a local mutation via OBSERVE-path future."""
-        loop = asyncio.get_running_loop()
-        future: asyncio.Future["FileEvent"] = loop.create_future()
-        waiter = _Waiter(path_pattern=path, future=future, loop=loop)
-
-        with self._waiters_lock:
-            self._waiters.append(waiter)
-        try:
-            return await asyncio.wait_for(future, timeout=timeout)
-        except TimeoutError:
-            return None
-        finally:
-            with self._waiters_lock, contextlib.suppress(ValueError):
-                self._waiters.remove(waiter)
-
-    # =========================================================================
-    # EventBus wait (distributed path)
-    # =========================================================================
-
-    async def _wait_eventbus(
-        self,
-        zone_id: str,
-        path: str,
-        timeout: float,
-    ) -> "FileEvent | None":
-        """Wait for a remote mutation via EventBus subscription."""
-        event = await self._event_bus.wait_for_event(  # type: ignore[union-attr]
-            zone_id=zone_id,
-            path_pattern=path,
-            timeout=timeout,
-        )
-        return event
-
-    # =========================================================================
     # Cache Invalidation Hooks (used by multi-instance tests)
     # =========================================================================
 
@@ -210,19 +102,6 @@ class EventsService:
     def _stop_cache_invalidation(self) -> None:
         """No-op placeholder — see ``_start_cache_invalidation``."""
         logger.debug("[EventsService] _stop_cache_invalidation (no-op)")
-
-    # =========================================================================
-    # System Readiness
-    # =========================================================================
-
-    async def _ensure_distributed_system_ready(self) -> None:
-        """Ensure the distributed event system is ready for use."""
-        if self._has_distributed_events() and not getattr(self._event_bus, "_started", False):
-            try:
-                await self._event_bus.start()  # type: ignore[union-attr]
-                logger.debug("Event bus auto-started")
-            except Exception as e:
-                logger.warning(f"Failed to auto-start event bus: {e}")
 
     # =========================================================================
     # Public API: File Watching
@@ -237,8 +116,8 @@ class EventsService:
     ) -> dict[str, Any] | None:
         """Wait for file system changes on a path.
 
-        Uses kernel OBSERVE for local writes (~0µs) and EventBus for remote
-        writes.  When both are available, races them via FIRST_COMPLETED.
+        Delegates to kernel FileWatcher which races local OBSERVE (~0µs)
+        and optional remote watcher (distributed) via FIRST_COMPLETED.
 
         Args:
             path: Virtual path to watch (supports glob patterns)
@@ -248,52 +127,13 @@ class EventsService:
         Returns:
             Dict with change info if change detected, None if timeout
         """
-        await self._ensure_distributed_system_ready()
-
         path = validate_path(path, allow_root=True)
         zone_id = self._get_zone_id(_context)
 
-        has_internal = self._has_internal_observe()
-        has_eventbus = self._has_distributed_events()
-
-        if has_internal and has_eventbus:
-            # Race both: local OBSERVE vs EventBus — first to fire wins
-            task_internal = asyncio.create_task(self._wait_internal(path, timeout))
-            task_eventbus = asyncio.create_task(self._wait_eventbus(zone_id, path, timeout))
-
-            done, pending = await asyncio.wait(
-                {task_internal, task_eventbus},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for t in pending:
-                t.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await t
-
-            result_event = done.pop().result()
-            if result_event is None:
-                return None
-            return result_event.to_dict()
-
-        if has_internal:
-            event = await self._wait_internal(path, timeout)
-            if event is None:
-                return None
-            return event.to_dict()
-
-        if has_eventbus:
-            logger.debug(f"Using distributed event bus for {path}")
-            event = await self._wait_eventbus(zone_id, path, timeout)
-            if event is None:
-                return None
-            return event.to_dict()
-
-        raise NotImplementedError(
-            "No event source available. Either register EventsService as "
-            "VFSObserver on KernelDispatch or configure EventBus for "
-            "distributed events."
-        )
+        event = await self._file_watcher.wait(path, timeout=timeout, zone_id=zone_id)
+        if event is None:
+            return None
+        return event.to_dict()
 
     # =========================================================================
     # Public API: Advisory Locking
@@ -324,8 +164,6 @@ class EventsService:
         Returns:
             Lock ID if acquired, None if timeout
         """
-        await self._ensure_distributed_system_ready()
-
         path = validate_path(path, allow_root=True)
 
         if not self._has_lock_manager():

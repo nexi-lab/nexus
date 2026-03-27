@@ -250,18 +250,18 @@ async def _boot_post_kernel_services(
     else:
         logger.debug("[BOOT:WIRED] ShareLinkService disabled by profile")
 
-    # --- EventsService: File watching + advisory locking ---
-    # EventsService is a VFSObserver — receives FileEvents via kernel OBSERVE.
-    # Factory registers it on dispatch in orchestrator.py after construction.
+    # --- EventsService: File watching RPC wrapper + advisory locking ---
+    # Delegates watch to kernel FileWatcher primitive (§4.5).
+    # Advisory locking is service-tier (flock-style).
     events_service: Any = None
     if _on("ipc"):
         try:
             from nexus.services.lifecycle.events_service import EventsService
 
             events_service = EventsService(
-                event_bus=services.get("event_bus"),
+                file_watcher=nx._file_watcher,
             )
-            logger.debug("[BOOT:WIRED] EventsService created")
+            logger.debug("[BOOT:WIRED] EventsService created (delegates to kernel FileWatcher)")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] EventsService unavailable: %s", exc)
     else:

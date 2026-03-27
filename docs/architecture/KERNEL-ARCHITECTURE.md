@@ -330,7 +330,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). One-dimension model: PersistentService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-owned, created at `__init__`. Details in §4.4 |
-| **FileEvent** | `core.file_events` | `fsnotify_event` | Immutable mutation records. Details in §4.3 |
+| **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | Kernel file change notification + immutable mutation records. FileWatcher: kernel-owned local OBSERVE waiters + kernel-knows `RemoteWatchProtocol`. FileEvent: frozen dataclass. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
 
@@ -374,13 +374,14 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 
 See `federation-memo.md` §7j for design rationale.
 
-### 4.3 FileEvent / FileEventType — Immutable Mutation Records
+### 4.3 FileWatcher + FileEvent — File Change Notification
 
 | Property | Value |
 |----------|-------|
 | Event types | `FILE_WRITE`, `FILE_DELETE`, `FILE_RENAME`, `METADATA_CHANGE`, `DIR_CREATE`, `DIR_DELETE`, `SYNC_*`, `CONFLICT_*` |
-| Structure | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
-| Consumer paths | KernelDispatch OBSERVE (local), EventBus (distributed) |
+| FileEvent | Frozen dataclass: path, etag, size, version, zone_id, agent_id, user_id, vector_clock |
+| FileWatcher (kernel-owned) | Local OBSERVE waiters — `on_mutation()` resolves in-memory futures (~0µs) |
+| FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |
 | Emission point | Always AFTER lock release |
 
 ### 4.4 AgentRegistry — Kernel Process Table

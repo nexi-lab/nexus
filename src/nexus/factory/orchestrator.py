@@ -536,17 +536,19 @@ async def _register_vfs_hooks(
         await _enlist("zone_writability", ZoneWritabilityHook(_zl2))
 
     # ── OBSERVE observers (Issue #900, #922) ──────────────────────────
+    # FileWatcher: kernel inotify primitive — local OBSERVE waiters.
+    # Registers itself as VFSObserver via hook_spec() at enlist() time.
+    # Remote watcher (EventBus) wired later by federation or other services.
+    await _enlist("file_watcher", nx._file_watcher)
+
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
-    # Replaces _publish_file_event() direct calls — single dispatch exit point.
-    # Issue #1701: event_bus injected directly via ServiceRegistry.
+    # Constructed with event_bus from system services dict. When event_bus is None
+    # (no distributed infra), the observer is a no-op.
     # Tests use swap_service() to replace.
     from nexus.services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(event_bus=_ss.get("event_bus"))
     await _enlist("event_bus_observer", _bus_observer)
-
-    # EventsService observer: self-registered via duck-typed hook_spec()
-    # at enlist() time (Issue #1611).
 
     # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
     # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).

@@ -414,10 +414,10 @@ class TestSlimIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.SLIM),
         )
 
-        # EventBusObserver + RevisionTrackingObserver are unconditionally
-        # registered (Issue #969, #1382); they degrade gracefully when
-        # no bus or version is configured.
-        assert nx._dispatch.observer_count == 2
+        # FileWatcher + EventBusObserver + RevisionTrackingObserver are
+        # unconditionally registered (Issue #969, #1382, #162); they
+        # degrade gracefully when no bus or version is configured.
+        assert nx._dispatch.observer_count == 3
 
     @pytest.mark.asyncio
     async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:

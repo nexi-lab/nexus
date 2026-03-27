@@ -9,6 +9,15 @@ import pytest
 from nexus.core.config import WiredServices
 from nexus.factory.service_routing import populate_service_registry
 
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+
 
 class TestWiredServicesDataclass:
     """Test WiredServices frozen dataclass behavior."""

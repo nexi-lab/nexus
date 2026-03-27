@@ -29,6 +29,14 @@ from nexus.system_services.agents.agent_service import (
     create_agent_service,
 )
 
+try:
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:

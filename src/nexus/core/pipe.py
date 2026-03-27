@@ -26,10 +26,18 @@ See: federation-memo.md §7j, ISSUE-A2A-PHASE2-VFS-IPC.md
 
 import asyncio
 import logging
-
-from nexus_fast import RingBufferCore
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+try:
+    from nexus_fast import RingBufferCore
+except ImportError:
+    RingBufferCore: Any = None  # type: ignore[no-redef]
+    logger.debug(
+        "nexus_fast not available — pipe operations require the Rust extension. "
+        "Build with: maturin develop --release -m rust/nexus_pyo3/Cargo.toml"
+    )
 
 # ---------------------------------------------------------------------------
 # Exceptions

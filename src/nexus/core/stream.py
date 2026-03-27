@@ -23,10 +23,18 @@ Data plane backed by Rust ``nexus_fast.StreamBufferCore``.
 
 import asyncio
 import logging
-
-from nexus_fast import StreamBufferCore
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+try:
+    from nexus_fast import StreamBufferCore
+except ImportError:
+    StreamBufferCore: Any = None  # type: ignore[no-redef]
+    logger.debug(
+        "nexus_fast not available — stream operations require the Rust extension. "
+        "Build with: maturin develop --release -m rust/nexus_pyo3/Cargo.toml"
+    )
 
 # ---------------------------------------------------------------------------
 # Exceptions

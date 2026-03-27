@@ -19,6 +19,14 @@ from nexus.lib.zone_helpers import add_user_to_zone
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+try:
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+
 
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:

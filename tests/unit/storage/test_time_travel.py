@@ -19,6 +19,14 @@ from nexus.storage.operation_logger import OperationLogger
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
+try:
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+
 # TimeTravelService reads content directly from CAS backend, bypassing
 # sys_read.  Content must exceed INLINE_THRESHOLD so it goes through CAS.
 _CAS_PAD = b"\x00" * (INLINE_THRESHOLD + 1)

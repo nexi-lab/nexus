@@ -15,6 +15,14 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.version_gc import GCStats, VersionGCSettings, VersionHistoryGC
 
+try:
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
+
 
 class TestGCStats:
     """Test GCStats dataclass."""

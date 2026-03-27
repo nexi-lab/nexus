@@ -33,6 +33,23 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         print(msg, file=sys.stderr, flush=True)
 
 
+# Probe for Raft metastore availability (requires Rust extension)
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+
+@pytest.fixture
+def requires_raft():
+    """Skip test if Raft metastore Rust extension is not available."""
+    if not _raft_available:
+        pytest.skip("Raft metastore not available (Rust extension not built)")
+
+
 # Conditionally ignore MCP tests if fastmcp is not installed
 # This must be done at collection time, before any imports from test files
 try:

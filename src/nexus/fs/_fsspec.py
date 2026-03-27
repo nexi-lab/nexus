@@ -316,6 +316,55 @@ class NexusFileSystem(AbstractFileSystem):
         path = self._strip_protocol(path)
         self._runner(self._nexus.mkdir(path, parents=create_parents))
 
+    def mkdir(self, path: str, create_parents: bool = True, **kwargs: Any) -> None:  # noqa: ARG002
+        """Create directory (public API).
+
+        Overrides the no-op default in AbstractFileSystem so that
+        ``fs.mkdir()`` and ``fs.makedirs()`` actually create directories.
+        """
+        self._mkdir(path, create_parents=create_parents)
+        self.dircache.clear()
+
+    def makedirs(self, path: str, exist_ok: bool = False) -> None:
+        """Create directory and parents (public API)."""
+        path = self._strip_protocol(path)
+        if not exist_ok:
+            stat = self._runner(self._nexus.stat(path))
+            if stat is not None and stat.get("is_directory"):
+                raise FileExistsError(path)
+        try:
+            self._mkdir(path, create_parents=True)
+        except Exception:
+            # Silently ignore errors for mount-point ancestors
+            # that the router won't let us create explicitly.
+            if exist_ok:
+                pass
+            else:
+                raise
+        self.dircache.clear()
+
+    def cp_file(self, path1: str, path2: str, **kwargs: Any) -> None:
+        """Copy a single file (public API).
+
+        Overrides the NotImplementedError default in AbstractFileSystem.
+        Handles directories (fsspec copy(recursive=True) calls cp_file
+        on each entry including directories) and ensures parent
+        directories exist in the metastore for ls() discovery.
+        """
+        import posixpath
+
+        path1 = self._strip_protocol(path1)
+        path2 = self._strip_protocol(path2)
+
+        if self.isdir(path1):
+            self.mkdir(path2)
+        else:
+            parent = posixpath.dirname(path2)
+            if parent and not self.isdir(parent):
+                self.makedirs(parent, exist_ok=True)
+            self._cp_file(path1, path2, **kwargs)
+        self.dircache.clear()
+
     # -- Open ------------------------------------------------------------------
 
     def _open(

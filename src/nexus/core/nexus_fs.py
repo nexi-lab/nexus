@@ -3332,19 +3332,38 @@ class NexusFS(  # type: ignore[misc]
                         dst_route.backend_path,
                         context=context,
                     )
-                    # Create metadata for the new file
+                    # Get the destination blob's actual size/version
+                    # (NOT the source's — versioned backends assign new IDs).
+                    dst_size = src_route.backend._transport.get_blob_size(
+                        src_route.backend._get_blob_path(dst_route.backend_path.strip("/")),
+                    )
+                    dst_version: str | None = None
+                    if (
+                        hasattr(src_route.backend, "versioning_enabled")
+                        and src_route.backend.versioning_enabled
+                    ):
+                        _get_ver = getattr(
+                            src_route.backend._transport, "get_version_id", None
+                        ) or getattr(src_route.backend._transport, "get_generation", None)
+                        if _get_ver:
+                            dst_version = _get_ver(
+                                src_route.backend._get_blob_path(dst_route.backend_path.strip("/"))
+                            )
+
                     from dataclasses import replace as _replace
 
                     dst_meta = _replace(
                         src_meta,
                         path=dst_path,
                         physical_path=dst_route.backend_path,
+                        etag=dst_version or src_meta.etag,
+                        size=dst_size,
                     )
                     self.metadata.put(dst_meta)
                     result = {
                         "path": dst_path,
-                        "size": dst_meta.size or 0,
-                        "etag": dst_meta.etag,
+                        "size": dst_size,
+                        "etag": dst_version or dst_meta.etag,
                         "version": dst_meta.version,
                     }
 
@@ -3374,18 +3393,36 @@ class NexusFS(  # type: ignore[misc]
                             chunks,
                             content_type=src_meta.mime_type or "",
                         )
+                        # Use source size (streaming doesn't return size);
+                        # get destination version if the backend is versioned.
+                        dst_version_id: str | None = None
+                        if (
+                            hasattr(dst_route.backend, "versioning_enabled")
+                            and dst_route.backend.versioning_enabled
+                        ):
+                            _get_ver = getattr(
+                                dst_route.backend._transport, "get_version_id", None
+                            ) or getattr(dst_route.backend._transport, "get_generation", None)
+                            if _get_ver:
+                                dst_version_id = _get_ver(
+                                    dst_route.backend._get_blob_path(
+                                        dst_route.backend_path.strip("/")
+                                    )
+                                )
+
                         from dataclasses import replace as _replace
 
                         dst_meta = _replace(
                             src_meta,
                             path=dst_path,
                             physical_path=dst_route.backend_path,
+                            etag=dst_version_id or src_meta.etag,
                         )
                         self.metadata.put(dst_meta)
                         result = {
                             "path": dst_path,
                             "size": dst_meta.size or 0,
-                            "etag": dst_meta.etag,
+                            "etag": dst_version_id or dst_meta.etag,
                             "version": dst_meta.version,
                         }
                     else:
@@ -3402,12 +3439,26 @@ class NexusFS(  # type: ignore[misc]
                                 f"{NEXUS_FS_MAX_INMEMORY_SIZE / (1024**3):.0f} GB limit). "
                                 f"Move the file to the same backend first."
                             )
+                        # Build a context with backend_path for the source read
+                        from dataclasses import replace as _ctx_replace
+
+                        src_ctx = (
+                            _ctx_replace(
+                                context,
+                                backend_path=src_route.backend_path,
+                            )
+                            if context
+                            else context
+                        )
                         content = src_route.backend.read_content(
                             src_meta.physical_path or src_route.backend_path,
-                            context=context,
+                            context=src_ctx,
                         )
+                        # Supply content_id=backend_path so path-addressed
+                        # backends know where to write the blob.
                         write_result = dst_route.backend.write_content(
                             content,
+                            content_id=dst_route.backend_path,
                             context=context,
                         )
                         from dataclasses import replace as _replace

@@ -99,11 +99,14 @@ refcount drain → unhook old → replace → rehook new.
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
 |---------|-------------------|---------------------|---------|
 | **Kernel owns** | Creates instance | — | VFSLockManager, KernelDispatch, PipeManager, StreamManager, ServiceRegistry, DriverLifecycleCoordinator |
-| **Kernel knows** (sentinel) | `self._x = None` (or AllowAll default) | Injects real value; `None` = graceful degrade | `_permission_enforcer`, `_descendant_checker`, `_distributed_lock_manager`, `_agent_registry` |
+| **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_distributed_lock_manager`, `_agent_registry` |
 
-"Kernel knows" follows the Linux LSM pattern: kernel declares a default (allow-all
-or None), factory overrides at link-time. The kernel never imports service-layer
-modules — it uses what it's given, or degrades gracefully without it.
+"Kernel knows" follows the Linux LSM pattern: kernel declares a default (None),
+factory overrides at link-time. The kernel never imports service-layer modules.
+
+Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
+(PermissionCheckHook). No hook registered = no check = zero overhead.
+`_permission_enforcer` and `_descendant_checker` removed — no kernel DI needed.
 
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`

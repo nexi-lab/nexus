@@ -170,3 +170,63 @@ class TestFileWatcherWait:
         fw = FileWatcher()
         result = await fw.wait("/test/file.txt", timeout=0.05)
         assert result is None
+
+
+class TestFileWatcherCrossZone:
+    """Test cross-zone routing — skip local wait for remote zones."""
+
+    @pytest.mark.asyncio
+    async def test_remote_zone_skips_local_wait(self) -> None:
+        """When zone_id != local_zone_id, wait() goes straight to remote."""
+        fw = FileWatcher(local_zone_id="zone1")
+        remote_event = _make_event("/zone2/file.txt")
+        mock_watcher = AsyncMock(spec=RemoteWatchProtocol)
+        mock_watcher.wait_for_event.return_value = remote_event
+        fw.set_remote_watcher(mock_watcher)
+
+        result = await fw.wait("/zone2/file.txt", timeout=5.0, zone_id="zone2")
+        assert result is not None
+        assert result.path == "/zone2/file.txt"
+        # Verify remote watcher was called with correct zone
+        mock_watcher.wait_for_event.assert_called_once_with(
+            zone_id="zone2", path_pattern="/zone2/file.txt", timeout=5.0
+        )
+
+    @pytest.mark.asyncio
+    async def test_local_zone_still_races(self) -> None:
+        """When zone_id == local_zone_id, wait() races local + remote."""
+        fw = FileWatcher(local_zone_id="zone1")
+        local_event = _make_event("/zone1/file.txt")
+
+        async def slow_remote(*args, **kwargs):
+            await asyncio.sleep(10)
+            return None
+
+        mock_watcher = AsyncMock(spec=RemoteWatchProtocol)
+        mock_watcher.wait_for_event.side_effect = slow_remote
+        fw.set_remote_watcher(mock_watcher)
+
+        async def mutator() -> None:
+            await asyncio.sleep(0.01)
+            await fw.on_mutation(local_event)
+
+        task = asyncio.create_task(fw.wait("/zone1/file.txt", timeout=5.0, zone_id="zone1"))
+        await mutator()
+        result = await task
+        assert result is not None
+        assert result.path == "/zone1/file.txt"
+
+    @pytest.mark.asyncio
+    async def test_no_local_zone_id_treats_all_as_local(self) -> None:
+        """When local_zone_id is None (single-node), _is_remote_zone always False."""
+        fw = FileWatcher(local_zone_id=None)
+        assert fw._is_remote_zone("zone1") is False
+        assert fw._is_remote_zone("zone2") is False
+
+    @pytest.mark.asyncio
+    async def test_remote_zone_no_watcher_returns_none(self) -> None:
+        """Remote zone without remote watcher returns None (timeout)."""
+        fw = FileWatcher(local_zone_id="zone1")
+        # No remote watcher set — falls through to wait_local which will timeout
+        result = await fw.wait("/zone2/file.txt", timeout=0.05, zone_id="zone2")
+        assert result is None

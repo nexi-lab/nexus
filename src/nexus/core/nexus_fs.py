@@ -210,11 +210,13 @@ class NexusFS(  # type: ignore[misc]
             self_address=_ipc_self_addr,
             channel_pool=self._channel_pool,
         )
-        # FileWatcher — kernel file change notification (inotify equivalent, §4.5).
+        # FileWatcher — kernel file change notification (inotify equivalent, §4.3).
         # Kernel-owned local OBSERVE waiters + optional kernel-knows remote watcher.
+        # local_zone_id enables cross-zone optimization: skip local wait when
+        # watching a remote zone (guaranteed miss). Defaults to ROOT_ZONE_ID.
         from nexus.core.file_watcher import FileWatcher
 
-        self._file_watcher = FileWatcher()
+        self._file_watcher = FileWatcher(local_zone_id=ROOT_ZONE_ID)
 
         logger.info(
             "IPC primitives initialized: PipeManager + StreamManager + FileWatcher (self_address=%s)",

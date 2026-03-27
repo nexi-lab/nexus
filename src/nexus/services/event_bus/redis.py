@@ -27,6 +27,9 @@ class RedisEventBus(EventBusBase):
     Uses per-zone channels for efficient event routing.
     Channel format: nexus:events:{zone_id}
 
+    **Cross-zone limitation**: Redis pub/sub is single-instance. Cross-zone
+    event propagation requires a shared NATS cluster (NatsEventBus).
+
     SSOT Architecture:
         - PostgreSQL (operation_log) is the source of truth
         - Redis Pub/Sub is best-effort notification

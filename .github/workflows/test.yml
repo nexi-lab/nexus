@@ -460,10 +460,12 @@ jobs:
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist/*.whl
 
       - name: Install in clean environment (with timing)
+        env:
+          VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
-          uv venv --python 3.13 /tmp/nexus-fs-test
+          uv venv --python 3.13 $VIRTUAL_ENV
           start_time=$(date +%s%N)
-          VIRTUAL_ENV=/tmp/nexus-fs-test /tmp/nexus-fs-test/bin/pip install dist/*.whl
+          uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
           end_time=$(date +%s%N)
           install_ms=$(( (end_time - start_time) / 1000000 ))
           echo "Install time: ${install_ms}ms"
@@ -475,7 +477,6 @@ jobs:
           /tmp/nexus-fs-test/bin/python -c "
           import nexus.fs
           print(f'nexus-fs v{nexus.fs.__version__}')
-          # Verify lazy imports work
           _ = nexus.fs.SlimNexusFS
           _ = nexus.fs.parse_uri
           print('Import OK')
@@ -484,22 +485,20 @@ jobs:
       - name: Smoke test — CLI
         run: |
           /tmp/nexus-fs-test/bin/nexus-fs --help
-          # doctor may exit 1 if cloud backends aren't configured — that's expected in CI
           /tmp/nexus-fs-test/bin/nexus-fs doctor || true
 
       - name: Smoke test — fsspec entry point
         run: |
-          /tmp/nexus-fs-test/bin/pip install fsspec
+          uv pip install --python /tmp/nexus-fs-test/bin/python fsspec
           /tmp/nexus-fs-test/bin/python -c "
           import fsspec
-          # Verify the entry point is discoverable
           cls = fsspec.get_filesystem_class('nexus')
           print(f'fsspec entry point OK: {cls}')
           "
 
       - name: Smoke test — S3 extra
         run: |
-          /tmp/nexus-fs-test/bin/pip install boto3
+          uv pip install --python /tmp/nexus-fs-test/bin/python boto3
           /tmp/nexus-fs-test/bin/python -c "
           from nexus.backends.storage.path_s3 import PathS3Backend
           print('S3 backend import OK')
@@ -507,7 +506,7 @@ jobs:
 
       - name: Smoke test — GCS extra
         run: |
-          /tmp/nexus-fs-test/bin/pip install google-cloud-storage
+          uv pip install --python /tmp/nexus-fs-test/bin/python google-cloud-storage
           /tmp/nexus-fs-test/bin/python -c "
           from nexus.backends.storage.cas_gcs import CASGCSBackend
           print('GCS backend import OK')
@@ -516,12 +515,10 @@ jobs:
       - name: Cold import time gate (budget 240ms)
         run: |
           /tmp/nexus-fs-test/bin/python -X importtime -c "import nexus.fs" 2> /tmp/importtime.log
-          # Parse cumulative time from last line
           cumulative_us=$(/tmp/nexus-fs-test/bin/python -c "
           import re
           with open('/tmp/importtime.log') as f:
               lines = f.read().strip().splitlines()
-          # Last line has the total cumulative time
           last = lines[-1]
           match = re.search(r'\|\s+(\d+)\s+\|', last)
           print(match.group(1) if match else '0')

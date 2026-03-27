@@ -152,12 +152,24 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     return selected.category === "cli" || selected.category === "oauth" || selected.category === "api";
   }, [connectors, selectedIndex]);
 
+  // Mount success flash
+  const [mountFlash, setMountFlash] = useState<string | null>(null);
+
   /** Mount directly via API for connectors that need no config. */
-  const handleDirectMount = useCallback(() => {
+  const handleDirectMount = useCallback(async () => {
     const selected = connectors[selectedIndex];
     if (!selected) return;
+    if (selected.mount_path) {
+      // Already mounted — show flash
+      setMountFlash(`Already mounted at ${selected.mount_path}`);
+      setTimeout(() => setMountFlash(null), 2000);
+      return;
+    }
     const baseName = selected.name.replace(/_connector$/, "");
-    mountConnector(selected.name, `/mnt/${baseName}`, client);
+    setMountFlash(`Mounting ${baseName}...`);
+    await mountConnector(selected.name, `/mnt/${baseName}`, client);
+    setMountFlash(`✓ Mounted at /mnt/${baseName}`);
+    setTimeout(() => setMountFlash(null), 2000);
   }, [connectors, selectedIndex, mountConnector, client]);
 
   /** Enter/m: direct mount if no config needed, otherwise show CLI guide. */
@@ -212,6 +224,15 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
 
   return (
     <box flexDirection="column" height="100%" width="100%">
+      {/* Mount flash */}
+      {mountFlash && (
+        <box height={1} width="100%" marginBottom={1}>
+          <text foregroundColor={mountFlash.startsWith("✓") ? statusColor.healthy : statusColor.info}>
+            {mountFlash}
+          </text>
+        </box>
+      )}
+
       {/* Mount CLI guide */}
       {showMountGuide && selectedConnector && (
         <box flexDirection="column" width="100%" borderStyle="single" marginBottom={1}>

@@ -24,6 +24,9 @@ defaults:
   run:
     working-directory: packages/nexus-fs
 
+env:
+  DISABLE_MKDOCS_2_WARNING: "true"
+
 jobs:
   check:
     name: Build & test docs
@@ -37,22 +40,14 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-
       - name: Install dependencies
-        run: |
-          uv venv --python 3.13
-          uv pip install -r requirements-docs.txt
+        run: pip install -r requirements-docs.txt
 
       - name: Build docs (strict)
-        run: uv run mkdocs build --strict
-        env:
-          DISABLE_MKDOCS_2_WARNING: "true"
+        run: mkdocs build --strict
 
       - name: Spell check
-        run: uv run typos docs/
+        run: typos docs/
 
   deploy:
     name: Deploy to GitHub Pages
@@ -71,15 +66,9 @@ jobs:
         with:
           python-version: "3.13"
 
-      - uses: astral-sh/setup-uv@v3
-        with:
-          enable-cache: true
-
       - name: Install dependencies
         working-directory: packages/nexus-fs
-        run: |
-          uv venv --python 3.13
-          uv pip install -r requirements-docs.txt
+        run: pip install -r requirements-docs.txt
 
       - name: Configure git
         run: |
@@ -89,10 +78,8 @@ jobs:
       - name: Deploy versioned docs
         working-directory: packages/nexus-fs
         run: |
-          uv run mike deploy --push --update-aliases 0.1.0 latest
-          uv run mike set-default --push latest
-        env:
-          DISABLE_MKDOCS_2_WARNING: "true"
+          mike deploy --push --update-aliases 0.1.0 latest
+          mike set-default --push latest
 
   link-check:
     name: Check external links

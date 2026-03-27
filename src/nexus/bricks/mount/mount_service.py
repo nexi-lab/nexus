@@ -377,7 +377,6 @@ class MountService:
                 entry_type = DT_MOUNT
 
             zone_id = get_zone_id(context) if context else "default"
-            created_by = getattr(context, "user_id", None) if context else None
 
             parts = mount_point.rstrip("/").split("/")
             for i in range(2, len(parts) + 1):
@@ -398,7 +397,6 @@ class MountService:
                         created_at=now,
                         modified_at=now,
                         version=1,
-                        created_by=created_by,
                         zone_id=zone_id,
                     )
                     self._gw.metadata_put(meta)

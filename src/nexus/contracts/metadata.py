@@ -51,7 +51,6 @@ class FileMetadata:
     modified_at: datetime | None = None
     version: int = 1
     zone_id: str | None = None  # Kernel namespace partition ID (P0 invariant)
-    created_by: str | None = None
     owner_id: str | None = None  # Kernel posix_uid for O(1) DAC
     entry_type: int = 0
     target_zone_id: str | None = None  # Mount target namespace (DT_MOUNT only)
@@ -114,7 +113,6 @@ class FileMetadata:
             "modified_at": self.modified_at.isoformat() if self.modified_at else None,
             "version": self.version,
             "zone_id": self.zone_id,
-            "created_by": self.created_by,
             "owner_id": self.owner_id,
             "entry_type": self.entry_type,
             "target_zone_id": self.target_zone_id,

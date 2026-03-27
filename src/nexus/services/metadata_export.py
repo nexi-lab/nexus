@@ -243,7 +243,6 @@ class MetadataExportService:
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at or existing.modified_at,
                 version=metadata_dict.get("version", existing.version),
-                created_by=self._created_by,
             )
             self._metadata.put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
@@ -333,7 +332,6 @@ class MetadataExportService:
             created_at=created_at or existing.created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", existing.version + 1),
-            created_by=self._created_by,
         )
         self._metadata.put(file_meta)
         self._import_custom_metadata(path, metadata_dict)
@@ -387,7 +385,6 @@ class MetadataExportService:
             created_at=created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._created_by,
         )
         self._metadata.put(file_meta)
         self._import_custom_metadata(remapped_path, metadata_dict)
@@ -446,7 +443,6 @@ class MetadataExportService:
                 created_at=created_at or existing.created_at,
                 modified_at=modified_at,
                 version=metadata_dict.get("version", existing.version + 1),
-                created_by=self._created_by,
             )
             self._metadata.put(file_meta)
             self._import_custom_metadata(path, metadata_dict)
@@ -497,7 +493,6 @@ class MetadataExportService:
             created_at=created_at,
             modified_at=modified_at,
             version=metadata_dict.get("version", 1),
-            created_by=self._created_by,
         )
 
         self._metadata.put(file_meta)

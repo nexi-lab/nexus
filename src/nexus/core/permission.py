@@ -22,6 +22,10 @@ class AllowAllEnforcer:
     All permission checks return True (allow-all).
     """
 
+    def check_owner(self, metadata: Any, context: Any) -> bool:  # noqa: ARG002
+        """AllowAll: owner check always passes (like root)."""
+        return True
+
     def check(self, path: str, permission: Any, context: Any) -> bool:  # noqa: ARG002
         """Always grants permission."""
         return True

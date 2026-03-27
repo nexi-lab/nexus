@@ -154,22 +154,18 @@ class PermissionChecker:
             permission_path = path
 
         # ----------------------------------------------------------
-        # Issue #920: O(1) owner fast-path check
-        # If the file has posix_uid set and it matches the requesting
-        # user, skip the expensive ReBAC graph traversal.
+        # Issue #920 / #1825: O(1) owner fast-path via kernel contract.
+        # Delegates to PermissionEnforcerProtocol.check_owner() so the
+        # check lives on the kernel contract, not in this service class.
         # ----------------------------------------------------------
-        file_meta = (
-            file_metadata
-            if (file_metadata is not None and permission_path == path)
-            else self._metadata_store.get(permission_path)
-        )
-        if file_meta and file_meta.owner_id:
-            subject_id = ctx.subject_id or ctx.user_id
-            if file_meta.owner_id == subject_id:
-                logger.debug(
-                    f"  -> OWNER FAST-PATH: {subject_id} owns {permission_path}, skipping ReBAC"
-                )
-                return  # Owner has all permissions
+        if self._permission_enforcer is not None:
+            _owner_meta = (
+                file_metadata
+                if (file_metadata is not None and permission_path == path)
+                else self._metadata_store.get(permission_path)
+            )
+            if self._permission_enforcer.check_owner(_owner_meta, ctx):
+                return  # Owner has all permissions — skip ReBAC
 
         # ----------------------------------------------------------
         # ReBAC graph traversal via PermissionEnforcer

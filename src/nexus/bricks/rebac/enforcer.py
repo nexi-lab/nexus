@@ -205,6 +205,26 @@ class PermissionEnforcer:
                 stacklevel=2,
             )
 
+    def check_owner(
+        self,
+        metadata: Any,
+        context: "OperationContext",
+    ) -> bool:
+        """Kernel DAC: O(1) owner fast-path (Issue #920, #1825).
+
+        Returns True if context subject matches metadata.owner_id.
+        Moved from PermissionChecker to kernel contract so the kernel
+        can call it directly before hook dispatch.
+        """
+        if metadata is not None and getattr(metadata, "owner_id", None):
+            subject_id = context.subject_id or context.user_id
+            if metadata.owner_id == subject_id:
+                logger.debug(
+                    f"  -> OWNER FAST-PATH: {subject_id} owns {getattr(metadata, 'path', '?')}, skipping ReBAC"
+                )
+                return True
+        return False
+
     def invalidate_cache(
         self,
         subject_type: str | None = None,

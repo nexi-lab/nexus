@@ -12,6 +12,7 @@ References:
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from nexus.contracts.metadata import FileMetadata
     from nexus.contracts.types import OperationContext, Permission
 
 
@@ -22,6 +23,21 @@ class PermissionEnforcerProtocol(Protocol):
     Do NOT use ``isinstance()`` checks in hot paths — use structural
     typing via Protocol matching instead.
     """
+
+    def check_owner(
+        self,
+        metadata: "FileMetadata | None",
+        context: "OperationContext",
+    ) -> bool:
+        """Kernel DAC: O(1) owner check (like Linux ``inode_permission`` i_uid).
+
+        Returns True if context subject matches ``metadata.owner_id``.
+        Kernel calls this BEFORE hook dispatch — fast path that skips
+        expensive ReBAC graph traversal for file owners.
+
+        Issue #920, #1825.
+        """
+        ...
 
     def check(
         self,

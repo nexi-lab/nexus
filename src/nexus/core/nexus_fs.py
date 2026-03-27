@@ -210,8 +210,14 @@ class NexusFS(  # type: ignore[misc]
             self_address=_ipc_self_addr,
             channel_pool=self._channel_pool,
         )
+        # FileWatcher — kernel file change notification (inotify equivalent, §4.5).
+        # Kernel-owned local OBSERVE waiters + optional kernel-knows remote watcher.
+        from nexus.core.file_watcher import FileWatcher
+
+        self._file_watcher = FileWatcher()
+
         logger.info(
-            "IPC primitives initialized: PipeManager + StreamManager (self_address=%s)",
+            "IPC primitives initialized: PipeManager + StreamManager + FileWatcher (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 

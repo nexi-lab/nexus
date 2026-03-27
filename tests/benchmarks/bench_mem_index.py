@@ -137,15 +137,19 @@ def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
         read_median = statistics.median(read_times_us)
         checks = []
         checks.append(("Read latency < 100μs", read_median < 100, f"{read_median:.0f}μs"))
-        checks.append(("Per-entry memory < 100B", per_entry < 100, f"{per_entry:.1f}B"))
-        if count >= 10000:
-            checks.append(
-                (
-                    f"Startup load < 200ms ({count:,} entries)",
-                    startup_time * 1000 < 200,
-                    f"{startup_time * 1000:.1f}ms",
-                )
+        checks.append(("Per-entry memory < 60B", per_entry < 60, f"{per_entry:.1f}B"))
+        checks.append(
+            (
+                f"Startup load ({count:,} entries)",
+                startup_time * 1000 < 200,
+                f"{startup_time * 1000:.1f}ms",
             )
+        )
+        if count >= 10000:
+            per_entry_us = (startup_time * 1_000_000) / count
+            print(f"  Startup per-entry: {per_entry_us:.1f}μs (redb iteration dominates)")
+            extrapolated_1m = per_entry_us * 1_000_000 / 1000
+            print(f"  1M extrapolation:  {extrapolated_1m:.0f}ms (linear, pessimistic)")
 
         for label, passed, value in checks:
             status = "✓" if passed else "✗"
@@ -155,10 +159,10 @@ def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
         engine.close()
 
 
-# Pytest entry point
-@pytest.mark.timeout(60)
+# Pytest entry point — runs at 50K entries to meaningfully extrapolate to 1M.
+@pytest.mark.timeout(120)
 def test_mem_index_benchmark():
-    run_benchmark(count=5000, read_iterations=200)
+    run_benchmark(count=50000, read_iterations=200)
 
 
 if __name__ == "__main__":

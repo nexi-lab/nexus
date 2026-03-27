@@ -1,10 +1,10 @@
 //! In-memory volume index — O(1) content lookup via Rust HashMap.
 //!
-//! Maintains a `HashMap<[u8; 16], MemIndexEntry>` for instant hash-to-location
+//! Maintains a `HashMap<[u8; 32], MemIndexEntry>` for instant hash-to-location
 //! lookups and keeps volume file descriptors open for zero-overhead pread.
 //!
-//! Keys are truncated to 16 bytes (128-bit) from the full 32-byte blake3 hash.
-//! Collision probability at 1M entries: ~10^-27 (birthday bound at 2^64).
+//! Uses full 32-byte blake3 hashes as keys to preserve CAS identity —
+//! a content-addressed store must never alias distinct hashes.
 //!
 //! Thread safety: callers protect the index with `RwLock<VolumeIndex>`.
 //! Volume FDs support concurrent pread via `read_at` (no seek required).
@@ -21,22 +21,6 @@ use std::path::Path;
 /// Entry header size in volume files: hash(32) + size(4) + flags(1) = 37 bytes.
 /// Must match `ENTRY_HEADER_SIZE` in `volume_engine.rs`.
 const ENTRY_HEADER_SIZE: u64 = 37;
-
-/// Number of bytes kept from the full 32-byte hash for the in-memory key.
-/// 16 bytes (128-bit) gives collision probability ~10^-27 at 1M entries.
-const KEY_LEN: usize = 16;
-
-/// Fold a full 32-byte hash into a 16-byte key via XOR of both halves.
-/// This preserves entropy from all 32 bytes, so hashes that differ in
-/// any position produce distinct keys (e.g., test hashes like 000...0001).
-#[inline]
-fn fold_key(hash: &[u8; 32]) -> [u8; KEY_LEN] {
-    let mut key = [0u8; KEY_LEN];
-    for i in 0..KEY_LEN {
-        key[i] = hash[i] ^ hash[i + KEY_LEN];
-    }
-    key
-}
 
 /// Compact index entry for in-memory O(1) lookup.
 ///
@@ -64,12 +48,11 @@ pub enum ReadContentResult {
 
 /// In-memory volume index for O(1) content lookup.
 ///
-/// Keys are truncated to 16 bytes from the full 32-byte blake3 hash.
-/// Memory: ~38 bytes per entry (16B key + 16B value + hashmap overhead).
-/// For 1M entries: ~38 MB — trivial for any deployment.
+/// Memory: ~56 bytes per entry (32B key + 16B value + hashmap overhead).
+/// For 1M entries: ~56 MB — trivial for any deployment.
 pub struct VolumeIndex {
-    /// truncated_hash[0..16] → (volume_id, offset, size)
-    map: HashMap<[u8; KEY_LEN], MemIndexEntry>,
+    /// blake3_hash → (volume_id, offset, size)
+    map: HashMap<[u8; 32], MemIndexEntry>,
     /// Volume file descriptors kept open for pread.
     volumes: HashMap<u32, std::fs::File>,
 }
@@ -92,25 +75,25 @@ impl VolumeIndex {
     /// O(1) lookup of content location by hash.
     #[inline]
     pub fn lookup(&self, hash: &[u8; 32]) -> Option<MemIndexEntry> {
-        self.map.get(&fold_key(hash)).copied()
+        self.map.get(hash).copied()
     }
 
     /// Check if a hash exists in the index.
     #[inline]
     pub fn contains(&self, hash: &[u8; 32]) -> bool {
-        self.map.contains_key(&fold_key(hash))
+        self.map.contains_key(hash)
     }
 
     /// Insert or update an entry.
     #[inline]
     pub fn insert(&mut self, hash: [u8; 32], entry: MemIndexEntry) {
-        self.map.insert(fold_key(&hash), entry);
+        self.map.insert(hash, entry);
     }
 
     /// Remove an entry. Returns true if it existed.
     #[inline]
     pub fn remove(&mut self, hash: &[u8; 32]) -> bool {
-        self.map.remove(&fold_key(hash)).is_some()
+        self.map.remove(hash).is_some()
     }
 
     /// Lookup + pread in a single operation (no Python round-trip).
@@ -118,7 +101,7 @@ impl VolumeIndex {
     /// Uses `read_at` (pread) for thread-safe concurrent reads from cached FDs.
     #[cfg(unix)]
     pub fn read_content(&self, hash: &[u8; 32]) -> ReadContentResult {
-        let entry = match self.map.get(&fold_key(hash)) {
+        let entry = match self.map.get(hash) {
             Some(e) => *e,
             None => return ReadContentResult::NotFound,
         };
@@ -142,7 +125,7 @@ impl VolumeIndex {
 
     #[cfg(not(unix))]
     pub fn read_content(&self, hash: &[u8; 32]) -> ReadContentResult {
-        match self.map.get(&fold_key(hash)) {
+        match self.map.get(hash) {
             Some(e) => ReadContentResult::NoFd(*e),
             None => ReadContentResult::NotFound,
         }
@@ -174,10 +157,9 @@ impl VolumeIndex {
 
     /// Estimated memory usage in bytes.
     pub fn memory_bytes(&self) -> usize {
-        // hashbrown layout: each bucket = key(16) + value(16) = 32 bytes + 1 control byte
+        // hashbrown layout: each bucket = key(32) + value(16) = 48 bytes + 1 control byte
         // Load factor ~87.5%, so capacity ≈ len * 8/7
-        let entry_size =
-            std::mem::size_of::<[u8; KEY_LEN]>() + std::mem::size_of::<MemIndexEntry>();
+        let entry_size = std::mem::size_of::<[u8; 32]>() + std::mem::size_of::<MemIndexEntry>();
         let capacity = self.map.capacity().max(self.map.len());
         let map_bytes = capacity * (entry_size + 1); // +1 for control byte per bucket
 
@@ -192,7 +174,7 @@ impl VolumeIndex {
     #[allow(dead_code)]
     pub fn load_entries(&mut self, entries: impl Iterator<Item = ([u8; 32], MemIndexEntry)>) {
         for (hash, entry) in entries {
-            self.map.insert(fold_key(&hash), entry);
+            self.map.insert(hash, entry);
         }
     }
 
@@ -246,23 +228,6 @@ mod tests {
     }
 
     #[test]
-    fn test_key_folding() {
-        let mut idx = VolumeIndex::new();
-        // Two hashes identical in first 16 bytes but different in last 16
-        // produce DIFFERENT folded keys (XOR distinguishes them)
-        let h1 = [0xAAu8; 32];
-        let mut h2 = [0xAAu8; 32];
-        h2[16] = 0xBB; // differ only after byte 16
-
-        idx.insert(h1, make_entry(1, 0, 10));
-        idx.insert(h2, make_entry(2, 100, 20));
-        // XOR-fold distinguishes these, so both exist
-        assert_eq!(idx.len(), 2);
-        assert_eq!(idx.lookup(&h1).unwrap().volume_id, 1);
-        assert_eq!(idx.lookup(&h2).unwrap().volume_id, 2);
-    }
-
-    #[test]
     fn test_with_capacity() {
         let idx = VolumeIndex::with_capacity(1000);
         assert_eq!(idx.len(), 0);
@@ -279,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn test_memory_bytes_within_target() {
+    fn test_memory_bytes_grows() {
         let mut idx = VolumeIndex::new();
         let empty_bytes = idx.memory_bytes();
 
@@ -291,10 +256,9 @@ mod tests {
         assert!(loaded_bytes > empty_bytes);
 
         let per_entry = (loaded_bytes - std::mem::size_of::<VolumeIndex>()) as f64 / 100.0;
-        // 16 (key) + 16 (value) + 1 (control) = 33 bytes minimum
-        assert!(per_entry >= 33.0, "per_entry={per_entry} too small");
-        // Target: < 40 bytes per entry
-        assert!(per_entry < 60.0, "per_entry={per_entry} too large");
+        // 32 (key) + 16 (value) + 1 (control) = 49 bytes minimum
+        assert!(per_entry >= 49.0, "per_entry={per_entry} too small");
+        assert!(per_entry < 120.0, "per_entry={per_entry} too large");
     }
 
     #[test]

@@ -120,7 +120,7 @@ class SlackConnectorBackend(
     - Messages stored as JSON files
     """
 
-    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,

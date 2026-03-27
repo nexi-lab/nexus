@@ -58,7 +58,7 @@ class DelegatingBackend(Backend):
 
     def __init__(self, inner: Backend) -> None:
         self._inner = inner
-        self._cached_capabilities = inner.capabilities
+        self._cached_backend_features = inner.capabilities
 
     # === Name & Chain Introspection ===
 
@@ -102,11 +102,11 @@ class DelegatingBackend(Backend):
     @property
     def capabilities(self) -> frozenset:
         """Delegate to inner backend's capabilities (cached in __init__)."""
-        return self._cached_capabilities
+        return self._cached_backend_features
 
-    def has_capability(self, cap: object) -> bool:
+    def has_feature(self, cap: object) -> bool:
         """Check capability using cached frozenset."""
-        return cap in self._cached_capabilities
+        return cap in self._cached_backend_features
 
     # === Transform Hooks (override in data-transforming wrappers) ===
 

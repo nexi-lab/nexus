@@ -35,8 +35,8 @@ def _make_backend(
         from nexus.contracts.backend_features import BackendFeature
 
         capabilities = frozenset({BackendFeature.SYNC_ELIGIBLE})
-    backend.capabilities = capabilities
-    backend.has_capability = MagicMock(side_effect=lambda c: c in capabilities)
+    backend.backend_features = capabilities
+    backend.has_feature = MagicMock(side_effect=lambda c: c in capabilities)
 
     if has_sync_delta:
         backend.sync_delta = MagicMock(return_value=sync_delta_result)

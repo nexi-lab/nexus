@@ -76,7 +76,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CAS_ADDRESSING_CAPABILITIES: frozenset[BackendFeature] = frozenset(
+CAS_ADDRESSING_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
         BackendFeature.CAS,
         BackendFeature.STREAMING,
@@ -103,7 +103,7 @@ class CASAddressingEngine(Backend):
         _backend_name: Human-readable backend identifier.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = CAS_ADDRESSING_CAPABILITIES
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = CAS_ADDRESSING_BACKEND_FEATURES
 
     def __init__(
         self,

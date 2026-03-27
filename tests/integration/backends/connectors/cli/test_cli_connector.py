@@ -279,19 +279,19 @@ class TestConnectionLifecycle:
 class TestCapabilities:
     def test_has_cli_backed(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(BackendFeature.CLI_BACKED)
+        assert connector.has_feature(BackendFeature.CLI_BACKED)
 
     def test_has_skill_doc(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(BackendFeature.SKILL_DOC)
+        assert connector.has_feature(BackendFeature.SKILL_DOC)
 
     def test_has_write_back(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(BackendFeature.WRITE_BACK)
+        assert connector.has_feature(BackendFeature.WRITE_BACK)
 
     def test_has_sync(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(BackendFeature.SYNC)
+        assert connector.has_feature(BackendFeature.SYNC)
 
     def test_name(self) -> None:
         connector = FakeCLIConnector()

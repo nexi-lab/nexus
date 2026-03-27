@@ -64,8 +64,8 @@ def _make_route(
 
     backend = MagicMock()
     backend.name = backend_name
-    backend.capabilities = caps
-    backend.has_capability = MagicMock(side_effect=lambda c: c in caps)
+    backend.backend_features = caps
+    backend.has_feature = MagicMock(side_effect=lambda c: c in caps)
     backend.use_metadata_listing = use_metadata_listing
 
     return SimpleNamespace(

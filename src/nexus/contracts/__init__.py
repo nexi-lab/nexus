@@ -19,7 +19,7 @@ from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import TIER_ALIASES, PriorityTier
 from nexus.contracts.credential_types import (
     DEFAULT_CREDENTIAL_TTL,
-    MAX_CAPABILITIES_PER_CREDENTIAL,
+    MAX_BACKEND_FEATURES_PER_CREDENTIAL,
     MAX_CREDENTIAL_TTL,
     MAX_DELEGATION_DEPTH,
     MIN_CREDENTIAL_TTL,
@@ -200,7 +200,7 @@ __all__ = [
     "CredentialClaims",
     "CredentialStatus",
     "DEFAULT_CREDENTIAL_TTL",
-    "MAX_CAPABILITIES_PER_CREDENTIAL",
+    "MAX_BACKEND_FEATURES_PER_CREDENTIAL",
     "MAX_CREDENTIAL_TTL",
     "MAX_DELEGATION_DEPTH",
     "MIN_CREDENTIAL_TTL",

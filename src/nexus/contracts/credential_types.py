@@ -26,7 +26,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 #: Maximum capabilities per credential (keeps JWT <2KB).
-MAX_CAPABILITIES_PER_CREDENTIAL: int = 20
+MAX_BACKEND_FEATURES_PER_CREDENTIAL: int = 20
 
 #: Maximum delegation depth (root=0, first delegate=1, …).
 MAX_DELEGATION_DEPTH: int = 3

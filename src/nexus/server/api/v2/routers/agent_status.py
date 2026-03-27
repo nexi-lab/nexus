@@ -447,7 +447,7 @@ async def get_agent_spec(
 
     return AgentSpecResponse(
         agent_type=data.get("agent_type", "unknown"),
-        capabilities=sorted(data.get("capabilities", [])),
+        capabilities=sorted(data.get("backend_features", [])),
         resource_requests=AgentResourcesModel(**data.get("resource_requests", {})),
         resource_limits=AgentResourcesModel(**data.get("resource_limits", {})),
         qos_class=data.get("qos_class", "standard"),

@@ -68,11 +68,11 @@ class TestGoogleDriveConnectorBackendMixins:
         assert "MISSING_CONFIRM" in registry
 
     def test_skill_doc_capability(self) -> None:
-        caps = GoogleDriveConnectorBackend._CAPABILITIES
+        caps = GoogleDriveConnectorBackend._BACKEND_FEATURES
         assert BackendFeature.SKILL_DOC in caps
 
     def test_write_back_capability(self) -> None:
-        caps = GoogleDriveConnectorBackend._CAPABILITIES
+        caps = GoogleDriveConnectorBackend._BACKEND_FEATURES
         assert BackendFeature.WRITE_BACK in caps
 
     def test_inherits_skill_doc_mixin(self) -> None:

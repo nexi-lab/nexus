@@ -304,9 +304,9 @@ class TestOpenAICompatibleBackend:
         from nexus.contracts.backend_features import BackendFeature
 
         backend, _ = _make_backend()
-        assert backend.has_capability(BackendFeature.CAS)
-        assert backend.has_capability(BackendFeature.STREAMING)
-        assert not backend.has_capability(BackendFeature.ROOT_PATH)
+        assert backend.has_feature(BackendFeature.CAS)
+        assert backend.has_feature(BackendFeature.STREAMING)
+        assert not backend.has_feature(BackendFeature.ROOT_PATH)
 
     def test_mkdir_rmdir_noop(self) -> None:
         """Directory ops are no-ops for compute backends."""

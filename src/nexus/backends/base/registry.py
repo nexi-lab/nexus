@@ -99,8 +99,8 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
         "has_root_path",
         "has_token_manager",
         # CapabilityAwareProtocol (Issue #2069)
-        "capabilities",
-        "has_capability",
+        "backend_features",
+        "has_feature",
     }
 )
 
@@ -229,7 +229,7 @@ class ConnectorInfo:
     eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
     """
 
-    capabilities: frozenset[BackendFeature] = field(default_factory=frozenset)
+    backend_features: frozenset[BackendFeature] = field(default_factory=frozenset)
     """Capabilities declared by this connector (Issue #2069)."""
 
     @property
@@ -372,9 +372,9 @@ class ConnectorRegistry:
 
         config_mapping = derive_config_mapping(connector_class)
 
-        # Extract capabilities from class (Issue #2069)
-        capabilities: frozenset[BackendFeature] = getattr(
-            connector_class, "_CAPABILITIES", frozenset()
+        # Extract backend features from class (Issue #2069)
+        backend_features: frozenset[BackendFeature] = getattr(
+            connector_class, "_BACKEND_FEATURES", frozenset()
         )
 
         info = ConnectorInfo(
@@ -386,7 +386,7 @@ class ConnectorRegistry:
             user_scoped=user_scoped,
             config_mapping=config_mapping,
             service_name=service_name,
-            capabilities=capabilities,
+            backend_features=backend_features,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -486,7 +486,7 @@ class ConnectorRegistry:
         return name in cls._base
 
     @classmethod
-    def get_capabilities(cls, name: str) -> frozenset[BackendFeature]:
+    def get_backend_features(cls, name: str) -> frozenset[BackendFeature]:
         """Get capabilities for a connector by name (Issue #2069).
 
         Args:
@@ -498,10 +498,10 @@ class ConnectorRegistry:
         Raises:
             KeyError: If connector is not found
         """
-        return cls.get_info(name).capabilities
+        return cls.get_info(name).backend_features
 
     @classmethod
-    def list_by_capability(cls, cap: BackendFeature) -> list[ConnectorInfo]:
+    def list_by_feature(cls, cap: BackendFeature) -> list[ConnectorInfo]:
         """List all connectors with a specific capability (Issue #2069).
 
         Args:
@@ -510,7 +510,7 @@ class ConnectorRegistry:
         Returns:
             List of ConnectorInfo objects that declare the given capability
         """
-        return [info for info in cls._base.list_all() if cap in info.capabilities]
+        return [info for info in cls._base.list_all() if cap in info.backend_features]
 
     @classmethod
     def get_by_service_name(cls, service_name: str) -> ConnectorInfo | None:

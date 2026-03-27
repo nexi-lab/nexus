@@ -98,7 +98,7 @@ class CLIConnector(
     # Auth is ALWAYS via environment variables (never CLI flags).
     # See _build_auth_env() for the mapping.
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = (
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = (
         CLI_BACKEND_FEATURES | OAUTH_BACKEND_FEATURES
     )
 

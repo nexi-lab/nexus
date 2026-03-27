@@ -55,7 +55,7 @@ class OAuthConnectorBase(
     - Connector-specific ``SKILL_NAME``, ``SCHEMAS``, ``OPERATION_TRAITS``
     """
 
-    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,

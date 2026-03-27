@@ -204,21 +204,21 @@ class Backend(ObjectStoreABC):
 
     # === Capability Discovery (Issue #2069) ===
 
-    _CAPABILITIES: ClassVar["frozenset[BackendFeature]"] = frozenset()
+    _BACKEND_FEATURES: ClassVar["frozenset[BackendFeature]"] = frozenset()
     """Capabilities declared by this backend class.
 
     Subclasses override to declare their supported capabilities.
-    Consumers query via ``has_capability()`` or ``cap in backend.capabilities``.
+    Consumers query via ``has_feature()`` or ``cap in backend.capabilities``.
     """
 
     @property
     def capabilities(self) -> "frozenset[BackendFeature]":
         """All capabilities supported by this backend."""
-        return self._CAPABILITIES
+        return self._BACKEND_FEATURES
 
-    def has_capability(self, cap: "BackendFeature") -> bool:
+    def has_feature(self, cap: "BackendFeature") -> bool:
         """Check whether this backend supports a specific capability."""
-        return cap in self._CAPABILITIES
+        return cap in self._BACKEND_FEATURES
 
     # === Chain Introspection (Issue #1449) ===
 

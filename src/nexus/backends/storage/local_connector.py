@@ -79,7 +79,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         >>> content = backend.read_content("", context)  # Uses context.backend_path
     """
 
-    _CAPABILITIES = frozenset(
+    _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.DIRECTORY_LISTING,
             BackendFeature.CACHE_BULK_READ,

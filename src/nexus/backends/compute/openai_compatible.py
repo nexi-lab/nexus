@@ -114,7 +114,7 @@ class OpenAICompatibleBackend(CASAddressingEngine):
         ),
     }
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = frozenset(
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
             BackendFeature.CAS,
             BackendFeature.STREAMING,

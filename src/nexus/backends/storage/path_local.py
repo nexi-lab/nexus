@@ -48,7 +48,7 @@ class PathLocalBackend(PathAddressingEngine):
     Opt into CAS by setting ``backend = "local"`` in config.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.ROOT_PATH,
         }

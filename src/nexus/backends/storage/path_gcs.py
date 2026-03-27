@@ -56,7 +56,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
     - Batch version fetch (single API call for 1000s of files)
     """
 
-    _CAPABILITIES = BLOB_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = BLOB_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,

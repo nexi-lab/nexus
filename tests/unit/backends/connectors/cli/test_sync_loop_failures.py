@@ -22,8 +22,8 @@ def _make_backend(capabilities: frozenset | None = None, **kwargs: Any) -> Magic
 
     backend = MagicMock()
     backend.name = "test"
-    backend.capabilities = capabilities or frozenset({BackendFeature.SYNC_ELIGIBLE})
-    backend.has_capability = MagicMock(side_effect=lambda c: c in backend.capabilities)
+    backend.backend_features = capabilities or frozenset({BackendFeature.SYNC_ELIGIBLE})
+    backend.has_feature = MagicMock(side_effect=lambda c: c in backend.backend_features)
     backend._has_caching = MagicMock(return_value=False)
     backend.use_metadata_listing = True
     return backend

@@ -30,7 +30,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 
 from nexus.contracts.credential_types import (
     DEFAULT_CREDENTIAL_TTL,
-    MAX_CAPABILITIES_PER_CREDENTIAL,
+    MAX_BACKEND_FEATURES_PER_CREDENTIAL,
     MAX_CREDENTIAL_TTL,
     MAX_DELEGATION_DEPTH,
     MIN_CREDENTIAL_TTL,
@@ -127,10 +127,10 @@ class CapabilityIssuer:
             raise ValueError("subject_did must be non-empty")
         if not capabilities:
             raise ValueError("At least one capability is required")
-        if len(capabilities) > MAX_CAPABILITIES_PER_CREDENTIAL:
+        if len(capabilities) > MAX_BACKEND_FEATURES_PER_CREDENTIAL:
             raise ValueError(
                 f"Too many capabilities: {len(capabilities)} "
-                f"(max {MAX_CAPABILITIES_PER_CREDENTIAL})"
+                f"(max {MAX_BACKEND_FEATURES_PER_CREDENTIAL})"
             )
         if delegation_depth > MAX_DELEGATION_DEPTH:
             raise ValueError(
@@ -149,7 +149,7 @@ class CapabilityIssuer:
             "type": list(VC_TYPES),
             "credentialSubject": {
                 "id": subject_did,
-                "capabilities": [cap.to_dict() for cap in capabilities],
+                "backend_features": [cap.to_dict() for cap in capabilities],
             },
         }
         if parent_credential_id is not None:
@@ -303,7 +303,7 @@ class CapabilityVerifier:
         # Step 6: Parse VC claims
         vc = claims.get("vc", {})
         subject = vc.get("credentialSubject", {})
-        raw_capabilities = subject.get("capabilities", [])
+        raw_capabilities = subject.get("backend_features", [])
 
         capabilities = tuple(Capability.from_dict(cap_dict) for cap_dict in raw_capabilities)
 

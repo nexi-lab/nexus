@@ -1,8 +1,8 @@
 """Backend feature flags (Issue #2069).
 
 Provides a unified ``BackendFeature`` enum for declaring and querying
-backend features.  Backends declare ``_CAPABILITIES`` as a ClassVar;
-consumers query via ``has_capability()`` or ``cap in backend.capabilities``.
+backend features.  Backends declare ``_BACKEND_FEATURES`` as a ClassVar;
+consumers query via ``has_feature()`` or ``cap in backend.capabilities``.
 
 Canonical home: contracts/ (base tier — available to all layers).
 Moved from core/protocols/capabilities.py in #1323.

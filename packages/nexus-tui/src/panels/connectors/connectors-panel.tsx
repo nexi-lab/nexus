@@ -77,7 +77,7 @@ export default function ConnectorsPanel(): React.ReactNode {
   }
 
   return (
-    <BrickGate brick="mount">
+    <BrickGate brick="storage">
       <box height="100%" width="100%" flexDirection="column">
         {/* Sub-tab bar */}
         <box height={1} width="100%">

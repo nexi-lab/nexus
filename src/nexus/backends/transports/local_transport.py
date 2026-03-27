@@ -354,6 +354,57 @@ class LocalBlobTransport:
             ) from e
         return None
 
+    # === Extended Methods (transport protocol extensions, Issue #3403) ===
+
+    def list_content_hashes(self) -> list[tuple[str, float]]:
+        """List all CAS content hashes with their mtime.
+
+        Scans cas/ directory tree and returns (hash_hex, mtime) pairs.
+        Used by GC for reachability scan and by Bloom filter for seeding.
+        """
+        cas_dir = self._root / "cas"
+        if not cas_dir.is_dir():
+            return []
+
+        result: list[tuple[str, float]] = []
+        for path in cas_dir.rglob("*"):
+            if path.is_file() and path.suffix not in (".meta", ".lock"):
+                try:
+                    result.append((path.name, path.stat().st_mtime))
+                except OSError:
+                    continue
+        return result
+
+    def batch_get_blobs(self, keys: list[str]) -> dict[str, bytes | None]:
+        """Batch read multiple blobs, using Rust parallel mmap when available.
+
+        Falls back to sequential reads if nexus_fast is not available.
+        """
+        if not keys:
+            return {}
+
+        try:
+            from nexus_fast import read_files_bulk
+
+            paths = [str(self._resolve(k)) for k in keys]
+            disk_contents = read_files_bulk(paths)
+            result: dict[str, bytes | None] = {}
+            for key, path in zip(keys, paths, strict=True):
+                result[key] = disk_contents.get(path)
+            return result
+        except ImportError:
+            pass
+
+        # Sequential fallback
+        result = {}
+        for key in keys:
+            try:
+                data, _ = self.get_blob(key)
+                result[key] = data
+            except Exception:
+                result[key] = None
+        return result
+
     # === Internal Helpers ===
 
     def _cleanup_empty_parents(self, dir_path: Path) -> None:

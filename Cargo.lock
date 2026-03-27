@@ -1295,6 +1295,7 @@ dependencies = [
  "parking_lot",
  "pyo3",
  "rayon",
+ "redb",
  "regex",
  "roaring",
  "serde",

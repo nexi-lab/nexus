@@ -1,0 +1,271 @@
+"""Integration tests for CAS volume packing with feature interactions.
+
+Tests feature combinations:
+  - CDC chunked write → volume seal → read chunks from sealed volume
+  - Batch read spanning multiple sealed volumes
+  - Bloom filter seeded from volume index
+  - Streaming write → volume append
+  - CASLocalBackend end-to-end with volume transport
+
+Issue #3403: CAS volume packing — feature integration.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+try:
+    from nexus_fast import VolumeEngine
+
+    HAS_VOLUME_ENGINE = True
+except ImportError:
+    HAS_VOLUME_ENGINE = False
+
+pytestmark = pytest.mark.skipif(
+    not HAS_VOLUME_ENGINE, reason="nexus_fast.VolumeEngine not available"
+)
+
+
+def make_hash(seed: int) -> str:
+    return f"{seed:064x}"
+
+
+# ─── VolumeEngine Core Integration ──────────────────────────────────────────
+
+
+class TestVolumeEngineIntegration:
+    """Direct VolumeEngine tests — read/write/seal/compact end-to-end."""
+
+    def test_write_seal_read_roundtrip(self, tmp_path):
+        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+
+        data_map = {}
+        for i in range(10):
+            h = make_hash(i)
+            data = f"content_{i}".encode()
+            engine.put(h, data)
+            data_map[h] = data
+
+        engine.seal_active()
+
+        for h, expected in data_map.items():
+            actual = bytes(engine.get(h))
+            assert actual == expected
+
+        engine.close()
+
+    def test_batch_get_across_volumes(self, tmp_path):
+        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=256)
+
+        hashes = []
+        for i in range(20):
+            h = make_hash(i)
+            engine.put(h, bytes([i] * 50))
+            hashes.append(h)
+
+        engine.seal_active()
+
+        # Batch read all 20 hashes
+        results = engine.batch_get(hashes)
+        assert len(results) == 20
+        for i, h in enumerate(hashes):
+            assert results[h] == bytes([i] * 50)
+
+        engine.close()
+
+    def test_list_content_hashes(self, tmp_path):
+        engine = VolumeEngine(str(tmp_path / "vol"), target_volume_size=1024 * 1024)
+
+        written = set()
+        for i in range(5):
+            h = make_hash(i)
+            engine.put(h, b"data")
+            written.add(h)
+
+        engine.seal_active()
+
+        listed = {h for h, _ts in engine.list_content_hashes()}
+        assert listed == written
+
+        engine.close()
+
+
+# ─── VolumeLocalTransport Integration ────────────────────────────────────────
+
+
+class TestVolumeLocalTransportIntegration:
+    """VolumeLocalTransport wrapping VolumeEngine."""
+
+    def _make_transport(self, tmp_path):
+        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+
+        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+
+    def test_cas_and_dir_operations(self, tmp_path):
+        """CAS keys go to volumes, dir keys go to filesystem."""
+        transport = self._make_transport(tmp_path)
+
+        # CAS write
+        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        transport.put_blob(cas_key, b"cas data")
+
+        # Dir operation
+        transport.create_directory_marker("dirs/test/")
+        assert transport.blob_exists("dirs/test/")
+
+        # CAS read (seal first for volume transport)
+        transport.seal_active_volume()
+        data, _ = transport.get_blob(cas_key)
+        assert data == b"cas data"
+
+    def test_meta_sidecar_goes_to_delegate(self, tmp_path):
+        """CDC .meta files should NOT go to volume engine."""
+        transport = self._make_transport(tmp_path)
+
+        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
+        transport.put_blob(meta_key, b'{"is_chunked_manifest": true}')
+
+        data, _ = transport.get_blob(meta_key)
+        assert b"is_chunked_manifest" in data
+
+    def test_volume_stats(self, tmp_path):
+        transport = self._make_transport(tmp_path)
+        stats = transport.volume_stats()
+        assert "total_blobs" in stats
+        assert "sealed_volume_count" in stats
+
+    def test_batch_read_mixed_keys(self, tmp_path):
+        """Batch read with both CAS and non-CAS keys."""
+        transport = self._make_transport(tmp_path)
+
+        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        transport.put_blob(cas_key, b"cas blob")
+
+        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
+        transport.put_blob(meta_key, b"meta blob")
+
+        transport.seal_active_volume()
+
+        result = transport.batch_get_blobs([cas_key, meta_key])
+        assert result[cas_key] == b"cas blob"
+        assert result[meta_key] == b"meta blob"
+
+
+# ─── CASLocalBackend Integration ─────────────────────────────────────────────
+
+
+class TestCASLocalBackendWithVolumes:
+    """CASLocalBackend end-to-end with volume transport."""
+
+    def _make_backend(self, tmp_path):
+        from nexus.backends.storage.cas_local import CASLocalBackend
+
+        return CASLocalBackend(root_path=tmp_path, use_volume_packing=True)
+
+    def test_write_read_roundtrip(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        content = b"hello from volume-packed CAS"
+        result = backend.write_content(content)
+
+        # Read-after-write should work without explicit seal
+        read_back = backend.read_content(result.content_id)
+        assert read_back == content
+
+    def test_dedup(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        data = b"dedup test"
+
+        r1 = backend.write_content(data)
+        r2 = backend.write_content(data)
+        assert r1.content_id == r2.content_id
+
+    def test_content_exists(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        result = backend.write_content(b"exists test")
+        assert backend.content_exists(result.content_id)
+
+    def test_content_size(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        data = b"size test data"
+        result = backend.write_content(data)
+
+        # Size should be available immediately (from index)
+        assert backend.get_content_size(result.content_id) == len(data)
+
+    def test_delete_content(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        result = backend.write_content(b"to delete")
+        backend.delete_content(result.content_id)
+        assert not backend.content_exists(result.content_id)
+
+    def test_batch_read(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        ids = []
+        for i in range(5):
+            result = backend.write_content(f"batch_{i}".encode())
+            ids.append(result.content_id)
+
+        results = backend.batch_read_content(ids)
+        for i, cid in enumerate(ids):
+            assert results[cid] == f"batch_{i}".encode()
+
+    def test_stream_write(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+
+        def chunks():
+            yield b"chunk1"
+            yield b"chunk2"
+            yield b"chunk3"
+
+        result = backend.write_stream(chunks())
+
+        read_back = backend.read_content(result.content_id)
+        assert read_back == b"chunk1chunk2chunk3"
+
+    def test_directory_operations_unaffected(self, tmp_path):
+        backend = self._make_backend(tmp_path)
+        backend.mkdir("test_dir", parents=True, exist_ok=True)
+        assert backend.is_directory("test_dir")
+        entries = backend.list_dir("test_dir")
+        assert isinstance(entries, list)
+
+    def test_fallback_to_local_transport(self, tmp_path):
+        """use_volume_packing=False should use LocalBlobTransport."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.backends.transports.local_transport import LocalBlobTransport
+
+        backend = CASLocalBackend(root_path=tmp_path, use_volume_packing=False)
+        assert isinstance(backend._transport, LocalBlobTransport)
+
+        content = b"fallback test"
+        result = backend.write_content(content)
+        read_back = backend.read_content(result.content_id)
+        assert read_back == content
+
+
+# ─── Bloom Filter + Volume Integration ───────────────────────────────────────
+
+
+class TestBloomWithVolumes:
+    """Bloom filter should be seeded from volume index."""
+
+    def test_bloom_seeded_from_volumes(self, tmp_path):
+        import gc
+
+        from nexus.backends.storage.cas_local import CASLocalBackend
+
+        # Write data and seal
+        backend1 = CASLocalBackend(root_path=tmp_path, use_volume_packing=True)
+        r = backend1.write_content(b"bloom seed test")
+        if hasattr(backend1._transport, "seal_active_volume"):
+            backend1._transport.seal_active_volume()
+        if hasattr(backend1._transport, "close"):
+            backend1._transport.close()
+        # Release redb lock before reopening
+        del backend1
+        gc.collect()
+
+        # Recreate backend — Bloom should be seeded from volume index
+        backend2 = CASLocalBackend(root_path=tmp_path, use_volume_packing=True)
+        # If Bloom is properly seeded, content_exists should be fast (Bloom hit)
+        assert backend2.content_exists(r.content_id)

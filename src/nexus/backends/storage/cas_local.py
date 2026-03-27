@@ -1,12 +1,16 @@
 """CAS + Local transport backend — full-featured local storage.
 
-Composes CASAddressingEngine (addressing) + LocalBlobTransport (I/O) +
+Composes CASAddressingEngine (addressing) + VolumeLocalTransport (I/O) +
 MultipartUpload (resumable uploads) using Feature DI for Bloom filter,
 content cache, VFSSemaphore, and CDCEngine (chunking).
 
-    CASLocalBackend = CASAddressingEngine(LocalBlobTransport)
+    CASLocalBackend = CASAddressingEngine(VolumeLocalTransport)
                     + MultipartUpload     (resumable uploads, ABC)
                     + Feature DI          (Bloom, cache, VFSSemaphore, CDC)
+
+VolumeLocalTransport packs CAS blobs into append-only volume files with a
+redb index, reducing inode overhead and enabling batched fsync. Falls back
+to LocalBlobTransport if the Rust VolumeEngine is unavailable.
 
 CDC routing is handled by CASAddressingEngine base class via Feature DI —
 CASLocalBackend only instantiates and passes CDCEngine.
@@ -16,6 +20,7 @@ docs/architecture/backend-architecture.md.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
+    - Issue #3403: CAS volume packing
 """
 
 from __future__ import annotations
@@ -32,6 +37,7 @@ from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -46,20 +52,24 @@ DEFAULT_CAS_BLOOM_CAPACITY = 100_000
 DEFAULT_CAS_BLOOM_FP_RATE = 0.01
 
 
-def _init_bloom(cas_root: Path, capacity: int, fp_rate: float) -> Any:
-    """Initialize Bloom filter, populate from disk. Returns None if unavailable."""
+def _init_bloom_from_transport(
+    transport: VolumeLocalTransport | LocalBlobTransport,
+    capacity: int,
+    fp_rate: float,
+) -> Any:
+    """Initialize Bloom filter, populated from transport. Returns None if unavailable.
+
+    Uses transport.list_content_hashes() to seed the Bloom filter — works for
+    both volume-packed storage and file-per-blob storage (Issue #3403).
+    """
     try:
         from nexus_fast import BloomFilter
 
         bloom = BloomFilter(capacity, fp_rate)
-        # Scan existing CAS entries
-        if cas_root.exists():
-            keys = [
-                f.name
-                for f in cas_root.rglob("*")
-                if f.is_file() and f.suffix not in (".meta", ".lock")
-            ]
-            if keys:
+        if hasattr(transport, "list_content_hashes"):
+            hashes_ts = transport.list_content_hashes()
+            if hashes_ts:
+                keys = [h for h, _ts in hashes_ts]
                 bloom.add_bulk(keys)
                 logger.info("CAS Bloom filter populated with %d entries", len(keys))
         return bloom
@@ -111,6 +121,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
         bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
         on_write_callback: Any | None = None,
+        *,
+        use_volume_packing: bool = False,
     ):
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"
@@ -122,9 +134,21 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self.cas_root.mkdir(parents=True, exist_ok=True)
         self.dir_root.mkdir(parents=True, exist_ok=True)
 
-        # Build components
-        transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
-        bloom = _init_bloom(self.cas_root, bloom_capacity, bloom_fp_rate)
+        # Build transport — VolumeLocalTransport with fallback to LocalBlobTransport
+        # VolumeLocalTransport packs CAS blobs into volumes; falls back internally
+        # if VolumeEngine is unavailable (Issue #3403).
+        # Both VolumeLocalTransport and LocalBlobTransport implement BlobTransport
+        # structurally (Protocol), but mypy can't verify VolumeLocalTransport against
+        # the Protocol since it uses dynamic PyO3 dispatch. Using BlobTransport annotation
+        # directly would fail for VolumeLocalTransport.
+        transport: Any
+        if use_volume_packing:
+            transport = VolumeLocalTransport(root_path=self.root_path, fsync=True)
+        else:
+            transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
+
+        # Seed Bloom filter from transport (works for both volume and file storage)
+        bloom = _init_bloom_from_transport(transport, bloom_capacity, bloom_fp_rate)
 
         # Feature DI: LRU metadata cache for hot-path _read_meta()
         import cachetools
@@ -175,26 +199,24 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         *,
         contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        """Read multiple content items, using Rust parallel mmap when available.
+        """Read multiple content items via transport batch_get_blobs.
 
-        Overrides ObjectStoreABC default (sequential) with nexus_fast bulk
-        read for local CAS blobs. Falls back to sequential on ImportError.
+        Uses transport.batch_get_blobs() for efficient bulk reads — works for
+        both volume-packed storage (batch pread) and file-per-blob (mmap bulk).
+        Falls back to sequential reads if batch_get_blobs is unavailable.
         """
         if len(content_ids) <= 1:
             return super().batch_read_content(content_ids, context, contexts=contexts)
 
-        try:
-            from nexus_fast import read_files_bulk
-
-            disk_paths = [str(self._hash_to_path(cid)) for cid in content_ids]
-            disk_contents = read_files_bulk(disk_paths)
-
+        if hasattr(self._transport, "batch_get_blobs"):
+            keys = [self._blob_key(cid) for cid in content_ids]
+            key_results = self._transport.batch_get_blobs(keys)
             result: dict[str, bytes | None] = {}
-            for cid, disk_path in zip(content_ids, disk_paths, strict=True):
-                result[cid] = disk_contents.get(disk_path)
+            for cid, key in zip(content_ids, keys, strict=True):
+                result[cid] = key_results.get(key)
             return result
-        except ImportError:
-            return super().batch_read_content(content_ids, context, contexts=contexts)
+
+        return super().batch_read_content(content_ids, context, contexts=contexts)
 
     def _is_chunked_content(self, content_hash: str) -> bool:
         """Check if content was stored as CDC chunks."""

@@ -271,23 +271,25 @@ async def _async_list_mounts(
 ) -> None:
     timing = CommandTiming()
     try:
-        # Get filesystem (works with both local and remote)
-        nx = await get_filesystem(remote_url, remote_api_key)
-
-        # Call list_mounts via mount_service
+        # List mounts via HTTP API (gRPC port may differ from default)
         with timing.phase("server"):
-            try:
-                mount_svc = nx.service("mount")
-                assert mount_svc is not None
-                mounts = await mount_svc.list_mounts()
-            except AttributeError:
-                console.print(
-                    "[red]Error:[/red] This Nexus instance doesn't support listing mounts"
-                )
-                console.print(
-                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
-                )
+            import os
+
+            import httpx
+
+            base_url = remote_url or os.environ.get("NEXUS_URL", "")
+            api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+            if not base_url:
+                console.print("[red]Error:[/red] NEXUS_URL required")
+                console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
                 sys.exit(1)
+            async with httpx.AsyncClient(timeout=10) as http:
+                resp = await http.get(
+                    f"{base_url.rstrip('/')}/api/v2/connectors/mounts",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                mounts = resp.json()
 
         # Note: owner/zone filtering not yet supported in remote mode
         if owner or zone:
@@ -546,23 +548,24 @@ async def _async_sync_mount(
                 console.print("[cyan](dry run - no changes will be made)[/cyan]")
 
         with timing.phase("server"):
-            try:
-                result = await nx.service("sync").sync_mount_flat(
-                    mount_point=mount_point,
-                    path=path,
-                    recursive=True,
-                    dry_run=dry_run,
-                    sync_content=not no_cache,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns,
-                    generate_embeddings=embeddings,
-                )
-            except AttributeError:
-                console.print("[red]Error:[/red] This Nexus instance doesn't support sync_mount")
-                console.print(
-                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
-                )
+            import os
+
+            import httpx
+
+            base_url = remote_url or os.environ.get("NEXUS_URL", "")
+            api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+            if not base_url:
+                console.print("[red]Error:[/red] NEXUS_URL required")
+                console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
                 sys.exit(1)
+            async with httpx.AsyncClient(timeout=120) as http:
+                resp = await http.post(
+                    f"{base_url.rstrip('/')}/api/v2/connectors/sync",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"mount_point": mount_point, "full_sync": False},
+                )
+                resp.raise_for_status()
+                result = resp.json()
 
         def _render_sync(data: dict[str, Any]) -> None:
             console.print()

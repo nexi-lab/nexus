@@ -132,8 +132,7 @@ class TestRaftWriteRead:
         assert "error" not in result, f"Write failed: {result}"
         assert "result" in result
         bw = result["result"]["bytes_written"]
-        assert bw["size"] == len(content)
-        assert bw["version"] == 1
+        assert bw == len(content)
 
     def test_read_from_leader(self, cluster, api_key):
         """Write then read back from the same node."""

@@ -20,6 +20,38 @@ import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { ConnectorRow } from "./connector-row.js";
 import { statusColor } from "../../shared/theme.js";
 
+/**
+ * Copy text to system clipboard using platform-native tools (pbcopy/xclip)
+ * and also write to a temp file so it survives TUI exit.
+ */
+function copyCommand(text: string): void {
+  const { execSync, exec } = require("child_process");
+  const fs = require("fs");
+
+  // Write to temp file so user can retrieve after TUI exit
+  try {
+    fs.writeFileSync("/tmp/nexus-mount-cmd.txt", text + "\n");
+  } catch {}
+
+  // Copy to system clipboard via platform tool
+  try {
+    if (process.platform === "darwin") {
+      execSync("pbcopy", { input: text, timeout: 2000 });
+    } else {
+      // Try xclip, then xsel
+      try {
+        execSync("xclip -selection clipboard", { input: text, timeout: 2000 });
+      } catch {
+        execSync("xsel --clipboard --input", { input: text, timeout: 2000 });
+      }
+    }
+  } catch {
+    // Fall back to OSC 52
+    const encoded = Buffer.from(text).toString("base64");
+    process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+  }
+}
+
 interface AvailableTabProps {
   readonly client: FetchClient;
   readonly overlayActive: boolean;
@@ -124,8 +156,11 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
           r: () => fetchAvailable(client),
           y: () => {
             if (showMountGuide) {
-              copy(getMountCommand());
+              const cmd = getMountCommand();
+              copyCommand(cmd);
+              copy(cmd);
             } else if (authFlow.auth_url) {
+              copyCommand(authFlow.auth_url);
               copy(authFlow.auth_url);
             }
           },
@@ -166,7 +201,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
           </box>
           <box height={1} width="100%">
             <text foregroundColor={statusColor.dim}>
-              {"  Press y to copy command, Esc to close"}
+              {"  y:copy to clipboard  Esc:close  (also saved to /tmp/nexus-mount-cmd.txt)"}
             </text>
           </box>
         </box>

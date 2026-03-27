@@ -9,6 +9,7 @@ Kernel just calls generic ``dispatch.intercept_pre_*()`` which iterates
 the existing hook lists and calls ``on_pre_*`` via getattr.
 
 Issue #899: Extracted from NexusFS kernel (was ``self._permission_checker``).
+Issue #3394: Permission write leases — check once, write many.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.types import Permission
 
 if TYPE_CHECKING:
+    from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import (
         AccessHookContext,
@@ -75,6 +77,7 @@ class PermissionCheckHook:
         enforce_permissions: bool = True,
         permission_enforcer: Any = None,
         descendant_checker: Any = None,
+        lease_table: "PermissionLeaseTable | None" = None,
     ) -> None:
         self._checker = checker
         self._metadata_store = metadata_store
@@ -82,6 +85,7 @@ class PermissionCheckHook:
         self._enforce_permissions = enforce_permissions
         self._permission_enforcer = permission_enforcer
         self._descendant_checker = descendant_checker
+        self._lease_table = lease_table
 
     # ------------------------------------------------------------------
     # PRE hooks — permission gating (raise PermissionError to abort)
@@ -98,18 +102,49 @@ class PermissionCheckHook:
         self._checker.check(ctx.path, Permission.READ, ctx.context)
 
     def on_pre_write(self, ctx: WriteHookContext) -> None:
-        """Check WRITE permission before write operations."""
+        """Check WRITE permission before write operations.
+
+        Fast path (Issue #3394): if a permission lease exists for the
+        (checked_path, agent_id) pair, skip the full ReBAC check (~1μs
+        vs ~50-200μs).  On cache miss, do the full check and stamp a
+        lease for subsequent writes.
+        """
         if not self._enforce_permissions:
             return
         context = ctx.context or self._default_context
+
+        # Resolve the path that will actually be permission-checked.
+        # For existing files: the file path.  For new files: the parent dir.
+        # Keying leases by checked_path covers both "repeated writes to same
+        # file" and "many new files in same directory" (Decision #14B).
         if ctx.old_metadata is not None:
-            # Existing file — check on file with owner fast-path
+            checked_path = ctx.path
+        else:
+            checked_path = self._get_parent_path(ctx.path)
+            if checked_path is None:
+                return  # root path — no parent to check
+
+        # Extract agent_id from context (Decision #7A).
+        # If unavailable, skip lease — falls through to full check every time.
+        agent_id = getattr(context, "agent_id", None) if context else None
+
+        # Fast path: check permission lease (~100-200ns)
+        if (
+            agent_id
+            and self._lease_table is not None
+            and self._lease_table.check(checked_path, agent_id)
+        ):
+            return  # lease valid — skip full ReBAC check
+
+        # Slow path: full ReBAC check (raises PermissionError on denial)
+        if ctx.old_metadata is not None:
             self._checker.check(ctx.path, Permission.WRITE, context, file_metadata=ctx.old_metadata)
         else:
-            # New file — check WRITE on parent directory
-            parent = self._get_parent_path(ctx.path)
-            if parent:
-                self._checker.check(parent, Permission.WRITE, context)
+            self._checker.check(checked_path, Permission.WRITE, context)
+
+        # Stamp lease on successful check (Decision #6A)
+        if agent_id and self._lease_table is not None:
+            self._lease_table.stamp(checked_path, agent_id)
 
     def on_pre_delete(self, ctx: DeleteHookContext) -> None:
         """Check WRITE permission before delete."""

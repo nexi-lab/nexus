@@ -7,12 +7,13 @@ When a permission tuple is written/deleted, the coordinator ensures
 all affected caches are properly invalidated in the correct order:
 1. Zone graph cache (in-memory tuple cache)
 2. L1 permission check cache (targeted by subject + object)
-3. Boundary cache (permission inheritance boundaries)
-4. Directory visibility cache (dir listing optimization)
-5. Iterator cache (pagination cursors)
-6. Namespace cache — dcache + mount table (Issue #1244)
-7. Leopard cache (transitive group closure) - via callbacks
-8. Tiger cache (materialized bitmaps) - via callbacks
+3. Permission leases — zone-wide clear (Issue #3394)
+4. Boundary cache (permission inheritance boundaries)
+5. Directory visibility cache (dir listing optimization)
+6. Iterator cache (pagination cursors)
+7. Namespace cache — dcache + mount table (Issue #1244)
+8. Leopard cache (transitive group closure) - via callbacks
+9. Tiger cache (materialized bitmaps) - via callbacks
 
 Also handles:
 - L2 (database) cache invalidation with precise targeting (Issue #2179 Step 2.5)
@@ -152,6 +153,8 @@ class CacheCoordinator:
         # Namespace cache invalidators: callback(subject_type, subject_id, zone_id)
         # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
         self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
+        # Permission lease invalidators: callback(zone_id) — zone-wide clear (Issue #3394)
+        self._lease_invalidators: list[tuple[str, Callable[[str], None]]] = []
 
         # Async eager recompute (Issue #3192)
         self._recompute_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -164,6 +167,7 @@ class CacheCoordinator:
         self._invalidation_count = 0
         self._zone_graph_invalidations = 0
         self._l1_invalidations = 0
+        self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
         self._namespace_invalidations = 0
@@ -283,6 +287,33 @@ class CacheCoordinator:
                 return True
         return False
 
+    def register_lease_invalidator(
+        self,
+        callback_id: str,
+        callback: "Callable[[str], None]",
+    ) -> None:
+        """Register a permission lease invalidation callback (Issue #3394).
+
+        Called on every rebac_write/rebac_delete to invalidate permission
+        leases (zone-wide clear).  The callback receives the zone_id.
+
+        Args:
+            callback_id: Unique identifier for this callback
+            callback: Function(zone_id) — should clear all permission leases
+        """
+        for cid, _ in self._lease_invalidators:
+            if cid == callback_id:
+                return  # Already registered
+        self._lease_invalidators.append((callback_id, callback))
+
+    def unregister_lease_invalidator(self, callback_id: str) -> bool:
+        """Unregister a permission lease invalidation callback."""
+        for i, (cid, _) in enumerate(self._lease_invalidators):
+            if cid == callback_id:
+                self._lease_invalidators.pop(i)
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Unified invalidation (L1 + callback-based)
     # ------------------------------------------------------------------
@@ -315,21 +346,24 @@ class CacheCoordinator:
         # 2. L1 permission check cache (targeted)
         self._invalidate_l1(subject_type, subject_id, object_type, object_id, zone_id)
 
-        # 3. Boundary cache (external callbacks)
+        # 3. Permission leases — zone-wide clear (Issue #3394)
+        self._notify_lease_invalidators(zone_id)
+
+        # 4. Boundary cache (external callbacks)
         self._notify_boundary_invalidators(
             zone_id, subject_type, subject_id, relation, object_type, object_id
         )
 
-        # 4. Directory visibility cache (external callbacks)
+        # 5. Directory visibility cache (external callbacks)
         self._notify_visibility_invalidators(zone_id, object_type, object_id)
 
-        # 5. Namespace cache — dcache + mount table (Issue #1244)
+        # 6. Namespace cache — dcache + mount table (Issue #1244)
         self.notify_namespace_invalidators(zone_id, subject_type, subject_id)
 
-        # 6. Iterator cache (zone-level)
+        # 7. Iterator cache (zone-level)
         self._invalidate_iterator(zone_id)
 
-        # 7. DT_STREAM: Publish invalidation event for intra-zone consumers (Issue #3192)
+        # 8. DT_STREAM: Publish invalidation event for intra-zone consumers (Issue #3192)
         if self._stream:
             self._stream.append(
                 InvalidationEventType.L1_CACHE,
@@ -341,7 +375,7 @@ class CacheCoordinator:
                 object_id=object_id,
             )
 
-        # 8. Pub/Sub: Publish cross-zone hint (Issue #3192)
+        # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
         if self._pubsub:
             self._pubsub.publish_invalidation(
                 zone_id=zone_id,
@@ -406,6 +440,9 @@ class CacheCoordinator:
 
         if self._l1_cache:
             self._l1_cache.clear()
+
+        # Permission leases (Issue #3394)
+        self._notify_lease_invalidators(zone_id or "root")
 
         if self._boundary_cache:
             self._boundary_cache.clear()
@@ -925,6 +962,30 @@ class CacheCoordinator:
         self._l1_cache.invalidate_subject(subject_type, subject_id, zone_id)
         self._l1_cache.invalidate_object(object_type, object_id, zone_id)
 
+    def _notify_lease_invalidators(self, zone_id: str) -> None:
+        """Notify permission lease invalidators — zone-wide clear (Issue #3394).
+
+        Called after L1 cache invalidation and before boundary cache
+        invalidation to ensure stale leases cannot be used during the
+        boundary recomputation window.
+        """
+        if not self._lease_invalidators:
+            return
+
+        self._lease_invalidations += 1
+
+        for callback_id, callback in self._lease_invalidators:
+            try:
+                callback(zone_id)
+            except Exception:
+                self._callback_failure_count += 1
+                logger.warning(
+                    "[CacheCoordinator] Lease invalidator %s failed for zone %s",
+                    callback_id,
+                    zone_id,
+                    exc_info=True,
+                )
+
     def _notify_boundary_invalidators(
         self,
         zone_id: str,
@@ -1078,6 +1139,7 @@ class CacheCoordinator:
             "total_invalidations": self._invalidation_count,
             "zone_graph_invalidations": self._zone_graph_invalidations,
             "l1_invalidations": self._l1_invalidations,
+            "lease_invalidations": self._lease_invalidations,
             "boundary_invalidations": self._boundary_invalidations,
             "visibility_invalidations": self._visibility_invalidations,
             "namespace_invalidations": self._namespace_invalidations,
@@ -1085,6 +1147,7 @@ class CacheCoordinator:
             "registered_boundary_invalidators": len(self._boundary_invalidators),
             "registered_visibility_invalidators": len(self._visibility_invalidators),
             "registered_namespace_invalidators": len(self._namespace_invalidators),
+            "registered_lease_invalidators": len(self._lease_invalidators),
             "callback_failure_count": self._callback_failure_count,
             "async_recompute_submitted": self._recompute_submitted,
             "async_recompute_completed": self._recompute_completed,
@@ -1098,6 +1161,7 @@ class CacheCoordinator:
         self._invalidation_count = 0
         self._zone_graph_invalidations = 0
         self._l1_invalidations = 0
+        self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
         self._namespace_invalidations = 0

@@ -4,9 +4,11 @@ Commands for discovering and inspecting available connectors:
 - nexus connectors list - List all registered connectors
 - nexus connectors info - Show connector details
 
-Connects to a remote Nexus instance via RPC.
+Uses the HTTP REST API for connector discovery (not gRPC, which
+doesn't expose connector registry methods).
 """
 
+import asyncio
 import sys
 from typing import Any
 
@@ -17,9 +19,40 @@ from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     console,
-    get_filesystem,
     handle_error,
 )
+
+
+def _resolve_http_url(remote_url: str | None) -> tuple[str, str | None]:
+    """Resolve the HTTP base URL and API key from args or environment."""
+    import os
+
+    url = remote_url or os.environ.get("NEXUS_URL")
+    api_key = os.environ.get("NEXUS_API_KEY")
+
+    if not url:
+        console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
+        console.print(
+            "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+            " or use `eval $(nexus env)`"
+        )
+        sys.exit(1)
+
+    return url.rstrip("/"), api_key
+
+
+async def _http_get(url: str, api_key: str | None) -> Any:
+    """Make an authenticated HTTP GET request."""
+    import httpx
+
+    headers: dict[str, str] = {}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(url, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
 
 
 @click.group(name="connectors")
@@ -31,22 +64,10 @@ def connectors_group() -> None:
     and their configuration requirements.
 
     Examples:
-        # List all connectors
-        nexus connectors list --remote-url http://localhost:2026
-
-        # List only storage connectors
+        nexus connectors list
         nexus connectors list --category storage
-
-        # Show details for a specific connector
-        nexus connectors info gcs_connector
+        nexus connectors info gws_gmail
     """
-    pass
-
-
-def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
-    """List connectors from remote server via RPC."""
-    result: list[dict[str, Any]] = nx.service("mount").list_connectors_sync(category=category)
-    return result
 
 
 @connectors_group.command(name="list")
@@ -55,7 +76,7 @@ def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any
     "-c",
     type=str,
     default=None,
-    help="Filter by category (storage, api, oauth, database)",
+    help="Filter by category (storage, api, oauth, cli)",
 )
 @add_output_options
 @add_backend_options
@@ -70,25 +91,22 @@ def list_connectors(
     Shows all available connector types that can be used with 'nexus mounts add'.
 
     Examples:
-        # List connectors from remote server
-        nexus connectors list --remote-url http://localhost:2026
-
-        # List only storage connectors
+        nexus connectors list
         nexus connectors list --category storage
-
-        # Output as JSON
         nexus connectors list --json
     """
     timing = CommandTiming()
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-        try:
-            with timing.phase("server"):
-                connectors = _list_connectors_remote(nx, category)
-        except AttributeError:
-            console.print("[red]Error:[/red] Server doesn't support list_connectors")
-            console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
-            sys.exit(1)
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
+
+        with timing.phase("server"):
+            data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
+
+        if category:
+            connectors = [c for c in connectors if c.get("category") == category]
 
         if not connectors:
             if category:
@@ -97,26 +115,29 @@ def list_connectors(
                 console.print("[yellow]No connectors registered[/yellow]")
             return
 
-        def _render(data: list[dict[str, Any]]) -> None:
+        def _render(items: list[dict[str, Any]]) -> None:
             from rich.table import Table
 
             table = Table(title="Available Connectors", show_header=True, header_style="bold cyan")
             table.add_column("Name", style="green")
             table.add_column("Description")
             table.add_column("Category", style="yellow")
-            table.add_column("Dependencies", style="dim")
+            table.add_column("Capabilities", style="dim")
 
-            for c in data:
-                deps = ", ".join(c["requires"]) if c.get("requires") else "-"
+            for c in items:
+                caps = c.get("capabilities", [])
+                caps_str = ", ".join(caps[:3])
+                if len(caps) > 3:
+                    caps_str += f" (+{len(caps) - 3})"
                 table.add_row(
                     c["name"],
                     c.get("description", ""),
                     c.get("category", ""),
-                    deps,
+                    caps_str,
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(data)} connectors[/dim]")
+            console.print(f"\n[dim]Total: {len(items)} connectors[/dim]")
 
         render_output(
             data=connectors,
@@ -139,23 +160,24 @@ def connector_info(
 ) -> None:
     """Show details for a specific connector.
 
-    CONNECTOR_NAME: The connector identifier (e.g., gcs_connector, s3_connector)
+    CONNECTOR_NAME: The connector identifier (e.g., gws_gmail, path_s3)
 
     Examples:
-        nexus connectors info gcs_connector --remote-url http://localhost:2026
+        nexus connectors info gws_gmail
+        nexus connectors info path_s3
     """
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-        try:
-            connectors = _list_connectors_remote(nx, None)
-            info = next((c for c in connectors if c["name"] == connector_name), None)
-            if not info:
-                available = ", ".join(c["name"] for c in connectors)
-                console.print(f"[red]Unknown connector: {connector_name}[/red]")
-                console.print(f"[dim]Available: {available}[/dim]")
-                sys.exit(1)
-        except AttributeError:
-            console.print("[red]Error:[/red] Server doesn't support list_connectors")
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
+
+        data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
+
+        info = next((c for c in connectors if c["name"] == connector_name), None)
+        if not info:
+            available = ", ".join(c["name"] for c in connectors)
+            console.print(f"[red]Unknown connector: {connector_name}[/red]")
+            console.print(f"[dim]Available: {available}[/dim]")
             sys.exit(1)
 
         console.print(f"\n[bold cyan]{info['name']}[/bold cyan]")
@@ -163,14 +185,9 @@ def connector_info(
         console.print(f"  [dim]Category:[/dim] {info.get('category', 'unknown')}")
         console.print(f"  [dim]User-scoped:[/dim] {'Yes' if info.get('user_scoped') else 'No'}")
 
-        requires = info.get("requires", [])
-        if requires:
-            console.print(f"  [dim]Dependencies:[/dim] {', '.join(requires)}")
-        else:
-            console.print("  [dim]Dependencies:[/dim] None (core)")
-
-        if "class" in info:
-            console.print(f"  [dim]Class:[/dim] {info['class']}")
+        caps = info.get("capabilities", [])
+        if caps:
+            console.print(f"  [dim]Capabilities:[/dim] {', '.join(caps)}")
 
         console.print()
 
@@ -195,33 +212,25 @@ def connectors_capabilities(
 
     Examples:
         nexus connectors capabilities
-        nexus connectors capabilities gcs_connector
+        nexus connectors capabilities gws_gmail
     """
     timing = CommandTiming()
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-        try:
-            with timing.phase("server"):
-                all_connectors = _list_connectors_remote(nx, None)
-        except AttributeError:
-            console.print("[red]Error:[/red] Server doesn't support list_connectors")
-            console.print("[yellow]Hint:[/yellow] Update server to latest Nexus version")
-            sys.exit(1)
+        base_url, api_key = _resolve_http_url(remote_url)
+        api_key = remote_api_key or api_key
+
+        with timing.phase("server"):
+            data = asyncio.run(_http_get(f"{base_url}/api/v2/connectors", api_key))
+
+        connectors: list[dict[str, Any]] = data.get("connectors", [])
 
         if name:
-            match = [
-                c for c in all_connectors if c.get("name") == name or c.get("connector_id") == name
-            ]
-            if not match:
-                available = ", ".join(c["name"] for c in all_connectors)
+            connectors = [c for c in connectors if c.get("name") == name]
+            if not connectors:
                 console.print(f"[red]Error:[/red] Connector '{name}' not found")
-                console.print(f"[dim]Available: {available}[/dim]")
                 sys.exit(1)
-            connectors_to_show = match
-        else:
-            connectors_to_show = all_connectors
 
-        def _render(data: list[dict[str, Any]]) -> None:
+        def _render(items: list[dict[str, Any]]) -> None:
             from rich.table import Table
 
             table = Table(
@@ -230,26 +239,23 @@ def connectors_capabilities(
                 header_style="bold cyan",
             )
             table.add_column("Name", style="cyan")
-            table.add_column("Type", style="green")
+            table.add_column("Category", style="green")
             table.add_column("Capabilities", style="yellow")
 
-            for c in data:
+            for c in items:
                 caps = c.get("capabilities", [])
-                if isinstance(caps, list):
-                    caps_str = ", ".join(str(cap) for cap in caps) if caps else "none"
-                else:
-                    caps_str = str(caps)
+                caps_str = ", ".join(str(cap) for cap in caps) if caps else "none"
                 table.add_row(
                     c.get("name", "?"),
-                    c.get("category", c.get("type", "?")),
+                    c.get("category", "?"),
                     caps_str,
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(data)} connectors[/dim]")
+            console.print(f"\n[dim]Total: {len(items)} connectors[/dim]")
 
         render_output(
-            data=connectors_to_show,
+            data=connectors,
             output_opts=output_opts,
             timing=timing,
             human_formatter=_render,

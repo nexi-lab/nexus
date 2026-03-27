@@ -227,36 +227,6 @@ def validate_mount_collision(mount_point: str, existing_mounts: set[str]) -> Non
 # ---------------------------------------------------------------------------
 
 
-def infer_uris_from_paths(paths: list[str]) -> list[str]:
-    """Infer backend URIs from virtual filesystem paths.
-
-    Extracts the scheme and authority from paths like ``/s3/my-bucket/file.txt``
-    to produce ``s3://my-bucket``.  Used by ``nexus-fs cp`` to auto-mount
-    backends without requiring the user to specify URIs explicitly.
-
-    Supported patterns:
-      /s3/<bucket>/...     → s3://<bucket>
-      /gcs/<bucket>/...    → gcs://<bucket>
-      /local/<path>/...    → local://<first-path-segment>
-
-    Returns deduplicated list of URIs.
-    """
-    uris: list[str] = []
-    seen: set[str] = set()
-    for path in paths:
-        parts = path.strip("/").split("/")
-        if len(parts) < 2:
-            continue
-        scheme = parts[0]
-        authority = parts[1]
-        if scheme in ("s3", "gcs", "local") and authority:
-            uri = f"{scheme}://{authority}"
-            if uri not in seen:
-                seen.add(uri)
-                uris.append(uri)
-    return uris
-
-
 def _check_reserved(mount_point: str) -> None:
     """Raise if *mount_point* falls under a reserved path prefix."""
     normalised = mount_point.rstrip("/")

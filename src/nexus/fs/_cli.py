@@ -155,13 +155,32 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> None:
-        from nexus.fs import mount
-        from nexus.fs._uri import infer_uris_from_paths
+        import json
+        import os
+        import tempfile
 
-        # Infer required backend URIs from the virtual paths,
-        # then merge with any explicitly provided URIs.
-        inferred = infer_uris_from_paths([source, dest])
-        all_uris = list(dict.fromkeys(list(mount_uris) + inferred))  # dedup, preserve order
+        from nexus.fs import mount
+
+        # Load previously persisted mount URIs from mounts.json
+        # (written by mount() on every invocation).
+        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
+            tempfile.gettempdir(), "nexus-fs"
+        )
+        persisted: list[str] = []
+        mounts_file = os.path.join(state_dir, "mounts.json")
+        try:
+            with open(mounts_file) as f:
+                persisted = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        # Merge persisted + any extra URIs the user passed explicitly.
+        all_uris = list(dict.fromkeys(persisted + list(mount_uris)))
+        if not all_uris:
+            raise click.UsageError(
+                "No mounts found. Either run 'nexus-fs mount' first or "
+                "pass backend URIs: nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
+            )
         fs = await mount(*all_uris)
 
         result = await fs.copy(source, dest)

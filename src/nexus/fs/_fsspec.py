@@ -466,11 +466,11 @@ class NexusBufferedFile(AbstractBufferedFile):
 
     @property
     def name(self) -> str:
-        return self.path
+        return str(self.path)
 
     def _fetch_range(self, start: int, end: int) -> bytes:
         """Fetch byte range from nexus backend via ``read_range()``."""
-        return self._runner(self._nexus.read_range(self.path, start, end))
+        return bytes(self._runner(self._nexus.read_range(self.path, start, end)))
 
 
 class NexusWriteFile:

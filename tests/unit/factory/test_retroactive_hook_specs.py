@@ -121,11 +121,12 @@ class TestHookSpecDeclarations:
         assert spec.write_hooks == (hook,)
         assert spec.delete_hooks == (hook,)
         assert spec.rename_hooks == (hook,)
+        assert spec.copy_hooks == (hook,)
         assert spec.mkdir_hooks == (hook,)
         assert spec.rmdir_hooks == (hook,)
         assert spec.stat_hooks == (hook,)
         assert spec.access_hooks == (hook,)
-        assert spec.total_hooks == 8
+        assert spec.total_hooks == 9
 
     def test_audit_6_channels(self) -> None:
         from nexus.storage.write_observer_hooks import AuditWriteInterceptor

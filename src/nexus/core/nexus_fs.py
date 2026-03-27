@@ -4138,6 +4138,16 @@ class NexusFS(  # type: ignore[misc]
             "version": entry.version,
         }
 
+    # Issue #3388: Internal metastore prefixes that must not appear in
+    # user-facing directory listings (search checkpoints, ReBAC namespaces).
+    _INTERNAL_PATH_PREFIXES = ("cfg:", "ns:")
+
+    @staticmethod
+    def _is_internal_path(path: str) -> bool:
+        """Return True for system-internal metastore paths."""
+        root = path.lstrip("/").split("/")[0] if "/" in path else path.lstrip("/")
+        return root.startswith(NexusFS._INTERNAL_PATH_PREFIXES)
+
     @rpc_expose(description="List directory entries")
     async def sys_readdir(
         self,
@@ -4157,7 +4167,11 @@ class NexusFS(  # type: ignore[misc]
         if limit is not None:
             from nexus.core.pagination import paginate_iter
 
-            items_iter = self.metadata.list_iter(prefix=prefix, recursive=recursive)
+            items_iter = (
+                e
+                for e in self.metadata.list_iter(prefix=prefix, recursive=recursive)
+                if not self._is_internal_path(e.path)
+            )
             result = paginate_iter(items_iter, limit=limit, cursor_path=cursor)
             if details:
                 result.items = [self._entry_to_detail_dict(e, recursive) for e in result.items]
@@ -4166,6 +4180,7 @@ class NexusFS(  # type: ignore[misc]
             return result
 
         entries = self.metadata.list(prefix=prefix, recursive=recursive)
+        entries = [e for e in entries if not self._is_internal_path(e.path)]
         if details:
             return [self._entry_to_detail_dict(e, recursive) for e in entries]
         return [e.path for e in entries]

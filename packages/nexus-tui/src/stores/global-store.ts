@@ -163,6 +163,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
         throw new Error("Server health check failed");
       }
 
+      // Note: zoneId is not set here — no health/readiness endpoint provides it.
+      // The old /api/v2/bricks/health never returned zone_id either (its response
+      // was { total, active, failed, bricks }). zoneId is set via setIdentity()
+      // when the user explicitly configures a zone, or defaults to "root".
       set({
         serverVersion: features?.version ?? get().serverVersion,
         uptime: health.uptime_seconds ?? get().uptime,

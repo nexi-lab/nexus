@@ -84,6 +84,24 @@ describe("Connection Lifecycle", () => {
       expect(state.userInfo!.email).toBe("test@example.com");
     });
 
+    it("testConnection does not overwrite zoneId (set via setIdentity, not health)", async () => {
+      useGlobalStore.setState({ client: createMockClient(), zoneId: "my-zone" });
+
+      await useGlobalStore.getState().testConnection();
+
+      // zoneId is preserved — no health endpoint provides it
+      expect(useGlobalStore.getState().zoneId).toBe("my-zone");
+    });
+
+    it("testConnection sets serverVersion from features response", async () => {
+      const client = createMockClient();
+      useGlobalStore.setState({ client });
+
+      await useGlobalStore.getState().testConnection();
+
+      expect(useGlobalStore.getState().serverVersion).toBe("0.9.0");
+    });
+
     it("transitions through connecting state", async () => {
       const states: string[] = [];
       const unsubscribe = useGlobalStore.subscribe((s) => {

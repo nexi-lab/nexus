@@ -268,8 +268,6 @@ async def _wire_services(
 
             nx._close_callbacks.append(_close_agent_registry)
 
-        # Keep kernel sentinel in sync for backward compat
-        nx._agent_registry = _ar
         logger.debug("[BOOT:LINK] AgentRegistry lazy-constructed on first access")
         return _ar
 

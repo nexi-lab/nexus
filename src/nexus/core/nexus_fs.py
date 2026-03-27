@@ -2,7 +2,6 @@
 
 import builtins
 import contextlib
-import inspect
 import logging
 import time
 from collections.abc import Callable, Generator, Iterator
@@ -243,14 +242,13 @@ class NexusFS(  # type: ignore[misc]
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
         self._runtime_closeables: list[Any] = []
-        # Factory-injected lifecycle implementations (legacy — no longer used).
-        # Linearized in PR #3371 Phase 2: create_nexus_fs() calls
-        # _wire_services() / _initialize_services() directly.
-        self._link_fn: Callable[..., Any] | None = None
-        self._initialize_fn: Callable[..., Any] | None = None
 
     # =====================================================================
     # Lifecycle methods: link() → initialize() → bootstrap()
+    #
+    # Linearized in PR #3371 Phase 2: create_nexus_fs() calls
+    # _wire_services() / _initialize_services() directly and sets the
+    # flags. These methods are now flag-only no-ops for backward compat.
     # =====================================================================
 
     async def link(
@@ -260,39 +258,27 @@ class NexusFS(  # type: ignore[misc]
         parsing: Any = None,
         workflow_engine: Any = None,
     ) -> None:
-        """Phase 1: Wire service topology.  Pure memory — NO I/O.
+        """Phase 1: Wire service topology — flag-only no-op.
 
-        Implementation is injected via ``_link_fn`` by the factory layer,
-        keeping the kernel free of factory/bricks imports.
-
-        Idempotent — guarded by ``_linked`` flag.
+        Actual wiring is done by factory._lifecycle._wire_services(),
+        called directly from create_nexus_fs(). This method exists for
+        backward compatibility (tests, manual construction).
         """
         if self._linked:
             return
-        if self._link_fn is not None:
-            await self._link_fn(
-                self,
-                enabled_bricks=enabled_bricks,
-                parsing=parsing,
-                workflow_engine=workflow_engine,
-            )
         self._linked = True
 
     async def initialize(self) -> None:
-        """Phase 2: One-time side effects.  NO background threads.
+        """Phase 2: One-time side effects — flag-only no-op.
 
-        Implementation is injected via ``_initialize_fn`` by the factory layer.
-
-        Idempotent — guarded by ``_initialized`` flag.
+        Actual initialization is done by factory._lifecycle._initialize_services(),
+        called directly from create_nexus_fs(). This method exists for
+        backward compatibility (tests, manual construction).
         """
         if self._initialized:
             return
         if not self._linked:
             await self.link()
-        if self._initialize_fn is not None:
-            _result = self._initialize_fn(self)
-            if inspect.isawaitable(_result):
-                await _result
         self._initialized = True
 
     async def bootstrap(self) -> None:

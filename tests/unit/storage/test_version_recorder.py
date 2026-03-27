@@ -137,7 +137,7 @@ class TestRecordCreate:
         """When etag is set, a VersionHistoryModel entry should be created."""
         metadata = _make_metadata(etag="sha256-abc")
         recorder = VersionRecorder(session)
-        recorder.record_write(metadata, is_new=True)
+        recorder.record_write(metadata, is_new=True, created_by="user-1")
         session.commit()
 
         fp = session.execute(

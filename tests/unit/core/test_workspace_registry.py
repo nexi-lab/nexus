@@ -33,6 +33,7 @@ class TestWorkspaceConfig:
             name="Main Workspace",
             description="Test workspace",
             created_at=now,
+            created_by="alice",
             metadata={"key": "value"},
         )
         assert config.path == "/workspace"
@@ -49,6 +50,7 @@ class TestWorkspaceConfig:
             path="/workspace",
             name="Test",
             created_at=now,
+            created_by="bob",
         )
         result = config.to_dict()
         assert result["path"] == "/workspace"

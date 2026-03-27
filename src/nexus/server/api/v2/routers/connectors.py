@@ -234,7 +234,10 @@ async def list_available_connectors(
     _: dict = Depends(require_auth),
 ) -> list[AvailableConnector]:
     """List connectors with auth and mount status (for TUI Connectors tab)."""
+    from nexus.backends import _register_optional_backends
     from nexus.backends.base.registry import ConnectorRegistry
+
+    _register_optional_backends()
 
     nx = _get_nx(request)
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")

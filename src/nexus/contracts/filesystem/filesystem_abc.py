@@ -175,6 +175,17 @@ class NexusFilesystemABC(ABC):
         """Rename/move a file (POSIX rename(2))."""
         ...
 
+    @abstractmethod
+    async def sys_copy(
+        self, src_path: str, dst_path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
+        """Copy a file (Issue #3329).
+
+        Uses backend-native server-side copy when available,
+        streaming for cross-backend, or read+write as fallback.
+        """
+        ...
+
     # ── Directory ──────────────────────────────────────────────────
 
     @abstractmethod

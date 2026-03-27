@@ -306,6 +306,33 @@ class LocalBlobTransport:
                 path=key,
             ) from e
 
+    def put_blob_chunked(
+        self,
+        key: str,
+        chunks: "Iterator[bytes]",
+        content_type: str = "",  # noqa: ARG002 — local FS ignores MIME
+    ) -> str | None:
+        """Stream chunks to local filesystem via temp file + atomic replace."""
+        import tempfile
+
+        path = self._resolve(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, suffix=".tmp") as tmp:
+                for chunk in chunks:
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+            os.replace(tmp_path, str(path))
+        except Exception as e:
+            with contextlib.suppress(OSError):
+                Path(tmp_path).unlink(missing_ok=True)
+            raise BackendError(
+                f"Failed to write chunked blob to {key}: {e}",
+                backend="local",
+                path=key,
+            ) from e
+        return None
+
     def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
         """Atomic move: src_path → final blob path (no memory copy).
 

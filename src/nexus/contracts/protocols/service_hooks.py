@@ -33,6 +33,7 @@ class HookSpec:
     write_batch_hooks: tuple[Any, ...] = ()
     delete_hooks: tuple[Any, ...] = ()
     rename_hooks: tuple[Any, ...] = ()
+    copy_hooks: tuple[Any, ...] = ()
     mkdir_hooks: tuple[Any, ...] = ()
     rmdir_hooks: tuple[Any, ...] = ()
     stat_hooks: tuple[Any, ...] = ()
@@ -52,6 +53,7 @@ class HookSpec:
                 self.write_batch_hooks,
                 self.delete_hooks,
                 self.rename_hooks,
+                self.copy_hooks,
                 self.mkdir_hooks,
                 self.rmdir_hooks,
                 self.stat_hooks,
@@ -72,6 +74,7 @@ class HookSpec:
             + len(self.write_batch_hooks)
             + len(self.delete_hooks)
             + len(self.rename_hooks)
+            + len(self.copy_hooks)
             + len(self.mkdir_hooks)
             + len(self.rmdir_hooks)
             + len(self.stat_hooks)

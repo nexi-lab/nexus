@@ -24,6 +24,7 @@ class FileEventType(StrEnum):
     FILE_WRITE = "file_write"
     FILE_DELETE = "file_delete"
     FILE_RENAME = "file_rename"
+    FILE_COPY = "file_copy"
     METADATA_CHANGE = "metadata_change"  # chmod, chown, truncate (Issue #1115)
     DIR_CREATE = "dir_create"
     DIR_DELETE = "dir_delete"
@@ -47,8 +48,9 @@ FILE_EVENT_BIT: dict[FileEventType, int] = {
     FileEventType.SYNC_TO_BACKEND_COMPLETED: 1 << 7,
     FileEventType.SYNC_TO_BACKEND_FAILED: 1 << 8,
     FileEventType.CONFLICT_DETECTED: 1 << 9,
+    FileEventType.FILE_COPY: 1 << 10,  # Issue #3329
 }
-ALL_FILE_EVENTS: int = (1 << 10) - 1  # 0x3FF — matches all event types
+ALL_FILE_EVENTS: int = (1 << 11) - 1  # 0x7FF — matches all event types
 
 
 @dataclass(frozen=True)

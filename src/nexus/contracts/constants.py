@@ -93,6 +93,18 @@ DEFAULT_NATS_URL = "nats://localhost:4222"
 # Zone Defaults
 # =============================================================================
 
+# =============================================================================
+# File Size Limits
+# =============================================================================
+
+NEXUS_FS_MAX_INMEMORY_SIZE = 1 * 1024 * 1024 * 1024  # 1 GB
+"""Maximum file size for in-memory buffering (read-copy, cat, write buffer).
+
+Shared across the kernel (sys_copy cross-backend fallback), the slim facade,
+and the fsspec compatibility layer.  Change this one constant to adjust all
+in-memory size guards.
+"""
+
 ROOT_ZONE_ID = "root"
 """Default zone ID for standalone (non-federated) deployments.
 

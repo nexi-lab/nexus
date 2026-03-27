@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.contracts.vfs_hooks import (
         AccessHookContext,
+        CopyHookContext,
         DeleteHookContext,
         MkdirHookContext,
         ReadHookContext,
@@ -116,6 +117,11 @@ class PermissionCheckHook:
     def on_pre_rename(self, ctx: RenameHookContext) -> None:
         """Check WRITE permission on both source and destination."""
         self._checker.check(ctx.old_path, Permission.WRITE, ctx.context)
+
+    def on_pre_copy(self, ctx: "CopyHookContext") -> None:
+        """Check READ on source, WRITE on destination (Issue #3329)."""
+        self._checker.check(ctx.src_path, Permission.READ, ctx.context)
+        self._checker.check(ctx.dst_path, Permission.WRITE, ctx.context)
 
     def on_pre_mkdir(self, ctx: MkdirHookContext) -> None:
         """Check WRITE permission on nearest existing ancestor."""

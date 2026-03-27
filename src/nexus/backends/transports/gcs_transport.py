@@ -211,12 +211,27 @@ class GCSBlobTransport:
             ) from e
 
     def copy_blob(self, src_key: str, dst_key: str) -> None:
+        """Server-side copy using GCS rewrite API.
+
+        Uses the rewrite() token-continuation loop which handles
+        large objects and cross-location copies reliably.  For
+        same-location objects this completes in a single call.
+        """
         try:
             source_blob = self.bucket.blob(src_key)
             if not source_blob.exists():
                 raise NexusFileNotFoundError(src_key)
 
-            self.bucket.copy_blob(source_blob, self.bucket, dst_key)
+            dest_blob = self.bucket.blob(dst_key)
+            token = None
+            while True:
+                token, _bytes_rewritten, _total_bytes = dest_blob.rewrite(
+                    source_blob,
+                    token=token,
+                    timeout=self._operation_timeout,
+                )
+                if token is None:
+                    break
 
         except NotFound as e:
             raise NexusFileNotFoundError(src_key) from e
@@ -281,6 +296,39 @@ class GCSBlobTransport:
         except Exception as e:
             raise BackendError(
                 f"Failed to stream blob from {key}: {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def put_blob_chunked(
+        self,
+        key: str,
+        chunks: "Iterator[bytes]",
+        content_type: str = "",
+    ) -> str | None:
+        """Stream chunks into GCS via resumable upload.
+
+        Uses ``blob.open('wb')`` which manages a resumable upload session
+        under the hood — chunks are uploaded incrementally without
+        buffering the full object in memory.
+        """
+        try:
+            blob = self.bucket.blob(key)
+            with blob.open(
+                "wb",
+                content_type=content_type or "application/octet-stream",
+                timeout=self._upload_timeout,
+                retry=retry.Retry(deadline=300),
+            ) as writer:
+                for chunk in chunks:
+                    writer.write(chunk)
+
+            blob.reload()
+            return str(blob.generation) if blob.generation else None
+
+        except Exception as e:
+            raise BackendError(
+                f"Failed to write chunked blob to {key}: {e}",
                 backend="gcs",
                 path=key,
             ) from e

@@ -32,9 +32,6 @@ Known deviations from full fsspec contract (v0.1.0):
     - Write-mode ``_open()`` buffers the entire file in memory (up to 1 GB).
       True streaming writes are not yet supported.
     - ``_rm()`` does not support glob patterns; pass explicit paths.
-    - ``NexusBufferedFile`` does not inherit from
-      ``fsspec.spec.AbstractBufferedFile`` — it implements the file-like
-      protocol directly.
     - No ``transactions`` support (``start_transaction`` / ``end_transaction``).
 
 Framework adapters (v0.1.0 scope):
@@ -52,7 +49,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 try:
-    from fsspec.spec import AbstractFileSystem
+    from fsspec.spec import AbstractBufferedFile, AbstractFileSystem
 except ImportError:
     raise ImportError(
         "fsspec is required for NexusFileSystem. Install with: pip install nexus-fs[fsspec]"
@@ -66,17 +63,12 @@ from nexus.fs._constants import DEFAULT_MAX_FILE_SIZE
 
 logger = logging.getLogger(__name__)
 
-# Maximum file size for _cat_file before refusing.
-# Files larger than this should use _open() with buffered access.
+# Re-export under descriptive names for backward compatibility.
 MAX_CAT_FILE_SIZE = DEFAULT_MAX_FILE_SIZE
-
-# Maximum buffer size for write-mode _open().
-# Writes exceeding this should use _pipe_file() with pre-built bytes
-# or wait for streaming write support.
 MAX_WRITE_BUFFER_SIZE = DEFAULT_MAX_FILE_SIZE
 
 # Supported modes for _open().
-_SUPPORTED_MODES = frozenset({"rb", "wb", "r", "w"})
+_SUPPORTED_MODES = frozenset({"rb", "wb", "r", "w", "xb", "x"})
 
 
 class NexusFileSystem(AbstractFileSystem):
@@ -354,6 +346,17 @@ class NexusFileSystem(AbstractFileSystem):
 
         path = self._strip_protocol(path)
 
+        if "x" in mode:
+            # Exclusive create — fail if file exists
+            if self._runner(self._nexus.stat(path)) is not None:
+                raise FileExistsError(path)
+            return NexusWriteFile(
+                fs=self,
+                path=path,
+                nexus_fs=self._nexus,
+                runner=self._runner,
+            )
+
         if "r" in mode:
             stat = self._runner(self._nexus.stat(path))
             if stat is None:
@@ -377,12 +380,15 @@ class NexusFileSystem(AbstractFileSystem):
             )
 
 
-class NexusBufferedFile:
-    """Read-only file-like object with byte-range fetching.
+class NexusBufferedFile(AbstractBufferedFile):
+    """Read-only buffered file backed by nexus-fs ``read_range()``.
 
-    Implements the file-like interface needed by pandas, dask, etc.:
-    ``read()``, ``readline()``, ``readlines()``, ``seek()``, ``tell()``,
-    ``close()``, ``__enter__``/``__exit__``, ``__iter__``/``__next__``.
+    Inherits from fsspec's ``AbstractBufferedFile`` to get the full
+    file-like contract (read, readline, readlines, seek, tell, close,
+    context manager, iteration) plus cache strategies (readahead, block,
+    bytes, all).
+
+    Only ``_fetch_range()`` is overridden — everything else is inherited.
     """
 
     def __init__(
@@ -395,144 +401,27 @@ class NexusBufferedFile:
         nexus_fs: SlimNexusFS,
         runner: PortalRunner,
     ) -> None:
-        self.fs = fs
-        self.path = path
-        self.mode = mode
-        self.size = size
-        self.block_size = block_size
         self._nexus = nexus_fs
         self._runner = runner
-        self._pos = 0
-        self._closed = False
+        # AbstractBufferedFile only accepts binary modes (rb, wb, ab, xb).
+        # Normalize "r" → "rb" since our text mode returns bytes anyway.
+        abf_mode = mode if mode.endswith("b") else mode + "b"
+        super().__init__(
+            fs=fs,
+            path=path,
+            mode=abf_mode,
+            block_size=block_size,
+            size=size,
+            cache_type="readahead",
+        )
 
     @property
     def name(self) -> str:
         return self.path
 
-    def read(self, length: int = -1) -> bytes:
-        """Read up to *length* bytes from current position.
-
-        Uses ``read_range()`` for memory-efficient byte-range fetching --
-        only the requested range is transferred from the backend.
-        """
-        if self._closed:
-            raise ValueError("I/O operation on closed file")
-        if self._pos >= self.size:
-            return b""
-
-        end = self.size if length == -1 else min(self._pos + length, self.size)
-
-        data: bytes = self._runner(self._nexus.read_range(self.path, self._pos, end))
-        self._pos = end
-        return data
-
-    def readline(self, size: int = -1) -> bytes:
-        r"""Read a single line (up to ``\n`` or EOF).
-
-        Args:
-            size: Maximum bytes to read.  -1 means no limit.
-        """
-        if self._closed:
-            raise ValueError("I/O operation on closed file")
-        if self._pos >= self.size:
-            return b""
-
-        chunks: list[bytes] = []
-        bytes_read = 0
-        chunk_size = min(self.block_size, 256 * 1024)  # 256 KB to reduce round trips
-
-        while self._pos < self.size:
-            if 0 <= size <= bytes_read:
-                break
-            remaining = self.size - self._pos
-            if size >= 0:
-                remaining = min(remaining, size - bytes_read)
-            to_read = min(chunk_size, remaining)
-
-            chunk: bytes = self._runner(
-                self._nexus.read_range(self.path, self._pos, self._pos + to_read)
-            )
-            if not chunk:
-                break
-
-            newline_pos = chunk.find(b"\n")
-            if newline_pos >= 0:
-                # Found newline -- take up to and including it
-                chunks.append(chunk[: newline_pos + 1])
-                self._pos += newline_pos + 1
-                break
-            else:
-                chunks.append(chunk)
-                self._pos += len(chunk)
-                bytes_read += len(chunk)
-
-        return b"".join(chunks)
-
-    def readlines(self, hint: int = -1) -> list[bytes]:
-        """Read all remaining lines.
-
-        Args:
-            hint: Approximate number of bytes to read.  -1 reads all.
-        """
-        lines: list[bytes] = []
-        total = 0
-        while True:
-            line = self.readline()
-            if not line:
-                break
-            lines.append(line)
-            total += len(line)
-            if 0 <= hint <= total:
-                break
-        return lines
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        """Seek to a position."""
-        if whence == 0:
-            self._pos = offset
-        elif whence == 1:
-            self._pos += offset
-        elif whence == 2:
-            self._pos = self.size + offset
-        self._pos = max(0, min(self._pos, self.size))
-        return self._pos
-
-    def tell(self) -> int:
-        return self._pos
-
-    def flush(self) -> None:
-        """No-op for read-only file."""
-
-    def close(self) -> None:
-        self._closed = True
-
-    @property
-    def closed(self) -> bool:
-        return self._closed
-
-    def readable(self) -> bool:
-        return True
-
-    def writable(self) -> bool:
-        return False
-
-    def seekable(self) -> bool:
-        return True
-
-    def __enter__(self) -> NexusBufferedFile:
-        return self
-
-    def __exit__(self, *args: Any) -> None:
-        self.close()
-
-    def __iter__(self) -> NexusBufferedFile:
-        return self
-
-    def __next__(self) -> bytes:
-        line = self.readline()
-        if not line:
-            raise StopIteration
-        return line
+    def _fetch_range(self, start: int, end: int) -> bytes:
+        """Fetch byte range from nexus backend via ``read_range()``."""
+        return self._runner(self._nexus.read_range(self.path, start, end))
 
 
 class NexusWriteFile:

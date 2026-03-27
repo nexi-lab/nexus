@@ -130,6 +130,54 @@ def playground(uris: tuple[str, ...]) -> None:
     app.run()
 
 
+@main.command()
+@click.argument("source", type=str)
+@click.argument("dest", type=str)
+@click.argument("mount_uris", nargs=-1)
+def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
+    """Copy a file between any mounted backends.
+
+    Uses backend-native server-side copy when source and destination are
+    on the same backend (S3 CopyObject, GCS rewrite).  For cross-backend
+    copies (e.g., S3 → GCS), streams data in 8 MB chunks without
+    buffering the entire file in memory.
+
+    Pass additional URIs to mount backends that aren't auto-discovered.
+
+    \b
+    Examples:
+
+    \b
+      nexus-fs cp /s3/bucket/data.csv /s3/bucket/backup.csv
+      nexus-fs cp /s3/bucket/file.parquet /gcs/bucket/file.parquet
+      nexus-fs cp /local/data/report.pdf /s3/archive/report.pdf s3://archive
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> None:
+        from nexus.fs import mount
+
+        # Auto-discover + any extra mount URIs
+        all_uris = list(mount_uris)
+        fs = await mount(*all_uris) if all_uris else await mount()
+
+        result = await fs.copy(source, dest)
+        size = result.get("size", 0)
+        if size >= 1024 * 1024:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+        elif size >= 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size} B"
+        click.echo(f"Copied {source} → {dest} ({size_str})")
+
+    try:
+        run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 main.add_command(auth_group)
 
 

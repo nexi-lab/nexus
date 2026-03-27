@@ -56,6 +56,7 @@ except ImportError:  # pragma: no cover — Rust extension not built
 
 from nexus.contracts.vfs_hooks import (
     AccessHookContext,
+    CopyHookContext,
     DeleteHookContext,
     MkdirHookContext,
     MountHookContext,
@@ -65,6 +66,7 @@ from nexus.contracts.vfs_hooks import (
     StatHookContext,
     UnmountHookContext,
     VFSAccessHook,
+    VFSCopyHook,
     VFSDeleteHook,
     VFSMkdirHook,
     VFSMountHook,
@@ -328,6 +330,9 @@ class KernelDispatch:
         self._registry.register("rename", hook)
         self._mark_hook("rename")
 
+    def register_intercept_copy(self, hook: VFSCopyHook) -> None:
+        self._registry.register("copy", hook)
+
     def register_intercept_mkdir(self, hook: VFSMkdirHook) -> None:
         self._registry.register("mkdir", hook)
         self._mark_hook("mkdir")
@@ -389,6 +394,9 @@ class KernelDispatch:
         if r:
             self._unmark_hook("rename")
         return r
+
+    def unregister_intercept_copy(self, hook: VFSCopyHook) -> bool:
+        return bool(self._registry.unregister("copy", hook))
 
     def unregister_intercept_mkdir(self, hook: VFSMkdirHook) -> bool:
         r = bool(self._registry.unregister("mkdir", hook))
@@ -460,6 +468,11 @@ class KernelDispatch:
             return
         for hook in self._registry.get_pre_hooks("rename"):
             hook.on_pre_rename(ctx)
+
+    def intercept_pre_copy(self, ctx: CopyHookContext) -> None:
+        """PRE-INTERCEPT phase for copy — hooks may abort by raising."""
+        for hook in self._registry.get_pre_hooks("copy"):
+            hook.on_pre_copy(ctx)
 
     def intercept_pre_mkdir(self, ctx: MkdirHookContext) -> None:
         """PRE-INTERCEPT phase for mkdir — hooks may abort by raising."""
@@ -564,6 +577,9 @@ class KernelDispatch:
     async def intercept_post_rename(self, ctx: RenameHookContext) -> None:
         await self._post_dispatch("rename", "on_post_rename", ctx)
 
+    async def intercept_post_copy(self, ctx: CopyHookContext) -> None:
+        await self._post_dispatch("copy", "on_post_copy", ctx)
+
     async def intercept_post_mkdir(self, ctx: MkdirHookContext) -> None:
         await self._post_dispatch("mkdir", "on_post_mkdir", ctx)
 
@@ -662,6 +678,10 @@ class KernelDispatch:
     @property
     def rename_hook_count(self) -> int:
         return int(self._registry.count("rename"))
+
+    @property
+    def copy_hook_count(self) -> int:
+        return int(self._registry.count("copy"))
 
     @property
     def mkdir_hook_count(self) -> int:

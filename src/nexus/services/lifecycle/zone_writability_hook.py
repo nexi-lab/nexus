@@ -21,6 +21,7 @@ from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
     from nexus.contracts.vfs_hooks import (
+        CopyHookContext,
         DeleteHookContext,
         MkdirHookContext,
         RenameHookContext,
@@ -72,6 +73,9 @@ class ZoneWritabilityHook:
         self._check(ctx.zone_id)
 
     def on_pre_rename(self, ctx: RenameHookContext) -> None:
+        self._check(ctx.zone_id)
+
+    def on_pre_copy(self, ctx: "CopyHookContext") -> None:
         self._check(ctx.zone_id)
 
     def on_pre_mkdir(self, ctx: MkdirHookContext) -> None:

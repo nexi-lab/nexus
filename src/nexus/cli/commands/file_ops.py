@@ -690,14 +690,10 @@ def cp(
 
             nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
-            # Read source
-            content = await nx.sys_read(source)
-
-            # Type narrowing: when return_metadata=False (default), result is bytes
-            assert isinstance(content, bytes), "Expected bytes from read()"
-
-            # Write to destination
-            await nx.write(dest, content)
+            # Use sys_copy for backend-native server-side copy when
+            # available (S3 CopyObject, GCS rewrite), streaming for
+            # cross-backend, or read+write as fallback.
+            await nx.sys_copy(source, dest)
 
             nx.close()
 

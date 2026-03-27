@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { FetchClient } from "@nexus/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
+import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
@@ -71,6 +72,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   const pollAuthStatus = useConnectorsStore((s) => s.pollAuthStatus);
   const cancelAuth = useConnectorsStore((s) => s.cancelAuth);
 
+  const config = useGlobalStore((s) => s.config);
   const { copy, copied } = useCopy();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -136,8 +138,17 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
       configHint = "'{}'";
     }
 
-    return `nexus mounts add ${mountPath} ${selected.name} ${configHint}`;
-  }, [connectors, selectedIndex]);
+    // Include --remote-url and --remote-api-key so the command works without
+    // NEXUS_URL being set in the user's shell
+    const url = (config as Record<string, unknown>).baseUrl as string | undefined;
+    const apiKey = (config as Record<string, unknown>).apiKey as string | undefined;
+    const remoteFlags = [
+      url ? `--remote-url ${url}` : "",
+      apiKey ? `--remote-api-key ${apiKey}` : "",
+    ].filter(Boolean).join(" ");
+
+    return `nexus mounts add ${mountPath} ${selected.name} ${configHint}${remoteFlags ? ` ${remoteFlags}` : ""}`;
+  }, [connectors, selectedIndex, config]);
 
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,

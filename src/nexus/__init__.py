@@ -577,20 +577,6 @@ async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backe
     )
     await _coordinator.enlist("federation_ipc", ipc_resolver)
 
-    # Wire EventBus as kernel FileWatcher's remote watcher (#162).
-    # Federation is the primary consumer of cross-zone events, so it
-    # constructs the EventBus and wires it into the kernel.
-    # Other consumers that need distributed events check
-    # _file_watcher._remote_watcher — if None, they can construct and set it.
-    if hasattr(nx_fs, "_file_watcher") and not nx_fs._file_watcher.has_remote_watcher:
-        _event_bus_ref = nx_fs._service_registry.service("event_bus")
-        _event_bus = _event_bus_ref._service_instance if _event_bus_ref is not None else None
-        if _event_bus is None:
-            _event_bus = getattr(nx_fs, "_event_bus_instance", None)
-        if _event_bus is not None:
-            nx_fs._file_watcher.set_remote_watcher(_event_bus)
-            logger.info("Federation wired EventBus as FileWatcher remote watcher")
-
     # Build CAS remote content fetcher if backend supports CAS (#1744)
     remote_content_fetcher = None
     if hasattr(backend, "content_exists") and hasattr(backend, "read_content"):

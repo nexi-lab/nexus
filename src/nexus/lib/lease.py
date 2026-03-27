@@ -201,32 +201,39 @@ class LocalLeaseManager:
             await self._sweep_expired()
 
     async def _sweep_expired(self) -> None:
-        """Remove all expired leases from internal state."""
+        """Remove all expired leases from internal state and notify callbacks."""
         now = self._clock.monotonic()
+        expired_leases: list[Lease] = []
         async with self._lock:
-            expired_keys: list[tuple[str, str]] = []
-            for rkey, holders in self._by_resource.items():
-                for hid, lease in holders.items():
-                    if lease.is_expired(now):
-                        expired_keys.append((rkey, hid))
-            for rkey, hid in expired_keys:
-                self._remove_lease_unlocked(rkey, hid)
-            if expired_keys:
+            for rkey in list(self._by_resource.keys()):
+                expired_leases.extend(self._evict_expired_for_resource(rkey, now))
+            if expired_leases:
                 logger.debug(
                     "[LeaseManager] Sweep removed %d expired lease(s)",
-                    len(expired_keys),
+                    len(expired_leases),
                 )
+        # Invoke callbacks outside lock
+        if expired_leases:
+            await self._invoke_callbacks(expired_leases, "expired")
 
     # -- internal state management (call under self._lock) --------------------
 
-    def _evict_expired_for_resource(self, rkey: str, now: float) -> None:
-        """Lazily evict expired leases for a single resource (under lock)."""
+    def _evict_expired_for_resource(self, rkey: str, now: float) -> list[Lease]:
+        """Lazily evict expired leases for a single resource (under lock).
+
+        Returns:
+            List of expired leases that were removed (for callback invocation).
+        """
         holders = self._by_resource.get(rkey)
         if not holders:
-            return
-        expired = [hid for hid, lease in holders.items() if lease.is_expired(now)]
-        for hid in expired:
-            self._remove_lease_unlocked(rkey, hid)
+            return []
+        expired_leases: list[Lease] = []
+        expired_hids = [hid for hid, lease in holders.items() if lease.is_expired(now)]
+        for hid in expired_hids:
+            removed = self._remove_lease_unlocked(rkey, hid)
+            if removed is not None:
+                expired_leases.append(removed)
+        return expired_leases
 
     def _remove_lease_unlocked(self, rkey: str, holder_id: str) -> Lease | None:
         """Remove a lease from both indexes (under lock). Returns removed lease."""
@@ -352,9 +359,10 @@ class LocalLeaseManager:
                 )
                 return None
 
+            expired_in_eviction: list[Lease] = []
             async with self._lock:
                 now = self._clock.monotonic()
-                self._evict_expired_for_resource(rkey, now)
+                expired_in_eviction = self._evict_expired_for_resource(rkey, now)
 
                 # Check if this holder already has a lease on this resource
                 existing = self._by_resource.get(rkey, {}).get(holder_id)
@@ -394,7 +402,14 @@ class LocalLeaseManager:
                     )
                     return lease
 
-                # Conflicts exist — revoke them (DFUSE Algorithm 2)
+                # Conflicts exist — check timeout BEFORE revoking to avoid
+                # destructive non-blocking acquire (codex finding #1: timeout=0
+                # must not evict holders and then fail to grant).
+                if timeout <= 0:
+                    self._timeout_count += 1
+                    return None
+
+                # Revoke conflicting holders (DFUSE Algorithm 2)
                 revoked: list[Lease] = []
                 for conflict in conflicts:
                     removed = self._remove_lease_unlocked(rkey, conflict.holder_id)
@@ -403,14 +418,10 @@ class LocalLeaseManager:
                         self._revoke_count += 1
 
             # Invoke callbacks outside the lock to avoid deadlock
+            if expired_in_eviction:
+                await self._invoke_callbacks(expired_in_eviction, "expired")
             if revoked:
                 await self._invoke_callbacks(revoked, "conflict")
-
-            # Re-acquire lock and try again (callbacks may have taken time)
-            # For non-blocking mode, fail immediately
-            if timeout <= 0:
-                self._timeout_count += 1
-                return None
 
             # Brief yield to let other tasks run, then retry
             await asyncio.sleep(min(retry_interval, max(0, deadline - self._clock.monotonic())))
@@ -424,15 +435,18 @@ class LocalLeaseManager:
         """Return the active lease if still valid for this holder/resource pair."""
         rkey = self._resource_key(resource_id)
         now = self._clock.monotonic()
+        expired: list[Lease] = []
         async with self._lock:
-            self._evict_expired_for_resource(rkey, now)
+            expired = self._evict_expired_for_resource(rkey, now)
             holders = self._by_resource.get(rkey)
             if not holders:
-                return None
-            lease = holders.get(holder_id)
-            if lease is None or lease.is_expired(now):
-                return None
-            return lease
+                result = None
+            else:
+                lease = holders.get(holder_id)
+                result = None if (lease is None or lease.is_expired(now)) else lease
+        if expired:
+            await self._invoke_callbacks(expired, "expired")
+        return result
 
     async def revoke(
         self,
@@ -527,11 +541,12 @@ class LocalLeaseManager:
         now = self._clock.monotonic()
 
         async with self._lock:
-            self._evict_expired_for_resource(rkey, now)
+            expired = self._evict_expired_for_resource(rkey, now)
             holders = self._by_resource.get(rkey)
-            if not holders:
-                return []
-            return list(holders.values())
+            result = list(holders.values()) if holders else []
+        if expired:
+            await self._invoke_callbacks(expired, "expired")
+        return result
 
     # -- lifecycle & observability --------------------------------------------
 

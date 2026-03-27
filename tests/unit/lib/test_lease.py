@@ -152,6 +152,21 @@ class TestCompatibilityMatrix:
             assert await mgr.validate("r1", "h-a") is None
 
     @pytest.mark.asyncio()
+    async def test_nonblocking_conflict_does_not_destroy_existing(
+        self, mgr: LocalLeaseManager
+    ) -> None:
+        """timeout=0 with conflict must return None WITHOUT revoking the holder."""
+        lease_a = await mgr.acquire("r1", "h-a", READ)
+        assert lease_a is not None
+
+        # Non-blocking conflicting acquire should fail but NOT revoke h-a
+        result = await mgr.acquire("r1", "h-b", WRITE, timeout=0)
+        assert result is None
+
+        # h-a's lease must still be valid
+        assert await mgr.validate("r1", "h-a") is not None
+
+    @pytest.mark.asyncio()
     async def test_grant_on_empty_resource(self, mgr: LocalLeaseManager) -> None:
         """No existing holders — always grant immediately."""
         for state in (READ, WRITE):
@@ -437,6 +452,26 @@ class TestRevocationCallbacks:
         await mgr.acquire("r1", "h1", READ)
         revoked = await mgr.revoke("r1")
         assert len(revoked) == 1
+
+    @pytest.mark.asyncio()
+    async def test_callback_invoked_on_expiry(
+        self, mgr: LocalLeaseManager, clock: ManualClock
+    ) -> None:
+        """Expired leases trigger callbacks with reason 'expired' on next access."""
+        events: list[tuple[str, str]] = []
+
+        async def on_revoke(lease: Lease, reason: str) -> None:
+            events.append((lease.holder_id, reason))
+
+        mgr.register_revocation_callback("test-cb", on_revoke)
+        await mgr.acquire("r1", "h1", READ, ttl=5.0)
+
+        # Advance past TTL
+        clock.advance(6.0)
+
+        # validate triggers lazy eviction which should fire the callback
+        assert await mgr.validate("r1", "h1") is None
+        assert ("h1", "expired") in events
 
     @pytest.mark.asyncio()
     async def test_no_callback_on_force_revoke(self, mgr: LocalLeaseManager) -> None:

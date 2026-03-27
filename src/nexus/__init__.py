@@ -408,8 +408,9 @@ async def connect(
     metadata_store: MetastoreABC
     federation = None
 
-    # Federation gating: only attempt if "federation" brick is enabled
-    if "federation" in enabled_bricks:
+    # Federation: attempt when IPC brick is enabled (cluster profile and above).
+    # Federation is a system service (not a brick) but requires IPC infrastructure.
+    if "ipc" in enabled_bricks:
         try:
             from nexus.raft.federation import NexusFederation
 

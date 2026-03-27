@@ -47,7 +47,6 @@ def _make_metadata(path: str, *, etag: str = "abc123", size: int = 100) -> FileM
         modified_at=datetime.now(UTC),
         version=1,
         zone_id="root",
-        created_by="bench",
         owner_id="bench",
     )
 

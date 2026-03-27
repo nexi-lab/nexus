@@ -56,7 +56,6 @@ def _make_metadata(
         modified_at=datetime.now(UTC),
         version=version,
         zone_id="root",
-        created_by="test_user",
         owner_id="user1",
     )
 

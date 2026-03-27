@@ -104,7 +104,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             revoked_at=None,
             expires_at=None,
             max_access_count=None,
@@ -118,7 +117,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             revoked_at=datetime.now(UTC),
         )
         assert link.is_valid() is False
@@ -129,7 +127,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             expires_at=datetime.now(UTC) - timedelta(hours=1),
         )
         assert link.is_valid() is False
@@ -140,7 +137,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             max_access_count=5,
             access_count=5,
         )
@@ -152,7 +148,6 @@ class TestShareLinkModelIsValid:
         link = ShareLinkModel(
             resource_type="file",
             resource_id="f1",
-            created_by="u1",
             max_access_count=5,
             access_count=4,
         )

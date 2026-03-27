@@ -111,7 +111,6 @@ def _add_snapshot(session_factory, workspace_path: str, snapshot_id: str, number
             file_count=3,
             total_size_bytes=512,
             description=f"Snapshot {number}",
-            created_by="test",
         )
         session.add(snap)
         session.commit()

@@ -18,7 +18,6 @@ def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig
         path=path,
         name=path.split("/")[-1],
         created_at=datetime.now(),
-        created_by=created_by,
     )
 
 

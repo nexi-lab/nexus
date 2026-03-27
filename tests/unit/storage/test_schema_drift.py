@@ -137,7 +137,6 @@ class TestRoundtripConsistency:
             modified_at=now,
             version=3,
             zone_id="zone1",
-            created_by="agent-1",
             owner_id="user-42",
         )
 

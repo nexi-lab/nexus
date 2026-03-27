@@ -837,12 +837,21 @@ def create_async_files_router(
             # in its own listing — that causes infinite recursion in tree UIs.
             clean_path = path.rstrip("/") or "/"
 
+            # Internal paths stored in the metastore (system config, ReBAC
+            # namespaces) must not leak into user-facing directory listings.
+            _INTERNAL_PREFIXES = ("cfg:", "ns:")
+
+            def _is_visible(entry: dict) -> bool:
+                p = entry.get("path", "")
+                name = p.lstrip("/").split("/")[0] if "/" in p else p.lstrip("/")
+                return p.rstrip("/") != clean_path.rstrip("/") and not name.startswith(
+                    _INTERNAL_PREFIXES
+                )
+
             # Paginated path: result is a PaginatedResult
             if limit is not None:
                 file_items = [
-                    _to_file_item(entry, prefix)
-                    for entry in result.items
-                    if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
+                    _to_file_item(entry, prefix) for entry in result.items if _is_visible(entry)
                 ]
                 next_cursor = (
                     base64.b64encode(result.next_cursor.encode("utf-8")).decode("ascii")
@@ -856,11 +865,7 @@ def create_async_files_router(
                 )
 
             # Non-paginated path (backward compat): result is list[dict]
-            file_items = [
-                _to_file_item(entry, prefix)
-                for entry in result
-                if entry.get("path", "").rstrip("/") != clean_path.rstrip("/")
-            ]
+            file_items = [_to_file_item(entry, prefix) for entry in result if _is_visible(entry)]
             return ListResponse(items=file_items, has_more=False)
 
         except HTTPException:

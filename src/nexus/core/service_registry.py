@@ -43,6 +43,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _declares_hook_spec(instance: Any) -> bool:
+    """Check if instance has a real hook_spec method without triggering __getattr__.
+
+    RPC proxy objects (RPCProxyBase) use __getattr__ to synthesize remote method
+    calls.  Using ``hasattr(instance, "hook_spec")`` on these proxies triggers a
+    remote RPC call to a non-existent ``hook_spec`` method, causing errors.
+    ``inspect.getattr_static`` reads the class MRO without invoking descriptors
+    or __getattr__, so it is safe for dynamic proxies.
+    """
+    attr = inspect.getattr_static(instance, "hook_spec", None)
+    return attr is not None
+
+
 DEFAULT_DRAIN_TIMEOUT: float = 10.0
 
 

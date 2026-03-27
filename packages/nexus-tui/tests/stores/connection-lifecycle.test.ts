@@ -25,7 +25,7 @@ function createMockClient(overrides: {
     primary_auth_method: "api_key",
   };
 
-  const defaultHealth = { version: "0.9.0", zone_id: "default", uptime_seconds: 100 };
+  const defaultHealth = { status: "ready", uptime_seconds: 100 };
   const defaultFeatures = {
     profile: "full",
     mode: "standalone",
@@ -40,7 +40,7 @@ function createMockClient(overrides: {
       if (url === "/auth/me") {
         return overrides.authMe ? overrides.authMe() : defaultUserInfo;
       }
-      if (url === "/api/v2/bricks/health") {
+      if (url === "/healthz/ready") {
         return overrides.health ? overrides.health() : defaultHealth;
       }
       if (url === "/api/v2/features") {

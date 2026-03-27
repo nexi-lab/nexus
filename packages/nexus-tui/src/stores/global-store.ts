@@ -118,8 +118,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
     try {
       // Consolidated connection check (Decision 5A): health + features + auth in one flow
       let [health, features, userInfo] = await Promise.all([
-        client.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
-          "/api/v2/bricks/health",
+        client.get<{ status?: string; uptime_seconds?: number }>(
+          "/healthz/ready",
         ).catch(() => null),
         client.get<FeaturesResponse>("/api/v2/features").catch(() => null),
         client.get<UserInfo>("/auth/me").catch(() => null),
@@ -139,8 +139,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
           try {
             const probeUrl = `${protocol}://${hostname || "localhost"}:${port}`;
             const probeClient = new FetchClient({ ...get().config, baseUrl: probeUrl, timeout: 3000, maxRetries: 0 });
-            const probeHealth = await probeClient.get<{ version?: string; zone_id?: string; uptime_seconds?: number }>(
-              "/api/v2/bricks/health",
+            const probeHealth = await probeClient.get<{ status?: string; uptime_seconds?: number }>(
+              "/healthz/ready",
             ).catch(() => null);
             if (probeHealth) {
               const newConfig = resolveConfig({ transformKeys: false, baseUrl: probeUrl });
@@ -164,8 +164,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       }
 
       set({
-        serverVersion: health.version ?? get().serverVersion,
-        zoneId: health.zone_id ?? get().zoneId,
+        serverVersion: features?.version ?? get().serverVersion,
         uptime: health.uptime_seconds ?? get().uptime,
       });
       if (features) {

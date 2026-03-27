@@ -140,7 +140,7 @@ class TestStreamBlob:
     def test_stream_not_found(self, transport):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        key = "cas/de/ad/dead1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        key = "cas/de/ad/dead1234567890abcdef1234567890abcdef1234567890abcdef12345678dead"
         with pytest.raises(NexusFileNotFoundError):
             list(transport.stream_blob(key))
 
@@ -155,7 +155,7 @@ class TestDirectoryMarker:
 class TestCopyBlob:
     def test_copy(self, transport):
         src = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-        dst = "cas/ef/01/ef011234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        dst = "cas/ef/01/ef011234567890abcdef1234567890abcdef1234567890abcdef12345678ef01"
         data = b"copy me"
         transport.put_blob(src, data)
         transport.copy_blob(src, dst)

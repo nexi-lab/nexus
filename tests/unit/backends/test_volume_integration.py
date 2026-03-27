@@ -250,6 +250,8 @@ class TestBloomWithVolumes:
     """Bloom filter should be seeded from volume index."""
 
     def test_bloom_seeded_from_volumes(self, tmp_path):
+        import gc
+
         from nexus.backends.storage.cas_local import CASLocalBackend
 
         # Write data and seal
@@ -259,6 +261,9 @@ class TestBloomWithVolumes:
             backend1._transport.seal_active_volume()
         if hasattr(backend1._transport, "close"):
             backend1._transport.close()
+        # Release redb lock before reopening
+        del backend1
+        gc.collect()
 
         # Recreate backend — Bloom should be seeded from volume index
         backend2 = CASLocalBackend(root_path=tmp_path, use_volume_packing=True)

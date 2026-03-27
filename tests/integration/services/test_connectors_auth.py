@@ -164,6 +164,7 @@ class TestAuthStatus:
             "provider": "gmail",
             "created_at": time.time(),
             "status": "pending",
+            "baseline_auth_status": "unknown",
         }
 
         # auth_service returns "unknown" (not yet authed) — default from _setup_app_state
@@ -182,6 +183,7 @@ class TestAuthStatus:
             "provider": "gmail",
             "created_at": time.time(),
             "status": "pending",
+            "baseline_auth_status": "unknown",
         }
 
         mock_registry.get_info.return_value = _make_connector_info(
@@ -211,6 +213,7 @@ class TestAuthStatus:
             "provider": "gmail",
             "created_at": time.time() - 301,  # 301 seconds ago (>300s TTL)
             "status": "pending",
+            "baseline_auth_status": "unknown",
         }
 
         resp = _client.get("/api/v2/connectors/auth/status", params={"state_token": "tok-old"})
@@ -222,6 +225,41 @@ class TestAuthStatus:
         assert "expired" in data["message"].lower()
         # Token should be cleaned up after expiration
         assert "tok-old" not in _pending_auth
+
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
+    def test_preexisting_auth_stays_pending(self, mock_registry: MagicMock) -> None:
+        """When baseline was already 'authed', current 'authed' stays pending.
+
+        This prevents pre-existing auth from causing a false 'completed' report,
+        which is the core correctness fix for concurrent auth attempts.
+        """
+        _pending_auth["tok-preauth"] = {
+            "connector_name": "gmail_connector",
+            "provider": "gmail",
+            "created_at": time.time(),
+            "status": "pending",
+            "baseline_auth_status": "authed",  # was already authed at init
+        }
+
+        mock_registry.get_info.return_value = _make_connector_info(
+            "gmail_connector", service_name="gmail"
+        )
+
+        # Auth service still reports "authed" — same as baseline
+        auth_service = MagicMock()
+        auth_service.get_connector_auth_state = AsyncMock(
+            return_value={"auth_status": "authed", "auth_source": "stored:secret"}
+        )
+        _test_app.state.auth_service = auth_service
+
+        resp = _client.get("/api/v2/connectors/auth/status", params={"state_token": "tok-preauth"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # Should remain pending because auth state did NOT change
+        assert data["status"] == "pending"
+        # Token should still be in pending auth (not cleaned up)
+        assert "tok-preauth" in _pending_auth
 
     def test_unknown_token_returns_404(self) -> None:
         """Completely unknown token returns 404."""

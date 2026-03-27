@@ -240,27 +240,41 @@ async def list_available_connectors(
     mount_svc = nx.service("mount")
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
-    # Get mounted connectors
-    mounted: dict[str, str] = {}  # connector_type -> mount_point
+    # Build a map of connector_type -> mount_point by inspecting each mount's
+    # backend. This correctly identifies mounts regardless of path naming
+    # (e.g., /mnt/work-mail still maps to gmail_connector).
+    type_to_mount: dict[str, str] = {}
     if mount_svc:
         try:
             mounts = await mount_svc.list_mounts()
             for m in mounts:
                 mp = m.get("mount_point", "")
-                if mp.startswith("/mnt/"):
-                    # Infer type from mount point name
-                    mounted[mp] = mp
+                # Try to resolve the backend type from the router
+                try:
+                    route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
+                    if route and route.backend:
+                        # Use the registry name if available, else class name
+                        backend = route.backend
+                        reg_name = getattr(backend, "_registry_name", None)
+                        if reg_name:
+                            type_to_mount[reg_name] = mp
+                        else:
+                            # Fallback: match by class name convention
+                            cls_name = type(backend).__name__.lower()
+                            type_to_mount[cls_name] = mp
+                except Exception:
+                    pass
+                # Also store the raw mount config connector_type if available
+                ct = m.get("connector_type") or m.get("backend_type")
+                if ct:
+                    type_to_mount[ct] = mp
         except Exception:
             pass
 
     result = []
     for info in ConnectorRegistry.list_all():
-        # Check if this connector is mounted
-        mount_path = None
-        for mp in mounted:
-            if info.name.replace("_connector", "") in mp:
-                mount_path = mp
-                break
+        # Check if this connector is mounted — match by registered name
+        mount_path = type_to_mount.get(info.name)
 
         auth_state = {"auth_status": "unknown", "auth_source": None}
         if auth_svc is not None:
@@ -441,12 +455,25 @@ async def init_connector_auth(
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
 
-    # Store pending auth state
+    # Snapshot the current auth state so we can detect a *change* during polling.
+    # Without this, pre-existing auth for the same connector would immediately
+    # report "completed" — a correctness bug for concurrent auth attempts.
+    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
+    baseline_status = "unknown"
+    if auth_svc is not None:
+        try:
+            baseline = await auth_svc.get_connector_auth_state(info.service_name)
+            baseline_status = str(baseline.get("auth_status", "unknown"))
+        except Exception:
+            pass
+
+    # Store pending auth state with the baseline snapshot
     _pending_auth[state_token] = {
         "connector_name": req.connector_name,
         "provider": provider,
         "created_at": time.time(),
         "status": "pending",
+        "baseline_auth_status": baseline_status,
     }
 
     # Cleanup expired entries (>5 min old)
@@ -489,7 +516,11 @@ async def get_auth_status(
             message="Auth session expired. Please try again.",
         )
 
-    # Check if auth was completed by querying the auth service
+    # Check if auth was completed by querying the auth service.
+    # Only report "completed" when the auth state *changed* from the baseline
+    # captured at init time. This prevents pre-existing auth from causing
+    # false completion and makes concurrent auth attempts distinguishable.
+    baseline_status = pending.get("baseline_auth_status", "unknown")
     nx = _get_nx(request)
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
@@ -501,21 +532,21 @@ async def get_auth_status(
             auth_state = await auth_svc.get_connector_auth_state(info.service_name)
             status = str(auth_state.get("auth_status", "unknown"))
 
-            if status == "authed":
-                # Auth completed — clean up pending state
+            if status == "authed" and baseline_status != "authed":
+                # Auth state changed to authed — this flow completed
                 del _pending_auth[state_token]
                 return AuthStatusResponse(
                     status="completed",
                     connector_name=connector_name,
                     message="Authentication successful.",
                 )
-            elif status == "expired":
+            elif status == "expired" and baseline_status != "expired":
                 return AuthStatusResponse(
                     status="denied",
                     connector_name=connector_name,
                     message="Authentication was denied or token expired.",
                 )
-            elif status == "error":
+            elif status == "error" and baseline_status != "error":
                 return AuthStatusResponse(
                     status="error",
                     connector_name=connector_name,
@@ -683,6 +714,8 @@ async def list_mounted_connectors(
         mp = m.get("mount_point", "")
         skill_name = None
         operations: list[str] = []
+        sync_status: str | None = None
+        last_sync: str | None = None
         try:
             # Route to a dummy file path inside the mount to get the backend
             route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
@@ -696,8 +729,39 @@ async def list_mounted_connectors(
                     operations = list(schemas.keys())
                 elif traits:
                     operations = list(traits.keys())
+
+                # Extract sync status from backend state or cache metadata.
+                # Backends that implement sync track their last sync time and
+                # status via _last_sync_at / _sync_status attributes or via
+                # the cache mixin's session metadata.
+                sync_status = getattr(backend, "_sync_status", None)
+                raw_last_sync = getattr(backend, "_last_sync_at", None)
+                if raw_last_sync is not None:
+                    import datetime
+
+                    if isinstance(raw_last_sync, (int, float)):
+                        dt = datetime.datetime.fromtimestamp(raw_last_sync, tz=datetime.UTC)
+                    elif isinstance(raw_last_sync, datetime.datetime):
+                        dt = raw_last_sync
+                    else:
+                        dt = None
+                    if dt:
+                        delta = datetime.datetime.now(tz=datetime.UTC) - dt
+                        secs = int(delta.total_seconds())
+                        if secs < 60:
+                            last_sync = f"{secs}s ago"
+                        elif secs < 3600:
+                            last_sync = f"{secs // 60}m ago"
+                        else:
+                            last_sync = f"{secs // 3600}h ago"
         except Exception:
             pass
+
+        # Fall back to mount-level metadata for sync info
+        if sync_status is None:
+            sync_status = m.get("sync_status")
+        if last_sync is None:
+            last_sync = m.get("last_sync")
 
         result.append(
             MountInfo(
@@ -705,6 +769,8 @@ async def list_mounted_connectors(
                 readonly=m.get("readonly", False),
                 skill_name=skill_name,
                 operations=operations,
+                sync_status=sync_status,
+                last_sync=last_sync,
             )
         )
 

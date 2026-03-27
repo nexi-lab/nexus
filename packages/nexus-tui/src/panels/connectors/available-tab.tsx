@@ -2,10 +2,10 @@
  * Available tab: lists all registered connectors with auth status.
  *
  * Supports: connector list navigation, auth initiation (opens browser),
- * auth status polling, mount path configuration.
+ * auth status polling, mount path configuration with custom path input.
  */
 
-import React, { useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { FetchClient } from "@nexus/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -13,7 +13,7 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { ConnectorRow } from "./connector-row.js";
-import { statusColor, palette } from "../../shared/theme.js";
+import { statusColor } from "../../shared/theme.js";
 
 interface AvailableTabProps {
   readonly client: FetchClient;
@@ -37,6 +37,10 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
 
   const { copy, copied } = useCopy();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Mount path input mode
+  const [mountInputMode, setMountInputMode] = useState(false);
+  const [mountPathBuffer, setMountPathBuffer] = useState("");
 
   // Auto-fetch on mount
   useEffect(() => {
@@ -78,14 +82,25 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     }
   }, [connectors, selectedIndex, initiateAuth, client]);
 
-  const handleMount = useCallback(() => {
+  /** Start mount flow — pre-fill with default path, allow user to edit. */
+  const startMountInput = useCallback(() => {
     const selected = connectors[selectedIndex];
     if (!selected) return;
-    // Auto-generate mount path from connector name
     const baseName = selected.name.replace(/_connector$/, "");
-    const mountPath = `/mnt/${baseName}`;
-    mountConnector(selected.name, mountPath, client);
-  }, [connectors, selectedIndex, mountConnector, client]);
+    setMountPathBuffer(`/mnt/${baseName}`);
+    setMountInputMode(true);
+  }, [connectors, selectedIndex]);
+
+  /** Submit the mount with the user-specified path. */
+  const submitMount = useCallback(() => {
+    const selected = connectors[selectedIndex];
+    if (!selected) return;
+    const path = mountPathBuffer.trim();
+    if (!path) return;
+    mountConnector(selected.name, path, client);
+    setMountInputMode(false);
+    setMountPathBuffer("");
+  }, [connectors, selectedIndex, mountPathBuffer, mountConnector, client]);
 
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,
@@ -96,22 +111,38 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   useKeyboard(
     overlayActive
       ? {}
-      : {
-          ...listNav,
-          a: handleAuth,
-          m: handleMount,
-          r: () => fetchAvailable(client),
-          y: () => {
-            if (authFlow.auth_url) {
-              copy(authFlow.auth_url);
-            }
+      : mountInputMode
+        ? {
+            return: submitMount,
+            escape: () => { setMountInputMode(false); setMountPathBuffer(""); },
+            backspace: () => { setMountPathBuffer((b) => b.slice(0, -1)); },
+          }
+        : {
+            ...listNav,
+            a: handleAuth,
+            m: startMountInput,
+            r: () => fetchAvailable(client),
+            y: () => {
+              if (authFlow.auth_url) {
+                copy(authFlow.auth_url);
+              }
+            },
+            escape: () => {
+              if (authFlow.status !== "idle") {
+                cancelAuth();
+              }
+            },
           },
-          escape: () => {
-            if (authFlow.status !== "idle") {
-              cancelAuth();
-            }
-          },
-        },
+    // Capture typed characters in mount input mode
+    (!overlayActive && mountInputMode)
+      ? (keyName: string) => {
+          if (keyName === "space") {
+            setMountPathBuffer((b) => b + " ");
+          } else if (keyName.length === 1) {
+            setMountPathBuffer((b) => b + keyName);
+          }
+        }
+      : undefined,
   );
 
   if (loading && connectors.length === 0) {
@@ -120,6 +151,18 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
 
   return (
     <box flexDirection="column" height="100%" width="100%">
+      {/* Mount path input */}
+      {mountInputMode && (
+        <box height={1} width="100%" marginBottom={1}>
+          <text>
+            <span foregroundColor={statusColor.info}>{"Mount path: "}</span>
+            <span bold>{mountPathBuffer}</span>
+            <span foregroundColor={statusColor.info}>{"\u2588"}</span>
+            <span foregroundColor={statusColor.dim}>{"  (Enter:mount  Escape:cancel)"}</span>
+          </text>
+        </box>
+      )}
+
       {/* Auth flow banner */}
       {authFlow.status !== "idle" && (
         <box flexDirection="column" width="100%" borderStyle="single" marginBottom={1}>

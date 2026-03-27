@@ -3246,6 +3246,7 @@ class NexusFS(  # type: ignore[misc]
     # sys_copy — Issue #3329 (Workstream 3: native copy/move)
     # ------------------------------------------------------------------
 
+    @rpc_expose(description="Copy file with native backend support")
     async def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
     ) -> dict[str, Any]:

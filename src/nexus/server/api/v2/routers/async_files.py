@@ -844,6 +844,56 @@ def create_async_files_router(
                             )
                         result = detail_list
 
+            # Inject mount point parent directories into the listing.
+            # Mount points exist in the VFS router but not in the metastore,
+            # so sys_readdir doesn't return them. We synthesize directory
+            # entries for immediate children of the listed path that are
+            # mount point ancestors.
+            try:
+                mount_svc = fs.service("mount")
+                if mount_svc:
+                    mount_list_result = mount_svc.list_mounts()
+                    if hasattr(mount_list_result, "__await__"):
+                        mounts_raw = await mount_list_result
+                    else:
+                        mounts_raw = mount_list_result
+                    listed_prefix = path.rstrip("/") + "/"
+                    existing_paths = {
+                        (e.get("path", "") if isinstance(e, dict) else str(e)).rstrip("/")
+                        for e in (
+                            result if isinstance(result, list) else getattr(result, "items", [])
+                        )
+                    }
+                    for m in mounts_raw:
+                        mp = (m.get("mount_point", "") if isinstance(m, dict) else str(m)).rstrip(
+                            "/"
+                        )
+                        if not mp.startswith(listed_prefix) and not (
+                            path == "/" and mp.startswith("/")
+                        ):
+                            continue
+                        # Find the immediate child segment
+                        relative = mp.lstrip("/") if path == "/" else mp[len(listed_prefix) :]
+                        child = relative.split("/")[0] if "/" in relative else relative
+                        if not child:
+                            continue
+                        child_path = f"{path.rstrip('/')}/{child}"
+                        if child_path.rstrip("/") not in existing_paths:
+                            synthetic = {
+                                "path": child_path,
+                                "name": child,
+                                "entry_type": 1,
+                                "size": 0,
+                                "is_directory": True,
+                            }
+                            if isinstance(result, list):
+                                result.append(synthetic)
+                            elif hasattr(result, "items"):
+                                result.items.append(synthetic)
+                            existing_paths.add(child_path.rstrip("/"))
+            except Exception:
+                pass  # Best effort — listing still works without mount injection
+
             prefix = path.rstrip("/") + "/"
             # The listed path itself (e.g. "/" → empty name) must not appear
             # in its own listing — that causes infinite recursion in tree UIs.

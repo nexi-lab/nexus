@@ -26,6 +26,8 @@ except ImportError:
 AbstractFixtures = _AbstractFixturesBase
 
 
+pytest.importorskip("fsspec", reason="fsspec required for upstream compliance tests")
+
 from nexus.contracts.constants import ROOT_ZONE_ID  # noqa: E402
 from nexus.contracts.types import OperationContext  # noqa: E402
 from nexus.core.config import PermissionConfig  # noqa: E402

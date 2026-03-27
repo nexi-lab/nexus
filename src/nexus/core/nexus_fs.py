@@ -3242,6 +3242,264 @@ class NexusFS(  # type: ignore[misc]
 
         return {}
 
+    # ------------------------------------------------------------------
+    # sys_copy — Issue #3329 (Workstream 3: native copy/move)
+    # ------------------------------------------------------------------
+
+    @rpc_expose(description="Copy file with native backend support")
+    async def sys_copy(
+        self, src_path: str, dst_path: str, *, context: OperationContext | None = None
+    ) -> dict[str, Any]:
+        """Copy a file from src_path to dst_path.
+
+        Uses the optimal strategy based on backend capabilities:
+        - **Same backend, path-addressed**: Backend-native server-side copy
+          (S3 CopyObject / GCS rewrite). Zero client bandwidth.
+        - **Same backend, CAS**: Metadata duplication — the content blob
+          is already deduplicated, so no I/O is needed.
+        - **Cross-backend**: Read from source, write to destination.
+          Bounded by ``NEXUS_FS_MAX_INMEMORY_SIZE`` (1 GB).
+
+        Args:
+            src_path: Source virtual path.
+            dst_path: Destination virtual path.
+            context: Operation context for permission checks.
+
+        Returns:
+            Dict with path, size, etag of the new file.
+
+        Raises:
+            NexusFileNotFoundError: If source file doesn't exist.
+            FileExistsError: If destination path already exists.
+            PermissionError: If source or destination is read-only.
+            ValueError: If cross-backend copy exceeds size limit.
+        """
+        src_path = self._validate_path(src_path)
+        dst_path = self._validate_path(dst_path)
+        context = self._parse_context(context)
+
+        zone_id, agent_id, is_admin = self._get_context_identity(context)
+
+        # Route both paths
+        src_route = self.router.route(src_path, is_admin=is_admin)
+        dst_route = self.router.route(dst_path, is_admin=is_admin, check_write=True)
+
+        if dst_route.readonly:
+            raise PermissionError(f"Cannot copy to read-only path: {dst_path}")
+
+        # Fast-fail (unlocked — re-checked under lock)
+        if not self.metadata.exists(src_path) and not self.metadata.is_implicit_directory(src_path):
+            raise NexusFileNotFoundError(src_path)
+
+        src_meta = self.metadata.get(src_path)
+        if src_meta is None:
+            raise NexusFileNotFoundError(src_path)
+        if src_meta.mime_type == "inode/directory":
+            raise IsADirectoryError(f"Cannot copy a directory: {src_path}")
+
+        # PRE-INTERCEPT (unlocked — hooks may be slow)
+        from nexus.contracts.vfs_hooks import CopyHookContext
+
+        _copy_ctx = CopyHookContext(
+            src_path=src_path,
+            dst_path=dst_path,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            metadata=src_meta,
+        )
+        self._dispatch.intercept_pre_copy(_copy_ctx)
+
+        # VFS I/O Lock: exclusive write on dst, shared read on src
+        _first, _second = sorted([src_path, dst_path])
+        _h1 = self._vfs_acquire(_first, "write")
+        try:
+            _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
+            try:
+                # Authoritative checks under lock
+                src_meta = self.metadata.get(src_path)
+                if src_meta is None:
+                    raise NexusFileNotFoundError(src_path)
+
+                if self.metadata.exists(dst_path):
+                    raise FileExistsError(f"Destination path already exists: {dst_path}")
+
+                same_backend = src_route.backend is dst_route.backend
+
+                if same_backend and hasattr(src_route.backend, "copy_file"):
+                    # Path-addressing backend — native server-side copy
+                    src_route.backend.copy_file(
+                        src_route.backend_path,
+                        dst_route.backend_path,
+                        context=context,
+                    )
+                    # Get the destination blob's actual size/version
+                    # (NOT the source's — versioned backends assign new IDs).
+                    dst_size = src_route.backend._transport.get_blob_size(
+                        src_route.backend._get_blob_path(dst_route.backend_path.strip("/")),
+                    )
+                    dst_version: str | None = None
+                    if (
+                        hasattr(src_route.backend, "versioning_enabled")
+                        and src_route.backend.versioning_enabled
+                    ):
+                        _get_ver = getattr(
+                            src_route.backend._transport, "get_version_id", None
+                        ) or getattr(src_route.backend._transport, "get_generation", None)
+                        if _get_ver:
+                            dst_version = _get_ver(
+                                src_route.backend._get_blob_path(dst_route.backend_path.strip("/"))
+                            )
+
+                    from dataclasses import replace as _replace
+
+                    dst_meta = _replace(
+                        src_meta,
+                        path=dst_path,
+                        physical_path=dst_route.backend_path,
+                        etag=dst_version or src_meta.etag,
+                        size=dst_size,
+                    )
+                    self.metadata.put(dst_meta)
+                    result = {
+                        "path": dst_path,
+                        "size": dst_size,
+                        "etag": dst_version or dst_meta.etag,
+                        "version": dst_meta.version,
+                    }
+
+                elif same_backend and not hasattr(src_route.backend, "copy_file"):
+                    # CAS backend — metadata-only copy (content is deduplicated)
+                    from dataclasses import replace as _replace
+
+                    dst_meta = _replace(src_meta, path=dst_path)
+                    self.metadata.put(dst_meta)
+                    result = {
+                        "path": dst_path,
+                        "size": dst_meta.size or 0,
+                        "etag": dst_meta.etag,
+                        "version": dst_meta.version,
+                    }
+
+                else:
+                    # Cross-backend copy
+                    src_can_stream = hasattr(src_route.backend, "stream_file")
+                    dst_can_stream = hasattr(dst_route.backend, "write_file_chunked")
+
+                    if src_can_stream and dst_can_stream:
+                        # Streaming copy — no size limit, ~8 MB memory
+                        chunks = src_route.backend.stream_file(src_route.backend_path)
+                        dst_route.backend.write_file_chunked(
+                            dst_route.backend_path,
+                            chunks,
+                            content_type=src_meta.mime_type or "",
+                        )
+                        # Use source size (streaming doesn't return size);
+                        # get destination version if the backend is versioned.
+                        dst_version_id: str | None = None
+                        if (
+                            hasattr(dst_route.backend, "versioning_enabled")
+                            and dst_route.backend.versioning_enabled
+                        ):
+                            _get_ver = getattr(
+                                dst_route.backend._transport, "get_version_id", None
+                            ) or getattr(dst_route.backend._transport, "get_generation", None)
+                            if _get_ver:
+                                dst_version_id = _get_ver(
+                                    dst_route.backend._get_blob_path(
+                                        dst_route.backend_path.strip("/")
+                                    )
+                                )
+
+                        from dataclasses import replace as _replace
+
+                        dst_meta = _replace(
+                            src_meta,
+                            path=dst_path,
+                            physical_path=dst_route.backend_path,
+                            etag=dst_version_id or src_meta.etag,
+                        )
+                        self.metadata.put(dst_meta)
+                        result = {
+                            "path": dst_path,
+                            "size": dst_meta.size or 0,
+                            "etag": dst_version_id or dst_meta.etag,
+                            "version": dst_meta.version,
+                        }
+                    else:
+                        # Fallback — read from backend directly (we already
+                        # hold VFS locks, so must NOT call sys_read/write
+                        # which would try to re-acquire locks → deadlock).
+                        from nexus.contracts.constants import NEXUS_FS_MAX_INMEMORY_SIZE
+
+                        src_size = src_meta.size or 0
+                        if src_size > NEXUS_FS_MAX_INMEMORY_SIZE:
+                            size_gb = src_size / (1024**3)
+                            raise ValueError(
+                                f"Cross-backend copy too large ({size_gb:.1f} GB > "
+                                f"{NEXUS_FS_MAX_INMEMORY_SIZE / (1024**3):.0f} GB limit). "
+                                f"Move the file to the same backend first."
+                            )
+                        # Build a context with backend_path for the source read
+                        from dataclasses import replace as _ctx_replace
+
+                        src_ctx = (
+                            _ctx_replace(
+                                context,
+                                backend_path=src_route.backend_path,
+                            )
+                            if context
+                            else context
+                        )
+                        content = src_route.backend.read_content(
+                            src_meta.physical_path or src_route.backend_path,
+                            context=src_ctx,
+                        )
+                        # Supply content_id=backend_path so path-addressed
+                        # backends know where to write the blob.
+                        write_result = dst_route.backend.write_content(
+                            content,
+                            content_id=dst_route.backend_path,
+                            context=context,
+                        )
+                        from dataclasses import replace as _replace
+
+                        dst_meta = _replace(
+                            src_meta,
+                            path=dst_path,
+                            physical_path=write_result.content_id or dst_route.backend_path,
+                        )
+                        self.metadata.put(dst_meta)
+                        result = {
+                            "path": dst_path,
+                            "size": dst_meta.size or 0,
+                            "etag": write_result.content_id or dst_meta.etag,
+                            "version": dst_meta.version,
+                        }
+
+            finally:
+                if _h2:
+                    self._vfs_lock_manager.release(_h2)
+        finally:
+            self._vfs_lock_manager.release(_h1)
+
+        # Lock released — event dispatch + side effects
+        await self._dispatch.notify(
+            FileEvent(
+                type=FileEventType.FILE_COPY,
+                path=src_path,
+                zone_id=zone_id or ROOT_ZONE_ID,
+                agent_id=agent_id,
+                new_path=dst_path,
+                size=result.get("size"),
+                etag=result.get("etag"),
+            )
+        )
+
+        await self._dispatch.intercept_post_copy(_copy_ctx)
+
+        return result
+
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """

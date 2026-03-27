@@ -138,3 +138,28 @@ class BlobTransport(Protocol):
             Chunks of blob data.
         """
         ...
+
+    def put_blob_chunked(
+        self,
+        key: str,
+        chunks: Iterator[bytes],
+        content_type: str = "",
+    ) -> str | None:
+        """Write a blob from an iterator of byte chunks.
+
+        Enables cross-backend streaming copy without buffering the
+        entire file in memory.  Each transport uses its native
+        chunked-upload mechanism:
+        - S3: multipart upload (min 5 MB per part, except last)
+        - GCS: resumable upload via ``blob.open('wb')``
+        - Local: write to temp file, then atomic replace
+
+        Args:
+            key: Destination storage key.
+            chunks: Iterator yielding byte chunks.
+            content_type: Optional MIME type hint.
+
+        Returns:
+            Version identifier if versioning is enabled, else ``None``.
+        """
+        ...

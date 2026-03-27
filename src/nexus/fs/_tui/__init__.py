@@ -108,8 +108,8 @@ class ContextualNexusFS:
         return cast(bool, await self._kernel.sys_access(path, context=self._ctx))
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        content = await self.read(src)
-        return await self.write(dst, content)
+        result: dict[str, Any] = await self._kernel.sys_copy(src, dst, context=self._ctx)
+        return result
 
     def list_mounts(self) -> list[str]:
         mounts = []

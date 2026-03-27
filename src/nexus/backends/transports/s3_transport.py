@@ -248,15 +248,14 @@ class S3BlobTransport:
             ) from e
 
     def copy_blob(self, src_key: str, dst_key: str) -> None:
-        try:
-            # Verify source exists
-            self.s3_client.head_object(Bucket=self.bucket_name, Key=src_key)
+        """Server-side copy using boto3 managed transfer.
 
-            self.s3_client.copy_object(
-                Bucket=self.bucket_name,
-                Key=dst_key,
-                CopySource={"Bucket": self.bucket_name, "Key": src_key},
-            )
+        Automatically handles multipart copy for objects >5 GB via
+        boto3's managed copy (CreateMultipartUpload + UploadPartCopy).
+        """
+        try:
+            copy_source = {"Bucket": self.bucket_name, "Key": src_key}
+            self.s3_client.copy(copy_source, self.bucket_name, dst_key)
 
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "")
@@ -315,6 +314,51 @@ class S3BlobTransport:
                 backend="s3",
                 path=key,
             ) from e
+
+    # S3 multipart minimum part size (5 MB) — except for the last part.
+    _MIN_PART_SIZE = 5 * 1024 * 1024
+
+    def put_blob_chunked(
+        self,
+        key: str,
+        chunks: Iterator[bytes],
+        content_type: str = "",
+    ) -> str | None:
+        """Stream chunks into S3 via multipart upload.
+
+        Buffers incoming chunks until they reach ``_MIN_PART_SIZE`` (5 MB),
+        then uploads each part.  Aborts the upload on any error.
+        """
+        upload_id: str | None = None
+        try:
+            upload_id = self.init_multipart(
+                key, content_type=content_type or "application/octet-stream"
+            )
+            parts: list[dict[str, Any]] = []
+            part_num = 1
+            buf = bytearray()
+
+            for chunk in chunks:
+                buf.extend(chunk)
+                while len(buf) >= self._MIN_PART_SIZE:
+                    part_data = bytes(buf[: self._MIN_PART_SIZE])
+                    buf = buf[self._MIN_PART_SIZE :]
+                    part = self.upload_part(key, upload_id, part_num, part_data)
+                    parts.append(part)
+                    part_num += 1
+
+            # Flush remaining bytes as the final part
+            if buf or not parts:
+                part = self.upload_part(key, upload_id, part_num, bytes(buf))
+                parts.append(part)
+
+            return self.complete_multipart(key, upload_id, parts)
+
+        except Exception:
+            if upload_id is not None:
+                with __import__("contextlib").suppress(Exception):
+                    self.abort_multipart(key, upload_id)
+            raise
 
     # === S3-Specific Extras (not part of BlobTransport protocol) ===
 

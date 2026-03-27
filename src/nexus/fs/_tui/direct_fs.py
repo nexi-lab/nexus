@@ -94,7 +94,14 @@ class LocalDirectFS:
         return self._to_real(path).exists()
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        return await self.write(dst, await self.read(src))
+        import shutil
+
+        src_real = self._to_real(src)
+        dst_real = self._to_real(dst)
+        dst_real.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src_real, dst_real)
+        st = dst_real.stat()
+        return {"path": dst, "size": st.st_size, "etag": None}
 
     def list_mounts(self) -> list[str]:
         return [self._mount_point]
@@ -272,15 +279,31 @@ class S3DirectFS:
         self._s3.delete_object(Bucket=self._bucket, Key=self._to_key(path))
 
     async def rename(self, old_path: str, new_path: str) -> None:
-        content = await self.read(old_path)
-        await self.write(new_path, content)
-        await self.delete(old_path)
+        old_key = self._to_key(old_path)
+        new_key = self._to_key(new_path)
+        # Server-side copy
+        self._s3.copy(
+            {"Bucket": self._bucket, "Key": old_key},
+            self._bucket,
+            new_key,
+        )
+        # Verify destination before deleting source
+        self._s3.head_object(Bucket=self._bucket, Key=new_key)
+        self._s3.delete_object(Bucket=self._bucket, Key=old_key)
 
     async def exists(self, path: str) -> bool:
         return (await self.stat(path)) is not None
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
-        return await self.write(dst, await self.read(src))
+        src_key = self._to_key(src)
+        dst_key = self._to_key(dst)
+        self._s3.copy(
+            {"Bucket": self._bucket, "Key": src_key},
+            self._bucket,
+            dst_key,
+        )
+        head = self._s3.head_object(Bucket=self._bucket, Key=dst_key)
+        return {"path": dst, "size": head.get("ContentLength", 0), "etag": head.get("ETag")}
 
     def list_mounts(self) -> list[str]:
         return [self._mount_point]

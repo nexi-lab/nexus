@@ -93,6 +93,20 @@ class RenameHookContext:
 
 
 @dataclass
+class CopyHookContext:
+    """Context passed through copy hooks (Issue #3329)."""
+
+    src_path: str
+    dst_path: str
+    context: OperationContext | None
+    zone_id: str | None = None
+    agent_id: str | None = None
+    metadata: FileMetadata | None = None
+    warnings: list[OperationWarning] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class MkdirHookContext:
     """Context passed through mkdir hooks (Issue #900)."""
 
@@ -208,6 +222,16 @@ class VFSRenameHook(Protocol):
     def name(self) -> str: ...
 
     def on_post_rename(self, ctx: RenameHookContext) -> None: ...
+
+
+@runtime_checkable
+class VFSCopyHook(Protocol):
+    """Hook that runs after a copy operation (Issue #3329)."""
+
+    @property
+    def name(self) -> str: ...
+
+    def on_post_copy(self, ctx: CopyHookContext) -> None: ...
 
 
 @runtime_checkable

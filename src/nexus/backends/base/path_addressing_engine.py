@@ -496,6 +496,74 @@ class PathAddressingEngine(Backend):
                 path=path,
             ) from e
 
+    def copy_file(
+        self,
+        src_path: str,
+        dst_path: str,
+        context: "OperationContext | None" = None,  # noqa: ARG002
+    ) -> None:
+        """Copy a file using backend-native server-side copy.
+
+        Optimistic — no pre-existence checks. The transport's copy_blob
+        will raise NexusFileNotFoundError if the source doesn't exist.
+        """
+        try:
+            src_path = src_path.strip("/")
+            dst_path = dst_path.strip("/")
+            src_blob = self._get_blob_path(src_path)
+            dst_blob = self._get_blob_path(dst_path)
+            self._transport.copy_blob(src_blob, dst_blob)
+        except (FileNotFoundError, NexusFileNotFoundError):
+            raise
+        except Exception as e:
+            if isinstance(e, BackendError):
+                raise
+            raise BackendError(
+                f"Failed to copy file {src_path} -> {dst_path}: {e}",
+                backend=self.name,
+                path=src_path,
+            ) from e
+
+    # -- Streaming I/O (cross-backend copy support, Issue #3329) --
+
+    # Default chunk size for cross-backend streaming (8 MB).
+    _STREAM_CHUNK_SIZE = 8 * 1024 * 1024
+
+    def stream_file(
+        self,
+        path: str,
+        chunk_size: int | None = None,
+    ) -> "Iterator[bytes]":
+        """Stream file content as an iterator of byte chunks.
+
+        Used by the kernel for cross-backend streaming copy.
+        """
+        path = path.strip("/")
+        blob_path = self._get_blob_path(path)
+        return self._transport.stream_blob(
+            blob_path,
+            chunk_size=chunk_size or self._STREAM_CHUNK_SIZE,
+        )
+
+    def write_file_chunked(
+        self,
+        path: str,
+        chunks: "Iterator[bytes]",
+        content_type: str = "",
+    ) -> str | None:
+        """Write a file from an iterator of byte chunks.
+
+        Delegates to the transport's ``put_blob_chunked()`` for
+        memory-efficient streaming writes (S3 multipart, GCS resumable).
+        """
+        path = path.strip("/")
+        blob_path = self._get_blob_path(path)
+        return self._transport.put_blob_chunked(
+            blob_path,
+            chunks,
+            content_type=content_type,
+        )
+
     def rename_file(
         self,
         old_path: str,

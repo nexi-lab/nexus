@@ -170,6 +170,8 @@ class DriverLifecycleCoordinator:
             d.register_intercept_delete(h)
         for h in spec.rename_hooks:
             d.register_intercept_rename(h)
+        for h in spec.copy_hooks:
+            d.register_intercept_copy(h)
         for h in spec.mkdir_hooks:
             d.register_intercept_mkdir(h)
         for h in spec.rmdir_hooks:
@@ -196,6 +198,8 @@ class DriverLifecycleCoordinator:
             d.unregister_intercept_delete(h)
         for h in spec.rename_hooks:
             d.unregister_intercept_rename(h)
+        for h in spec.copy_hooks:
+            d.unregister_intercept_copy(h)
         for h in spec.mkdir_hooks:
             d.unregister_intercept_mkdir(h)
         for h in spec.rmdir_hooks:

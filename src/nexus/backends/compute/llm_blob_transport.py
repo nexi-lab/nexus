@@ -108,3 +108,13 @@ class LLMBlobTransport:
         data, _ = self.get_blob(key, version_id)
         for i in range(0, len(data), chunk_size):
             yield data[i : i + chunk_size]
+
+    def put_blob_chunked(
+        self,
+        key: str,
+        chunks: Iterator[bytes],
+        content_type: str = "",
+    ) -> str | None:
+        """Write blob from chunks (in-memory: just concatenate)."""
+        data = b"".join(chunks)
+        return self.put_blob(key, data, content_type)

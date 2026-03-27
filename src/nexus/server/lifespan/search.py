@@ -153,6 +153,7 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                 import asyncio as _asyncio
 
                 from nexus.contracts.vfs_hooks import (
+                    CopyHookContext,
                     DeleteHookContext,
                     RenameHookContext,
                     WriteHookContext,
@@ -195,10 +196,19 @@ async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asynci
                         _notify(ctx.old_path, "delete")
                         _notify(ctx.new_path, "update")
 
+                class _SearchCopyHook:
+                    @property
+                    def name(self) -> str:
+                        return "search_auto_copy"
+
+                    def on_post_copy(self, ctx: CopyHookContext) -> None:
+                        _notify(ctx.dst_path, "update")
+
                 _dispatch.register_intercept_write(_SearchWriteHook())
                 _dispatch.register_intercept_delete(_SearchDeleteHook())
                 _dispatch.register_intercept_rename(_SearchRenameHook())
-                logger.info("Search auto-index hooks registered (write/delete/rename)")
+                _dispatch.register_intercept_copy(_SearchCopyHook())
+                logger.info("Search auto-index hooks registered (write/delete/rename/copy)")
 
         stats = app.state.search_daemon.get_stats()
         logger.info(

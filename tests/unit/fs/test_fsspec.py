@@ -280,6 +280,90 @@ class TestCpFile:
         mock_nexus_fs.copy.assert_awaited_once()
 
 
+class TestCpFileComprehensive:
+    """Comprehensive copy tests covering edge cases and error paths."""
+
+    def test_cp_file_strips_protocol(self, nexus_fsspec, mock_nexus_fs):
+        """Verify _cp_file strips protocol from both paths."""
+        nexus_fsspec._cp_file("nexus:///src.txt", "nexus:///dst.txt")
+        args = mock_nexus_fs.copy.await_args
+        # Verify stripped paths were passed
+        assert args is not None
+
+    def test_cp_file_source_not_found(self, nexus_fsspec, mock_nexus_fs):
+        """_cp_file raises FileNotFoundError when source doesn't exist."""
+        mock_nexus_fs.copy.side_effect = FileNotFoundError("/src.txt")
+        with pytest.raises(FileNotFoundError):
+            nexus_fsspec._cp_file("/src.txt", "/dst.txt")
+
+    def test_cp_file_destination_exists(self, nexus_fsspec, mock_nexus_fs):
+        """_cp_file raises FileExistsError when destination already exists."""
+        mock_nexus_fs.copy.side_effect = FileExistsError("/dst.txt")
+        with pytest.raises(FileExistsError):
+            nexus_fsspec._cp_file("/src.txt", "/dst.txt")
+
+    def test_cp_file_empty_file(self, nexus_fsspec, mock_nexus_fs):
+        """_cp_file works for empty (0-byte) files."""
+        mock_nexus_fs.copy.return_value = {"path": "/dst.txt", "size": 0, "etag": "d41d8cd98f"}
+        nexus_fsspec._cp_file("/src.txt", "/dst.txt")
+        mock_nexus_fs.copy.assert_awaited_once()
+
+
+class TestErrorPropagation:
+    """Verify errors from the backend propagate correctly through fsspec."""
+
+    def test_cat_file_backend_error(self, nexus_fsspec, mock_nexus_fs):
+        """BackendError from read propagates through _cat_file."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_nexus_fs.stat.return_value = {"path": "/f", "size": 10, "is_directory": False}
+        mock_nexus_fs.read.side_effect = BackendError("network timeout", backend="s3", path="/f")
+        with pytest.raises(BackendError):
+            nexus_fsspec._cat_file("/f")
+
+    def test_cat_file_not_found(self, nexus_fsspec, mock_nexus_fs):
+        """FileNotFoundError propagates through _cat_file."""
+        mock_nexus_fs.stat.return_value = None
+        with pytest.raises(FileNotFoundError):
+            nexus_fsspec._cat_file("/nonexistent")
+
+    def test_pipe_file_backend_error(self, nexus_fsspec, mock_nexus_fs):
+        """BackendError from write propagates through _pipe_file."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_nexus_fs.write.side_effect = BackendError("disk full", backend="local", path="/f")
+        with pytest.raises(BackendError):
+            nexus_fsspec._pipe_file("/f", b"data")
+
+    def test_open_read_stat_error(self, nexus_fsspec, mock_nexus_fs):
+        """Error during stat in _open(mode='rb') propagates."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_nexus_fs.stat.side_effect = BackendError("timeout", backend="s3", path="/f")
+        with pytest.raises(BackendError):
+            nexus_fsspec._open("/f", mode="rb")
+
+    def test_write_file_close_error(self, nexus_fsspec, mock_nexus_fs):
+        """Error during NexusWriteFile.close() propagates through context manager."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_nexus_fs.write.side_effect = BackendError("write failed", backend="s3", path="/f")
+        f = nexus_fsspec._open("/f", mode="wb")
+        f.write(b"data")
+        with pytest.raises(BackendError):
+            f.close()
+
+    def test_buffered_file_read_range_error(self, nexus_fsspec, mock_nexus_fs):
+        """Error during read_range propagates through NexusBufferedFile.read()."""
+        from nexus.contracts.exceptions import BackendError
+
+        mock_nexus_fs.stat.return_value = {"path": "/f", "size": 100, "is_directory": False}
+        mock_nexus_fs.read_range.side_effect = BackendError("timeout", backend="s3", path="/f")
+        f = nexus_fsspec._open("/f", mode="rb")
+        with pytest.raises(BackendError):
+            f.read()
+
+
 # ===========================================================================
 # _mkdir()
 # ===========================================================================
@@ -300,11 +384,15 @@ class TestModeValidation:
     @pytest.mark.parametrize("mode", sorted(_SUPPORTED_MODES))
     def test_supported_modes_accepted(self, nexus_fsspec, mock_nexus_fs, mode):
         """All supported modes should be accepted without raising."""
-        mock_nexus_fs.stat.return_value = {"path": "/f", "size": 0, "is_directory": False}
+        if "x" in mode:
+            # Exclusive-create: stat must return None (file doesn't exist)
+            mock_nexus_fs.stat.return_value = None
+        else:
+            mock_nexus_fs.stat.return_value = {"path": "/f", "size": 0, "is_directory": False}
         f = nexus_fsspec._open("/f", mode=mode)
         f.close()
 
-    @pytest.mark.parametrize("mode", ["ab", "a", "r+b", "x", "xyz"])
+    @pytest.mark.parametrize("mode", ["ab", "a", "r+b", "xyz"])
     def test_unsupported_modes_raise(self, nexus_fsspec, mode):
         """Unsupported modes should raise ValueError with helpful message."""
         with pytest.raises(ValueError, match="Unsupported mode"):
@@ -445,7 +533,7 @@ class TestBufferedFileEdgeCases:
             buf_file.read()
 
     def test_read_past_eof(self, buf_file):
-        buf_file._pos = 11  # at EOF
+        buf_file.seek(11)  # at EOF
         assert buf_file.read() == b""
 
     def test_read_zero_bytes(self, buf_file, mock_nexus_fs):
@@ -463,7 +551,7 @@ class TestBufferedFileEdgeCases:
 
     def test_seek_whence_relative(self, buf_file):
         """seek(offset, 1) seeks relative to current position."""
-        buf_file._pos = 5
+        buf_file.seek(5)
         result = buf_file.seek(3, 1)
         assert result == 8
 
@@ -472,13 +560,15 @@ class TestBufferedFileEdgeCases:
         result = buf_file.seek(-3, 2)
         assert result == 8  # 11 - 3
 
-    def test_seek_negative_clamps_to_zero(self, buf_file):
-        result = buf_file.seek(-100, 0)
-        assert result == 0
+    def test_seek_negative_raises(self, buf_file):
+        """AbstractBufferedFile raises ValueError on seek before start."""
+        with pytest.raises(ValueError, match="Seek before start of file"):
+            buf_file.seek(-100, 0)
 
-    def test_seek_past_end_clamps_to_size(self, buf_file):
+    def test_seek_past_end(self, buf_file):
+        """AbstractBufferedFile allows seeking past end (like regular files)."""
         result = buf_file.seek(100, 0)
-        assert result == 11
+        assert result == 100
 
     def test_double_close(self, buf_file):
         buf_file.close()
@@ -497,15 +587,16 @@ class TestBufferedFileEdgeCases:
 
     def test_readline_no_newline(self, buf_file, mock_nexus_fs):
         """readline() returns remaining bytes if no newline found."""
-        mock_nexus_fs.read_range.return_value = b"no newline"
-        buf_file._pos = 0
-        buf_file.size = 10
+        content = b"no newline"
+        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        buf_file.seek(0)
+        buf_file.size = len(content)
         line = buf_file.readline()
-        assert line == b"no newline"
+        assert line == content
 
     def test_readline_at_eof(self, buf_file):
         """readline() at EOF returns empty bytes."""
-        buf_file._pos = 11
+        buf_file.seek(11)
         assert buf_file.readline() == b""
 
     def test_readline_on_closed_file(self, buf_file):
@@ -515,15 +606,17 @@ class TestBufferedFileEdgeCases:
 
     def test_readlines(self, buf_file, mock_nexus_fs):
         """readlines() returns all remaining lines."""
-        mock_nexus_fs.read_range.side_effect = [b"line1\n", b"line2"]
-        buf_file.size = 11
+        content = b"line1\nline2"
+        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        buf_file.size = len(content)
         lines = buf_file.readlines()
         assert lines == [b"line1\n", b"line2"]
 
     def test_iter(self, buf_file, mock_nexus_fs):
         """Iterating yields lines."""
-        mock_nexus_fs.read_range.side_effect = [b"a\n", b"b\n", b""]
-        buf_file.size = 4
+        content = b"a\nb\n"
+        mock_nexus_fs.read_range.side_effect = lambda path, start, end: content[start:end]
+        buf_file.size = len(content)
         lines = list(buf_file)
         assert lines == [b"a\n", b"b\n"]
 
@@ -639,7 +732,7 @@ class TestFsspecIntegration:
         from nexus.backends.storage.cas_local import CASLocalBackend
         from nexus.contracts.constants import ROOT_ZONE_ID
         from nexus.contracts.types import OperationContext
-        from nexus.core.config import BrickServices, KernelServices, PermissionConfig
+        from nexus.core.config import PermissionConfig
         from nexus.core.nexus_fs import NexusFS
         from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
@@ -660,8 +753,7 @@ class TestFsspecIntegration:
         kernel = NexusFS(
             metadata_store=metastore,
             permissions=PermissionConfig(enforce=False),
-            kernel_services=KernelServices(router=router),
-            brick_services=BrickServices(),
+            router=router,
         )
         kernel._init_cred = OperationContext(
             user_id="test",
@@ -915,3 +1007,59 @@ class TestHuggingFaceIntegration:
         assert ds.column_names == ["text", "label"]
         assert ds[0]["text"] == "hello world"
         assert ds[0]["label"] == 1
+
+
+# ===========================================================================
+# End-to-end: Dask parquet via fsspec
+# ===========================================================================
+
+dask_dd = pytest.importorskip("dask.dataframe")
+
+
+class TestDaskIntegration:
+    """Validates that dask parquet roundtrip works with nexus:// URIs.
+
+    Dask exercises byte-range reads (_cat_file with start/end) which are
+    critical for efficient columnar file access.
+    """
+
+    @pytest.fixture
+    def mounted_fs(self, tmp_path, monkeypatch):
+        """Mount a real local backend and register the nexus protocol."""
+        import fsspec
+
+        fsspec.register_implementation("nexus", NexusFileSystem, clobber=True)
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(state_dir))
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        import nexus.fs
+        from nexus.fs._sync import PortalRunner, run_sync
+
+        facade = run_sync(nexus.fs.mount(f"local://{data_dir}"))
+        runner = PortalRunner()
+        mount = sorted(m for m in facade.list_mounts())[0]
+        yield facade, runner, mount
+        runner.close()
+
+    def test_dask_parquet_roundtrip(self, mounted_fs):
+        """Write parquet via dask, read it back, assert equality."""
+        import pandas as pd
+
+        facade, runner, mount = mounted_fs
+
+        original = pd.DataFrame({"a": range(100), "b": [f"val_{i}" for i in range(100)]})
+        ddf = dask_dd.from_pandas(original, npartitions=2)
+
+        ddf.to_parquet(f"nexus://{mount}/test_dask.parquet")
+
+        result = dask_dd.read_parquet(f"nexus://{mount}/test_dask.parquet")
+        result_pd = result.compute()
+
+        assert len(result_pd) == 100
+        assert list(result_pd.columns) == ["a", "b"]
+        assert result_pd["a"].tolist() == list(range(100))

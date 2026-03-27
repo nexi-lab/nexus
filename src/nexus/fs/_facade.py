@@ -22,7 +22,6 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.nexus_fs import NexusFS
-from nexus.fs._constants import STREAMING_COPY_CHUNK_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -183,12 +182,10 @@ class SlimNexusFS:
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
 
-        Reads the source in STREAMING_COPY_CHUNK_SIZE (64 MB) chunks to
-        bound peak memory during the read phase.  The kernel ``write()``
-        API requires the full content, so the file is assembled into a
-        single ``bytearray`` before writing.  True streaming writes
-        (never materializing the full file) require kernel API changes
-        and are planned for a future release with backend-native copy.
+        Delegates to the kernel's sys_copy which uses backend-native
+        server-side copy when available (S3 CopyObject, GCS rewrite),
+        CAS metadata duplication for content-addressed backends, or
+        chunked streaming as a fallback.
 
         Args:
             src: Source file path.
@@ -196,33 +193,8 @@ class SlimNexusFS:
 
         Returns:
             Dict with path, size, etag of the new file.
-
-        Raises:
-            FileNotFoundError: If the source file does not exist.
         """
-        stat = await self.stat(src)
-        if stat is None:
-            raise FileNotFoundError(src)
-
-        file_size = stat.get("size", 0)
-
-        # Small files: single read-write (avoids bytearray overhead)
-        if file_size <= STREAMING_COPY_CHUNK_SIZE:
-            content = await self.read(src)
-            return await self.write(dst, content)
-
-        # Large files: chunked read into pre-allocated bytearray.
-        # This bounds peak memory to ~file_size + one chunk (vs 2x with
-        # list-of-chunks + join). True streaming requires kernel changes.
-        buf = bytearray(file_size)
-        offset = 0
-        while offset < file_size:
-            end = min(offset + STREAMING_COPY_CHUNK_SIZE, file_size)
-            chunk = await self.read_range(src, offset, end)
-            buf[offset : offset + len(chunk)] = chunk
-            offset = end
-
-        return await self.write(dst, bytes(buf))
+        return await self._kernel.sys_copy(src, dst, context=self._ctx)
 
     # -- Metadata (optimized single-lookup) --
 

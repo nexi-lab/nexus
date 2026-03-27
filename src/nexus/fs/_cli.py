@@ -130,6 +130,76 @@ def playground(uris: tuple[str, ...]) -> None:
     app.run()
 
 
+@main.command()
+@click.argument("source", type=str)
+@click.argument("dest", type=str)
+@click.argument("mount_uris", nargs=-1)
+def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
+    """Copy a file between any mounted backends.
+
+    Uses backend-native server-side copy when source and destination are
+    on the same backend (S3 CopyObject, GCS rewrite).  For cross-backend
+    copies (e.g., S3 → GCS), streams data in 8 MB chunks without
+    buffering the entire file in memory.
+
+    Pass additional URIs to mount backends that aren't auto-discovered.
+
+    \b
+    Examples:
+
+    \b
+      nexus-fs cp /s3/bucket/data.csv /s3/bucket/backup.csv
+      nexus-fs cp /s3/bucket/file.parquet /gcs/bucket/file.parquet
+      nexus-fs cp /local/data/report.pdf /s3/archive/report.pdf s3://archive
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> None:
+        import json
+        import os
+        import tempfile
+
+        from nexus.fs import mount
+
+        # Load previously persisted mount URIs from mounts.json
+        # (written by mount() on every invocation).
+        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
+            tempfile.gettempdir(), "nexus-fs"
+        )
+        persisted: list[str] = []
+        mounts_file = os.path.join(state_dir, "mounts.json")
+        try:
+            with open(mounts_file) as f:
+                persisted = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+        # Merge persisted + any extra URIs the user passed explicitly.
+        all_uris = list(dict.fromkeys(persisted + list(mount_uris)))
+        if not all_uris:
+            raise click.UsageError(
+                "No mounts found. Either run 'nexus-fs mount' first or "
+                "pass backend URIs: nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
+            )
+        fs = await mount(*all_uris)
+
+        result = await fs.copy(source, dest)
+        size = result.get("size", 0)
+        if size >= 1024 * 1024:
+            size_str = f"{size / (1024 * 1024):.1f} MB"
+        elif size >= 1024:
+            size_str = f"{size / 1024:.1f} KB"
+        else:
+            size_str = f"{size} B"
+        click.echo(f"Copied {source} → {dest} ({size_str})")
+
+    try:
+        run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 main.add_command(auth_group)
 
 

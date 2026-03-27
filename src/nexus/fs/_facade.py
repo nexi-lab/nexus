@@ -305,20 +305,22 @@ class SlimNexusFS:
         """
         if self._closed:
             return
-        self._closed = True
 
-        # Close the kernel (may be sync or async)
-        _close = getattr(self._kernel, "close", None)
-        if _close is not None:
-            result = _close()
-            if result is not None:
-                await result
-
-        # Close the metastore connection to release the WAL lock
         import contextlib
 
-        with contextlib.suppress(Exception):
-            self._kernel.metadata.close()
+        try:
+            # Close the kernel (may be sync or async)
+            _close = getattr(self._kernel, "close", None)
+            if _close is not None:
+                result = _close()
+                if result is not None:
+                    await result
+        finally:
+            # Always close the metastore — even if kernel close raises —
+            # to release the SQLite/WAL lock.
+            with contextlib.suppress(Exception):
+                self._kernel.metadata.close()
+            self._closed = True
 
     async def __aenter__(self) -> SlimNexusFS:
         return self

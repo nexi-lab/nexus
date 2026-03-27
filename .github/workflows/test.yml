@@ -485,7 +485,7 @@ jobs:
       - name: Smoke test — CLI
         run: |
           /tmp/nexus-fs-test/bin/nexus-fs --help
-          /tmp/nexus-fs-test/bin/nexus-fs doctor || true
+          /tmp/nexus-fs-test/bin/nexus-fs doctor
 
       - name: Smoke test — fsspec entry point
         run: |

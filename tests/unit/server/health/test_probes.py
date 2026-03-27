@@ -108,14 +108,15 @@ class TestReadinessProbe:
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
-        mock_fed = MagicMock()
-        mock_fed.ensure_topology.return_value = True
-        mock_fs = MagicMock()
-        mock_fs._zone_mgr.ensure_topology.return_value = True
-        mock_fs._zone_mgr.root_zone_id = "root"
         mock_root_store = MagicMock()
         mock_root_store.is_leader.return_value = True
-        mock_fs._zone_mgr.get_store.return_value = mock_root_store
+        mock_zmgr = MagicMock()
+        mock_zmgr.root_zone_id = "root"
+        mock_zmgr.get_store.return_value = mock_root_store
+        mock_fed = MagicMock()
+        mock_fed.ensure_topology.return_value = True
+        mock_fed.zone_manager = mock_zmgr
+        mock_fs = MagicMock()
         mock_fs.service.return_value = mock_fed
 
         app = _make_app(tracker)
@@ -129,15 +130,16 @@ class TestReadinessProbe:
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
 
-        mock_fed = MagicMock()
-        mock_fed.ensure_topology.return_value = True
-        mock_fs = MagicMock()
-        mock_fs.service.return_value = mock_fed
-        mock_fs._zone_mgr.ensure_topology.return_value = True
-        mock_fs._zone_mgr.root_zone_id = "root"
         mock_root_store = MagicMock()
         mock_root_store.is_leader.return_value = False
-        mock_fs._zone_mgr.get_store.return_value = mock_root_store
+        mock_zmgr = MagicMock()
+        mock_zmgr.root_zone_id = "root"
+        mock_zmgr.get_store.return_value = mock_root_store
+        mock_fed = MagicMock()
+        mock_fed.ensure_topology.return_value = True
+        mock_fed.zone_manager = mock_zmgr
+        mock_fs = MagicMock()
+        mock_fs.service.return_value = mock_fed
 
         app = _make_app(tracker)
         app.state.nexus_fs = mock_fs

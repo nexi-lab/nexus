@@ -312,13 +312,13 @@ async def _boot_post_kernel_services(
     # AgentStatusResolver moved to orchestrator._register_vfs_hooks() (Issue #1570, #1810)
 
     acp_rpc_service: Any = None
-    # Issue #1792: AcpService is created in _do_link() using kernel-owned
-    # nx._agent_registry. Retrieve from nx (set by _do_link).
+    # Issue #1792: AcpService is created in _wire_services() via ServiceRegistry.
     _acp_ref = nx._service_registry.service("acp_service")
     _acp_service = _acp_ref._service_instance if _acp_ref is not None else None
     if _acp_service is None:
-        # Fallback: construct inline using kernel-owned AgentRegistry.
-        _acp_pt = getattr(nx, "_agent_registry", None)
+        # Fallback: construct inline using AgentRegistry from ServiceRegistry.
+        _acp_ar_ref = nx._service_registry.service("agent_registry")
+        _acp_pt = _acp_ar_ref._service_instance if _acp_ar_ref is not None else None
         if _acp_pt is not None:
             try:
                 from nexus.services.acp.service import AcpService

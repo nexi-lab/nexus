@@ -48,7 +48,7 @@ async def _wire_services(
     """
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_post_kernel_services
-    from nexus.factory.service_routing import enlist_wired_services
+    from nexus.factory.service_routing import enlist_services, enlist_wired_services
 
     _svc = services or {}
     nx._permission_enforcer = _svc.get("permission_enforcer")  # Issue #1706: override sentinel
@@ -141,23 +141,13 @@ async def _wire_services(
     if _mount_svc is not None:
         _mount_svc._driver_coordinator = nx._driver_coordinator
 
-    # Enlist all services into ServiceRegistry (unified loop).
-    # After this, every service is available via nx.service("name").
-    # Note: permission_enforcer stays as kernel-owns DI (Issue #1815).
-    # Canonical name mapping for services that need aliasing.
-    _CANONICAL_ALIASES = {
-        "context_branch_service": "context_branch",
-    }
-    for _attr, _val in _svc.items():
-        if _val is None:
-            continue
-        _canonical = _CANONICAL_ALIASES.get(_attr, _attr)
-        await nx._service_registry.enlist(_canonical, _val)
+    # Enlist all system+brick services into ServiceRegistry.
+    # Canonical name mapping consolidated in service_routing.py.
+    await enlist_services(nx._service_registry, _svc)
 
     # Federation — wire from parameter (profile-gated, created before kernel).
     if federation is not None:
         await nx._service_registry.enlist("federation", federation)
-        nx._zone_mgr = federation.zone_manager  # backward compat for health checks
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager
@@ -229,27 +219,8 @@ async def _wire_services(
     # Issue #1801: _flush_write_observer_fn closure removed — kernel now reads
     # write_observer directly from service registry via nx.service("write_observer").
 
-    _rebac = _svc.get("rebac_manager")
-    if _rebac is not None and hasattr(_rebac, "close"):
-
-        def _close_rebac() -> None:
-            try:
-                _rebac.close()
-            except Exception as exc:
-                logger.debug("close: rebac_manager.close() failed: %s", exc)
-
-        nx._close_callbacks.append(_close_rebac)
-
-    _audit = _svc.get("audit_store")
-    if _audit is not None and hasattr(_audit, "close"):
-
-        def _close_audit() -> None:
-            try:
-                _audit.close()
-            except Exception as exc:
-                logger.debug("close: audit_store.close() failed: %s", exc)
-
-        nx._close_callbacks.append(_close_audit)
+    # rebac_manager.close() and audit_store.close() are now handled by
+    # ServiceRegistry.close_all_services() — no manual callbacks needed.
 
     # Issue #1792: AgentRegistry — lazy construct via ServiceRegistry.register_factory().
     # Only created on first access (ACP/TaskManager/EvictionManager need it).
@@ -269,8 +240,6 @@ async def _wire_services(
 
             nx._close_callbacks.append(_close_agent_registry)
 
-        # Keep kernel sentinel in sync for backward compat
-        nx._agent_registry = _ar
         logger.debug("[BOOT:LINK] AgentRegistry lazy-constructed on first access")
         return _ar
 

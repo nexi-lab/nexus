@@ -106,6 +106,31 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
+# Canonical name aliases for dict-keyed services (pre-kernel + brick dicts).
+# Parallel to _CANONICAL_NAMES for wired (dataclass) services.
+_ENLIST_CANONICAL_NAMES: dict[str, str] = {
+    "context_branch_service": "context_branch",
+}
+
+
+async def enlist_services(coordinator: Any, services: dict[str, Any]) -> int:
+    """Enlist services from a dict via coordinator.enlist().
+
+    Same pattern as enlist_wired_services() but for plain dicts
+    (pre-kernel tier + brick tier merged). Skips None values.
+
+    Returns the number of services enlisted.
+    """
+    count = 0
+    for attr, val in services.items():
+        if val is None:
+            continue
+        canonical = _ENLIST_CANONICAL_NAMES.get(attr, attr)
+        await coordinator.enlist(canonical, val)
+        count += 1
+    return count
+
+
 async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
     """Enlist WiredServices via coordinator.enlist() (#1708).
 

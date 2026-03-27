@@ -154,10 +154,8 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1788: distributed lock manager removed — now routed through EventsService.
         # In-process locks use _vfs_lock_manager (kernel owns); advisory locks use
         # nx.service("events_service").lock() which auto-creates local fallback.
-        # Issue #1792: agent registry — kernel knows, factory provides.
-        # Kernel does NOT own AgentRegistry (no-agent profiles like REMOTE work without it).
-        # Factory creates and injects at link-time; None = graceful degrade.
-        self._agent_registry: Any = None
+        # Issue #1792: AgentRegistry accessed via ServiceRegistry (register_factory).
+        # No kernel sentinel — no-agent profiles (REMOTE) never construct it.
         # Issue #1801: _flush_write_observer_fn and _overlay_config_fn closures removed —
         # kernel now reads services directly from service registry.
         # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
@@ -4365,6 +4363,10 @@ class NexusFS(  # type: ignore[misc]
                 _close_cb()
             except Exception as exc:
                 logger.debug("close: callback failed (best-effort): %s", exc)
+
+        # Auto-close all enlisted services that have a close() method
+        # (rebac_manager, audit_store, etc.). Reverse registration order.
+        self._service_registry.close_all_services()
 
         # Close metadata store
         self.metadata.close()

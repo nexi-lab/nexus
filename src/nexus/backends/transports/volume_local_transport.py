@@ -114,7 +114,8 @@ class VolumeLocalTransport:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
             try:
-                data = self._engine.get(hash_hex)
+                # read_content: O(1) HashMap lookup + pread (Issue #3404)
+                data = self._engine.read_content(hash_hex)
                 if data is None:
                     raise NexusFileNotFoundError(key)
                 return bytes(data), None

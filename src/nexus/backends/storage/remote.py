@@ -43,10 +43,10 @@ class RemoteBackend(ObjectStoreABC):
         transport: Shared ``RPCTransport`` instance (gRPC channel).
     """
 
-    # Expose EXTERNAL_CONTENT so the client-side kernel takes the dynamic
-    # connector path in sys_read (bypassing local metadata/CAS lookup).
-    # The server knows the actual backend type and handles reads correctly.
-    capabilities: frozenset[str] = frozenset({"external_content"})
+    # RemoteBackend dispatch is handled via DT_EXTERNAL_STORAGE entry_type
+    # in metastore, not via capabilities. The server knows the actual
+    # backend type and handles reads correctly.
+    capabilities: frozenset[str] = frozenset()
 
     def __init__(self, transport: "RPCTransport") -> None:
         self._transport = transport

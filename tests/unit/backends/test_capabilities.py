@@ -45,8 +45,8 @@ class TestConnectorCapabilityEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """We have exactly 27 capabilities defined (21 base + 5 connector protocol #3148 + 1 sync #3266)."""
-        assert len(ConnectorCapability) == 27
+        """We have exactly 26 capabilities (EXTERNAL_CONTENT removed — now DT_EXTERNAL_STORAGE entry_type)."""
+        assert len(ConnectorCapability) == 26
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""

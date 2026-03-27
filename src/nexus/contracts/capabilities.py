@@ -37,9 +37,6 @@ class ConnectorCapability(StrEnum):
     RENAME = "rename"
     """Backend supports direct file rename/move."""
 
-    EXTERNAL_CONTENT = "external_content"
-    """Content is managed by an external source (local FS, API, IPC), not CAS."""
-
     ROOT_PATH = "root_path"
     """Backend has a local root_path for physical storage."""
 

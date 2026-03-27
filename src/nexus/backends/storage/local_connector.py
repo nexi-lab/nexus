@@ -81,7 +81,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.DIRECTORY_LISTING,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,

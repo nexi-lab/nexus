@@ -164,15 +164,18 @@ class WriteBackService:
         # Skip external-content backends (e.g. LocalConnector, HN, IPC) — content is
         # managed externally, write-back would double-write or be meaningless.
         # Also skip RemoteBackend — server handles its own persistence.
-        from nexus.contracts.capabilities import ConnectorCapability
-
+        # Detection: check metastore entry_type (DT_EXTERNAL_STORAGE) via gateway.
         backend = mount_info["backend"]
-        _caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
-        if (
-            ConnectorCapability.EXTERNAL_CONTENT in _caps
-            or getattr(backend, "name", "") == "remote"
-        ):
+        if getattr(backend, "name", "") == "remote":
             return
+        # Skip external storage backends (OAuth/API/CLI connectors)
+        _mount_path = mount_info.get("mount_point", "")
+        if _mount_path and self._gw:
+            from nexus.contracts.metadata import DT_EXTERNAL_STORAGE
+
+            _meta = self._gw.metadata_get(_mount_path)
+            if _meta is not None and _meta.entry_type == DT_EXTERNAL_STORAGE:
+                return
 
         # Map event type to operation type
         op_type = self._event_to_operation(event_type)

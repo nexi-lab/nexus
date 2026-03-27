@@ -17,6 +17,7 @@ enum DirEntryType {
   DT_MOUNT = 2;   // Mount point (VFS namespace composition)
   DT_PIPE = 3;    // Kernel IPC ring buffer (same-node, SPSC)
   DT_STREAM = 4;  // Append-only log with offset-based non-destructive reads
+  DT_EXTERNAL_STORAGE = 5;  // Backend-managed content (OAuth/API/CLI connectors)
 }
 
 // FileMetadata represents the metadata for a single file or directory in Nexus.

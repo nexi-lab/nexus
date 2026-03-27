@@ -1092,7 +1092,7 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(path, is_admin=is_admin, check_write=False)
 
         # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
-        from nexus.core.router import PipeRouteResult, StreamRouteResult
+        from nexus.core.router import ExternalRouteResult, PipeRouteResult, StreamRouteResult
 
         if isinstance(route, PipeRouteResult | StreamRouteResult):
             # Range reads not applicable; use sync non-blocking path
@@ -1111,13 +1111,8 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Dynamic connector bypass
-        _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
-        is_dynamic_connector = (
-            route.backend.user_scoped is True and route.backend.has_token_manager is True
-        ) or "external_content" in _caps
-
-        if is_dynamic_connector:
+        # DT_EXTERNAL_STORAGE: backend manages own content — skip metastore lookup
+        if isinstance(route, ExternalRouteResult):
             content = route.backend.read_content("", context=read_context)
             return (content, None, route, zone_id, agent_id)
 
@@ -1243,7 +1238,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
-        from nexus.core.router import PipeRouteResult, StreamRouteResult
+        from nexus.core.router import ExternalRouteResult, PipeRouteResult, StreamRouteResult
 
         if isinstance(route, PipeRouteResult):
             return await self._pipe_read(path, count=count, offset=offset)
@@ -1263,18 +1258,9 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # Check if backend is a dynamic API-backed connector or external content source.
-        # TODO(#899): Move this bypass logic out of kernel into service/composition layer.
-        _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
-        is_dynamic_connector = (
-            route.backend.user_scoped is True and route.backend.has_token_manager is True
-        ) or "external_content" in _caps
-
-        if is_dynamic_connector:
-            # Dynamic connector - read directly from backend without metadata check
-            # The backend handles authentication and API calls (no VFS lock needed)
+        # DT_EXTERNAL_STORAGE: backend manages own content — skip metastore lookup
+        if isinstance(route, ExternalRouteResult):
             content = route.backend.read_content("", context=read_context)
-
             if offset or count is not None:
                 content = (
                     content[offset : offset + count] if count is not None else content[offset:]
@@ -2286,14 +2272,15 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
 
-        # External_content backends manage their own content storage.
+        # DT_EXTERNAL_STORAGE: backend manages own content storage.
         # Remote backends (RPC-based) also persist metadata on the remote server,
         # so we skip local metadata.put() to avoid overwriting.
-        # Local external_content backends (e.g. LocalConnector) write content
+        # Local external backends (e.g. LocalConnector) write content
         # to disk but do NOT manage metadata — we must persist metadata locally.
-        _backend_caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
+        from nexus.core.router import ExternalRouteResult
+
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
-        if "external_content" in _backend_caps:
+        if isinstance(route, ExternalRouteResult):
             wr = route.backend.write_content(
                 content,
                 content_id=meta.physical_path if (offset > 0 and meta) else "",
@@ -2317,7 +2304,7 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=zone_id or "root",
                 owner_id=owner_id,
             )
-            # Local external_content backends need metadata persisted locally
+            # Local external backends need metadata persisted locally
             if not _is_remote:
                 self.metadata.put(metadata, consistency=consistency)
         else:

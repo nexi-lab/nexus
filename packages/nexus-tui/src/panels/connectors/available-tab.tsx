@@ -111,6 +111,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     getIndex: () => selectedIndex,
     setIndex: (i) => { setSelectedIndex(i); setShowMountGuide(false); },
     getLength: () => connectors.length,
+    onSelect: () => setShowMountGuide(!showMountGuide),
   });
 
   useKeyboard(

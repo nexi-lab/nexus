@@ -3,7 +3,7 @@
 Issue #1502: ``bind_wired_services()`` and the setattr wiring path have been
 deleted.  All service access now goes through ``nx.service("name")``.
 
-Issue #1708: Single entry point via ``enlist_wired_services()`` which calls
+Issue #1708: Single entry point via ``enlist_services()`` which calls
 ``coordinator.enlist()`` for each service.  Coordinator is always available
 for all deployment profiles (BLM optional).
 """
@@ -80,10 +80,14 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
 }
 
 # ---------------------------------------------------------------------------
-# Canonical name mapping: WiredServices field → short registry key
+# Canonical name mapping: source key → short registry key
+#
+# Unified map for both dict-keyed services (pre-kernel + brick tier)
+# and WiredServices dataclass fields (post-kernel tier).
 # ---------------------------------------------------------------------------
 
 _CANONICAL_NAMES: dict[str, str] = {
+    # WiredServices dataclass fields
     "rebac_service": "rebac",
     "mount_service": "mount",
     "gateway": "gateway",
@@ -103,53 +107,44 @@ _CANONICAL_NAMES: dict[str, str] = {
     "user_provisioning_service": "user_provisioning",
     "sandbox_rpc_service": "sandbox_rpc",
     "metadata_export_service": "metadata_export",
-}
-
-
-# Canonical name aliases for dict-keyed services (pre-kernel + brick dicts).
-# Parallel to _CANONICAL_NAMES for wired (dataclass) services.
-_ENLIST_CANONICAL_NAMES: dict[str, str] = {
+    # Dict-keyed services (pre-kernel + brick tier)
     "context_branch_service": "context_branch",
 }
 
 
-async def enlist_services(coordinator: Any, services: dict[str, Any]) -> int:
-    """Enlist services from a dict via coordinator.enlist().
+async def enlist_services(coordinator: Any, services: Any) -> int:
+    """Enlist services via coordinator.enlist() (#1708).
 
-    Same pattern as enlist_wired_services() but for plain dicts
-    (pre-kernel tier + brick tier merged). Skips None values.
-
-    Returns the number of services enlisted.
-    """
-    count = 0
-    for attr, val in services.items():
-        if val is None:
-            continue
-        canonical = _ENLIST_CANONICAL_NAMES.get(attr, attr)
-        await coordinator.enlist(canonical, val)
-        count += 1
-    return count
-
-
-async def enlist_wired_services(coordinator: Any, wired: Any) -> int:
-    """Enlist WiredServices via coordinator.enlist() (#1708).
-
-    Iterates ``_CANONICAL_NAMES``, extracts each non-None service from
-    ``wired`` (WiredServices dataclass or dict), and calls
-    ``await coordinator.enlist()`` with canonical name + exports.
-
-    All wired services are on-demand — no PersistentService or hook_spec()
-    — so enlist() auto-detects and registers them without lifecycle side effects.
-    On-demand services are still swappable at runtime via swap_service() (#1452).
+    Accepts both dicts and dataclass instances. For each non-None service,
+    resolves canonical name (via ``_CANONICAL_NAMES``) and exports
+    (via ``_CANONICAL_EXPORTS``), then calls ``coordinator.enlist()``.
 
     Returns the number of services enlisted.
     """
     count = 0
-    for src_key, canonical in _CANONICAL_NAMES.items():
-        val = wired.get(src_key) if isinstance(wired, dict) else getattr(wired, src_key, None)
+
+    pairs: list[tuple[str, Any]]
+    if isinstance(services, dict):
+        pairs = list(services.items())
+    else:
+        # WiredServices dataclass — iterate declared fields
+        pairs = [(f, getattr(services, f, None)) for f in services.__dataclass_fields__]
+
+    for src_key, val in pairs:
         if val is None:
             continue
+        canonical: str = _CANONICAL_NAMES.get(src_key, src_key)
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        await coordinator.enlist(canonical, val, exports=exports, allow_overwrite=True)
+        await coordinator.enlist(
+            canonical,
+            val,
+            exports=exports,
+            allow_overwrite=True,
+        )
         count += 1
+
     return count
+
+
+# Backward compatibility alias
+enlist_wired_services = enlist_services

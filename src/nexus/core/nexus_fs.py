@@ -241,7 +241,6 @@ class NexusFS(  # type: ignore[misc]
         self._linked: bool = False
         self._initialized: bool = False
         self._bootstrapped: bool = False
-        self._bootstrap_callbacks: list[Callable[[], Any]] = []
         self._close_callbacks: list[
             Callable[[], None]
         ] = []  # Issue #1793: factory-registered service close
@@ -288,9 +287,9 @@ class NexusFS(  # type: ignore[misc]
     async def bootstrap(self) -> None:
         """Phase 3: Start async tasks.  Server/Worker only.
 
-        Executes registered bootstrap callbacks.  Reserved for future
-        server-specific active components (Feishu WS, EventBus consumers,
-        background sync workers, etc.).
+        Auto-starts all PersistentService instances (ZoneLifecycleService,
+        EventDeliveryWorker, DeferredPermissionBuffer, etc.) via
+        ServiceRegistry.start_persistent_services().
 
         Idempotent — guarded by ``_bootstrapped`` flag.
         """
@@ -298,8 +297,6 @@ class NexusFS(  # type: ignore[misc]
             return
         if not self._initialized:
             await self.initialize()
-        for cb in self._bootstrap_callbacks:
-            await cb()
         # Auto-lifecycle: start PersistentService instances (Issue #1580)
         coord = self.service_coordinator
         if coord is not None:

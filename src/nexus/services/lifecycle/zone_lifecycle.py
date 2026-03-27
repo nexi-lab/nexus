@@ -75,6 +75,29 @@ class ZoneLifecycleService:
         )
 
     # ------------------------------------------------------------------
+    # PersistentService lifecycle (auto-managed by ServiceRegistry)
+    # ------------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Load terminating zones from DB at bootstrap.
+
+        Called by ServiceRegistry.start_persistent_services(). Replaces
+        the old _bootstrap_callbacks pattern.
+        """
+        try:
+            if self._session_factory is not None:
+                with self._session_factory() as session:
+                    self.load_terminating_zones(session)
+                logger.debug(
+                    "[ZoneLifecycle] Loaded terminating zones at PersistentService.start()"
+                )
+        except Exception as exc:
+            logger.warning("[ZoneLifecycle] Failed to load terminating zones: %s", exc)
+
+    async def stop(self) -> None:
+        """No-op — in-memory set, no cleanup needed."""
+
+    # ------------------------------------------------------------------
     # Write-gating (Decision #4A / #14A)
     # ------------------------------------------------------------------
 

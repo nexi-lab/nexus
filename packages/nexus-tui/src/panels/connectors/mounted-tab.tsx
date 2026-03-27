@@ -164,9 +164,15 @@ export function MountedTab({ client, overlayActive }: MountedTabProps): React.Re
 
       {/* Help bar */}
       <box height={1} width="100%">
-        <text foregroundColor={statusColor.dim}>
-          j/k:navigate  s:sync  u:unmount  r:refresh
-        </text>
+        {loading ? (
+          <text foregroundColor={statusColor.warning}>⠋ Refreshing...</text>
+        ) : syncingMounts.size > 0 ? (
+          <text foregroundColor={statusColor.warning}>{`⠋ Syncing ${syncingMounts.size} mount(s)...`}</text>
+        ) : (
+          <text foregroundColor={statusColor.dim}>
+            j/k:navigate  s:sync  u:unmount  r:refresh
+          </text>
+        )}
       </box>
     </box>
   );

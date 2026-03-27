@@ -72,6 +72,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   const pollAuthStatus = useConnectorsStore((s) => s.pollAuthStatus);
   const cancelAuth = useConnectorsStore((s) => s.cancelAuth);
   const mountConnector = useConnectorsStore((s) => s.mountConnector);
+  const mountsLoading = useConnectorsStore((s) => s.mountsLoading);
 
   const config = useGlobalStore((s) => s.config);
   const { copy, copied } = useCopy();
@@ -343,9 +344,11 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
       <box height={1} width="100%">
         {copied ? (
           <text foregroundColor={statusColor.healthy}>Copied!</text>
+        ) : loading || mountsLoading ? (
+          <text foregroundColor={statusColor.warning}>⠋ Loading...</text>
         ) : (
           <text foregroundColor={statusColor.dim}>
-            j/k:navigate  a:auth  m:mount guide  r:refresh  y:copy  Esc:cancel
+            j/k:navigate  Enter/m:mount  a:auth  r:refresh  y:copy  Esc:cancel
           </text>
         )}
       </box>

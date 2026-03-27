@@ -15,11 +15,17 @@ written.  For existing files this is the file path; for new files it's
 the parent directory (since ``on_pre_write`` checks WRITE on the parent).
 This design covers both repeated writes and many-files-in-same-directory.
 
+Inheritance-aware: ``check()`` walks up the path hierarchy so a lease
+stamped on a parent directory (e.g. from a new-file write) also covers
+writes to existing files in that directory.  This matches the ReBAC
+inheritance model where WRITE on a directory implies WRITE on children.
+
 Integration:
     - Checked in ``PermissionCheckHook.on_pre_write()`` (fast path)
     - Stamped after successful ReBAC check (slow path)
     - Invalidated by ``CacheCoordinator.invalidate_for_write()`` via
       registered callback (zone-wide clear on any permission mutation)
+    - ``invalidate_agent()`` called on agent termination / permission change
 
 References:
     - Issue #3394: Permission write leases
@@ -108,16 +114,36 @@ class PermissionLeaseTable:
 
     # -- core operations ------------------------------------------------------
 
+    @staticmethod
+    def _parent(path: str) -> str | None:
+        """Get parent directory path, or None if root."""
+        if path == "/":
+            return None
+        last_slash = path.rfind("/")
+        if last_slash == 0:
+            return "/"
+        return path[:last_slash] if last_slash > 0 else None
+
     def check(self, path: str, agent_id: str) -> bool:
         """Check if a valid permission lease exists.
 
-        O(1) dict lookup + monotonic time check.  Returns True if the
-        agent has a non-expired lease on the given path.
+        Walks up the path hierarchy (inheritance-aware): a lease stamped
+        on an ancestor directory covers writes to descendant paths.  This
+        matches the ReBAC model where WRITE on a directory implies WRITE
+        on children via ``parent-of`` relationships.
+
+        Typical cost: O(depth) dict lookups where depth ≈ 3-5.  Each
+        lookup is ~50-100ns, total ~250-500ns on miss — well within the
+        ~1μs budget.
         """
-        expiry = self._table.get((self._normalize(path), agent_id))
-        if expiry is not None and self._clock.monotonic() < expiry:
-            self._hits += 1
-            return True
+        now = self._clock.monotonic()
+        current: str | None = self._normalize(path)
+        while current is not None:
+            expiry = self._table.get((current, agent_id))
+            if expiry is not None and now < expiry:
+                self._hits += 1
+                return True
+            current = self._parent(current)
         self._misses += 1
         return False
 
@@ -162,6 +188,23 @@ class PermissionLeaseTable:
             del self._table[k]
         if keys_to_remove:
             self._invalidations += 1
+
+    def invalidate_agent(self, agent_id: str) -> None:
+        """Clear all leases for a specific agent.
+
+        Called on agent termination or agent-level permission change.
+        O(n) scan of the table.
+        """
+        keys_to_remove = [k for k in self._table if k[1] == agent_id]
+        for k in keys_to_remove:
+            del self._table[k]
+        if keys_to_remove:
+            self._invalidations += 1
+            logger.debug(
+                "[PermissionLeaseTable] Invalidated %d lease(s) for agent %s",
+                len(keys_to_remove),
+                agent_id,
+            )
 
     # -- diagnostics ----------------------------------------------------------
 

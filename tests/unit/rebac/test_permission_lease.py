@@ -205,6 +205,90 @@ class TestPermissionLeaseEdgeCases:
         assert table.check("/exists", "agent-A") is True
         assert table.stats()["lease_invalidations"] == 0
 
+    def test_invalidate_agent_clears_all_paths_for_agent(self, table: PermissionLeaseTable) -> None:
+        """Agent invalidation removes all leases for that agent only."""
+        table.stamp("/a", "agent-A")
+        table.stamp("/b", "agent-A")
+        table.stamp("/a", "agent-B")
+        table.invalidate_agent("agent-A")
+        assert table.check("/a", "agent-A") is False
+        assert table.check("/b", "agent-A") is False
+        assert table.check("/a", "agent-B") is True  # untouched
+
+    def test_invalidate_agent_nonexistent(self, table: PermissionLeaseTable) -> None:
+        """Invalidating an agent with no leases is a no-op."""
+        table.stamp("/a", "agent-A")
+        table.invalidate_agent("agent-X")
+        assert table.check("/a", "agent-A") is True
+        assert table.stats()["lease_invalidations"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Inheritance-aware ancestor walk
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionLeaseInheritance:
+    """Ancestor walk: a lease on a parent covers writes to descendants."""
+
+    def test_parent_lease_covers_child_file(self, table: PermissionLeaseTable) -> None:
+        """Lease stamped on directory covers check for a file in that directory."""
+        table.stamp("/workspace/src", "agent-A")
+        assert table.check("/workspace/src/file.py", "agent-A") is True
+
+    def test_grandparent_lease_covers_deep_descendant(self, table: PermissionLeaseTable) -> None:
+        """Lease on grandparent covers deeply nested file."""
+        table.stamp("/workspace", "agent-A")
+        assert table.check("/workspace/src/nested/file.py", "agent-A") is True
+
+    def test_root_lease_covers_any_path(self, table: PermissionLeaseTable) -> None:
+        """Lease on root covers any path."""
+        table.stamp("/", "agent-A")
+        assert table.check("/workspace/src/file.py", "agent-A") is True
+
+    def test_sibling_lease_does_not_cover(self, table: PermissionLeaseTable) -> None:
+        """Lease on /a does NOT cover /b (not an ancestor)."""
+        table.stamp("/workspace/a", "agent-A")
+        assert table.check("/workspace/b", "agent-A") is False
+
+    def test_child_lease_does_not_cover_parent(self, table: PermissionLeaseTable) -> None:
+        """Lease on child does NOT cover parent (walk is upward only)."""
+        table.stamp("/workspace/src/file.py", "agent-A")
+        assert table.check("/workspace/src", "agent-A") is False
+
+    def test_ancestor_walk_different_agents_independent(self, table: PermissionLeaseTable) -> None:
+        """Agent B's parent lease doesn't help agent A."""
+        table.stamp("/workspace/src", "agent-B")
+        assert table.check("/workspace/src/file.py", "agent-A") is False
+        assert table.check("/workspace/src/file.py", "agent-B") is True
+
+    def test_exact_match_preferred_over_ancestor(
+        self, table: PermissionLeaseTable, clock: ManualClock
+    ) -> None:
+        """Exact match is checked first (and returned) before ancestors."""
+        table.stamp("/workspace/src", "agent-A", ttl=5.0)
+        table.stamp("/workspace/src/file.py", "agent-A", ttl=30.0)
+        clock.advance(10.0)  # parent expired, child still valid
+        assert table.check("/workspace/src/file.py", "agent-A") is True
+
+    def test_new_file_scenario_many_files_same_dir(self, table: PermissionLeaseTable) -> None:
+        """Real-world: new-file write stamps parent, then existing file writes hit ancestor."""
+        # First write: new file → stamps parent dir (from on_pre_write logic)
+        table.stamp("/workspace/src", "agent-A")
+
+        # Subsequent writes to existing files in same dir → ancestor walk hits
+        assert table.check("/workspace/src/file1.py", "agent-A") is True
+        assert table.check("/workspace/src/file2.py", "agent-A") is True
+        assert table.check("/workspace/src/file3.py", "agent-A") is True
+
+    def test_ancestor_walk_expired_ancestor_is_skip(
+        self, table: PermissionLeaseTable, clock: ManualClock
+    ) -> None:
+        """Expired ancestor lease is skipped, walk continues but ultimately misses."""
+        table.stamp("/workspace", "agent-A")
+        clock.advance(31.0)  # expired
+        assert table.check("/workspace/src/file.py", "agent-A") is False
+
 
 # ---------------------------------------------------------------------------
 # Metrics

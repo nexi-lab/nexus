@@ -257,6 +257,79 @@ class TestPermissionLeaseAgentIdEdgeCases:
 
 
 # ---------------------------------------------------------------------------
+# Inheritance-aware: new-file stamp covers existing-file writes
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionLeaseInheritanceHook:
+    """Ancestor walk through the hook: parent stamp covers child writes."""
+
+    def test_new_file_stamp_covers_subsequent_existing_file_writes(
+        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+    ) -> None:
+        """New-file write stamps parent dir; existing-file write in same dir hits via ancestor."""
+        # 1. New file → checks parent /workspace, stamps /workspace
+        new_ctx = _make_write_ctx(path="/workspace/file1.py", old_metadata=None)
+        hook.on_pre_write(new_ctx)
+        assert checker.check.call_count == 1
+        checker.check.reset_mock()
+
+        # 2. Existing file in same dir → ancestor walk finds /workspace lease
+        existing_ctx = _make_write_ctx(path="/workspace/file2.py", old_metadata=MagicMock())
+        hook.on_pre_write(existing_ctx)
+        checker.check.assert_not_called()  # lease hit via ancestor walk
+
+    def test_new_file_stamp_does_not_cover_different_directory(
+        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+    ) -> None:
+        """Parent stamp on /workspace does NOT cover /other."""
+        new_ctx = _make_write_ctx(path="/workspace/file1.py", old_metadata=None)
+        hook.on_pre_write(new_ctx)
+        checker.check.reset_mock()
+
+        other_ctx = _make_write_ctx(path="/other/file2.py", old_metadata=MagicMock())
+        hook.on_pre_write(other_ctx)
+        checker.check.assert_called_once()  # no ancestor match → full check
+
+
+# ---------------------------------------------------------------------------
+# Agent invalidation
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionLeaseAgentInvalidation:
+    """invalidate_agent() clears leases for a terminated/changed agent."""
+
+    def test_agent_invalidation_forces_recheck(
+        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+    ) -> None:
+        """After invalidating an agent, their writes require full checks."""
+        ctx = _make_write_ctx(old_metadata=MagicMock())
+        hook.on_pre_write(ctx)  # stamp
+        checker.check.reset_mock()
+
+        lease_table.invalidate_agent("agent-A")
+
+        hook.on_pre_write(ctx)  # must do full check again
+        checker.check.assert_called_once()
+
+    def test_agent_invalidation_does_not_affect_other_agents(
+        self, hook: PermissionCheckHook, checker: MagicMock, lease_table: PermissionLeaseTable
+    ) -> None:
+        """Invalidating agent-A leaves agent-B's leases intact."""
+        ctx_a = _make_write_ctx(context=_make_context(agent_id="agent-A"), old_metadata=MagicMock())
+        ctx_b = _make_write_ctx(context=_make_context(agent_id="agent-B"), old_metadata=MagicMock())
+        hook.on_pre_write(ctx_a)
+        hook.on_pre_write(ctx_b)
+        checker.check.reset_mock()
+
+        lease_table.invalidate_agent("agent-A")
+
+        hook.on_pre_write(ctx_b)
+        checker.check.assert_not_called()  # agent-B lease still valid
+
+
+# ---------------------------------------------------------------------------
 # No lease table (backwards compatibility)
 # ---------------------------------------------------------------------------
 

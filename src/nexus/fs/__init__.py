@@ -145,11 +145,23 @@ async def mount(*uris: str, at: str | None = None) -> Any:
             ),
         )
 
-        # Persist mount URIs so playground/fsspec can auto-discover them
+        # Persist mount URIs so playground/fsspec can auto-discover them.
+        # Atomic write (temp file + os.replace) to avoid partial JSON if
+        # the process crashes mid-write.
         try:
+            import os
+            import tempfile
+
             mf = mounts_file()
-            with open(mf, "w") as f:
-                json.dump(list(uris), f)
+            fd, tmp = tempfile.mkstemp(dir=mf.parent, suffix=".tmp")
+            try:
+                with open(fd, "w") as f:
+                    json.dump(list(uris), f)
+                    f.flush()
+                os.replace(tmp, mf)
+            except BaseException:
+                os.unlink(tmp)
+                raise
         except OSError as exc:
             logger.warning(
                 "Could not write mounts.json (%s). "

@@ -221,6 +221,13 @@ class SQLiteMetastore(MetastoreABC):
         return results
 
     def close(self) -> None:
+        # Checkpoint and optimize before closing so WAL/SHM files are
+        # cleaned up and the database is left in a compact state.
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.execute("PRAGMA optimize")
+        except Exception:
+            pass  # best-effort; closing is more important
         self._conn.close()
 
     # ------------------------------------------------------------------

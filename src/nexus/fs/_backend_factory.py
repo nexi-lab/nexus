@@ -262,8 +262,10 @@ def _discover_connector_module(scheme: str) -> None:
     imported. This is a no-op if the module doesn't exist or has already
     been imported.
 
-    Distinguishes between ``ModuleNotFoundError`` (expected — module doesn't
-    exist) and ``ImportError`` (unexpected — module exists but has a bug).
+    Distinguishes between:
+    - ``ModuleNotFoundError`` for the connector module itself → expected, skip
+    - ``ModuleNotFoundError`` for a transitive dependency → re-raise (real bug)
+    - ``ImportError`` → re-raise (module exists but broken)
     """
     module_paths = [
         f"nexus.backends.connectors.{scheme}.connector",
@@ -276,21 +278,12 @@ def _discover_connector_module(scheme: str) -> None:
         except ModuleNotFoundError as exc:
             # Only treat as "module doesn't exist" if the missing module
             # is the one we tried to import. If a transitive dependency
-            # inside the connector is missing, that's a real bug.
+            # inside the connector is missing, that's a real bug — re-raise
+            # so the user sees the actual missing package, not a misleading
+            # "no connector found" error.
             if exc.name is not None and exc.name == mod_path:
                 continue
-            # Transitive dependency missing — treat as a real import failure
-            logger.warning(
-                "Connector module %s has a missing dependency: %s",
-                mod_path,
-                exc,
-            )
-            continue
-        except ImportError as exc:
-            # Unexpected: the module exists but failed to import (bug)
-            logger.warning(
-                "Connector module %s exists but failed to import: %s",
-                mod_path,
-                exc,
-            )
-            continue
+            raise
+        except ImportError:
+            # Module exists but failed to import (bug in connector) — re-raise
+            raise

@@ -111,9 +111,10 @@ async def mount(*uris: str, at: str | None = None) -> Any:
             backend = create_backend(spec)
             backends.append((mp, backend))
     except Exception:
-        # Clean up any already-created backends before re-raising
+        # Clean up any already-created backends and the metastore
         for _, be in backends:
             _close_backend(be)
+        metastore.close()
         raise
 
     # Slim kernel boot — direct construction, no factory dependency.

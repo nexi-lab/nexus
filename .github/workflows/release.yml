@@ -263,7 +263,13 @@ jobs:
         run: python -m pip install build hatchling
 
       - name: Build nexus-fs wheel and sdist
-        run: cd packages/nexus-fs && python -m build --outdir ../../dist-nexus-fs
+        run: |
+          ln -s ../../src src
+          sed -i 's|"../../src/nexus"|"src/nexus"|' pyproject.toml
+          python -m hatchling build -d ../../dist-nexus-fs
+          git checkout pyproject.toml
+          rm -f src
+        working-directory: packages/nexus-fs
 
       - name: Validate wheel
         run: |

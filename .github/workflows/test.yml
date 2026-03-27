@@ -435,8 +435,16 @@ jobs:
 
       - name: Build nexus-fs wheel
         run: |
-          pip install build hatchling
-          cd packages/nexus-fs && python -m build --outdir ../../dist/
+          pip install hatchling
+          # pyproject.toml uses packages = ["../../src/nexus"] which only works
+          # in-tree. For CI wheel builds, temporarily rewrite to a local symlink.
+          ln -s ../../src src
+          sed -i 's|"../../src/nexus"|"src/nexus"|' pyproject.toml
+          python -m hatchling build -t wheel -d ../../dist/
+          git checkout pyproject.toml
+          rm -f src
+          ls -lh ../../dist/
+        working-directory: packages/nexus-fs
 
       - name: Validate wheel metadata
         run: |

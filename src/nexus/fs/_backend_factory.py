@@ -273,8 +273,18 @@ def _discover_connector_module(scheme: str) -> None:
         try:
             importlib.import_module(mod_path)
             return
-        except ModuleNotFoundError:
-            # Expected: this scheme just doesn't have a connector module
+        except ModuleNotFoundError as exc:
+            # Only treat as "module doesn't exist" if the missing module
+            # is the one we tried to import. If a transitive dependency
+            # inside the connector is missing, that's a real bug.
+            if exc.name is not None and exc.name == mod_path:
+                continue
+            # Transitive dependency missing — treat as a real import failure
+            logger.warning(
+                "Connector module %s has a missing dependency: %s",
+                mod_path,
+                exc,
+            )
             continue
         except ImportError as exc:
             # Unexpected: the module exists but failed to import (bug)

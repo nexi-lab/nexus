@@ -108,13 +108,10 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     backends: list[tuple[str, Any]] = []
     try:
         for spec, mp in resolved_mounts:
-            try:
-                backend = create_backend(spec)
-            except Exception as exc:
-                raise type(exc)(f"Failed to create backend for {spec.uri} at {mp}: {exc}") from exc
+            backend = create_backend(spec)
             backends.append((mp, backend))
     except Exception:
-        # Clean up any already-created backends
+        # Clean up any already-created backends before re-raising
         for _, be in backends:
             _close_backend(be)
         raise

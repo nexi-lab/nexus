@@ -183,8 +183,12 @@ class SlimNexusFS:
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
 
-        Uses chunked streaming to avoid loading the entire file into memory.
-        Reads and writes in STREAMING_COPY_CHUNK_SIZE (64 MB) chunks.
+        Reads the source in STREAMING_COPY_CHUNK_SIZE (64 MB) chunks to
+        bound peak memory during the read phase.  The kernel ``write()``
+        API requires the full content, so the file is assembled into a
+        single ``bytearray`` before writing.  True streaming writes
+        (never materializing the full file) require kernel API changes
+        and are planned for a future release with backend-native copy.
 
         Args:
             src: Source file path.
@@ -202,22 +206,23 @@ class SlimNexusFS:
 
         file_size = stat.get("size", 0)
 
-        # Small files: single read-write (simpler, avoids chunked reassembly)
+        # Small files: single read-write (avoids bytearray overhead)
         if file_size <= STREAMING_COPY_CHUNK_SIZE:
             content = await self.read(src)
             return await self.write(dst, content)
 
-        # Large files: chunked streaming copy
-        chunks: list[bytes] = []
+        # Large files: chunked read into pre-allocated bytearray.
+        # This bounds peak memory to ~file_size + one chunk (vs 2x with
+        # list-of-chunks + join). True streaming requires kernel changes.
+        buf = bytearray(file_size)
         offset = 0
         while offset < file_size:
             end = min(offset + STREAMING_COPY_CHUNK_SIZE, file_size)
             chunk = await self.read_range(src, offset, end)
-            chunks.append(chunk)
+            buf[offset : offset + len(chunk)] = chunk
             offset = end
 
-        content = b"".join(chunks)
-        return await self.write(dst, content)
+        return await self.write(dst, bytes(buf))
 
     # -- Metadata (optimized single-lookup) --
 

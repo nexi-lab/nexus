@@ -7,7 +7,7 @@ Tests the full IPC flow through the actual FastAPI server:
 4. Read and verify messages
 5. Test permission enforcement (unauthenticated requests rejected)
 
-Uses a custom auth_server fixture that starts nexus serve with --api-key.
+Uses the shared e2e server fixture with API-key auth enabled.
 """
 
 import json
@@ -19,6 +19,7 @@ import sys
 import time
 from contextlib import closing, suppress
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 
 import httpx
@@ -26,7 +27,49 @@ import pytest
 
 # ── Fixtures: authenticated server ──────────────────────────────────────
 
-_src_path = Path(__file__).parent.parent.parent / "src"
+_src_path = Path(__file__).resolve().parents[3] / "src"
+
+
+@lru_cache(maxsize=1)
+def _resolve_daemon_python() -> str:
+    """Pick a Python interpreter with the full _nexus_raft extension available."""
+    import shutil
+
+    candidates: list[str] = []
+    env_python = os.environ.get("NEXUS_E2E_PYTHON")
+    if env_python:
+        candidates.append(env_python)
+    candidates.extend(
+        candidate
+        for candidate in [
+            sys.executable,
+            shutil.which("python3"),
+            shutil.which("python"),
+            "/opt/anaconda3/bin/python",
+        ]
+        if candidate
+    )
+
+    probe = "from _nexus_raft import ZoneManager; print('ok')"
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            result = subprocess.run(
+                [candidate, "-c", probe],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "PYTHONPATH": str(_src_path)},
+            )
+        except OSError:
+            continue
+        if result.returncode == 0 and "ok" in result.stdout:
+            return candidate
+
+    raise RuntimeError("No Python interpreter with _nexus_raft.ZoneManager available for e2e")
 
 
 def _find_free_port() -> int:
@@ -38,12 +81,7 @@ def _find_free_port() -> int:
 
 @pytest.fixture(scope="function")
 def auth_server(tmp_path):
-    """Start nexus serve with database auth + permissions for e2e tests.
-
-    Uses --auth-type database --init to create tables and an admin key,
-    then extracts the generated admin API key from .nexus-admin-env.
-    """
-    import re
+    """Start a Nexus server with static API-key auth for IPC e2e tests."""
     import uuid
 
     db_path = tmp_path / f"test_ipc_{uuid.uuid4().hex[:8]}.db"
@@ -56,24 +94,23 @@ def auth_server(tmp_path):
     env = os.environ.copy()
     env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
     env["NEXUS_DATABASE_URL"] = f"sqlite:///{db_path}"
-    env["NEXUS_ENFORCE_PERMISSIONS"] = "true"
-    env["NEXUS_RATE_LIMIT_ENABLED"] = "false"
+    env["NEXUS_API_KEY"] = "test-e2e-api-key-12345"
     env["PYTHONPATH"] = str(_src_path)
+    env["HOME"] = str(tmp_path)
 
     process = subprocess.Popen(
         [
-            sys.executable,
+            _resolve_daemon_python(),
             "-c",
             (
                 "from nexus.daemon.main import main; "
                 f"main(['--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{tmp_path}', "
-                "'--auth-type', 'database', '--init'])"
+                f"'--data-dir', '{tmp_path}'])"
             ),
         ],
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         cwd=str(tmp_path),
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
@@ -90,41 +127,14 @@ def auth_server(tmp_path):
         time.sleep(0.1)
     else:
         process.terminate()
-        stdout, stderr = process.communicate(timeout=10)
-        pytest.fail(
-            f"Auth server failed to start on port {port}.\n"
-            f"stdout: {stdout.decode()[:2000]}\nstderr: {stderr.decode()[:2000]}"
-        )
-
-    # Extract admin API key from .nexus-admin-env file written by --init
-    admin_api_key: str | None = None
-    env_file = tmp_path / ".nexus-admin-env"
-    if env_file.exists():
-        for line in env_file.read_text().splitlines():
-            m = re.search(r"NEXUS_API_KEY='([^']+)'", line)
-            if m:
-                admin_api_key = m.group(1)
-                break
-
-    if not admin_api_key:
-        process.terminate()
-        stdout, stderr = process.communicate(timeout=10)
-        all_output = stdout.decode() + stderr.decode()
-        m = re.search(r"Admin API Key:\s*(sk-\S+)", all_output)
-        if m:
-            admin_api_key = m.group(1)
-        else:
-            pytest.fail(
-                f"Could not find admin API key.\n"
-                f"env_file exists: {env_file.exists()}\n"
-                f"output tail: {all_output[-1000:]}"
-            )
+        process.wait(timeout=10)
+        pytest.fail(f"Auth server failed to start on port {port}.")
 
     yield {
         "port": port,
         "base_url": base_url,
         "process": process,
-        "admin_api_key": admin_api_key,
+        "admin_api_key": env["NEXUS_API_KEY"],
     }
 
     if sys.platform != "win32":
@@ -141,7 +151,7 @@ def auth_server(tmp_path):
 
 @pytest.fixture(scope="function")
 def auth_client(auth_server) -> httpx.Client:
-    """Authenticated httpx client with admin Bearer token."""
+    """Authenticated httpx client with the test Bearer token."""
     with httpx.Client(
         base_url=auth_server["base_url"],
         timeout=30.0,
@@ -234,6 +244,17 @@ def _list_dir(client: httpx.Client, path: str) -> list:
 def _mkdir(client: httpx.Client, path: str) -> dict:
     """Create directory via RPC."""
     return _rpc_call(client, "mkdir", {"path": path, "exist_ok": True})
+
+
+def _provision_ipc_agent(client: httpx.Client, agent_id: str) -> None:
+    """Create the standard IPC directory layout for one agent."""
+    _mkdir(client, "/agents")
+    _mkdir(client, f"/agents/{agent_id}")
+    _mkdir(client, f"/agents/{agent_id}/inbox")
+    _mkdir(client, f"/agents/{agent_id}/outbox")
+    _mkdir(client, f"/agents/{agent_id}/processed")
+    _mkdir(client, f"/agents/{agent_id}/dead_letter")
+    _mkdir(client, f"/agents/{agent_id}/tasks")
 
 
 def _make_envelope(
@@ -365,6 +386,47 @@ class TestIPCViaServer:
         # Discovery: read AGENT.json for capabilities
         search_card = json.loads(_read_file(auth_client, "/agents/search_agent/AGENT.json"))
         assert "semantic_search" in search_card["skills"]
+
+    def test_rest_compat_send_inbox_count(self, auth_client: httpx.Client) -> None:
+        """Compatibility REST endpoints work through the real daemon."""
+        _provision_ipc_agent(auth_client, "agent:alice")
+        _provision_ipc_agent(auth_client, "agent:bob")
+
+        send_response = auth_client.post(
+            "/api/v2/ipc/send",
+            json={
+                "sender": "agent:alice",
+                "recipient": "agent:bob",
+                "type": "task",
+                "payload": {"body": "hello from daemon"},
+                "message_id": "msg_daemon_rest_compat",
+            },
+        )
+        assert send_response.status_code == 200, send_response.text
+        send_data = send_response.json()
+        assert send_data["message_id"] == "msg_daemon_rest_compat"
+        assert send_data["sender"] == "agent:alice"
+        assert send_data["recipient"] == "agent:bob"
+
+        inbox_response = auth_client.get("/api/v2/ipc/inbox/agent:bob")
+        assert inbox_response.status_code == 200, inbox_response.text
+        inbox_data = inbox_response.json()
+        assert inbox_data["agent_id"] == "agent:bob"
+        assert inbox_data["count"] == 1
+        assert len(inbox_data["messages"]) == 1
+        assert "msg_daemon_rest_compat" in inbox_data["messages"][0]["filename"]
+
+        count_response = auth_client.get("/api/v2/ipc/inbox/agent:bob/count")
+        assert count_response.status_code == 200, count_response.text
+        assert count_response.json() == {"agent_id": "agent:bob", "count": 1}
+
+    def test_sse_endpoint_returns_event_stream_headers(self, auth_client: httpx.Client) -> None:
+        """SSE endpoint is exposed through the live daemon."""
+        with auth_client.stream("GET", "/api/v2/ipc/stream/agent:alice") as response:
+            assert response.status_code == 200
+            assert "text/event-stream" in response.headers.get("content-type", "")
+            assert response.headers.get("x-accel-buffering") == "no"
+            assert response.headers.get("cache-control") == "no-cache"
 
 
 class TestIPCLocal:

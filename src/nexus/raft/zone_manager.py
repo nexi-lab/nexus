@@ -16,8 +16,9 @@ All zones share one gRPC port (zone_id routing in transport layer).
 
 import logging
 import os
+from inspect import signature
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
@@ -36,6 +37,45 @@ def _get_py_zone_manager() -> type | None:
     except ImportError:
         return None
     return PyZoneManager
+
+
+def _make_py_zone_manager(
+    py_zone_manager: type,
+    *,
+    hostname: str,
+    base_path: str,
+    bind_addr: str,
+    tls_cert_path: str | None,
+    tls_key_path: str | None,
+    tls_ca_path: str | None,
+    ca_key_path: str | None,
+    join_token_hash: str | None,
+) -> Any:
+    """Construct the PyO3 ZoneManager across hostname/node_id API variants.
+
+    Some environments still have an older extension build whose constructor
+    takes ``node_id`` as the first positional argument, while newer builds
+    accept ``hostname`` and derive the node ID internally.
+    """
+    from nexus.raft.peer_address import hostname_to_node_id
+
+    kwargs = {
+        "bind_addr": bind_addr,
+        "tls_cert_path": tls_cert_path,
+        "tls_key_path": tls_key_path,
+        "tls_ca_path": tls_ca_path,
+        "ca_key_path": ca_key_path,
+        "join_token_hash": join_token_hash,
+    }
+
+    try:
+        first_param = next(iter(signature(py_zone_manager).parameters.values())).name
+    except (TypeError, ValueError, StopIteration):
+        first_param = "hostname"
+
+    first_arg: str | int = hostname_to_node_id(hostname) if first_param == "node_id" else hostname
+
+    return py_zone_manager(first_arg, base_path, **kwargs)
 
 
 class ZoneManager:
@@ -119,10 +159,11 @@ class ZoneManager:
                         join_token_hash = hash_path.read_text().strip()
                         ca_key_path = str(Path(base_path) / "tls" / "ca-key.pem")
 
-        self._py_mgr = PyZoneManager(
-            hostname,
-            base_path,
-            bind_addr,
+        self._py_mgr = _make_py_zone_manager(
+            PyZoneManager,
+            hostname=hostname,
+            base_path=base_path,
+            bind_addr=bind_addr,
             tls_cert_path=tls_cert_path,
             tls_key_path=tls_key_path,
             tls_ca_path=tls_ca_path,

@@ -1,8 +1,9 @@
-"""IPC REST API — SSE-only endpoints.
+"""IPC REST API — IPC send + SSE endpoints.
 
-CRUD/query endpoints have been migrated to RPC services.
-Only the SSE streaming endpoint remains (requires HTTP keep-alive).
+Inbox/query endpoints have been migrated to RPC services.
+Compatibility send + SSE endpoints remain on REST.
 
+    POST /api/v2/ipc/send              — enqueue a message in an agent inbox
     GET /api/v2/ipc/stream/{agent_id}  — SSE stream for real-time inbox notifications
 """
 
@@ -14,8 +15,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict
 
-from nexus.bricks.ipc.conventions import validate_agent_id
+from nexus.bricks.ipc.conventions import inbox_path, validate_agent_id
+from nexus.bricks.ipc.delivery import MessageSender
+from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import (
+    EnvelopeValidationError,
+    InboxFullError,
+    InboxNotFoundError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +75,147 @@ def _get_ipc_cache_store(request: Request) -> Any:
     return getattr(request.app.state, "ipc_cache_store", None)
 
 
+class SendMessageRequest(BaseModel):
+    """Compatibility REST payload for IPC send."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    sender: str
+    recipient: str
+    type: MessageType = MessageType.TASK
+    payload: dict[str, Any]
+    correlation_id: str | None = None
+    ttl_seconds: int | None = None
+    message_id: str | None = None
+
+
+def _get_ipc_storage_driver(request: Request) -> Any:
+    return getattr(request.app.state, "ipc_storage_driver", None)
+
+
+def _get_ipc_event_publisher(request: Request) -> Any:
+    return getattr(request.app.state, "ipc_event_publisher", None)
+
+
+def _get_ipc_wakeup_notifiers(request: Request) -> list[Any]:
+    return getattr(request.app.state, "ipc_wakeup_notifiers", [])
+
+
+def _get_ipc_zone_id(request: Request) -> str:
+    return getattr(request.app.state, "zone_id", "root")
+
+
 # ---------------------------------------------------------------------------
-# SSE streaming endpoint
+# Send + SSE endpoints
 # ---------------------------------------------------------------------------
+
+
+@router.post("/send")
+async def send_message(
+    body: SendMessageRequest,
+    _request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    storage: Any = Depends(_get_ipc_storage_driver),
+    event_publisher: Any = Depends(_get_ipc_event_publisher),
+    wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
+    cache_store: Any = Depends(_get_ipc_cache_store),
+    zone_id: str = Depends(_get_ipc_zone_id),
+) -> dict[str, Any]:
+    """Compatibility REST endpoint for enqueueing IPC inbox messages."""
+    _validate_agent_id(body.sender)
+    _validate_agent_id(body.recipient)
+    _check_agent_access(auth_result, body.sender)
+
+    if storage is None:
+        raise HTTPException(status_code=503, detail="IPC storage is not available")
+
+    try:
+        envelope = MessageEnvelope.model_validate(
+            {
+                "id": body.message_id,
+                "from": body.sender,
+                "to": body.recipient,
+                "type": body.type,
+                "payload": body.payload,
+                "correlation_id": body.correlation_id,
+                "ttl_seconds": body.ttl_seconds,
+            }
+        )
+        sender = MessageSender(
+            storage=storage,
+            event_publisher=event_publisher,
+            zone_id=zone_id,
+            wakeup_notifiers=wakeup_notifiers,
+            cache_store=cache_store,
+        )
+        message_path = await sender.send(envelope)
+    except EnvelopeValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except InboxNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InboxFullError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "message_id": envelope.id,
+        "path": message_path,
+        "sender": envelope.sender,
+        "recipient": envelope.recipient,
+        "type": envelope.type.value,
+    }
+
+
+@router.get("/inbox/{agent_id}")
+async def list_inbox(
+    agent_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    storage: Any = Depends(_get_ipc_storage_driver),
+    zone_id: str = Depends(_get_ipc_zone_id),
+) -> dict[str, Any]:
+    """Compatibility REST endpoint for listing inbox messages."""
+    _validate_agent_id(agent_id)
+    _check_agent_access(auth_result, agent_id)
+
+    if storage is None:
+        raise HTTPException(status_code=503, detail="IPC storage is not available")
+
+    try:
+        filenames = await storage.list_dir(inbox_path(agent_id), zone_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "agent_id": agent_id,
+        "messages": [{"filename": name} for name in filenames],
+        "count": len(filenames),
+    }
+
+
+@router.get("/inbox/{agent_id}/count")
+async def inbox_count(
+    agent_id: str,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+    storage: Any = Depends(_get_ipc_storage_driver),
+    zone_id: str = Depends(_get_ipc_zone_id),
+) -> dict[str, Any]:
+    """Compatibility REST endpoint for inbox depth."""
+    _validate_agent_id(agent_id)
+    _check_agent_access(auth_result, agent_id)
+
+    if storage is None:
+        raise HTTPException(status_code=503, detail="IPC storage is not available")
+
+    try:
+        count = await storage.count_dir(inbox_path(agent_id), zone_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return {
+        "agent_id": agent_id,
+        "count": count,
+    }
 
 
 @router.get("/stream/{agent_id}")

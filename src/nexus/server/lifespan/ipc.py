@@ -13,9 +13,28 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from nexus.contracts.cache_store import CacheStoreABC
     from nexus.server.lifespan.services_container import LifespanServices
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_ipc_cache_store(app: "FastAPI", svc: "LifespanServices") -> "CacheStoreABC | None":
+    """Resolve the cache store used by IPC pub/sub.
+
+    Prefer the runtime CacheBrick when it has a real backend. That avoids
+    binding IPC to a stale NullCacheStore held on NexusFS when permissions
+    startup created a working Dragonfly-backed CacheBrick separately.
+    """
+    cache_brick = getattr(app.state, "cache_brick", None)
+    if cache_brick is None and svc.nexus_fs is not None:
+        _svc_fn = getattr(svc.nexus_fs, "service", None)
+        cache_brick = _svc_fn("cache_brick") if _svc_fn else None
+
+    if cache_brick is not None and getattr(cache_brick, "has_cache_store", False):
+        return getattr(cache_brick, "cache_store", None)
+
+    return getattr(svc.nexus_fs, "cache_store", None)
 
 
 async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
@@ -46,7 +65,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
 
     # --- Issue #3197: DT_PIPE wakeup + EventPublisher + CacheStore ---
     wakeup_notifiers = []
-    cache_store = getattr(svc.nexus_fs, "cache_store", None)
+    cache_store = _resolve_ipc_cache_store(app, svc)
     event_publisher = None
 
     # Wire EventPublisher via CacheStore pub/sub so MessageSender publishes

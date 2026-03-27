@@ -125,7 +125,8 @@ class TestReadinessProbe:
         resp = client.get("/healthz/ready")
         assert resp.status_code == 200
 
-    def test_503_when_root_leader_not_ready(self) -> None:
+    def test_200_when_follower(self) -> None:
+        """Follower nodes are ready — they serve reads and forward writes."""
         tracker = StartupTracker()
         for phase in _REQUIRED_FOR_READY:
             tracker.complete(phase)
@@ -145,8 +146,7 @@ class TestReadinessProbe:
         app.state.nexus_fs = mock_fs
         client = TestClient(app)
         resp = client.get("/healthz/ready")
-        assert resp.status_code == 503
-        assert resp.json()["reason"] == "Raft leader not ready"
+        assert resp.status_code == 200
 
     def test_503_on_db_pool_exhausted(self) -> None:
         tracker = StartupTracker()

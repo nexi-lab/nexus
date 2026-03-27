@@ -404,14 +404,9 @@ class SearchService:
                     is_admin=is_admin,
                     check_write=False,
                 )
-                from nexus.contracts.capabilities import ConnectorCapability
+                from nexus.core.router import ExternalRouteResult
 
-                _caps: frozenset[str] = getattr(route.backend, "capabilities", frozenset())
-                is_dynamic_connector = (
-                    route.backend.user_scoped and route.backend.has_token_manager
-                ) or ConnectorCapability.EXTERNAL_CONTENT in _caps
-
-                if is_dynamic_connector:
+                if isinstance(route, ExternalRouteResult):
                     return self._list_dynamic_connector(path, route, recursive, details, context)
             except PermissionDeniedError:
                 raise

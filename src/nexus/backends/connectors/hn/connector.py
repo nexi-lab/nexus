@@ -111,7 +111,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.EXTERNAL_CONTENT,
             ConnectorCapability.CACHE_BULK_READ,
             ConnectorCapability.CACHE_SYNC,
             ConnectorCapability.SKILL_DOC,

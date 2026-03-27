@@ -80,6 +80,22 @@ class StreamRouteResult:
     path: str
 
 
+@dataclass(frozen=True, slots=True)
+class ExternalRouteResult:
+    """Route result for DT_EXTERNAL_STORAGE — backend manages own namespace.
+
+    Like ``PipeRouteResult`` for DT_PIPE, but for backends whose content lives
+    outside kernel-managed storage (OAuth connectors, CLI connectors, APIs).
+    Kernel skips metastore lookup and dispatches directly to backend methods.
+    """
+
+    backend: "ObjectStoreABC"
+    backend_path: str
+    mount_point: str
+    readonly: bool
+    io_profile: str = "balanced"
+
+
 class PathRouter:
     """Route virtual paths to storage backends using mount table.
 
@@ -164,7 +180,7 @@ class PathRouter:
         *,
         is_admin: bool = False,
         check_write: bool = False,
-    ) -> RouteResult | PipeRouteResult | StreamRouteResult:
+    ) -> RouteResult | PipeRouteResult | StreamRouteResult | ExternalRouteResult:
         """Route virtual path to backend with mount-level access control.
 
         Algorithm: walk path components from deepest to shallowest, checking
@@ -183,7 +199,8 @@ class PathRouter:
 
         Returns:
             RouteResult for regular files, PipeRouteResult for DT_PIPE,
-            StreamRouteResult for DT_STREAM.
+            StreamRouteResult for DT_STREAM, ExternalRouteResult for
+            DT_EXTERNAL_STORAGE.
 
         Raises:
             PathNotMountedError: No mount found for path.
@@ -211,7 +228,9 @@ class PathRouter:
             # The fallback is required for REMOTE profile where the
             # server "stat" RPC does not return entry_type, so
             # metastore.get() never reports is_mount=True.
-            if (meta is not None and meta.is_mount) or current in self._backends:
+            if (
+                meta is not None and (meta.is_mount or meta.is_external_storage)
+            ) or current in self._backends:
                 entry = self._backends.get(current)
                 if entry is None:
                     # DT_MOUNT in metastore but backend not loaded
@@ -225,6 +244,16 @@ class PathRouter:
                     raise AccessDeniedError(f"Mount '{current}' is read-only")
 
                 backend_path = self._strip_mount_prefix(virtual_path, current)
+
+                # DT_EXTERNAL_STORAGE: backend manages own content namespace
+                if meta is not None and meta.is_external_storage:
+                    return ExternalRouteResult(
+                        backend=entry.backend,
+                        backend_path=backend_path,
+                        mount_point=current,
+                        readonly=entry.readonly,
+                        io_profile=entry.io_profile,
+                    )
                 return RouteResult(
                     backend=entry.backend,
                     backend_path=backend_path,

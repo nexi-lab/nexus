@@ -188,7 +188,7 @@ def _make_mount_entry(path: str, backend_name: str) -> Any:
     from datetime import UTC, datetime
 
     from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.metadata import FileMetadata
+    from nexus.contracts.metadata import DT_MOUNT, FileMetadata
     from nexus.core.hash_fast import hash_content
 
     empty_hash = hash_content(b"")
@@ -204,5 +204,5 @@ def _make_mount_entry(path: str, backend_name: str) -> Any:
         modified_at=now,
         version=1,
         zone_id=ROOT_ZONE_ID,
-        entry_type=2,  # DT_MOUNT
+        entry_type=DT_MOUNT,
     )

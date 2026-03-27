@@ -344,6 +344,8 @@ class MountService:
         self,
         mount_point: str,
         context: "OperationContext | None",
+        entry_type: int | None = None,
+        backend_name: str = "__mount__",
     ) -> None:
         """Setup mount point with directory and permissions.
 
@@ -351,9 +353,14 @@ class MountService:
         directories (e.g., /mnt/gmail creates both /mnt and /mnt/gmail)
         so the TUI file explorer can navigate to the mount point.
 
+        The mount point itself gets the specified ``entry_type``
+        (DT_MOUNT or DT_EXTERNAL_STORAGE); parent dirs get DT_DIR.
+
         Args:
             mount_point: Virtual path
             context: Operation context
+            entry_type: Entry type for the mount point (default DT_MOUNT)
+            backend_name: Backend name for the mount entry
         """
         logger.info(f"Setting up mount point: {mount_point}")
 
@@ -363,8 +370,11 @@ class MountService:
         if self._gw is not None:
             from datetime import UTC, datetime
 
-            from nexus.contracts.metadata import FileMetadata
+            from nexus.contracts.metadata import DT_DIR, DT_MOUNT, FileMetadata
             from nexus.lib.context_utils import get_zone_id
+
+            if entry_type is None:
+                entry_type = DT_MOUNT
 
             zone_id = get_zone_id(context) if context else "default"
             created_by = getattr(context, "user_id", None) if context else None
@@ -377,12 +387,14 @@ class MountService:
                     if existing:
                         continue
                     now = datetime.now(UTC)
+                    is_mount_point = i == len(parts)
                     meta = FileMetadata(
                         path=dir_path,
-                        backend_name="__mount__",
+                        backend_name=backend_name if is_mount_point else "__mount__",
                         physical_path=dir_path,
                         size=0,
                         etag=None,
+                        entry_type=entry_type if is_mount_point else DT_DIR,
                         created_at=now,
                         modified_at=now,
                         version=1,
@@ -591,6 +603,14 @@ class MountService:
         # Create backend instance
         backend = self._create_backend(backend_type, config)
 
+        # Determine mount entry_type from ConnectorRegistry category.
+        # Non-storage backends (oauth/api/cli) get DT_EXTERNAL_STORAGE.
+        from nexus.backends.base.registry import ConnectorRegistry
+        from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
+
+        _info = ConnectorRegistry.get_info(backend_type)
+        _entry_type = DT_EXTERNAL_STORAGE if (_info and _info.category != "storage") else DT_MOUNT
+
         # Add to router via DriverLifecycleCoordinator (registers hook_spec +
         # broadcasts mount event), then setup -- rollback on failure (#2754).
         # If _setup_mount_point fails after the mount is active in the router,
@@ -602,7 +622,12 @@ class MountService:
             io_profile=io_profile,
         )
         try:
-            self._setup_mount_point(mount_point, context)
+            self._setup_mount_point(
+                mount_point,
+                context,
+                entry_type=_entry_type,
+                backend_name=backend.name,
+            )
         except Exception:
             logger.error(
                 "Mount setup failed for %s, rolling back router registration",

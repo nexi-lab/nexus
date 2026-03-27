@@ -521,18 +521,27 @@ class TestExternalContentSkip:
 
     @pytest.mark.asyncio
     async def test_skip_external_content_backends(self, mock_event_bus):
-        """Write-back should skip events from external-content backends (LocalConnector)."""
-        # Setup gateway where mount returns a backend with EXTERNAL_CONTENT capability
-        # (external-content backends like LocalConnector manage content externally,
+        """Write-back should skip events from DT_EXTERNAL_STORAGE backends."""
+        # Setup gateway where mount returns a backend with DT_EXTERNAL_STORAGE entry_type
+        # (external storage backends like LocalConnector manage content externally,
         # so write-back would double-write or be meaningless)
+        from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, FileMetadata
+
         gw = MagicMock()
         store = SQLAlchemyRecordStore(db_url="sqlite:///:memory:", create_tables=True)
 
         mock_backend = MagicMock()
         mock_backend.name = "test_local"
-        mock_backend.capabilities = frozenset(
-            {"external_content"}
-        )  # Triggers skip in _on_file_event
+        mock_backend.capabilities = frozenset()
+
+        # Gateway returns DT_EXTERNAL_STORAGE metadata for the mount point
+        gw.metadata_get.return_value = FileMetadata(
+            path="/mnt/local",
+            backend_name="test_local",
+            physical_path="/mnt/local",
+            size=0,
+            entry_type=DT_EXTERNAL_STORAGE,
+        )
 
         gw.get_mount_for_path.return_value = {
             "mount_point": "/mnt/local",
@@ -581,7 +590,7 @@ class TestExternalContentSkip:
             change_log_store=change_log_store,
         )
 
-        # Default mock_gateway backend has no EXTERNAL_CONTENT capability — eligible for write-back
+        # Default mock_gateway backend has DT_MOUNT entry_type — eligible for write-back
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/mnt/gcs/project/file.txt",

@@ -118,37 +118,32 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     }
   }, [connectors, selectedIndex, initiateAuth, client]);
 
-  /** Build CLI mount command for the selected connector. */
+  /** Build curl mount command for storage connectors that need config. */
   const getMountCommand = useCallback((): string => {
     const selected = connectors[selectedIndex];
     if (!selected) return "";
     const baseName = selected.name.replace(/_connector$/, "");
     const mountPath = `/mnt/${baseName}`;
-
-    // Build a config hint based on connector category
-    let configHint = "{}";
-    if (selected.category === "storage") {
-      if (selected.name.includes("s3")) {
-        configHint = '\'{"bucket_name": "<BUCKET>", "access_key_id": "<KEY>", "secret_access_key": "<SECRET>"}\'';
-      } else if (selected.name.includes("gcs")) {
-        configHint = '\'{"bucket_name": "<BUCKET>", "credentials_path": "<PATH>"}\'';
-      } else if (selected.name.includes("local")) {
-        configHint = '\'{"local_path": "<PATH>"}\'';
-      }
-    } else if (selected.category === "cli" || selected.category === "oauth") {
-      configHint = "'{}'";
-    }
-
-    // Include --remote-url and --remote-api-key so the command works without
-    // NEXUS_URL being set in the user's shell
     const url = (config as Record<string, unknown>).baseUrl as string | undefined;
     const apiKey = (config as Record<string, unknown>).apiKey as string | undefined;
-    const remoteFlags = [
-      url ? `--remote-url ${url}` : "",
-      apiKey ? `--remote-api-key ${apiKey}` : "",
-    ].filter(Boolean).join(" ");
 
-    return `nexus mounts add ${mountPath} ${selected.name} ${configHint}${remoteFlags ? ` ${remoteFlags}` : ""}`;
+    // Build config template based on connector type
+    let configFields: Record<string, string> = {};
+    if (selected.name.includes("s3")) {
+      configFields = { bucket_name: "<BUCKET>", access_key_id: "<KEY>", secret_access_key: "<SECRET>" };
+    } else if (selected.name.includes("gcs")) {
+      configFields = { bucket_name: "<BUCKET>", credentials_path: "<PATH>" };
+    } else if (selected.name.includes("local")) {
+      configFields = { local_path: "<PATH>" };
+    }
+
+    const body = JSON.stringify({
+      connector_type: selected.name,
+      mount_point: mountPath,
+      config: configFields,
+    }, null, 2);
+
+    return `curl -X POST ${url}/api/v2/connectors/mount \\\n  -H "Authorization: Bearer ${apiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`;
   }, [connectors, selectedIndex, config]);
 
   /** Check if connector can be mounted directly (no config needed). */

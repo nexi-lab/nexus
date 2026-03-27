@@ -16,9 +16,7 @@ on:
       - "src/nexus/fs/**"
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 defaults:
   run:
@@ -48,38 +46,6 @@ jobs:
 
       - name: Spell check
         run: typos docs/
-
-  deploy:
-    name: Deploy to GitHub Pages
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: check
-    runs-on: ubuntu-latest
-    environment:
-      name: nexus-fs-docs
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install dependencies
-        working-directory: packages/nexus-fs
-        run: pip install -r requirements-docs.txt
-
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Deploy versioned docs
-        working-directory: packages/nexus-fs
-        run: |
-          mike deploy --push --update-aliases 0.1.0 latest
-          mike set-default --push latest
 
   link-check:
     name: Check external links

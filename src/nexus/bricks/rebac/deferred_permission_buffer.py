@@ -127,8 +127,8 @@ class DeferredPermissionBuffer:
         if self._flush_thread and self._flush_thread.is_alive():
             self._flush_thread.join(timeout=timeout)
 
-        # Final flush
-        self._flush_sync()
+        # Final flush on shutdown should be resilient like the background worker.
+        self._flush_sync(catch_unexpected=True)
 
         self._started = False
         logger.info(
@@ -191,7 +191,7 @@ class DeferredPermissionBuffer:
         Call this when you need to ensure all permissions are persisted,
         e.g., before a critical read or during graceful shutdown.
         """
-        self._flush_sync()
+        self._flush_sync(catch_unexpected=False)
 
     def get_stats(self) -> dict[str, Any]:
         """Get buffer statistics.
@@ -235,12 +235,18 @@ class DeferredPermissionBuffer:
 
             if not self._shutdown.is_set():
                 try:
-                    self._flush_sync()
+                    self._flush_sync(catch_unexpected=True)
                 except Exception as e:  # fail-safe: background flush must not crash thread
                     logger.error(f"DeferredPermissionBuffer flush error: {e}")
 
-    def _flush_sync(self) -> None:
+    def _flush_sync(self, *, catch_unexpected: bool = False) -> None:
         """Flush all pending operations using batch APIs."""
+        retryable_errors: tuple[type[BaseException], ...]
+        if catch_unexpected:
+            retryable_errors = (Exception,)
+        else:
+            retryable_errors = (OperationalError, TimeoutError, RuntimeError)
+
         # Atomically drain queues
         with self._lock:
             if not self._pending_hierarchy and not self._pending_grants:
@@ -275,7 +281,9 @@ class DeferredPermissionBuffer:
                 # Clear retry counts for successfully flushed items
                 for item in hierarchy_batch:
                     self._hierarchy_retry_counts.pop(item, None)
-            except (OperationalError, TimeoutError, RuntimeError) as e:
+            except retryable_errors as e:
+                # Background flushes should re-queue unexpected manager errors
+                # instead of dropping buffered permission state.
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue: list[tuple[str, str]] = []
                 for item in hierarchy_batch:
@@ -322,7 +330,9 @@ class DeferredPermissionBuffer:
                         grant["zone_id"],
                     )
                     self._grants_retry_counts.pop(gkey, None)
-            except (OperationalError, TimeoutError, RuntimeError) as e:
+            except retryable_errors as e:
+                # Background flushes should re-queue unexpected manager errors
+                # instead of dropping buffered permission state.
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue_grants: list[dict[str, Any]] = []
                 for grant in grants_batch:

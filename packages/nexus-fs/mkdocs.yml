@@ -1,7 +1,7 @@
 site_name: nexus-fs
 site_description: "Unified filesystem for cloud storage — mount S3, GCS, and local storage with two lines of Python."
 site_author: Nexi Lab Team
-site_url: https://nexus-fs.dev
+site_url: !ENV [NEXUS_FS_SITE_URL, "https://nexi-lab.github.io/nexus/latest/"]
 
 repo_name: nexi-lab/nexus
 repo_url: https://github.com/nexi-lab/nexus
@@ -136,9 +136,6 @@ plugins:
       minify_html: true
 
 extra:
-  version:
-    provider: mike
-    default: latest
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/nexi-lab/nexus

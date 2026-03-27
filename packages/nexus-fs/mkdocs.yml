@@ -1,0 +1,174 @@
+site_name: nexus-fs
+site_description: "Unified filesystem for cloud storage — mount S3, GCS, and local storage with two lines of Python."
+site_author: Nexi Lab Team
+site_url: https://nexus-fs.dev
+
+repo_name: nexi-lab/nexus
+repo_url: https://github.com/nexi-lab/nexus
+edit_uri: edit/develop/packages/nexus-fs/docs/
+
+copyright: Copyright &copy; 2024–2026 Nexi Lab Team
+
+theme:
+  name: material
+
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.footer
+    - navigation.tracking
+    - navigation.top
+    - navigation.prune
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.action.edit
+    - content.action.view
+    - header.autohide
+
+  icon:
+    repo: fontawesome/brands/github
+
+  font:
+    text: Inter
+    code: JetBrains Mono
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.snippets:
+      base_path:
+        - .
+        - ../..
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"/]+|(?!\b)(?=[A-Z][a-z])|\.(?!\d)|&[lg]t;'
+      lang: en
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [../../src]
+          options:
+            docstring_style: google
+            docstring_section_style: list
+            show_source: true
+            show_bases: true
+            show_root_heading: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+            members_order: source
+            filters: ["!^_"]
+            heading_level: 2
+            summary: true
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - section-index
+  - privacy
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: timeago
+      fallback_to_build_date: true
+      enable_git_follow: false
+  - minify:
+      minify_html: true
+
+extra:
+  version:
+    provider: mike
+    default: latest
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/nexi-lab/nexus
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/nexus-fs/
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - getting-started/index.md
+    - Installation: getting-started/installation.md
+    - Quickstart: getting-started/quickstart.md
+  - Backends:
+    - backends/index.md
+    - Local Filesystem: backends/local.md
+    - Amazon S3: backends/s3.md
+    - Google Cloud Storage: backends/gcs.md
+    - Google Drive: backends/gdrive.md
+  - Integrations:
+    - integrations/index.md
+    - fsspec: integrations/fsspec.md
+    - Data Science: integrations/data-science.md
+    - Agent Frameworks: integrations/agent-frameworks.md
+  - CLI:
+    - cli/index.md
+    - nexus-fs doctor: cli/doctor.md
+    - nexus-fs playground: cli/playground.md
+  - Concepts:
+    - concepts/index.md
+    - How Mounting Works: concepts/mounting.md
+    - How Backends Work: concepts/backends.md
+    - fsspec Internals: concepts/fsspec-internals.md
+  - API Reference: reference/

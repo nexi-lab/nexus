@@ -52,8 +52,8 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
         root_store = _zmgr.get_store(root_zone_id)
         if root_store is None:
             return False, "Raft root store not ready"
-        if hasattr(root_store, "is_leader") and not root_store.is_leader():
-            return False, "Raft leader not ready"
+        # Followers are ready too — they serve reads and forward writes.
+        # Only check that root store exists (leader election is Raft-internal).
         return True, ""
     except Exception:
         return True, ""

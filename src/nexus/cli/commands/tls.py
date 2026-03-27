@@ -22,7 +22,7 @@ def tls() -> None:
 
 @tls.command()
 @click.option("--data-dir", type=click.Path(), default=None, help="Override NEXUS_DATA_DIR.")
-@click.option("--zone-id", default="default", help="Zone ID for the CA certificate.")
+@click.option("--zone-id", default="root", help="Zone ID for the CA certificate.")
 @click.option("--node-id", type=int, default=1, help="Node ID for the node certificate.")
 def init(data_dir: str | None, zone_id: str, node_id: int) -> None:
     """Generate CA + node certificates (idempotent)."""

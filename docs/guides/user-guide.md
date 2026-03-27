@@ -827,7 +827,7 @@ Packages behind this:
 - Event subsystem and scheduler: `nexus.system_services.event_subsystem`, `nexus.system_services.scheduler`
 - Storage and audit trails: `nexus.storage`
 
-## 11. Federation, TLS, Networking, And Cloud Mode
+## 11. Federation, Networking, And Cluster Mode
 
 This is the most advanced part of Nexus. Start here only after local and
 single-node remote mode already work.
@@ -846,58 +846,132 @@ node:
 The difference is that these flows now cross node and zone boundaries instead
 of staying inside one local daemon.
 
-### Step 1: Use the `cloud` profile
+Nexus supports two bootstrap modes:
 
-This path assumes you have a federation-capable build. If `cloud` mode does
-not boot on your machine yet, stay on `full` until your environment includes
-the federation pieces.
+- **Static bootstrap** — all peers known upfront via `NEXUS_PEERS` env var.
+  Best for fixed-topology clusters and the recommended starting point.
+- **Dynamic bootstrap** — new nodes join at runtime using a K3s-style join
+  token (`{data_dir}/tls/join-token`). Best for elastic scaling after a
+  cluster is already running.
 
-```bash
-nexusd --profile cloud --port 2026 --data-dir "$PWD/data"
-```
+The guide below uses **static bootstrap** (simpler, fewer moving parts).
 
-### Step 2: Initialize TLS material
+### Step 1: Use the `cluster` profile
 
-```bash
-nexus tls init --data-dir "$PWD/data" --zone-id root --node-id 1
-nexus tls show
-```
-
-### Step 3: Join another node to the cluster
-
-On the joining node:
+The `cluster` profile enables Raft consensus + federation with kernel-native
+storage (redb). No external PostgreSQL required.
 
 ```bash
-nexus join leader.example.com:2026 --token "<join-token>" --node-id 2 --data-dir "$PWD/data"
+# Environment variable approach (recommended for cross-machine setups):
+export NEXUS_PROFILE=cluster
+export NEXUS_DATA_DIR="$PWD/data"
+nexusd --port 2026
 ```
 
-### Step 4: Set up the WireGuard mesh
+Or pass the profile flag directly:
+
+```bash
+nexusd --profile cluster --port 2026 --data-dir "$PWD/data"
+```
+
+### Step 2: Configure the Raft cluster (static bootstrap)
+
+Each node needs to know all peers. Raft gRPC runs on port **2126** (separate
+from the HTTP API on 2026).
+
+Set these environment variables on **every node** before starting `nexusd`:
+
+```bash
+# -- Required --
+export NEXUS_PROFILE=cluster
+export NEXUS_PEERS="<node1-ip>:2126,<node2-ip>:2126"    # all peers
+export NEXUS_BIND_ADDR="0.0.0.0:2126"                    # Raft gRPC listen
+export NEXUS_ADVERTISE_ADDR="<this-node-ip>:2126"        # reachable from peers
+
+# -- TLS (disable for initial testing over VPN / trusted LAN) --
+export NEXUS_RAFT_TLS=false
+
+# -- Optional: pre-configure zones and mounts at startup --
+export NEXUS_FEDERATION_ZONES="shared"
+export NEXUS_FEDERATION_MOUNTS="/shared=shared"
+```
+
+Then start the daemon on each node:
+
+```bash
+nexusd --port 2026 --data-dir "$PWD/data"
+```
+
+All nodes bootstrap the same root zone automatically. Static zones and mounts
+declared via `NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS` are created
+idempotently on every startup.
+
+### Step 3 (optional): Set up the WireGuard mesh
+
+If nodes are on different networks (e.g., macOS + Windows over the internet),
+use WireGuard to create an encrypted tunnel first.
 
 ```bash
 nexus network init --node-id 1
-nexus network add-peer --node-id 2 --public-key "<peer-public-key>" --endpoint "203.0.113.10:51820"
+nexus network add-peer --node-id 2 --public-key "<peer-public-key>" --endpoint "<peer-ip>:51820"
 nexus network config
 nexus network status
 ```
 
 `nexus network up` usually needs sudo or admin privileges because it brings up
-the WireGuard interface.
+the WireGuard interface. IP scheme: `10.99.0.{node_id}/24`.
 
-### Step 5: Share and mount zones
+### Step 4: Verify federation
 
 ```bash
-nexus federation share /workspace/shared --zone-id team-shared
-nexus federation zones
+nexus federation status          # overview: zone count, link count
+nexus federation zones           # list all Raft zones
+nexus federation info <zone-id>  # cluster info for a specific zone
+```
+
+### Step 5: Manage mounts
+
+```bash
+# Create a cross-zone mount point
 nexus federation mount --parent-zone root --path /shared --target-zone team-shared
+
+# Remove a mount point
+nexus federation unmount --parent-zone root --path /shared
 ```
 
-To pull a shared subtree from a peer:
+> **Note:** `share` and `join` are daemon-level operations (triggered via
+> `NexusFederation.share()` / `NexusFederation.join()` API or pre-configured
+> via `NEXUS_FEDERATION_ZONES` / `NEXUS_FEDERATION_MOUNTS` env vars). They are
+> not separate CLI commands.
+
+### Step 6 (optional): Enable TLS later
+
+Once the cluster works over plaintext, enable mTLS:
 
 ```bash
-nexus federation join peer1:2126 /shared /local/shared
+# On the first node — generate CA + node certs:
+nexus tls init --data-dir "$PWD/data" --zone-id root
+nexus tls show
+
+# Remove NEXUS_RAFT_TLS=false (default is TLS enabled) and restart all nodes.
+# For dynamic join with TLS, place a join token file at {data_dir}/tls/join-token
+# on the joining node — see the dynamic bootstrap section in federation-memo.md.
 ```
 
-Packages behind this:
+### Environment variable reference
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXUS_PROFILE` | Yes | `full` | `cluster` for federation |
+| `NEXUS_PEERS` | Yes (federation) | — | Comma-separated `host:port` (Raft gRPC) |
+| `NEXUS_BIND_ADDR` | No | `0.0.0.0:2126` | Raft gRPC listen address |
+| `NEXUS_ADVERTISE_ADDR` | Recommended | — | Address peers use to reach this node |
+| `NEXUS_RAFT_TLS` | No | `true` | Set `false` to disable mTLS |
+| `NEXUS_FEDERATION_ZONES` | No | — | Comma-separated zone IDs to pre-create |
+| `NEXUS_FEDERATION_MOUNTS` | No | — | `path=zone_id,...` mount mappings |
+| `NEXUS_HOSTNAME` | No | OS hostname | Used to derive deterministic node ID |
+
+### Packages behind this
 
 - Federation and consensus: `nexus.raft`
 - Trust and TLS: `nexus.security`

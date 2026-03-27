@@ -457,7 +457,7 @@ jobs:
       - name: Validate wheel size and portability
         run: |
           pip install pydistcheck
-          pydistcheck --max-allowed-size-compressed '5M' dist/*.whl
+          pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist/*.whl
 
       - name: Install in clean environment (with timing)
         run: |

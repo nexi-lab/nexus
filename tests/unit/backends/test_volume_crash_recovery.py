@@ -11,6 +11,8 @@ Issue #3403: CAS volume packing — crash safety.
 
 from __future__ import annotations
 
+import gc
+
 import pytest
 
 try:
@@ -75,6 +77,8 @@ class TestCrashRecoveryRebuildsFromVol:
         engine.put(h, b"important data")
         engine.seal_active()
         engine.close()
+        del engine
+        gc.collect()
 
         # Verify .vol file exists
         vol_files = list(vol_dir.glob("*.vol"))
@@ -103,6 +107,8 @@ class TestCrashRecoveryRebuildsFromVol:
             hashes.append(h)
         engine.seal_active()
         engine.close()
+        del engine
+        gc.collect()
 
         # Delete index
         (vol_dir / "volume_index.redb").unlink()
@@ -127,6 +133,8 @@ class TestStaleIndexEntries:
         engine.seal_active()
         assert engine.exists(h)
         engine.close()
+        del engine
+        gc.collect()
 
         # Delete the volume file but keep the index
         for f in vol_dir.glob("*.vol"):
@@ -218,6 +226,8 @@ class TestGracefulRecovery:
 
         engine.seal_active()
         engine.close()
+        del engine
+        gc.collect()
 
         # Simulate crash: delete index, leave .vol files
         (vol_dir / "volume_index.redb").unlink()
@@ -241,6 +251,8 @@ class TestGracefulRecovery:
         engine1.put(make_hash(1), b"from engine 1")
         engine1.seal_active()
         engine1.close()
+        del engine1
+        gc.collect()
 
         engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
         assert engine2.exists(make_hash(1))
@@ -266,6 +278,8 @@ class TestGracefulRecovery:
 
         # Close (which seals the active volume)
         engine.close()
+        del engine
+        gc.collect()
 
         # Reopen — deleted blob must NOT reappear
         engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)

@@ -359,6 +359,11 @@ pub struct VolumeEngine {
     compaction_rate_limit: u64,
     /// Sparsity threshold for compaction trigger (0.0 - 1.0)
     compaction_sparsity_threshold: f64,
+    /// Pending index writes — batched and flushed periodically to avoid
+    /// one redb write transaction (with fsync) per blob.
+    pending_index: Mutex<Vec<([u8; 32], IndexEntry)>>,
+    /// Max pending entries before auto-flush (default 256)
+    index_batch_size: usize,
 }
 
 fn db_err(e: impl std::fmt::Display) -> PyErr {
@@ -411,6 +416,8 @@ impl VolumeEngine {
             target_volume_size_override: target_volume_size,
             compaction_rate_limit,
             compaction_sparsity_threshold,
+            pending_index: Mutex::new(Vec::with_capacity(256)),
+            index_batch_size: 256,
         };
 
         // Startup recovery
@@ -419,9 +426,18 @@ impl VolumeEngine {
         Ok(engine)
     }
 
-    /// Check if a content hash exists in the index.
+    /// Check if a content hash exists in the index (or pending buffer).
     fn exists(&self, hash_hex: &str) -> PyResult<bool> {
         let hash = hex_to_hash(hash_hex)?;
+
+        // Check pending buffer first (not yet flushed to redb)
+        {
+            let pending = self.pending_index.lock();
+            if pending.iter().any(|(h, _)| h == &hash) {
+                return Ok(true);
+            }
+        }
+
         let db = self.db.read();
         let txn = db.begin_read().map_err(db_err)?;
         let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
@@ -430,10 +446,20 @@ impl VolumeEngine {
     }
 
     /// Write a blob. Returns true if it was new (not a dedup hit).
+    ///
+    /// Index updates are batched — entries go into a pending buffer and are
+    /// flushed to redb in a single transaction every `index_batch_size` writes
+    /// or at seal time. This amortizes the redb fsync cost across many blobs.
     fn put(&self, hash_hex: &str, data: &[u8]) -> PyResult<bool> {
         let hash = hex_to_hash(hash_hex)?;
 
-        // Dedup check: if already indexed, skip
+        // Dedup check: pending buffer + committed index
+        {
+            let pending = self.pending_index.lock();
+            if pending.iter().any(|(h, _)| h == &hash) {
+                return Ok(false);
+            }
+        }
         {
             let db = self.db.read();
             let txn = db.begin_read().map_err(db_err)?;
@@ -446,23 +472,23 @@ impl VolumeEngine {
         // Append to active volume
         let (volume_id, offset) = self.append_to_active(&hash, data)?;
 
-        // Update index
+        // Buffer index entry (not committed to redb yet)
         let entry = IndexEntry {
             volume_id,
             offset,
             size: data.len() as u32,
             timestamp: now_unix_secs(),
         };
-        {
-            let db = self.db.read();
-            let txn = db.begin_write().map_err(db_err)?;
-            {
-                let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-                table
-                    .insert(hash.as_slice(), entry.to_bytes().as_slice())
-                    .map_err(db_err)?;
-            }
-            txn.commit().map_err(db_err)?;
+
+        let should_flush = {
+            let mut pending = self.pending_index.lock();
+            pending.push((hash, entry));
+            pending.len() >= self.index_batch_size
+        };
+
+        // Flush when buffer is full
+        if should_flush {
+            self.flush_pending_index()?;
         }
 
         self.total_bytes
@@ -471,22 +497,20 @@ impl VolumeEngine {
         Ok(true)
     }
 
+    /// Flush pending index entries to redb in a single transaction.
+    fn flush_index(&self) -> PyResult<()> {
+        self.flush_pending_index()
+    }
+
     /// Read a blob by hash. Returns None if not found.
     fn get<'py>(&self, py: Python<'py>, hash_hex: &str) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let hash = hex_to_hash(hash_hex)?;
 
-        // Lookup in index
-        let entry = {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            match table.get(hash.as_slice()).map_err(db_err)? {
-                Some(val) => match IndexEntry::from_bytes(val.value()) {
-                    Some(e) => e,
-                    None => return Ok(None),
-                },
-                None => return Ok(None),
-            }
+        // Lookup: pending buffer first, then committed index
+        let entry = self.lookup_entry(&hash)?;
+        let entry = match entry {
+            Some(e) => e,
+            None => return Ok(None),
         };
 
         // Find volume path
@@ -506,27 +530,35 @@ impl VolumeEngine {
     /// Get blob size by hash. Returns None if not found.
     fn get_size(&self, hash_hex: &str) -> PyResult<Option<u32>> {
         let hash = hex_to_hash(hash_hex)?;
-        let db = self.db.read();
-        let txn = db.begin_read().map_err(db_err)?;
-        let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-        match table.get(hash.as_slice()).map_err(db_err)? {
-            Some(val) => Ok(IndexEntry::from_bytes(val.value()).map(|e| e.size)),
-            None => Ok(None),
-        }
+        Ok(self.lookup_entry(&hash)?.map(|e| e.size))
     }
 
     /// Delete (tombstone) a blob by hash. Returns true if it existed.
     fn delete(&self, hash_hex: &str) -> PyResult<bool> {
         let hash = hex_to_hash(hash_hex)?;
-        let db = self.db.read();
-        let txn = db.begin_write().map_err(db_err)?;
-        let existed;
-        {
-            let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            existed = table.remove(hash.as_slice()).map_err(db_err)?.is_some();
-        }
-        txn.commit().map_err(db_err)?;
-        Ok(existed)
+
+        // Remove from pending buffer if present
+        let was_pending = {
+            let mut pending = self.pending_index.lock();
+            let before = pending.len();
+            pending.retain(|(h, _)| h != &hash);
+            pending.len() < before
+        };
+
+        // Remove from committed index
+        let was_committed = {
+            let db = self.db.read();
+            let txn = db.begin_write().map_err(db_err)?;
+            let existed;
+            {
+                let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                existed = table.remove(hash.as_slice()).map_err(db_err)?.is_some();
+            }
+            txn.commit().map_err(db_err)?;
+            existed
+        };
+
+        Ok(was_pending || was_committed)
     }
 
     /// Batch read multiple blobs. Returns dict of hash_hex → bytes (missing hashes omitted).
@@ -537,19 +569,12 @@ impl VolumeEngine {
     ) -> PyResult<HashMap<String, Bound<'py, PyBytes>>> {
         let mut result = HashMap::with_capacity(hash_hexes.len());
 
-        // Batch lookup: collect all index entries first
+        // Batch lookup: pending buffer + committed index
         let mut lookups: Vec<(String, [u8; 32], IndexEntry)> = Vec::with_capacity(hash_hexes.len());
-        {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            for hex in &hash_hexes {
-                if let Ok(hash) = hex_to_hash(hex) {
-                    if let Ok(Some(val)) = table.get(hash.as_slice()) {
-                        if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                            lookups.push((hex.clone(), hash, entry));
-                        }
-                    }
+        for hex in &hash_hexes {
+            if let Ok(hash) = hex_to_hash(hex) {
+                if let Ok(Some(entry)) = self.lookup_entry(&hash) {
+                    lookups.push((hex.clone(), hash, entry));
                 }
             }
         }
@@ -598,12 +623,27 @@ impl VolumeEngine {
         let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
 
         let mut result = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        // Include pending entries
+        {
+            let pending = self.pending_index.lock();
+            for (hash, entry) in pending.iter() {
+                let h = hex::encode(hash);
+                seen.insert(h.clone());
+                result.push((h, entry.timestamp));
+            }
+        }
+
+        // Include committed entries (skip those already in pending)
         let iter = table.iter().map_err(db_err)?;
         for item in iter {
             let (key, val) = item.map_err(db_err)?;
             let hash_hex = hex::encode(key.value());
-            if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                result.push((hash_hex, entry.timestamp));
+            if !seen.contains(&hash_hex) {
+                if let Some(entry) = IndexEntry::from_bytes(val.value()) {
+                    result.push((hash_hex, entry.timestamp));
+                }
             }
         }
 
@@ -613,21 +653,16 @@ impl VolumeEngine {
     /// Get the write timestamp for a specific hash. Returns None if not found.
     fn get_timestamp(&self, hash_hex: &str) -> PyResult<Option<f64>> {
         let hash = hex_to_hash(hash_hex)?;
-        let db = self.db.read();
-        let txn = db.begin_read().map_err(db_err)?;
-        let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-        match table.get(hash.as_slice()).map_err(db_err)? {
-            Some(val) => Ok(IndexEntry::from_bytes(val.value()).map(|e| e.timestamp)),
-            None => Ok(None),
-        }
+        Ok(self.lookup_entry(&hash)?.map(|e| e.timestamp))
     }
 
-    /// Get total number of indexed blobs.
+    /// Get total number of indexed blobs (committed + pending).
     fn len(&self) -> PyResult<u64> {
+        let pending_count = self.pending_index.lock().len() as u64;
         let db = self.db.read();
         let txn = db.begin_read().map_err(db_err)?;
         let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-        table.len().map_err(db_err)
+        Ok(table.len().map_err(db_err)? + pending_count)
     }
 
     /// Get total bytes stored across all volumes.
@@ -652,10 +687,14 @@ impl VolumeEngine {
         let paths = self.volume_paths.read();
         stats.insert("sealed_volume_count".to_string(), paths.len() as u64);
 
+        let pending_count = self.pending_index.lock().len() as u64;
         let db = self.db.read();
         let txn = db.begin_read().map_err(db_err)?;
         let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-        stats.insert("total_blobs".to_string(), table.len().map_err(db_err)?);
+        stats.insert(
+            "total_blobs".to_string(),
+            table.len().map_err(db_err)? + pending_count,
+        );
         stats.insert(
             "total_bytes".to_string(),
             self.total_bytes.load(Ordering::Relaxed),
@@ -679,7 +718,8 @@ impl VolumeEngine {
         if !self.is_open.swap(false, Ordering::SeqCst) {
             return Ok(());
         }
-        // Seal active volume if it has entries
+        // Flush pending index entries, then seal active volume
+        let _ = self.flush_pending_index();
         let _ = self.do_seal_active();
         Ok(())
     }
@@ -872,6 +912,52 @@ impl VolumeEngine {
         }
     }
 
+    /// Lookup an entry from pending buffer or committed index.
+    fn lookup_entry(&self, hash: &[u8; 32]) -> PyResult<Option<IndexEntry>> {
+        // Check pending buffer first
+        {
+            let pending = self.pending_index.lock();
+            for (h, entry) in pending.iter().rev() {
+                if h == hash {
+                    return Ok(Some(entry.clone()));
+                }
+            }
+        }
+
+        // Check committed index
+        let db = self.db.read();
+        let txn = db.begin_read().map_err(db_err)?;
+        let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+        match table.get(hash.as_slice()).map_err(db_err)? {
+            Some(val) => Ok(IndexEntry::from_bytes(val.value())),
+            None => Ok(None),
+        }
+    }
+
+    /// Flush all pending index entries to redb in a single write transaction.
+    fn flush_pending_index(&self) -> PyResult<()> {
+        let entries: Vec<([u8; 32], IndexEntry)> = {
+            let mut pending = self.pending_index.lock();
+            if pending.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut *pending)
+        };
+
+        let db = self.db.read();
+        let txn = db.begin_write().map_err(db_err)?;
+        {
+            let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+            for (hash, entry) in &entries {
+                table
+                    .insert(hash.as_slice(), entry.to_bytes().as_slice())
+                    .map_err(db_err)?;
+            }
+        }
+        txn.commit().map_err(db_err)?;
+        Ok(())
+    }
+
     fn get_target_volume_size(&self) -> u64 {
         if self.target_volume_size_override > 0 {
             return self.target_volume_size_override;
@@ -897,6 +983,9 @@ impl VolumeEngine {
         {
             let vol = active_guard.as_ref().unwrap();
             if vol.is_full() {
+                // Flush pending index so seal_volume's cross-reference
+                // against the index is accurate.
+                self.flush_pending_index()?;
                 // Seal current, create new
                 let old_vol = active_guard.take().unwrap();
                 self.seal_volume(old_vol)?;
@@ -963,13 +1052,13 @@ impl VolumeEngine {
     }
 
     fn do_seal_active(&self) -> PyResult<bool> {
+        // Flush pending index entries before sealing so seal_volume's
+        // cross-reference check against the index is accurate.
+        self.flush_pending_index()?;
+
         let mut active_guard = self.active.lock();
         if let Some(vol) = active_guard.take() {
             if vol.entry_count() > 0 {
-                // Before sealing, we need to move all entries from the active
-                // volume's in-memory tracking to the sealed volume's index.
-                // The entries are already in the redb index (added during put()),
-                // but the volume_paths need to be updated after seal.
                 self.seal_volume(vol)?;
                 return Ok(true);
             } else {
@@ -1124,38 +1213,52 @@ impl VolumeEngine {
             }
         }
 
-        // Find candidate volumes with high sparsity
+        // Find candidate volumes with high sparsity.
+        // Sparsity is based on entry counts (live vs total), not byte sizes,
+        // because volume files have per-entry overhead (headers, TOC, alignment)
+        // that inflates the file size relative to content bytes.
         let paths = self.volume_paths.read().clone();
-        let mut candidates: Vec<(u32, PathBuf, u64, u64)> = Vec::new(); // (vol_id, path, total_bytes, live_bytes)
+        // (vol_id, path, file_size, live_count, total_count)
+        let mut candidates: Vec<(u32, PathBuf, u64, u64, u64)> = Vec::new();
 
         for (vol_id, path) in &paths {
-            if let Ok(meta) = fs::metadata(path) {
-                let total = meta.len();
-                let (_, live_bytes) = live_per_volume.get(vol_id).copied().unwrap_or((0, 0));
-                if total > HEADER_SIZE + FOOTER_SIZE {
-                    let data_bytes = total - HEADER_SIZE - FOOTER_SIZE;
-                    let sparsity = if data_bytes > 0 {
-                        1.0 - (live_bytes as f64 / data_bytes as f64)
-                    } else {
-                        0.0
-                    };
-                    if sparsity >= self.compaction_sparsity_threshold {
-                        candidates.push((*vol_id, path.clone(), total, live_bytes));
-                    }
+            // Skip .tmp (active) volumes
+            if path.extension().is_some_and(|ext| ext == "tmp") {
+                continue;
+            }
+            if let Ok((_, toc_entries)) = read_volume_toc(path) {
+                let total_count = toc_entries.len() as u64;
+                let (live_count, _) = live_per_volume.get(vol_id).copied().unwrap_or((0, 0));
+                let sparsity = if total_count > 0 {
+                    1.0 - (live_count as f64 / total_count as f64)
+                } else {
+                    0.0
+                };
+                if sparsity >= self.compaction_sparsity_threshold {
+                    let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                    candidates.push((*vol_id, path.clone(), file_size, live_count, total_count));
                 }
             }
         }
 
         // Sort by sparsity descending (most sparse first)
         candidates.sort_by(|a, b| {
-            let sp_a = 1.0 - (a.3 as f64 / a.2 as f64);
-            let sp_b = 1.0 - (b.3 as f64 / b.2 as f64);
+            let sp_a = if a.4 > 0 {
+                1.0 - (a.3 as f64 / a.4 as f64)
+            } else {
+                0.0
+            };
+            let sp_b = if b.4 > 0 {
+                1.0 - (b.3 as f64 / b.4 as f64)
+            } else {
+                0.0
+            };
             sp_b.partial_cmp(&sp_a).unwrap_or(std::cmp::Ordering::Equal)
         });
 
         let mut rate_budget = self.compaction_rate_limit as i64;
 
-        for (vol_id, vol_path, vol_total, _) in candidates {
+        for (vol_id, vol_path, vol_total, _, _) in candidates {
             // Collect live entries from this volume
             let mut live_entries: Vec<([u8; 32], IndexEntry)> = Vec::new();
             {
@@ -1448,6 +1551,8 @@ mod tests {
             target_volume_size_override: 1024 * 1024,
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         let hash = hash_hex(1);
@@ -1495,6 +1600,8 @@ mod tests {
             target_volume_size_override: 1024 * 1024,
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         let hash = hash_hex(1);
@@ -1527,6 +1634,8 @@ mod tests {
             target_volume_size_override: 1024 * 1024,
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         let hash = hash_hex(1);
@@ -1568,6 +1677,8 @@ mod tests {
             target_volume_size_override: 0,
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         engine.recover_on_startup().unwrap();
@@ -1607,6 +1718,8 @@ mod tests {
             target_volume_size_override: 0,
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         engine.recover_on_startup().unwrap();
@@ -1641,6 +1754,8 @@ mod tests {
             target_volume_size_override: 256, // Very small!
             compaction_rate_limit: 0,
             compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         // Write enough data to trigger multiple volume seals
@@ -1682,6 +1797,8 @@ mod tests {
             target_volume_size_override: 512, // Small volumes for testing
             compaction_rate_limit: 0,         // No rate limit for tests
             compaction_sparsity_threshold: 0.3,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
         };
 
         // Write 10 entries

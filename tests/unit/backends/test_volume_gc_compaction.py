@@ -126,7 +126,7 @@ class TestCompaction:
         vol_dir = tmp_path / "vol"
         engine = VolumeEngine(
             str(vol_dir),
-            target_volume_size=512,
+            target_volume_size=1024 * 1024,  # Large enough for all entries in one volume
             compaction_sparsity_threshold=0.3,
         )
 

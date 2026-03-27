@@ -741,7 +741,7 @@ impl VolumeEngine {
         self.mem_index.read().memory_bytes()
     }
 
-    /// Close the engine: seal active volume, close database.
+    /// Close the engine: seal active volume, save snapshot, close database.
     fn close(&self) -> PyResult<()> {
         if !self.is_open.swap(false, Ordering::SeqCst) {
             return Ok(());
@@ -749,6 +749,8 @@ impl VolumeEngine {
         // Flush pending index entries, then seal active volume
         let _ = self.flush_pending_index();
         let _ = self.do_seal_active();
+        // Save snapshot for fast startup next time
+        let _ = self.mem_index.read().save_snapshot(&self.snapshot_path());
         Ok(())
     }
 
@@ -1106,27 +1108,22 @@ impl VolumeEngine {
     }
 
     /// Startup recovery: delete .tmp files, scan .vol files to rebuild state.
+    /// Path to the snapshot sidecar file.
+    fn snapshot_path(&self) -> PathBuf {
+        self.volumes_dir.join("mem_index.bin")
+    }
+
     fn recover_on_startup(&mut self) -> PyResult<()> {
         let entries = fs::read_dir(&self.volumes_dir).map_err(io_err)?;
 
         let mut max_vol_id: u32 = 0;
         let mut total_bytes: u64 = 0;
-        let mut volume_paths = HashMap::new();
+        let mut volume_paths: HashMap<u32, PathBuf> = HashMap::new();
+        let mut had_tmp_files = false;
 
-        // Track which hashes are in the index
-        let indexed_hashes: std::collections::HashSet<Vec<u8>> = {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            let mut set = std::collections::HashSet::new();
-            let iter = table.iter().map_err(db_err)?;
-            for item in iter {
-                let (key, _) = item.map_err(db_err)?;
-                set.insert(key.value().to_vec());
-            }
-            set
-        };
-
+        // ── Phase 1: Scan directory — discover volume paths, delete .tmp ──
+        // NOTE: We do NOT read TOCs here — defer until we know if reconciliation
+        // is needed (snapshot fast path skips TOC reading entirely).
         for entry in entries {
             let entry = entry.map_err(io_err)?;
             let path = entry.path();
@@ -1137,31 +1134,81 @@ impl VolumeEngine {
                 .to_string();
 
             if name.ends_with(".tmp") {
-                // Crash recovery: delete incomplete volumes
                 let _ = fs::remove_file(&path);
+                had_tmp_files = true;
                 continue;
             }
 
             if name.ends_with(".vol") {
-                // Read TOC from sealed volume
-                match read_volume_toc(&path) {
-                    Ok((vol_id, toc_entries)) => {
+                // Parse volume_id from filename (vol_XXXXXXXX.vol)
+                if let Some(hex) = name
+                    .strip_prefix("vol_")
+                    .and_then(|s| s.strip_suffix(".vol"))
+                {
+                    if let Ok(vol_id) = u32::from_str_radix(hex, 16) {
                         max_vol_id = max_vol_id.max(vol_id);
-                        volume_paths.insert(vol_id, path.clone());
+                        volume_paths.insert(vol_id, path);
+                    }
+                }
+            }
+        }
 
-                        // Reconcile: add any entries in VOL but not in index
-                        let now = now_unix_secs();
-                        let db = self.db.read();
-                        let txn = db.begin_write().map_err(db_err)?;
-                        {
-                            let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+        // ── Phase 2: Try snapshot — skip redb + TOC reading on clean startup ──
+        let snapshot_path = self.snapshot_path();
+
+        let (mut idx, need_reconciliation) = if !had_tmp_files {
+            if let Some(snap_idx) = VolumeIndex::load_snapshot(&snapshot_path) {
+                let redb_count = {
+                    let db = self.db.read();
+                    let txn = db.begin_read().map_err(db_err)?;
+                    let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                    table.len().map_err(db_err)? as usize
+                };
+                if snap_idx.len() == redb_count && snap_idx.all_volumes_exist(&volume_paths) {
+                    (snap_idx, false)
+                } else {
+                    (Self::load_index_from_redb(self, &volume_paths)?, true)
+                }
+            } else {
+                (Self::load_index_from_redb(self, &volume_paths)?, true)
+            }
+        } else {
+            let _ = fs::remove_file(&snapshot_path);
+            (Self::load_index_from_redb(self, &volume_paths)?, true)
+        };
+
+        // ── Phase 3: Reconcile (only if snapshot was not used) ──
+        // Read TOCs and reconcile only when needed — this is the slow path.
+        if need_reconciliation {
+            let mut indexed_hashes: std::collections::HashSet<Vec<u8>> = {
+                let db = self.db.read();
+                let txn = db.begin_read().map_err(db_err)?;
+                let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                let mut set =
+                    std::collections::HashSet::with_capacity(table.len().map_err(db_err)? as usize);
+                for item in table.iter().map_err(db_err)? {
+                    let (key, _) = item.map_err(db_err)?;
+                    set.insert(key.value().to_vec());
+                }
+                set
+            };
+
+            let now = now_unix_secs();
+            let db = self.db.read();
+            let txn = db.begin_write().map_err(db_err)?;
+            {
+                let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                for (vol_id, path) in &volume_paths {
+                    match read_volume_toc(path) {
+                        Ok((_, toc_entries)) => {
                             for toc_entry in &toc_entries {
                                 if toc_entry.flags & FLAG_TOMBSTONE != 0 {
                                     continue;
                                 }
+                                total_bytes += toc_entry.size as u64;
                                 if !indexed_hashes.contains(toc_entry.hash.as_slice()) {
                                     let idx_entry = IndexEntry {
-                                        volume_id: vol_id,
+                                        volume_id: *vol_id,
                                         offset: toc_entry.offset,
                                         size: toc_entry.size,
                                         timestamp: now,
@@ -1172,70 +1219,72 @@ impl VolumeEngine {
                                             idx_entry.to_bytes().as_slice(),
                                         )
                                         .map_err(db_err)?;
+                                    idx.insert(
+                                        toc_entry.hash,
+                                        MemIndexEntry {
+                                            volume_id: *vol_id,
+                                            offset: toc_entry.offset,
+                                            size: toc_entry.size,
+                                        },
+                                    );
+                                    indexed_hashes.insert(toc_entry.hash.to_vec());
                                 }
-                                total_bytes += toc_entry.size as u64;
                             }
                         }
-                        txn.commit().map_err(db_err)?;
-                    }
-                    Err(e) => {
-                        // Corrupted volume — log and skip
-                        eprintln!(
-                            "Warning: skipping corrupted volume {}: {}",
-                            path.display(),
-                            e
-                        );
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: skipping corrupted volume {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
                     }
                 }
             }
+            txn.commit().map_err(db_err)?;
+
+            // Save snapshot for next startup
+            let _ = idx.save_snapshot(&snapshot_path);
+        } else {
+            // Snapshot path — compute total_bytes from mem_index
+            total_bytes = idx.total_content_bytes();
         }
 
-        // Verify index entries point to existing volumes — remove stale entries
-        {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            let mut stale_keys: Vec<Vec<u8>> = Vec::new();
-            let iter = table.iter().map_err(db_err)?;
-            for item in iter {
-                let (key, val) = item.map_err(db_err)?;
-                if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                    if !volume_paths.contains_key(&entry.volume_id) {
-                        stale_keys.push(key.value().to_vec());
-                    }
+        // ── Phase 4: Open FDs, set state ──
+        for (vol_id, path) in &volume_paths {
+            if path.extension().is_some_and(|ext| ext == "vol") {
+                if let Err(e) = idx.open_volume(*vol_id, path) {
+                    eprintln!(
+                        "Warning: failed to open volume FD for {}: {}",
+                        path.display(),
+                        e
+                    );
                 }
-            }
-            drop(table);
-            drop(txn);
-
-            if !stale_keys.is_empty() {
-                let txn = db.begin_write().map_err(db_err)?;
-                {
-                    let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-                    for key in &stale_keys {
-                        table.remove(key.as_slice()).map_err(db_err)?;
-                    }
-                }
-                txn.commit().map_err(db_err)?;
             }
         }
 
         self.next_volume_id.store(max_vol_id + 1, Ordering::Relaxed);
         self.total_bytes.store(total_bytes, Ordering::Relaxed);
-        *self.volume_paths.write() = volume_paths.clone();
+        *self.volume_paths.write() = volume_paths;
+        *self.mem_index.write() = idx;
 
-        // ── Issue #3404: populate in-memory index from redb ──────────────
-        {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            let count = table.len().map_err(db_err)? as usize;
-            let mut idx = VolumeIndex::with_capacity(count);
+        Ok(())
+    }
 
-            let iter = table.iter().map_err(db_err)?;
-            for item in iter {
-                let (key, val) = item.map_err(db_err)?;
-                if let Some(entry) = IndexEntry::from_bytes(val.value()) {
+    /// Load the mem_index from redb in a single pass (slow path).
+    /// Also detects and removes stale entries pointing to missing volumes.
+    fn load_index_from_redb(&self, volume_paths: &HashMap<u32, PathBuf>) -> PyResult<VolumeIndex> {
+        let db = self.db.read();
+        let txn = db.begin_read().map_err(db_err)?;
+        let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+        let count = table.len().map_err(db_err)? as usize;
+        let mut idx = VolumeIndex::with_capacity(count);
+        let mut stale_keys: Vec<Vec<u8>> = Vec::new();
+
+        for item in table.iter().map_err(db_err)? {
+            let (key, val) = item.map_err(db_err)?;
+            if let Some(entry) = IndexEntry::from_bytes(val.value()) {
+                if volume_paths.contains_key(&entry.volume_id) {
                     let mut hash = [0u8; 32];
                     hash.copy_from_slice(key.value());
                     idx.insert(
@@ -1246,26 +1295,27 @@ impl VolumeEngine {
                             size: entry.size,
                         },
                     );
+                } else {
+                    stale_keys.push(key.value().to_vec());
                 }
             }
+        }
+        drop(table);
+        drop(txn);
 
-            // Open FDs for sealed volumes (pread access)
-            for (vol_id, path) in &volume_paths {
-                if path.extension().is_some_and(|ext| ext == "vol") {
-                    if let Err(e) = idx.open_volume(*vol_id, path) {
-                        eprintln!(
-                            "Warning: failed to open volume FD for {}: {}",
-                            path.display(),
-                            e
-                        );
-                    }
+        // Remove stale keys
+        if !stale_keys.is_empty() {
+            let txn = db.begin_write().map_err(db_err)?;
+            {
+                let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                for key in &stale_keys {
+                    table.remove(key.as_slice()).map_err(db_err)?;
                 }
             }
-
-            *self.mem_index.write() = idx;
+            txn.commit().map_err(db_err)?;
         }
 
-        Ok(())
+        Ok(idx)
     }
 
     /// Run compaction: find sparse volumes, copy live entries to new volume.

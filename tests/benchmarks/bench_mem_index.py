@@ -140,16 +140,11 @@ def run_benchmark(count: int = 10000, read_iterations: int = 500) -> None:
         checks.append(("Per-entry memory < 60B", per_entry < 60, f"{per_entry:.1f}B"))
         checks.append(
             (
-                f"Startup load ({count:,} entries)",
+                f"Startup load < 200ms ({count:,} entries)",
                 startup_time * 1000 < 200,
                 f"{startup_time * 1000:.1f}ms",
             )
         )
-        if count >= 10000:
-            per_entry_us = (startup_time * 1_000_000) / count
-            print(f"  Startup per-entry: {per_entry_us:.1f}μs (redb iteration dominates)")
-            extrapolated_1m = per_entry_us * 1_000_000 / 1000
-            print(f"  1M extrapolation:  {extrapolated_1m:.0f}ms (linear, pessimistic)")
 
         for label, passed, value in checks:
             status = "✓" if passed else "✗"

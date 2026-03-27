@@ -14,9 +14,10 @@
 #[cfg(unix)]
 use std::os::unix::fs::FileExt;
 
+use ahash::AHashMap;
 use std::collections::HashMap;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Entry header size in volume files: hash(32) + size(4) + flags(1) = 37 bytes.
 /// Must match `ENTRY_HEADER_SIZE` in `volume_engine.rs`.
@@ -52,7 +53,8 @@ pub enum ReadContentResult {
 /// For 1M entries: ~56 MB — trivial for any deployment.
 pub struct VolumeIndex {
     /// blake3_hash → (volume_id, offset, size)
-    map: HashMap<[u8; 32], MemIndexEntry>,
+    /// Uses ahash for faster hashing of 32-byte keys (~2-3x vs SipHash).
+    map: AHashMap<[u8; 32], MemIndexEntry>,
     /// Volume file descriptors kept open for pread.
     volumes: HashMap<u32, std::fs::File>,
 }
@@ -60,14 +62,14 @@ pub struct VolumeIndex {
 impl VolumeIndex {
     pub fn new() -> Self {
         Self {
-            map: HashMap::new(),
+            map: AHashMap::new(),
             volumes: HashMap::new(),
         }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            map: HashMap::with_capacity(capacity),
+            map: AHashMap::with_capacity(capacity),
             volumes: HashMap::new(),
         }
     }
@@ -157,7 +159,7 @@ impl VolumeIndex {
 
     /// Estimated memory usage in bytes.
     pub fn memory_bytes(&self) -> usize {
-        // hashbrown layout: each bucket = key(32) + value(16) = 48 bytes + 1 control byte
+        // AHashMap (hashbrown) layout: each bucket = key(32) + value(16) = 48 bytes + 1 control byte
         // Load factor ~87.5%, so capacity ≈ len * 8/7
         let entry_size = std::mem::size_of::<[u8; 32]>() + std::mem::size_of::<MemIndexEntry>();
         let capacity = self.map.capacity().max(self.map.len());
@@ -170,17 +172,115 @@ impl VolumeIndex {
         map_bytes + fd_bytes + std::mem::size_of::<Self>()
     }
 
-    /// Bulk load entries from an iterator (for startup).
-    #[allow(dead_code)]
-    pub fn load_entries(&mut self, entries: impl Iterator<Item = ([u8; 32], MemIndexEntry)>) {
-        for (hash, entry) in entries {
-            self.map.insert(hash, entry);
-        }
-    }
-
     /// Number of open volume file descriptors.
     pub fn volume_count(&self) -> usize {
         self.volumes.len()
+    }
+
+    /// Sum of all entry sizes (for total_bytes tracking).
+    pub fn total_content_bytes(&self) -> u64 {
+        self.map.values().map(|e| e.size as u64).sum()
+    }
+
+    /// Check that every volume_id referenced by entries exists in the given paths.
+    pub fn all_volumes_exist(&self, volume_paths: &HashMap<u32, PathBuf>) -> bool {
+        self.map
+            .values()
+            .all(|e| volume_paths.contains_key(&e.volume_id))
+    }
+
+    // ─── Snapshot persistence (flat binary sidecar for fast startup) ──────
+
+    /// Snapshot magic bytes.
+    const SNAPSHOT_MAGIC: &'static [u8; 4] = b"NIDX";
+    /// Snapshot version.
+    const SNAPSHOT_VERSION: u32 = 1;
+    /// Header: magic(4) + version(4) + entry_count(8) = 16 bytes.
+    const SNAPSHOT_HEADER_SIZE: usize = 16;
+    /// Per-entry: hash(32) + volume_id(4) + offset(8) + size(4) = 48 bytes.
+    const SNAPSHOT_ENTRY_SIZE: usize = 48;
+
+    /// Save the index to a flat binary file for fast startup.
+    ///
+    /// Format: `[magic:4][version:4][count:8] || [hash:32][vol_id:4][offset:8][size:4] × count`
+    pub fn save_snapshot(&self, path: &Path) -> io::Result<()> {
+        use std::io::Write;
+        let tmp = path.with_extension("tmp");
+        let mut f = std::fs::File::create(&tmp)?;
+
+        // Header
+        f.write_all(Self::SNAPSHOT_MAGIC)?;
+        f.write_all(&Self::SNAPSHOT_VERSION.to_le_bytes())?;
+        f.write_all(&(self.map.len() as u64).to_le_bytes())?;
+
+        // Entries
+        for (hash, entry) in &self.map {
+            f.write_all(hash)?;
+            f.write_all(&entry.volume_id.to_le_bytes())?;
+            f.write_all(&entry.offset.to_le_bytes())?;
+            f.write_all(&entry.size.to_le_bytes())?;
+        }
+
+        f.sync_data()?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    /// Load the index from a snapshot file. Returns None if the file doesn't
+    /// exist, is corrupt, or has a version mismatch.
+    pub fn load_snapshot(path: &Path) -> Option<Self> {
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).ok()?;
+        let file_len = f.metadata().ok()?.len() as usize;
+
+        // Read header
+        let mut header = [0u8; Self::SNAPSHOT_HEADER_SIZE];
+        f.read_exact(&mut header).ok()?;
+
+        if &header[0..4] != Self::SNAPSHOT_MAGIC {
+            return None;
+        }
+        let version = u32::from_le_bytes(header[4..8].try_into().ok()?);
+        if version != Self::SNAPSHOT_VERSION {
+            return None;
+        }
+        let count = u64::from_le_bytes(header[8..16].try_into().ok()?) as usize;
+
+        // Validate file size
+        let expected = Self::SNAPSHOT_HEADER_SIZE + count * Self::SNAPSHOT_ENTRY_SIZE;
+        if file_len != expected {
+            return None;
+        }
+
+        // Read all entries in one syscall
+        let data_len = count * Self::SNAPSHOT_ENTRY_SIZE;
+        let mut buf = vec![0u8; data_len];
+        f.read_exact(&mut buf).ok()?;
+
+        // Parse entries — collect into AHashMap in one shot (avoids per-insert overhead)
+        let map: AHashMap<[u8; 32], MemIndexEntry> = buf
+            .chunks_exact(Self::SNAPSHOT_ENTRY_SIZE)
+            .map(|chunk| {
+                let mut hash = [0u8; 32];
+                hash.copy_from_slice(&chunk[..32]);
+                let volume_id = u32::from_le_bytes(chunk[32..36].try_into().unwrap());
+                let offset = u64::from_le_bytes(chunk[36..44].try_into().unwrap());
+                let size = u32::from_le_bytes(chunk[44..48].try_into().unwrap());
+                (
+                    hash,
+                    MemIndexEntry {
+                        volume_id,
+                        offset,
+                        size,
+                    },
+                )
+            })
+            .collect();
+
+        Some(Self {
+            map,
+            volumes: HashMap::new(),
+        })
     }
 }
 

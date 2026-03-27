@@ -68,6 +68,9 @@ services:
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
 
+      # gRPC VFS (bind 0.0.0.0 for cross-container access)
+      NEXUS_GRPC_BIND_ALL: "true"
+
       # CacheStore
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
 
@@ -116,6 +119,7 @@ services:
       NEXUS_ADVERTISE_ADDR: nexus-2:2126
       NEXUS_PEERS: "nexus-1:2126,nexus-2:2126,witness:2126"
       NEXUS_RAFT_TLS: "false"
+      NEXUS_GRPC_BIND_ALL: "true"
 
       NEXUS_DRAGONFLY_URL: ${NEXUS_DRAGONFLY_URL:-redis://dragonfly:6379}
       NEXUS_API_KEY: ${NEXUS_API_KEY:-sk-test-dynamic-federation-key}
@@ -182,15 +186,16 @@ services:
     entrypoint: []
     volumes:
       - ..:/app
+      - /var/run/docker.sock:/var/run/docker.sock  # For failover test (pause/unpause nodes)
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app/src
     command: >
       bash -c '
         echo "Installing test dependencies..."
-        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf
-        echo "Running dynamic federation E2E tests..."
-        python -m pytest tests/e2e/docker/test_federation_dynamic_e2e.py -v --no-header -o "addopts=" -x --timeout=180
+        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
+        echo "Running federation E2E tests..."
+        python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" -x --timeout=180
       '
     networks:
       - dyn-nexus-network

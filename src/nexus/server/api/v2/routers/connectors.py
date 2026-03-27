@@ -138,6 +138,36 @@ class SchemaResponse(BaseModel):
     content: str
 
 
+class AuthInitRequest(BaseModel):
+    """Request to initiate OAuth for a connector."""
+
+    connector_name: str = Field(..., description="Connector name (e.g., gmail_connector)")
+    provider: str | None = Field(None, description="OAuth provider override")
+
+
+class AuthInitResponse(BaseModel):
+    """Response from auth init with URL to open in browser."""
+
+    auth_url: str
+    state_token: str
+    provider: str
+    expires_in: int = 300  # 5 minutes
+
+
+class AuthStatusRequest(BaseModel):
+    """Query params for auth status polling."""
+
+    state_token: str
+
+
+class AuthStatusResponse(BaseModel):
+    """Auth completion status."""
+
+    status: str  # "pending", "completed", "denied", "expired", "error"
+    connector_name: str
+    message: str | None = None
+
+
 class MountInfo(BaseModel):
     """Info about a mounted connector."""
 
@@ -267,6 +297,237 @@ def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
     return ConnectorCapabilitiesResponse(
         name=info.name,
         capabilities=sorted(str(c) for c in info.backend_features),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints (Issue #3182)
+# ---------------------------------------------------------------------------
+
+# Module-level pending auth state (TTL managed by cleanup).
+# Maps state_token -> {connector_name, provider, created_at, status}
+_pending_auth: dict[str, dict[str, Any]] = {}
+
+
+@router.post("/auth/init", response_model=AuthInitResponse)
+async def init_connector_auth(
+    req: AuthInitRequest,
+    request: Request,
+    _: dict = Depends(require_auth),
+) -> AuthInitResponse:
+    """Initiate OAuth flow for a connector. Returns a URL to open in a browser."""
+    import secrets
+    import time
+
+    import yaml
+
+    from nexus.backends.base.registry import ConnectorRegistry
+
+    # Validate connector exists
+    if not ConnectorRegistry.is_registered(req.connector_name):
+        raise HTTPException(status_code=404, detail=f"Connector '{req.connector_name}' not found")
+
+    info = ConnectorRegistry.get_info(req.connector_name)
+
+    # Resolve provider — use explicit override or infer from connector's service_name
+    provider = req.provider or info.service_name
+    if not provider:
+        raise HTTPException(
+            status_code=400, detail=f"No OAuth provider for connector '{req.connector_name}'"
+        )
+
+    import os
+
+    nx = _get_nx(request)
+
+    # Generate state token
+    state_token = secrets.token_urlsafe(32)
+
+    # Build OAuth authorization URL
+    # Look up provider config from oauth.yaml
+    oauth_config: dict[str, Any] = {}
+    try:
+        configs_dir = getattr(nx, "configs_dir", None)
+        oauth_path = None
+        for search_path in [
+            configs_dir and os.path.join(configs_dir, "oauth.yaml"),
+            os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../../../../../configs/oauth.yaml")
+            ),
+        ]:
+            if search_path and os.path.exists(search_path):
+                oauth_path = search_path
+                break
+
+        if oauth_path:
+            with open(oauth_path) as f:
+                all_config = yaml.safe_load(f)
+
+            # Try direct provider name, then aliases
+            provider_aliases = {
+                "gmail": "gmail",
+                "gmail_connector": "gmail",
+                "calendar_connector": "gcalendar",
+                "gcalendar": "gcalendar",
+                "gdrive_connector": "google-drive",
+                "google-drive": "google-drive",
+                "slack_connector": "slack",
+                "slack": "slack",
+                "x_connector": "x",
+                "x": "x",
+                "gws_connector": "google-drive",
+            }
+            lookup = provider_aliases.get(
+                provider, provider_aliases.get(req.connector_name, provider)
+            )
+            providers = all_config.get("providers", {})
+            oauth_config = providers.get(lookup, providers.get(provider, {}))
+    except Exception:
+        logger.debug("Failed to load oauth.yaml", exc_info=True)
+
+    if not oauth_config:
+        raise HTTPException(
+            status_code=400, detail=f"No OAuth configuration found for provider '{provider}'"
+        )
+
+    # Build authorization URL
+    scopes = oauth_config.get("scopes", [])
+    client_id_env = oauth_config.get("client_id_env", "")
+    client_id = os.environ.get(client_id_env, "")
+    redirect_uri = all_config.get("redirect_uri", "http://localhost:5173/oauth/callback")
+
+    if not client_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OAuth client ID not configured. Set environment variable: {client_id_env}",
+        )
+
+    # Determine authorization endpoint based on provider
+    provider_class = oauth_config.get("provider_class", "")
+    if (
+        "google" in provider_class.lower()
+        or "gmail" in lookup
+        or "gcalendar" in lookup
+        or "google" in lookup
+    ):
+        auth_url = (
+            f"https://accounts.google.com/o/oauth2/v2/auth"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&response_type=code"
+            f"&scope={'+'.join(scopes)}"
+            f"&state={state_token}"
+            f"&access_type=offline"
+            f"&prompt=consent"
+        )
+    elif "slack" in provider_class.lower() or "slack" in lookup:
+        auth_url = (
+            f"https://slack.com/oauth/v2/authorize"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&scope={','.join(scopes)}"
+            f"&state={state_token}"
+        )
+    elif lookup == "x":
+        auth_url = (
+            f"https://twitter.com/i/oauth2/authorize"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&response_type=code"
+            f"&scope={'+'.join(scopes)}"
+            f"&state={state_token}"
+            f"&code_challenge=challenge&code_challenge_method=plain"
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
+
+    # Store pending auth state
+    _pending_auth[state_token] = {
+        "connector_name": req.connector_name,
+        "provider": provider,
+        "created_at": time.time(),
+        "status": "pending",
+    }
+
+    # Cleanup expired entries (>5 min old)
+    cutoff = time.time() - 300
+    expired = [k for k, v in _pending_auth.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _pending_auth[k]
+
+    resolved_provider = lookup if "lookup" in dir() else provider
+    return AuthInitResponse(
+        auth_url=auth_url,
+        state_token=state_token,
+        provider=resolved_provider,
+    )
+
+
+@router.get("/auth/status", response_model=AuthStatusResponse)
+async def get_auth_status(
+    state_token: str,
+    request: Request,
+    _: dict = Depends(require_auth),
+) -> AuthStatusResponse:
+    """Poll for OAuth completion status."""
+    import time
+
+    # Check pending auth state
+    pending = _pending_auth.get(state_token)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Unknown or expired auth state token")
+
+    connector_name = pending["connector_name"]
+    created_at = pending["created_at"]
+
+    # Check if expired (5 min TTL)
+    if time.time() - created_at > 300:
+        del _pending_auth[state_token]
+        return AuthStatusResponse(
+            status="expired",
+            connector_name=connector_name,
+            message="Auth session expired. Please try again.",
+        )
+
+    # Check if auth was completed by querying the auth service
+    nx = _get_nx(request)
+    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
+
+    if auth_svc is not None:
+        try:
+            from nexus.backends.base.registry import ConnectorRegistry
+
+            info = ConnectorRegistry.get_info(connector_name)
+            auth_state = await auth_svc.get_connector_auth_state(info.service_name)
+            status = str(auth_state.get("auth_status", "unknown"))
+
+            if status == "authed":
+                # Auth completed — clean up pending state
+                del _pending_auth[state_token]
+                return AuthStatusResponse(
+                    status="completed",
+                    connector_name=connector_name,
+                    message="Authentication successful.",
+                )
+            elif status == "expired":
+                return AuthStatusResponse(
+                    status="denied",
+                    connector_name=connector_name,
+                    message="Authentication was denied or token expired.",
+                )
+            elif status == "error":
+                return AuthStatusResponse(
+                    status="error",
+                    connector_name=connector_name,
+                    message="Authentication failed. Check provider configuration.",
+                )
+        except Exception as e:
+            logger.debug("Error checking auth status for %s: %s", connector_name, e)
+
+    return AuthStatusResponse(
+        status="pending",
+        connector_name=connector_name,
+        message="Waiting for authentication...",
     )
 
 

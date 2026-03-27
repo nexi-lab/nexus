@@ -4364,6 +4364,10 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("close: callback failed (best-effort): %s", exc)
 
+        # Auto-close all enlisted services that have a close() method
+        # (rebac_manager, audit_store, etc.). Reverse registration order.
+        self._service_registry.close_all_services()
+
         # Close metadata store
         self.metadata.close()
 

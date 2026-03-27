@@ -562,6 +562,24 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
             logger.info("[COORDINATOR] stopped %d persistent services: %s", len(stopped), stopped)
         return stopped
 
+    def close_all_services(self) -> None:
+        """Call close() on all services that have it. Reverse registration order.
+
+        Handles sync cleanup (rebac_manager.close(), audit_store.close(), etc.)
+        that previously required manual _close_callbacks in _lifecycle.py.
+        Runs BEFORE pillar close so DB connections are still open.
+        """
+        for name in self._ordered_names(reverse=True):
+            info = self.service_info(name)
+            if info is None:
+                continue
+            instance = info.instance
+            if instance is not None and hasattr(instance, "close") and callable(instance.close):
+                try:
+                    instance.close()
+                except Exception as exc:
+                    logger.debug("[COORDINATOR] close(%r) failed (best-effort): %s", name, exc)
+
     def _unregister_all_hooks(self) -> None:
         """Unregister all hooks from dispatch. Used by aclose()."""
         for name in list(self._hook_specs):

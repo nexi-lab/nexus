@@ -58,7 +58,7 @@ class DelegatingBackend(Backend):
 
     def __init__(self, inner: Backend) -> None:
         self._inner = inner
-        self._cached_backend_features = inner.capabilities
+        self._cached_backend_features = inner.backend_features
 
     # === Name & Chain Introspection ===
 
@@ -100,7 +100,7 @@ class DelegatingBackend(Backend):
     # === Capability Discovery (Issue #2069) ===
 
     @property
-    def capabilities(self) -> frozenset:
+    def backend_features(self) -> frozenset:
         """Delegate to inner backend's capabilities (cached in __init__)."""
         return self._cached_backend_features
 

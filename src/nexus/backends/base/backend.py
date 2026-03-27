@@ -208,12 +208,12 @@ class Backend(ObjectStoreABC):
     """Capabilities declared by this backend class.
 
     Subclasses override to declare their supported capabilities.
-    Consumers query via ``has_feature()`` or ``cap in backend.capabilities``.
+    Consumers query via ``has_feature()`` or ``cap in backend.backend_features``.
     """
 
     @property
-    def capabilities(self) -> "frozenset[BackendFeature]":
-        """All capabilities supported by this backend."""
+    def backend_features(self) -> "frozenset[BackendFeature]":
+        """All features supported by this backend."""
         return self._BACKEND_FEATURES
 
     def has_feature(self, cap: "BackendFeature") -> bool:

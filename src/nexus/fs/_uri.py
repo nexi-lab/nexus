@@ -63,6 +63,18 @@ class MountSpec:
     uri: str
 
 
+def derive_bucket(spec: MountSpec) -> str:
+    """Derive the cloud bucket/container name from a MountSpec.
+
+    For GCS (``gcs://project/bucket/sub``), the bucket is the first
+    path segment.  For S3 (``s3://bucket/sub``), it is the authority.
+    Falls back to authority for all other schemes.
+    """
+    if spec.scheme == "gcs" and spec.path:
+        return spec.path.strip("/").split("/")[0]
+    return spec.authority
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -179,8 +191,7 @@ def derive_mount_point(spec: MountSpec, at: str | None = None) -> str:
     elif spec.scheme == "gcs":
         # gcs://project/bucket → mount at /gcs/bucket
         # gcs://bucket          → mount at /gcs/bucket
-        last_segment = spec.path.split("/")[-1] if spec.path else spec.authority
-        mount = f"/gcs/{last_segment}"
+        mount = f"/gcs/{derive_bucket(spec)}"
     elif spec.scheme == "local":
         # Sanitise: replace slashes and dots so the mount name is a single
         # clean segment.  e.g. /tmp/nexus → tmp-nexus, ./data → data

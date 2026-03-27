@@ -25,6 +25,35 @@ from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
+
+def _make_stat_dict(
+    *,
+    path: str,
+    size: int,
+    etag: str | None,
+    mime_type: str,
+    created_at: str | None,
+    modified_at: str | None,
+    is_directory: bool,
+    version: int,
+    zone_id: str | None,
+    entry_type: int,
+) -> dict[str, Any]:
+    """Build the stat response dict.  Single source of truth for the shape."""
+    return {
+        "path": path,
+        "size": size,
+        "etag": etag,
+        "mime_type": mime_type,
+        "created_at": created_at,
+        "modified_at": modified_at,
+        "is_directory": is_directory,
+        "version": version,
+        "zone_id": zone_id,
+        "entry_type": entry_type,
+    }
+
+
 # Default context for slim-mode (single-user, no auth)
 _SLIM_CONTEXT = OperationContext(
     user_id="local",
@@ -47,6 +76,7 @@ class SlimNexusFS:
     def __init__(self, kernel: NexusFS) -> None:
         self._kernel = kernel
         self._ctx = _SLIM_CONTEXT
+        self._closed = False
 
     @property
     def kernel(self) -> NexusFS:
@@ -220,37 +250,37 @@ class SlimNexusFS:
 
         if meta is not None:
             is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
-            return {
-                "path": meta.path,
-                "size": meta.size or (4096 if is_dir else 0),
-                "etag": meta.etag,
-                "mime_type": meta.mime_type
+            return _make_stat_dict(
+                path=meta.path,
+                size=meta.size or (4096 if is_dir else 0),
+                etag=meta.etag,
+                mime_type=meta.mime_type
                 or ("inode/directory" if is_dir else "application/octet-stream"),
-                "created_at": meta.created_at.isoformat() if meta.created_at else None,
-                "modified_at": meta.modified_at.isoformat() if meta.modified_at else None,
-                "is_directory": is_dir,
-                "version": meta.version,
-                "zone_id": meta.zone_id,
-                "entry_type": meta.entry_type,
-            }
+                created_at=meta.created_at.isoformat() if meta.created_at else None,
+                modified_at=meta.modified_at.isoformat() if meta.modified_at else None,
+                is_directory=is_dir,
+                version=meta.version,
+                zone_id=meta.zone_id,
+                entry_type=meta.entry_type,
+            )
 
         # No explicit entry — check if it's an implicit directory.
         # is_implicit_directory is on concrete metastore classes, not the ABC.
         _meta = self._kernel.metadata
         _is_implicit = getattr(_meta, "is_implicit_directory", None)
         if _is_implicit is not None and _is_implicit(normalized):
-            return {
-                "path": normalized,
-                "size": 4096,
-                "etag": None,
-                "mime_type": "inode/directory",
-                "created_at": None,
-                "modified_at": None,
-                "is_directory": True,
-                "version": 0,
-                "zone_id": ROOT_ZONE_ID,
-                "entry_type": 1,
-            }
+            return _make_stat_dict(
+                path=normalized,
+                size=4096,
+                etag=None,
+                mime_type="inode/directory",
+                created_at=None,
+                modified_at=None,
+                is_directory=True,
+                version=0,
+                zone_id=ROOT_ZONE_ID,
+                entry_type=1,
+            )
 
         return None
 
@@ -267,10 +297,31 @@ class SlimNexusFS:
     # -- Lifecycle --
 
     async def close(self) -> None:
-        """Close the filesystem and release resources."""
+        """Close the filesystem and release resources.
+
+        Closes the kernel (if it exposes a close method) and then
+        closes the metastore's SQLite connection.  Safe to call
+        multiple times — subsequent calls are no-ops.
+        """
+        if self._closed:
+            return
+        self._closed = True
+
+        # Close the kernel (may be sync or async)
         _close = getattr(self._kernel, "close", None)
         if _close is not None:
             result = _close()
-            # Handle both sync and async close implementations
             if result is not None:
                 await result
+
+        # Close the metastore connection to release the WAL lock
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._kernel.metadata.close()
+
+    async def __aenter__(self) -> SlimNexusFS:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        await self.close()

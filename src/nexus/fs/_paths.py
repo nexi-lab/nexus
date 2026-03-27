@@ -3,12 +3,25 @@
 Single source of truth for all filesystem paths used by nexus-fs:
 state directory, persistent directory, metadata DB, mounts file, etc.
 
-Uses ``platformdirs`` for cross-platform XDG-compliant paths:
-    Linux:  ~/.local/state/nexus-fs/
-    macOS:  ~/Library/Application Support/nexus-fs/
-    Windows: %LOCALAPPDATA%/nexus-fs/
+Two directories
+---------------
+**State directory** (``state_dir()``)
+    Runtime metadata that can be regenerated: ``metadata.db``, ``mounts.json``.
+    Safe to delete — nexus-fs recreates it on next mount.
+    Uses ``platformdirs`` for cross-platform XDG-compliant paths:
+        Linux:  ~/.local/state/nexus-fs/
+        macOS:  ~/Library/Application Support/nexus-fs/
+        Windows: %LOCALAPPDATA%/nexus-fs/
+    Override: ``NEXUS_FS_STATE_DIR``
 
-Override with ``NEXUS_FS_STATE_DIR`` environment variable.
+**Persistent directory** (``persistent_dir()``)
+    Secrets that must survive state resets: OAuth tokens, encryption keys.
+    Created with restricted permissions (``0o700``).
+    Default: ``~/.nexus/`` (legacy, pre-XDG).
+    Override: ``NEXUS_FS_PERSISTENT_DIR``
+
+The split exists because state can be wiped without data loss, but secrets
+cannot be regenerated without re-authenticating.
 """
 
 from __future__ import annotations
@@ -56,12 +69,18 @@ def persistent_dir() -> Path:
     1. ``NEXUS_FS_PERSISTENT_DIR`` environment variable
     2. ``~/.nexus/`` (legacy default, maintained for backwards compatibility)
 
-    This directory stores secrets (OAuth tokens, encryption keys) and must
-    have restricted permissions.
+    This directory stores secrets (OAuth tokens, encryption keys).
+    Created with mode ``0o700`` (owner-only access) on POSIX systems.
     """
     override = os.environ.get("NEXUS_FS_PERSISTENT_DIR")
     p = Path(override) if override else Path.home() / ".nexus"
     p.mkdir(parents=True, exist_ok=True)
+    # Restrict permissions to owner-only on POSIX (no-op on Windows where
+    # chmod is unsupported).
+    import contextlib
+
+    with contextlib.suppress(OSError):
+        p.chmod(0o700)
     return p
 
 

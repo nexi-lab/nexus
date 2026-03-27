@@ -132,6 +132,9 @@ class SyncNexusFS:
     def mkdir(self, path: str, parents: bool = True) -> None:
         self._runner(self._async.mkdir(path, parents=parents))
 
+    def rmdir(self, path: str, recursive: bool = False) -> None:
+        self._runner(self._async.rmdir(path, recursive=recursive))
+
     def rename(self, old_path: str, new_path: str) -> None:
         self._runner(self._async.rename(old_path, new_path))
 

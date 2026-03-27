@@ -512,23 +512,32 @@ jobs:
           print('GCS backend import OK')
           "
 
-      - name: Cold import time gate (budget 240ms)
+      - name: Cold import time gate (budget 240ms, median of 3 runs)
         run: |
-          /tmp/nexus-fs-test/bin/python -X importtime -c "import nexus.fs" 2> /tmp/importtime.log
-          cumulative_us=$(/tmp/nexus-fs-test/bin/python -c "
+          # Run 3 times and take the median to eliminate CI runner jitter
+          measurements=()
+          for i in 1 2 3; do
+            /tmp/nexus-fs-test/bin/python -X importtime -c "import nexus.fs" 2> /tmp/importtime_${i}.log
+            cumulative_us=$(/tmp/nexus-fs-test/bin/python -c "
           import re
-          with open('/tmp/importtime.log') as f:
+          with open('/tmp/importtime_${i}.log') as f:
               lines = f.read().strip().splitlines()
           last = lines[-1]
           match = re.search(r'\|\s+(\d+)\s+\|', last)
           print(match.group(1) if match else '0')
           ")
-          actual_ms=$((cumulative_us / 1000))
-          echo "Cold import time: ${actual_ms}ms (budget: 240ms)"
+            ms=$((cumulative_us / 1000))
+            measurements+=($ms)
+            echo "  Run ${i}: ${ms}ms"
+          done
+          # Sort and take the median (second of three values)
+          IFS=$'\n' sorted=($(sort -n <<<"${measurements[*]}")); unset IFS
+          actual_ms=${sorted[1]}
+          echo "Median import time: ${actual_ms}ms (budget: 240ms)"
           echo "### nexus-fs import time" >> $GITHUB_STEP_SUMMARY
-          echo "**${actual_ms}ms** (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
+          echo "**${actual_ms}ms** median of [${measurements[0]}, ${measurements[1]}, ${measurements[2]}]ms (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
           if [ "$actual_ms" -gt 240 ]; then
-            echo "::error::Cold import time ${actual_ms}ms exceeds 240ms budget"
+            echo "::error::Median import time ${actual_ms}ms exceeds 240ms budget"
             exit 1
           fi
 

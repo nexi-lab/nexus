@@ -67,6 +67,9 @@ logger = logging.getLogger(__name__)
 MAX_CAT_FILE_SIZE = DEFAULT_MAX_FILE_SIZE
 MAX_WRITE_BUFFER_SIZE = DEFAULT_MAX_FILE_SIZE
 
+# Warn when write buffer crosses 100 MB (before the 1 GB hard limit).
+_WRITE_BUFFER_WARNING = 100 * 1024 * 1024
+
 # Supported modes for _open().
 _SUPPORTED_MODES = frozenset({"rb", "wb", "r", "w", "xb", "x"})
 
@@ -334,11 +337,13 @@ class NexusFileSystem(AbstractFileSystem):
                 raise FileExistsError(path)
         try:
             self._mkdir(path, create_parents=True)
-        except Exception:
-            # Silently ignore errors for mount-point ancestors
-            # that the router won't let us create explicitly.
+        except Exception as exc:
             if exist_ok:
-                pass
+                logger.debug(
+                    "makedirs(%r, exist_ok=True) suppressed: %s",
+                    path,
+                    exc,
+                )
             else:
                 raise
         self.dircache.clear()
@@ -497,6 +502,7 @@ class NexusWriteFile:
         self._buffer = io.BytesIO()
         self._closed = False
         self._bytes_written = 0
+        self._warned_large_buffer = False
 
     @property
     def name(self) -> str:
@@ -512,6 +518,14 @@ class NexusWriteFile:
                 f"{MAX_WRITE_BUFFER_SIZE / (1024**3):.0f} GB limit. "
                 f"Use _pipe_file() for large writes or wait for "
                 f"streaming write support."
+            )
+        if not self._warned_large_buffer and self._bytes_written > _WRITE_BUFFER_WARNING:
+            self._warned_large_buffer = True
+            logger.warning(
+                "Write buffer for %r is %d MB. Writes are buffered in memory "
+                "up to 1 GB (hard limit). Consider chunking large writes.",
+                self.path,
+                self._bytes_written // (1024 * 1024),
             )
         return self._buffer.write(data)
 

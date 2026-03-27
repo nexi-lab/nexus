@@ -275,30 +275,10 @@ async def _initialize_services(
         parse_fn=ctx.parse_fn,
     )
 
-    # --- Register background services as bootstrap callbacks ---
-    # TL directive: initialize() prepares resources but stays static.
-    # bootstrap() is the only phase allowed to spawn active threads/async loops.
-    #
-    # Issue #1666: DeferredPermissionBuffer and EventDeliveryWorker now
-    # implement PersistentService and are auto-started by the coordinator's
-    # start_persistent_services() at bootstrap.  Manual callbacks deleted.
-
-    _zl = ctx.services.get("zone_lifecycle")
-    if _zl is not None and hasattr(_zl, "load_terminating_zones"):
-
-        async def _load_zones() -> None:
-            try:
-                _sf = getattr(_zl, "_session_factory", None)
-                if _sf is not None:
-                    with _sf() as session:
-                        _zl.load_terminating_zones(session)
-                    logger.debug(
-                        "[LIFECYCLE] ZoneLifecycleService loaded terminating zones (bootstrap)"
-                    )
-            except Exception as exc:
-                logger.warning("[LIFECYCLE] Failed to load terminating zones: %s", exc)
-
-        nx._bootstrap_callbacks.append(_load_zones)
+    # Background services (DeferredPermissionBuffer, EventDeliveryWorker,
+    # ZoneLifecycleService) implement PersistentService and are auto-started
+    # by the coordinator's start_persistent_services() at bootstrap.
+    # No manual _bootstrap_callbacks needed.
 
 
 # Backward compatibility aliases

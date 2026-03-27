@@ -3,7 +3,6 @@ name: No Merge Commits
 on:
   pull_request:
     branches: [main, develop]
-  merge_group:
 
 jobs:
   check:
@@ -17,12 +16,6 @@ jobs:
 
       - name: Reject merge commits in PR branch
         run: |
-          # For merge_group events, skip (queue handles merge)
-          if [ "${{ github.event_name }}" = "merge_group" ]; then
-            echo "✅ Merge queue event — skipping merge commit check"
-            exit 0
-          fi
-
           HEAD_REF="${{ github.head_ref }}"
           HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
           BASE_REF=${{ github.event.pull_request.base.ref }}

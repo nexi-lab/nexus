@@ -71,6 +71,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   const initiateAuth = useConnectorsStore((s) => s.initiateAuth);
   const pollAuthStatus = useConnectorsStore((s) => s.pollAuthStatus);
   const cancelAuth = useConnectorsStore((s) => s.cancelAuth);
+  const mountConnector = useConnectorsStore((s) => s.mountConnector);
 
   const config = useGlobalStore((s) => s.config);
   const { copy, copied } = useCopy();
@@ -150,11 +151,35 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     return `nexus mounts add ${mountPath} ${selected.name} ${configHint}${remoteFlags ? ` ${remoteFlags}` : ""}`;
   }, [connectors, selectedIndex, config]);
 
+  /** Check if connector can be mounted directly (no config needed). */
+  const canDirectMount = useCallback((): boolean => {
+    const selected = connectors[selectedIndex];
+    if (!selected) return false;
+    return selected.category === "cli" || selected.category === "oauth" || selected.category === "api";
+  }, [connectors, selectedIndex]);
+
+  /** Mount directly via API for connectors that need no config. */
+  const handleDirectMount = useCallback(() => {
+    const selected = connectors[selectedIndex];
+    if (!selected) return;
+    const baseName = selected.name.replace(/_connector$/, "");
+    mountConnector(selected.name, `/mnt/${baseName}`, client);
+  }, [connectors, selectedIndex, mountConnector, client]);
+
+  /** Enter/m: direct mount if no config needed, otherwise show CLI guide. */
+  const handleMountAction = useCallback(() => {
+    if (canDirectMount()) {
+      handleDirectMount();
+    } else {
+      setShowMountGuide(!showMountGuide);
+    }
+  }, [canDirectMount, handleDirectMount, showMountGuide]);
+
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,
     setIndex: (i) => { setSelectedIndex(i); setShowMountGuide(false); },
     getLength: () => connectors.length,
-    onSelect: () => setShowMountGuide(!showMountGuide),
+    onSelect: handleMountAction,
   });
 
   useKeyboard(
@@ -163,7 +188,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
       : {
           ...listNav,
           a: handleAuth,
-          m: () => setShowMountGuide(!showMountGuide),
+          m: handleMountAction,
           r: () => fetchAvailable(client),
           y: () => {
             if (showMountGuide) {

@@ -533,8 +533,16 @@ async def get_auth_status(
             status = str(auth_state.get("auth_status", "unknown"))
 
             if status == "authed" and baseline_status != "authed":
-                # Auth state changed to authed — this flow completed
-                del _pending_auth[state_token]
+                # Auth state changed to authed — this flow completed.
+                # Invalidate ALL pending tokens for the same connector so
+                # concurrent auth/init calls don't also claim completion.
+                # The losing tokens will get 404 on next poll, which the
+                # TUI handles as "expired — retry".
+                stale = [
+                    k for k, v in _pending_auth.items() if v["connector_name"] == connector_name
+                ]
+                for k in stale:
+                    del _pending_auth[k]
                 return AuthStatusResponse(
                     status="completed",
                     connector_name=connector_name,

@@ -261,6 +261,52 @@ class TestAuthStatus:
         # Token should still be in pending auth (not cleaned up)
         assert "tok-preauth" in _pending_auth
 
+    @patch("nexus.backends.base.registry.ConnectorRegistry")
+    def test_concurrent_auth_only_first_completes(self, mock_registry: MagicMock) -> None:
+        """Two pending tokens for the same connector — only the first poll wins.
+
+        When one token detects completion, all other pending tokens for the
+        same connector are invalidated. Subsequent polls get 404.
+        """
+        # Two concurrent auth flows for gmail
+        _pending_auth["tok-A"] = {
+            "connector_name": "gmail_connector",
+            "provider": "gmail",
+            "created_at": time.time(),
+            "status": "pending",
+            "baseline_auth_status": "unknown",
+        }
+        _pending_auth["tok-B"] = {
+            "connector_name": "gmail_connector",
+            "provider": "gmail",
+            "created_at": time.time(),
+            "status": "pending",
+            "baseline_auth_status": "unknown",
+        }
+
+        mock_registry.get_info.return_value = _make_connector_info(
+            "gmail_connector", service_name="gmail"
+        )
+
+        auth_service = MagicMock()
+        auth_service.get_connector_auth_state = AsyncMock(
+            return_value={"auth_status": "authed", "auth_source": "oauth"}
+        )
+        _test_app.state.auth_service = auth_service
+
+        # First poll (tok-A) claims completion
+        resp_a = _client.get("/api/v2/connectors/auth/status", params={"state_token": "tok-A"})
+        assert resp_a.status_code == 200
+        assert resp_a.json()["status"] == "completed"
+
+        # Both tokens should be invalidated
+        assert "tok-A" not in _pending_auth
+        assert "tok-B" not in _pending_auth
+
+        # Second poll (tok-B) gets 404 — not a false "completed"
+        resp_b = _client.get("/api/v2/connectors/auth/status", params={"state_token": "tok-B"})
+        assert resp_b.status_code == 404
+
     def test_unknown_token_returns_404(self) -> None:
         """Completely unknown token returns 404."""
         resp = _client.get(

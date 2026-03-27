@@ -17,12 +17,16 @@
 export const statusColor = {
   /** Healthy, active, committed, connected */
   healthy: "green",
+  /** Completed successfully — same as healthy (terminal vs ongoing state) */
+  success: "green",
   /** Warning, starting, stopping, stale */
   warning: "yellow",
   /** Error, failed, rolled_back, expired */
   error: "red",
-  /** Info, focus, selected */
+  /** Info, informational highlights */
   info: "cyan",
+  /** Focus, selected, active UI chrome */
+  focus: "yellow",
   /** Secondary text, hints, timestamps */
   dim: "gray",
   /** Agent identity, delegation chains */
@@ -132,13 +136,13 @@ export const delegationStatusColor: Record<string, string> = {
 
 export const focusColor = {
   /** Active pane border */
-  activeBorder: statusColor.info,
+  activeBorder: statusColor.focus,
   /** Inactive pane border */
   inactiveBorder: statusColor.dim,
   /** Selected item highlight */
-  selected: statusColor.info,
+  selected: statusColor.focus,
   /** Help bar action keys */
-  actionKey: statusColor.info,
+  actionKey: statusColor.focus,
   /** Help bar navigation keys */
   navKey: statusColor.dim,
 } as const;
@@ -153,23 +157,23 @@ export const focusColor = {
 
 export const palette = {
   /** Primary accent — active tabs, selected items, key bindings */
-  accent: "#00d4ff",
+  accent: "#D4A017",
   /** Secondary accent — hover, secondary actions */
-  accentDim: "#0099bb",
+  accentDim: "#B8890F",
   /** Success — green confirmation */
-  success: "#4dff88",
+  success: "#34D399",
   /** Error — bright red */
-  error: "#ff4444",
+  error: "#F87171",
   /** Error secondary — softer red for hints */
-  errorDim: "#ff8888",
+  errorDim: "#FCA5A5",
   /** Warning — amber */
-  warning: "#ffaa00",
+  warning: "#FBBF24",
   /** Muted text — labels, separators */
-  muted: "#888888",
+  muted: "#8B8B92",
   /** Very muted — borders, inactive chrome */
-  faint: "#555555",
+  faint: "#2A2A2E",
   /** Bright text — active content */
-  bright: "#cccccc",
+  bright: "#EDEDEF",
   /** Header/title text */
-  title: "#ffffff",
+  title: "#EDEDEF",
 } as const;

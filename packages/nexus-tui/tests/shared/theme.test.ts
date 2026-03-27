@@ -7,18 +7,25 @@ import {
   httpStatusColor,
   agentPhaseColor,
   focusColor,
+  palette,
 } from "../../src/shared/theme.js";
 
 describe("theme", () => {
   describe("statusColor", () => {
     it("has all required semantic keys", () => {
       expect(statusColor.healthy).toBe("green");
+      expect(statusColor.success).toBe("green");
       expect(statusColor.warning).toBe("yellow");
       expect(statusColor.error).toBe("red");
       expect(statusColor.info).toBe("cyan");
+      expect(statusColor.focus).toBe("yellow");
       expect(statusColor.dim).toBe("gray");
       expect(statusColor.identity).toBe("magenta");
       expect(statusColor.reference).toBe("blue");
+    });
+
+    it("success is semantically distinct from but same color as healthy", () => {
+      expect(statusColor.success).toBe(statusColor.healthy);
     });
   });
 
@@ -89,13 +96,34 @@ describe("theme", () => {
 
   describe("focusColor", () => {
     it("has active and inactive border colors", () => {
-      expect(focusColor.activeBorder).toBe("cyan");
+      expect(focusColor.activeBorder).toBe("yellow");
       expect(focusColor.inactiveBorder).toBe("gray");
     });
 
     it("has key highlight colors", () => {
-      expect(focusColor.actionKey).toBe("cyan");
+      expect(focusColor.actionKey).toBe("yellow");
       expect(focusColor.navKey).toBe("gray");
+    });
+
+    it("derives from statusColor.focus", () => {
+      expect(focusColor.activeBorder).toBe(statusColor.focus);
+      expect(focusColor.selected).toBe(statusColor.focus);
+      expect(focusColor.actionKey).toBe(statusColor.focus);
+    });
+  });
+
+  describe("palette", () => {
+    it("has all Industrial Warmth hex values", () => {
+      expect(palette.accent).toBe("#D4A017");
+      expect(palette.accentDim).toBe("#B8890F");
+      expect(palette.success).toBe("#34D399");
+      expect(palette.error).toBe("#F87171");
+      expect(palette.errorDim).toBe("#FCA5A5");
+      expect(palette.warning).toBe("#FBBF24");
+      expect(palette.muted).toBe("#8B8B92");
+      expect(palette.faint).toBe("#2A2A2E");
+      expect(palette.bright).toBe("#EDEDEF");
+      expect(palette.title).toBe("#EDEDEF");
     });
   });
 });

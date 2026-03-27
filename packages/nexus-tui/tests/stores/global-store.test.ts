@@ -218,7 +218,7 @@ describe("GlobalStore", () => {
 
   describe("testConnection", () => {
     it("sets connected and userInfo on success", async () => {
-      const mockHealth = { version: "1.0", zone_id: "z1", uptime_seconds: 100 };
+      const mockHealth = { status: "ready", uptime_seconds: 100 };
       const mockUserInfo = {
         user_id: "user-1",
         email: "test@example.com",
@@ -231,7 +231,7 @@ describe("GlobalStore", () => {
 
       // testConnection calls client.get 3 times: health, features, auth/me
       const mockGet = mock()
-        .mockResolvedValueOnce(mockHealth)     // health
+        .mockResolvedValueOnce(mockHealth)     // health (/healthz/ready)
         .mockResolvedValueOnce(null)           // features
         .mockResolvedValueOnce(mockUserInfo);  // auth/me
 
@@ -250,7 +250,7 @@ describe("GlobalStore", () => {
     });
 
     it("sets connected when health passes but auth/me fails", async () => {
-      const mockHealth = { version: "1.0", zone_id: null, uptime_seconds: 10 };
+      const mockHealth = { status: "ready", uptime_seconds: 10 };
       const mockGet = mock()
         .mockResolvedValueOnce(mockHealth)     // health OK
         .mockResolvedValueOnce(null)           // features

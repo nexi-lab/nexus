@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class CacheKey:
     """Key for Tiger Cache lookup.
 
-    zone_id is included for multi-zone federation isolation — each zone
+    zone_id is included for multi-zone namespace isolation — each zone
     gets its own cache partition to prevent cross-zone cache pollution.
     """
 

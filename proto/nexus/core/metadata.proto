@@ -52,21 +52,22 @@ message FileMetadata {
   // Metadata version number (starts at 1).
   int32 version = 9;
 
-  // Zone ID for multi-zone deployments.
+  // Kernel namespace partition ID for multi-zone isolation (P0 invariant).
+  // Analogous to Linux sb->s_dev. Federation extends zones with Raft consensus.
   string zone_id = 10;
 
   // User or agent ID who created/modified this version.
   string created_by = 11;
 
-  // Owner ID for O(1) permission checks (posix_uid).
+  // Kernel posix_uid for O(1) DAC via PermissionEnforcerProtocol.check_owner().
   string owner_id = 12;
 
   // Entry type: DT_REG (0), DT_DIR (1), DT_MOUNT (2), DT_PIPE (3), DT_STREAM (4).
   // SSOT for file/directory/mount/ipc distinction.
   DirEntryType entry_type = 13;
 
-  // Target zone ID for DT_MOUNT entries. Only set when entry_type == DT_MOUNT.
-  // Contains the zone_id of the mounted zone for cross-zone path resolution.
+  // Mount target namespace (DT_MOUNT only). Kernel concept for cross-zone
+  // path resolution — federation extends with Raft consensus per zone.
   string target_zone_id = 14;
 
   // Field 15 reserved: i_links_count moved to zone-level __i_links_count__

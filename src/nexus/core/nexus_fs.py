@@ -183,7 +183,7 @@ class NexusFS(  # type: ignore[misc]
 
         # IPC primitives — kernel-internal, NOT injected via DI.
         # Like VFSLockManager: always present, created by kernel at init.
-        # Both use ROOT_ZONE_ID (zone_id is a federation concept, not kernel).
+        # Both use ROOT_ZONE_ID (zone_id is a kernel namespace partition concept).
         import os as _os_ipc
 
         from nexus.core.pipe_manager import PipeManager

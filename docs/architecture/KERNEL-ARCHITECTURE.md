@@ -273,6 +273,12 @@ describe files. Operations: O(1) KV (get/put/delete), ordered prefix scan
 
 Data type: `FileMetadata` — path, backend_name, etag, size, version, zone_id,
 owner_id, timestamps, mime_type. Always tagged with `zone_id` (P0 invariant).
+`zone_id` is a **kernel namespace partition identifier** (analogous to Linux
+`sb->s_dev`). Federation extends zones with Raft consensus groups, but the
+kernel owns the concept. `owner_id` is the kernel's posix_uid — used by
+`PermissionEnforcerProtocol.check_owner()` for O(1) DAC before service-layer
+hooks run. Audit trail (who created a file) is a service concern tracked by
+VersionRecorder, not a kernel inode field.
 
 ### 3.2 ObjectStoreABC (= Backend) — Blob I/O
 

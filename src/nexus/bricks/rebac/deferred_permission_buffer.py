@@ -23,8 +23,6 @@ import time
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy.exc import OperationalError
-
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.pubsub_invalidation import PubSubInvalidation
     from nexus.bricks.rebac.hierarchy_manager import HierarchyManager
@@ -275,7 +273,9 @@ class DeferredPermissionBuffer:
                 # Clear retry counts for successfully flushed items
                 for item in hierarchy_batch:
                     self._hierarchy_retry_counts.pop(item, None)
-            except (OperationalError, TimeoutError, RuntimeError) as e:
+            except Exception as e:
+                # The flush loop must not drop buffered permissions on unexpected
+                # manager errors. Re-queue and retry anything that fails here.
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue: list[tuple[str, str]] = []
                 for item in hierarchy_batch:
@@ -322,7 +322,9 @@ class DeferredPermissionBuffer:
                         grant["zone_id"],
                     )
                     self._grants_retry_counts.pop(gkey, None)
-            except (OperationalError, TimeoutError, RuntimeError) as e:
+            except Exception as e:
+                # The flush loop must not drop buffered permissions on unexpected
+                # manager errors. Re-queue and retry anything that fails here.
                 # Re-queue with retry tracking; dead-letter items that exceed max_retries
                 requeue_grants: list[dict[str, Any]] = []
                 for grant in grants_batch:

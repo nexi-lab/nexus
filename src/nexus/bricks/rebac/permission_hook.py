@@ -59,6 +59,7 @@ class PermissionCheckHook:
             write_hooks=(self,),
             delete_hooks=(self,),
             rename_hooks=(self,),
+            copy_hooks=(self,),
             mkdir_hooks=(self,),
             rmdir_hooks=(self,),
             stat_hooks=(self,),

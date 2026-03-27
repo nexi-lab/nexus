@@ -156,10 +156,13 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
 
     async def _run() -> None:
         from nexus.fs import mount
+        from nexus.fs._uri import infer_uris_from_paths
 
-        # Auto-discover + any extra mount URIs
-        all_uris = list(mount_uris)
-        fs = await mount(*all_uris) if all_uris else await mount()
+        # Infer required backend URIs from the virtual paths,
+        # then merge with any explicitly provided URIs.
+        inferred = infer_uris_from_paths([source, dest])
+        all_uris = list(dict.fromkeys(list(mount_uris) + inferred))  # dedup, preserve order
+        fs = await mount(*all_uris)
 
         result = await fs.copy(source, dest)
         size = result.get("size", 0)

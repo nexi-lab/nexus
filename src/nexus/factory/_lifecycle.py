@@ -48,7 +48,7 @@ async def _wire_services(
     """
     from nexus.contracts.deployment_profile import DeploymentProfile as _DP
     from nexus.factory._wired import _boot_post_kernel_services
-    from nexus.factory.service_routing import enlist_services, enlist_wired_services
+    from nexus.factory.service_routing import enlist_services
 
     _svc = services or {}
     nx._permission_enforcer = _svc.get("permission_enforcer")  # Issue #1706: override sentinel
@@ -126,7 +126,7 @@ async def _wire_services(
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
-    await enlist_wired_services(nx._service_registry, _wired)
+    await enlist_services(nx._service_registry, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") was added to PathRouter in

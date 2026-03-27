@@ -45,10 +45,11 @@ jobs:
         run: |
           uv venv --python 3.13
           uv pip install -r requirements-docs.txt
-          uv pip install -e ".[all]"
 
       - name: Build docs (strict)
         run: uv run mkdocs build --strict
+        env:
+          DISABLE_MKDOCS_2_WARNING: "true"
 
       - name: Spell check
         run: uv run typos docs/
@@ -79,7 +80,6 @@ jobs:
         run: |
           uv venv --python 3.13
           uv pip install -r requirements-docs.txt
-          uv pip install -e ".[all]"
 
       - name: Configure git
         run: |
@@ -89,9 +89,10 @@ jobs:
       - name: Deploy versioned docs
         working-directory: packages/nexus-fs
         run: |
-          VERSION=$(python -c "import importlib.metadata; print(importlib.metadata.version('nexus-fs'))" 2>/dev/null || echo "0.1.0")
-          uv run mike deploy --push --update-aliases "$VERSION" latest
+          uv run mike deploy --push --update-aliases 0.1.0 latest
           uv run mike set-default --push latest
+        env:
+          DISABLE_MKDOCS_2_WARNING: "true"
 
   link-check:
     name: Check external links

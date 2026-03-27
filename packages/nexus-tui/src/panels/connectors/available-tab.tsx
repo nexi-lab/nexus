@@ -118,7 +118,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     }
   }, [connectors, selectedIndex, initiateAuth, client]);
 
-  /** Build curl mount command for storage connectors that need config. */
+  /** Build mount command for storage connectors that need config. */
   const getMountCommand = useCallback((): string => {
     const selected = connectors[selectedIndex];
     if (!selected) return "";
@@ -128,22 +128,21 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     const apiKey = (config as Record<string, unknown>).apiKey as string | undefined;
 
     // Build config template based on connector type
-    let configFields: Record<string, string> = {};
+    let configJson = "'{}'";
     if (selected.name.includes("s3")) {
-      configFields = { bucket_name: "<BUCKET>", access_key_id: "<KEY>", secret_access_key: "<SECRET>" };
+      configJson = '\'{"bucket_name": "<BUCKET>", "access_key_id": "<KEY>", "secret_access_key": "<SECRET>"}\'';
     } else if (selected.name.includes("gcs")) {
-      configFields = { bucket_name: "<BUCKET>", credentials_path: "<PATH>" };
+      configJson = '\'{"bucket_name": "<BUCKET>", "credentials_path": "<PATH>"}\'';
     } else if (selected.name.includes("local")) {
-      configFields = { local_path: "<PATH>" };
+      configJson = '\'{"local_path": "<PATH>"}\'';
     }
 
-    const body = JSON.stringify({
-      connector_type: selected.name,
-      mount_point: mountPath,
-      config: configFields,
-    }, null, 2);
-
-    return `curl -X POST ${url}/api/v2/connectors/mount \\\n  -H "Authorization: Bearer ${apiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '${body}'`;
+    // Use eval $(nexus env) prefix so NEXUS_URL, NEXUS_API_KEY, and
+    // NEXUS_GRPC_PORT are all set correctly for the CLI
+    const nexusDir = process.env.NEXUS_DATA_DIR
+      ? `cd ${process.env.NEXUS_DATA_DIR.replace(/\/nexus-data$/, "")} && `
+      : "";
+    return `${nexusDir}eval $(nexus env) && nexus mounts add ${mountPath} ${selected.name} ${configJson}`;
   }, [connectors, selectedIndex, config]);
 
   /** Check if connector can be mounted directly (no config needed). */

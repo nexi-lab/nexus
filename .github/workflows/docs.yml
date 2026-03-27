@@ -40,6 +40,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev]"
+          uv pip install -r packages/nexus-fs/requirements-docs.txt
 
       - name: Setup Pages
         id: pages
@@ -47,7 +48,7 @@ jobs:
 
       - name: Build documentation
         run: |
-          uv run mkdocs build
+          uv run python scripts/build_docs_site.py
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

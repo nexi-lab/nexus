@@ -70,7 +70,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/nexi-lab/nexus"
-Documentation = "https://nexus-fs.dev"
+Documentation = "https://nexi-lab.github.io/nexus/latest/"
 Repository = "https://github.com/nexi-lab/nexus"
 Issues = "https://github.com/nexi-lab/nexus/issues"
 

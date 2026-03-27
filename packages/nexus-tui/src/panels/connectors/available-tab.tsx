@@ -269,11 +269,28 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
             </box>
           )}
           {authFlow.status === "error" && (
-            <box height={1} width="100%">
-              <text foregroundColor={statusColor.error}>
-                {`✕ Auth failed: ${authFlow.error_message ?? "Unknown error"} (press a to retry)`}
-              </text>
-            </box>
+            <>
+              <box height={1} width="100%">
+                <text foregroundColor={statusColor.error}>
+                  {`✕ Auth failed: ${authFlow.error_message ?? "Unknown error"}`}
+                </text>
+              </box>
+              <box height={1} width="100%">
+                <text foregroundColor={statusColor.dim}>
+                  {"  To set up OAuth: configure GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars,"}
+                </text>
+              </box>
+              <box height={1} width="100%">
+                <text foregroundColor={statusColor.dim}>
+                  {"  then restart the server. Or mount directly: connectors like gws_gmail work without OAuth."}
+                </text>
+              </box>
+              <box height={1} width="100%">
+                <text foregroundColor={statusColor.dim}>
+                  {"  a:retry  Esc:dismiss"}
+                </text>
+              </box>
+            </>
           )}
         </box>
       )}

@@ -47,11 +47,9 @@ def _check_raft_topology(request: Request) -> tuple[bool, str]:
             return True, ""
         if not _fed.ensure_topology():
             return False, "Raft topology not ready"
-        zone_mgr = getattr(nx_fs, "_zone_mgr", None)
-        if zone_mgr is None:
-            return True, ""
-        root_zone_id = getattr(zone_mgr, "root_zone_id", None) or ROOT_ZONE_ID
-        root_store = zone_mgr.get_store(root_zone_id)
+        _zmgr = _fed.zone_manager
+        root_zone_id = getattr(_zmgr, "root_zone_id", None) or ROOT_ZONE_ID
+        root_store = _zmgr.get_store(root_zone_id)
         if root_store is None:
             return False, "Raft root store not ready"
         if hasattr(root_store, "is_leader") and not root_store.is_leader():

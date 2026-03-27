@@ -157,7 +157,6 @@ async def _wire_services(
     # Federation — wire from parameter (profile-gated, created before kernel).
     if federation is not None:
         await nx._service_registry.enlist("federation", federation)
-        nx._zone_mgr = federation.zone_manager  # backward compat for health checks
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager

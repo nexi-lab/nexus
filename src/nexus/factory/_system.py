@@ -426,7 +426,7 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] SchedulerService unavailable: %s", exc)
 
-    # (Federation is created at link time in _lifecycle.py when nx._zone_mgr is available.)
+    # (Federation is wired at link time in _lifecycle.py via the federation parameter.)
 
     # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
     # AgentRegistry is lazy-constructed via register_factory().

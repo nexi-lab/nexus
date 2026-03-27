@@ -18,11 +18,11 @@ from nexus.backends.connectors.cli.sync_types import DeltaItem
 
 
 def _make_backend(capabilities: frozenset | None = None, **kwargs: Any) -> MagicMock:
-    from nexus.contracts.capabilities import ConnectorCapability
+    from nexus.contracts.backend_features import BackendFeature
 
     backend = MagicMock()
     backend.name = "test"
-    backend.capabilities = capabilities or frozenset({ConnectorCapability.SYNC_ELIGIBLE})
+    backend.capabilities = capabilities or frozenset({BackendFeature.SYNC_ELIGIBLE})
     backend.has_capability = MagicMock(side_effect=lambda c: c in backend.capabilities)
     backend._has_caching = MagicMock(return_value=False)
     backend.use_metadata_listing = True

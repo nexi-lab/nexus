@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from nexus.backends.connectors.base import ConfirmLevel, Reversibility
 from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 
 # ---------------------------------------------------------------------------
 # CreateTweetSchema
@@ -176,7 +176,7 @@ class TestXConnectorCapabilities:
     def test_has_skill_doc_capability(self):
         from nexus.backends.connectors.x.connector import XConnectorBackend
 
-        assert ConnectorCapability.SKILL_DOC in XConnectorBackend._CAPABILITIES
+        assert BackendFeature.SKILL_DOC in XConnectorBackend._CAPABILITIES
 
     def test_skill_name(self):
         from nexus.backends.connectors.x.connector import XConnectorBackend

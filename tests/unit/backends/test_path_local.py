@@ -65,10 +65,10 @@ class TestPathLocalRegistration:
         assert cls is PathLocalBackend
 
     def test_capabilities(self, tmp_path: Path) -> None:
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = PathLocalBackend(root_path=tmp_path)
-        assert ConnectorCapability.ROOT_PATH in backend.capabilities
+        assert BackendFeature.ROOT_PATH in backend.capabilities
         assert backend.has_root_path is True
         assert backend.name == "path_local"
 

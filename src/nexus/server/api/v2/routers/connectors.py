@@ -724,13 +724,13 @@ async def write_to_connector(
         # the kernel write path for ordinary path-addressed backends.
         import asyncio
 
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _route.backend if _route else None
         _caps: frozenset[str] = (
             getattr(backend, "capabilities", frozenset()) if backend else frozenset()
         )
-        is_cli_connector = ConnectorCapability.CLI_BACKED in _caps
+        is_cli_connector = BackendFeature.CLI_BACKED in _caps
 
         if is_cli_connector and _backend_path:
             # Enforce the same write-access checks that nx.write() performs:

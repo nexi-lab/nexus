@@ -30,7 +30,7 @@ from nexus.backends.connectors.cli.protocol import (
     SyncPage,
 )
 from nexus.backends.connectors.cli.result import CLIErrorMapper, CLIResult, CLIResultStatus
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 
 # ---------------------------------------------------------------------------
 # Test schema and connector
@@ -80,17 +80,17 @@ class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.SKILL_DOC,
-            ConnectorCapability.WRITE_BACK,
-            ConnectorCapability.CLI_BACKED,
+            BackendFeature.SKILL_DOC,
+            BackendFeature.WRITE_BACK,
+            BackendFeature.CLI_BACKED,
         }
     )
 
-    def has_capability(self, cap: ConnectorCapability) -> bool:
+    def has_capability(self, cap: BackendFeature) -> bool:
         return cap in self._CAPABILITIES
 
     @property
-    def capabilities(self) -> frozenset[ConnectorCapability]:
+    def capabilities(self) -> frozenset[BackendFeature]:
         return self._CAPABILITIES
 
 
@@ -246,9 +246,9 @@ class TestConnectorLifecycleE2E:
     def test_step8_capability_declaration(self) -> None:
         """Step 8: Connector declares correct capabilities."""
         connector = FakeGHConnector()
-        assert connector.has_capability(ConnectorCapability.SKILL_DOC)
-        assert connector.has_capability(ConnectorCapability.WRITE_BACK)
-        assert connector.has_capability(ConnectorCapability.CLI_BACKED)
+        assert connector.has_capability(BackendFeature.SKILL_DOC)
+        assert connector.has_capability(BackendFeature.WRITE_BACK)
+        assert connector.has_capability(BackendFeature.CLI_BACKED)
 
     @pytest.mark.asyncio
     async def test_step9_sync_provider_satisfies_protocol(self) -> None:

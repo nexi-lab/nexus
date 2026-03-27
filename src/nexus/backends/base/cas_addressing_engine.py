@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.blob_transport import BlobTransport
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.core.object_store import WriteResult
@@ -76,11 +76,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CAS_ADDRESSING_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+CAS_ADDRESSING_CAPABILITIES: frozenset[BackendFeature] = frozenset(
     {
-        ConnectorCapability.CAS,
-        ConnectorCapability.STREAMING,
-        ConnectorCapability.BATCH_CONTENT,
+        BackendFeature.CAS,
+        BackendFeature.STREAMING,
+        BackendFeature.BATCH_CONTENT,
     }
 )
 """Common capabilities for CAS-based backends."""
@@ -103,7 +103,7 @@ class CASAddressingEngine(Backend):
         _backend_name: Human-readable backend identifier.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = CAS_ADDRESSING_CAPABILITIES
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = CAS_ADDRESSING_CAPABILITIES
 
     def __init__(
         self,

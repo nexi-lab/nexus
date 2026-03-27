@@ -18,7 +18,7 @@ import pytest
 
 from nexus.backends.connectors.cli.sync_loop import ConnectorSyncLoop
 from nexus.backends.connectors.cli.sync_types import DeltaItem, DeltaSyncResult
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -34,8 +34,8 @@ def _make_sync_eligible_backend(
     backend.name = name
     backend.capabilities = frozenset(
         {
-            ConnectorCapability.SYNC_ELIGIBLE,
-            ConnectorCapability.CACHE_BULK_READ,
+            BackendFeature.SYNC_ELIGIBLE,
+            BackendFeature.CACHE_BULK_READ,
         }
     )
     backend.has_capability = MagicMock(side_effect=lambda c: c in backend.capabilities)

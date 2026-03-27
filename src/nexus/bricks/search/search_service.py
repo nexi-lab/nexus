@@ -769,11 +769,11 @@ class SearchService:
         2. If entries exist, return them (fast, no API call).
         3. If empty (cache miss), fall back to live API.
         """
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = route.backend
         caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
-        use_metastore = ConnectorCapability.SYNC_ELIGIBLE in caps and getattr(
+        use_metastore = BackendFeature.SYNC_ELIGIBLE in caps and getattr(
             backend, "use_metadata_listing", False
         )
 

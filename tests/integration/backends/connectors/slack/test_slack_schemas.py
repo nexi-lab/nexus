@@ -9,7 +9,7 @@ from nexus.backends.connectors.slack.schemas import (
     SendMessageSchema,
     UpdateMessageSchema,
 )
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 
 # ---------------------------------------------------------------------------
 # SendMessageSchema
@@ -251,7 +251,7 @@ class TestSlackConnectorCapabilities:
     def test_has_skill_doc_capability(self):
         from nexus.backends.connectors.slack.connector import SlackConnectorBackend
 
-        assert ConnectorCapability.SKILL_DOC in SlackConnectorBackend._CAPABILITIES
+        assert BackendFeature.SKILL_DOC in SlackConnectorBackend._CAPABILITIES
 
     def test_skill_name(self):
         from nexus.backends.connectors.slack.connector import SlackConnectorBackend

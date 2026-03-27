@@ -1,7 +1,7 @@
-"""Connector capability discovery (Issue #2069).
+"""Backend feature flags (Issue #2069).
 
-Provides a unified ``ConnectorCapability`` enum for declaring and querying
-backend capabilities.  Backends declare ``_CAPABILITIES`` as a ClassVar;
+Provides a unified ``BackendFeature`` enum for declaring and querying
+backend features.  Backends declare ``_CAPABILITIES`` as a ClassVar;
 consumers query via ``has_capability()`` or ``cap in backend.capabilities``.
 
 Canonical home: contracts/ (base tier — available to all layers).
@@ -23,7 +23,7 @@ References:
 from enum import StrEnum
 
 
-class ConnectorCapability(StrEnum):
+class BackendFeature(StrEnum):
     """Enumeration of all capabilities a connector backend can support.
 
     Each value corresponds to either:
@@ -43,12 +43,6 @@ class ConnectorCapability(StrEnum):
     TOKEN_MANAGER = "token_manager"
     """Backend manages OAuth tokens."""
 
-    DATA_DIR = "data_dir"
-    """Backend has a data_dir for ancillary data storage."""
-
-    PARALLEL_MMAP = "parallel_mmap"
-    """Backend supports Rust-accelerated parallel mmap reads."""
-
     USER_SCOPED = "user_scoped"
     """Backend requires per-user OAuth credentials."""
 
@@ -62,9 +56,6 @@ class ConnectorCapability(StrEnum):
 
     DIRECTORY_LISTING = "directory_listing"
     """Backend supports DirectoryListingProtocol (list_dir + get_file_info)."""
-
-    SEARCHABLE = "searchable"
-    """Backend supports SearchableConnector (content/metadata search)."""
 
     OAUTH = "oauth"
     """Backend supports OAuthCapableProtocol (token management)."""
@@ -94,9 +85,6 @@ class ConnectorCapability(StrEnum):
     NATIVE_VERSIONING = "native_versioning"
     """Backend supports native object versioning (e.g., S3 versioning, GCS generations)."""
 
-    CHANGE_NOTIFICATIONS = "change_notifications"
-    """Backend supports change notifications (e.g., S3 Event Notifications, GCS Pub/Sub)."""
-
     RESUMABLE_UPLOAD = "resumable_upload"
     """Backend supports resumable uploads (e.g., GCS resumable, S3 multipart with resume)."""
 
@@ -107,9 +95,6 @@ class ConnectorCapability(StrEnum):
 
     SYNC = "sync"
     """Backend implements ConnectorSyncProvider for delta sync."""
-
-    WATCH = "watch"
-    """Sync provider supports real-time watch() for push-based updates."""
 
     WRITE_BACK = "write_back"
     """Backend supports write operations (validated YAML → backend action)."""
@@ -128,37 +113,37 @@ class ConnectorCapability(StrEnum):
 
 # --- Convenience frozensets ---
 
-CORE_CAPABILITIES: frozenset[ConnectorCapability] = frozenset()
+CORE_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset()
 """Default capabilities for Backend ABC (empty — backends opt in)."""
 
-BLOB_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+BLOB_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
-        ConnectorCapability.RENAME,
-        ConnectorCapability.DIRECTORY_LISTING,
-        ConnectorCapability.PATH_DELETE,
-        ConnectorCapability.STREAMING,
-        ConnectorCapability.BATCH_CONTENT,
+        BackendFeature.RENAME,
+        BackendFeature.DIRECTORY_LISTING,
+        BackendFeature.PATH_DELETE,
+        BackendFeature.STREAMING,
+        BackendFeature.BATCH_CONTENT,
     }
 )
 """Common capabilities for blob storage connectors (S3, GCS, Azure)."""
 
-OAUTH_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+OAUTH_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
-        ConnectorCapability.USER_SCOPED,
-        ConnectorCapability.TOKEN_MANAGER,
-        ConnectorCapability.OAUTH,
-        ConnectorCapability.SYNC_ELIGIBLE,
+        BackendFeature.USER_SCOPED,
+        BackendFeature.TOKEN_MANAGER,
+        BackendFeature.OAUTH,
+        BackendFeature.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for OAuth-based connectors."""
 
-CLI_CONNECTOR_CAPABILITIES: frozenset[ConnectorCapability] = frozenset(
+CLI_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
-        ConnectorCapability.CLI_BACKED,
-        ConnectorCapability.WRITE_BACK,
-        ConnectorCapability.SKILL_DOC,
-        ConnectorCapability.SYNC,
-        ConnectorCapability.SYNC_ELIGIBLE,
+        BackendFeature.CLI_BACKED,
+        BackendFeature.WRITE_BACK,
+        BackendFeature.SKILL_DOC,
+        BackendFeature.SYNC,
+        BackendFeature.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for CLI-backed connectors (gws, gh)."""

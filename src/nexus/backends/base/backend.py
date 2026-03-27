@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, runtime_checkable
 from nexus.core.object_store import ObjectStoreABC, WriteResult
 
 if TYPE_CHECKING:
-    from nexus.contracts.capabilities import ConnectorCapability
+    from nexus.contracts.backend_features import BackendFeature
     from nexus.contracts.types import OperationContext
 
 
@@ -204,7 +204,7 @@ class Backend(ObjectStoreABC):
 
     # === Capability Discovery (Issue #2069) ===
 
-    _CAPABILITIES: ClassVar["frozenset[ConnectorCapability]"] = frozenset()
+    _CAPABILITIES: ClassVar["frozenset[BackendFeature]"] = frozenset()
     """Capabilities declared by this backend class.
 
     Subclasses override to declare their supported capabilities.
@@ -212,11 +212,11 @@ class Backend(ObjectStoreABC):
     """
 
     @property
-    def capabilities(self) -> "frozenset[ConnectorCapability]":
+    def capabilities(self) -> "frozenset[BackendFeature]":
         """All capabilities supported by this backend."""
         return self._CAPABILITIES
 
-    def has_capability(self, cap: "ConnectorCapability") -> bool:
+    def has_capability(self, cap: "BackendFeature") -> bool:
         """Check whether this backend supports a specific capability."""
         return cap in self._CAPABILITIES
 

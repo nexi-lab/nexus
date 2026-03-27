@@ -66,7 +66,7 @@ from nexus.backends.connectors.slack.utils import (
     list_messages_from_channel,
 )
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -120,11 +120,11 @@ class SlackConnectorBackend(
     - Messages stored as JSON files
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-            ConnectorCapability.SKILL_DOC,
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
+            BackendFeature.SKILL_DOC,
         }
     )
 

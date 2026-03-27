@@ -88,7 +88,7 @@ class OperationContext:
         subject_type: Type of subject (user, agent, service, session).
         subject_id: Unique identifier for the subject.
         groups: List of group IDs the subject belongs to.
-        zone_id: Zone/organization ID for multi-zone isolation (optional).
+        zone_id: Kernel namespace partition ID for multi-zone isolation (optional).
         is_admin: Whether the subject has admin privileges.
         is_system: Whether this is a system operation (bypasses all checks).
         admin_capabilities: Set of granted admin capabilities.

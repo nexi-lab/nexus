@@ -63,7 +63,7 @@ class FileEvent:
 
     type: FileEventType | str
     path: str
-    zone_id: str | None = None  # None for Layer 1 (local) events
+    zone_id: str | None = None  # Kernel namespace partition (None for Layer 1 local events)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     old_path: str | None = None

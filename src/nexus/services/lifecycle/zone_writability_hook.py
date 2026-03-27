@@ -1,8 +1,9 @@
 """Zone writability hook — gate all writes during zone deprovision (Issue #2061).
 
 Migrated from NexusFS._check_zone_writable() (Issue #1371):
-kernel should not know about zone lifecycle — this is a federation concern
-injected via KernelDispatch PRE hooks.
+zone lifecycle management is a federation service concern (kernel owns zone_id
+as namespace partition, federation owns zone provisioning/deprovisioning).
+Injected via KernelDispatch PRE hooks.
 
 When a zone is terminating (being deprovisioned), all write operations
 to that zone are blocked with ZoneTerminatingError. This prevents data

@@ -82,7 +82,7 @@ class AdvisoryLockManager(ABC):
     a counting semaphore (no exclusive/shared distinction).
 
     zone_id is bound at construction time — callers never pass it per-method.
-    This prevents federation concepts (zone) from leaking into the lock API.
+    zone_id is a kernel namespace partition concept — callers need not manage it.
     Internally, zone_id is used as a key prefix for store-level scoping.
 
     Subclasses must implement all abstract methods.

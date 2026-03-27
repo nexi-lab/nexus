@@ -33,7 +33,7 @@ classifiers = [
 
 # ~16 base dependencies — slim by design
 dependencies = [
-    "pydantic>=2.0",
+    "pydantic[email]>=2.0",
     "click>=8.0",
     "rich>=13.0",
     "orjson>=3.9",

@@ -25,6 +25,7 @@ from nexus.bricks.ipc.exceptions import (
     InboxFullError,
     InboxNotFoundError,
 )
+from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +102,8 @@ def _get_ipc_wakeup_notifiers(request: Request) -> list[Any]:
     return getattr(request.app.state, "ipc_wakeup_notifiers", [])
 
 
-def _get_ipc_zone_id(request: Request) -> str:
-    return getattr(request.app.state, "zone_id", "root")
+def _get_auth_zone_id(auth_result: dict[str, Any]) -> str:
+    return auth_result.get("zone_id") or ROOT_ZONE_ID
 
 
 # ---------------------------------------------------------------------------
@@ -119,28 +120,28 @@ async def send_message(
     event_publisher: Any = Depends(_get_ipc_event_publisher),
     wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
     cache_store: Any = Depends(_get_ipc_cache_store),
-    zone_id: str = Depends(_get_ipc_zone_id),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for enqueueing IPC inbox messages."""
     _validate_agent_id(body.sender)
     _validate_agent_id(body.recipient)
     _check_agent_access(auth_result, body.sender)
+    zone_id = _get_auth_zone_id(auth_result)
 
     if storage is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")
 
     try:
-        envelope = MessageEnvelope.model_validate(
-            {
-                "id": body.message_id,
-                "from": body.sender,
-                "to": body.recipient,
-                "type": body.type,
-                "payload": body.payload,
-                "correlation_id": body.correlation_id,
-                "ttl_seconds": body.ttl_seconds,
-            }
-        )
+        envelope_data: dict[str, Any] = {
+            "from": body.sender,
+            "to": body.recipient,
+            "type": body.type,
+            "payload": body.payload,
+            "correlation_id": body.correlation_id,
+            "ttl_seconds": body.ttl_seconds,
+        }
+        if body.message_id is not None:
+            envelope_data["id"] = body.message_id
+        envelope = MessageEnvelope.model_validate(envelope_data)
         sender = MessageSender(
             storage=storage,
             event_publisher=event_publisher,
@@ -172,11 +173,11 @@ async def list_inbox(
     agent_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     storage: Any = Depends(_get_ipc_storage_driver),
-    zone_id: str = Depends(_get_ipc_zone_id),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for listing inbox messages."""
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
+    zone_id = _get_auth_zone_id(auth_result)
 
     if storage is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")
@@ -198,11 +199,11 @@ async def inbox_count(
     agent_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     storage: Any = Depends(_get_ipc_storage_driver),
-    zone_id: str = Depends(_get_ipc_zone_id),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for inbox depth."""
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
+    zone_id = _get_auth_zone_id(auth_result)
 
     if storage is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")

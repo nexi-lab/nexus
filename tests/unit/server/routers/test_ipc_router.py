@@ -33,6 +33,19 @@ def _override_auth(app: FastAPI) -> None:
     }
 
 
+def _override_auth_zone(app: FastAPI, zone_id: str) -> None:
+    from nexus.server.api.v2.routers.ipc import _get_require_auth
+
+    app.dependency_overrides[_get_require_auth()] = lambda: {
+        "authenticated": True,
+        "subject_type": "agent",
+        "subject_id": "agent:alice",
+        "x_agent_id": "agent:alice",
+        "zone_id": zone_id,
+        "is_admin": True,
+    }
+
+
 def test_post_send_enqueues_message() -> None:
     storage = InMemoryStorageDriver()
     provisioner = AgentProvisioner(storage, zone_id="root")
@@ -79,6 +92,41 @@ def test_post_send_enqueues_message() -> None:
     assert envelope["payload"]["body"] == "hello"
 
 
+def test_post_send_generates_message_id_when_omitted() -> None:
+    storage = InMemoryStorageDriver()
+    provisioner = AgentProvisioner(storage, zone_id="root")
+    asyncio.run(provisioner.provision("agent:alice", name="Alice"))
+    asyncio.run(provisioner.provision("agent:bob", name="Bob"))
+
+    app = FastAPI()
+    app.state.ipc_storage_driver = storage
+    app.state.ipc_event_publisher = None
+    app.state.ipc_wakeup_notifiers = []
+    app.state.ipc_cache_store = None
+    app.state.zone_id = "wrong-zone"
+    app.include_router(router)
+    _override_auth(app)
+
+    client = TestClient(app)
+    response = client.post(
+        "/api/v2/ipc/send",
+        json={
+            "sender": "agent:alice",
+            "recipient": "agent:bob",
+            "type": "task",
+            "payload": {"body": "hello"},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data["message_id"], str)
+    assert data["message_id"]
+
+    inbox_entries = asyncio.run(storage.list_dir(inbox_path("agent:bob"), "root"))
+    assert any(data["message_id"] in entry for entry in inbox_entries)
+
+
 def test_inbox_and_count_return_compatibility_shapes() -> None:
     storage = InMemoryStorageDriver()
     provisioner = AgentProvisioner(storage, zone_id="root")
@@ -119,6 +167,53 @@ def test_inbox_and_count_return_compatibility_shapes() -> None:
     assert count_response.status_code == 200
     count_data = count_response.json()
     assert count_data == {"agent_id": "agent:bob", "count": 1}
+
+
+def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
+    storage = InMemoryStorageDriver()
+    provisioner = AgentProvisioner(storage, zone_id="tenant-a")
+    asyncio.run(provisioner.provision("agent:alice", name="Alice"))
+    asyncio.run(provisioner.provision("agent:bob", name="Bob"))
+
+    app = FastAPI()
+    app.state.ipc_storage_driver = storage
+    app.state.ipc_event_publisher = None
+    app.state.ipc_wakeup_notifiers = []
+    app.state.ipc_cache_store = None
+    app.state.zone_id = "root"
+    app.include_router(router)
+    _override_auth_zone(app, "tenant-a")
+
+    client = TestClient(app)
+    send_response = client.post(
+        "/api/v2/ipc/send",
+        json={
+            "sender": "agent:alice",
+            "recipient": "agent:bob",
+            "type": "task",
+            "payload": {"body": "hello"},
+            "message_id": "msg_router_zone",
+        },
+    )
+    assert send_response.status_code == 200
+
+    tenant_entries = asyncio.run(storage.list_dir(inbox_path("agent:bob"), "tenant-a"))
+    assert any("msg_router_zone" in entry for entry in tenant_entries)
+
+    root_entries_error: FileNotFoundError | None = None
+    try:
+        asyncio.run(storage.list_dir(inbox_path("agent:bob"), "root"))
+    except FileNotFoundError as exc:
+        root_entries_error = exc
+    assert root_entries_error is not None
+
+    inbox_response = client.get("/api/v2/ipc/inbox/agent:bob")
+    assert inbox_response.status_code == 200
+    assert inbox_response.json()["count"] == 1
+
+    count_response = client.get("/api/v2/ipc/inbox/agent:bob/count")
+    assert count_response.status_code == 200
+    assert count_response.json() == {"agent_id": "agent:bob", "count": 1}
 
 
 def test_sse_stream_emits_connected_and_delivery_event() -> None:
@@ -164,7 +259,6 @@ def test_sse_stream_emits_connected_and_delivery_event() -> None:
                 event_publisher,
                 [],
                 cache_store,
-                "root",
             )
         )
         delivery_event = await asyncio.wait_for(delivery_task, timeout=1.0)

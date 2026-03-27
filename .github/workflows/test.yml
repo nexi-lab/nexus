@@ -5,7 +5,6 @@ on:
     branches: [main, develop, SETUP]
   pull_request:
     branches: [main, develop]
-  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -19,9 +18,7 @@ jobs:
     name: Detect Code Changes
     runs-on: ubuntu-latest
     outputs:
-      # Merge queue always runs full CI — paths-filter can't diff correctly
-      # on the temporary merge commit created by the queue.
-      code_changed: ${{ github.event_name == 'merge_group' && 'true' || steps.filter.outputs.code }}
+      code_changed: ${{ steps.filter.outputs.code }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3

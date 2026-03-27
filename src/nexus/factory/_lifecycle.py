@@ -222,72 +222,9 @@ async def _wire_services(
     # rebac_manager.close() and audit_store.close() are now handled by
     # ServiceRegistry.close_all_services() — no manual callbacks needed.
 
-    # Issue #1792: AgentRegistry — lazy construct via ServiceRegistry.register_factory().
-    # Only created on first access (ACP/TaskManager/EvictionManager need it).
-    # No-agent profiles (REMOTE) never access it → never created.
-    def _create_agent_registry() -> Any:
-        from nexus.core.agent_registry import AgentRegistry
-
-        _ar = AgentRegistry()
-        # Wire close callback
-        if hasattr(_ar, "close_all"):
-
-            def _close_agent_registry() -> None:
-                try:
-                    _ar.close_all()
-                except Exception as exc:
-                    logger.debug("close: agent_registry.close_all() failed: %s", exc)
-
-            nx._close_callbacks.append(_close_agent_registry)
-
-        logger.debug("[BOOT:LINK] AgentRegistry lazy-constructed on first access")
-        return _ar
-
-    nx._service_registry.register_factory("agent_registry", _create_agent_registry)
-
-    # Issue #1801: _overlay_config_fn closure removed — kernel now reads
-    # workspace_registry directly from service registry via nx.service("workspace_registry").
-
-    # --- Deferred EvictionManager + AcpService (Issue #1792) ---
-    # AgentRegistry is lazy-constructed via register_factory().
-    # Accessing it here triggers construction only if EvictionManager/AcpService exist.
-    _agent_ref = nx._service_registry.service("agent_registry")
-    _agent_reg = _agent_ref._service_instance if _agent_ref is not None else None
-    if _agent_reg is not None:
-        try:
-            from nexus.contracts.deployment_profile import DeploymentProfile as _DP
-            from nexus.lib.performance_tuning import resolve_profile_tuning
-            from nexus.services.agents.eviction_manager import EvictionManager
-            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
-            from nexus.services.agents.resource_monitor import ResourceMonitor
-
-            _profile_tuning = resolve_profile_tuning(_DP.FULL)
-            _eviction_tuning = _profile_tuning.eviction
-            _resource_monitor = ResourceMonitor(tuning=_eviction_tuning)
-            _eviction_policy = QoSEvictionPolicy()
-            _eviction_manager = EvictionManager(
-                agent_registry=_agent_reg,
-                monitor=_resource_monitor,
-                policy=_eviction_policy,
-                tuning=_eviction_tuning,
-            )
-            await nx._service_registry.enlist("eviction_manager", _eviction_manager)
-            logger.debug("[BOOT:LINK] EvictionManager created (deferred, QoS-aware)")
-        except Exception as exc:
-            logger.warning("[BOOT:LINK] EvictionManager unavailable: %s", exc)
-
-        try:
-            from nexus.contracts.constants import ROOT_ZONE_ID
-            from nexus.services.acp.service import AcpService
-
-            _acp_service = AcpService(
-                agent_registry=_agent_reg,
-                zone_id=zone_id or ROOT_ZONE_ID,
-            )
-            await nx._service_registry.enlist("acp_service", _acp_service)
-            logger.debug("[BOOT:LINK] AcpService created (deferred)")
-        except Exception as exc:
-            logger.warning("[BOOT:LINK] AcpService unavailable: %s", exc)
+    # Issue #1792: AgentRegistry, EvictionManager, AcpService are now
+    # constructed in _boot_post_kernel_services (_wired.py) by the services
+    # that need them. No factory lazy pattern or register_factory() needed.
 
     return _InitContext(
         services=_svc,

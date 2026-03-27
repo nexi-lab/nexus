@@ -311,25 +311,60 @@ async def _boot_post_kernel_services(
 
     # AgentStatusResolver moved to orchestrator._register_vfs_hooks() (Issue #1570, #1810)
 
-    acp_rpc_service: Any = None
-    # Issue #1792: AcpService is created in _wire_services() via ServiceRegistry.
-    _acp_ref = nx._service_registry.service("acp_service")
-    _acp_service = _acp_ref._service_instance if _acp_ref is not None else None
-    if _acp_service is None:
-        # Fallback: construct inline using AgentRegistry from ServiceRegistry.
-        _acp_ar_ref = nx._service_registry.service("agent_registry")
-        _acp_pt = _acp_ar_ref._service_instance if _acp_ar_ref is not None else None
-        if _acp_pt is not None:
-            try:
-                from nexus.services.acp.service import AcpService
+    # --- AgentRegistry + AcpService + EvictionManager (Issue #1792) ---
+    # AgentRegistry is constructed by the first consumer that needs it.
+    # No-agent profiles (REMOTE) skip this entire block.
+    _agent_reg: Any = None
+    _acp_ref = nx._service_registry.service("agent_registry")
+    if _acp_ref is not None:
+        _agent_reg = _acp_ref._service_instance
+    if _agent_reg is None:
+        try:
+            from nexus.core.agent_registry import AgentRegistry
 
-                _acp_service = AcpService(
-                    agent_registry=_acp_pt,
-                    zone_id=ROOT_ZONE_ID,
-                )
-                logger.debug("[BOOT:WIRED] AcpService created (inline)")
-            except Exception as exc:
-                logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
+            _agent_reg = AgentRegistry()
+            await nx._service_registry.enlist("agent_registry", _agent_reg)
+            logger.debug("[BOOT:WIRED] AgentRegistry constructed by wired tier")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] AgentRegistry unavailable: %s", exc)
+
+    # EvictionManager (QoS-aware agent eviction)
+    if _agent_reg is not None:
+        try:
+            from nexus.contracts.deployment_profile import DeploymentProfile as _DP
+            from nexus.lib.performance_tuning import resolve_profile_tuning
+            from nexus.services.agents.eviction_manager import EvictionManager
+            from nexus.services.agents.eviction_policy import QoSEvictionPolicy
+            from nexus.services.agents.resource_monitor import ResourceMonitor
+
+            _profile_tuning = resolve_profile_tuning(_DP.FULL)
+            _eviction_tuning = _profile_tuning.eviction
+            _eviction_manager = EvictionManager(
+                agent_registry=_agent_reg,
+                monitor=ResourceMonitor(tuning=_eviction_tuning),
+                policy=QoSEvictionPolicy(),
+                tuning=_eviction_tuning,
+            )
+            await nx._service_registry.enlist("eviction_manager", _eviction_manager)
+            logger.debug("[BOOT:WIRED] EvictionManager created (QoS-aware)")
+        except Exception as exc:
+            logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
+
+    # AcpService (agent call protocol)
+    acp_rpc_service: Any = None
+    _acp_service: Any = None
+    if _agent_reg is not None:
+        try:
+            from nexus.services.acp.service import AcpService
+
+            _acp_service = AcpService(
+                agent_registry=_agent_reg,
+                zone_id=ROOT_ZONE_ID,
+            )
+            await nx._service_registry.enlist("acp_service", _acp_service)
+            logger.debug("[BOOT:WIRED] AcpService created")
+        except Exception as exc:
+            logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)
     if _acp_service is not None:
         # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
         if hasattr(_acp_service, "bind_fs"):

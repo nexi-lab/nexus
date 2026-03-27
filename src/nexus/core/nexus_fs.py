@@ -1199,8 +1199,22 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
         # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        if path in self._stream_manager._buffers:
-            return await self._stream_read(path, count=count, offset=offset)
+        # Fully inlined: single dict.get → buffer.read_at (Rust). No wrapper calls.
+        _sbuf = self._stream_manager._buffers.get(path)
+        if _sbuf is not None:
+            from nexus.core.stream import StreamClosedError, StreamEmptyError
+
+            try:
+                if count is not None and count > 1:
+                    items, _ = await _sbuf.read_batch_blocking(offset, count, blocking=True)
+                    return b"".join(items)
+                data, _ = await _sbuf.read(offset, blocking=True)
+                return data
+            except StreamEmptyError:
+                # Blocking read handles this internally; only non-blocking raises
+                raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
+            except StreamClosedError:
+                raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
@@ -1982,11 +1996,13 @@ class NexusFS(  # type: ignore[misc]
                 n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
                 return {"path": path, "bytes_written": n}
         # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        if path in self._stream_manager._buffers:
+        # Fully inlined: single dict.get → buffer.write_nowait (Rust). No wrapper calls.
+        _sbuf = self._stream_manager._buffers.get(path)
+        if _sbuf is not None:
             if isinstance(buf, str):
                 buf = buf.encode("utf-8")
-            offset = self._stream_write(path, buf)
-            return {"path": path, "bytes_written": len(buf), "offset": offset}
+            _off = _sbuf.write_nowait(buf)
+            return {"path": path, "bytes_written": len(buf), "offset": _off}
 
         # Auto-convert str to bytes for convenience
         if isinstance(buf, str):

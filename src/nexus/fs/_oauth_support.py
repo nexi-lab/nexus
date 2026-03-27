@@ -13,8 +13,12 @@ import click
 from cryptography.fernet import Fernet
 from rich.console import Console
 
-_DEFAULT_DB_PATH = Path("~/.nexus/nexus.db").expanduser()
-_DEFAULT_OAUTH_KEY_PATH = Path("~/.nexus/auth/oauth.key").expanduser()
+from nexus.fs._paths import oauth_key_path as _oauth_key_path_fn
+from nexus.fs._paths import token_manager_db as _token_manager_db_fn
+
+# Resolve once at import time for backwards compatibility
+_DEFAULT_DB_PATH = _token_manager_db_fn()
+_DEFAULT_OAUTH_KEY_PATH = _oauth_key_path_fn()
 console = Console()
 
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {

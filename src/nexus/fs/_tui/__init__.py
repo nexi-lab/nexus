@@ -397,13 +397,12 @@ class PlaygroundApp(App[None]):
         # No URIs — auto-discover from mounts.json in state dir
         import json
 
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            __import__("tempfile").gettempdir(), "nexus-fs"
-        )
-        mounts_file = os.path.join(state_dir, "mounts.json")
-        if os.path.exists(mounts_file):
+        from nexus.fs._paths import mounts_file as _mounts_file_fn
+
+        mf = _mounts_file_fn()
+        if mf.exists():
             try:
-                with open(mounts_file) as f:
+                with open(mf) as f:
                     saved_uris = json.load(f)
                 if saved_uris:
                     self._restored_mounts = True
@@ -1073,12 +1072,10 @@ class PlaygroundApp(App[None]):
 
     def _persist_mounts(self) -> None:
         """Persist current mount URIs for the next playground launch."""
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            __import__("tempfile").gettempdir(), "nexus-fs"
-        )
-        os.makedirs(state_dir, exist_ok=True)
-        mounts_file = os.path.join(state_dir, "mounts.json")
-        with open(mounts_file, "w") as f:
+        from nexus.fs._paths import mounts_file as _mounts_file_fn
+
+        mf = _mounts_file_fn()
+        with open(mf, "w") as f:
             json.dump(list(self._uris), f)
 
     def _selected_mount_point(self) -> str | None:

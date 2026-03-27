@@ -69,6 +69,47 @@ fs = nexus.fs.mount_sync("gws://sheets", "gws://docs")
 | `mkdir(path)` | Create directory |
 | `list_mounts()` | List mount points |
 
+## TUI Playground
+
+```bash
+pip install nexus-fs[tui]
+nexus-fs playground s3://my-bucket local://./data
+```
+
+> **Note:** The TUI uses direct backend access for low-latency browsing.
+> File operation semantics in the playground may differ from the library API
+> (e.g., metadata fields, error messages). The library API (`mount()` /
+> `mount_sync()`) is the authoritative interface. TUI/library unification
+> is planned for a future release.
+
+## State Directory
+
+nexus-fs stores runtime state (metadata DB, mount config) in a platform-specific
+directory:
+
+| Platform | Default path |
+|----------|-------------|
+| Linux | `~/.local/state/nexus-fs/` |
+| macOS | `~/Library/Application Support/nexus-fs/` |
+| Windows | `%LOCALAPPDATA%/nexus-fs/` |
+
+Override with the `NEXUS_FS_STATE_DIR` environment variable.
+
+Persistent secrets (OAuth tokens, encryption keys) are stored under `~/.nexus/`.
+Override with `NEXUS_FS_PERSISTENT_DIR`.
+
+## Relationship to `nexus-ai-fs`
+
+`nexus-fs` is the **slim standalone** cloud storage package (~16 dependencies).
+`nexus-ai-fs` is the **full** Nexus filesystem/context plane (~100+ dependencies)
+that includes server, bricks, gRPC, federation, and more.
+
+Both packages install into the `nexus` Python namespace. **Do not install both
+in the same environment** — they will conflict. Choose one:
+
+- `pip install nexus-fs` — lightweight cloud storage only
+- `pip install nexus-ai-fs` — full Nexus system (includes all `nexus-fs` functionality)
+
 ## License
 
 Apache-2.0

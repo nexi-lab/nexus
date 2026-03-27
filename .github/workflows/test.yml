@@ -412,6 +412,115 @@ jobs:
           uv run pytest tests/e2e/nats/ -v --timeout=120 -o "addopts="
         timeout-minutes: 10
 
+  # ── nexus-fs standalone package validation ─────────────────────────────
+  nexus-fs-smoke:
+    name: nexus-fs Smoke Test
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "packages/nexus-fs/pyproject.toml"
+
+      - name: Build nexus-fs wheel
+        run: uv build --package nexus-fs --out-dir dist/
+
+      - name: Validate wheel metadata
+        run: |
+          uv pip install twine check-wheel-contents
+          twine check --strict dist/*
+          check-wheel-contents dist/*.whl
+
+      - name: Validate wheel size and portability
+        run: |
+          uv pip install pydistcheck
+          pydistcheck --max-allowed-size-compressed '5M' dist/*.whl
+
+      - name: Install in clean environment (with timing)
+        run: |
+          uv venv --python 3.13 /tmp/nexus-fs-test
+          start_time=$(date +%s%N)
+          VIRTUAL_ENV=/tmp/nexus-fs-test /tmp/nexus-fs-test/bin/pip install dist/*.whl
+          end_time=$(date +%s%N)
+          install_ms=$(( (end_time - start_time) / 1000000 ))
+          echo "Install time: ${install_ms}ms"
+          echo "### nexus-fs install time" >> $GITHUB_STEP_SUMMARY
+          echo "**${install_ms}ms**" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test — import
+        run: |
+          /tmp/nexus-fs-test/bin/python -c "
+          import nexus.fs
+          print(f'nexus-fs v{nexus.fs.__version__}')
+          # Verify lazy imports work
+          _ = nexus.fs.SlimNexusFS
+          _ = nexus.fs.parse_uri
+          print('Import OK')
+          "
+
+      - name: Smoke test — CLI
+        run: |
+          /tmp/nexus-fs-test/bin/nexus-fs --help
+          /tmp/nexus-fs-test/bin/nexus-fs doctor
+
+      - name: Smoke test — fsspec entry point
+        run: |
+          /tmp/nexus-fs-test/bin/pip install fsspec
+          /tmp/nexus-fs-test/bin/python -c "
+          import fsspec
+          assert 'nexus' in fsspec.registry.target, 'fsspec entry point not registered'
+          print('fsspec entry point OK')
+          "
+
+      - name: Smoke test — S3 extra
+        run: |
+          /tmp/nexus-fs-test/bin/pip install dist/*.whl'[s3]'
+          /tmp/nexus-fs-test/bin/python -c "
+          from nexus.backends.storage.path_s3 import PathS3Backend
+          print('S3 backend import OK')
+          "
+
+      - name: Smoke test — GCS extra
+        run: |
+          /tmp/nexus-fs-test/bin/pip install dist/*.whl'[gcs]'
+          /tmp/nexus-fs-test/bin/python -c "
+          from nexus.backends.storage.cas_gcs import CASGCSBackend
+          print('GCS backend import OK')
+          "
+
+      - name: Cold import time gate (budget 240ms)
+        run: |
+          /tmp/nexus-fs-test/bin/python -X importtime -c "import nexus.fs" 2> /tmp/importtime.log
+          # Parse cumulative time from last line
+          cumulative_us=$(/tmp/nexus-fs-test/bin/python -c "
+          import re
+          with open('/tmp/importtime.log') as f:
+              lines = f.read().strip().splitlines()
+          # Last line has the total cumulative time
+          last = lines[-1]
+          match = re.search(r'\|\s+(\d+)\s+\|', last)
+          print(match.group(1) if match else '0')
+          ")
+          actual_ms=$((cumulative_us / 1000))
+          echo "Cold import time: ${actual_ms}ms (budget: 240ms)"
+          echo "### nexus-fs import time" >> $GITHUB_STEP_SUMMARY
+          echo "**${actual_ms}ms** (budget: 240ms)" >> $GITHUB_STEP_SUMMARY
+          if [ "$actual_ms" -gt 240 ]; then
+            echo "::error::Cold import time ${actual_ms}ms exceeds 240ms budget"
+            exit 1
+          fi
+
   migration-test:
     name: Migration Tests (SQLite)
     runs-on: ubuntu-latest

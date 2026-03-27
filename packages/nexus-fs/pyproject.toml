@@ -26,7 +26,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# ~15 base dependencies — slim by design
+# IMPORTANT: nexus-fs and nexus-ai-fs both install into the `nexus` namespace
+# and MUST NOT be installed in the same environment. nexus-ai-fs is the full
+# monorepo package; nexus-fs is the slim standalone subset. A future release
+# will formalize the dependency direction (nexus-ai-fs depends on nexus-fs).
+
+# ~16 base dependencies — slim by design
 dependencies = [
     "pydantic>=2.0",
     "click>=8.0",
@@ -36,6 +41,7 @@ dependencies = [
     "anyio>=4.0",
     "aiofiles>=23.0",
     "pyyaml>=6.0",
+    "platformdirs>=4.0",
 ]
 
 [project.optional-dependencies]

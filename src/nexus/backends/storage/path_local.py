@@ -25,7 +25,7 @@ from typing import ClassVar
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.transports.local_transport import LocalBlobTransport
-from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 
 
 @register_connector(
@@ -48,13 +48,10 @@ class PathLocalBackend(PathAddressingEngine):
     Opt into CAS by setting ``backend = "local"`` in config.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = (
-        BLOB_CONNECTOR_CAPABILITIES
-        | frozenset(
-            {
-                ConnectorCapability.ROOT_PATH,
-            }
-        )
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES | frozenset(
+        {
+            BackendFeature.ROOT_PATH,
+        }
     )
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {

@@ -32,9 +32,9 @@ def _make_backend(
     backend.name = name
 
     if capabilities is None:
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
-        capabilities = frozenset({ConnectorCapability.SYNC_ELIGIBLE})
+        capabilities = frozenset({BackendFeature.SYNC_ELIGIBLE})
     backend.capabilities = capabilities
     backend.has_capability = MagicMock(side_effect=lambda c: c in capabilities)
 
@@ -142,10 +142,10 @@ class TestCapabilityFiltering:
     @pytest.mark.asyncio
     async def test_syncs_sync_eligible(self) -> None:
         """Connectors with SYNC_ELIGIBLE get synced."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 
@@ -265,10 +265,10 @@ class TestDeltaSyncToMetastore:
     @pytest.mark.asyncio
     async def test_delta_with_no_changes(self) -> None:
         """No-change delta records success without writes."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result={"added": [], "deleted": [], "history_id": "100"},
         )
@@ -292,10 +292,10 @@ class TestDeltaSyncToMetastore:
     @pytest.mark.asyncio
     async def test_delta_full_sync_required_falls_back(self) -> None:
         """Delta with full_sync_required=True triggers full BFS sync."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result={"added": [], "deleted": [], "full_sync": True},
         )
@@ -321,10 +321,10 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_sync_failure_records_error(self) -> None:
         """Failed sync records failure in mount state."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 
@@ -343,10 +343,10 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_delta_failure_falls_back_to_full_sync(self) -> None:
         """Failed delta sync falls back to full BFS sync."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result=None,  # Will be overridden
         )
@@ -381,10 +381,10 @@ class TestErrorHandling:
     @pytest.mark.asyncio
     async def test_skip_mount_with_sync_in_progress(self) -> None:
         """Mount with sync_in_progress is skipped."""
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({ConnectorCapability.SYNC_ELIGIBLE}),
+            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 

@@ -30,7 +30,7 @@ from nexus.backends.connectors.cli.config import (
     WriteOperationConfig,
 )
 from nexus.backends.connectors.cli.result import CLIResult, CLIResultStatus
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import ValidationError as CoreValidationError
 from nexus.core.object_store import WriteResult
 
@@ -279,19 +279,19 @@ class TestConnectionLifecycle:
 class TestCapabilities:
     def test_has_cli_backed(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(ConnectorCapability.CLI_BACKED)
+        assert connector.has_capability(BackendFeature.CLI_BACKED)
 
     def test_has_skill_doc(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(ConnectorCapability.SKILL_DOC)
+        assert connector.has_capability(BackendFeature.SKILL_DOC)
 
     def test_has_write_back(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(ConnectorCapability.WRITE_BACK)
+        assert connector.has_capability(BackendFeature.WRITE_BACK)
 
     def test_has_sync(self) -> None:
         connector = FakeCLIConnector()
-        assert connector.has_capability(ConnectorCapability.SYNC)
+        assert connector.has_capability(BackendFeature.SYNC)
 
     def test_name(self) -> None:
         connector = FakeCLIConnector()

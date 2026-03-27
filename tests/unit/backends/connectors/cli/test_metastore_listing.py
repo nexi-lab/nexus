@@ -56,11 +56,11 @@ def _make_route(
     use_metadata_listing: bool = True,
     backend_path: str = "",
 ) -> SimpleNamespace:
-    from nexus.contracts.capabilities import ConnectorCapability
+    from nexus.contracts.backend_features import BackendFeature
 
     caps = frozenset()
     if sync_eligible:
-        caps = frozenset({ConnectorCapability.SYNC_ELIGIBLE})
+        caps = frozenset({BackendFeature.SYNC_ELIGIBLE})
 
     backend = MagicMock()
     backend.name = backend_name

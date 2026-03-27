@@ -18,7 +18,7 @@ from nexus.backends.connectors.gws.schemas import (
     UpdateFileSchema,
     UploadFileSchema,
 )
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 
 
 class TestGoogleDriveConnectorBackendMixins:
@@ -69,11 +69,11 @@ class TestGoogleDriveConnectorBackendMixins:
 
     def test_skill_doc_capability(self) -> None:
         caps = GoogleDriveConnectorBackend._CAPABILITIES
-        assert ConnectorCapability.SKILL_DOC in caps
+        assert BackendFeature.SKILL_DOC in caps
 
     def test_write_back_capability(self) -> None:
         caps = GoogleDriveConnectorBackend._CAPABILITIES
-        assert ConnectorCapability.WRITE_BACK in caps
+        assert BackendFeature.WRITE_BACK in caps
 
     def test_inherits_skill_doc_mixin(self) -> None:
         assert issubclass(GoogleDriveConnectorBackend, SkillDocMixin)

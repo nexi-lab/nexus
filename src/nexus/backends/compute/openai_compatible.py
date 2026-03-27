@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
@@ -114,11 +114,11 @@ class OpenAICompatibleBackend(CASAddressingEngine):
         ),
     }
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = frozenset(
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
-            ConnectorCapability.CAS,
-            ConnectorCapability.STREAMING,
-            ConnectorCapability.BATCH_CONTENT,
+            BackendFeature.CAS,
+            BackendFeature.STREAMING,
+            BackendFeature.BATCH_CONTENT,
         }
     )
 

@@ -27,7 +27,7 @@ from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
-from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -56,13 +56,13 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
     - Batch version fetch (single API call for 1000s of files)
     """
 
-    _CAPABILITIES = BLOB_CONNECTOR_CAPABILITIES | frozenset(
+    _CAPABILITIES = BLOB_BACKEND_FEATURES | frozenset(
         {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-            ConnectorCapability.SIGNED_URL,
-            ConnectorCapability.NATIVE_VERSIONING,
-            ConnectorCapability.RESUMABLE_UPLOAD,
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
+            BackendFeature.SIGNED_URL,
+            BackendFeature.NATIVE_VERSIONING,
+            BackendFeature.RESUMABLE_UPLOAD,
         }
     )
 

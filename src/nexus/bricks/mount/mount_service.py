@@ -142,10 +142,10 @@ class MountService:
                 return
 
             # Skill doc generation (via mount_hooks if available)
-            from nexus.contracts.capabilities import ConnectorCapability
+            from nexus.contracts.backend_features import BackendFeature
 
             if hasattr(backend, "has_capability") and backend.has_capability(
-                ConnectorCapability.SKILL_DOC
+                BackendFeature.SKILL_DOC
             ):
                 await self._generate_skill_docs(mount_point, backend)
 

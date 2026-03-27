@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.lib.registry import BaseRegistry
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 # that maps to a Protocol, we verify the class has the required methods.
 
 
-def get_capability_protocols() -> dict[ConnectorCapability, type]:
+def get_capability_protocols() -> dict[BackendFeature, type]:
     """Get capability-to-Protocol mapping for registration-time validation.
 
     Returns:
@@ -65,10 +65,10 @@ def get_capability_protocols() -> dict[ConnectorCapability, type]:
     )
 
     return {
-        ConnectorCapability.STREAMING: StreamingProtocol,
-        ConnectorCapability.BATCH_CONTENT: BatchContentProtocol,
-        ConnectorCapability.DIRECTORY_LISTING: DirectoryListingProtocol,
-        ConnectorCapability.OAUTH: OAuthCapableProtocol,
+        BackendFeature.STREAMING: StreamingProtocol,
+        BackendFeature.BATCH_CONTENT: BatchContentProtocol,
+        BackendFeature.DIRECTORY_LISTING: DirectoryListingProtocol,
+        BackendFeature.OAUTH: OAuthCapableProtocol,
     }
 
 
@@ -229,7 +229,7 @@ class ConnectorInfo:
     eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
     """
 
-    capabilities: frozenset[ConnectorCapability] = field(default_factory=frozenset)
+    capabilities: frozenset[BackendFeature] = field(default_factory=frozenset)
     """Capabilities declared by this connector (Issue #2069)."""
 
     @property
@@ -373,7 +373,7 @@ class ConnectorRegistry:
         config_mapping = derive_config_mapping(connector_class)
 
         # Extract capabilities from class (Issue #2069)
-        capabilities: frozenset[ConnectorCapability] = getattr(
+        capabilities: frozenset[BackendFeature] = getattr(
             connector_class, "_CAPABILITIES", frozenset()
         )
 
@@ -486,14 +486,14 @@ class ConnectorRegistry:
         return name in cls._base
 
     @classmethod
-    def get_capabilities(cls, name: str) -> frozenset[ConnectorCapability]:
+    def get_capabilities(cls, name: str) -> frozenset[BackendFeature]:
         """Get capabilities for a connector by name (Issue #2069).
 
         Args:
             name: Connector identifier
 
         Returns:
-            frozenset of ConnectorCapability values
+            frozenset of BackendFeature values
 
         Raises:
             KeyError: If connector is not found
@@ -501,7 +501,7 @@ class ConnectorRegistry:
         return cls.get_info(name).capabilities
 
     @classmethod
-    def list_by_capability(cls, cap: ConnectorCapability) -> list[ConnectorInfo]:
+    def list_by_capability(cls, cap: BackendFeature) -> list[ConnectorInfo]:
         """List all connectors with a specific capability (Issue #2069).
 
         Args:

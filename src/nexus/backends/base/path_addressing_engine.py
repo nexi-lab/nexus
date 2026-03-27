@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.blob_transport import BlobTransport
-from nexus.contracts.capabilities import BLOB_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
@@ -52,7 +52,7 @@ class PathAddressingEngine(Backend):
         versioning_enabled: Whether versioning is enabled on the bucket.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = BLOB_CONNECTOR_CAPABILITIES
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES
 
     def __init__(
         self,

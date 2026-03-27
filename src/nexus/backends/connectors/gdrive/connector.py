@@ -54,7 +54,7 @@ from nexus.backends.connectors.gws.schemas import (
     UploadFileSchema,
 )
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
@@ -133,10 +133,10 @@ class GoogleDriveConnectorBackend(
     - Rate limited by Google Drive API quotas
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            ConnectorCapability.SKILL_DOC,
-            ConnectorCapability.WRITE_BACK,
+            BackendFeature.SKILL_DOC,
+            BackendFeature.WRITE_BACK,
         }
     )
 

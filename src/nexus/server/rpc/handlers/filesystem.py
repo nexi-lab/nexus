@@ -10,7 +10,7 @@ layer — they MUST NOT call async code directly.
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.path_utils import (
     unscope_internal_dict,
@@ -56,9 +56,7 @@ def generate_download_url(
         backend_path = route.backend_path
 
         # S3 or GCS connector with signed URL support
-        if hasattr(backend, "has_capability") and backend.has_capability(
-            ConnectorCapability.SIGNED_URL
-        ):
+        if hasattr(backend, "has_capability") and backend.has_capability(BackendFeature.SIGNED_URL):
             from dataclasses import replace
 
             if context and hasattr(context, "backend_path"):
@@ -82,9 +80,7 @@ def generate_download_url(
             }
 
         # Local backend - use streaming endpoint with signed token
-        if hasattr(backend, "has_capability") and backend.has_capability(
-            ConnectorCapability.ROOT_PATH
-        ):
+        if hasattr(backend, "has_capability") and backend.has_capability(BackendFeature.ROOT_PATH):
             from urllib.parse import quote
 
             from nexus.server.streaming import _sign_stream_token

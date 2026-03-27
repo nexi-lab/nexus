@@ -21,7 +21,7 @@ from nexus.backends.connectors.base import (
 )
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
@@ -55,10 +55,10 @@ class OAuthConnectorBase(
     - Connector-specific ``SKILL_NAME``, ``SCHEMAS``, ``OPERATION_TRAITS``
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
         }
     )
 

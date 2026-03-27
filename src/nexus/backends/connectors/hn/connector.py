@@ -47,7 +47,7 @@ from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import SkillDocMixin
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, SyncResult
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -111,10 +111,10 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-            ConnectorCapability.SKILL_DOC,
-            ConnectorCapability.SYNC,
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
+            BackendFeature.SKILL_DOC,
+            BackendFeature.SYNC,
         }
     )
 

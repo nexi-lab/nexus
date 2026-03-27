@@ -32,7 +32,7 @@ from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
 from nexus.backends.transports.local_transport import LocalBlobTransport
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
@@ -92,15 +92,14 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         ),
     }
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = frozenset(
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
-            ConnectorCapability.CAS,
-            ConnectorCapability.ROOT_PATH,
-            ConnectorCapability.PARALLEL_MMAP,
-            ConnectorCapability.MULTIPART_UPLOAD,
-            ConnectorCapability.STREAMING,
-            ConnectorCapability.BATCH_CONTENT,
-            ConnectorCapability.DIRECTORY_LISTING,
+            BackendFeature.CAS,
+            BackendFeature.ROOT_PATH,
+            BackendFeature.MULTIPART_UPLOAD,
+            BackendFeature.STREAMING,
+            BackendFeature.BATCH_CONTENT,
+            BackendFeature.DIRECTORY_LISTING,
         }
     )
 

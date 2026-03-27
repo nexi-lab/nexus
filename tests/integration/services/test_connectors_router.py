@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nexus.backends.base.registry import ConnectorInfo
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.server.api.v2.routers.connectors import router
 from nexus.server.dependencies import require_auth
 
@@ -30,7 +30,7 @@ def _make_connector_info(
     name: str,
     description: str = "",
     category: str = "storage",
-    capabilities: frozenset[ConnectorCapability] | None = None,
+    capabilities: frozenset[BackendFeature] | None = None,
     user_scoped: bool = False,
 ) -> ConnectorInfo:
     """Create a minimal ConnectorInfo for testing."""
@@ -70,15 +70,13 @@ class TestListConnectors:
                 name="path_gcs",
                 description="Google Cloud Storage",
                 category="storage",
-                capabilities=frozenset(
-                    {ConnectorCapability.SIGNED_URL, ConnectorCapability.RENAME}
-                ),
+                capabilities=frozenset({BackendFeature.SIGNED_URL, BackendFeature.RENAME}),
             ),
             _make_connector_info(
                 name="gmail_connector",
                 description="Gmail",
                 category="api",
-                capabilities=frozenset({ConnectorCapability.OAUTH}),
+                capabilities=frozenset({BackendFeature.OAUTH}),
                 user_scoped=True,
             ),
         ]
@@ -105,9 +103,9 @@ class TestListConnectors:
                 name="test",
                 capabilities=frozenset(
                     {
-                        ConnectorCapability.STREAMING,
-                        ConnectorCapability.BATCH_CONTENT,
-                        ConnectorCapability.RENAME,
+                        BackendFeature.STREAMING,
+                        BackendFeature.BATCH_CONTENT,
+                        BackendFeature.RENAME,
                     }
                 ),
             ),
@@ -130,9 +128,7 @@ class TestGetConnectorCapabilities:
         mock_registry.is_registered.return_value = True
         mock_registry.get_info.return_value = _make_connector_info(
             name="s3_connector",
-            capabilities=frozenset(
-                {ConnectorCapability.SIGNED_URL, ConnectorCapability.MULTIPART_UPLOAD}
-            ),
+            capabilities=frozenset({BackendFeature.SIGNED_URL, BackendFeature.MULTIPART_UPLOAD}),
         )
         resp = _client.get("/api/v2/connectors/s3_connector/capabilities")
         assert resp.status_code == 200

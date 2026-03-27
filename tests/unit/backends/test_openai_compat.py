@@ -301,12 +301,12 @@ class TestOpenAICompatibleBackend:
         assert resp_data["finish_reason"] == "stop"
 
     def test_capabilities(self) -> None:
-        from nexus.contracts.capabilities import ConnectorCapability
+        from nexus.contracts.backend_features import BackendFeature
 
         backend, _ = _make_backend()
-        assert backend.has_capability(ConnectorCapability.CAS)
-        assert backend.has_capability(ConnectorCapability.STREAMING)
-        assert not backend.has_capability(ConnectorCapability.ROOT_PATH)
+        assert backend.has_capability(BackendFeature.CAS)
+        assert backend.has_capability(BackendFeature.STREAMING)
+        assert not backend.has_capability(BackendFeature.ROOT_PATH)
 
     def test_mkdir_rmdir_noop(self) -> None:
         """Directory ops are no-ops for compute backends."""

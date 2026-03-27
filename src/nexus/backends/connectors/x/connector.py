@@ -61,7 +61,7 @@ from nexus.backends.connectors.base import (
 from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
-from nexus.contracts.capabilities import OAUTH_CONNECTOR_CAPABILITIES, ConnectorCapability
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
@@ -127,9 +127,9 @@ class XConnectorBackend(
     - Fixed virtual directory structure
     """
 
-    _CAPABILITIES = OAUTH_CONNECTOR_CAPABILITIES | frozenset(
+    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            ConnectorCapability.SKILL_DOC,
+            BackendFeature.SKILL_DOC,
         }
     )
 

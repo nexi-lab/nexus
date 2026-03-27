@@ -145,10 +145,10 @@ class ConnectorSyncLoop:
                 continue
 
             # Only sync connectors that declare SYNC_ELIGIBLE (Decision #5A)
-            from nexus.contracts.capabilities import ConnectorCapability
+            from nexus.contracts.backend_features import BackendFeature
 
             caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
-            if ConnectorCapability.SYNC_ELIGIBLE not in caps:
+            if BackendFeature.SYNC_ELIGIBLE not in caps:
                 continue
 
             # Ensure mount state exists

@@ -35,10 +35,10 @@ from nexus.backends.connectors.base import (
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
 from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 from nexus.backends.connectors.cli.result import CLIErrorMapper, CLIResult, CLIResultStatus
-from nexus.contracts.capabilities import (
-    CLI_CONNECTOR_CAPABILITIES,
-    OAUTH_CONNECTOR_CAPABILITIES,
-    ConnectorCapability,
+from nexus.contracts.backend_features import (
+    CLI_BACKEND_FEATURES,
+    OAUTH_BACKEND_FEATURES,
+    BackendFeature,
 )
 from nexus.core.object_store import WriteResult
 
@@ -98,8 +98,8 @@ class CLIConnector(
     # Auth is ALWAYS via environment variables (never CLI flags).
     # See _build_auth_env() for the mapping.
 
-    _CAPABILITIES: ClassVar[frozenset[ConnectorCapability]] = (
-        CLI_CONNECTOR_CAPABILITIES | OAUTH_CONNECTOR_CAPABILITIES
+    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = (
+        CLI_BACKEND_FEATURES | OAUTH_BACKEND_FEATURES
     )
 
     # --- Instance state ---

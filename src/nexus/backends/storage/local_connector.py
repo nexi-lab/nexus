@@ -31,7 +31,7 @@ from nexus.backends.base.registry import (
     register_connector,
 )
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
-from nexus.contracts.capabilities import ConnectorCapability
+from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
@@ -81,10 +81,9 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     _CAPABILITIES = frozenset(
         {
-            ConnectorCapability.DIRECTORY_LISTING,
-            ConnectorCapability.CACHE_BULK_READ,
-            ConnectorCapability.CACHE_SYNC,
-            ConnectorCapability.CHANGE_NOTIFICATIONS,
+            BackendFeature.DIRECTORY_LISTING,
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
         }
     )
 

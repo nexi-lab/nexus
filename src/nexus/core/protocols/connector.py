@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
-    from nexus.contracts.capabilities import ConnectorCapability
+    from nexus.contracts.backend_features import BackendFeature
     from nexus.contracts.types import OperationContext
     from nexus.core.object_store import WriteResult
 
@@ -141,9 +141,9 @@ class CapabilityAwareProtocol(Protocol):
     """
 
     @property
-    def capabilities(self) -> "frozenset[ConnectorCapability]": ...
+    def capabilities(self) -> "frozenset[BackendFeature]": ...
 
-    def has_capability(self, cap: "ConnectorCapability") -> bool: ...
+    def has_capability(self, cap: "BackendFeature") -> bool: ...
 
 @runtime_checkable
 class ConnectorProtocol(

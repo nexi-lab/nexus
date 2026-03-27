@@ -122,7 +122,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
         on_write_callback: Any | None = None,
         *,
-        use_volume_packing: bool = True,
+        use_volume_packing: bool = False,
     ):
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"
@@ -137,10 +137,13 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # Build transport — VolumeLocalTransport with fallback to LocalBlobTransport
         # VolumeLocalTransport packs CAS blobs into volumes; falls back internally
         # if VolumeEngine is unavailable (Issue #3403).
+        # Both VolumeLocalTransport and LocalBlobTransport implement BlobTransport
+        # structurally (Protocol), but mypy can't verify VolumeLocalTransport against
+        # the Protocol since it uses dynamic PyO3 dispatch. Using BlobTransport annotation
+        # directly would fail for VolumeLocalTransport.
+        transport: Any
         if use_volume_packing:
-            transport: VolumeLocalTransport | LocalBlobTransport = VolumeLocalTransport(
-                root_path=self.root_path, fsync=True
-            )
+            transport = VolumeLocalTransport(root_path=self.root_path, fsync=True)
         else:
             transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
 

@@ -146,7 +146,7 @@ class VolumeLocalTransport:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
             try:
-                return self._engine.exists(hash_hex)
+                return bool(self._engine.exists(hash_hex))
             except Exception:
                 return False
         return self._delegate.blob_exists(key)
@@ -158,7 +158,7 @@ class VolumeLocalTransport:
                 size = self._engine.get_size(hash_hex)
                 if size is None:
                     raise NexusFileNotFoundError(key)
-                return size
+                return int(size)
             except NexusFileNotFoundError:
                 raise
             except Exception as e:
@@ -255,7 +255,7 @@ class VolumeLocalTransport:
                 ts = self._engine.get_timestamp(hash_hex)
                 if ts is None:
                     raise NexusFileNotFoundError(key)
-                return ts
+                return float(ts)
             except NexusFileNotFoundError:
                 raise
             except Exception as e:
@@ -274,7 +274,7 @@ class VolumeLocalTransport:
         """
         if self._volume_available:
             try:
-                return self._engine.list_content_hashes()
+                return list(self._engine.list_content_hashes())
             except Exception as e:
                 logger.warning("Volume list_content_hashes failed: %s", e)
                 return []
@@ -300,11 +300,12 @@ class VolumeLocalTransport:
         # Batch read CAS blobs via volume engine
         if cas_keys and self._volume_available:
             try:
-                hash_to_key = {h: k for k, h in cas_keys.items()}
+                hash_to_key: dict[str, str] = {h: k for k, h in cas_keys.items()}
                 batch_result = self._engine.batch_get(list(cas_keys.values()))
                 for hash_hex, data in batch_result.items():
-                    key = hash_to_key.get(hash_hex)
-                    if key is not None:
+                    matched_key = hash_to_key.get(hash_hex)
+                    if matched_key is not None:
+                        key = matched_key
                         result[key] = bytes(data)
                 # Fill missing with None
                 for key in cas_keys:
@@ -334,19 +335,19 @@ class VolumeLocalTransport:
     def seal_active_volume(self) -> bool:
         """Seal the active volume (for testing or explicit flush)."""
         if self._volume_available:
-            return self._engine.seal_active()
+            return bool(self._engine.seal_active())
         return False
 
     def compact(self) -> tuple[int, int, int]:
         """Run compaction. Returns (volumes_compacted, blobs_moved, bytes_reclaimed)."""
         if self._volume_available:
-            return self._engine.compact()
+            return tuple(self._engine.compact())
         return (0, 0, 0)
 
     def volume_stats(self) -> dict[str, int]:
         """Get volume engine statistics."""
         if self._volume_available:
-            return self._engine.stats()
+            return dict(self._engine.stats())
         return {}
 
     def close(self) -> None:
@@ -378,11 +379,13 @@ class VolumeLocalTransport:
             return (0, 0, 0)
 
         cas_root = str(self._root / "cas")
-        return self._engine.migrate_from_files(
-            cas_root,
-            batch_size,
-            delete_originals,
-            rate_limit_bytes,
+        return tuple(
+            self._engine.migrate_from_files(
+                cas_root,
+                batch_size,
+                delete_originals,
+                rate_limit_bytes,
+            )
         )
 
     # === Internal Helpers ===

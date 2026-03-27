@@ -106,7 +106,7 @@ class TestVolumeLocalTransportIntegration:
         transport = self._make_transport(tmp_path)
 
         # CAS write
-        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(cas_key, b"cas data")
 
         # Dir operation
@@ -122,7 +122,7 @@ class TestVolumeLocalTransportIntegration:
         """CDC .meta files should NOT go to volume engine."""
         transport = self._make_transport(tmp_path)
 
-        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678.meta"
+        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
         transport.put_blob(meta_key, b'{"is_chunked_manifest": true}')
 
         data, _ = transport.get_blob(meta_key)
@@ -138,10 +138,10 @@ class TestVolumeLocalTransportIntegration:
         """Batch read with both CAS and non-CAS keys."""
         transport = self._make_transport(tmp_path)
 
-        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(cas_key, b"cas blob")
 
-        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678.meta"
+        meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
         transport.put_blob(meta_key, b"meta blob")
 
         transport.seal_active_volume()

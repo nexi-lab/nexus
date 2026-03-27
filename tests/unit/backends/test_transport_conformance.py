@@ -49,7 +49,7 @@ def volume_transport(tmp_path):
 
 class TestPutGetRoundtrip:
     def test_put_get_basic(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         data = b"hello world"
         transport.put_blob(key, data)
         result, version = transport.get_blob(key)
@@ -70,7 +70,7 @@ class TestPutGetRoundtrip:
         assert result == data
 
     def test_put_overwrites(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(key, b"first")
         transport.put_blob(key, b"second")
         result, _ = transport.get_blob(key)
@@ -80,18 +80,18 @@ class TestPutGetRoundtrip:
 
 class TestBlobExists:
     def test_exists_true(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(key, b"data")
         assert transport.blob_exists(key) is True
 
     def test_exists_false(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         assert transport.blob_exists(key) is False
 
 
 class TestGetBlobSize:
     def test_size(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         data = b"hello"
         transport.put_blob(key, data)
         assert transport.get_blob_size(key) == 5
@@ -99,14 +99,14 @@ class TestGetBlobSize:
     def test_size_not_found(self, transport):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         with pytest.raises(NexusFileNotFoundError):
             transport.get_blob_size(key)
 
 
 class TestDeleteBlob:
     def test_delete(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(key, b"to delete")
         assert transport.blob_exists(key) is True
         transport.delete_blob(key)
@@ -115,7 +115,7 @@ class TestDeleteBlob:
     def test_delete_not_found(self, transport):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         with pytest.raises(NexusFileNotFoundError):
             transport.delete_blob(key)
 
@@ -124,14 +124,14 @@ class TestGetBlobNotFound:
     def test_get_not_found(self, transport):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         with pytest.raises(NexusFileNotFoundError):
             transport.get_blob(key)
 
 
 class TestStreamBlob:
     def test_stream(self, transport):
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         data = b"streaming data here"
         transport.put_blob(key, data)
         chunks = list(transport.stream_blob(key, chunk_size=5))
@@ -140,7 +140,7 @@ class TestStreamBlob:
     def test_stream_not_found(self, transport):
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        key = "cas/ab/cd/nonexistent"
+        key = "cas/de/ad/dead1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         with pytest.raises(NexusFileNotFoundError):
             list(transport.stream_blob(key))
 
@@ -154,8 +154,8 @@ class TestDirectoryMarker:
 
 class TestCopyBlob:
     def test_copy(self, transport):
-        src = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
-        dst = "cas/ef/gh/efgh1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        src = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+        dst = "cas/ef/01/ef011234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         data = b"copy me"
         transport.put_blob(src, data)
         transport.copy_blob(src, dst)
@@ -177,7 +177,7 @@ class TestListContentHashes:
         if not hasattr(transport, "list_content_hashes"):
             pytest.skip("Transport does not support list_content_hashes")
 
-        hash_hex = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        hash_hex = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         key = f"cas/{hash_hex[:2]}/{hash_hex[2:4]}/{hash_hex}"
         transport.put_blob(key, b"test data")
 
@@ -225,7 +225,7 @@ class TestGetBlobMtime:
         if not hasattr(transport, "get_blob_mtime"):
             pytest.skip("Transport does not support get_blob_mtime")
 
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob(key, b"data")
         mtime = transport.get_blob_mtime(key)
         assert isinstance(mtime, float)
@@ -237,7 +237,7 @@ class TestPutBlobNosync:
         if not hasattr(transport, "put_blob_nosync"):
             pytest.skip("Transport does not support put_blob_nosync")
 
-        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef12345678"
+        key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
         transport.put_blob_nosync(key, b"nosync data")
         result, _ = transport.get_blob(key)
         assert result == b"nosync data"

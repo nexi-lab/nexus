@@ -63,8 +63,8 @@ EXPECTED_SYSTEM_KEYS = frozenset(
         "zone_lifecycle",
         "scheduler_service",
         "event_signal",
-        # Infrastructure (moved from bricks)
-        "event_bus",
+        # Infrastructure (moved from bricks, event_bus stored on NexusFS as infra)
+        "_event_bus_infra",
     }
 )
 
@@ -216,7 +216,7 @@ class TestBootSystemServices:
             "observability_subsystem",
             "workspace_registry",  # degradable — None with mock session_factory
             "scheduler_service",  # degradable — None if SchedulerService unavailable
-            "event_bus",  # None when enable_events=False
+            "_event_bus_infra",  # None when enable_events=False
         }
         for key, value in result.items():
             if key in _NULLABLE_KEYS:

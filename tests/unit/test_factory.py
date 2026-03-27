@@ -180,8 +180,8 @@ class TestBootSystemServices:
             "scheduler_service",
             # Issue #3193: shared notification signal
             "event_signal",
-            # Infrastructure (moved from bricks)
-            "event_bus",
+            # Infrastructure (event_bus stored on NexusFS as infra, not in services)
+            "_event_bus_infra",
         }
         assert expected_keys == set(result.keys())
 

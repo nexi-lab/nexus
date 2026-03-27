@@ -97,10 +97,10 @@ class TestFromAppExtraction:
             _coordination_client="coord_client",
             workflow_engine="wf_engine",
             config="nexus_cfg",
+            _event_bus_infra="event_bus",
             _service_map={
                 "entity_registry": "entity_reg",
                 "rebac_manager": "rebac_mgr",
-                "event_bus": "event_bus",
                 "async_namespace_manager": "ns_mgr",
                 "snapshot_service": "snap_svc",
             },

@@ -921,17 +921,42 @@ impl VolumeEngine {
     }
 
     /// Seal a volume and register it in the volume paths.
-    fn seal_volume(&self, vol: ActiveVolume) -> PyResult<()> {
+    ///
+    /// Before sealing, filters out entries that were deleted from the index
+    /// since they were appended. This prevents deleted blobs from being
+    /// resurrected on crash recovery (which re-inserts TOC entries missing
+    /// from the index).
+    fn seal_volume(&self, mut vol: ActiveVolume) -> PyResult<()> {
         if vol.entry_count() == 0 {
             // Empty volume — just delete the temp file
             let _ = fs::remove_file(&vol.path);
+            self.volume_paths.write().remove(&vol.volume_id);
+            return Ok(());
+        }
+
+        // Filter entries: only keep those still present in the index.
+        // Deleted blobs have been removed from the index by delete(), but
+        // their data is still in the volume file. Excluding them from the
+        // TOC ensures they won't be resurrected by crash recovery.
+        {
+            let db = self.db.read();
+            let txn = db.begin_read().map_err(db_err)?;
+            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+            vol.entries
+                .retain(|entry| table.get(entry.hash.as_slice()).ok().flatten().is_some());
+        }
+
+        if vol.entries.is_empty() {
+            // All entries were deleted — discard the volume
+            let _ = fs::remove_file(&vol.path);
+            self.volume_paths.write().remove(&vol.volume_id);
             return Ok(());
         }
 
         let vol_id = vol.volume_id;
         let (sealed_path, _entries) = vol.seal(&self.volumes_dir).map_err(io_err)?;
 
-        // Register sealed volume path
+        // Register sealed volume path (replaces the .tmp entry)
         self.volume_paths.write().insert(vol_id, sealed_path);
 
         Ok(())

@@ -246,3 +246,29 @@ class TestGracefulRecovery:
         assert engine2.exists(make_hash(1))
         assert bytes(engine2.get(make_hash(1))) == b"from engine 1"
         engine2.close()
+
+    def test_deleted_blob_not_resurrected_on_restart(self, tmp_path):
+        """Delete before seal must not be resurrected by crash recovery.
+
+        Regression test: delete() removes from index, but if the blob's TOC
+        entry survives into the sealed volume, recovery would re-insert it.
+        The fix filters deleted entries from the TOC at seal time.
+        """
+        vol_dir = tmp_path / "volumes"
+
+        engine = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        engine.put(make_hash(1), b"keep me")
+        engine.put(make_hash(2), b"delete me")
+
+        # Delete before sealing
+        engine.delete(make_hash(2))
+        assert not engine.exists(make_hash(2))
+
+        # Close (which seals the active volume)
+        engine.close()
+
+        # Reopen — deleted blob must NOT reappear
+        engine2 = VolumeEngine(str(vol_dir), target_volume_size=1024 * 1024)
+        assert engine2.exists(make_hash(1)), "Kept blob should survive restart"
+        assert not engine2.exists(make_hash(2)), "Deleted blob must not be resurrected"
+        engine2.close()

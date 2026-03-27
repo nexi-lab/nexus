@@ -167,10 +167,7 @@ class TestCASLocalBackendWithVolumes:
         content = b"hello from volume-packed CAS"
         result = backend.write_content(content)
 
-        # Seal so content is readable from volume
-        if hasattr(backend._transport, "seal_active_volume"):
-            backend._transport.seal_active_volume()
-
+        # Read-after-write should work without explicit seal
         read_back = backend.read_content(result.content_id)
         assert read_back == content
 
@@ -192,10 +189,7 @@ class TestCASLocalBackendWithVolumes:
         data = b"size test data"
         result = backend.write_content(data)
 
-        # Seal for volume reads
-        if hasattr(backend._transport, "seal_active_volume"):
-            backend._transport.seal_active_volume()
-
+        # Size should be available immediately (from index)
         assert backend.get_content_size(result.content_id) == len(data)
 
     def test_delete_content(self, tmp_path):
@@ -211,10 +205,6 @@ class TestCASLocalBackendWithVolumes:
             result = backend.write_content(f"batch_{i}".encode())
             ids.append(result.content_id)
 
-        # Seal
-        if hasattr(backend._transport, "seal_active_volume"):
-            backend._transport.seal_active_volume()
-
         results = backend.batch_read_content(ids)
         for i, cid in enumerate(ids):
             assert results[cid] == f"batch_{i}".encode()
@@ -228,10 +218,6 @@ class TestCASLocalBackendWithVolumes:
             yield b"chunk3"
 
         result = backend.write_stream(chunks())
-
-        # Seal
-        if hasattr(backend._transport, "seal_active_volume"):
-            backend._transport.seal_active_volume()
 
         read_back = backend.read_content(result.content_id)
         assert read_back == b"chunk1chunk2chunk3"

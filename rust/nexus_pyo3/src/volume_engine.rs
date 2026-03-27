@@ -888,6 +888,8 @@ impl VolumeEngine {
             let vol_id = self.next_volume_id.fetch_add(1, Ordering::Relaxed);
             let target = self.get_target_volume_size();
             let vol = ActiveVolume::new(&self.volumes_dir, vol_id, target).map_err(io_err)?;
+            // Register .tmp path immediately so get() can read from active volume
+            self.volume_paths.write().insert(vol_id, vol.path.clone());
             *active_guard = Some(vol);
         }
 
@@ -903,6 +905,10 @@ impl VolumeEngine {
                 let target = self.get_target_volume_size();
                 let new_vol =
                     ActiveVolume::new(&self.volumes_dir, vol_id, target).map_err(io_err)?;
+                // Register .tmp path immediately
+                self.volume_paths
+                    .write()
+                    .insert(vol_id, new_vol.path.clone());
                 *active_guard = Some(new_vol);
             }
         }
@@ -1159,6 +1165,10 @@ impl VolumeEngine {
             let mut new_vol =
                 ActiveVolume::new(&self.volumes_dir, new_vol_id, target).map_err(io_err)?;
 
+            let total_live = live_entries.len();
+            let mut copied: u64 = 0;
+            let mut rate_exhausted = false;
+
             for (hash, entry) in &live_entries {
                 // Read blob from old volume
                 match pread_blob(&vol_path, entry.offset, entry.size) {
@@ -1183,12 +1193,12 @@ impl VolumeEngine {
                         txn.commit().map_err(db_err)?;
 
                         blobs_moved += 1;
+                        copied += 1;
 
                         if rate_budget > 0 {
                             rate_budget -= entry.size as i64;
                             if rate_budget <= 0 {
-                                // Rate limit: stop compacting for this call
-                                // Seal what we have and return
+                                rate_exhausted = true;
                                 break;
                             }
                         }
@@ -1205,13 +1215,16 @@ impl VolumeEngine {
                 let _ = fs::remove_file(&new_vol.path);
             }
 
-            // Delete old volume
-            let _ = fs::remove_file(&vol_path);
-            self.volume_paths.write().remove(&vol_id);
-            bytes_reclaimed += vol_total;
-            volumes_compacted += 1;
+            // Only delete old volume if ALL live entries were copied.
+            // If rate limit interrupted, some entries still reference the old volume.
+            if copied as usize >= total_live {
+                let _ = fs::remove_file(&vol_path);
+                self.volume_paths.write().remove(&vol_id);
+                bytes_reclaimed += vol_total;
+                volumes_compacted += 1;
+            }
 
-            if rate_budget <= 0 {
+            if rate_exhausted {
                 break;
             }
         }
@@ -1419,8 +1432,8 @@ mod tests {
         let is_new = engine.put(&hash, data).unwrap();
         assert!(is_new);
 
-        // Seal so we can read (entries in active volume are in index but volume not in paths)
-        engine.do_seal_active().unwrap();
+        // Read-after-write should work without explicit seal
+        // (active volume's .tmp path is registered in volume_paths)
 
         // Exists
         assert!(engine.exists(&hash).unwrap());

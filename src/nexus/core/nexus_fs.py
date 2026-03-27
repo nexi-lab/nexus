@@ -372,13 +372,6 @@ class NexusFS(  # type: ignore[misc]
             "Use factory create_nexus_fs(init_cred=...) or pass context= to each syscall."
         )
 
-    def _get_created_by(self, context: OperationContext | dict | None = None) -> str | None:
-        """Get the created_by value for version history tracking."""
-        from nexus.lib.context_utils import get_created_by
-
-        fallback = self._resolve_cred(context if isinstance(context, OperationContext) else None)
-        return get_created_by(context, fallback)
-
     def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
@@ -455,7 +448,6 @@ class NexusFS(  # type: ignore[misc]
                 DT_DIR,
                 {
                     "zone_id": ctx.zone_id or ROOT_ZONE_ID,
-                    "created_by": self._get_created_by(ctx),
                 },
             )
 
@@ -827,7 +819,6 @@ class NexusFS(  # type: ignore[misc]
                 created_at=now,
                 modified_at=now,
                 version=1,
-                created_by=attrs.get("created_by"),
                 zone_id=attrs.get("zone_id", ROOT_ZONE_ID),
             )
             self.metadata.put(metadata)
@@ -1934,7 +1925,6 @@ class NexusFS(  # type: ignore[misc]
             version=new_version,
             created_at=meta.created_at if meta else now,
             modified_at=now,
-            created_by=self._get_created_by(context),
             zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
@@ -2102,7 +2092,6 @@ class NexusFS(  # type: ignore[misc]
             DT_DIR,
             {
                 "zone_id": ctx.zone_id or ROOT_ZONE_ID,
-                "created_by": self._get_created_by(context),
             },
         )
 
@@ -2322,7 +2311,6 @@ class NexusFS(  # type: ignore[misc]
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
                 version=new_version,
-                created_by=self._get_created_by(context),
                 zone_id=zone_id or "root",
                 owner_id=owner_id,
             )
@@ -2362,7 +2350,6 @@ class NexusFS(  # type: ignore[misc]
                     created_at=meta.created_at if meta else now,
                     modified_at=now,
                     version=new_version,
-                    created_by=self._get_created_by(context),
                     zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
                     owner_id=owner_id,
                 )
@@ -2928,8 +2915,6 @@ class NexusFS(  # type: ignore[misc]
                 created_at=meta.created_at if meta else now,
                 modified_at=now,
                 version=new_version,
-                created_by=getattr(self, "agent_id", None)
-                or getattr(self, "user_id", None),  # Track who created/modified this version
                 zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)

@@ -78,7 +78,6 @@ class CompactFileMetadata:
     modified_at: str | None
     version: int
     zone_id_intern: int
-    created_by_id: int
     owner_id_intern: int
     entry_type: int
     target_zone_id_intern: int
@@ -97,7 +96,6 @@ class CompactFileMetadata:
             modified_at=m.modified_at.isoformat() if m.modified_at else None,
             version=m.version,
             zone_id_intern=_intern(m.zone_id),
-            created_by_id=_intern(m.created_by),
             owner_id_intern=_intern(m.owner_id),
             entry_type=m.entry_type,
             target_zone_id_intern=_intern(m.target_zone_id),
@@ -118,7 +116,6 @@ class CompactFileMetadata:
             modified_at=datetime.fromisoformat(self.modified_at) if self.modified_at else None,
             version=self.version,
             zone_id=_resolve(self.zone_id_intern),
-            created_by=_resolve(self.created_by_id),
             owner_id=_resolve(self.owner_id_intern),
             entry_type=self.entry_type,
             target_zone_id=_resolve(self.target_zone_id_intern),

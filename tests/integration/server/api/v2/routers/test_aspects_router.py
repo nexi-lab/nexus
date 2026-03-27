@@ -88,7 +88,6 @@ class TestAspectServiceViaRouter:
             "urn:nexus:file:z1:id1",
             "path",
             {"virtual_path": "/new"},
-            created_by="alice",
             zone_id="z1",
         )
         db_session.commit()

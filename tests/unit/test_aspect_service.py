@@ -50,7 +50,6 @@ class TestAspectServiceCRUD:
             entity_urn="urn:nexus:file:z1:id1",
             aspect_name="path",
             payload={"virtual_path": "/data/file.csv"},
-            created_by="alice",
         )
         db_session.commit()
 

@@ -183,7 +183,7 @@ class OverlayResolver:
     def create_whiteout(
         self,
         path: str,
-        overlay_config: OverlayConfig,
+        overlay_config: OverlayConfig,  # noqa: ARG002
     ) -> None:
         """Create a whiteout marker in the upper layer.
 
@@ -207,7 +207,6 @@ class OverlayResolver:
             mime_type=None,
             modified_at=datetime.now(UTC),
             version=1,
-            created_by=overlay_config.agent_id,
         )
         self._metadata.put(whiteout_meta)
 

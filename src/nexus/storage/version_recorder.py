@@ -36,24 +36,32 @@ class VersionRecorder:
     Usage (from kernel _write_internal):
         with self.SessionLocal() as session:
             recorder = VersionRecorder(session)
-            recorder.record_write(metadata, is_new=True)
+            recorder.record_write(metadata, is_new=True, created_by="user:abc")
             session.commit()
     """
 
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def record_write(self, metadata: "FileMetadata", *, is_new: bool) -> None:
+    def record_write(
+        self,
+        metadata: "FileMetadata",
+        *,
+        is_new: bool,
+        created_by: str | None = None,
+    ) -> None:
         """Record a file write (create or update).
 
         Args:
             metadata: FileMetadata that was just written to Metastore.
             is_new: True if new file, False if updating existing.
+            created_by: User/agent ID who performed the write (Issue #1825:
+                extracted from OperationContext by caller, not from FileMetadata).
         """
         if is_new:
-            self._record_create(metadata)
+            self._record_create(metadata, created_by=created_by)
         else:
-            self._record_update(metadata)
+            self._record_update(metadata, created_by=created_by)
 
     def record_rename(self, old_path: str, new_path: str) -> None:
         """Record a file rename (update virtual_path in FilePathModel).
@@ -96,7 +104,7 @@ class VersionRecorder:
                 .values(deleted_at=_utcnow_naive())
             )
 
-    def _record_create(self, metadata: "FileMetadata") -> None:
+    def _record_create(self, metadata: "FileMetadata", *, created_by: str | None = None) -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
         # Remove any soft-deleted entries at this path (single statement, no SELECT)
         self.session.execute(
@@ -129,11 +137,11 @@ class VersionRecorder:
                 parent_version_id=None,
                 source_type="original",
                 created_at=file_path.created_at,
-                created_by=metadata.created_by,
+                created_by=created_by,
             )
             self.session.add(version_entry)
 
-    def _record_update(self, metadata: "FileMetadata") -> None:
+    def _record_update(self, metadata: "FileMetadata", *, created_by: str | None = None) -> None:
         """Update existing FilePathModel + append VersionHistoryModel."""
         existing = self.session.execute(
             select(FilePathModel).where(
@@ -191,7 +199,7 @@ class VersionRecorder:
                 parent_version_id=prev_version.version_id if prev_version else None,
                 source_type="original",
                 created_at=_utcnow_naive(),
-                created_by=metadata.created_by,
+                created_by=created_by,
             )
             self.session.add(version_entry)
         else:

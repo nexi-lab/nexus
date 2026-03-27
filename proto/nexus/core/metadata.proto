@@ -56,8 +56,8 @@ message FileMetadata {
   // Analogous to Linux sb->s_dev. Federation extends zones with Raft consensus.
   string zone_id = 10;
 
-  // User or agent ID who created/modified this version.
-  string created_by = 11;
+  reserved 11;
+  reserved "created_by";
 
   // Kernel posix_uid for O(1) DAC via PermissionEnforcerProtocol.check_owner().
   string owner_id = 12;

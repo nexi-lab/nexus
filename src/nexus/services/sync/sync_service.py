@@ -320,7 +320,6 @@ class SyncService:
         total_tuples_created = 0
 
         # Get created_by from context
-        created_by = self._get_created_by(ctx)
 
         def flush_parent_tuples_batch() -> None:
             """Flush accumulated paths and create parent tuples in batch."""
@@ -386,7 +385,6 @@ class SyncService:
                     backend,
                     start_virtual_path,
                     start_backend_path,
-                    created_by,
                     result,
                     files_found,
                     paths_needing_tuples,
@@ -449,7 +447,6 @@ class SyncService:
                             backend,
                             entry_virtual_path,
                             entry_backend_path,
-                            created_by,
                             result,
                             files_found,
                             paths_needing_tuples,
@@ -469,7 +466,6 @@ class SyncService:
                             backend,
                             entry_virtual_path,
                             entry_backend_path,
-                            created_by,
                             result,
                             files_found,
                             paths_needing_tuples,
@@ -527,7 +523,6 @@ class SyncService:
 
         assert ctx.mount_point is not None
         files_found: set[str] = set()
-        created_by = self._get_created_by(ctx)
         zone_id = self._resolve_zone_id(ctx)
 
         # Resume from persisted state token for delta sync (unless full_sync)
@@ -583,7 +578,6 @@ class SyncService:
                             created_at=now,
                             modified_at=now,
                             version=1,
-                            created_by=created_by,
                             zone_id=zone_id,
                         )
                         try:
@@ -698,7 +692,6 @@ class SyncService:
         backend: Any,
         virtual_path: str,
         backend_path: str,
-        created_by: str | None,
         result: SyncResult,
         files_found: set[str],
         paths_needing_tuples: list[str],
@@ -716,7 +709,6 @@ class SyncService:
             backend: Backend instance
             virtual_path: Virtual file path
             backend_path: Backend file path
-            created_by: Creator identifier
             result: SyncResult to update
             files_found: Set to track found files
             paths_needing_tuples: List to collect paths for batch tuple creation
@@ -832,7 +824,6 @@ class SyncService:
                     created_at=now,
                     modified_at=now,
                     version=1,
-                    created_by=created_by,
                     zone_id=zone_id,
                 )
 
@@ -877,7 +868,6 @@ class SyncService:
                         created_at=existing_meta.created_at or now,
                         modified_at=now,
                         version=(existing_meta.version or 0) + 1,
-                        created_by=existing_meta.created_by,
                         zone_id=existing_meta.zone_id,
                     )
                     self._gw.metadata_put(updated)
@@ -899,7 +889,6 @@ class SyncService:
                     created_at=existing_meta.created_at,
                     modified_at=existing_meta.modified_at,
                     version=existing_meta.version,
-                    created_by=existing_meta.created_by,
                     zone_id=existing_meta.zone_id or ROOT_ZONE_ID,
                 )
                 self._write_to_file_paths(display_meta)
@@ -1007,7 +996,6 @@ class SyncService:
         backend: Any,
         virtual_path: str,
         backend_path: str,
-        created_by: str | None,
         result: SyncResult,
         files_found: set[str],
         paths_needing_tuples: list[str],
@@ -1019,7 +1007,6 @@ class SyncService:
             backend: Backend instance
             virtual_path: Virtual directory path
             backend_path: Backend directory path
-            created_by: Creator identifier
             result: SyncResult to update
             files_found: Set to track found paths
             paths_needing_tuples: List for batch tuple creation
@@ -1055,7 +1042,6 @@ class SyncService:
                 created_at=now,
                 modified_at=now,
                 version=1,
-                created_by=created_by,
                 zone_id=zone_id,
             )
 
@@ -1305,7 +1291,6 @@ class SyncService:
         backend: Any,
         virtual_path: str,
         backend_path: str,
-        created_by: str | None,
         result: SyncResult,
         files_found: set[str],
         paths_needing_tuples: list[str],
@@ -1323,7 +1308,6 @@ class SyncService:
             backend: Backend instance
             virtual_path: Virtual path
             backend_path: Backend path
-            created_by: Creator identifier
             result: SyncResult to update
             files_found: Set to track found files
             paths_needing_tuples: List for batch tuple creation
@@ -1347,7 +1331,6 @@ class SyncService:
             backend=backend,
             virtual_path=virtual_path,
             backend_path=backend_path,
-            created_by=created_by,
             result=result,
             files_found=files_found,
             paths_needing_tuples=paths_needing_tuples,

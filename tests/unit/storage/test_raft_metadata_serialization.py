@@ -87,7 +87,6 @@ class TestSerializeMetadata:
             created_at=None,
             modified_at=None,
             zone_id=None,
-            created_by=None,
             owner_id=None,
         )
         data = _serialize_metadata(original)

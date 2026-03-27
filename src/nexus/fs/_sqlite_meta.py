@@ -49,9 +49,9 @@ CREATE TABLE IF NOT EXISTS metadata (
 _UPSERT = """\
 INSERT INTO metadata (
     path, backend_name, physical_path, size, etag, mime_type,
-    created_at, modified_at, version, created_by, zone_id,
+    created_at, modified_at, version, zone_id,
     owner_id, entry_type, target_zone_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
     backend_name   = excluded.backend_name,
     physical_path  = excluded.physical_path,
@@ -61,7 +61,6 @@ ON CONFLICT(path) DO UPDATE SET
     created_at     = excluded.created_at,
     modified_at    = excluded.modified_at,
     version        = excluded.version,
-    created_by     = excluded.created_by,
     zone_id        = excluded.zone_id,
     owner_id       = excluded.owner_id,
     entry_type     = excluded.entry_type,
@@ -93,7 +92,6 @@ def _row_to_metadata(row: sqlite3.Row) -> FileMetadata:
         created_at=_iso_to_dt(row["created_at"]),
         modified_at=_iso_to_dt(row["modified_at"]),
         version=row["version"],
-        created_by=row["created_by"],
         zone_id=row["zone_id"],
         owner_id=row["owner_id"],
         entry_type=row["entry_type"],
@@ -113,7 +111,6 @@ def _metadata_to_tuple(m: FileMetadata) -> tuple[Any, ...]:
         _dt_to_iso(m.created_at),
         _dt_to_iso(m.modified_at),
         m.version,
-        m.created_by,
         m.zone_id,
         m.owner_id,
         m.entry_type,

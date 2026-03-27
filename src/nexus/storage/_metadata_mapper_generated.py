@@ -30,7 +30,6 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "modified_at",
         "version",
         "zone_id",
-        "created_by",
         "owner_id",
         "entry_type",
         "target_zone_id",
@@ -72,7 +71,6 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "modified_at": "updated_at",
     "version": "current_version",
     "zone_id": "zone_id",
-    "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
@@ -104,7 +102,6 @@ class MetadataMapper:
             modified_at=metadata.modified_at.isoformat() if metadata.modified_at else "",
             version=metadata.version,
             zone_id=metadata.zone_id or "",
-            created_by=metadata.created_by or "",
             owner_id=metadata.owner_id or "",
             entry_type=metadata_pb2.DirEntryType.Name(metadata.entry_type),
             target_zone_id=metadata.target_zone_id or "",
@@ -135,7 +132,6 @@ class MetadataMapper:
             modified_at=modified_at,
             version=proto.version,
             zone_id=proto.zone_id or None,
-            created_by=proto.created_by or None,
             owner_id=proto.owner_id or None,
             entry_type=proto.entry_type,
             target_zone_id=proto.target_zone_id or None,
@@ -157,7 +153,6 @@ class MetadataMapper:
             "modified_at": metadata.modified_at.isoformat() if metadata.modified_at else None,
             "version": metadata.version,
             "zone_id": metadata.zone_id,
-            "created_by": metadata.created_by,
             "owner_id": metadata.owner_id,
             "entry_type": metadata.entry_type,
             "target_zone_id": metadata.target_zone_id,

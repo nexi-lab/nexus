@@ -106,7 +106,7 @@ class WorkspaceManager:
         workspace_path: str,
         description: str | None = None,
         tags: list[str] | None = None,
-        created_by: str | None = None,
+        created_by: str | None = None,  # noqa: ARG002  # kept for API compat
         user_id: str | None = None,
         agent_id: str | None = None,
         zone_id: str | None = None,
@@ -190,7 +190,6 @@ class WorkspaceManager:
                 file_count=manifest.file_count,
                 total_size_bytes=manifest.total_size,
                 description=description,
-                created_by=created_by,
                 tags=json.dumps(tags) if tags else None,
             )
 
@@ -323,8 +322,7 @@ class WorkspaceManager:
                     etag=entry.content_hash,
                     mime_type=entry.mime_type,
                     modified_at=datetime.now(UTC),
-                    version=1,  # Will be updated by metadata store
-                    created_by=self.agent_id,  # Track who restored this version
+                    version=1,  # Will be updated by metadata store  # Track who restored this version
                 )
                 self.metadata.put(file_meta)
                 files_restored += 1

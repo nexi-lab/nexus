@@ -853,11 +853,20 @@ def create_async_files_router(
             # internal entries (cfg:, ns:) consume an entire page.
             if limit is not None:
                 file_items: list[FileItemResponse] = []
-                has_more = result.has_more
-                next_cursor_raw = result.next_cursor
+                # sys_readdir may return a paginated object (with .items,
+                # .has_more, .next_cursor) or a plain list for connector
+                # backends. Normalize to avoid AttributeError.
+                if isinstance(result, list):
+                    _page_items = result
+                    has_more = False
+                    next_cursor_raw = None
+                else:
+                    _page_items = result.items
+                    has_more = result.has_more
+                    next_cursor_raw = result.next_cursor
 
                 # Collect visible items from current page
-                for entry in result.items:
+                for entry in _page_items:
                     if _is_visible(entry):
                         file_items.append(_to_file_item(entry, prefix))
 
@@ -871,11 +880,17 @@ def create_async_files_router(
                         limit=limit,
                         cursor=next_cursor_raw,
                     )
-                    for entry in result.items:
+                    if isinstance(result, list):
+                        _page_items = result
+                        has_more = False
+                        next_cursor_raw = None
+                    else:
+                        _page_items = result.items
+                        has_more = result.has_more
+                        next_cursor_raw = result.next_cursor
+                    for entry in _page_items:
                         if _is_visible(entry):
                             file_items.append(_to_file_item(entry, prefix))
-                    has_more = result.has_more
-                    next_cursor_raw = result.next_cursor
 
                 next_cursor = (
                     base64.b64encode(next_cursor_raw.encode("utf-8")).decode("ascii")

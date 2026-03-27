@@ -127,8 +127,8 @@ class DeferredPermissionBuffer:
         if self._flush_thread and self._flush_thread.is_alive():
             self._flush_thread.join(timeout=timeout)
 
-        # Final flush
-        self._flush_sync(catch_unexpected=False)
+        # Final flush on shutdown should be resilient like the background worker.
+        self._flush_sync(catch_unexpected=True)
 
         self._started = False
         logger.info(

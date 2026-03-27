@@ -1,8 +1,13 @@
 /**
- * Available tab: lists all registered connectors with auth status.
+ * Available tab: lists all registered connectors with auth and mount status.
  *
  * Supports: connector list navigation, auth initiation (opens browser),
- * auth status polling, mount path configuration with custom path input.
+ * auth status polling, CLI mount guidance.
+ *
+ * Mounting connectors requires configuration (credentials, bucket names, etc.)
+ * that varies per connector. Instead of trying to collect all config in the TUI,
+ * we show the CLI command the user should run, with the required arguments
+ * pre-filled from the connector's connection_args.
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
@@ -33,14 +38,12 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   const initiateAuth = useConnectorsStore((s) => s.initiateAuth);
   const pollAuthStatus = useConnectorsStore((s) => s.pollAuthStatus);
   const cancelAuth = useConnectorsStore((s) => s.cancelAuth);
-  const mountConnector = useConnectorsStore((s) => s.mountConnector);
 
   const { copy, copied } = useCopy();
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Mount path input mode
-  const [mountInputMode, setMountInputMode] = useState(false);
-  const [mountPathBuffer, setMountPathBuffer] = useState("");
+  // Show CLI mount guide for selected connector
+  const [showMountGuide, setShowMountGuide] = useState(false);
 
   // Auto-fetch on mount
   useEffect(() => {
@@ -61,14 +64,12 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
       };
     }
 
-    // Stop polling when flow completes/errors/cancels
     if (pollTimerRef.current) {
       clearInterval(pollTimerRef.current);
       pollTimerRef.current = null;
     }
   }, [authFlow.status, client, pollAuthStatus]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
@@ -82,84 +83,91 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     }
   }, [connectors, selectedIndex, initiateAuth, client]);
 
-  /** Start mount flow — pre-fill with default path, allow user to edit. */
-  const startMountInput = useCallback(() => {
+  /** Build CLI mount command for the selected connector. */
+  const getMountCommand = useCallback((): string => {
     const selected = connectors[selectedIndex];
-    if (!selected) return;
+    if (!selected) return "";
     const baseName = selected.name.replace(/_connector$/, "");
-    setMountPathBuffer(`/mnt/${baseName}`);
-    setMountInputMode(true);
-  }, [connectors, selectedIndex]);
+    const mountPath = `/mnt/${baseName}`;
 
-  /** Submit the mount with the user-specified path. */
-  const submitMount = useCallback(() => {
-    const selected = connectors[selectedIndex];
-    if (!selected) return;
-    const path = mountPathBuffer.trim();
-    if (!path) return;
-    mountConnector(selected.name, path, client);
-    setMountInputMode(false);
-    setMountPathBuffer("");
-  }, [connectors, selectedIndex, mountPathBuffer, mountConnector, client]);
+    // Build a config hint based on connector category
+    let configHint = "{}";
+    if (selected.category === "storage") {
+      if (selected.name.includes("s3")) {
+        configHint = '\'{"bucket_name": "<BUCKET>", "access_key_id": "<KEY>", "secret_access_key": "<SECRET>"}\'';
+      } else if (selected.name.includes("gcs")) {
+        configHint = '\'{"bucket_name": "<BUCKET>", "credentials_path": "<PATH>"}\'';
+      } else if (selected.name.includes("local")) {
+        configHint = '\'{"local_path": "<PATH>"}\'';
+      }
+    } else if (selected.category === "cli" || selected.category === "oauth") {
+      configHint = "'{}'";
+    }
+
+    return `nexus mounts add ${mountPath} ${selected.name} ${configHint}`;
+  }, [connectors, selectedIndex]);
 
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,
-    setIndex: setSelectedIndex,
+    setIndex: (i) => { setSelectedIndex(i); setShowMountGuide(false); },
     getLength: () => connectors.length,
   });
 
   useKeyboard(
     overlayActive
       ? {}
-      : mountInputMode
-        ? {
-            return: submitMount,
-            escape: () => { setMountInputMode(false); setMountPathBuffer(""); },
-            backspace: () => { setMountPathBuffer((b) => b.slice(0, -1)); },
-          }
-        : {
-            ...listNav,
-            a: handleAuth,
-            m: startMountInput,
-            r: () => fetchAvailable(client),
-            y: () => {
-              if (authFlow.auth_url) {
-                copy(authFlow.auth_url);
-              }
-            },
-            escape: () => {
-              if (authFlow.status !== "idle") {
-                cancelAuth();
-              }
-            },
+      : {
+          ...listNav,
+          a: handleAuth,
+          m: () => setShowMountGuide(!showMountGuide),
+          r: () => fetchAvailable(client),
+          y: () => {
+            if (showMountGuide) {
+              copy(getMountCommand());
+            } else if (authFlow.auth_url) {
+              copy(authFlow.auth_url);
+            }
           },
-    // Capture typed characters in mount input mode
-    (!overlayActive && mountInputMode)
-      ? (keyName: string) => {
-          if (keyName === "space") {
-            setMountPathBuffer((b) => b + " ");
-          } else if (keyName.length === 1) {
-            setMountPathBuffer((b) => b + keyName);
-          }
-        }
-      : undefined,
+          escape: () => {
+            if (showMountGuide) {
+              setShowMountGuide(false);
+            } else if (authFlow.status !== "idle") {
+              cancelAuth();
+            }
+          },
+        },
   );
 
   if (loading && connectors.length === 0) {
     return <LoadingIndicator message="Loading connectors..." />;
   }
 
+  const selectedConnector = connectors[selectedIndex];
+
   return (
     <box flexDirection="column" height="100%" width="100%">
-      {/* Mount path input */}
-      {mountInputMode && (
-        <box height={1} width="100%" marginBottom={1}>
-          <text>
-            <span foregroundColor={statusColor.info}>{"Mount path: "}</span>
-            <span bold>{mountPathBuffer}</span>
-            <span foregroundColor={statusColor.info}>{"\u2588"}</span>
-            <span foregroundColor={statusColor.dim}>{"  (Enter:mount  Escape:cancel)"}</span>
-          </text>
+      {/* Mount CLI guide */}
+      {showMountGuide && selectedConnector && (
+        <box flexDirection="column" width="100%" borderStyle="single" marginBottom={1}>
+          <box height={1} width="100%">
+            <text bold foregroundColor={statusColor.info}>
+              {`Mount ${selectedConnector.name.replace(/_connector$/, "")}:`}
+            </text>
+          </box>
+          <box height={1} width="100%">
+            <text foregroundColor={statusColor.dim}>Run this command in your terminal:</text>
+          </box>
+          <box height={1} width="100%">
+            <text>
+              <span foregroundColor={statusColor.healthy}>{"  $ "}</span>
+              <span>{getMountCommand()}</span>
+            </text>
+          </box>
+          <box height={1} width="100%">
+            <text foregroundColor={statusColor.dim}>
+              {"  Press y to copy command, Esc to close"}
+            </text>
+          </box>
         </box>
       )}
 
@@ -233,7 +241,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
           <text foregroundColor={statusColor.healthy}>Copied!</text>
         ) : (
           <text foregroundColor={statusColor.dim}>
-            j/k:navigate  a:auth  m:mount  r:refresh  y:copy auth URL  Esc:cancel auth
+            j/k:navigate  a:auth  m:mount guide  r:refresh  y:copy  Esc:cancel
           </text>
         )}
       </box>

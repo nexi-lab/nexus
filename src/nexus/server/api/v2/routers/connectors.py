@@ -237,43 +237,14 @@ async def list_available_connectors(
     from nexus.backends.base.registry import ConnectorRegistry
 
     nx = _get_nx(request)
-    mount_svc = nx.service("mount")
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
-    # Build a map of connector_type -> mount_point by inspecting each mount's
-    # backend. This correctly identifies mounts regardless of path naming
-    # (e.g., /mnt/work-mail still maps to gmail_connector).
-    type_to_mount: dict[str, str] = {}
-    if mount_svc:
-        try:
-            mounts = await mount_svc.list_mounts()
-            for m in mounts:
-                mp = m.get("mount_point", "")
-                # Try to resolve the backend type from the router
-                try:
-                    route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
-                    if route and route.backend:
-                        # Use the registry name if available, else class name
-                        backend = route.backend
-                        reg_name = getattr(backend, "_registry_name", None)
-                        if reg_name:
-                            type_to_mount[reg_name] = mp
-                        else:
-                            # Fallback: match by class name convention
-                            cls_name = type(backend).__name__.lower()
-                            type_to_mount[cls_name] = mp
-                except Exception:
-                    pass
-                # Also store the raw mount config connector_type if available
-                ct = m.get("connector_type") or m.get("backend_type")
-                if ct:
-                    type_to_mount[ct] = mp
-        except Exception:
-            pass
+    # Build connector_type -> mount_point map by inverting _mount_types
+    # (which stores mount_point -> connector_type).
+    type_to_mount: dict[str, str] = {ct: mp for mp, ct in _mount_types.items()}
 
     result = []
     for info in ConnectorRegistry.list_all():
-        # Check if this connector is mounted — match by registered name
         mount_path = type_to_mount.get(info.name)
 
         auth_state = {"auth_status": "unknown", "auth_source": None}
@@ -321,6 +292,11 @@ def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
 # Module-level pending auth state (TTL managed by cleanup).
 # Maps state_token -> {connector_name, provider, created_at, status}
 _pending_auth: dict[str, dict[str, Any]] = {}
+
+# Module-level mount tracking: mount_point -> connector_type.
+# Populated by mount/unmount endpoints so /available can show mount status
+# without relying on fragile router introspection through CAS wrappers.
+_mount_types: dict[str, str] = {}
 
 
 @router.post("/auth/init", response_model=AuthInitResponse)
@@ -702,6 +678,7 @@ async def mount_connector(
             readonly=req.readonly,
             context=mount_context,
         )
+        _mount_types[req.mount_point] = req.connector_type
         return MountResponse(mounted=True, mount_point=str(result))
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
@@ -795,6 +772,7 @@ async def unmount_connector(
     mount_svc = _get_mount_service(request)
     try:
         await mount_svc.remove_mount(mount_point=req.mount_point)
+        _mount_types.pop(req.mount_point, None)
         return MountResponse(mounted=False, mount_point=req.mount_point)
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))

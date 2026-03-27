@@ -848,19 +848,43 @@ def create_async_files_router(
                     _INTERNAL_PREFIXES
                 )
 
-            # Paginated path: result is a PaginatedResult
+            # Paginated path: keep advancing until the page has visible items
+            # or there are no more results. This prevents empty pages when
+            # internal entries (cfg:, ns:) consume an entire page.
             if limit is not None:
-                file_items = [
-                    _to_file_item(entry, prefix) for entry in result.items if _is_visible(entry)
-                ]
+                file_items: list[FileItemResponse] = []
+                has_more = result.has_more
+                next_cursor_raw = result.next_cursor
+
+                # Collect visible items from current page
+                for entry in result.items:
+                    if _is_visible(entry):
+                        file_items.append(_to_file_item(entry, prefix))
+
+                # If filtering emptied the page but more data exists, keep fetching
+                while not file_items and has_more and next_cursor_raw:
+                    result = await fs.sys_readdir(
+                        path,
+                        recursive=False,
+                        details=True,
+                        context=context,
+                        limit=limit,
+                        cursor=next_cursor_raw,
+                    )
+                    for entry in result.items:
+                        if _is_visible(entry):
+                            file_items.append(_to_file_item(entry, prefix))
+                    has_more = result.has_more
+                    next_cursor_raw = result.next_cursor
+
                 next_cursor = (
-                    base64.b64encode(result.next_cursor.encode("utf-8")).decode("ascii")
-                    if result.next_cursor
+                    base64.b64encode(next_cursor_raw.encode("utf-8")).decode("ascii")
+                    if next_cursor_raw
                     else None
                 )
                 return ListResponse(
                     items=file_items,
-                    has_more=result.has_more,
+                    has_more=has_more,
                     next_cursor=next_cursor,
                 )
 

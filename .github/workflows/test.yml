@@ -436,7 +436,7 @@ jobs:
       - name: Build nexus-fs wheel
         run: |
           pip install build hatchling
-          python -m build --outdir dist/ packages/nexus-fs/
+          cd packages/nexus-fs && python -m build --outdir ../../dist/
 
       - name: Validate wheel metadata
         run: |

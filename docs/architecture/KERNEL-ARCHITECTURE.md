@@ -332,7 +332,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). One-dimension model: PersistentService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
-| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Kernel-knows — constructed by first consumer (AcpService/EvictionManager) via ServiceRegistry. Details in §4.4 |
+| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Sentinel — `None` in `__init__`, injected by factory. Details in §4.4 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | Kernel file change notification + immutable mutation records. FileWatcher: kernel-owned local OBSERVE waiters + kernel-knows `RemoteWatchProtocol`. FileEvent: frozen dataclass. Details in §4.3 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
@@ -394,11 +394,10 @@ See `federation-memo.md` §7j for design rationale.
 | Linux analogue | `task_struct` list (`for_each_process()`) |
 | Package | `core.agent_registry` |
 | Storage | In-memory dict (process heap) — no persistence |
-| Lifecycle | Constructed by first consumer (AcpService/EvictionManager) via ServiceRegistry; closed by `close_all_services()` |
+| Lifecycle | Sentinel (`None` in `__init__`), factory injects at link-time; `None` = graceful degrade |
 
 In-memory registry of all active agent descriptors (spawn, status, close).
-Like Linux's `task_struct`, it is infrastructure that consuming services
-construct on first access and enlist into ServiceRegistry.
+Profiles without agents (e.g. REMOTE) operate without it.
 
 ---
 

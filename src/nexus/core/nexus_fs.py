@@ -4140,13 +4140,13 @@ class NexusFS(  # type: ignore[misc]
 
     # Issue #3388: Internal metastore prefixes that must not appear in
     # user-facing directory listings (search checkpoints, ReBAC namespaces).
+    # These are bare keys (no leading "/") — user paths always start with "/".
     _INTERNAL_PATH_PREFIXES = ("cfg:", "ns:")
 
     @staticmethod
     def _is_internal_path(path: str) -> bool:
-        """Return True for system-internal metastore paths."""
-        root = path.lstrip("/").split("/")[0] if "/" in path else path.lstrip("/")
-        return root.startswith(NexusFS._INTERNAL_PATH_PREFIXES)
+        """Return True for system-internal metastore paths (bare keys)."""
+        return path.startswith(NexusFS._INTERNAL_PATH_PREFIXES)
 
     @rpc_expose(description="List directory entries")
     async def sys_readdir(

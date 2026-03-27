@@ -43,6 +43,11 @@ class TestIsInternalPath:
             "workspace",
             "/workspace",
             "mnt",
+            # User paths starting with /cfg: or /ns: must NOT be filtered —
+            # only bare keys (no leading slash) are internal metastore entries.
+            "/cfg:user-visible",
+            "/ns:notes",
+            "/cfg:something/nested",
         ],
     )
     def test_user_paths_not_filtered(self, path: str) -> None:

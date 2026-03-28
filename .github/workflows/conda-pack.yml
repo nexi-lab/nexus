@@ -134,6 +134,32 @@ jobs:
         run: |
           conda install -n base -c conda-forge conda-pack -y
 
+      # ── macOS: strip & ad-hoc re-sign all dylibs/so ──────────────────────────
+      # conda-forge signs its libraries with its own Team ID. When sudowork later
+      # re-signs the packed tarball with the developer certificate, any file that
+      # fails to re-sign retains the conda-forge Team ID while others get the new
+      # one — causing "different Team IDs" dlopen failures on the user's machine.
+      # Stripping and applying a uniform ad-hoc signature here ensures all native
+      # libraries start from a consistent (signerless) state before sudowork signs.
+      - name: Strip and ad-hoc sign dylibs/so (macOS only)
+        if: runner.os == 'macOS'
+        shell: bash -el {0}
+        run: |
+          CONDA_ENV_PREFIX=$(conda run -n nexus python -c "import sys; print(sys.prefix)")
+          echo "Stripping and ad-hoc signing native libraries in: ${CONDA_ENV_PREFIX}"
+          SIGNED=0
+          FAILED=0
+          while IFS= read -r -d '' f; do
+            codesign --remove-signature "$f" 2>/dev/null || true
+            if codesign --force --sign - "$f" 2>/dev/null; then
+              SIGNED=$((SIGNED + 1))
+            else
+              echo "  WARNING: could not ad-hoc sign: $f"
+              FAILED=$((FAILED + 1))
+            fi
+          done < <(find "$CONDA_ENV_PREFIX" \( -name "*.dylib" -o -name "*.so" \) -print0)
+          echo "Ad-hoc signed ${SIGNED} file(s), ${FAILED} failure(s)"
+
       - name: Pack nexus environment
         shell: bash -el {0}
         run: |

@@ -560,7 +560,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
 class GmailConnector(CLIConnector):
     """Gmail CLI connector via ``gws gmail``.
 
-    CLI-backed alternative to the existing GmailConnectorBackend API connector.
+    CLI-backed alternative to the existing PathGmailBackend API connector.
     Uses gws CLI for all operations. Phase 3 (Issue #3148).
     Human-readable display paths added in Issue #3256.
     """
@@ -1130,7 +1130,7 @@ class GmailConnector(CLIConnector):
 class CalendarConnector(CLIConnector):
     """Calendar CLI connector via ``gws calendar``.
 
-    CLI-backed alternative to the existing GoogleCalendarConnectorBackend.
+    CLI-backed alternative to the existing PathCalendarBackend.
     Uses gws CLI for all operations. Phase 3 (Issue #3148).
     Human-readable display paths added in Issue #3256.
     """

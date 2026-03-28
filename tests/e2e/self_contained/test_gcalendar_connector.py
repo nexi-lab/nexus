@@ -24,6 +24,7 @@ from nexus.backends.connectors.calendar.schemas import (
     TimeSlot,
     UpdateEventSchema,
 )
+from nexus.backends.connectors.calendar.transport import CalendarTransport
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
@@ -87,19 +88,19 @@ def mock_calendar_service():
 @pytest.fixture
 def calendar_backend(mock_calendar_service, tmp_path):
     """Create a Calendar backend with mocked Google service."""
-    from nexus.backends.connectors.calendar.connector import GoogleCalendarConnectorBackend
+    from nexus.backends.connectors.calendar.connector import PathCalendarBackend
 
     # Create a mock token manager
     with patch(
-        "nexus.backends.connectors.calendar.connector.GoogleCalendarConnectorBackend._register_oauth_provider"
+        "nexus.backends.connectors.calendar.connector.PathCalendarBackend._register_oauth_provider"
     ):
-        backend = GoogleCalendarConnectorBackend(
+        backend = PathCalendarBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
             user_email="test@example.com",
         )
 
-    # Replace _get_calendar_service to return our mock
-    backend._get_calendar_service = MagicMock(return_value=mock_calendar_service)
+    # Replace _get_calendar_service on the transport (OAuth calls)
+    backend._cal_transport._get_calendar_service = MagicMock(return_value=mock_calendar_service)
 
     return backend
 
@@ -340,7 +341,7 @@ end:
   timeZone: America/Los_Angeles
 """
 
-        data = calendar_backend._parse_yaml_content(content)
+        data = CalendarTransport._parse_yaml_content(content)
 
         assert data["agent_intent"] == "User wants to create a team meeting"
         assert data["confirm"] is True
@@ -354,7 +355,7 @@ start:
   dateTime: "2024-01-15T09:00:00-08:00"
 """
 
-        data = calendar_backend._parse_yaml_content(content)
+        data = CalendarTransport._parse_yaml_content(content)
 
         assert "agent_intent" in data
         assert "weekly standup" in data["agent_intent"].lower()
@@ -442,14 +443,14 @@ summary: Updated Project Discussion
 
     def test_list_calendars(self, calendar_backend, operation_context):
         """Test listing calendars."""
-        calendars = calendar_backend._list_calendars(operation_context)
+        calendars = calendar_backend.list_dir("", context=operation_context)
 
         assert "primary/" in calendars
         assert len(calendars) >= 1
 
     def test_list_events(self, calendar_backend, operation_context):
         """Test listing events in a calendar."""
-        events = calendar_backend._list_events("primary", operation_context)
+        events = calendar_backend.list_dir("primary", context=operation_context)
 
         assert "event1.yaml" in events
         assert "event2.yaml" in events

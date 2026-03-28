@@ -514,7 +514,3 @@ class PathGmailBackend(
             if message_id in msg_id_to_content:
                 results[path] = msg_id_to_content[message_id]
         return results
-
-
-# Backward-compat alias (will be removed in a future cleanup)
-GmailConnectorBackend = PathGmailBackend

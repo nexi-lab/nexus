@@ -613,7 +613,3 @@ send_notifications: true
             "Cannot delete calendars via Nexus. Use Google Calendar to manage calendars.",
             backend="gcalendar",
         )
-
-
-# Backward-compat alias
-GoogleCalendarConnectorBackend = PathCalendarBackend

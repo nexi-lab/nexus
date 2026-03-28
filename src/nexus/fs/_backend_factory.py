@@ -53,9 +53,9 @@ def create_backend(spec: Any) -> Any:
                 "google-cloud-storage is required for GCS backends. "
                 "Install with: pip install nexus-fs[gcs]"
             ) from None
-        # GCS: gcs://project/bucket → authority=project, path=/bucket
-        bucket = spec.path.strip("/").split("/")[0] if spec.path else spec.authority
-        return CASGCSBackend(bucket_name=bucket, project_id=spec.authority)
+        from nexus.fs._uri import derive_bucket
+
+        return CASGCSBackend(bucket_name=derive_bucket(spec), project_id=spec.authority)
 
     elif spec.scheme == "local":
         from pathlib import Path as _Path

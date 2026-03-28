@@ -136,10 +136,10 @@ class TestDeriveMountPoint:
         "uri, expected_mount",
         [
             ("gcs://project/bucket", "/gcs/bucket"),
-            ("gcs://project/bucket/subdir", "/gcs/subdir"),
+            ("gcs://project/bucket/subdir", "/gcs/bucket"),
             ("gcs://my-project", "/gcs/my-project"),
         ],
-        ids=["gcs-project-bucket", "gcs-nested-last-segment", "gcs-project-only"],
+        ids=["gcs-project-bucket", "gcs-nested-uses-bucket", "gcs-project-only"],
     )
     def test_gcs_mount(self, uri: str, expected_mount: str) -> None:
         spec = parse_uri(uri)

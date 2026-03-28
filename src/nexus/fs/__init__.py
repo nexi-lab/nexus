@@ -76,6 +76,10 @@ async def mount(*uris: str, at: str | None = None) -> Any:
 
         # Custom mount point
         fs = await nexus.fs.mount("s3://my-bucket", at="/data")
+
+        # Context manager (recommended for resource cleanup)
+        async with await nexus.fs.mount("s3://my-bucket") as fs:
+            content = await fs.read("/s3/my-bucket/file.txt")
     """
     from nexus.fs._uri import derive_mount_point, parse_uri, validate_mount_collision
 
@@ -118,39 +122,61 @@ async def mount(*uris: str, at: str | None = None) -> Any:
         raise
 
     # Slim kernel boot — direct construction, no factory dependency.
-    from nexus.contracts.constants import ROOT_ZONE_ID
-    from nexus.contracts.types import OperationContext
-    from nexus.core.config import PermissionConfig
-    from nexus.core.nexus_fs import NexusFS
-    from nexus.core.router import PathRouter
-
-    router = PathRouter(metastore)
-
-    for mp, backend in backends:
-        router.add_mount(mp, backend)
-
-    kernel = NexusFS(
-        metadata_store=metastore,
-        permissions=PermissionConfig(enforce=False),
-        router=router,
-        init_cred=OperationContext(user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True),
-    )
-
-    # Persist mount URIs so playground/fsspec can auto-discover them
+    # Wrapped in try/except so backends and metastore are cleaned up if
+    # PathRouter, NexusFS, or the mount-entry writes fail.
     try:
-        mf = mounts_file()
-        with open(mf, "w") as f:
-            json.dump(list(uris), f)
-    except OSError as exc:
-        logger.warning(
-            "Could not write mounts.json (%s). "
-            "fsspec auto-discovery and playground will not find these mounts.",
-            exc,
+        from nexus.contracts.constants import ROOT_ZONE_ID
+        from nexus.contracts.types import OperationContext
+        from nexus.core.config import PermissionConfig
+        from nexus.core.nexus_fs import NexusFS
+        from nexus.core.router import PathRouter
+
+        router = PathRouter(metastore)
+
+        for mp, backend in backends:
+            router.add_mount(mp, backend)
+
+        kernel = NexusFS(
+            metadata_store=metastore,
+            permissions=PermissionConfig(enforce=False),
+            router=router,
+            init_cred=OperationContext(
+                user_id="local", groups=[], zone_id=ROOT_ZONE_ID, is_admin=True
+            ),
         )
 
-    # Create DT_MOUNT metadata entries for each mount point
-    for mp, backend in backends:
-        metastore.put(_make_mount_entry(mp, backend.name))
+        # Persist mount URIs so playground/fsspec can auto-discover them.
+        # Atomic write (temp file + os.replace) to avoid partial JSON if
+        # the process crashes mid-write.
+        try:
+            import os
+            import tempfile
+
+            mf = mounts_file()
+            fd, tmp = tempfile.mkstemp(dir=mf.parent, suffix=".tmp")
+            try:
+                with open(fd, "w") as f:
+                    json.dump(list(uris), f)
+                    f.flush()
+                os.replace(tmp, mf)
+            except BaseException:
+                os.unlink(tmp)
+                raise
+        except OSError as exc:
+            logger.warning(
+                "Could not write mounts.json (%s). "
+                "fsspec auto-discovery and playground will not find these mounts.",
+                exc,
+            )
+
+        # Create DT_MOUNT metadata entries for each mount point
+        for mp, backend in backends:
+            metastore.put(_make_mount_entry(mp, backend.name))
+    except Exception:
+        for _, be in backends:
+            _close_backend(be)
+        metastore.close()
+        raise
 
     return SlimNexusFS(kernel)
 

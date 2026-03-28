@@ -116,5 +116,63 @@ locally. This avoids re-listing remote backends on every operation and
 enables features like `stat()` and `exists()` without network calls for
 recently accessed files.
 
-The database is stored in the nexus-fs state directory
-(`$TMPDIR/nexus-fs/` by default, or `$NEXUS_FS_STATE_DIR/` if set).
+The database is stored in the nexus-fs state directory (platform-
+specific, see [State Directory](#state-directory) below).
+
+## State directory
+
+nexus-fs writes two files to the state directory:
+
+| File | Purpose | Regenerable? |
+|------|---------|-------------|
+| `metadata.db` | SQLite database with file metadata | Yes — rebuilt on next `mount()` |
+| `mounts.json` | Last-mounted URIs for auto-discovery | Yes — written on every `mount()` |
+
+Default location depends on platform (override with `NEXUS_FS_STATE_DIR`):
+
+- Linux: `~/.local/state/nexus-fs/`
+- macOS: `~/Library/Application Support/nexus-fs/`
+- Windows: `%LOCALAPPDATA%/nexus-fs/`
+
+!!! tip "Safe to delete"
+    The entire state directory can be deleted without data loss.
+    nexus-fs recreates it on the next `mount()` call. Your actual
+    data remains in the storage backends (S3, GCS, local).
+
+### Cleanup and retention
+
+nexus-fs does **not** automatically delete stale state. If you mount
+different backends over time, old metadata entries accumulate in
+`metadata.db`. To reset:
+
+```bash
+rm -rf ~/.local/state/nexus-fs/   # Linux
+rm -rf ~/Library/Application\ Support/nexus-fs/  # macOS
+```
+
+On `close()`, nexus-fs checkpoints the WAL and runs `PRAGMA optimize`
+to keep the database compact.
+
+### Corruption recovery
+
+If `metadata.db` becomes corrupted (e.g., after a hard crash), delete
+it and re-mount. The database is a cache — no user data is stored in it.
+
+If `mounts.json` contains invalid JSON, `nexus-fs playground` will show
+an empty mount list and `fsspec` auto-discovery will raise a clear error
+asking you to re-run `mount()`.
+
+### Concurrent processes
+
+nexus-fs is designed for **single-process use per state directory**.
+
+- SQLite WAL mode allows concurrent readers, but only one writer.
+- `mount()` writes `mounts.json` atomically (temp file + rename), so
+  concurrent readers always see valid JSON.
+- If two processes call `mount()` against the same state directory
+  simultaneously, the second writer may encounter `SQLITE_BUSY` and
+  retry (up to 3 times with exponential backoff). If contention persists
+  beyond the retry budget, an `OperationalError` is raised.
+
+To run multiple independent nexus-fs instances, set a different
+`NEXUS_FS_STATE_DIR` for each process.

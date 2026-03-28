@@ -15,6 +15,9 @@ content = fs.read("/s3/my-bucket/README.md")
 pip install nexus-fs            # core (local only)
 pip install nexus-fs[s3]        # + Amazon S3
 pip install nexus-fs[gcs]       # + Google Cloud Storage
+pip install nexus-fs[gdrive]    # + Google Drive
+pip install nexus-fs[fsspec]    # + fsspec/pandas/dask integration
+pip install nexus-fs[tui]       # + interactive TUI playground
 pip install nexus-fs[all]       # everything
 ```
 
@@ -54,6 +57,12 @@ fs = nexus.fs.mount_sync("gws://sheets", "gws://docs")
 # Uses gws CLI under the hood — no server needed
 ```
 
+> **Prerequisite:** `gws://` mounts require the
+> [gws CLI](https://github.com/nicholasgasior/gws) to be installed and
+> authenticated. Other connectors (GitHub, Slack) require OAuth
+> credentials configured via environment variables — see
+> `nexus-fs doctor` for diagnostics.
+
 ## API
 
 | Method | Description |
@@ -85,7 +94,8 @@ nexus-fs playground s3://my-bucket local://./data
 ## State Directory
 
 nexus-fs stores runtime state (metadata DB, mount config) in a platform-specific
-directory:
+directory. This state is a **cache** — it can be safely deleted and will be
+recreated on the next `mount()` call.
 
 | Platform | Default path |
 |----------|-------------|
@@ -95,8 +105,13 @@ directory:
 
 Override with the `NEXUS_FS_STATE_DIR` environment variable.
 
-Persistent secrets (OAuth tokens, encryption keys) are stored under `~/.nexus/`.
+Persistent secrets (OAuth tokens, encryption keys) are stored separately
+under `~/.nexus/` with restricted permissions (`0700`).
 Override with `NEXUS_FS_PERSISTENT_DIR`.
+
+> **Concurrency:** nexus-fs is designed for single-process use per state
+> directory. To run multiple independent instances, set a different
+> `NEXUS_FS_STATE_DIR` for each process.
 
 ## Relationship to `nexus-ai-fs`
 

@@ -67,8 +67,8 @@ def check_aws_credentials() -> dict[str, str]:
             return {"source": "boto3_session", "method": type(creds).__name__}
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Unexpected error during boto3 credential discovery: %s", exc)
 
     raise CloudCredentialError(
         "s3",
@@ -107,8 +107,8 @@ def check_gcs_credentials() -> dict[str, str]:
             return {"source": "google_auth_default", "project": project or "unknown"}
     except ImportError:
         pass
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Unexpected error during GCP credential discovery: %s", exc)
 
     raise CloudCredentialError(
         "gcs",

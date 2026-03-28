@@ -23,10 +23,17 @@ nexus-fs playground local://./data s3://my-bucket
 nexus-fs playground
 ```
 
-When no URIs are provided, playground reads from the nexus-fs state
-directory (`$TMPDIR/nexus-fs/mounts.json` by default, or
-`$NEXUS_FS_STATE_DIR/mounts.json` if set) to find previously mounted
-backends.
+When no URIs are provided, playground reads `mounts.json` from the
+nexus-fs state directory to find previously mounted backends. This file
+is written by `mount()` / `mount_sync()` on every successful mount.
+
+If `mounts.json` is missing or contains invalid JSON, playground starts
+with an empty mount list. Re-run `mount()` or pass URIs explicitly.
+
+!!! note "Stale mounts"
+    `mounts.json` reflects the *last* `mount()` call. If credentials or
+    backends have changed since then, playground may fail to connect.
+    Pass URIs explicitly to bypass stale auto-discovery.
 
 ## Layout
 

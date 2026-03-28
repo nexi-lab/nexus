@@ -149,7 +149,7 @@ class CapabilityIssuer:
             "type": list(VC_TYPES),
             "credentialSubject": {
                 "id": subject_did,
-                "backend_features": [cap.to_dict() for cap in capabilities],
+                "capabilities": [cap.to_dict() for cap in capabilities],
             },
         }
         if parent_credential_id is not None:
@@ -303,7 +303,7 @@ class CapabilityVerifier:
         # Step 6: Parse VC claims
         vc = claims.get("vc", {})
         subject = vc.get("credentialSubject", {})
-        raw_capabilities = subject.get("backend_features", [])
+        raw_capabilities = subject.get("capabilities", [])
 
         capabilities = tuple(Capability.from_dict(cap_dict) for cap_dict in raw_capabilities)
 

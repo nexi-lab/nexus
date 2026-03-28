@@ -100,7 +100,7 @@ class AuditLogEntry:
             "permission": self.permission,
             "bypass_type": self.bypass_type,
             "allowed": self.allowed,
-            "backend_features": json.dumps(self.capabilities),
+            "capabilities": json.dumps(self.capabilities),
             "denial_reason": self.denial_reason,
         }
 
@@ -384,8 +384,8 @@ class AuditStore:
                         "permission": row["permission"],
                         "bypass_type": row["bypass_type"],
                         "allowed": bool(row["allowed"]),
-                        "backend_features": json.loads(row["backend_features"])
-                        if row["backend_features"]
+                        "capabilities": json.loads(row["capabilities"])
+                        if row["capabilities"]
                         else [],
                         "denial_reason": row["denial_reason"],
                     }

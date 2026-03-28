@@ -139,7 +139,7 @@ class NexusFederation:
         # Parse peer addresses
         peers_str = os.environ.get("NEXUS_PEERS", "")
         peer_addrs = PeerAddress.parse_peer_list(peers_str) if peers_str else []
-        peers = [p.grpc_target for p in peer_addrs]
+        peers = [p.to_raft_peer_str() for p in peer_addrs]
 
         _max_attempts = int(os.environ.get("NEXUS_STARTUP_MAX_RETRIES", "12"))
         _base_delay = 2.0
@@ -264,8 +264,8 @@ class NexusFederation:
 
     @property
     def peer_targets(self) -> list[str]:
-        """Cluster peer host:port strings for Raft group creation."""
-        return [p.grpc_target for p in self._peers]
+        """Cluster peer id@host:port strings for Raft group creation."""
+        return [p.to_raft_peer_str() for p in self._peers]
 
     def create_zone(self, zone_id: str) -> Any:
         """Create a zone with all cluster peers included in the Raft group."""

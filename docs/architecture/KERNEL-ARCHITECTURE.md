@@ -375,14 +375,20 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   no internal synchronization. PipeManager wraps with per-pipe `asyncio.Lock`
   for **MPMC** safety. Direct RingBuffer access is kernel-internal only.
 
-**DT_STREAM (StreamManager + StreamBuffer):**
+**DT_STREAM (StreamManager + pluggable StreamBackend):**
 
 - **StreamManager (mkstream)** — VFS named stream lifecycle (same syscall
   surface as mkpipe). Per-stream lock for concurrent writers. Reads are
   non-destructive — multiple readers maintain independent byte offsets (fan-out).
-- **StreamBuffer (kstream)** — Linear append-only buffer. Monotonic tail, no
-  wrap-around. Primary use case: LLM streaming I/O (realtime first consumer +
-  replay for later consumers).
+- **StreamBackend protocol** — pluggable backing store for DT_STREAM data.
+  Mount configuration determines which backend is used when creating a stream
+  under that mount (like Linux filesystem type determines pipe implementation).
+  Current implementations: ``StreamBuffer`` (in-memory, default),
+  ``RemoteStreamBackend`` (federation gRPC proxy).
+  Future: CAS-backed (durable), WAL-backed (replicated).
+- **Mount-determined backend** — ``_MountEntry.stream_backend_factory`` is baked
+  at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
+  mount's factory; if set, creates a custom backend instead of default memory.
 
 See `federation-memo.md` §7j for design rationale.
 

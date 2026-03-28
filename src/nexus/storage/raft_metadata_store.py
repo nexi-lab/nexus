@@ -170,15 +170,18 @@ class RaftMetadataStore(MetastoreABC):
 
         Args:
             metadata: File metadata to store
-            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
+            consistency: "sc", "ec", or "wb" (wb treated as "ec" fallback —
+                buffering is handled by BufferedMetadataStore wrapper).
 
         Returns:
-            EC mode: write token (int) for polling via is_committed().
+            EC/WB mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed).
         """
+        # WB fallback: non-buffered stores treat write-back as eventual consistency
+        engine_consistency = "ec" if consistency == "wb" else consistency
         data = _serialize_metadata(metadata)
         try:
-            return self._engine.set_metadata(metadata.path, data, consistency=consistency)
+            return self._engine.set_metadata(metadata.path, data, consistency=engine_consistency)
         except TypeError:
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)
@@ -546,15 +549,23 @@ class RaftMetadataStore(MetastoreABC):
         # Fallback: individual calls when batch API not yet compiled
         return {path: self._get_raw(path) for path in paths}
 
-    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+        skip_snapshot: bool = False,
+    ) -> None:
         """Store or update multiple file metadata entries atomically.
 
         All entries are serialized upfront to fail fast on bad data.
         If any write fails mid-batch, previously written entries are
-        rolled back on a best-effort basis.
+        rolled back on a best-effort basis (unless skip_snapshot=True).
 
         Args:
             metadata_list: List of file metadata to store
+            consistency: Consistency mode (see put() for details).
+            skip_snapshot: Skip pre-write snapshot for rollback.
 
         Raises:
             RuntimeError: If a write fails (includes details of partial progress)
@@ -566,28 +577,32 @@ class RaftMetadataStore(MetastoreABC):
         serialized: list[tuple[str, bytes]] = [
             (m.path, _serialize_metadata(m)) for m in metadata_list
         ]
-        path_list = [path for path, _ in serialized]
 
         # Phase 2: capture existing metadata for rollback (single FFI call)
-        if hasattr(self._engine, "get_metadata_multi"):
-            snapshots = self._engine.get_metadata_multi(path_list)
-        else:
-            snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
+        # Skipped when caller manages its own retry logic (e.g., deferred buffer flush)
+        snapshots: list[tuple[str, bytes | None]] | None = None
+        if not skip_snapshot:
+            path_list = [path for path, _ in serialized]
+            if hasattr(self._engine, "get_metadata_multi"):
+                snapshots = self._engine.get_metadata_multi(path_list)
+            else:
+                snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
 
         # Phase 3: apply all writes in a single FFI call
         try:
             self._engine.batch_set_metadata(serialized)
         except Exception as e:
-            # Best-effort rollback: restore pre-existing entries, delete new ones
-            restore_items = [(path, data) for path, data in snapshots if data is not None]
-            delete_paths = [path for path, data in snapshots if data is None]
-            try:
-                if restore_items:
-                    self._engine.batch_set_metadata(restore_items)
-                if delete_paths:
-                    self._engine.batch_delete_metadata(delete_paths)
-            except Exception:
-                logger.warning("put_batch rollback failed for %d paths", len(path_list))
+            # Best-effort rollback (only when snapshots were captured)
+            if snapshots is not None:
+                restore_items = [(path, data) for path, data in snapshots if data is not None]
+                delete_paths = [path for path, data in snapshots if data is None]
+                try:
+                    if restore_items:
+                        self._engine.batch_set_metadata(restore_items)
+                    if delete_paths:
+                        self._engine.batch_delete_metadata(delete_paths)
+                except Exception:
+                    logger.warning("put_batch rollback failed for %d paths", len(serialized))
             raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
 
     def _delete_batch_raw(self, paths: Sequence[str]) -> None:

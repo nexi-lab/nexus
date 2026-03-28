@@ -301,7 +301,13 @@ class FederatedMetadataProxy(MetastoreABC):
                 result[global_path] = meta
         return result
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def put_batch(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",
+        skip_snapshot: bool = False,
+    ) -> None:
         zone_groups: dict[str, list[FileMetadata]] = {}
         for metadata in metadata_list:
             resolved = self._resolve(metadata.path)
@@ -315,7 +321,7 @@ class FederatedMetadataProxy(MetastoreABC):
         for zone_id, metas in zone_groups.items():
             store = self._resolver.get_store(zone_id)
             if store is not None:
-                store.put_batch(metas)
+                store.put_batch(metas, consistency=consistency, skip_snapshot=skip_snapshot)
 
     def delete_batch(self, paths: Sequence[str]) -> None:
         zone_groups: dict[str, list[str]] = {}

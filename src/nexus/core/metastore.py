@@ -75,6 +75,14 @@ class MetastoreABC(ABC):
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store or update file metadata (write-through dcache).
 
+        Args:
+            metadata: File metadata to store.
+            consistency: Consistency mode for the write:
+                - ``"sc"`` — blocks until Raft commit. Returns None.
+                - ``"ec"`` — fire-and-forget. Returns write token (int).
+                - ``"wb"`` — buffers for batched flush. Returns None.
+                  Stores without buffering SHOULD treat ``"wb"`` as ``"ec"``.
+
         Returns:
             EC mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed when this returns).
@@ -145,11 +153,24 @@ class MetastoreABC(ABC):
             self._dcache.pop(p, None)
         self._delete_batch_raw(paths)
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
-        """Store or update multiple file metadata (write-through dcache)."""
+    def put_batch(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",
+        skip_snapshot: bool = False,
+    ) -> None:
+        """Store or update multiple file metadata (write-through dcache).
+
+        Args:
+            metadata_list: List of file metadata to store.
+            consistency: Consistency mode (see put() for details).
+            skip_snapshot: Skip pre-write snapshot for rollback. Use when
+                the caller has its own retry logic (e.g., deferred buffer).
+        """
         for meta in metadata_list:
             self._dcache[meta.path] = meta
-        self._put_batch_raw(metadata_list)
+        self._put_batch_raw(metadata_list, consistency=consistency, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         """Get content IDs (hashes) for multiple paths (dcache-accelerated)."""
@@ -224,7 +245,13 @@ class MetastoreABC(ABC):
         for p in paths:
             self._delete_raw(p)
 
-    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+        skip_snapshot: bool = False,  # noqa: ARG002
+    ) -> None:
         """Store multiple metadata entries in the underlying store."""
         for meta in metadata_list:
             self._put_raw(meta)

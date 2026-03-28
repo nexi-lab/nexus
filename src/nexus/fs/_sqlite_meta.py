@@ -266,7 +266,13 @@ class SQLiteMetastore(MetastoreABC):
         return {p: found.get(p) for p in paths}
 
     @_retry_on_busy
-    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+        skip_snapshot: bool = False,  # noqa: ARG002
+    ) -> None:
         if not metadata_list:
             return
         self._conn.executemany(_UPSERT, [_metadata_to_tuple(m) for m in metadata_list])

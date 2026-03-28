@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -248,13 +249,43 @@ async def create_nexus_fs(
                 distributed = _dc_replace(_base_dist, enable_events=False)
                 logger.debug("EventBus disabled: no CacheStore or Redis/Dragonfly URL")
 
+    # Issue #3393: Wrap metadata store with write-back buffer.
+    # Must happen BEFORE create_nexus_services so services get the same wrapped store.
+    # Always enabled — transparent for SC/EC writes. Disable with NEXUS_METADATA_BUFFER=0.
+    _effective_metadata_store = metadata_store
+    if os.environ.get("NEXUS_METADATA_BUFFER", "").lower() not in ("0", "false", "no"):
+        from nexus.lib.performance_tuning import resolve_profile_tuning
+        from nexus.storage.buffered_metadata_store import BufferedMetadataStore
+
+        _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+        try:
+            from nexus.core.config import DeploymentProfile as _DP
+
+            _dp = _DP(_profile_str) if _profile_str != "auto" else _DP.FULL
+        except (ValueError, ImportError):
+            _dp = None
+        _tuning = resolve_profile_tuning(_dp) if _dp else None
+        _flush_ms = _tuning.storage.write_buffer_flush_ms if _tuning else 100
+        _max_size = _tuning.storage.write_buffer_max_size if _tuning else 100
+
+        _effective_metadata_store = BufferedMetadataStore(
+            metadata_store,
+            flush_interval_sec=_flush_ms / 1000.0,
+            max_batch_size=_max_size,
+        )
+        logger.info(
+            "Metadata write-back buffer enabled (flush=%dms, max_batch=%d)",
+            _flush_ms,
+            _max_size,
+        )
+
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
     # this branch is skipped — bare kernel with no services.
     if services is None and record_store is not None:
         services = create_nexus_services(
             record_store=record_store,
-            metadata_store=metadata_store,
+            metadata_store=_effective_metadata_store,
             backend=backend,
             router=router,
             permissions=permissions,
@@ -279,7 +310,7 @@ async def create_nexus_fs(
     )
 
     nx = NexusFS(
-        metadata_store=metadata_store,
+        metadata_store=_effective_metadata_store,
         record_store=record_store,
         cache_store=cache_store,
         cache=cache,
@@ -305,6 +336,12 @@ async def create_nexus_fs(
 
     await _initialize_services(nx, init_ctx)
     nx._initialized = True
+
+    # Issue #3393: Start the metadata write-back buffer's background flush thread
+    # and set write-back as the default consistency for all writes.
+    if hasattr(_effective_metadata_store, "_buffer"):
+        await _effective_metadata_store.start()
+        nx._default_write_consistency = "wb"
 
     return nx
 

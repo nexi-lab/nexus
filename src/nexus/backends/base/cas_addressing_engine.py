@@ -116,7 +116,6 @@ class CASAddressingEngine(Backend):
         meta_cache: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
-        verify_on_read: bool = True,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
@@ -128,7 +127,6 @@ class CASAddressingEngine(Backend):
         self._meta_cache_misses = 0
         self._on_write_callback = on_write_callback
         self._cdc: ChunkingStrategy | None = cdc_engine
-        self._verify_on_read = verify_on_read
 
     @property
     def name(self) -> str:
@@ -350,16 +348,6 @@ class CASAddressingEngine(Backend):
                     if self._cache is not None:
                         self._cache.put(content_hash, chunked_content)
                     return chunked_content
-
-            # Verify integrity (configurable — local disk bit rot is rare)
-            if self._verify_on_read:
-                actual_hash = hash_content(data)
-                if actual_hash != content_hash:
-                    raise BackendError(
-                        f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                        backend=self.name,
-                        path=content_hash,
-                    )
 
             # Feature DI: cache on miss
             if self._cache is not None:

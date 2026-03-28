@@ -316,35 +316,6 @@ class TestCASAddressingEngineName:
         assert backend.name == "cas-memory"
 
 
-class TestVerifyOnRead:
-    """Test verify_on_read flag — configurable integrity hash on read."""
-
-    def test_verify_on_read_true_detects_corruption(self, transport: InMemoryTransport):
-        backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=True)
-        content = b"original"
-        result = backend.write_content(content)
-        # Corrupt stored blob
-        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
-        transport.files[cas_key] = b"corrupted"
-        with pytest.raises(BackendError, match="hash mismatch"):
-            backend.read_content(result.content_id)
-
-    def test_verify_on_read_false_skips_hash(self, transport: InMemoryTransport):
-        backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=False)
-        content = b"original"
-        result = backend.write_content(content)
-        # Corrupt stored blob
-        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
-        transport.files[cas_key] = b"corrupted"
-        # Should return corrupted data without raising
-        data = backend.read_content(result.content_id)
-        assert data == b"corrupted"
-
-    def test_verify_on_read_default_is_true(self, transport: InMemoryTransport):
-        backend = CASAddressingEngine(transport, backend_name="test")
-        assert backend._verify_on_read is True
-
-
 class TestDedupSkip:
     """Test dedup skip — blob_exists check before put_blob on write."""
 

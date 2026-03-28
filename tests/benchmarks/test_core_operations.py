@@ -819,7 +819,16 @@ class TestBlake3HashingBenchmarks:
 # =============================================================================
 
 
+try:
+    from nexus.fuse.cache import FUSECacheManager  # noqa: F401
+
+    _HAS_FUSE = True
+except (ImportError, OSError):
+    _HAS_FUSE = False
+
+
 @pytest.mark.benchmark_ci
+@pytest.mark.skipif(not _HAS_FUSE, reason="fusepy not installed")
 class TestFUSELeaseBenchmarks:
     """Benchmarks for lease-gated FUSE cache operations.
 

@@ -88,8 +88,8 @@ class VolumeLocalTransport:
     All other keys (dirs/..., uploads/...) are handled by an internal
     LocalTransport for filesystem-native directory operations.
 
-    TTL-aware writes (Issue #3405): when `put_blob_ttl()` is called with a
-    TTL, the blob is routed to a TTL-bucketed engine. Standard `put_blob()`
+    TTL-aware writes (Issue #3405): when `store_ttl()` is called with a
+    TTL, the blob is routed to a TTL-bucketed engine. Standard `store()`
     goes to the permanent engine.
 
     Args:
@@ -211,14 +211,14 @@ class VolumeLocalTransport:
 
     # === Transport Protocol Methods ===
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         if self._is_cas_key(key):
             with self._cas_op(key, "put") as (hash_hex, engine):
                 engine.put(hash_hex, data)
                 return None
-        return self._delegate.put_blob(key, data, content_type)
+        return self._delegate.store(key, data, content_type)
 
-    def put_blob_ttl(
+    def store_ttl(
         self, key: str, data: bytes, ttl_seconds: float, content_type: str = ""
     ) -> str | None:
         """Write a CAS blob with TTL-based volume routing (Issue #3405).
@@ -240,9 +240,9 @@ class VolumeLocalTransport:
                         f"Volume TTL put failed: {e}", backend="volume_local", path=key
                     ) from e
             # TTL exceeds all buckets — fall through to permanent
-        return self.put_blob(key, data, content_type)
+        return self.store(key, data, content_type)
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
             # Check TTL engines first, then permanent
@@ -259,18 +259,18 @@ class VolumeLocalTransport:
                 if data is None:
                     raise NexusFileNotFoundError(key)
                 return bytes(data), None
-        return self._delegate.get_blob(key, version_id)
+        return self._delegate.fetch(key, version_id)
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         if self._is_cas_key(key):
             with self._cas_op(key, "delete") as (hash_hex, engine):
                 existed = engine.delete(hash_hex)
                 if not existed:
                     raise NexusFileNotFoundError(key)
                 return
-        self._delegate.delete_blob(key)
+        self._delegate.remove(key)
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
             # Check TTL engines first
@@ -284,9 +284,9 @@ class VolumeLocalTransport:
                 return bool(self._engine.exists(hash_hex))
             except Exception:
                 return False
-        return self._delegate.blob_exists(key)
+        return self._delegate.exists(key)
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
             # Check TTL engines first
@@ -302,9 +302,9 @@ class VolumeLocalTransport:
                 if size is None:
                     raise NexusFileNotFoundError(key)
                 return int(size)
-        return self._delegate.get_blob_size(key)
+        return self._delegate.get_size(key)
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         if prefix.startswith(_CAS_PREFIX) and self._volume_available:
             # Aggregate from permanent + all TTL engines
             all_hashes_ts = list(self._engine.list_content_hashes())
@@ -316,50 +316,50 @@ class VolumeLocalTransport:
                 matching = [k for k in blob_keys if k.startswith(prefix)]
                 return sorted(matching), []
             return sorted(blob_keys), []
-        return self._delegate.list_blobs(prefix, delimiter)
+        return self._delegate.list_keys(prefix, delimiter)
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         if self._is_cas_key(src_key) and self._is_cas_key(dst_key):
-            data, _ = self.get_blob(src_key)
-            self.put_blob(dst_key, data)
+            data, _ = self.fetch(src_key)
+            self.store(dst_key, data)
             return
         if self._is_cas_key(src_key):
-            data, _ = self.get_blob(src_key)
-            self._delegate.put_blob(dst_key, data)
+            data, _ = self.fetch(src_key)
+            self._delegate.store(dst_key, data)
             return
         if self._is_cas_key(dst_key):
-            data, _ = self._delegate.get_blob(src_key)
-            self.put_blob(dst_key, data)
+            data, _ = self._delegate.fetch(src_key)
+            self.store(dst_key, data)
             return
-        self._delegate.copy_blob(src_key, dst_key)
+        self._delegate.copy_key(src_key, dst_key)
 
-    def create_directory_marker(self, key: str) -> None:
-        self._delegate.create_directory_marker(key)
+    def create_dir(self, key: str) -> None:
+        self._delegate.create_dir(key)
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         if self._is_cas_key(key):
-            data, _ = self.get_blob(key)
+            data, _ = self.fetch(key)
             for i in range(0, len(data), chunk_size):
                 yield data[i : i + chunk_size]
             return
-        yield from self._delegate.stream_blob(key, chunk_size, version_id)
+        yield from self._delegate.stream(key, chunk_size, version_id)
 
     # === Extended Methods (used by CASAddressingEngine via hasattr) ===
 
-    def put_blob_nosync(self, key: str, data: bytes) -> None:
+    def store_nosync(self, key: str, data: bytes) -> None:
         """Write without fsync — volume engine batches fsync at seal time."""
         if self._is_cas_key(key):
             with self._cas_op(key, "put_nosync") as (hash_hex, engine):
                 engine.put(hash_hex, data)
                 return
-        self._delegate.put_blob_nosync(key, data)
+        self._delegate.store_nosync(key, data)
 
-    def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
+    def store_from_path(self, key: str, src_path: str | Path) -> str | None:
         """Move a file into the volume."""
         if self._is_cas_key(key):
             src = Path(src_path)
@@ -368,9 +368,9 @@ class VolumeLocalTransport:
                 engine.put(hash_hex, data)
                 src.unlink(missing_ok=True)
                 return None
-        return self._delegate.put_blob_from_path(key, src_path)
+        return self._delegate.store_from_path(key, src_path)
 
-    def get_blob_mtime(self, key: str) -> float:
+    def get_mtime(self, key: str) -> float:
         """Blob write timestamp. For GC age threshold."""
         if self._is_cas_key(key):
             with self._cas_op(key, "get_mtime") as (hash_hex, engine):
@@ -378,7 +378,7 @@ class VolumeLocalTransport:
                 if ts is None:
                     raise NexusFileNotFoundError(key)
                 return float(ts)
-        return self._delegate.get_blob_mtime(key)
+        return self._delegate.get_mtime(key)
 
     # === New Methods (transport protocol extensions) ===
 
@@ -397,7 +397,7 @@ class VolumeLocalTransport:
                 return []
         return self._delegate.list_content_hashes()
 
-    def batch_get_blobs(self, keys: list[str]) -> dict[str, bytes | None]:
+    def batch_fetch(self, keys: list[str]) -> dict[str, bytes | None]:
         """Batch read multiple blobs efficiently."""
         result: dict[str, bytes | None] = {}
         cas_keys: dict[str, str] = {}
@@ -424,14 +424,14 @@ class VolumeLocalTransport:
             except Exception:
                 for key in cas_keys:
                     try:
-                        data, _ = self.get_blob(key)
+                        data, _ = self.fetch(key)
                         result[key] = data
                     except Exception:
                         result[key] = None
 
         for key in other_keys:
             try:
-                data, _ = self._delegate.get_blob(key)
+                data, _ = self._delegate.fetch(key)
                 result[key] = data
             except Exception:
                 result[key] = None
@@ -545,11 +545,11 @@ class VolumeLocalTransport:
 
     # === Internal Helpers ===
 
-    def move_blob(self, src_key: str, dst_key: str) -> None:
+    def move(self, src_key: str, dst_key: str) -> None:
         """Atomic move — delegate to appropriate transport."""
         if self._is_cas_key(src_key) or self._is_cas_key(dst_key):
-            data, _ = self.get_blob(src_key)
-            self.put_blob(dst_key, data)
-            self.delete_blob(src_key)
+            data, _ = self.fetch(src_key)
+            self.store(dst_key, data)
+            self.remove(src_key)
             return
-        self._delegate.move_blob(src_key, dst_key)
+        self._delegate.move(src_key, dst_key)

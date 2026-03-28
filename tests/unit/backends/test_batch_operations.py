@@ -2,7 +2,7 @@
 
 Tests cover batch optimization methods:
 - _batch_get_versions() for GCS and S3
-- _bulk_download_blobs() for parallel downloads
+- _bulk_download() for parallel downloads
 - _batch_write_to_cache() for bulk cache writes
 - _batch_read_from_backend() integration
 - batch_read_content() native implementations for GCS and S3 (#1626)
@@ -29,40 +29,40 @@ class InMemoryTransport:
         self.files: dict[str, bytes] = {}
         self.download_count: int = 0
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         self.files[key] = data
         return None
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         self.download_count += 1
         if key not in self.files:
             raise FileNotFoundError(f"Blob not found: {key}")
         return self.files[key], version_id
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         self.files.pop(key, None)
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         return key in self.files
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         return len(self.files.get(key, b""))
 
-    def list_blobs(self, prefix: str = "", delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str = "", delimiter: str = "/") -> tuple[list[str], list[str]]:
         keys = [k for k in self.files if k.startswith(prefix)]
         return keys, []
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         if src_key in self.files:
             self.files[dst_key] = self.files[src_key]
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         self.files[key] = b""
 
-    def stream_blob(
+    def stream(
         self, key: str, chunk_size: int = 8192, version_id: str | None = None
     ) -> Iterator[bytes]:
-        data, _ = self.get_blob(key, version_id)
+        data, _ = self.fetch(key, version_id)
         for i in range(0, len(data), chunk_size):
             yield data[i : i + chunk_size]
 
@@ -174,10 +174,10 @@ class TestBatchGetVersions:
 
 
 class TestBulkDownloadBlobs:
-    """Test _bulk_download_blobs() method."""
+    """Test _bulk_download() method."""
 
-    def test_bulk_download_calls_download_blob(self, tmp_path: Path):
-        """Test that bulk download calls _download_blob() for each file (DRY principle)."""
+    def test_bulk_download_calls_download(self, tmp_path: Path):
+        """Test that bulk download calls _download() for each file (DRY principle)."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
@@ -199,14 +199,10 @@ class TestBulkDownloadBlobs:
         backend.download_count = 0
 
         # Call bulk download
-        result = backend._bulk_download_blobs(
-            ["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2
-        )
+        result = backend._bulk_download(["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2)
 
-        # Verify _download_blob() was called for each file
-        assert backend.download_count == 3, (
-            "_bulk_download_blobs should call _download_blob() for each file"
-        )
+        # Verify _download() was called for each file
+        assert backend.download_count == 3, "_bulk_download should call _download() for each file"
 
         # Verify all files downloaded
         assert len(result) == 3
@@ -234,9 +230,7 @@ class TestBulkDownloadBlobs:
         }
 
         # Call bulk download
-        result = backend._bulk_download_blobs(
-            ["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2
-        )
+        result = backend._bulk_download(["blob1.txt", "blob2.txt", "blob3.txt"], max_workers=2)
 
         # Should return successful downloads only
         assert len(result) == 2
@@ -259,7 +253,7 @@ class TestBulkDownloadBlobs:
         backend = MockBlobConnector(SessionLocal)
 
         # Call with empty list
-        result = backend._bulk_download_blobs([], max_workers=2)
+        result = backend._bulk_download([], max_workers=2)
 
         # Should return empty dict
         assert result == {}
@@ -347,7 +341,7 @@ class TestBatchReadFromBackend:
     """Test batch_read_from_backend() integration."""
 
     def test_batch_read_uses_bulk_download(self, tmp_path: Path):
-        """Test that batch read uses _bulk_download_blobs() for blob connectors."""
+        """Test that batch read uses _bulk_download() for blob connectors."""
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
@@ -365,15 +359,13 @@ class TestBatchReadFromBackend:
             "file3.txt": b"content3",
         }
 
-        # Mock _bulk_download_blobs to verify it's called
-        with patch.object(
-            backend, "_bulk_download_blobs", wraps=backend._bulk_download_blobs
-        ) as mock_bulk:
+        # Mock _bulk_download to verify it's called
+        with patch.object(backend, "_bulk_download", wraps=backend._bulk_download) as mock_bulk:
             # Call batch read
             result = backend.batch_read_from_backend(["file1.txt", "file2.txt", "file3.txt"])
 
             # Verify bulk download was called
-            assert mock_bulk.called, "batch_read_from_backend should use _bulk_download_blobs"
+            assert mock_bulk.called, "batch_read_from_backend should use _bulk_download"
 
             # Verify all files read
             assert len(result) == 3
@@ -409,7 +401,7 @@ class TestBatchReadFromBackend:
         # Verify all files read
         assert len(result) == 50
 
-        # Verify _download_blob was called for each file
+        # Verify _download was called for each file
         # (but in parallel, not sequential)
         assert backend.download_count == 50
 
@@ -607,7 +599,7 @@ class MockS3ConnectorForBatch(PathAddressingEngine, CacheConnectorMixin):
                 "S3 connector requires backend_path",
                 backend=self.name,
             )
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
         if blob_path not in self._transport.files:
             raise NexusFileNotFoundError(blob_path)
         return self._transport.files[blob_path]

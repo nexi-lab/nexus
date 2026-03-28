@@ -95,7 +95,7 @@ class PathAddressingEngine(Backend):
 
         return content_type
 
-    def _get_blob_path(self, backend_path: str) -> str:
+    def _get_key_path(self, backend_path: str) -> str:
         """Convert backend-relative path to full blob path.
 
         Raises:
@@ -160,9 +160,9 @@ class PathAddressingEngine(Backend):
 
         # Offset write: read old content, splice, write back (Issue #1395)
         if offset > 0:
-            blob_path = self._get_blob_path(backend_path)
+            blob_path = self._get_key_path(backend_path)
             try:
-                old_data, _ = self._transport.get_blob(blob_path)
+                old_data, _ = self._transport.fetch(blob_path)
             except Exception:
                 old_data = b""
             # Zero-fill gap if offset > len(old_data)
@@ -170,11 +170,11 @@ class PathAddressingEngine(Backend):
                 old_data = old_data + b"\x00" * (offset - len(old_data))
             content = old_data[:offset] + content + old_data[offset + len(content) :]
 
-        blob_path = self._get_blob_path(backend_path)
+        blob_path = self._get_key_path(backend_path)
         content_type = self._detect_content_type(backend_path, content)
-        result = self._transport.put_blob(blob_path, content, content_type)
+        result = self._transport.store(blob_path, content, content_type)
 
-        # If versioning, put_blob returns version_id; otherwise compute hash
+        # If versioning, store returns version_id; otherwise compute hash
         content_hash = result if result is not None else self._compute_hash(content)
 
         return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
@@ -187,13 +187,13 @@ class PathAddressingEngine(Backend):
                 backend=self.name,
             )
 
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
 
         version_id = None
         if self.versioning_enabled and content_id and self._is_version_id(content_id):
             version_id = content_id
 
-        content, _version_id = self._transport.get_blob(blob_path, version_id)
+        content, _version_id = self._transport.fetch(blob_path, version_id)
         return content
 
     def stream_content(
@@ -205,14 +205,14 @@ class PathAddressingEngine(Backend):
         if not context or not context.backend_path:
             raise ValueError(f"{self.name} connector requires backend_path in OperationContext.")
 
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
 
         try:
             version_id = None
             if self.versioning_enabled and content_id and self._is_version_id(content_id):
                 version_id = content_id
 
-            yield from self._transport.stream_blob(blob_path, chunk_size, version_id)
+            yield from self._transport.stream(blob_path, chunk_size, version_id)
 
         except (NexusFileNotFoundError, BackendError):
             raise
@@ -230,15 +230,15 @@ class PathAddressingEngine(Backend):
                 backend=self.name,
             )
 
-        blob_path = self._get_blob_path(context.backend_path)
-        self._transport.delete_blob(blob_path)
+        blob_path = self._get_key_path(context.backend_path)
+        self._transport.remove(blob_path)
 
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         if not context or not context.backend_path:
             return False
         try:
-            blob_path = self._get_blob_path(context.backend_path)
-            return self._transport.blob_exists(blob_path)
+            blob_path = self._get_key_path(context.backend_path)
+            return self._transport.exists(blob_path)
         except Exception:
             return False
 
@@ -259,18 +259,16 @@ class PathAddressingEngine(Backend):
             if cached_size is not None:
                 return int(cached_size)
 
-        blob_path = self._get_blob_path(context.backend_path)
-        return self._transport.get_blob_size(blob_path)
+        blob_path = self._get_key_path(context.backend_path)
+        return self._transport.get_size(blob_path)
 
     # === Internal I/O (used by BackendIOService via duck typing) ===
 
-    def _download_blob(
-        self, blob_path: str, version_id: str | None = None
-    ) -> tuple[bytes, str | None]:
-        """Thin wrapper around transport.get_blob for BackendIOService compat."""
-        return self._transport.get_blob(blob_path, version_id)
+    def _download(self, blob_path: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+        """Thin wrapper around transport.fetch for BackendIOService compat."""
+        return self._transport.fetch(blob_path, version_id)
 
-    def _bulk_download_blobs(
+    def _bulk_download(
         self,
         blob_paths: list[str],
         version_ids: dict[str, str] | None = None,
@@ -291,7 +289,7 @@ class PathAddressingEngine(Backend):
         def download_one(blob_path: str) -> tuple[str, bytes | None]:
             try:
                 version_id = version_ids.get(blob_path) if version_ids else None
-                content, _ = self._transport.get_blob(blob_path, version_id)
+                content, _ = self._transport.fetch(blob_path, version_id)
                 return (blob_path, content)
             except Exception as e:
                 logger.warning("Failed to download %s: %s", blob_path, e)
@@ -379,9 +377,9 @@ class PathAddressingEngine(Backend):
         if not path:
             return
 
-        blob_path = self._get_blob_path(path) + "/"
+        blob_path = self._get_key_path(path) + "/"
 
-        if self._transport.blob_exists(blob_path):
+        if self._transport.exists(blob_path):
             if not exist_ok:
                 raise BackendError(
                     f"Directory already exists: {path}",
@@ -398,7 +396,7 @@ class PathAddressingEngine(Backend):
                     message=f"Parent directory not found: {parent}",
                 )
 
-        self._transport.create_directory_marker(blob_path)
+        self._transport.create_dir(blob_path)
 
     def rmdir(
         self,
@@ -414,16 +412,16 @@ class PathAddressingEngine(Backend):
                 path="/",
             )
 
-        blob_path = self._get_blob_path(path) + "/"
+        blob_path = self._get_key_path(path) + "/"
 
-        if not self._transport.blob_exists(blob_path):
+        if not self._transport.exists(blob_path):
             raise NexusFileNotFoundError(
                 path=path,
                 message=f"Directory not found: {path}",
             )
 
         if not recursive:
-            blobs, prefixes = self._transport.list_blobs(prefix=blob_path, delimiter="/")
+            blobs, prefixes = self._transport.list_keys(prefix=blob_path, delimiter="/")
             if len(blobs) > 1 or prefixes:
                 raise BackendError(
                     f"Directory not empty: {path}",
@@ -432,15 +430,15 @@ class PathAddressingEngine(Backend):
                 )
 
         if recursive:
-            blobs, _ = self._transport.list_blobs(prefix=blob_path, delimiter="")
+            blobs, _ = self._transport.list_keys(prefix=blob_path, delimiter="")
             for blob_key in blobs:
                 if blob_key != blob_path:
                     try:
-                        self._transport.delete_blob(blob_key)
+                        self._transport.remove(blob_key)
                     except Exception as e:
                         logger.debug("Failed to delete blob during recursive rmdir: %s", e)
 
-        self._transport.delete_blob(blob_path)
+        self._transport.remove(blob_path)
 
     def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
         try:
@@ -448,12 +446,12 @@ class PathAddressingEngine(Backend):
             if not path:
                 return True
 
-            blob_path = self._get_blob_path(path)
+            blob_path = self._get_key_path(path)
 
-            if self._transport.blob_exists(blob_path + "/"):
+            if self._transport.exists(blob_path + "/"):
                 return True
 
-            blobs, prefixes = self._transport.list_blobs(prefix=blob_path + "/", delimiter="/")
+            blobs, prefixes = self._transport.list_keys(prefix=blob_path + "/", delimiter="/")
             return len(blobs) > 0 or len(prefixes) > 0
 
         except Exception:
@@ -466,10 +464,10 @@ class PathAddressingEngine(Backend):
             if path and not self.is_directory(path):
                 raise FileNotFoundError(f"Directory not found: {path}")
 
-            blob_base_path = self._get_blob_path(path)
+            blob_base_path = self._get_key_path(path)
             prefix = blob_base_path + "/" if blob_base_path else ""
 
-            blobs, prefixes = self._transport.list_blobs(prefix=prefix, delimiter="/")
+            blobs, prefixes = self._transport.list_keys(prefix=prefix, delimiter="/")
 
             entries: set[str] = set()
 
@@ -504,15 +502,15 @@ class PathAddressingEngine(Backend):
     ) -> None:
         """Copy a file using backend-native server-side copy.
 
-        Optimistic — no pre-existence checks. The transport's copy_blob
+        Optimistic — no pre-existence checks. The transport's copy_key
         will raise NexusFileNotFoundError if the source doesn't exist.
         """
         try:
             src_path = src_path.strip("/")
             dst_path = dst_path.strip("/")
-            src_blob = self._get_blob_path(src_path)
-            dst_blob = self._get_blob_path(dst_path)
-            self._transport.copy_blob(src_blob, dst_blob)
+            src_blob = self._get_key_path(src_path)
+            dst_blob = self._get_key_path(dst_path)
+            self._transport.copy_key(src_blob, dst_blob)
         except (FileNotFoundError, NexusFileNotFoundError):
             raise
         except Exception as e:
@@ -539,8 +537,8 @@ class PathAddressingEngine(Backend):
         Used by the kernel for cross-backend streaming copy.
         """
         path = path.strip("/")
-        blob_path = self._get_blob_path(path)
-        return self._transport.stream_blob(
+        blob_path = self._get_key_path(path)
+        return self._transport.stream(
             blob_path,
             chunk_size=chunk_size or self._STREAM_CHUNK_SIZE,
         )
@@ -553,12 +551,12 @@ class PathAddressingEngine(Backend):
     ) -> str | None:
         """Write a file from an iterator of byte chunks.
 
-        Delegates to the transport's ``put_blob_chunked()`` for
+        Delegates to the transport's ``store_chunked()`` for
         memory-efficient streaming writes (S3 multipart, GCS resumable).
         """
         path = path.strip("/")
-        blob_path = self._get_blob_path(path)
-        return self._transport.put_blob_chunked(
+        blob_path = self._get_key_path(path)
+        return self._transport.store_chunked(
             blob_path,
             chunks,
             content_type=content_type,
@@ -575,27 +573,27 @@ class PathAddressingEngine(Backend):
             old_path = old_path.strip("/")
             new_path = new_path.strip("/")
 
-            old_blob_path = self._get_blob_path(old_path)
-            new_blob_path = self._get_blob_path(new_path)
+            old_blob_path = self._get_key_path(old_path)
+            new_blob_path = self._get_key_path(new_path)
 
             # Check existence for both files and directories
-            old_exists = self._transport.blob_exists(old_blob_path) or self._transport.blob_exists(
+            old_exists = self._transport.exists(old_blob_path) or self._transport.exists(
                 old_blob_path + "/"
             )
             if not old_exists:
                 raise FileNotFoundError(f"Source not found: {old_path}")
 
-            new_exists = self._transport.blob_exists(new_blob_path) or self._transport.blob_exists(
+            new_exists = self._transport.exists(new_blob_path) or self._transport.exists(
                 new_blob_path + "/"
             )
             if new_exists:
                 raise FileExistsError(f"Destination already exists: {new_path}")
 
-            if hasattr(self._transport, "move_blob"):
-                self._transport.move_blob(old_blob_path, new_blob_path)
+            if hasattr(self._transport, "move"):
+                self._transport.move(old_blob_path, new_blob_path)
             else:
-                self._transport.copy_blob(old_blob_path, new_blob_path)
-                self._transport.delete_blob(old_blob_path)
+                self._transport.copy_key(old_blob_path, new_blob_path)
+                self._transport.remove(old_blob_path)
 
         except (FileNotFoundError, FileExistsError):
             raise

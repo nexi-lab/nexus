@@ -297,7 +297,7 @@ class TestPathAddressingEngineStreamContent:
     """Test stream_content in PathAddressingEngine (Issue #480)."""
 
     def test_stream_content_default_yields_chunks(self) -> None:
-        """Test default stream_content yields chunks from transport.stream_blob."""
+        """Test default stream_content yields chunks from transport.stream."""
         from collections.abc import Iterator
 
         class TestTransport:
@@ -308,36 +308,36 @@ class TestPathAddressingEngineStreamContent:
             def __init__(self) -> None:
                 self.files: dict[str, bytes] = {}
 
-            def put_blob(self, key, data, content_type=""):
+            def store(self, key, data, content_type=""):
                 self.files[key] = data
                 return None
 
-            def get_blob(self, key, version_id=None):
+            def fetch(self, key, version_id=None):
                 if key not in self.files:
                     raise FileNotFoundError(key)
                 return self.files[key], version_id
 
-            def delete_blob(self, key):
+            def remove(self, key):
                 self.files.pop(key, None)
 
-            def blob_exists(self, key):
+            def exists(self, key):
                 return key in self.files
 
-            def get_blob_size(self, key):
+            def get_size(self, key):
                 return len(self.files.get(key, b""))
 
-            def list_blobs(self, prefix="", delimiter="/"):
+            def list_keys(self, prefix="", delimiter="/"):
                 return [k for k in self.files if k.startswith(prefix)], []
 
-            def copy_blob(self, src_key, dst_key):
+            def copy_key(self, src_key, dst_key):
                 if src_key in self.files:
                     self.files[dst_key] = self.files[src_key]
 
-            def create_directory_marker(self, key):
+            def create_dir(self, key):
                 self.files[key] = b""
 
-            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
-                data, _ = self.get_blob(key, version_id)
+            def stream(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+                data, _ = self.fetch(key, version_id)
                 for i in range(0, len(data), chunk_size):
                     yield data[i : i + chunk_size]
 
@@ -367,31 +367,31 @@ class TestPathAddressingEngineStreamContent:
             def __init__(self) -> None:
                 self.files: dict[str, bytes] = {}
 
-            def put_blob(self, key, data, content_type=""):
+            def store(self, key, data, content_type=""):
                 return None
 
-            def get_blob(self, key, version_id=None):
+            def fetch(self, key, version_id=None):
                 return b"", None
 
-            def delete_blob(self, key):
+            def remove(self, key):
                 pass
 
-            def blob_exists(self, key):
+            def exists(self, key):
                 return False
 
-            def get_blob_size(self, key):
+            def get_size(self, key):
                 return 0
 
-            def list_blobs(self, prefix="", delimiter="/"):
+            def list_keys(self, prefix="", delimiter="/"):
                 return [], []
 
-            def copy_blob(self, src_key, dst_key):
+            def copy_key(self, src_key, dst_key):
                 pass
 
-            def create_directory_marker(self, key):
+            def create_dir(self, key):
                 pass
 
-            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+            def stream(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
                 return iter([])
 
         transport = TestTransport()
@@ -400,46 +400,46 @@ class TestPathAddressingEngineStreamContent:
         with pytest.raises(ValueError, match="requires backend_path"):
             list(connector.stream_content("hash", context=None))
 
-    def test_stream_content_custom_stream_blob(self) -> None:
-        """Test that transport can provide custom stream_blob for true streaming."""
+    def test_stream_content_custom_stream(self) -> None:
+        """Test that transport can provide custom stream for true streaming."""
         from collections.abc import Iterator
 
         class StreamingTransport:
-            """Transport with custom stream_blob implementation."""
+            """Transport with custom stream implementation."""
 
             transport_name = "memory"
 
             def __init__(self) -> None:
                 self.files: dict[str, bytes] = {}
-                self.stream_blob_called = False
+                self.stream_called = False
 
-            def put_blob(self, key, data, content_type=""):
+            def store(self, key, data, content_type=""):
                 return None
 
-            def get_blob(self, key, version_id=None):
+            def fetch(self, key, version_id=None):
                 return b"should not be called", None
 
-            def delete_blob(self, key):
+            def remove(self, key):
                 pass
 
-            def blob_exists(self, key):
+            def exists(self, key):
                 return True
 
-            def get_blob_size(self, key):
+            def get_size(self, key):
                 return 18
 
-            def list_blobs(self, prefix="", delimiter="/"):
+            def list_keys(self, prefix="", delimiter="/"):
                 return [], []
 
-            def copy_blob(self, src_key, dst_key):
+            def copy_key(self, src_key, dst_key):
                 pass
 
-            def create_directory_marker(self, key):
+            def create_dir(self, key):
                 pass
 
-            def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
+            def stream(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]:
                 """Custom streaming implementation."""
-                self.stream_blob_called = True
+                self.stream_called = True
                 yield b"chunk1"
                 yield b"chunk2"
                 yield b"chunk3"
@@ -453,7 +453,7 @@ class TestPathAddressingEngineStreamContent:
 
         chunks = list(connector.stream_content("hash", context=context))
 
-        assert transport.stream_blob_called
+        assert transport.stream_called
         assert chunks == [b"chunk1", b"chunk2", b"chunk3"]
 
 

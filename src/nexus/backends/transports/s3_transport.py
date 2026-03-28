@@ -132,7 +132,7 @@ class S3Transport:
 
     # === Transport Protocol Methods ===
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         try:
             kwargs: dict[str, Any] = {
                 "Bucket": self.bucket_name,
@@ -155,7 +155,7 @@ class S3Transport:
                 path=key,
             ) from e
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         try:
             kwargs: dict[str, Any] = {
                 "Bucket": self.bucket_name,
@@ -180,7 +180,7 @@ class S3Transport:
                 path=key,
             ) from e
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         try:
             # Check existence first (S3 delete is idempotent)
             self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
@@ -196,14 +196,14 @@ class S3Transport:
                 path=key,
             ) from e
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         try:
             self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             return True
         except ClientError:
             return False
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         try:
             response = self.s3_client.head_object(Bucket=self.bucket_name, Key=key)
             return int(response["ContentLength"])
@@ -218,7 +218,7 @@ class S3Transport:
                 path=key,
             ) from e
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         try:
             kwargs: dict[str, Any] = {
                 "Bucket": self.bucket_name,
@@ -247,7 +247,7 @@ class S3Transport:
                 path=prefix,
             ) from e
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         """Server-side copy using boto3 managed transfer.
 
         Automatically handles multipart copy for objects >5 GB via
@@ -267,7 +267,7 @@ class S3Transport:
                 path=src_key,
             ) from e
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         try:
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
@@ -282,7 +282,7 @@ class S3Transport:
                 path=key,
             ) from e
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
@@ -318,7 +318,7 @@ class S3Transport:
     # S3 multipart minimum part size (5 MB) — except for the last part.
     _MIN_PART_SIZE = 5 * 1024 * 1024
 
-    def put_blob_chunked(
+    def store_chunked(
         self,
         key: str,
         chunks: Iterator[bytes],

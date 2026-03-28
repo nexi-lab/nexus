@@ -29,19 +29,19 @@ class MockBlobConnector:
     def __init__(self):
         self.blobs = {}  # blob_path -> content
 
-    def _get_blob_path(self, path):
+    def _get_key_path(self, path):
         return f"bucket/{path}"
 
-    def _download_blob(self, blob_path):
+    def _download(self, blob_path):
         if blob_path in self.blobs:
             return self.blobs[blob_path]
         raise FileNotFoundError(f"No blob: {blob_path}")
 
-    def _bulk_download_blobs(self, blob_paths, version_ids=None):
+    def _bulk_download(self, blob_paths, version_ids=None):
         return {bp: self.blobs[bp] for bp in blob_paths if bp in self.blobs}
 
     def _read_content_from_backend(self, path, context=None):
-        blob_path = self._get_blob_path(path)
+        blob_path = self._get_key_path(path)
         return self.blobs.get(blob_path)
 
 
@@ -112,8 +112,8 @@ class TestBatchReadFromBackend:
     def test_custom_bulk_download(self):
         connector = MagicMock()
         # Remove blob attributes to trigger custom bulk path
-        del connector._bulk_download_blobs
-        del connector._get_blob_path
+        del connector._bulk_download
+        del connector._get_key_path
         connector._bulk_download_contents.return_value = {"a.txt": b"aaa"}
         svc = BackendIOService(connector)
 

@@ -8,7 +8,7 @@ Tests cover:
 - Batch operations (batch_read_content, batch_get_versions)
 - Prefix handling
 - Rename file (copy + delete)
-- Bulk download (_bulk_download_blobs for BackendIOService compat)
+- Bulk download (_bulk_download for BackendIOService compat)
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
@@ -36,29 +36,29 @@ class InMemoryTransport:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         self.files[key] = data
         return None
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         return self.files[key], None
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         del self.files[key]
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         return key in self.files
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         return len(self.files[key])
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         blob_keys = [k for k in self.files if k.startswith(prefix)]
         common_prefixes: list[str] = []
         if delimiter:
@@ -72,15 +72,15 @@ class InMemoryTransport:
             blob_keys = [k for k in blob_keys if delimiter not in k[len(prefix) :]]
         return sorted(blob_keys), common_prefixes
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         if src_key not in self.files:
             raise NexusFileNotFoundError(src_key)
         self.files[dst_key] = self.files[src_key]
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         self.files[key] = b""
 
-    def stream_blob(
+    def stream(
         self, key: str, chunk_size: int = 8192, version_id: str | None = None
     ) -> Iterator[bytes]:
         if key not in self.files:
@@ -351,44 +351,44 @@ class TestPathAddressingEngineRename:
 
 
 class TestPathAddressingEngineBulkDownload:
-    """Test _bulk_download_blobs (BackendIOService compat)."""
+    """Test _bulk_download (BackendIOService compat)."""
 
     def test_bulk_download(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         transport.files["a.txt"] = b"content_a"
         transport.files["b.txt"] = b"content_b"
 
-        result = backend._bulk_download_blobs(["a.txt", "b.txt"], max_workers=2)
+        result = backend._bulk_download(["a.txt", "b.txt"], max_workers=2)
 
         assert result["a.txt"] == b"content_a"
         assert result["b.txt"] == b"content_b"
 
     def test_bulk_download_empty(self, backend: PathAddressingEngine):
-        assert backend._bulk_download_blobs([]) == {}
+        assert backend._bulk_download([]) == {}
 
     def test_bulk_download_handles_failures(
         self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         transport.files["exists.txt"] = b"data"
 
-        result = backend._bulk_download_blobs(["exists.txt", "missing.txt"], max_workers=2)
+        result = backend._bulk_download(["exists.txt", "missing.txt"], max_workers=2)
 
         assert result["exists.txt"] == b"data"
         assert "missing.txt" not in result
 
 
 class TestPathAddressingEnginePrefix:
-    """Test prefix handling in _get_blob_path."""
+    """Test prefix handling in _get_key_path."""
 
     def test_no_prefix(self, backend: PathAddressingEngine):
-        assert backend._get_blob_path("file.txt") == "file.txt"
-        assert backend._get_blob_path("dir/file.txt") == "dir/file.txt"
+        assert backend._get_key_path("file.txt") == "file.txt"
+        assert backend._get_key_path("dir/file.txt") == "dir/file.txt"
 
     def test_with_prefix(self, prefixed_backend: PathAddressingEngine):
-        assert prefixed_backend._get_blob_path("file.txt") == "data/file.txt"
-        assert prefixed_backend._get_blob_path("dir/file.txt") == "data/dir/file.txt"
+        assert prefixed_backend._get_key_path("file.txt") == "data/file.txt"
+        assert prefixed_backend._get_key_path("dir/file.txt") == "data/dir/file.txt"
 
     def test_strips_leading_slash(self, backend: PathAddressingEngine):
-        assert backend._get_blob_path("/file.txt") == "file.txt"
+        assert backend._get_key_path("/file.txt") == "file.txt"
 
 
 class TestPathAddressingEngineName:

@@ -86,7 +86,7 @@ class GCSTransport:
 
     # === Transport Protocol Methods ===
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         try:
             blob = self.bucket.blob(key)
             blob.upload_from_string(
@@ -107,7 +107,7 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         try:
             if version_id and version_id.isdigit():
                 blob = self.bucket.blob(key, generation=int(version_id))
@@ -138,7 +138,7 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         try:
             blob = self.bucket.blob(key)
 
@@ -161,14 +161,14 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         try:
             blob = self.bucket.blob(key)
             return bool(blob.exists())
         except Exception:
             return False
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         try:
             blob = self.bucket.blob(key)
 
@@ -196,9 +196,9 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         try:
-            blobs = self.bucket.list_blobs(prefix=prefix, delimiter=delimiter)
+            blobs = self.bucket.list_keys(prefix=prefix, delimiter=delimiter)
             blob_keys = [blob.name for blob in blobs]
             common_prefixes = list(blobs.prefixes) if blobs.prefixes else []
             return blob_keys, common_prefixes
@@ -210,7 +210,7 @@ class GCSTransport:
                 path=prefix,
             ) from e
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         """Server-side copy using GCS rewrite API.
 
         Uses the rewrite() token-continuation loop which handles
@@ -244,7 +244,7 @@ class GCSTransport:
                 path=src_key,
             ) from e
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         try:
             blob = self.bucket.blob(key)
             blob.upload_from_string(
@@ -260,7 +260,7 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
@@ -300,7 +300,7 @@ class GCSTransport:
                 path=key,
             ) from e
 
-    def put_blob_chunked(
+    def store_chunked(
         self,
         key: str,
         chunks: "Iterator[bytes]",

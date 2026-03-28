@@ -174,7 +174,7 @@ class CASAddressingEngine(Backend):
 
         key = self._meta_key(content_hash)
         try:
-            data, _ = self._transport.get_blob(key)
+            data, _ = self._transport.fetch(key)
             meta: dict[str, Any] = json.loads(data)
         except (NexusFileNotFoundError, FileNotFoundError):
             meta = {"size": 0}
@@ -197,16 +197,16 @@ class CASAddressingEngine(Backend):
         Only used by CDC engine for chunk/manifest flags.
         Non-CDC writes skip .meta entirely.
 
-        Uses put_blob_nosync when available — meta JSON is reconstructable
+        Uses store_nosync when available — meta JSON is reconstructable
         from VFS metastore, so fsync + atomic rename is unnecessary overhead.
         """
         key = self._meta_key(content_hash)
         data = json.dumps(meta).encode()
         try:
-            if hasattr(self._transport, "put_blob_nosync"):
-                self._transport.put_blob_nosync(key, data)
+            if hasattr(self._transport, "store_nosync"):
+                self._transport.store_nosync(key, data)
             else:
-                self._transport.put_blob(key, data, "application/json")
+                self._transport.store(key, data, "application/json")
         except Exception as e:
             raise BackendError(
                 f"Failed to write CAS metadata: {e}",
@@ -250,16 +250,16 @@ class CASAddressingEngine(Backend):
         try:
             # Dedup skip: if blob already exists, skip the content write.
             # CAS is idempotent by design — same content → same key.
-            # One stat() (~17μs) is much cheaper than a full put_blob (~760μs).
-            is_new = not self._transport.blob_exists(key)
+            # One stat() (~17μs) is much cheaper than a full store (~760μs).
+            is_new = not self._transport.exists(key)
             if is_new:
                 # TTL routing (Issue #3405): if context has ttl_seconds,
-                # route to a TTL-bucketed volume via put_blob_ttl.
+                # route to a TTL-bucketed volume via store_ttl.
                 ttl = getattr(context, "ttl_seconds", None) if context else None
-                if ttl and ttl > 0 and hasattr(self._transport, "put_blob_ttl"):
-                    self._transport.put_blob_ttl(key, content, ttl)
+                if ttl and ttl > 0 and hasattr(self._transport, "store_ttl"):
+                    self._transport.store_ttl(key, content, ttl)
                 else:
-                    self._transport.put_blob(key, content)
+                    self._transport.store(key, content)
 
             # No .meta for non-CDC content — ref_count eliminated.
 
@@ -341,7 +341,7 @@ class CASAddressingEngine(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            data, _ = self._transport.get_blob(key)
+            data, _ = self._transport.fetch(key)
 
             # CDC: check if blob IS a chunked manifest (read-then-check).
             # Avoids .meta stat on every non-CDC read — O(1) prefix check on
@@ -380,16 +380,16 @@ class CASAddressingEngine(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            if not self._transport.blob_exists(key):
+            if not self._transport.exists(key):
                 raise NexusFileNotFoundError(content_hash)
 
             # Always physically delete blob + .meta unconditionally.
             # delete_content is never called by kernel (kernel does metadata-only
             # sys_unlink). GC is the safe cleanup path for shared content.
-            self._transport.delete_blob(key)
+            self._transport.remove(key)
             meta_key = self._meta_key(content_hash)
-            if self._transport.blob_exists(meta_key):
-                self._transport.delete_blob(meta_key)
+            if self._transport.exists(meta_key):
+                self._transport.remove(meta_key)
             # Feature DI: evict from meta cache
             if self._meta_cache is not None:
                 self._meta_cache.pop(content_hash, None)
@@ -412,7 +412,7 @@ class CASAddressingEngine(Backend):
             if self._bloom is not None and not self._bloom.might_exist(content_hash):
                 return False
             key = self._blob_key(content_hash)
-            return self._transport.blob_exists(key)
+            return self._transport.exists(key)
         except Exception:
             return False
 
@@ -426,7 +426,7 @@ class CASAddressingEngine(Backend):
         key = self._blob_key(content_hash)
 
         try:
-            return self._transport.get_blob_size(key)
+            return self._transport.get_size(key)
         except NexusFileNotFoundError:
             raise
         except Exception as e:
@@ -496,7 +496,7 @@ class CASAddressingEngine(Backend):
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
         key = self._blob_key(content_hash)
         try:
-            yield from self._transport.stream_blob(key, chunk_size)
+            yield from self._transport.stream(key, chunk_size)
         except NexusFileNotFoundError:
             raise
         except Exception as e:
@@ -548,13 +548,13 @@ class CASAddressingEngine(Backend):
         try:
             # Move temp file to final blob location if transport supports it;
             # otherwise fall back to reading the temp file.
-            if hasattr(self._transport, "put_blob_from_path"):
-                self._transport.put_blob_from_path(key, tmp_path)
+            if hasattr(self._transport, "store_from_path"):
+                self._transport.store_from_path(key, tmp_path)
             else:
                 try:
                     with open(tmp_path, "rb") as f:
                         data = f.read()
-                    self._transport.put_blob(key, data)
+                    self._transport.store(key, data)
                 finally:
                     with contextlib.suppress(OSError):
                         os.unlink(tmp_path)
@@ -635,7 +635,7 @@ class CASAddressingEngine(Backend):
         dir_key = f"dirs/{path}/"
 
         try:
-            if self._transport.blob_exists(dir_key):
+            if self._transport.exists(dir_key):
                 if not exist_ok:
                     raise FileExistsError(f"Directory already exists: {path}")
                 return
@@ -645,7 +645,7 @@ class CASAddressingEngine(Backend):
                 if parent and not self.is_directory(parent):
                     raise FileNotFoundError(f"Parent directory not found: {parent}")
 
-            self._transport.create_directory_marker(dir_key)
+            self._transport.create_dir(dir_key)
 
         except (FileExistsError, FileNotFoundError):
             raise
@@ -673,22 +673,22 @@ class CASAddressingEngine(Backend):
         dir_key = f"dirs/{path}/"
 
         try:
-            if not self._transport.blob_exists(dir_key):
+            if not self._transport.exists(dir_key):
                 raise NexusFileNotFoundError(path)
 
             if not recursive:
-                blobs, _ = self._transport.list_blobs(prefix=dir_key, delimiter="/")
+                blobs, _ = self._transport.list_keys(prefix=dir_key, delimiter="/")
                 if len(blobs) > 1:
                     raise OSError(f"Directory not empty: {path}")
 
-            self._transport.delete_blob(dir_key)
+            self._transport.remove(dir_key)
 
             if recursive:
-                blobs, _ = self._transport.list_blobs(prefix=dir_key, delimiter="")
+                blobs, _ = self._transport.list_keys(prefix=dir_key, delimiter="")
                 for blob_key in blobs:
                     if blob_key != dir_key:
                         try:
-                            self._transport.delete_blob(blob_key)
+                            self._transport.remove(blob_key)
                         except Exception as e:
                             logger.debug("Failed to delete blob during recursive rmdir: %s", e)
 
@@ -708,7 +708,7 @@ class CASAddressingEngine(Backend):
                 return True
 
             dir_key = f"dirs/{path}/"
-            return self._transport.blob_exists(dir_key)
+            return self._transport.exists(dir_key)
 
         except Exception:
             return False
@@ -721,7 +721,7 @@ class CASAddressingEngine(Backend):
                 raise FileNotFoundError(f"Directory not found: {path}")
 
             prefix = f"dirs/{path}/" if path else "dirs/"
-            blobs, prefixes = self._transport.list_blobs(prefix=prefix, delimiter="/")
+            blobs, prefixes = self._transport.list_keys(prefix=prefix, delimiter="/")
 
             entries: set[str] = set()
 

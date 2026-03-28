@@ -3393,8 +3393,8 @@ class NexusFS(  # type: ignore[misc]
                     )
                     # Get the destination blob's actual size/version
                     # (NOT the source's — versioned backends assign new IDs).
-                    dst_size = src_route.backend._transport.get_blob_size(
-                        src_route.backend._get_blob_path(dst_route.backend_path.strip("/")),
+                    dst_size = src_route.backend._transport.get_size(
+                        src_route.backend._get_key_path(dst_route.backend_path.strip("/")),
                     )
                     dst_version: str | None = None
                     if (
@@ -3406,7 +3406,7 @@ class NexusFS(  # type: ignore[misc]
                         ) or getattr(src_route.backend._transport, "get_generation", None)
                         if _get_ver:
                             dst_version = _get_ver(
-                                src_route.backend._get_blob_path(dst_route.backend_path.strip("/"))
+                                src_route.backend._get_key_path(dst_route.backend_path.strip("/"))
                             )
 
                     from dataclasses import replace as _replace
@@ -3464,7 +3464,7 @@ class NexusFS(  # type: ignore[misc]
                             ) or getattr(dst_route.backend._transport, "get_generation", None)
                             if _get_ver:
                                 dst_version_id = _get_ver(
-                                    dst_route.backend._get_blob_path(
+                                    dst_route.backend._get_key_path(
                                         dst_route.backend_path.strip("/")
                                     )
                                 )

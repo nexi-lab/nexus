@@ -152,11 +152,11 @@ class TestTTLGCSeparation:
 
         # Write to permanent
         h_perm = f"{'a' * 64}"
-        transport.put_blob(f"cas/{h_perm[:2]}/{h_perm[2:4]}/{h_perm}", b"perm")
+        transport.store(f"cas/{h_perm[:2]}/{h_perm[2:4]}/{h_perm}", b"perm")
 
         # Write to TTL bucket
         h_ttl = f"{'b' * 64}"
-        transport.put_blob_ttl(f"cas/{h_ttl[:2]}/{h_ttl[2:4]}/{h_ttl}", b"ttl", ttl_seconds=60.0)
+        transport.store_ttl(f"cas/{h_ttl[:2]}/{h_ttl[2:4]}/{h_ttl}", b"ttl", ttl_seconds=60.0)
 
         # list_content_hashes should only return permanent hashes
         hashes = transport.list_content_hashes()

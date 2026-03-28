@@ -5,7 +5,7 @@ during a session — persistence is handled by CAS flush to durable
 backends (local/GCS/S3) in Step 2 (DT_STREAM + CAS flush).
 
 Satisfies the 6-method CASAddressingEngine subset of Transport:
-    put_blob, get_blob, delete_blob, blob_exists, get_blob_size, stream_blob.
+    store, fetch, remove, exists, get_size, stream.
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ class LLMTransport:
         self._store: dict[str, bytes] = {}
         self._lock = threading.Lock()
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         """Store blob in memory. Returns None (no versioning)."""
         with self._lock:
             self._store[key] = bytes(data) if isinstance(data, memoryview) else data
         return None
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         """Retrieve blob from memory."""
         with self._lock:
             data = self._store.get(key)
@@ -48,19 +48,19 @@ class LLMTransport:
             raise NexusFileNotFoundError(path=key, message=f"Blob not found: {key}")
         return data, None
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         """Delete blob from memory."""
         with self._lock:
             if key not in self._store:
                 raise NexusFileNotFoundError(path=key, message=f"Blob not found: {key}")
             del self._store[key]
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         """Check if blob exists in memory."""
         with self._lock:
             return key in self._store
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         """Return blob size in bytes."""
         with self._lock:
             data = self._store.get(key)
@@ -68,7 +68,7 @@ class LLMTransport:
             raise NexusFileNotFoundError(path=key, message=f"Blob not found: {key}")
         return len(data)
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """List blobs under prefix."""
         with self._lock:
             keys = list(self._store.keys())
@@ -85,7 +85,7 @@ class LLMTransport:
                 blobs.append(k)
         return sorted(blobs), sorted(prefixes)
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         """Copy blob from src to dst."""
         with self._lock:
             data = self._store.get(src_key)
@@ -93,23 +93,23 @@ class LLMTransport:
                 raise NexusFileNotFoundError(path=src_key, message=f"Blob not found: {src_key}")
             self._store[dst_key] = data
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         """Create empty directory marker."""
         with self._lock:
             self._store[key] = b""
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         """Stream blob in chunks."""
-        data, _ = self.get_blob(key, version_id)
+        data, _ = self.fetch(key, version_id)
         for i in range(0, len(data), chunk_size):
             yield data[i : i + chunk_size]
 
-    def put_blob_chunked(
+    def store_chunked(
         self,
         key: str,
         chunks: Iterator[bytes],
@@ -117,4 +117,4 @@ class LLMTransport:
     ) -> str | None:
         """Write blob from chunks (in-memory: just concatenate)."""
         data = b"".join(chunks)
-        return self.put_blob(key, data, content_type)
+        return self.store(key, data, content_type)

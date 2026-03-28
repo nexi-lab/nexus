@@ -264,7 +264,7 @@ class CDCEngine:
 
         # Store manifest blob
         key = b._blob_key(manifest_hash)
-        b._transport.put_blob(key, manifest_bytes)
+        b._transport.store(key, manifest_bytes)
 
         # Write .meta with manifest flags (for GC to identify manifests)
         manifest_meta: dict[str, Any] = {
@@ -295,13 +295,13 @@ class CDCEngine:
         chunk_hash = hash_content(chunk_bytes)
         key = b._blob_key(chunk_hash)
 
-        # Skip put_blob if chunk already exists in local CAS
+        # Skip store if chunk already exists in local CAS
         deduped = False
         if b._bloom is not None and b._bloom.might_exist(chunk_hash):
-            deduped = b._transport.blob_exists(key)
+            deduped = b._transport.exists(key)
 
         if not deduped:
-            b._transport.put_blob(key, chunk_bytes)
+            b._transport.store(key, chunk_bytes)
 
         # Write .meta with is_chunk flag (for GC to identify chunks)
         meta: dict[str, Any] = {"size": len(chunk_bytes), "is_chunk": True}
@@ -329,7 +329,7 @@ class CDCEngine:
 
         # Read old manifest
         key = b._blob_key(old_manifest_hash)
-        manifest_data, _ = b._transport.get_blob(key)
+        manifest_data, _ = b._transport.fetch(key)
         old_manifest = ChunkedReference.from_json(manifest_data)
 
         write_end = offset + len(buf)
@@ -418,7 +418,7 @@ class CDCEngine:
 
         # Store manifest blob
         mkey = b._blob_key(manifest_hash)
-        b._transport.put_blob(mkey, manifest_bytes)
+        b._transport.store(mkey, manifest_bytes)
 
         # Write .meta with manifest flags
         manifest_meta: dict[str, Any] = {
@@ -449,7 +449,7 @@ class CDCEngine:
         b = self._backend
 
         key = b._blob_key(content_hash)
-        manifest_data, _ = b._transport.get_blob(key)
+        manifest_data, _ = b._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_data)
 
         chunk_data: dict[int, bytes] = {}
@@ -492,7 +492,7 @@ class CDCEngine:
         b = self._backend
 
         key = b._blob_key(content_hash)
-        manifest_data, _ = b._transport.get_blob(key)
+        manifest_data, _ = b._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_data)
 
         # Filter to overlapping chunks
@@ -524,7 +524,7 @@ class CDCEngine:
     def _read_and_verify_chunk(self, chunk_info: ChunkInfo) -> tuple[int, bytes]:
         """Read a single chunk and verify its hash. Returns (offset, data)."""
         key = self._backend._blob_key(chunk_info.chunk_hash)
-        data, _ = self._backend._transport.get_blob(key)
+        data, _ = self._backend._transport.fetch(key)
 
         actual_hash = hash_content(data)
         if actual_hash != chunk_info.chunk_hash:
@@ -536,7 +536,7 @@ class CDCEngine:
 
     def _read_single_chunk(self, chunk_hash: str) -> bytes:
         key = self._backend._blob_key(chunk_hash)
-        data, _ = self._backend._transport.get_blob(key)
+        data, _ = self._backend._transport.fetch(key)
         return data
 
     # === Query ===
@@ -544,8 +544,8 @@ class CDCEngine:
     def is_chunked(self, content_hash: str) -> bool:
         """Check if content_hash refers to a chunked manifest.
 
-        Fast path: non-CDC content has no .meta file, so blob_exists (~5μs stat)
-        short-circuits before the full get_blob+json.loads path (~30μs).
+        Fast path: non-CDC content has no .meta file, so exists (~5μs stat)
+        short-circuits before the full fetch+json.loads path (~30μs).
         Meta cache also short-circuits on repeated checks.
         """
         b = self._backend
@@ -554,9 +554,9 @@ class CDCEngine:
             cached = b._meta_cache.get(content_hash)
             if cached is not None:
                 return bool(cached.get("is_chunked_manifest", False))
-        # No .meta file → definitely not chunked (cheap stat vs expensive get_blob)
+        # No .meta file → definitely not chunked (cheap stat vs expensive fetch)
         meta_key = b._meta_key(content_hash)
-        if not b._transport.blob_exists(meta_key):
+        if not b._transport.exists(meta_key):
             # Cache the negative result to avoid repeated stat
             if b._meta_cache is not None:
                 b._meta_cache[content_hash] = {"size": 0}
@@ -578,23 +578,23 @@ class CDCEngine:
         b = self._backend
 
         key = b._blob_key(content_hash)
-        manifest_data, _ = b._transport.get_blob(key)
+        manifest_data, _ = b._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_data)
 
         # Delete manifest blob + meta
         with contextlib.suppress(Exception):
-            b._transport.delete_blob(key)
+            b._transport.remove(key)
         with contextlib.suppress(Exception):
-            b._transport.delete_blob(b._meta_key(content_hash))
+            b._transport.remove(b._meta_key(content_hash))
         if b._meta_cache is not None:
             b._meta_cache.pop(content_hash, None)
 
         # Delete all chunks in parallel
         def _delete_chunk(ci: ChunkInfo) -> None:
             with contextlib.suppress(Exception):
-                b._transport.delete_blob(b._blob_key(ci.chunk_hash))
+                b._transport.remove(b._blob_key(ci.chunk_hash))
             with contextlib.suppress(Exception):
-                b._transport.delete_blob(b._meta_key(ci.chunk_hash))
+                b._transport.remove(b._meta_key(ci.chunk_hash))
             if b._meta_cache is not None:
                 b._meta_cache.pop(ci.chunk_hash, None)
 

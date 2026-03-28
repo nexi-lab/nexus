@@ -302,7 +302,7 @@ class TestSnapshotWithExpiry:
 class TestTransportTTLRouting:
     """Test VolumeLocalTransport TTL routing (Python layer)."""
 
-    def test_put_blob_ttl_routes_to_bucket(self, tmp_path) -> None:
+    def test_store_ttl_routes_to_bucket(self, tmp_path) -> None:
         if not _vol_engine_available():
             pytest.skip("VolumeEngine not available")
 
@@ -312,18 +312,18 @@ class TestTransportTTLRouting:
         h = make_hash(1)
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 
-        transport.put_blob_ttl(key, b"ttl_data", ttl_seconds=60.0)
+        transport.store_ttl(key, b"ttl_data", ttl_seconds=60.0)
 
         # Should have created a TTL engine
         assert transport.ttl_engine_count >= 1
 
         # Should be readable
-        data, _ = transport.get_blob(key)
+        data, _ = transport.fetch(key)
         assert data == b"ttl_data"
 
         transport.close()
 
-    def test_put_blob_ttl_large_ttl_goes_permanent(self, tmp_path) -> None:
+    def test_store_ttl_large_ttl_goes_permanent(self, tmp_path) -> None:
         if not _vol_engine_available():
             pytest.skip("VolumeEngine not available")
 
@@ -334,12 +334,12 @@ class TestTransportTTLRouting:
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 
         # TTL exceeds all buckets → should go to permanent engine
-        transport.put_blob_ttl(key, b"permanent", ttl_seconds=9999999.0)
+        transport.store_ttl(key, b"permanent", ttl_seconds=9999999.0)
 
         # No TTL engines should be created
         assert transport.ttl_engine_count == 0
 
-        data, _ = transport.get_blob(key)
+        data, _ = transport.fetch(key)
         assert data == b"permanent"
 
         transport.close()
@@ -355,7 +355,7 @@ class TestTransportTTLRouting:
         key = f"cas/{h[:2]}/{h[2:4]}/{h}"
 
         # Write with very short TTL (already expired)
-        transport.put_blob_ttl(key, b"expired", ttl_seconds=0.001)
+        transport.store_ttl(key, b"expired", ttl_seconds=0.001)
         # Force seal so expiry can operate on sealed volumes
         for engine in transport._ttl_engines.values():
             engine.seal_active()

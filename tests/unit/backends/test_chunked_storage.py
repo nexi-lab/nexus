@@ -26,7 +26,7 @@ def _write_metadata(backend, content_hash: str, metadata: dict):
 
     meta_key = backend._meta_key(content_hash)
     meta_bytes = json.dumps(metadata).encode()
-    backend._transport.put_blob(meta_key, meta_bytes)
+    backend._transport.store(meta_key, meta_bytes)
 
 
 class TestChunkInfo:

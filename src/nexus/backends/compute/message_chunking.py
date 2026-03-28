@@ -90,7 +90,7 @@ class MessageBoundaryStrategy:
 
             # Store chunk blob (idempotent — same message = same hash)
             key = b._blob_key(chunk_hash)
-            b._transport.put_blob(key, chunk_bytes)
+            b._transport.store(key, chunk_bytes)
 
             # Write chunk metadata with is_chunk flag
             chunk_meta: dict[str, Any] = {"size": length, "is_chunk": True}
@@ -114,7 +114,7 @@ class MessageBoundaryStrategy:
 
         # Store manifest
         key = b._blob_key(manifest_hash)
-        b._transport.put_blob(key, manifest_bytes)
+        b._transport.store(key, manifest_bytes)
 
         # Write manifest metadata
         manifest_meta: dict[str, Any] = {
@@ -140,14 +140,14 @@ class MessageBoundaryStrategy:
         """Reassemble conversation from per-message chunks."""
         b = self._backend
         key = b._blob_key(content_hash)
-        manifest_data, _ = b._transport.get_blob(key)
+        manifest_data, _ = b._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_data)
 
         # Read chunks in order (sequential — messages are small)
         messages: list[dict[str, Any]] = []
         for ci in manifest.chunks:
             chunk_key = b._blob_key(ci.chunk_hash)
-            chunk_data, _ = b._transport.get_blob(chunk_key)
+            chunk_data, _ = b._transport.fetch(chunk_key)
             messages.append(json.loads(chunk_data))
 
         # Reassemble as JSON array
@@ -181,7 +181,7 @@ class MessageBoundaryStrategy:
         b = self._backend
         key = b._blob_key(content_hash)
         try:
-            data, _ = b._transport.get_blob(key)
+            data, _ = b._transport.fetch(key)
             return ChunkedReference.is_chunked_manifest(data)
         except Exception:
             return False
@@ -190,7 +190,7 @@ class MessageBoundaryStrategy:
         """Get original conversation size from manifest."""
         b = self._backend
         key = b._blob_key(content_hash)
-        data, _ = b._transport.get_blob(key)
+        data, _ = b._transport.fetch(key)
         manifest = ChunkedReference.from_json(data)
         return manifest.total_size
 
@@ -202,7 +202,7 @@ class MessageBoundaryStrategy:
         key = b._blob_key(content_hash)
 
         try:
-            data, _ = b._transport.get_blob(key)
+            data, _ = b._transport.fetch(key)
             manifest = ChunkedReference.from_json(data)
         except Exception:
             return
@@ -210,12 +210,12 @@ class MessageBoundaryStrategy:
         # Delete all chunks
         for ci in manifest.chunks:
             with contextlib.suppress(Exception):
-                b._transport.delete_blob(b._blob_key(ci.chunk_hash))
+                b._transport.remove(b._blob_key(ci.chunk_hash))
             with contextlib.suppress(Exception):
-                b._transport.delete_blob(b._meta_key(ci.chunk_hash))
+                b._transport.remove(b._meta_key(ci.chunk_hash))
 
         # Remove manifest
         with contextlib.suppress(Exception):
-            b._transport.delete_blob(key)
+            b._transport.remove(key)
         with contextlib.suppress(Exception):
-            b._transport.delete_blob(b._meta_key(content_hash))
+            b._transport.remove(b._meta_key(content_hash))

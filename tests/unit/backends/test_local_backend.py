@@ -175,7 +175,7 @@ def test_content_deduplication(temp_backend):
 
     # Should only be stored once (blob exists in transport)
     blob_key = temp_backend._blob_key(hash1)
-    assert temp_backend._transport.blob_exists(blob_key)
+    assert temp_backend._transport.exists(blob_key)
 
     # Read should still work
     retrieved = temp_backend.read_content(hash1)
@@ -648,7 +648,7 @@ class TestChunkedCASIntegration:
 
         # Read raw manifest via transport
         key = chunked_backend._blob_key(manifest_hash)
-        manifest_bytes, _ = chunked_backend._transport.get_blob(key)
+        manifest_bytes, _ = chunked_backend._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_bytes)
 
         assert manifest.type == "chunked_manifest_v1"
@@ -665,7 +665,7 @@ class TestChunkedCASIntegration:
 
         # Read manifest to get chunk hashes
         key = chunked_backend._blob_key(manifest_hash)
-        manifest_bytes, _ = chunked_backend._transport.get_blob(key)
+        manifest_bytes, _ = chunked_backend._transport.fetch(key)
         manifest = ChunkedReference.from_json(manifest_bytes)
         chunk_hashes = [ci.chunk_hash for ci in manifest.chunks]
 
@@ -673,11 +673,11 @@ class TestChunkedCASIntegration:
         chunked_backend.delete_content(manifest_hash)
 
         # Manifest should be gone
-        assert not chunked_backend._transport.blob_exists(key)
+        assert not chunked_backend._transport.exists(key)
 
         # All chunks should be gone
         for ch in chunk_hashes:
-            assert not chunked_backend._transport.blob_exists(chunked_backend._blob_key(ch))
+            assert not chunked_backend._transport.exists(chunked_backend._blob_key(ch))
 
     def test_chunked_deduplication(self, chunked_backend):
         """Writing same chunked content twice produces same hash."""

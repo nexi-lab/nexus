@@ -22,7 +22,7 @@ from nexus.backends.connectors.cli.sync_types import DeltaItem, DeltaSyncResult,
 
 def _make_backend(
     name: str = "gmail",
-    capabilities: frozenset | None = None,
+    backend_features: frozenset | None = None,
     sync_delta_result: Any = None,
     has_sync_delta: bool = False,
     has_caching: bool = False,
@@ -31,11 +31,11 @@ def _make_backend(
     backend = MagicMock()
     backend.name = name
 
-    if capabilities is None:
+    if backend_features is None:
         from nexus.contracts.backend_features import BackendFeature
 
         capabilities = frozenset({BackendFeature.SYNC_ELIGIBLE})
-    backend.backend_features = capabilities
+    backend.backend_features = backend_features
     backend.has_feature = MagicMock(side_effect=lambda c: c in capabilities)
 
     if has_sync_delta:

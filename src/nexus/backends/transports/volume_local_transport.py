@@ -34,6 +34,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 from nexus.backends.transports.local_transport import LocalTransport
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
@@ -112,7 +113,7 @@ class VolumeLocalTransport:
     ) -> None:
         self._root = Path(root_path).resolve()
         self._volume_available = False
-        self._VolumeEngine = None  # Class reference for lazy creation
+        self._VolumeEngine: Any = None  # Class reference for lazy creation
 
         # Try to import Rust VolumeEngine
         try:
@@ -127,7 +128,7 @@ class VolumeLocalTransport:
             )
 
         # Permanent engine for non-TTL CAS blobs
-        self._engine = None
+        self._engine: Any = None
         self._target_volume_size = target_volume_size
         self._compaction_rate_limit = compaction_rate_limit
         self._compaction_sparsity_threshold = compaction_sparsity_threshold
@@ -143,7 +144,7 @@ class VolumeLocalTransport:
             logger.info("CAS volume engine (permanent) initialized at %s", volumes_dir)
 
         # TTL-bucketed engines (Issue #3405): lazily created on first write
-        self._ttl_engines: dict[str, object] = {}
+        self._ttl_engines: dict[str, Any] = {}
         # Rotation config per bucket: bucket_name → rotation_interval_seconds
         self._ttl_rotation: dict[str, float] = {name: interval for name, _, interval in TTL_BUCKETS}
         # Track last rotation time per bucket
@@ -153,7 +154,7 @@ class VolumeLocalTransport:
         # Also serves as fallback if VolumeEngine is unavailable.
         self._delegate = LocalTransport(root_path=root_path, fsync=fsync)
 
-    def _get_ttl_engine(self, bucket: str) -> object:
+    def _get_ttl_engine(self, bucket: str) -> Any:
         """Get or create a TTL-bucketed VolumeEngine (lazy creation)."""
         engine = self._ttl_engines.get(bucket)
         if engine is not None:
@@ -187,7 +188,7 @@ class VolumeLocalTransport:
         return key.split("/")[-1]
 
     @contextmanager
-    def _cas_op(self, key: str, op_name: str):
+    def _cas_op(self, key: str, op_name: str) -> Iterator[tuple[str, Any]]:
         """Context manager for CAS operations — extracts hash and wraps errors.
 
         Yields (hash_hex, engine) if the key is a CAS key.

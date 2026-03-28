@@ -307,12 +307,19 @@ class VFSObserver(Protocol):
     """OBSERVE-phase observer for kernel VFS mutations (fire-and-forget).
 
     Receives a frozen ``FileEvent`` after every successful mutation.
-    Observers run concurrently via ``asyncio.gather`` with no ordering
-    guarantees.  Must not raise — exceptions are caught and logged by
-    KernelDispatch.
+    Must not raise — exceptions are caught and logged by KernelDispatch.
 
-    Optional ``event_mask`` class attribute (default: ``ALL_FILE_EVENTS``)
-    enables Rust-side event-type filtering to skip irrelevant observers.
+    Optional class attributes:
+
+    ``event_mask`` (default: ``ALL_FILE_EVENTS``)
+        Rust-side event-type bitmask filtering to skip irrelevant observers.
+
+    ``OBSERVE_INLINE`` (default: ``True``)
+        When True, ``on_mutation`` runs synchronously on the caller's path
+        (suited for fast, in-process work like resolving futures).
+        When False, ``on_mutation`` is dispatched as a tracked background
+        task — fire-and-forget from the caller's perspective (suited for
+        I/O-bound work like publishing to an event bus).
     """
 
     async def on_mutation(self, event: Any) -> None: ...

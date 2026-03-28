@@ -41,6 +41,7 @@ class EventBusObserver:
     """
 
     event_mask: int = ALL_FILE_EVENTS
+    OBSERVE_INLINE: bool = False  # Issue #3391: network I/O → background task
 
     # ── Hook spec (duck-typed) (Issue #1616) ──────────────────────────
 

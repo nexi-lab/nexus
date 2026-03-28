@@ -523,15 +523,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
-        await self._dispatch.intercept_post_rmdir(
-            RmdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-                recursive=recursive,
-            )
-        )
+        # Issue #3391: Standardized dispatch order — OBSERVE then INTERCEPT
         await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_DELETE,
@@ -539,6 +531,15 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 agent_id=ctx.agent_id,
                 user_id=ctx.user_id,
+            )
+        )
+        await self._dispatch.intercept_post_rmdir(
+            RmdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=recursive,
             )
         )
 
@@ -1923,6 +1924,21 @@ class NexusFS(  # type: ignore[misc]
 
         self.metadata.put(new_meta)
 
+        # Issue #3391: OBSERVE dispatch was missing for write_stream — add it.
+        await self._dispatch.notify(
+            FileEvent(
+                type=FileEventType.FILE_WRITE,
+                path=path,
+                zone_id=zone_id or ROOT_ZONE_ID,
+                agent_id=agent_id,
+                etag=content_hash,
+                size=size,
+                version=new_version,
+                is_new=(meta is None),
+                old_etag=meta.etag if meta else None,
+            )
+        )
+
         # Issue #900: Unified INTERCEPT for write_stream
         from nexus.contracts.vfs_hooks import WriteHookContext
 
@@ -2088,15 +2104,7 @@ class NexusFS(  # type: ignore[misc]
             },
         )
 
-        # POST hooks + event dispatch (Issue #900/#1682)
-        await self._dispatch.intercept_post_mkdir(
-            MkdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-            )
-        )
+        # Issue #900/#3391: Unified two-phase dispatch — OBSERVE then INTERCEPT
         await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.DIR_CREATE,
@@ -2104,6 +2112,14 @@ class NexusFS(  # type: ignore[misc]
                 zone_id=ctx.zone_id or ROOT_ZONE_ID,
                 agent_id=ctx.agent_id,
                 user_id=ctx.user_id,
+            )
+        )
+        await self._dispatch.intercept_post_mkdir(
+            MkdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
             )
         )
 

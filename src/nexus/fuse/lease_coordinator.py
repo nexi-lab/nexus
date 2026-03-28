@@ -36,13 +36,14 @@ References:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
-from nexus.contracts.protocols.lease import Lease, LeaseState
+from nexus.contracts.protocols.lease import Lease, LeaseManagerProtocol, LeaseState
 from nexus.fuse.cache import FUSECacheManager
 
 logger = logging.getLogger(__name__)
@@ -95,13 +96,13 @@ class FUSELeaseCoordinator:
     def __init__(
         self,
         cache: FUSECacheManager,
-        lease_manager: Any | None = None,
+        lease_manager: LeaseManagerProtocol | None = None,
         holder_id: str = "default-mount",
         lease_ttl: float = _DEFAULT_LEASE_TTL,
         acquire_timeout: float = _LEASE_ACQUIRE_TIMEOUT,
     ) -> None:
         self._cache = cache
-        self._lease_manager = lease_manager
+        self._lease_manager: LeaseManagerProtocol | None = lease_manager
         self._holder_id = holder_id
         self._lease_ttl = lease_ttl
         self._acquire_timeout = acquire_timeout
@@ -140,6 +141,7 @@ class FUSELeaseCoordinator:
 
     def _register_revocation_callback(self) -> None:
         """Register callback so lease revocations clear our validity cache + L1 cache."""
+        assert self._lease_manager is not None
         callback_id = f"fuse-coordinator-{self._holder_id}"
 
         async def _on_revocation(lease: Lease, reason: str) -> None:
@@ -163,17 +165,19 @@ class FUSELeaseCoordinator:
 
         self._lease_manager.register_revocation_callback(callback_id, _on_revocation)
 
-    def _submit_async(self, coro: Awaitable[T]) -> T:
+    def _submit_async(self, coro: Coroutine[Any, Any, T]) -> T:
         """Submit an async coroutine to the lease event loop and block for result.
 
         Used for lease operations that need to cross the sync/async boundary.
         """
         if self._lease_loop is None or self._lease_loop.is_closed():
             raise RuntimeError("Lease event loop not running")
-        future = asyncio.run_coroutine_threadsafe(coro, self._lease_loop)
+        future: concurrent.futures.Future[T] = asyncio.run_coroutine_threadsafe(
+            coro, self._lease_loop
+        )
         return future.result(timeout=self._acquire_timeout + 1.0)
 
-    def _fire_and_forget(self, coro: Awaitable[Any]) -> None:
+    def _fire_and_forget(self, coro: Coroutine[Any, Any, Any]) -> None:
         """Submit an async coroutine without waiting for result (Decision 15A)."""
         if self._lease_loop is None or self._lease_loop.is_closed():
             return
@@ -216,7 +220,7 @@ class FUSELeaseCoordinator:
             return None
         resource_id = f"{_FUSE_RESOURCE_PREFIX}{path}"
         try:
-            lease = self._submit_async(
+            lease: Lease | None = self._submit_async(
                 self._lease_manager.acquire(
                     resource_id,
                     self._holder_id,
@@ -238,7 +242,10 @@ class FUSELeaseCoordinator:
             return None
         resource_id = f"{_FUSE_RESOURCE_PREFIX}{path}"
         try:
-            return self._submit_async(self._lease_manager.validate(resource_id, self._holder_id))
+            result: Lease | None = self._submit_async(
+                self._lease_manager.validate(resource_id, self._holder_id)
+            )
+            return result
         except Exception:
             logger.debug("[FUSE-LEASE] Lease validate failed for %s", path, exc_info=True)
             return None
@@ -403,7 +410,7 @@ class FUSELeaseCoordinator:
         return self._holder_id
 
     @property
-    def lease_manager(self) -> Any | None:
+    def lease_manager(self) -> LeaseManagerProtocol | None:
         """The shared lease manager (for diagnostics)."""
         return self._lease_manager
 

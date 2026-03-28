@@ -65,14 +65,28 @@ print_error() {
 }
 print_test() { echo -e "${MAGENTA}TEST:${NC} $1"; }
 
+# Auto-detect connection info from nexus stack if available.
+# This ensures DATABASE_URL, NEXUS_GRPC_HOST, etc. are set even if
+# the user only ran `nexus up` without `eval $(nexus env)`.
+if command -v nexus &>/dev/null; then
+    eval $(nexus env 2>/dev/null) || true
+fi
+
 # Check prerequisites
 if [ -z "$NEXUS_URL" ] || [ -z "$NEXUS_API_KEY" ]; then
-    print_error "NEXUS_URL and NEXUS_API_KEY not set. Run: source .nexus-admin-env"
+    print_error "NEXUS_URL and NEXUS_API_KEY not set. Run: eval \$(nexus env)"
     exit 1
 fi
 
+# Derive NEXUS_DATABASE_URL from DATABASE_URL (set by `eval $(nexus env)`)
 if [ -n "$DATABASE_URL" ] && [ -z "$NEXUS_DATABASE_URL" ]; then
     export NEXUS_DATABASE_URL="$DATABASE_URL"
+fi
+
+# Ensure NEXUS_GRPC_HOST is available for Python SDK connections.
+# The SDK needs grpc_address explicitly when using non-standard ports.
+if [ -z "$NEXUS_GRPC_HOST" ] && [ -n "$NEXUS_GRPC_PORT" ]; then
+    export NEXUS_GRPC_HOST="localhost:$NEXUS_GRPC_PORT"
 fi
 
 echo "╔══════════════════════════════════════════════════════════╗"
@@ -138,7 +152,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 
@@ -229,6 +243,35 @@ except Exception as e:
     print(f"  ⚠ Could not clean version history: {e}")
 
 print("✓ Cleaned up stale tuples")
+
+# Bootstrap ReBAC namespaces — ensure relation→permission expansion rules are loaded.
+# On fresh servers (or after Raft leader election), namespaces may not be initialized
+# because _ensure_namespaces_initialized() can fail silently during leader election.
+print("Bootstrapping ReBAC namespaces...")
+try:
+    from nexus.bricks.rebac.default_namespaces import (
+        DEFAULT_FILE_NAMESPACE,
+        DEFAULT_GROUP_NAMESPACE,
+        DEFAULT_MEMORY_NAMESPACE,
+        DEFAULT_PLAYBOOK_NAMESPACE,
+        DEFAULT_TRAJECTORY_NAMESPACE,
+        DEFAULT_SKILL_NAMESPACE,
+    )
+    for ns in [DEFAULT_FILE_NAMESPACE, DEFAULT_GROUP_NAMESPACE,
+               DEFAULT_MEMORY_NAMESPACE, DEFAULT_PLAYBOOK_NAMESPACE,
+               DEFAULT_TRAJECTORY_NAMESPACE, DEFAULT_SKILL_NAMESPACE]:
+        try:
+            rebac.rebac_create_namespace_sync(ns)
+            print(f"  ✓ {ns.object_type} namespace initialized")
+        except Exception as e:
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                print(f"  ✓ {ns.object_type} namespace (already exists)")
+            else:
+                print(f"  ⚠ {ns.object_type} namespace: {e}")
+    print("✓ Namespaces ready")
+except Exception as e:
+    print(f"⚠ Namespace bootstrap: {e}")
+
 nx.close()
 CLEANUP
 
@@ -248,9 +291,11 @@ echo "  This is the actual behavior - owners need editor/viewer role for read!"
 echo ""
 
 # Create test users
-ALICE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" alice "Alice Owner" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-BOB_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" bob "Bob Editor" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
-CHARLIE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" charlie "Charlie Viewer" --days 1 2>/dev/null | grep "API Key:" | awk '{print $3}')
+# Create user API keys with --zone-id default so their file I/O paths
+# are zone-scoped consistently with the admin key and ReBAC tuples.
+ALICE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" alice "Alice Owner" --days 1 --zone-id default 2>/dev/null | grep "API Key:" | awk '{print $3}')
+BOB_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" bob "Bob Editor" --days 1 --zone-id default 2>/dev/null | grep "API Key:" | awk '{print $3}')
+CHARLIE_KEY=$(nexus_python "$SCRIPT_DIR/scripts/create-api-key.py" charlie "Charlie Viewer" --days 1 --zone-id default 2>/dev/null | grep "API Key:" | awk '{print $3}')
 
 if [ -z "$ALICE_KEY" ] || [ -z "$BOB_KEY" ] || [ -z "$CHARLIE_KEY" ]; then
     print_error "Failed to create one or more demo user API keys"
@@ -401,7 +446,7 @@ nexus_python << 'PYTHON_PARENTS'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 rebac.rebac_create_sync(("file", f"{base}/project1/docs"), "parent", ("file", f"{base}/project1"))
@@ -501,7 +546,7 @@ nexus_python << 'PYTHON_LIST'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=("user", "bob"))
 print(f"Bob has {len(tuples)} permission tuples:")
@@ -530,7 +575,7 @@ nexus_python << 'PYTHON_CYCLE'
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 try:
@@ -631,7 +676,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync()
 
@@ -756,7 +801,7 @@ TUPLE_ID=$(nexus_python << PYTHON_TUPLE_ID
 import sys, os
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 tuples = rebac.rebac_list_tuples_sync(subject=('user', 'alice'), object=('file', '$DEMO_BASE/cache-test.txt'))
 print(tuples[0]['tuple_id'] if tuples else '')
@@ -810,7 +855,7 @@ import sys, os, time, statistics
 sys.path.insert(0, os.path.join(os.environ['NEXUS_REPO_ROOT'], 'src'))
 import nexus
 
-import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY')}))
+import asyncio; nx = asyncio.run(nexus.connect(config={"profile": "remote", "url": os.getenv('NEXUS_URL', 'http://localhost:2026'), "api_key": os.getenv('NEXUS_API_KEY'), "grpc_address": os.getenv('NEXUS_GRPC_HOST')}))
 rebac = nx.service("rebac")
 base = os.getenv('DEMO_BASE')
 

@@ -155,6 +155,11 @@ class CacheCoordinator:
         self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
         # Permission lease invalidators: callback(zone_id) — zone-wide clear (Issue #3394)
         self._lease_invalidators: list[tuple[str, Callable[[str], None]]] = []
+        # Tiger L2 (Dragonfly) invalidators: callback(subj_type, subj_id, permission, res_type, zone_id)
+        # Explicit L2 cache delete on write — replaces TTL-only expiry (Issue #3395)
+        self._tiger_l2_invalidators: list[
+            tuple[str, Callable[[str, str, str, str, str], None]]
+        ] = []
 
         # Async eager recompute (Issue #3192)
         self._recompute_executor: concurrent.futures.ThreadPoolExecutor | None = None
@@ -167,6 +172,7 @@ class CacheCoordinator:
         self._invalidation_count = 0
         self._zone_graph_invalidations = 0
         self._l1_invalidations = 0
+        self._tiger_l2_invalidations = 0
         self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
@@ -314,6 +320,38 @@ class CacheCoordinator:
                 return True
         return False
 
+    def register_tiger_l2_invalidator(
+        self,
+        callback_id: str,
+        callback: "Callable[[str, str, str, str, str], None]",
+    ) -> None:
+        """Register a Tiger L2 (Dragonfly) cache invalidation callback (Issue #3395).
+
+        Called on every rebac_write/rebac_delete to explicitly invalidate the
+        L2 Dragonfly cache instead of relying on TTL-only expiry.
+
+        The coordinator expands relation → permissions internally (same as
+        boundary invalidators), so the callback receives individual permissions.
+
+        The callback receives (subject_type, subject_id, permission, resource_type, zone_id).
+
+        Args:
+            callback_id: Unique identifier for this callback
+            callback: Function(subj_type, subj_id, permission, res_type, zone_id)
+        """
+        for cid, _ in self._tiger_l2_invalidators:
+            if cid == callback_id:
+                return  # Already registered
+        self._tiger_l2_invalidators.append((callback_id, callback))
+
+    def unregister_tiger_l2_invalidator(self, callback_id: str) -> bool:
+        """Unregister a Tiger L2 (Dragonfly) cache invalidation callback."""
+        for i, (cid, _) in enumerate(self._tiger_l2_invalidators):
+            if cid == callback_id:
+                self._tiger_l2_invalidators.pop(i)
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Unified invalidation (L1 + callback-based)
     # ------------------------------------------------------------------
@@ -345,6 +383,9 @@ class CacheCoordinator:
 
         # 2. L1 permission check cache (targeted)
         self._invalidate_l1(subject_type, subject_id, object_type, object_id, zone_id)
+
+        # 2.5. Tiger L2 (Dragonfly) cache — explicit delete (Issue #3395)
+        self._notify_tiger_l2_invalidators(subject_type, subject_id, relation, object_type, zone_id)
 
         # 3. Permission leases — zone-wide clear (Issue #3394)
         self._notify_lease_invalidators(zone_id)
@@ -986,6 +1027,44 @@ class CacheCoordinator:
                     exc_info=True,
                 )
 
+    def _notify_tiger_l2_invalidators(
+        self,
+        subject_type: str,
+        subject_id: str,
+        relation: str,
+        resource_type: str,
+        zone_id: str,
+    ) -> None:
+        """Notify Tiger L2 (Dragonfly) cache invalidators (Issue #3395).
+
+        Called after L1 cache invalidation and before permission lease
+        invalidation.  Each callback performs an explicit Dragonfly DEL
+        instead of relying on TTL-only expiry.
+
+        Expands relation → permissions (same mapping as boundary invalidators)
+        because Tiger cache keys are keyed by permission, not relation.
+        """
+        if not self._tiger_l2_invalidators:
+            return
+
+        # Map relation to permissions — same as boundary invalidators
+        permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
+
+        self._tiger_l2_invalidations += 1
+
+        for callback_id, callback in self._tiger_l2_invalidators:
+            for permission in permissions:
+                try:
+                    callback(subject_type, subject_id, permission, resource_type, zone_id)
+                except Exception:
+                    self._callback_failure_count += 1
+                    logger.warning(
+                        "[CacheCoordinator] Tiger L2 invalidator %s failed for %s",
+                        callback_id,
+                        permission,
+                        exc_info=True,
+                    )
+
     def _notify_boundary_invalidators(
         self,
         zone_id: str,
@@ -1139,6 +1218,7 @@ class CacheCoordinator:
             "total_invalidations": self._invalidation_count,
             "zone_graph_invalidations": self._zone_graph_invalidations,
             "l1_invalidations": self._l1_invalidations,
+            "tiger_l2_invalidations": self._tiger_l2_invalidations,
             "lease_invalidations": self._lease_invalidations,
             "boundary_invalidations": self._boundary_invalidations,
             "visibility_invalidations": self._visibility_invalidations,
@@ -1148,6 +1228,7 @@ class CacheCoordinator:
             "registered_visibility_invalidators": len(self._visibility_invalidators),
             "registered_namespace_invalidators": len(self._namespace_invalidators),
             "registered_lease_invalidators": len(self._lease_invalidators),
+            "registered_tiger_l2_invalidators": len(self._tiger_l2_invalidators),
             "callback_failure_count": self._callback_failure_count,
             "async_recompute_submitted": self._recompute_submitted,
             "async_recompute_completed": self._recompute_completed,
@@ -1161,6 +1242,7 @@ class CacheCoordinator:
         self._invalidation_count = 0
         self._zone_graph_invalidations = 0
         self._l1_invalidations = 0
+        self._tiger_l2_invalidations = 0
         self._lease_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0

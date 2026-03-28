@@ -398,3 +398,84 @@ class TestBatchOperations:
         assert results[k1] == {10}
         # k2 missed L1, bloom rejects it (not added), falls to L3 which returns None
         assert k2 not in results
+
+
+class TestDeleteExact:
+    """Tests for delete_exact L2 Dragonfly operation (Issue #3395)."""
+
+    def test_delete_l2_calls_dragonfly_op_with_correct_params(self, tiger_cache):
+        """delete_l2 should invoke _run_dragonfly_op with delete_exact and 1s timeout."""
+        tiger_cache._dragonfly = MagicMock()
+
+        with patch.object(tiger_cache, "_run_dragonfly_op", return_value=1) as mock_op:
+            result = tiger_cache.delete_l2(
+                subject_type="user",
+                subject_id="alice",
+                permission="read",
+                resource_type="file",
+                zone_id="zone-1",
+            )
+
+            mock_op.assert_called_once_with(
+                operation="delete_exact",
+                subject_type="user",
+                subject_id="alice",
+                permission="read",
+                resource_type="file",
+                zone_id="zone-1",
+                timeout=1.0,
+            )
+            assert result == 1
+
+    def test_delete_l2_returns_zero_when_dragonfly_disabled(self, tiger_cache):
+        """delete_l2 should return 0 when Dragonfly is not configured."""
+        assert tiger_cache._dragonfly is None
+        result = tiger_cache.delete_l2(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+        assert result == 0
+
+    def test_delete_l2_handles_none_result_gracefully(self, tiger_cache):
+        """delete_l2 should return 0 when _run_dragonfly_op returns None (timeout/error)."""
+        tiger_cache._dragonfly = MagicMock()
+
+        with patch.object(tiger_cache, "_run_dragonfly_op", return_value=None):
+            result = tiger_cache.delete_l2(
+                subject_type="user",
+                subject_id="alice",
+                permission="read",
+                resource_type="file",
+                zone_id="zone-1",
+            )
+            assert result == 0
+
+    def test_delete_exact_key_format_matches_set(self, tiger_cache):
+        """delete_exact must construct the same key format as set operation."""
+        tiger_cache._dragonfly = MagicMock()
+        tiger_cache._dragonfly_url = "redis://localhost:6379"
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        tiger_cache._l2_executor = ThreadPoolExecutor(max_workers=1)
+
+        try:
+            with patch("redis.from_url") as mock_redis:
+                mock_client = MagicMock()
+                mock_redis.return_value = mock_client
+                mock_client.delete.return_value = 1
+
+                tiger_cache.delete_l2(
+                    subject_type="user",
+                    subject_id="alice",
+                    permission="read",
+                    resource_type="file",
+                    zone_id="zone-1",
+                )
+
+                mock_client.delete.assert_called_once_with("tiger:user:alice:read:file:zone-1")
+        finally:
+            tiger_cache._l2_executor.shutdown(wait=False)

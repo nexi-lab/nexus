@@ -232,6 +232,7 @@ class TigerCache:
         zone_id: str = "",
         bitmap_data: bytes | None = None,
         revision: int = 0,
+        timeout: float = 5.0,
     ) -> Any:
         """Run a Dragonfly operation using sync Redis client.
 
@@ -302,6 +303,10 @@ class TigerCache:
                     )
                     return True
 
+                elif operation == "delete_exact":
+                    # Exact key deletion — O(1) single DEL (Issue #3395)
+                    return client.delete(key)
+
                 elif operation == "invalidate":
                     # Pattern-based invalidation with proper wildcards
                     # Build pattern: use * for empty/None fields
@@ -333,13 +338,44 @@ class TigerCache:
 
         try:
             future = self._l2_executor.submit(run_sync_redis)
-            return future.result(timeout=5.0)
+            return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             logger.warning("[TIGER] L2 Dragonfly operation timed out")
             return None
         except Exception as e:
             logger.warning("[TIGER] L2 Dragonfly error: %s", e)
             return None
+
+    def delete_l2(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str = "",
+    ) -> int:
+        """Delete a specific entry from L2 Dragonfly cache (Issue #3395).
+
+        Uses exact key deletion (O(1)) instead of SCAN-based pattern matching.
+        Called by CacheCoordinator via callback for coordinated L2 invalidation
+        on permission writes.
+
+        Returns:
+            Number of keys deleted (0 or 1).
+        """
+        if not self._dragonfly:
+            return 0
+
+        result = self._run_dragonfly_op(
+            operation="delete_exact",
+            subject_type=subject_type,
+            subject_id=subject_id,
+            permission=permission,
+            resource_type=resource_type,
+            zone_id=zone_id,
+            timeout=1.0,
+        )
+        return result or 0
 
     def set_rebac_manager(self, manager: "ReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""

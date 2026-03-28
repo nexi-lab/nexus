@@ -5,11 +5,13 @@ Tests the TTLVolumeSweeper background service including:
 - Failure injection (transport errors)
 - Start/stop lifecycle
 - Idempotent behavior
+- Metastore cleanup
 """
 
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,6 +24,7 @@ def mock_transport():
     transport = MagicMock()
     transport.expire_ttl_volumes.return_value = []
     transport.rotate_ttl_volumes.return_value = 0
+    transport.flush_expired_index.return_value = 0
     return transport
 
 
@@ -159,3 +162,78 @@ class TestSweeperFailureInjection:
         await sweeper.sweep_once()
 
         assert mock_transport.expire_ttl_volumes.call_count == 3
+
+
+class TestMetastoreCleanup:
+    """Test metastore cleanup for expired TTL entries."""
+
+    def _make_meta(self, path: str, ttl: float, modified_minutes_ago: float):
+        """Create a mock FileMetadata with TTL and modified_at."""
+        meta = MagicMock()
+        meta.path = path
+        meta.ttl_seconds = ttl
+        meta.modified_at = datetime.now(UTC) - timedelta(minutes=modified_minutes_ago)
+        return meta
+
+    @pytest.mark.asyncio
+    async def test_cleanup_deletes_expired_entries(self, mock_transport) -> None:
+        metastore = MagicMock()
+        # Two expired entries (ttl=60s, modified 10 min ago) + one live
+        metastore.list_iter.return_value = [
+            self._make_meta("/tmp/a.txt", ttl=60.0, modified_minutes_ago=10),
+            self._make_meta("/tmp/b.txt", ttl=60.0, modified_minutes_ago=10),
+            self._make_meta(
+                "/tmp/c.txt", ttl=3600.0, modified_minutes_ago=10
+            ),  # 1h TTL, still live
+        ]
+
+        sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
+        await sweeper.sweep_once()
+
+        metastore.delete_batch.assert_called_once()
+        deleted_paths = metastore.delete_batch.call_args[0][0]
+        assert "/tmp/a.txt" in deleted_paths
+        assert "/tmp/b.txt" in deleted_paths
+        assert "/tmp/c.txt" not in deleted_paths
+
+    @pytest.mark.asyncio
+    async def test_cleanup_skips_permanent_entries(self, mock_transport) -> None:
+        metastore = MagicMock()
+        metastore.list_iter.return_value = [
+            self._make_meta("/docs/readme.md", ttl=0.0, modified_minutes_ago=999),  # permanent
+        ]
+
+        sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
+        await sweeper.sweep_once()
+
+        metastore.delete_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_no_metastore(self, mock_transport) -> None:
+        """No metastore = no crash, no cleanup."""
+        sweeper = TTLVolumeSweeper(mock_transport, metastore=None)
+        entries, sealed = await sweeper.sweep_once()
+        assert entries == 0
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_doesnt_crash(self, mock_transport) -> None:
+        metastore = MagicMock()
+        metastore.list_iter.side_effect = RuntimeError("db down")
+
+        sweeper = TTLVolumeSweeper(mock_transport, metastore=metastore)
+        entries, sealed = await sweeper.sweep_once()
+        # Should not crash — metastore cleanup is best-effort
+        assert entries == 0
+
+    @pytest.mark.asyncio
+    async def test_set_metastore_deferred(self, mock_transport) -> None:
+        """Metastore can be injected after construction."""
+        sweeper = TTLVolumeSweeper(mock_transport)
+        assert sweeper._metastore is None
+
+        metastore = MagicMock()
+        metastore.list_iter.return_value = []
+        sweeper.set_metastore(metastore)
+
+        await sweeper.sweep_once()
+        metastore.list_iter.assert_called_once()

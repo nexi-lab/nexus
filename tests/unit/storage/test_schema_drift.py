@@ -33,6 +33,7 @@ PROTO_TO_SQL_FIELD_MAP: dict[str, str | None] = {
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # DT_MOUNT target, not in SQL
     "owner_id": "posix_uid",
+    "ttl_seconds": None,  # Storage-layer TTL routing, not persisted in SQL (#3405)
 }
 
 # Fields that exist in FilePathModel but NOT in FileMetadata (PG-only concerns)
@@ -182,8 +183,8 @@ class TestRoundtripConsistency:
         """
         none_mapped = {k for k, v in PROTO_TO_SQL_FIELD_MAP.items() if v is None}
         # These are the expected gaps — update this when columns are added
-        assert none_mapped == {"entry_type", "target_zone_id"}, (
-            f"Expected only entry_type and target_zone_id to be unmapped, "
+        assert none_mapped == {"entry_type", "target_zone_id", "ttl_seconds"}, (
+            f"Expected only entry_type, target_zone_id, and ttl_seconds to be unmapped, "
             f"but got: {none_mapped}. "
             f"Did you add a column to FilePathModel? Update PROTO_TO_SQL_FIELD_MAP."
         )

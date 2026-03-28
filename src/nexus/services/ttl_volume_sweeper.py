@@ -4,9 +4,10 @@ Periodically calls VolumeLocalTransport.expire_ttl_volumes() to remove
 expired entries from the in-memory index and delete fully-expired volume
 files. Also rotates TTL volumes at their configured intervals.
 
-Two-phase loop:
-  1. Expiry: Remove expired entries, delete empty volumes.
+Three-phase loop:
+  1. Expiry: Remove expired entries from volume index, delete empty volumes.
   2. Rotation: Seal active volumes that exceeded their rotation interval.
+  3. Metastore cleanup: Batch-delete metastore entries for expired TTL content.
 
 Design:
     - Simple asyncio timer loop (no event-driven mode — volume expiry is
@@ -22,10 +23,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+    from nexus.core.metastore import MetastoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +41,7 @@ class TTLVolumeSweeper:
 
     Usage::
 
-        sweeper = TTLVolumeSweeper(transport, interval=10.0)
+        sweeper = TTLVolumeSweeper(transport, metastore=metastore, interval=10.0)
         await sweeper.start()
         ...
         await sweeper.stop()
@@ -48,12 +51,18 @@ class TTLVolumeSweeper:
         self,
         transport: VolumeLocalTransport,
         *,
+        metastore: MetastoreABC | None = None,
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
         self._transport = transport
+        self._metastore = metastore
         self._interval = interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
+
+    def set_metastore(self, metastore: MetastoreABC) -> None:
+        """Deferred injection — metastore may not be available at construction time."""
+        self._metastore = metastore
 
     async def start(self) -> None:
         """Start the background sweep loop."""
@@ -100,6 +109,13 @@ class TTLVolumeSweeper:
         except Exception:
             logger.exception("TTL volume rotation failed")
 
+        # Phase 3: Clean up metastore entries for expired TTL content
+        if self._metastore is not None:
+            try:
+                self._cleanup_metastore()
+            except Exception:
+                logger.exception("TTL metastore cleanup failed")
+
         if entries_expired > 0 or volumes_sealed > 0:
             logger.info(
                 "TTL sweep: expired %d entries, sealed %d volumes",
@@ -108,6 +124,34 @@ class TTLVolumeSweeper:
             )
 
         return entries_expired, volumes_sealed
+
+    def _cleanup_metastore(self) -> int:
+        """Batch-delete metastore entries whose TTL has expired.
+
+        Scans for entries with ttl_seconds > 0 where
+        modified_at + ttl_seconds < now. These entries point to content
+        that has been (or will be) expired from the volume index.
+
+        Returns count of metastore entries deleted.
+        """
+        if self._metastore is None:
+            return 0
+
+        now = time.time()
+        expired_paths: list[str] = []
+
+        for meta in self._metastore.list_iter():
+            if meta.ttl_seconds > 0 and meta.modified_at is not None:
+                # modified_at is a datetime; convert to epoch for comparison
+                modified_epoch = meta.modified_at.timestamp()
+                if modified_epoch + meta.ttl_seconds < now:
+                    expired_paths.append(meta.path)
+
+        if expired_paths:
+            self._metastore.delete_batch(expired_paths)
+            logger.info("TTL metastore cleanup: deleted %d expired entries", len(expired_paths))
+
+        return len(expired_paths)
 
     async def _sweep_loop(self) -> None:
         """Main sweep loop — periodic timer."""

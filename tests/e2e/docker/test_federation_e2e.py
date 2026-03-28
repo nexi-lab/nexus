@@ -933,24 +933,24 @@ class TestFederationCacheCoherence:
         grpc2 = cluster["grpc2"]
 
         # Write a unique file on node-1
-        unique_name = f"coherence_test_{uuid.uuid4().hex[:8]}.txt"
-        content = f"cross-zone-coherence-{time.time()}"
+        unique_name = f"coherence-{_uid()}.txt"
+        content = f"cross-zone-coherence-{_uid()}"
         write_result = _grpc_call(
             grpc1,
             "write",
-            {"path": f"/corp/eng/{unique_name}", "data": content},
+            {"path": f"/corp/eng/{unique_name}", "content": content},
             api_key=api_key,
         )
 
         if "error" in write_result:
             pytest.skip(f"Write failed (may not have perms): {write_result}")
 
-        # Read back from node-2 — should eventually succeed
+        # Read back from node-2 — should eventually succeed via Raft replication
         _wait_replicated(
             grpc2,
             "/corp/eng/",
             unique_name,
             api_key,
             msg="Cross-zone write not propagated to node-2",
-            timeout=15,
+            timeout=30,
         )

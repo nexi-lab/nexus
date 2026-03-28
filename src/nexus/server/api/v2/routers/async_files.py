@@ -104,23 +104,15 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     # entry_type 0 with no etag and size 0 is likely an implicit directory
     # (created by writing files underneath it in CAS-based storage).
     et = entry.get("entry_type", 0)
-    # Explicit is_directory flag from connector backends takes priority
-    if "is_directory" in entry:
+    has_extension = "." in raw_path.rstrip("/").rsplit("/", 1)[-1]
+    # Size-zero entries without extensions are directories (mount points, folders).
+    # This overrides explicit is_directory=False from the metastore which
+    # incorrectly marks mount points as files.
+    looks_like_dir = entry.get("size", 0) == 0 and not entry.get("etag") and not has_extension
+    if "is_directory" in entry and not looks_like_dir:
         is_dir = bool(entry["is_directory"])
     else:
-        # Heuristic: entry_type 0 with size 0 and no etag COULD be an implicit
-        # directory (CAS), but NOT if the path has a file extension (.yaml, .txt, etc.)
-        has_extension = "." in raw_path.rstrip("/").rsplit("/", 1)[-1]
-        is_dir = (
-            et in (1, 2)
-            or raw_path.endswith("/")
-            or (
-                et == 0
-                and entry.get("size", 0) == 0
-                and not entry.get("etag")
-                and not has_extension
-            )
-        )
+        is_dir = et in (1, 2) or raw_path.endswith("/") or looks_like_dir
     clean_path = raw_path.rstrip("/")
     name = (
         clean_path[len(prefix) :]

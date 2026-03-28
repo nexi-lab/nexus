@@ -28,7 +28,7 @@ from nexus.contracts.exceptions import (
     RemoteFilesystemError,
     RemoteTimeoutError,
 )
-from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
@@ -108,7 +108,7 @@ class FUSESharedContext:
     mode: "MountMode"
     context: "OperationContext | None"
     namespace_manager: "NamespaceManager | None"
-    cache: FUSECacheManager
+    cache: FUSELeaseCoordinator
     local_disk_cache: Any | None  # LocalDiskCache | None
     readahead: Any | None  # ReadaheadManager | None
     rust_client: Any | None

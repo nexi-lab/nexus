@@ -52,10 +52,11 @@ class MutationHandler:
 
         await ctx.nexus_fs.write(original_path, b"", context=ctx.context)
 
-        # Invalidate caches
-        ctx.cache.invalidate_path(original_path)
+        # Invalidate caches + fire-and-forget lease revocation (Issue #3397)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, original_path)
 
         # Generate file descriptor
@@ -89,9 +90,10 @@ class MutationHandler:
         if not ok:
             await ctx.nexus_fs.sys_unlink(original_path, context=ctx.context)
 
-        ctx.cache.invalidate_path(original_path)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, original_path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
@@ -156,24 +158,23 @@ class MutationHandler:
         else:
             await self._rename_file(old_path, new_path)
 
-        # Invalidate caches for both paths
-        ctx.cache.invalidate_path(old_path)
-        ctx.cache.invalidate_path(new_path)
-        invalidate_dir_cache(ctx, old_path)
-        invalidate_dir_cache(ctx, new_path)
-
+        # Invalidate caches for both paths + parents (Issue #3397: lease revocation)
+        invalidation_paths = [old_path, new_path]
         old_parent = old_path.rsplit("/", 1)[0] or "/"
         new_parent = new_path.rsplit("/", 1)[0] or "/"
-        ctx.cache.invalidate_path(old_parent)
+        invalidation_paths.append(old_parent)
         if old_parent != new_parent:
-            ctx.cache.invalidate_path(new_parent)
+            invalidation_paths.append(new_parent)
             new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
             if new_grandparent != new_parent:
-                ctx.cache.invalidate_path(new_grandparent)
+                invalidation_paths.append(new_grandparent)
         if old != old_path:
-            ctx.cache.invalidate_path(old)
+            invalidation_paths.append(old)
         if new != new_path:
-            ctx.cache.invalidate_path(new)
+            invalidation_paths.append(new)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
+        invalidate_dir_cache(ctx, old_path)
+        invalidate_dir_cache(ctx, new_path)
 
         if HAS_EVENT_BUS and FileEventType is not None:
             ctx.events.fire(FileEventType.FILE_RENAME, new_path, old_path=old_path)

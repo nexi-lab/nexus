@@ -18,6 +18,7 @@ from cachetools import TTLCache as _TTLCache
 from fuse import Operations
 
 from nexus.fuse.cache import FUSECacheManager
+from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
 from nexus.fuse.ops._events import FUSEEventDispatcher
 from nexus.fuse.ops._shared import (
     FUSESharedContext,
@@ -93,6 +94,8 @@ class NexusFUSEOperations(Operations):
         use_rust: bool = False,
         event_bus: Any | None = None,
         subscription_manager: Any | None = None,
+        lease_manager: Any | None = None,
+        mount_id: str | None = None,
     ) -> None:
         self._context = context
         cache_config = cache_config or {}
@@ -123,13 +126,21 @@ class NexusFUSEOperations(Operations):
                 logger.warning("[FUSE] Falling back to Python client")
                 use_rust = False
 
-        # Initialize cache
-        cache = FUSECacheManager(
+        # Initialize cache with lease coordinator (Issue #3397)
+        bare_cache = FUSECacheManager(
             attr_cache_size=cache_config.get("attr_cache_size", 1024),
             attr_cache_ttl=cache_config.get("attr_cache_ttl", 60),
             content_cache_size=cache_config.get("content_cache_size", 10000),
             parsed_cache_size=cache_config.get("parsed_cache_size", 50),
             enable_metrics=cache_config.get("enable_metrics", False),
+        )
+
+        # Wrap in lease coordinator for cross-mount cache coherence
+        holder_id = mount_id or "default-mount"
+        cache = FUSELeaseCoordinator(
+            cache=bare_cache,
+            lease_manager=lease_manager,
+            holder_id=holder_id,
         )
 
         # Initialize L2 local disk cache (Issue #1072)

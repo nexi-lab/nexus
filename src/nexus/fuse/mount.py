@@ -66,6 +66,7 @@ class NexusFUSE:
         owner_id: str | None = None,
         zone_id: str | None = None,
         use_rust: bool = False,
+        lease_manager: Any | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -106,6 +107,11 @@ class NexusFUSE:
         self._owner_id = owner_id
         self._zone_id = zone_id
         self._use_rust = use_rust
+        self._lease_manager = lease_manager
+        # Generate unique mount ID for lease holder identity (Decision 2A)
+        import uuid
+
+        self._mount_id = f"mount-{uuid.uuid4().hex[:12]}"
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -186,6 +192,8 @@ class NexusFUSE:
             use_rust=self._use_rust,
             event_bus=event_bus,
             subscription_manager=subscription_manager,
+            lease_manager=self._lease_manager,
+            mount_id=self._mount_id,
         )
 
         # Issue #1115: Set up event loop for async event dispatch
@@ -383,6 +391,12 @@ class NexusFUSE:
                 self._event_loop = None
                 logger.info("[FUSE] Event loop stopped")
 
+            # Issue #3397: Close lease coordinator
+            if hasattr(self, "_operations") and hasattr(self._operations, "_ctx"):
+                coordinator = self._operations._ctx.cache
+                if hasattr(coordinator, "close"):
+                    coordinator.close()
+
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to unmount: {e.stderr.decode()}")
             raise RuntimeError(f"Failed to unmount: {e.stderr.decode()}") from e
@@ -432,6 +446,7 @@ def mount_nexus(
     owner_id: str | None = None,
     zone_id: str | None = None,
     use_rust: bool = False,
+    lease_manager: Any | None = None,
 ) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
@@ -494,6 +509,7 @@ def mount_nexus(
         owner_id=owner_id,
         zone_id=zone_id,
         use_rust=use_rust,
+        lease_manager=lease_manager,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

@@ -41,12 +41,17 @@ class MetadataHandler:
         ctx = self._ctx
         start_time = time.time()
 
-        # Check cache first
+        # Lease-gated cache check (Issue #3397)
+        # Uses local validity cache (~100ns) before falling through to backend
         cached_attrs = ctx.cache.get_attr(path)
-        if cached_attrs is not None:
+        if cached_attrs is not None and ctx.cache._check_validity(path):
             elapsed = time.time() - start_time
             if elapsed > 0.001:
-                logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
+                logger.debug(f"[FUSE-PERF] getattr CACHED+LEASED: path={path}, {elapsed:.3f}s")
+            return cached_attrs
+        # If cached but lease expired, fall through to re-validate
+        if cached_attrs is not None and ctx.cache.lease_manager is None:
+            # Still serve from cache if no lease manager (backward compat)
             return cached_attrs
 
         # Handle virtual views (.raw, .txt, .md)

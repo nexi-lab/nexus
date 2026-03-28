@@ -1,4 +1,4 @@
-"""GCS BlobTransport — raw key→blob I/O over Google Cloud Storage.
+"""GCS Transport — raw key→blob I/O over Google Cloud Storage.
 
 Shared between CASGCSBackend (CAS addressing) and PathGCSBackend (path
 addressing).  This is the value of orthogonal composition — one transport
@@ -28,10 +28,10 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 logger = logging.getLogger(__name__)
 
 
-class GCSBlobTransport:
+class GCSTransport:
     """Raw key→blob I/O over Google Cloud Storage.
 
-    Implements the BlobTransport protocol (structural typing — no inheritance).
+    Implements the Transport protocol (structural typing — no inheritance).
     """
 
     transport_name: str = "gcs"
@@ -84,7 +84,7 @@ class GCSBlobTransport:
         self.bucket.reload()
         return self.bucket.versioning_enabled or False
 
-    # === BlobTransport Protocol Methods ===
+    # === Transport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
         try:
@@ -333,7 +333,7 @@ class GCSBlobTransport:
                 path=key,
             ) from e
 
-    # === GCS-Specific Extras (not part of BlobTransport protocol) ===
+    # === GCS-Specific Extras (not part of Transport protocol) ===
 
     def generate_signed_url(self, key: str, expires_in: int = 3600, method: str = "GET") -> str:
         """Generate a V4 signed URL for direct download."""

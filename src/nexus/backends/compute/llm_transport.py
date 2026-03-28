@@ -1,10 +1,10 @@
-"""In-memory BlobTransport for LLM backends.
+"""In-memory Transport for LLM backends.
 
 Stores CAS blobs in process memory. LLM conversations are ephemeral
 during a session — persistence is handled by CAS flush to durable
 backends (local/GCS/S3) in Step 2 (DT_STREAM + CAS flush).
 
-Satisfies the 6-method CASAddressingEngine subset of BlobTransport:
+Satisfies the 6-method CASAddressingEngine subset of Transport:
     put_blob, get_blob, delete_blob, blob_exists, get_blob_size, stream_blob.
 """
 
@@ -16,14 +16,14 @@ from collections.abc import Iterator
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 
-class LLMBlobTransport:
+class LLMTransport:
     """In-memory blob transport for LLM request/response storage.
 
     Thread-safe via a threading.Lock on the internal dict. Suitable for
     concurrent CAS operations from multiple async tasks writing to the
     same conversation store.
 
-    Not a subclass of BlobTransport (Protocol-based structural typing).
+    Not a subclass of Transport (Protocol-based structural typing).
     """
 
     transport_name: str = "llm_memory"

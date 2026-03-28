@@ -1,8 +1,8 @@
-"""CRUD verification: CASAddressingEngine(LocalBlobTransport) end-to-end.
+"""CRUD verification: CASAddressingEngine(LocalTransport) end-to-end.
 
 This is the **first time** production CRUD has been verified on the new
-CAS x BlobTransport composition with a real filesystem. Previous tests
-used InMemoryBlobTransport.
+CAS x Transport composition with a real filesystem. Previous tests
+used InMemoryTransport.
 
 Tests cover:
 - write/read roundtrip with hash verification
@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.transports.local_transport import LocalTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
@@ -30,7 +30,7 @@ from nexus.core.object_store import WriteResult
 
 @pytest.fixture
 def transport(tmp_path):
-    return LocalBlobTransport(root_path=tmp_path, fsync=False)
+    return LocalTransport(root_path=tmp_path, fsync=False)
 
 
 @pytest.fixture

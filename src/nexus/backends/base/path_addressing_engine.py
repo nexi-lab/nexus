@@ -1,16 +1,16 @@
-"""Path-based addressing engine over any BlobTransport.
+"""Path-based addressing engine over any Transport.
 
 PathAddressingEngine implements ObjectStoreABC (via Backend) using direct path mapping:
 files are stored at their actual paths, with no CAS transformation or
 deduplication.
 
-    PathAddressingEngine(transport: BlobTransport)
-        ├── PathGCSBackend       — thin: creates GCSBlobTransport + cache
-        ├── PathS3Backend        — thin: creates S3BlobTransport + cache + multipart
-        └── (future Azure)       — thin: creates AzureBlobTransport
+    PathAddressingEngine(transport: Transport)
+        ├── PathGCSBackend       — thin: creates GCSTransport + cache
+        ├── PathS3Backend        — thin: creates S3Transport + cache + multipart
+        └── (future Azure)       — thin: creates AzureTransport
 
 This replaces ``BaseBlobStorageConnector`` which used abstract methods (inheritance)
-for cloud-specific I/O.  PathAddressingEngine uses composition (BlobTransport protocol).
+for cloud-specific I/O.  PathAddressingEngine uses composition (Transport protocol).
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
@@ -25,7 +25,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, ClassVar
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.blob_transport import BlobTransport
+from nexus.backends.base.transport import Transport
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -38,14 +38,14 @@ logger = logging.getLogger(__name__)
 
 
 class PathAddressingEngine(Backend):
-    """Path-based addressing over any BlobTransport.
+    """Path-based addressing over any Transport.
 
     Files are stored at their actual paths (with optional prefix).
     No CAS transformation, no deduplication, no reference counting.
     External tools can browse the bucket normally.
 
     Attributes:
-        _transport: The underlying BlobTransport for raw I/O.
+        _transport: The underlying Transport for raw I/O.
         _backend_name: Human-readable backend identifier.
         bucket_name: Storage bucket/container name.
         prefix: Optional prefix for all paths.
@@ -56,7 +56,7 @@ class PathAddressingEngine(Backend):
 
     def __init__(
         self,
-        transport: BlobTransport,
+        transport: Transport,
         *,
         backend_name: str | None = None,
         bucket_name: str = "",

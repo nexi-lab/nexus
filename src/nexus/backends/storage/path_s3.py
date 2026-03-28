@@ -1,7 +1,7 @@
 """AWS S3 connector backend with direct path mapping.
 
 Thin subclass of PathAddressingEngine that:
-- Creates an S3BlobTransport for raw S3 I/O
+- Creates an S3Transport for raw S3 I/O
 - Mixes in CacheConnectorMixin for L1+L2 caching
 - Mixes in MultipartUpload for chunked uploads
 - Registers as "path_s3" via @register_connector
@@ -116,9 +116,9 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         upload_timeout: float = 300.0,
     ):
         try:
-            from nexus.backends.transports.s3_transport import S3BlobTransport
+            from nexus.backends.transports.s3_transport import S3Transport
 
-            transport = S3BlobTransport(
+            transport = S3Transport(
                 bucket_name=bucket_name,
                 region_name=region_name,
                 access_key_id=access_key_id,

@@ -1,6 +1,6 @@
-"""BlobTransport Protocol — raw key→blob I/O abstraction.
+"""Transport Protocol — raw key→blob I/O abstraction.
 
-BlobTransport captures the *transport* dimension (WHERE data lives) while
+Transport captures the *transport* dimension (WHERE data lives) while
 CASAddressingEngine / PathAddressingEngine capture the *addressing* dimension (HOW data is
 addressed).  These two dimensions are orthogonal:
 
@@ -13,7 +13,7 @@ Addressing   +--------+-------+-------+--------------+
              | through| Trans | Trans |   Trans      |
              +--------+-------+-------+--------------+
 
-A single GCSBlobTransport is shared between CASGCSBackend (CAS addressing)
+A single GCSTransport is shared between CASGCSBackend (CAS addressing)
 and PathGCSBackend (path addressing) — this is the value of
 orthogonal composition.
 
@@ -32,7 +32,7 @@ from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
-class BlobTransport(Protocol):
+class Transport(Protocol):
     """Raw key→blob I/O.  No addressing, no ref-count, no hash logic.
 
     Implementors provide transport-level operations for a specific storage

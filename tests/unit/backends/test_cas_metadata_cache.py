@@ -16,12 +16,12 @@ import cachetools
 import pytest
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
-from tests.unit.backends.test_cas_backend import InMemoryBlobTransport
+from tests.unit.backends.test_cas_backend import InMemoryTransport
 
 
 @pytest.fixture
-def transport() -> InMemoryBlobTransport:
-    return InMemoryBlobTransport()
+def transport() -> InMemoryTransport:
+    return InMemoryTransport()
 
 
 @pytest.fixture
@@ -30,14 +30,12 @@ def meta_cache() -> cachetools.LRUCache:
 
 
 @pytest.fixture
-def backend(
-    transport: InMemoryBlobTransport, meta_cache: cachetools.LRUCache
-) -> CASAddressingEngine:
+def backend(transport: InMemoryTransport, meta_cache: cachetools.LRUCache) -> CASAddressingEngine:
     return CASAddressingEngine(transport, backend_name="test-cas", meta_cache=meta_cache)
 
 
 @pytest.fixture
-def backend_no_cache(transport: InMemoryBlobTransport) -> CASAddressingEngine:
+def backend_no_cache(transport: InMemoryTransport) -> CASAddressingEngine:
     """Backend without meta_cache (simulates cloud backends)."""
     return CASAddressingEngine(transport, backend_name="test-cas-no-cache")
 
@@ -146,7 +144,7 @@ class TestMetaCacheEviction:
 class TestMetaCacheLRUBehavior:
     """Test LRU eviction behavior."""
 
-    def test_cache_maxsize_respected(self, transport: InMemoryBlobTransport):
+    def test_cache_maxsize_respected(self, transport: InMemoryTransport):
         small_cache = cachetools.LRUCache(maxsize=3)
         backend = CASAddressingEngine(transport, backend_name="test", meta_cache=small_cache)
 

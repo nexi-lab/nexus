@@ -1,7 +1,7 @@
 """Google Cloud Storage connector backend with direct path mapping.
 
 Thin subclass of PathAddressingEngine that:
-- Creates a GCSBlobTransport for raw GCS I/O (shared with GCSBackend CAS)
+- Creates a GCSTransport for raw GCS I/O (shared with GCSBackend CAS)
 - Mixes in CacheConnectorMixin for L1+L2 caching
 - Registers as "path_gcs" via @register_connector
 - Adds GCS-specific features: signed URLs, versioning, batch version fetch
@@ -112,9 +112,9 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         upload_timeout: float = 300.0,
     ):
         try:
-            from nexus.backends.transports.gcs_transport import GCSBlobTransport
+            from nexus.backends.transports.gcs_transport import GCSTransport
 
-            transport = GCSBlobTransport(
+            transport = GCSTransport(
                 bucket_name=bucket_name,
                 project_id=project_id,
                 credentials_path=credentials_path,

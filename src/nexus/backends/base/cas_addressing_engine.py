@@ -1,14 +1,14 @@
-"""CAS addressing engine over any BlobTransport.
+"""CAS addressing engine over any Transport.
 
 CASAddressingEngine implements ObjectStoreABC (via Backend) using content-addressable
 storage semantics: content is stored by hash, automatically deduplicated.
 
-    CASAddressingEngine(transport: BlobTransport)
-        ├── CASGCSBackend   — thin: creates GCSBlobTransport, registered as "cas_gcs"
-        ├── CASLocalBackend  — thin: creates LocalBlobTransport + features
-        └── (future S3CAS)  — thin: creates S3BlobTransport
+    CASAddressingEngine(transport: Transport)
+        ├── CASGCSBackend   — thin: creates GCSTransport, registered as "cas_gcs"
+        ├── CASLocalBackend  — thin: creates LocalTransport + features
+        └── (future S3CAS)  — thin: creates S3Transport
 
-The transport is INTERNAL — callers never see BlobTransport.  They see Backend.
+The transport is INTERNAL — callers never see Transport.  They see Backend.
 Thin subclasses exist for: registration, CONNECTION_ARGS, connector-specific
 features (batch reads, signed URLs, versioning).
 
@@ -41,7 +41,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import Backend
-from nexus.backends.base.blob_transport import BlobTransport
+from nexus.backends.base.transport import Transport
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import create_hasher, hash_content
@@ -87,7 +87,7 @@ CAS_ADDRESSING_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
 
 
 class CASAddressingEngine(Backend):
-    """CAS addressing over any BlobTransport.  Full ObjectStoreABC implementation.
+    """CAS addressing over any Transport.  Full ObjectStoreABC implementation.
 
     Content is stored at ``cas/<h[:2]>/<h[2:4]>/<h>``.  CDC-chunked content
     has a JSON metadata sidecar at ``<path>.meta`` with chunk/manifest flags.
@@ -99,7 +99,7 @@ class CASAddressingEngine(Backend):
     No ref_count — writes are idempotent direct writes.
 
     Attributes:
-        _transport: The underlying BlobTransport for raw I/O.
+        _transport: The underlying Transport for raw I/O.
         _backend_name: Human-readable backend identifier.
     """
 
@@ -107,7 +107,7 @@ class CASAddressingEngine(Backend):
 
     def __init__(
         self,
-        transport: BlobTransport,
+        transport: Transport,
         *,
         backend_name: str | None = None,
         # Feature DI — optional optimizations, all None-safe

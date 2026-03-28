@@ -1,6 +1,6 @@
-"""Unit tests for LocalBlobTransport — BlobTransport protocol conformance.
+"""Unit tests for LocalTransport — Transport protocol conformance.
 
-Tests all 9 BlobTransport methods with a real temp-directory filesystem.
+Tests all 9 Transport methods with a real temp-directory filesystem.
 
 References:
     - Issue #1323: CAS x Backend orthogonal composition
@@ -8,23 +8,23 @@ References:
 
 import pytest
 
-from nexus.backends.base.blob_transport import BlobTransport
-from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.base.transport import Transport
+from nexus.backends.transports.local_transport import LocalTransport
 from nexus.contracts.exceptions import NexusFileNotFoundError
 
 
 @pytest.fixture
 def transport(tmp_path):
-    """Create a LocalBlobTransport rooted in a temporary directory."""
-    return LocalBlobTransport(root_path=tmp_path, fsync=False)
+    """Create a LocalTransport rooted in a temporary directory."""
+    return LocalTransport(root_path=tmp_path, fsync=False)
 
 
 # === Protocol Conformance ===
 
 
 class TestProtocolConformance:
-    def test_implements_blob_transport(self, transport):
-        assert isinstance(transport, BlobTransport)
+    def test_implements_transport(self, transport):
+        assert isinstance(transport, Transport)
 
     def test_transport_name(self, transport):
         assert transport.transport_name == "local"
@@ -245,13 +245,13 @@ class TestStreamBlob:
 
 class TestFsyncOption:
     def test_fsync_enabled(self, tmp_path):
-        t = LocalBlobTransport(root_path=tmp_path, fsync=True)
+        t = LocalTransport(root_path=tmp_path, fsync=True)
         t.put_blob("k", b"data")
         data, _ = t.get_blob("k")
         assert data == b"data"
 
     def test_fsync_disabled(self, tmp_path):
-        t = LocalBlobTransport(root_path=tmp_path, fsync=False)
+        t = LocalTransport(root_path=tmp_path, fsync=False)
         t.put_blob("k", b"data")
         data, _ = t.get_blob("k")
         assert data == b"data"

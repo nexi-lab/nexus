@@ -1,7 +1,7 @@
-"""BlobTransport conformance test suite — parametrized across transports.
+"""Transport conformance test suite — parametrized across transports.
 
-Verifies that LocalBlobTransport and VolumeLocalTransport both implement
-the BlobTransport protocol identically from the engine's perspective.
+Verifies that LocalTransport and VolumeLocalTransport both implement
+the Transport protocol identically from the engine's perspective.
 
 Issue #3403: CAS volume packing — transport conformance.
 """
@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.transports.local_transport import LocalTransport
 
 
 def _make_local_transport(tmp_path):
-    return LocalBlobTransport(root_path=tmp_path, fsync=False)
+    return LocalTransport(root_path=tmp_path, fsync=False)
 
 
 def _make_volume_transport(tmp_path):
@@ -26,7 +26,7 @@ def _make_volume_transport(tmp_path):
         pytest.skip("VolumeLocalTransport not available (nexus_fast not built)")
 
 
-@pytest.fixture(params=["local", "volume"], ids=["LocalBlobTransport", "VolumeLocalTransport"])
+@pytest.fixture(params=["local", "volume"], ids=["LocalTransport", "VolumeLocalTransport"])
 def transport(request, tmp_path):
     if request.param == "local":
         return _make_local_transport(tmp_path)
@@ -44,7 +44,7 @@ def volume_transport(tmp_path):
     return _make_volume_transport(tmp_path)
 
 
-# ─── BlobTransport Protocol Conformance ──────────────────────────────────────
+# ─── Transport Protocol Conformance ──────────────────────────────────────
 
 
 class TestPutGetRoundtrip:

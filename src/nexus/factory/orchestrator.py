@@ -398,20 +398,21 @@ async def _register_vfs_hooks(
 
             # Wire invalidation: CacheCoordinator → path-targeted or zone-wide
             # (Issue #3398 decisions 3A/7A).
+            _lt_ref = _lease_table  # capture for closures below
+
             def _lease_invalidation_callback(
                 _zone_id: str,
                 _subject: tuple[str, str],
                 _relation: str,
                 object: tuple[str, str],  # noqa: A002
-                _lt: PermissionLeaseTable = _lease_table,
             ) -> None:
                 obj_type, obj_id = object
                 # Direct grant on a file → invalidate only that path's leases
                 if obj_type == "file":
-                    _lt.invalidate_path(obj_id)
+                    _lt_ref.invalidate_path(obj_id)
                 else:
                     # Group/directory/inherited/wildcard → zone-wide clear
-                    _lt.invalidate_all()
+                    _lt_ref.invalidate_all()
 
             _rebac_mgr = _ss.get("rebac_manager")
             if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
@@ -425,16 +426,13 @@ async def _register_vfs_hooks(
                 if getattr(_coord, "_pubsub", None) is not None:
                     _zone_id = getattr(nx, "_zone_id", "root")
 
-                    def _on_cross_zone_lease_hint(
-                        payload: dict,
-                        _lt: PermissionLeaseTable = _lease_table,
-                    ) -> None:
+                    def _on_cross_zone_lease_hint(payload: dict) -> None:
                         obj_type = payload.get("object_type", "")
                         obj_id = payload.get("object_id", "")
                         if obj_type == "file" and obj_id:
-                            _lt.invalidate_path(obj_id)
+                            _lt_ref.invalidate_path(obj_id)
                         else:
-                            _lt.invalidate_all()
+                            _lt_ref.invalidate_all()
 
                     _coord._pubsub.subscribe(_zone_id, "lease", _on_cross_zone_lease_hint)
 
@@ -449,10 +447,10 @@ async def _register_vfs_hooks(
         )
         await _enlist("permission", _perm_hook)
 
-        # Expose lease table in service registry for late-binding consumers
+        # Expose lease table for late-binding consumers
         # (e.g., AcpService agent termination → lease revocation, Issue #3398).
         if _lease_table is not None:
-            nx._service_registry.register("permission_lease_table", _lease_table)
+            nx._permission_lease_table = _lease_table
 
     # ── Audit write interceptor (Issue #900, #1772) ──
     # Piped observer → async AuditWriteInterceptor serializes mutations → DT_PIPE.

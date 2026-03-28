@@ -91,6 +91,20 @@ backends:
   #   readonly: true
   #   description: "Gmail messages for joezhoujinjing@gmail.com organized by priority folders"
 
+# Cold tiering — upload sealed CAS volumes to cloud storage (Issue #3406)
+# Also configurable in nexus.yaml. Uncomment and configure to enable:
+# tiering:
+#   enabled: true
+#   quiet_period: 3600        # seconds a volume must be unread before tiering
+#   min_volume_size: 104857600  # 100 MB minimum volume size to tier
+#   cloud_backend: s3           # "s3" or "gcs"
+#   cloud_bucket: nexus-888     # S3 bucket or GCS bucket name
+#   upload_rate_limit: 26214400 # 25 MB/s upload rate limit
+#   sweep_interval: 60          # seconds between tiering sweeps
+#   local_cache_size: 10737418240  # 10 GB LRU cache for tiered volumes
+#   burst_read_threshold: 5     # reads in window to trigger re-download
+#   burst_read_window: 60       # burst detection window in seconds
+
 # Cache configuration — uses Dragonfly from docker-compose when available
 cache:
   type: ${NEXUS_CACHE_TYPE:-redis}

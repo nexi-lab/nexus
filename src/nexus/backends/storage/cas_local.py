@@ -123,6 +123,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         on_write_callback: Any | None = None,
         *,
         use_volume_packing: bool = False,
+        tiering_config: Any | None = None,
     ):
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"
@@ -172,6 +173,88 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
 
         # GC: metastore injected later via set_metastore() — not available at construction.
         self._gc = CASGarbageCollector(self)
+
+        # Cold tiering (Issue #3406): wire VolumeTieringService if enabled.
+        # Requires volume packing (VolumeLocalTransport).
+        self._tiering_service: Any | None = None
+        if (
+            tiering_config is not None
+            and tiering_config.enabled
+            and isinstance(transport, VolumeLocalTransport)
+        ):
+            self._tiering_service = self._init_tiering(transport, tiering_config)
+
+    @staticmethod
+    def _init_tiering(transport: VolumeLocalTransport, config: Any) -> Any:
+        """Create and wire VolumeTieringService into the transport.
+
+        Creates the appropriate cloud transport (S3 or GCS) based on config,
+        then creates VolumeTieringService and injects it into the transport.
+
+        Issue #3406: Volume-level cold tiering.
+        """
+        from nexus.services.volume_tiering import VolumeTieringService
+
+        cloud_transport: Any
+        if config.cloud_backend == "s3":
+            from nexus.backends.transports.s3_transport import S3Transport
+
+            cloud_transport = S3Transport(bucket_name=config.cloud_bucket)
+        elif config.cloud_backend == "gcs":
+            from nexus.backends.transports.gcs_transport import GCSTransport
+
+            cloud_transport = GCSTransport(bucket_name=config.cloud_bucket)
+        else:
+            logger.warning("Unknown tiering cloud_backend: %s, skipping", config.cloud_backend)
+            return None
+
+        volumes_dir = transport._root / "cas_volumes"
+        service = VolumeTieringService(
+            volumes_dir=volumes_dir,
+            cloud_transport=cloud_transport,
+            config=config,
+        )
+        transport.set_tiering(service)
+        logger.info(
+            "Cold tiering configured: backend=%s, bucket=%s",
+            config.cloud_backend,
+            config.cloud_bucket,
+        )
+        return service
+
+    def hook_spec(self) -> Any:
+        """Declare VFS hooks — mount + unmount for tiering lifecycle."""
+        from nexus.contracts.protocols.service_hooks import HookSpec
+
+        return HookSpec(
+            mount_hooks=(self,),
+            unmount_hooks=(self,),
+        )
+
+    def on_mount(self, ctx: Any) -> None:
+        """VFSMountHook: start tiering service when the backend is mounted.
+
+        Called by KernelDispatch at mount time (async event loop is running).
+        Uses asyncio.ensure_future() to schedule the tiering background task,
+        same pattern as CASGarbageCollector.start().
+        """
+        import asyncio
+
+        super().on_mount(ctx)
+        if self._tiering_service is not None:
+            asyncio.ensure_future(self._tiering_service.start())
+            logger.info("Cold tiering service scheduled to start on mount")
+
+    def on_unmount(self, ctx: Any) -> None:
+        """VFSUnmountHook: stop tiering service when the backend is unmounted.
+
+        Schedules graceful shutdown of the background sweep task.
+        """
+        import asyncio
+
+        if self._tiering_service is not None:
+            asyncio.ensure_future(self._tiering_service.stop())
+            logger.info("Cold tiering service scheduled to stop on unmount")
 
     def set_metastore(self, metastore: Any) -> None:
         """Inject metastore reference for reachability-based GC."""

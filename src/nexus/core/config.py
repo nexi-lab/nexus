@@ -102,6 +102,28 @@ class ParseConfig:
 
 
 @dataclass(frozen=True)
+class TieringConfig:
+    """Volume-level cold tiering configuration (Issue #3406).
+
+    Controls automatic upload of sealed CAS volumes to cloud storage
+    (S3/GCS) and range-read retrieval for tiered content.
+    """
+
+    enabled: bool = False
+    quiet_period_seconds: float = 3600.0  # 1 hour
+    min_volume_size_bytes: int = 100 * 1024 * 1024  # 100 MB
+    cloud_backend: str = "gcs"  # "gcs" or "s3"
+    cloud_bucket: str = ""
+    upload_rate_limit_bytes: int = 25 * 1024 * 1024  # 25 MB/s
+    sweep_interval_seconds: float = 60.0  # how often to check for tierable volumes
+    # LRU local cache for recently-accessed tiered volumes
+    local_cache_size_bytes: int = 10 * 1024 * 1024 * 1024  # 10 GB
+    # Burst re-download: reads within window triggers full volume cache
+    burst_read_threshold: int = 5  # reads within burst_window to trigger
+    burst_read_window_seconds: float = 60.0  # time window for burst detection
+
+
+@dataclass(frozen=True)
 class IPCConfig:
     """Inter-Process Communication (IPC) configuration (Issue #2037).
 

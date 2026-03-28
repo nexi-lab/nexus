@@ -17,6 +17,12 @@ TTL bucket routing (Issue #3405):
     - Expired volumes are deleted wholesale (single unlink, no per-file GC)
     - GC only operates on the permanent engine
 
+Cold tiering (Issue #3406):
+    - Sealed volumes can be uploaded to cloud storage (S3/GCS)
+    - Local .idx retained for O(1) hash → (volume, offset, size)
+    - Reads for tiered volumes use HTTP range requests
+    - VolumeLocalTransport intercepts reads and delegates to cloud
+
 Crash recovery:
     - Active volumes are .tmp files — deleted on startup
     - Sealed volumes have TOC at end — can rebuild index from TOCs
@@ -24,6 +30,7 @@ Crash recovery:
 
 Issue #3403: CAS volume packing.
 Issue #3405: Volume-level TTL.
+Issue #3406: Volume-level cold tiering.
 """
 
 from __future__ import annotations
@@ -150,6 +157,11 @@ class VolumeLocalTransport:
         # Track last rotation time per bucket
         self._ttl_last_rotation: dict[str, float] = {}
 
+        # Cold tiering delegate (Issue #3406): injected later via set_tiering().
+        # When set, get_blob() checks tiering manifest for volumes whose .dat
+        # is in cloud storage and reads via HTTP range request.
+        self._tiering: Any = None  # VolumeTieringService | None
+
         # Delegate transport for non-CAS keys (dirs, uploads, etc.)
         # Also serves as fallback if VolumeEngine is unavailable.
         self._delegate = LocalTransport(root_path=root_path, fsync=fsync)
@@ -256,10 +268,51 @@ class VolumeLocalTransport:
             # Permanent engine
             with self._cas_op(key, "get") as (h, engine):
                 data = engine.read_content(h)
-                if data is None:
-                    raise NexusFileNotFoundError(key)
-                return bytes(data), None
+                if data is not None:
+                    return bytes(data), None
+
+                # Not found locally — check if tiered to cloud (Issue #3406).
+                # Uses the Python-side blob_index (built from .vol TOC at tier
+                # time) instead of engine.locate() which is not exposed via PyO3.
+                if self._tiering is not None:
+                    tiered_data = self._read_from_tiered(h)
+                    if tiered_data is not None:
+                        return tiered_data, None
+
+                raise NexusFileNotFoundError(key)
         return self._delegate.fetch(key, version_id)
+
+    def _read_from_tiered(self, hash_hex: str) -> bytes | None:
+        """Attempt to read a blob from a tiered (cloud) volume.
+
+        Uses the manifest's O(1) reverse hash lookup to find the volume
+        and blob offset, then delegates to the tiering service for an
+        HTTP range read.
+
+        Returns None if the blob is not in any tiered volume.
+        """
+        if self._tiering is None:
+            return None
+
+        # O(1) lookup via manifest reverse hash set
+        result = self._tiering.manifest.lookup_hash(hash_hex)
+        if result is None:
+            return None
+
+        entry, offset, size = result
+        try:
+            data = self._tiering.read_range(
+                entry.cloud_key, offset, size, volume_id=entry.volume_id
+            )
+            return bytes(data)
+        except Exception as e:
+            logger.warning(
+                "Tiered read failed for hash %s in volume %s: %s",
+                hash_hex[:16],
+                entry.volume_id,
+                e,
+            )
+            return None
 
     def remove(self, key: str) -> None:
         if self._is_cas_key(key):
@@ -281,9 +334,12 @@ class VolumeLocalTransport:
                 except Exception:
                     pass
             try:
-                return bool(self._engine.exists(hash_hex))
+                if self._engine.exists(hash_hex):
+                    return True
             except Exception:
-                return False
+                pass
+            # O(1) check via manifest reverse hash set (Issue #3406)
+            return self._tiering is not None and self._tiering.manifest.is_hash_tiered(hash_hex)
         return self._delegate.exists(key)
 
     def get_size(self, key: str) -> int:
@@ -299,9 +355,14 @@ class VolumeLocalTransport:
                     pass
             with self._cas_op(key, "get_size") as (h, engine):
                 size = engine.get_size(h)
-                if size is None:
-                    raise NexusFileNotFoundError(key)
-                return int(size)
+                if size is not None:
+                    return int(size)
+                # O(1) lookup via manifest reverse hash set (Issue #3406)
+                if self._tiering is not None:
+                    result = self._tiering.manifest.lookup_hash(h)
+                    if result is not None:
+                        return int(result[2])  # size
+                raise NexusFileNotFoundError(key)
         return self._delegate.get_size(key)
 
     def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
@@ -437,6 +498,21 @@ class VolumeLocalTransport:
                 result[key] = None
 
         return result
+
+    # === Tiering (Issue #3406) ===
+
+    def set_tiering(self, tiering_service: Any) -> None:
+        """Inject the VolumeTieringService for cloud-backed reads.
+
+        Called after transport construction when tiering is enabled.
+        The tiering service owns the manifest and cloud transport.
+        """
+        self._tiering = tiering_service
+
+    @property
+    def tiering(self) -> Any:
+        """Access the tiering service (for GC integration)."""
+        return self._tiering
 
     # === Volume Management ===
 

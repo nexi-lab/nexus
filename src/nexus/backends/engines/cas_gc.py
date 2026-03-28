@@ -145,6 +145,12 @@ class CASGarbageCollector:
             logger.debug("CAS GC: enumeration failed for %s", engine.name, exc_info=True)
             return
 
+        # Issue #3406: resolve tiering manifest for skip check.
+        # GC must not delete blobs in TIERING or TIERED volumes.
+        tiering_manifest = None
+        if hasattr(transport, "tiering") and transport.tiering is not None:
+            tiering_manifest = transport.tiering.manifest
+
         collected = 0
         for content_hash, write_time in content_entries:
             if content_hash in referenced:
@@ -153,6 +159,12 @@ class CASGarbageCollector:
             # Unreferenced — check grace period
             if write_time > 0 and (now - write_time) < self._grace_period:
                 continue  # Too fresh — within grace period
+
+            # Issue #3406: O(1) skip for blobs in tiered/tiering volumes.
+            # Uses the manifest's reverse hash set (built from per-volume
+            # .idx files at load time).
+            if tiering_manifest is not None and tiering_manifest.is_hash_tiered(content_hash):
+                continue
 
             # Delete blob + meta sidecar
             blob_key = engine._blob_key(content_hash)

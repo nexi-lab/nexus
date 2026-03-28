@@ -234,11 +234,23 @@ class KernelDispatch:
             logger.warning("Background observer task %s failed: %s", task.get_name(), exc)
 
     async def shutdown(self, *, timeout: float = 5.0) -> None:
-        """Drain background observer tasks (call during kernel teardown)."""
+        """Drain background observer tasks (call during kernel teardown).
+
+        Handles cross-loop scenarios (e.g. TestClient calling aclose() on
+        a different event loop than the one that spawned the tasks).
+        """
         if not self._background_tasks:
             return
         _pending = set(self._background_tasks)
-        done, still_pending = await asyncio.wait(_pending, timeout=timeout)
+        try:
+            done, still_pending = await asyncio.wait(_pending, timeout=timeout)
+        except RuntimeError:
+            # Tasks belong to a different event loop (e.g. pytest loop vs
+            # TestClient loop). Cancel what we can and discard references.
+            for task in _pending:
+                task.cancel()
+            self._background_tasks.clear()
+            return
         for task in still_pending:
             task.cancel()
         if still_pending:

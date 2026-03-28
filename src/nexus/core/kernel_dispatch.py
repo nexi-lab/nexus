@@ -660,10 +660,15 @@ class KernelDispatch:
                 deferred.append((obs, name))
 
         async def _safe(obs: Any, name: str) -> None:
+            from nexus.core.lock_order import enter_observer_context, exit_observer_context
+
+            enter_observer_context()
             try:
                 await obs.on_mutation(event)
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", name, exc)
+            finally:
+                exit_observer_context()
 
         # Inline: await on caller's path (fast observers)
         if inline:

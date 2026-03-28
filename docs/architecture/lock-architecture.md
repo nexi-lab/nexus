@@ -188,3 +188,11 @@ acquire VFSLockManager. Advisory locks are cooperative like `flock(2)`.
 **D7: Advisory lock supports shared/exclusive modes** — RW gate pattern via two
 VFSSemaphore instances per path (one for shared, one for exclusive). Matches
 `flock(2)` LOCK_SH/LOCK_EX semantics.
+
+---
+
+## 6. Lock Ordering
+
+See [LOCK-ORDERING.md](LOCK-ORDERING.md) for the global lock hierarchy,
+permitted/forbidden acquisition orders, and debug-mode ordering assertions
+(Issue #3392, inspired by DFUSE arXiv:2503.18191).

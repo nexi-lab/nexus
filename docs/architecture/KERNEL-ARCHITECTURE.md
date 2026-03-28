@@ -164,6 +164,9 @@ business logic**.
 
 `mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
 `mount` is `sys_setattr(entry_type=DT_MOUNT, backend=...)`, `umount` is `sys_rmdir` on DT_MOUNT path.
+`/__sys__/services/` paths register/unregister services via syscall:
+`sys_setattr("/__sys__/services/X", service=instance)` registers (calls `enlist()`),
+`sys_unlink("/__sys__/services/X")` unregisters (calls `unregister_service_full()`).
 
 **Primitive usage pattern:**
 

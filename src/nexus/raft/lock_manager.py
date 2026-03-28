@@ -106,7 +106,7 @@ class RaftLockManager(LockManagerBase):
         ttl: float = AdvisoryLockManager.DEFAULT_TTL,
         max_holders: int = 1,
     ) -> str | None:
-        from nexus.core.lock_order import L2_ADVISORY, assert_can_acquire, mark_acquired
+        from nexus.lib.lock_order import L2_ADVISORY, assert_can_acquire, mark_acquired
 
         assert_can_acquire(L2_ADVISORY)
         if max_holders < 1:
@@ -153,7 +153,7 @@ class RaftLockManager(LockManagerBase):
         try:
             released: bool = self._store.release_lock(lock_key, lock_id)
             if released:
-                from nexus.core.lock_order import L2_ADVISORY, mark_released
+                from nexus.lib.lock_order import L2_ADVISORY, mark_released
 
                 mark_released(L2_ADVISORY)
                 logger.debug("Raft lock released: %s", lock_key)

@@ -248,7 +248,7 @@ class LocalLockManager(AdvisoryLockManager):
         ttl: float = AdvisoryLockManager.DEFAULT_TTL,
         max_holders: int = 1,
     ) -> str | None:
-        from nexus.core.lock_order import L2_ADVISORY, assert_can_acquire, mark_acquired
+        from nexus.lib.lock_order import L2_ADVISORY, assert_can_acquire, mark_acquired
 
         assert_can_acquire(L2_ADVISORY)
         if max_holders < 1:
@@ -324,7 +324,7 @@ class LocalLockManager(AdvisoryLockManager):
             await asyncio.sleep(self.RETRY_INTERVAL)
 
         self._active_locks[lock_id] = (gate, gate_holder)
-        from nexus.core.lock_order import L2_ADVISORY, mark_acquired
+        from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
 
         mark_acquired(L2_ADVISORY)
         logger.debug("Exclusive lock acquired: %s -> %s", key, lock_id)
@@ -364,7 +364,7 @@ class LocalLockManager(AdvisoryLockManager):
             return None
 
         self._active_locks[lock_id] = (readers, reader_holder)
-        from nexus.core.lock_order import L2_ADVISORY, mark_acquired
+        from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
 
         mark_acquired(L2_ADVISORY)
         logger.debug("Shared lock acquired: %s -> %s", key, lock_id)
@@ -379,7 +379,7 @@ class LocalLockManager(AdvisoryLockManager):
         sem_name, holder_id = entry
         released: bool = self._sem.release(sem_name, holder_id)
         if released:
-            from nexus.core.lock_order import L2_ADVISORY, mark_released
+            from nexus.lib.lock_order import L2_ADVISORY, mark_released
 
             mark_released(L2_ADVISORY)
             logger.debug("Lock released: %s (sem=%s)", lock_id, sem_name)

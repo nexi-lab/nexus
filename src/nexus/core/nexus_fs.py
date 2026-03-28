@@ -944,7 +944,7 @@ class NexusFS(  # type: ignore[misc]
         Raises:
             LockTimeout: If lock cannot be acquired within timeout.
         """
-        from nexus.core.lock_order import L1_VFS, assert_can_acquire, mark_acquired
+        from nexus.lib.lock_order import L1_VFS, assert_can_acquire, mark_acquired
 
         assert_can_acquire(L1_VFS)
         handle = self._vfs_lock_manager.acquire(path, mode, timeout_ms=self._VFS_LOCK_TIMEOUT_MS)
@@ -975,7 +975,7 @@ class NexusFS(  # type: ignore[misc]
             yield handle
         finally:
             self._vfs_lock_manager.release(handle)
-            from nexus.core.lock_order import L1_VFS, mark_released
+            from nexus.lib.lock_order import L1_VFS, mark_released
 
             mark_released(L1_VFS)
 
@@ -3271,12 +3271,12 @@ class NexusFS(  # type: ignore[misc]
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)
-                    from nexus.core.lock_order import L1_VFS, mark_released
+                    from nexus.lib.lock_order import L1_VFS, mark_released
 
                     mark_released(L1_VFS)
         finally:
             self._vfs_lock_manager.release(_h1)
-            from nexus.core.lock_order import L1_VFS, mark_released
+            from nexus.lib.lock_order import L1_VFS, mark_released
 
             mark_released(L1_VFS)
 
@@ -3538,12 +3538,12 @@ class NexusFS(  # type: ignore[misc]
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)
-                    from nexus.core.lock_order import L1_VFS, mark_released
+                    from nexus.lib.lock_order import L1_VFS, mark_released
 
                     mark_released(L1_VFS)
         finally:
             self._vfs_lock_manager.release(_h1)
-            from nexus.core.lock_order import L1_VFS, mark_released
+            from nexus.lib.lock_order import L1_VFS, mark_released
 
             mark_released(L1_VFS)
 

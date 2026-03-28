@@ -158,7 +158,7 @@ and asserts ordering constraints at runtime:
 - **Observer context**: acquiring L1 or L2 from a task tagged as
   `_nexus_observer=True` raises `LockOrderError`
 
-See: `core/lock_order.py` for implementation.
+See: `lib/lock_order.py` for implementation.
 
 Enable in development/CI:
 
@@ -190,7 +190,7 @@ accidentally broken by a code change.
 - `core/lock_fast.py` — VFS lock manager
 - `core/nexus_fs.py` — write path lock scope, rename sorted-order
 - `core/kernel_dispatch.py` — observer dispatch (OBSERVE phase)
-- `core/lock_order.py` — debug-mode ordering assertions
+- `lib/lock_order.py` — debug-mode ordering assertions
 - `raft/lock_manager.py` — RaftLockManager
 - `lib/distributed_lock.py` — advisory lock ABC + LocalLockManager
 - `core/file_watcher.py` — FileWatcher (threading.Lock for waiters)

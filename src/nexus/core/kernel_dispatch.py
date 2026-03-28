@@ -660,7 +660,7 @@ class KernelDispatch:
                 deferred.append((obs, name))
 
         async def _safe(obs: Any, name: str) -> None:
-            from nexus.core.lock_order import enter_observer_context, exit_observer_context
+            from nexus.lib.lock_order import enter_observer_context, exit_observer_context
 
             enter_observer_context()
             try:

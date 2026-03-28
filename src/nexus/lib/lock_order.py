@@ -12,7 +12,7 @@ Activation:
     (Default: disabled — zero overhead in production)
 
 Lock layers:
-    L1 = VFS I/O locks      (core/lock_fast.py)
+    L1 = VFS I/O locks      (core/lock_fast.py, lib/lock_order.py)
     L2 = Advisory/Raft locks (lib/distributed_lock.py, raft/lock_manager.py)
     L3 = asyncio primitives  (pipes, streams)
     L4 = threading locks     (file_watcher._waiters_lock, semaphore._mu)
@@ -74,7 +74,8 @@ _held_layers: ContextVar[dict[int, int]] = ContextVar("_held_layers")
 _observer_depth: ContextVar[int] = ContextVar("_observer_depth", default=0)
 
 # Thread-local fallback for synchronous code paths.
-_thread_state = threading.local()
+# Using a dict directly instead of threading.local() for proper typing.
+_thread_held: dict[int, dict[int, int]] = {}  # thread_id -> layer counts
 
 
 def _get_held() -> dict[int, int]:
@@ -82,10 +83,11 @@ def _get_held() -> dict[int, int]:
     try:
         return _held_layers.get()
     except LookupError:
-        # No asyncio task context — use thread-local.
-        if not hasattr(_thread_state, "held"):
-            _thread_state.held: dict[int, int] = {}
-        return _thread_state.held
+        # No asyncio task context — use thread-local via thread id.
+        tid = threading.get_ident()
+        if tid not in _thread_held:
+            _thread_held[tid] = {}
+        return _thread_held[tid]
 
 
 def _set_held(layers: dict[int, int]) -> None:
@@ -93,7 +95,7 @@ def _set_held(layers: dict[int, int]) -> None:
     try:
         _held_layers.set(layers)
     except LookupError:
-        _thread_state.held = layers
+        _thread_held[threading.get_ident()] = layers
 
 
 # ---------------------------------------------------------------------------

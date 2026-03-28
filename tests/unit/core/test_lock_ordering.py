@@ -26,7 +26,7 @@ from nexus.core.lock_fast import PythonVFSLockManager
 def _enable_lock_debug(monkeypatch):
     """Enable lock debug mode and reload the module."""
     monkeypatch.setenv("NEXUS_LOCK_DEBUG", "1")
-    import nexus.core.lock_order as mod
+    import nexus.lib.lock_order as mod
 
     monkeypatch.setattr(mod, "LOCK_DEBUG_ENABLED", True)
     return mod
@@ -81,7 +81,7 @@ class TestLockOrderingViolation:
 
     def test_noop_when_disabled(self, monkeypatch):
         """Assertions are no-ops when NEXUS_LOCK_DEBUG is not set."""
-        import nexus.core.lock_order as mod
+        import nexus.lib.lock_order as mod
 
         monkeypatch.setattr(mod, "LOCK_DEBUG_ENABLED", False)
 

@@ -1,69 +1,49 @@
-"""Gmail connector backend with OAuth 2.0 authentication.
+"""Gmail connector backend — PathAddressingEngine + GmailTransport composition.
 
-This is a connector backend that provides read-only access to Gmail emails,
-organizing them by label-based folders and thread structure.
+Architecture (Transport × Addressing):
+    PathGmailBackend(PathAddressingEngine)
+        └── GmailTransport(Transport)
+              ├── Gmail API calls (I/O)
+              └── OAuth token from OperationContext
 
-Use case: Access Gmail emails through Nexus mount for search, analysis, and archival.
+This follows the same pattern as PathS3Backend, PathGCSBackend:
+Transport handles raw I/O; PathAddressingEngine handles addressing,
+path security, and content operations.
 
-Storage structure (2-level hierarchy - flattened for performance):
+Storage structure (2-level hierarchy):
     /
     ├── SENT/                          # Sent emails
-    │   └── {thread_id}-{msg_id}.yaml  # Email metadata and content (flattened)
+    │   └── {thread_id}-{msg_id}.yaml  # Email metadata + content
     ├── STARRED/                       # Starred emails in INBOX
     ├── IMPORTANT/                     # Important emails in INBOX
     └── INBOX/                         # Remaining inbox emails
-
-Key features:
-- OAuth 2.0 authentication (user-scoped)
-- Priority-based label folders (SENT > STARRED > IMPORTANT > INBOX)
-- Thread-based organization preserving Gmail conversations
-- Efficient API usage with label-based filtering
-- On-demand email fetching from Gmail API
-- Full email metadata and content in YAML format (including HTML body if present)
-- Automatic token refresh via TokenManager
-- Database-backed caching via CacheConnectorMixin for fast search
-
-Fetching strategy:
-- Uses list_emails_by_folder() utility with label-based filtering
-- Fetches emails on-demand when accessed
-- Each email appears in exactly ONE folder based on highest priority label match
-
-Authentication:
-    Uses OAuth 2.0 flow via TokenManager:
-    - User authorizes via browser
-    - Tokens stored encrypted in database
-    - Automatic refresh when expired
 """
 
-import logging
-from contextlib import suppress
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import (
+    CheckpointMixin,
     ConfirmLevel,
     OpTraits,
     Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
 )
 from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
-from nexus.backends.connectors.gmail.utils import fetch_emails_batch, list_emails_by_folder
-from nexus.backends.connectors.oauth_base import OAuthConnectorBase
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
+from nexus.backends.connectors.oauth import OAuthConnectorMixin
+from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
+from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
-try:
-    import yaml
-except ImportError:
-    yaml = None  # type: ignore
-
-# Suppress annoying googleapiclient discovery cache warnings
-logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
-
 if TYPE_CHECKING:
-    from googleapiclient.discovery import Resource
-
     from nexus.contracts.types import OperationContext
     from nexus.storage.record_store import RecordStoreABC
 
@@ -77,46 +57,34 @@ logger = logging.getLogger(__name__)
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="gmail",
 )
-class GmailConnectorBackend(OAuthConnectorBase):
-    """
-    Gmail connector backend with OAuth 2.0 authentication.
-
-    This backend syncs emails from Gmail API and organizes them as YAML files
-    by Gmail labels (INBOX, SENT, STARRED, etc.).
+class PathGmailBackend(
+    PathAddressingEngine,
+    CacheConnectorMixin,
+    OAuthConnectorMixin,
+    SkillDocMixin,
+    ValidatedMixin,
+    TraitBasedMixin,
+    CheckpointMixin,
+):
+    """Gmail connector: PathAddressingEngine + GmailTransport composition.
 
     Features:
     - OAuth 2.0 authentication (per-user credentials)
-    - Email syncing from a start date
     - Label-based folder structure (INBOX/, SENT/, STARRED/, etc.)
-    - Full email metadata and content
-    - Automatic token refresh
-    - Persistent caching via CacheConnectorMixin for fast grep/search
-
-    Folder Structure (2-level hierarchy - flattened for performance):
-    - / - Root directory (lists label folders)
-    - /SENT/ - All sent emails (priority 1)
-      - {thread_id}-{msg_id}.yaml - Email messages (flattened, thread_id in filename)
-    - /STARRED/ - Starred emails in INBOX, excluding SENT (priority 2)
-    - /IMPORTANT/ - Important emails in INBOX, excluding SENT and STARRED (priority 3)
-    - /INBOX/ - Remaining INBOX emails (priority 4)
-    - Each email appears in exactly ONE folder based on highest priority match
-    - Thread grouping preserved in filename (thread_id prefix)
-
-    Limitations:
-    - No automatic deduplication (each email is a unique file)
-    - Requires OAuth tokens for each user
-    - Rate limited by Gmail API quotas
-    - Emails are stored as YAML files (not editable)
+    - Persistent caching via CacheConnectorMixin
+    - Batch download via Gmail batch API
+    - Immutable version for cache optimization
     """
 
-    # Gmail system labels to expose as folders (in priority order)
-    # Each email appears in exactly ONE folder based on priority
-    LABEL_FOLDERS = [
-        "SENT",  # Priority 1: All sent emails
-        "STARRED",  # Priority 2: Starred emails in INBOX (excluding SENT)
-        "IMPORTANT",  # Priority 3: Important emails in INBOX (excluding SENT, STARRED)
-        "INBOX",  # Priority 4: Remaining INBOX emails
-    ]
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
+        {
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
+        }
+    )
+
+    # Gmail system labels exposed as folders (in priority order)
+    LABEL_FOLDERS = LABEL_FOLDERS
 
     # Skill documentation settings
     SKILL_NAME = "gmail"
@@ -124,26 +92,26 @@ class GmailConnectorBackend(OAuthConnectorBase):
     # Operation traits for trait-based validation
     OPERATION_TRAITS = {
         "send_email": OpTraits(
-            reversibility=Reversibility.NONE,  # Cannot unsend
-            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            reversibility=Reversibility.NONE,
+            confirm=ConfirmLevel.EXPLICIT,
             checkpoint=True,
             intent_min_length=10,
         ),
         "reply_email": OpTraits(
-            reversibility=Reversibility.NONE,  # Cannot unsend
-            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            reversibility=Reversibility.NONE,
+            confirm=ConfirmLevel.EXPLICIT,
             checkpoint=True,
             intent_min_length=10,
         ),
         "forward_email": OpTraits(
-            reversibility=Reversibility.NONE,  # Cannot unsend
-            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            reversibility=Reversibility.NONE,
+            confirm=ConfirmLevel.EXPLICIT,
             checkpoint=True,
             intent_min_length=10,
         ),
         "create_draft": OpTraits(
-            reversibility=Reversibility.FULL,  # Can delete draft
-            confirm=ConfirmLevel.INTENT,  # Only needs agent_intent
+            reversibility=Reversibility.FULL,
+            confirm=ConfirmLevel.INTENT,
             checkpoint=True,
             intent_min_length=10,
         ),
@@ -151,6 +119,9 @@ class GmailConnectorBackend(OAuthConnectorBase):
 
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
+
+    # Enable metadata-based listing (use file_paths table for fast queries)
+    use_metadata_listing = True
 
     # Connection arguments for registry-based instantiation
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -187,373 +158,136 @@ class GmailConnectorBackend(OAuthConnectorBase):
         max_message_per_label: int = 200,
         metadata_store: Any = None,
     ):
-        """Initialize Gmail connector backend.
+        # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
-        Args:
-            token_manager_db: Path to TokenManager database (e.g., ~/.nexus/nexus.db)
-            user_email: Optional user email for OAuth lookup. If None, uses authenticated
-                       user from OperationContext (recommended for multi-user scenarios)
-            provider: OAuth provider name from config (default: "gmail")
-            record_store: Optional RecordStoreABC instance for content caching.
-                           If provided, enables persistent caching for fast grep/search.
-            max_message_per_label: Maximum number of messages to fetch per label (default: 200).
-                                  Set to None for unlimited. Useful for testing with small datasets.
-            metadata_store: MetastoreABC instance for writing to file_paths table (optional).
-                          Required for metadata-based listing (fast database queries).
-        """
-        super().__init__(
-            token_manager_db=token_manager_db,
-            user_email=user_email,
+        # 2. Create GmailTransport with the token manager
+        gmail_transport = GmailTransport(
+            token_manager=self.token_manager,
             provider=provider,
-            record_store=record_store,
-            metadata_store=metadata_store,
+            user_email=user_email,
+            max_message_per_label=max_message_per_label,
         )
+        self._gmail_transport = gmail_transport
+
+        # 3. Initialize PathAddressingEngine (no prefix, no bucket)
+        PathAddressingEngine.__init__(
+            self,
+            transport=gmail_transport,
+            backend_name="gmail",
+        )
+
+        # 4. Cache and metadata setup
+        self.session_factory = record_store.session_factory if record_store else None
+        self.metadata_store = metadata_store
         self.max_message_per_label = max_message_per_label
 
+        # 5. Initialize CheckpointMixin state
+        self._checkpoints: dict[str, Any] = {}
+
+        # 6. Register OAuth provider using factory
+        self._register_oauth_provider()
+
+    # -- Properties --
+
     @property
-    def name(self) -> str:
-        """Backend identifier name."""
-        return "gmail"
+    def user_scoped(self) -> bool:
+        return True
+
+    @property
+    def has_token_manager(self) -> bool:
+        return True
+
+    # -- _register_oauth_provider (same as OAuthConnectorBase) --
+
+    _PROVIDER_ALIASES: dict[str, list[str]] = {
+        "google": ["gmail", "gcalendar", "google-drive", "google-cloud-storage"],
+    }
+
+    def _register_oauth_provider(self) -> None:
+        try:
+            import importlib as _il
+
+            OAuthProviderFactory = _il.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
+
+            factory = OAuthProviderFactory()
+            candidates = [self.provider]
+            backend_name = getattr(self, "name", "")
+            if backend_name and backend_name != self.provider:
+                candidates.append(backend_name)
+            for alias, targets in self._PROVIDER_ALIASES.items():
+                if self.provider == alias:
+                    candidates.extend(targets)
+
+            for candidate in candidates:
+                try:
+                    provider_instance = factory.create_provider(name=candidate)
+                    self.token_manager.register_provider(self.provider, provider_instance)
+                    logger.info(
+                        "Registered OAuth provider '%s' (resolved from '%s') for %s backend",
+                        candidate,
+                        self.provider,
+                        self.name,
+                    )
+                    return
+                except ValueError:
+                    continue
+
+            logger.warning(
+                "OAuth provider '%s' not available (tried: %s). "
+                "OAuth flow must be initiated manually via the Integrations page.",
+                self.provider,
+                ", ".join(candidates),
+            )
+        except Exception as e:
+            logger.error("Failed to register OAuth provider: %s", e)
+
+    # -- Skill docs --
 
     def generate_skill_doc(self, mount_path: str) -> str:
-        """Load SKILL.md from static file with mount path replacement.
-
-        Args:
-            mount_path: The mount path for this connector (e.g., "/mnt/gmail/")
-
-        Returns:
-            SKILL.md content with mount path updated
-        """
         import importlib.resources as resources
 
         try:
-            # Load static SKILL.md from package resources
             skill_md_content = (
                 resources.files("nexus.backends.connectors.gmail")
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )
-
-            # Replace mount path placeholders
             skill_md_content = skill_md_content.replace("`/mnt/gmail/`", f"`{mount_path}`")
             skill_md_content = skill_md_content.replace("/mnt/gmail/", mount_path.rstrip("/") + "/")
-
             return skill_md_content
         except Exception as e:
             logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
             return super().generate_skill_doc(mount_path)
 
     async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
-        """Write SKILL.md to filesystem using static template.
-
-        Overrides SkillDocMixin.write_skill_docs to use the static SKILL.md
-        loaded by generate_skill_doc() instead of auto-generating from schemas.
-
-        Args:
-            mount_path: The mount path for this connector
-            filesystem: NexusFS instance to write to (optional)
-
-        Returns:
-            Dict of written paths: {"skill_md": path, "examples": [paths...]}
-        """
         import posixpath
 
         result: dict[str, Any] = {"skill_md": None, "examples": []}
-
         if filesystem is None:
             return result
 
         skill_dir = posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
-
         try:
             await filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
-
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
             content = self.generate_skill_doc(mount_path)
             await filesystem.write(skill_md_path, content.encode("utf-8"))
             result["skill_md"] = skill_md_path
-
             return result
         except Exception as e:
             logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
             return result
 
-    def _get_gmail_service(self, context: "OperationContext | None" = None) -> "Resource":
-        """Get Gmail service with user's OAuth credentials.
+    # =================================================================
+    # Content operations — override PathAddressingEngine for Gmail
+    # =================================================================
 
-        Args:
-            context: Operation context (provides user_id if user_email not configured)
-
-        Returns:
-            Gmail service instance
-
-        Raises:
-            BackendError: If credentials not found or user not authenticated
-        """
-        # Import here to avoid dependency if not using Gmail
-        try:
-            from googleapiclient.discovery import build
-        except ImportError:
-            raise BackendError(
-                "google-api-python-client not installed. "
-                "Install with: pip install google-api-python-client",
-                backend="gmail",
-            ) from None
-
-        # Determine which user's tokens to use
-        if self.user_email:
-            # Explicit user_email configured (single-user/demo mode)
-            user_email = self.user_email
-        elif context and context.user_id:
-            # Multi-user mode: use authenticated user from API key
-            user_email = context.user_id
-        else:
-            raise BackendError(
-                "Gmail backend requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gmail",
-            )
-
-        # Get valid access token from TokenManager (auto-refreshes if expired)
-        from nexus.lib.sync_bridge import run_sync
-
-        try:
-            zone_id = (
-                context.zone_id
-                if context and hasattr(context, "zone_id") and context.zone_id
-                else "root"
-            )
-
-            access_token = run_sync(
-                self.token_manager.get_valid_token(
-                    provider=self.provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
-            )
-        except Exception as e:
-            raise BackendError(
-                f"Failed to get valid OAuth token for user {user_email}: {e}",
-                backend="gmail",
-            ) from e
-
-        # Build Gmail service with OAuth token
-        from google.oauth2.credentials import Credentials
-
-        creds = Credentials(token=access_token)
-        service = build("gmail", "v1", credentials=creds)
-
-        return service
-
-    def _parse_email_date(self, date_str: str) -> datetime:
-        """Parse email date string to datetime.
-
-        Args:
-            date_str: Email date string (RFC 2822 format)
-
-        Returns:
-            Datetime object in UTC
-        """
-        from email.utils import parsedate_to_datetime
-
-        try:
-            dt = parsedate_to_datetime(date_str)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            return dt
-        except Exception:
-            # Fallback to current time if parsing fails
-            return datetime.now(UTC)
-
-    def _extract_body_from_parts(
-        self, parts: list[dict[str, Any]], body_text: str = "", body_html: str = ""
-    ) -> tuple[str, str]:
-        """Recursively extract body text and HTML from message parts.
-
-        This handles nested multipart messages (e.g., multipart/alternative inside multipart/mixed).
-
-        Args:
-            parts: List of message parts from Gmail API
-            body_text: Accumulated plain text body (for recursion)
-            body_html: Accumulated HTML body (for recursion)
-
-        Returns:
-            Tuple of (body_text, body_html)
-        """
-        import base64
-
-        for part in parts:
-            mime_type = part.get("mimeType", "")
-            body_data = part.get("body", {}).get("data")
-
-            # If this part has nested parts (multipart/*), recurse
-            if "parts" in part:
-                body_text, body_html = self._extract_body_from_parts(
-                    part["parts"], body_text, body_html
-                )
-            # Otherwise, extract body data if present
-            elif body_data:
-                try:
-                    decoded = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
-                    if mime_type == "text/plain" and not body_text:
-                        # Only set if not already set (prefer first occurrence)
-                        body_text = decoded
-                    elif mime_type == "text/html" and not body_html:
-                        # Only set if not already set (prefer first occurrence)
-                        body_html = decoded
-                except Exception as e:
-                    logger.debug(
-                        "Failed to decode email body part (mime_type=%s): %s", mime_type, e
-                    )
-                    continue
-
-        return body_text, body_html
-
-    def _parse_gmail_message(self, message: dict[str, Any]) -> dict[str, Any]:
-        """Parse Gmail API message response into email data dict.
-
-        This is a helper method for batch operations. It extracts email metadata
-        and content from Gmail API response format.
-
-        Args:
-            message: Gmail API message response dict
-
-        Returns:
-            Email data dictionary with metadata and content
-        """
-        import base64
-
-        # Extract headers
-        headers = {h["name"]: h["value"] for h in message.get("payload", {}).get("headers", [])}
-
-        # Extract date
-        date_str = headers.get("Date", "")
-        email_date = self._parse_email_date(date_str) if date_str else datetime.now(UTC)
-
-        # Extract body
-        body_text = ""
-        body_html = ""
-        payload = message.get("payload", {})
-        parts = payload.get("parts", [])
-
-        if not parts:
-            # Simple message without multipart
-            body_data = payload.get("body", {}).get("data")
-            if body_data:
-                with suppress(Exception):
-                    body_text = base64.urlsafe_b64decode(body_data).decode("utf-8", errors="ignore")
-        else:
-            # Multipart message - use recursive extraction to handle nested multipart
-            body_text, body_html = self._extract_body_from_parts(parts)
-
-        # Build email data structure
-        email_data = {
-            "id": message["id"],
-            "threadId": message.get("threadId"),
-            "labelIds": message.get("labelIds", []),
-            "snippet": message.get("snippet", ""),
-            "date": email_date.isoformat(),
-            "headers": headers,
-            "subject": headers.get("Subject", ""),
-            "from": headers.get("From", ""),
-            "to": headers.get("To", ""),
-            "cc": headers.get("Cc", ""),
-            "bcc": headers.get("Bcc", ""),
-            "body_text": body_text,
-            "body_html": body_html,
-            "sizeEstimate": message.get("sizeEstimate", 0),
-            "historyId": message.get("historyId"),
-        }
-
-        # Store the historyId from the message for tracking
-        if message.get("historyId"):
-            self._current_history_id = str(message.get("historyId"))
-
-        return email_data
-
-    def _fetch_email(self, service: "Resource", message_id: str) -> dict[str, Any]:
-        """Fetch full email data from Gmail API.
-
-        Args:
-            service: Gmail service instance
-            message_id: Gmail message ID
-
-        Returns:
-            Email data dictionary with metadata and content
-
-        Raises:
-            BackendError: If fetch fails
-        """
-        try:
-            # Get message
-            message = (
-                service.users().messages().get(userId="me", id=message_id, format="full").execute()
-            )
-
-            # Use shared parser
-            return self._parse_gmail_message(message)
-
-        except Exception as e:
-            raise BackendError(
-                f"Failed to fetch email {message_id}: {e}",
-                backend="gmail",
-            ) from e
-
-    def _format_email_as_yaml(self, email_data: dict[str, Any]) -> bytes:
-        """Format email data as YAML bytes.
-
-        Args:
-            email_data: Email metadata dictionary
-
-        Returns:
-            Formatted YAML as bytes
-        """
-        if yaml is None:
-            raise BackendError(
-                "PyYAML not installed. Install with: pip install pyyaml",
-                backend="gmail",
-            )
-
-        # Remove headers and body_html from YAML output (keep only body_text)
-        yaml_data = {k: v for k, v in email_data.items() if k not in ("headers", "body_html")}
-
-        # Normalize line endings in text bodies
-        if "body_text" in yaml_data and yaml_data["body_text"]:
-            text = yaml_data["body_text"]
-            text = text.replace("\r\n", "\n")
-            if "\\n" in text:
-                text = text.replace("\\n", "\n")
-            yaml_data["body_text"] = text
-
-        # Use custom dumper for literal block scalars
-        class LiteralDumper(yaml.SafeDumper):
-            def choose_scalar_style(self):  # type: ignore[no-untyped-def]
-                if (
-                    self.event
-                    and hasattr(self.event, "value")
-                    and self.event.value
-                    and "\n" in self.event.value
-                ):
-                    return "|"
-                return super().choose_scalar_style()
-
-        def literal_presenter(dumper, data):  # type: ignore[no-untyped-def]
-            if isinstance(data, str) and "\n" in data:
-                return dumper.represent_scalar("tag:yaml.org,2002:str", data.rstrip(), style="|")
-            return dumper.represent_scalar("tag:yaml.org,2002:str", data)
-
-        LiteralDumper.add_representer(str, literal_presenter)
-
-        yaml_output = yaml.dump(
-            yaml_data,
-            Dumper=LiteralDumper,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-        )
-        return yaml_output.encode("utf-8")
-
-    # === Backend interface methods ===
+    def _bind_transport(self, context: "OperationContext | None") -> None:
+        """Bind the transport to the current request context (OAuth token)."""
+        self._transport = self._gmail_transport.with_context(context)
 
     def write_content(
         self,
@@ -563,94 +297,30 @@ class GmailConnectorBackend(OAuthConnectorBase):
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        """
-        Write content is not supported for Gmail connector (read-only).
-
-        Args:
-            content: File content as bytes
-            context: Operation context
-
-        Raises:
-            BackendError: Always raised (read-only backend)
-        """
         raise BackendError(
             "Gmail connector is read-only. Cannot write emails back to Gmail.",
             backend="gmail",
         )
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
-        """
-        Read email content from cache or Gmail API.
-
-        For connector backends, content_hash is ignored - we use backend_path instead.
-
-        Args:
-            content_hash: Ignored for connector backends
-            context: Operation context with backend_path
-
-        Returns:
-            Email content as YAML bytes
-
-        Raises:
-            NexusFileNotFoundError: If email doesn't exist
-            BackendError: If read operation fails or PyYAML not installed
-        """
-
-        if yaml is None:
-            raise BackendError(
-                "PyYAML not installed. Install with: pip install pyyaml",
-                backend="gmail",
-            )
-
         if not context or not context.backend_path:
             raise BackendError(
-                "Gmail connector requires backend_path in OperationContext. "
-                "This backend reads files from actual paths, not CAS hashes.",
+                "Gmail connector requires backend_path in OperationContext.",
                 backend="gmail",
             )
 
-        backend_path = context.backend_path
+        # Bind transport to request context for OAuth
+        self._bind_transport(context)
 
-        # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
-        path_parts = backend_path.split("/")
-        if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-            # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
-            filename = path_parts[1]
-        elif len(path_parts) == 1:
-            # Already just a filename
-            filename = path_parts[0]
-        else:
-            raise NexusFileNotFoundError(backend_path)
-
-        # Extract message_id from filename (format: thread_id-msg_id.yaml)
-        if not filename.endswith(".yaml"):
-            raise NexusFileNotFoundError(backend_path)
-
-        # Split "thread_id-msg_id.yaml" to get msg_id
-        filename_parts = filename.replace(".yaml", "").split("-", 1)
-        if len(filename_parts) != 2:
-            raise NexusFileNotFoundError(backend_path)
-
-        message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
-
-        # Get cache path
-        cache_path = self._get_cache_path(context) or backend_path
-
-        # Check cache first (if caching enabled)
+        # Cache check
+        cache_path = self._get_cache_path(context) or context.backend_path
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
                 return cached.content_binary
 
-        # Fetch from Gmail API
-        try:
-            service = self._get_gmail_service(context)
-            email_data = self._fetch_email(service, message_id)
-        except Exception as e:
-            raise NexusFileNotFoundError(backend_path) from e
-
-        # Format as YAML (includes both body_text and body_html)
-        content = self._format_email_as_yaml(email_data)
+        # Delegate to PathAddressingEngine (which calls transport.fetch)
+        content = super().read_content(content_id, context)
 
         # Cache the result
         if self._has_caching():
@@ -659,7 +329,7 @@ class GmailConnectorBackend(OAuthConnectorBase):
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=IMMUTABLE_VERSION,  # Emails are immutable, use fixed version
+                    backend_version=IMMUTABLE_VERSION,
                     zone_id=zone_id,
                 )
             except Exception as e:
@@ -667,244 +337,63 @@ class GmailConnectorBackend(OAuthConnectorBase):
 
         return content
 
-    def _bulk_download_contents(
-        self,
-        paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
-    ) -> dict[str, bytes]:
-        """Bulk download email contents using Gmail batch API.
-
-        This method is called by CacheConnectorMixin._batch_read_from_backend
-        for efficient bulk downloads of email content.
-
-        Args:
-            paths: List of backend-relative paths (e.g., "INBOX/thread_id/email-123.yaml")
-            contexts: Optional dict mapping path -> OperationContext
-
-        Returns:
-            Dict mapping path -> content bytes (only successful reads)
-        """
-
-        # Extract message IDs from paths
-        path_to_message_id: dict[str, str] = {}
-        for path in paths:
-            try:
-                # Parse flattened path to extract filename
-                path_parts = path.split("/")
-                if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-                    # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
-                    filename = path_parts[1]
-                elif len(path_parts) == 1:
-                    # Already just a filename
-                    filename = path_parts[0]
-                else:
-                    continue  # Skip invalid paths
-
-                # Extract message_id from filename (format: thread_id-msg_id.yaml)
-                if not filename.endswith(".yaml"):
-                    continue
-
-                # Split "thread_id-msg_id.yaml" to get msg_id
-                filename_parts = filename.replace(".yaml", "").split("-", 1)
-                if len(filename_parts) != 2:
-                    continue
-
-                message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
-                path_to_message_id[path] = message_id
-            except Exception as e:
-                logger.debug("Failed to parse Gmail path %s: %s", path, e)
-                continue
-
-        if not path_to_message_id:
-            return {}
-
-        # Get Gmail service (use first context if available)
-        context = None
-        if contexts and paths:
-            context = contexts.get(paths[0])
-        service = self._get_gmail_service(context)
-
-        # Batch fetch emails using Gmail API
-        email_cache: dict[str, dict[str, Any]] = {}
-        message_ids = list(path_to_message_id.values())
-
-        try:
-            fetch_emails_batch(
-                service=service,
-                message_ids=message_ids,
-                parse_message_func=self._parse_gmail_message,
-                email_cache=email_cache,
-            )
-        except Exception as e:
-            # If batch fetch fails, fall back to empty results
-            # The cache mixin will retry with sequential reads
-            logger.debug("Gmail batch fetch failed, falling back to sequential reads: %s", e)
-            return {}
-
-        # Format results as YAML
-        results: dict[str, bytes] = {}
-        for path, message_id in path_to_message_id.items():
-            if message_id in email_cache:
-                try:
-                    email_data = email_cache[message_id]
-                    content = self._format_email_as_yaml(email_data)
-                    results[path] = content
-                except Exception as e:
-                    logger.debug("Failed to format email %s as YAML: %s", message_id, e)
-                    continue
-
-        return results
-
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
-        """
-        Delete is not supported for Gmail connector (read-only).
-
-        Args:
-            content_hash: Content hash
-            context: Operation context
-
-        Raises:
-            BackendError: Always raised (read-only backend)
-        """
         raise BackendError(
             "Gmail connector is read-only. Cannot delete emails from Gmail.",
             backend="gmail",
         )
 
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
-        """
-        Check if email exists.
-
-        Args:
-            content_hash: Content hash (ignored)
-            context: Operation context with backend_path
-
-        Returns:
-            True if email exists, False otherwise
-        """
         if not context or not context.backend_path:
             return False
-
-        try:
-            # Extract filename from flattened path (e.g., "SENT/thread_id-msg_id.yaml" -> "thread_id-msg_id.yaml")
-            path_parts = context.backend_path.split("/")
-            if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-                # Path is "LABEL/thread_id-msg_id.yaml" - use just the filename
-                filename = path_parts[1]
-            elif len(path_parts) == 1:
-                # Already just a filename
-                filename = path_parts[0]
-            else:
-                return False
-
-            # Validate filename format (thread_id-msg_id.yaml)
-            if not filename.endswith(".yaml"):
-                return False
-
-            # Check if filename has correct format: thread_id-msg_id.yaml
-            filename_parts = filename.replace(".yaml", "").split("-", 1)
-            if len(filename_parts) != 2:
-                return False
-
-            message_id = filename_parts[1]  # Extract msg_id from "thread_id-msg_id"
-
-            # Try to fetch from Gmail API
-            try:
-                service = self._get_gmail_service(context)
-                service.users().messages().get(userId="me", id=message_id, format="full").execute()
-                return True
-            except Exception as e:
-                logger.debug("Gmail API check for message %s failed: %s", message_id, e)
-                return False
-
-        except Exception as e:
-            logger.debug("Gmail content existence check failed: %s", e)
-            return False
+        self._bind_transport(context)
+        return super().content_exists(content_id, context)
 
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get email content size (cache-first, efficient).
-
-        Performance optimization: Checks cache first to avoid API calls during
-        ls -la operations. Only hits Gmail API if not cached.
-
-        Args:
-            content_hash: Content hash (ignored)
-            context: Operation context with backend_path
-
-        Returns:
-            Content size in bytes
-
-        Raises:
-            NexusFileNotFoundError: If email doesn't exist
-            BackendError: If operation fails
-        """
         if context is None or not hasattr(context, "backend_path"):
             raise ValueError("Gmail connector requires backend_path in OperationContext")
 
-        # OPTIMIZATION: Check cache first (efficient - no API call)
-        # This is crucial for ls -la performance with many files
+        # Cache optimization: check cache first (crucial for ls -la)
         if hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 return cached_size
 
-        # Fallback: Read content to get size (hits Gmail API)
-        # This only happens when file is not cached
-        content = self.read_content(content_id, context)
-        if content:
-            return len(content)
-        return 0
+        # Bind transport and delegate
+        self._bind_transport(context)
+        return super().get_content_size(content_id, context)
+
+    # =================================================================
+    # Version support (emails are immutable)
+    # =================================================================
 
     def get_version(
         self,
         path: str,
         context: "OperationContext | None" = None,
     ) -> str | None:
-        """
-        Get version for a Gmail email file.
-
-        Gmail emails are immutable (read-only) - once sent, they never change.
-        Therefore, we return a fixed version "immutable" for all email files.
-        This enables cache optimization: if cached entry has version "immutable",
-        sync can skip re-downloading the email.
-
-        Args:
-            path: Virtual file path (or backend_path from context)
-            context: Operation context with optional backend_path
-
-        Returns:
-            "immutable" for email files, None for directories/non-files
-        """
         try:
-            # Get backend path
-            if context and hasattr(context, "backend_path") and context.backend_path:
-                backend_path = context.backend_path
-            else:
-                backend_path = path.lstrip("/")
+            backend_path = (
+                context.backend_path
+                if context and hasattr(context, "backend_path") and context.backend_path
+                else path.lstrip("/")
+            )
 
-            # Check if this is an email file (ends with .yaml)
             if not backend_path.endswith(".yaml"):
-                return None  # Not a file (likely a directory/label)
+                return None
 
-            # Validate filename format (LABEL/thread_id-msg_id.yaml or thread_id-msg_id.yaml)
             path_parts = backend_path.split("/")
             if len(path_parts) == 2 and path_parts[0] in self.LABEL_FOLDERS:
-                # Path is "LABEL/thread_id-msg_id.yaml"
                 filename = path_parts[1]
             elif len(path_parts) == 1:
-                # Path is just "thread_id-msg_id.yaml"
                 filename = path_parts[0]
             else:
                 return None
 
-            # Check filename format: thread_id-msg_id.yaml
-            filename_base = filename.replace(".yaml", "")
-            if "-" not in filename_base:
+            if "-" not in filename.removesuffix(".yaml"):
                 return None
 
-            # Return fixed version for immutable Gmail emails
             return IMMUTABLE_VERSION
-
         except Exception as e:
             logger.debug("Gmail version check failed: %s", e)
             return None
@@ -912,32 +401,57 @@ class GmailConnectorBackend(OAuthConnectorBase):
     def batch_get_versions(
         self,
         backend_paths: list[str],
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, str | None]:
-        """
-        Get versions for multiple Gmail email files in batch (optimized).
-
-        Since Gmail emails are immutable, this is extremely fast - we just
-        return "immutable" for all email files without making any API calls.
-
-        Args:
-            backend_paths: List of backend-relative paths
-            contexts: Optional dict mapping path -> OperationContext
-
-        Returns:
-            Dict mapping backend_path -> version ("immutable" or None)
-        """
         results: dict[str, str | None] = {}
-
         for backend_path in backend_paths:
-            # Get context if available
             ctx = contexts.get(backend_path) if contexts else None
-
-            # Call get_version for each path (very fast - no API calls)
-            version = self.get_version(backend_path, context=ctx)
-            results[backend_path] = version
-
+            results[backend_path] = self.get_version(backend_path, context=ctx)
         return results
+
+    # =================================================================
+    # Directory operations — override for Gmail virtual directories
+    # =================================================================
+
+    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
+        path = path.strip("/")
+        if not path:
+            return True
+        return path in self.LABEL_FOLDERS
+
+    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+        """List directory contents via GmailTransport.list_keys()."""
+        try:
+            path = path.strip("/")
+
+            # Bind transport for OAuth
+            self._bind_transport(context)
+
+            # Root directory — list label folders
+            if not path:
+                return [f"{label}/" for label in self.LABEL_FOLDERS]
+
+            # Label folder — list email files
+            if path in self.LABEL_FOLDERS:
+                keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
+                # keys are "LABEL/thread-msg.yaml" — strip label prefix
+                files = []
+                label_prefix = f"{path}/"
+                for key in keys:
+                    name = key[len(label_prefix) :] if key.startswith(label_prefix) else key
+                    if name:
+                        files.append(name)
+                return sorted(files)
+
+            raise FileNotFoundError(f"Directory not found: {path}")
+        except FileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Failed to list directory {path}: {e}",
+                backend="gmail",
+                path=path,
+            ) from e
 
     def mkdir(
         self,
@@ -946,17 +460,6 @@ class GmailConnectorBackend(OAuthConnectorBase):
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory (not supported for Gmail connector).
-
-        Args:
-            path: Directory path
-            parents: Create parent directories if needed
-            exist_ok: Don't raise error if directory exists
-            context: Operation context
-
-        Raises:
-            BackendError: Always raised (read-only backend)
-        """
         raise BackendError(
             "Gmail connector is read-only. Cannot create directories.",
             backend="gmail",
@@ -968,99 +471,50 @@ class GmailConnectorBackend(OAuthConnectorBase):
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Remove directory (not supported for Gmail connector).
-
-        Args:
-            path: Directory path
-            recursive: Remove non-empty directory
-            context: Operation context
-
-        Raises:
-            BackendError: Always raised (read-only backend)
-        """
         raise BackendError(
             "Gmail connector is read-only. Cannot remove directories.",
             backend="gmail",
         )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
-        """Check if path is a directory.
+    # =================================================================
+    # Batch download (connector-specific — uses Gmail batch API)
+    # =================================================================
 
-        Args:
-            path: Path to check
-            context: Operation context
+    def _bulk_download_contents(
+        self,
+        paths: list[str],
+        contexts: dict[str, "OperationContext"] | None = None,
+    ) -> dict[str, bytes]:
+        # Extract message IDs from paths
+        path_to_message_id: dict[str, str] = {}
+        for path in paths:
+            _label, _thread_id, message_id = GmailTransport._parse_key(path)
+            if message_id:
+                path_to_message_id[path] = message_id
 
-        Returns:
-            True if path is a directory, False if it's a file
-        """
-        path = path.strip("/")
-        if not path:
-            return True  # Root is always a directory
+        if not path_to_message_id:
+            return {}
 
-        # Check if it's a label folder (SENT/, STARRED/, etc.)
-        # Everything else (email files with format LABEL/thread_id-msg_id.yaml) is a file
-        return path in self.LABEL_FOLDERS
+        # Bind transport to context for OAuth
+        context = None
+        if contexts and paths:
+            context = contexts.get(paths[0])
+        self._bind_transport(context)
 
-    def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
-        """
-        List directory contents.
+        # Use Gmail transport's batch fetch (not on Transport protocol)
+        message_ids = list(path_to_message_id.values())
+        # _bind_transport already set self._transport to a context-bound clone;
+        # but fetch_batch is Gmail-specific, so cast via _gmail_transport.
+        bound = self._gmail_transport.with_context(context)
+        msg_id_to_content = bound.fetch_batch(message_ids)
 
-        This method fetches emails from Gmail and lists:
-        - Root directory: Label folders (SENT/, STARRED/, IMPORTANT/, INBOX/)
-        - Label folders: Email files (thread_id-msg_id.yaml)
+        # Map back to paths
+        results: dict[str, bytes] = {}
+        for path, message_id in path_to_message_id.items():
+            if message_id in msg_id_to_content:
+                results[path] = msg_id_to_content[message_id]
+        return results
 
-        NOTE: Flattened from 3-level to 2-level hierarchy to optimize API calls.
-        Previously had thread folders but this required N+1 API calls (1 for label + N for each thread).
-        Now just 1 API call per label, with thread_id in filename.
 
-        Args:
-            path: Directory path to list (relative to backend root)
-            context: Operation context for authentication
-
-        Returns:
-            List of entry names (folders or email files)
-
-        Raises:
-            FileNotFoundError: If directory doesn't exist
-            BackendError: If operation fails
-        """
-        try:
-            path = path.strip("/")
-
-            # Root directory - list label folders
-            if not path:
-                return [f"{label}/" for label in self.LABEL_FOLDERS]
-
-            # Label folder - list email files directly (flattened)
-            if path in self.LABEL_FOLDERS:
-                # Get Gmail service
-                service = self._get_gmail_service(context)
-
-                # Fetch emails from Gmail API (single call per label)
-                emails = list_emails_by_folder(
-                    service,
-                    max_results=self.max_message_per_label,
-                    folder_filter=[path],
-                    silent=True,
-                )
-
-                # Return email files with format: thread_id-msg_id.yaml
-                files = []
-                for email in emails:
-                    if email.get("folder") == path:
-                        thread_id = email.get("threadId")
-                        message_id = email["id"]
-                        files.append(f"{thread_id}-{message_id}.yaml")
-                return sorted(files)
-
-            # Invalid path
-            raise FileNotFoundError(f"Directory not found: {path}")
-
-        except FileNotFoundError:
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to list directory {path}: {e}",
-                backend="gmail",
-                path=path,
-            ) from e
+# Backward-compat alias (will be removed in a future cleanup)
+GmailConnectorBackend = PathGmailBackend

@@ -84,19 +84,19 @@ def mock_gmail_service():
 @pytest.fixture
 def gmail_backend(mock_gmail_service, tmp_path):
     """Create a Gmail backend with mocked Google service."""
-    from nexus.backends.connectors.gmail.connector import GmailConnectorBackend
+    from nexus.backends.connectors.gmail.connector import PathGmailBackend
 
     # Create a mock token manager
     with patch(
-        "nexus.backends.connectors.gmail.connector.GmailConnectorBackend._register_oauth_provider"
+        "nexus.backends.connectors.gmail.connector.PathGmailBackend._register_oauth_provider"
     ):
-        backend = GmailConnectorBackend(
+        backend = PathGmailBackend(
             token_manager_db=str(tmp_path / "tokens.db"),
             user_email="test@example.com",
         )
 
-    # Replace _get_gmail_service to return our mock
-    backend._get_gmail_service = MagicMock(return_value=mock_gmail_service)
+    # Replace _get_gmail_service on the transport (OAuth calls)
+    backend._gmail_transport._get_gmail_service = MagicMock(return_value=mock_gmail_service)
 
     return backend
 

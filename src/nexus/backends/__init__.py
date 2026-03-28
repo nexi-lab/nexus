@@ -44,7 +44,12 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     "HNConnectorBackend": ("nexus.backends.connectors.hn.connector", "HNConnectorBackend"),
     "SlackConnectorBackend": ("nexus.backends.connectors.slack.connector", "SlackConnectorBackend"),
     "LocalConnectorBackend": ("nexus.backends.storage.local_connector", "LocalConnectorBackend"),
+    "PathGmailBackend": ("nexus.backends.connectors.gmail.connector", "PathGmailBackend"),
     "GmailConnectorBackend": ("nexus.backends.connectors.gmail.connector", "GmailConnectorBackend"),
+    "PathCalendarBackend": (
+        "nexus.backends.connectors.calendar.connector",
+        "PathCalendarBackend",
+    ),
     "GoogleCalendarConnectorBackend": (
         "nexus.backends.connectors.calendar.connector",
         "GoogleCalendarConnectorBackend",

@@ -33,6 +33,7 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "owner_id",
         "entry_type",
         "target_zone_id",
+        "ttl_seconds",
     }
 )
 
@@ -71,6 +72,7 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "modified_at": "updated_at",
     "version": "current_version",
     "zone_id": "zone_id",
+    "created_by": None,  # TODO(#1246): Add to FilePathModel
     "entry_type": None,  # TODO(#1246): Add to FilePathModel
     "target_zone_id": None,  # TODO(#1246): Add to FilePathModel
     "owner_id": "posix_uid",
@@ -105,6 +107,7 @@ class MetadataMapper:
             owner_id=metadata.owner_id or "",
             entry_type=metadata_pb2.DirEntryType.Name(metadata.entry_type),
             target_zone_id=metadata.target_zone_id or "",
+            ttl_seconds=metadata.ttl_seconds,
         )
 
     @staticmethod
@@ -135,6 +138,7 @@ class MetadataMapper:
             owner_id=proto.owner_id or None,
             entry_type=proto.entry_type,
             target_zone_id=proto.target_zone_id or None,
+            ttl_seconds=proto.ttl_seconds,
         )
 
     # -- JSON serialization (GENERATED) -------------------------------------
@@ -156,6 +160,7 @@ class MetadataMapper:
             "owner_id": metadata.owner_id,
             "entry_type": metadata.entry_type,
             "target_zone_id": metadata.target_zone_id,
+            "ttl_seconds": metadata.ttl_seconds,
         }
 
     @staticmethod

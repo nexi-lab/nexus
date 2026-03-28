@@ -80,34 +80,45 @@ fn now_unix_secs() -> f64 {
 
 // ─── Index entry ─────────────────────────────────────────────────────────────
 
-/// Serialized as 24 bytes: volume_id(4) + offset(8) + size(4) + timestamp_secs(8 as f64)
+/// Serialized as 32 bytes: volume_id(4) + offset(8) + size(4) + timestamp(8) + expiry(8)
+/// Issue #3405: added expiry field for TTL-bucketed volumes.
 #[derive(Clone, Debug)]
 struct IndexEntry {
     volume_id: u32,
     offset: u64,
     size: u32,
     timestamp: f64,
+    /// Unix timestamp when this entry expires. 0.0 = permanent.
+    expiry: f64,
 }
 
 impl IndexEntry {
-    fn to_bytes(&self) -> [u8; 24] {
-        let mut buf = [0u8; 24];
+    fn to_bytes(&self) -> [u8; 32] {
+        let mut buf = [0u8; 32];
         buf[0..4].copy_from_slice(&self.volume_id.to_le_bytes());
         buf[4..12].copy_from_slice(&self.offset.to_le_bytes());
         buf[12..16].copy_from_slice(&self.size.to_le_bytes());
         buf[16..24].copy_from_slice(&self.timestamp.to_le_bytes());
+        buf[24..32].copy_from_slice(&self.expiry.to_le_bytes());
         buf
     }
 
     fn from_bytes(data: &[u8]) -> Option<Self> {
+        // Accept both 24-byte (v1, no expiry) and 32-byte (v2, with expiry) entries
         if data.len() < 24 {
             return None;
         }
+        let expiry = if data.len() >= 32 {
+            f64::from_le_bytes(data[24..32].try_into().ok()?)
+        } else {
+            0.0 // v1 entries are permanent
+        };
         Some(Self {
             volume_id: u32::from_le_bytes(data[0..4].try_into().ok()?),
             offset: u64::from_le_bytes(data[4..12].try_into().ok()?),
             size: u32::from_le_bytes(data[12..16].try_into().ok()?),
             timestamp: f64::from_le_bytes(data[16..24].try_into().ok()?),
+            expiry,
         })
     }
 }
@@ -445,49 +456,18 @@ impl VolumeEngine {
     /// flushed to redb in a single transaction every `index_batch_size` writes
     /// or at seal time. This amortizes the redb fsync cost across many blobs.
     fn put(&self, hash_hex: &str, data: &[u8]) -> PyResult<bool> {
-        let hash = hex_to_hash(hash_hex)?;
+        self.put_impl(hash_hex, data, 0.0)
+    }
 
-        // Dedup check: O(1) via in-memory index (Issue #3404)
-        if self.mem_index.read().contains(&hash) {
-            return Ok(false);
-        }
-
-        // Append to active volume
-        let (volume_id, offset) = self.append_to_active(&hash, data)?;
-
-        // Buffer index entry (not committed to redb yet)
-        let entry = IndexEntry {
-            volume_id,
-            offset,
-            size: data.len() as u32,
-            timestamp: now_unix_secs(),
-        };
-
-        let should_flush = {
-            let mut pending = self.pending_index.lock();
-            pending.push((hash, entry));
-            pending.len() >= self.index_batch_size
-        };
-
-        // Update in-memory index for O(1) reads (Issue #3404)
-        self.mem_index.write().insert(
-            hash,
-            MemIndexEntry {
-                volume_id,
-                offset,
-                size: data.len() as u32,
-            },
-        );
-
-        // Flush when buffer is full
-        if should_flush {
-            self.flush_pending_index()?;
-        }
-
-        self.total_bytes
-            .fetch_add(data.len() as u64, Ordering::Relaxed);
-
-        Ok(true)
+    /// Write a blob with an expiry timestamp (Issue #3405).
+    ///
+    /// Args:
+    ///     hash_hex: Content hash as hex string.
+    ///     data: Blob content.
+    ///     expiry: Unix timestamp when this entry expires (0.0 = permanent).
+    #[pyo3(signature = (hash_hex, data, expiry=0.0))]
+    fn put_with_expiry(&self, hash_hex: &str, data: &[u8], expiry: f64) -> PyResult<bool> {
+        self.put_impl(hash_hex, data, expiry)
     }
 
     /// Flush pending index entries to redb in a single transaction.
@@ -875,6 +855,7 @@ impl VolumeEngine {
                         offset,
                         size: data.len() as u32,
                         timestamp: now_unix_secs(),
+                        expiry: 0.0, // Migrated content is permanent
                     };
                     {
                         let db = self.db.read();
@@ -923,11 +904,168 @@ impl VolumeEngine {
 
         Ok((migrated, skipped, bytes_migrated))
     }
+
+    /// Expire all entries whose expiry timestamp has passed (Issue #3405).
+    ///
+    /// Removes expired entries from the in-memory index immediately.
+    /// Collects expired volume IDs for deferred redb cleanup.
+    /// Returns list of (volume_id, entries_removed) tuples.
+    ///
+    /// This is the sweeper's primary entry point. The caller (Python timer)
+    /// invokes this periodically; Rust handles all state transitions atomically.
+    fn expire_ttl_volumes(&self) -> PyResult<Vec<(u32, usize)>> {
+        let now = now_unix_secs();
+        let mut result: Vec<(u32, usize)> = Vec::new();
+
+        // Phase 1: Identify expired entries from mem_index
+        let mut expired_hashes: HashMap<u32, Vec<[u8; 32]>> = HashMap::new();
+        {
+            let idx = self.mem_index.read();
+            for (hash, entry) in idx.iter_all() {
+                if entry.expiry > 0.0 && entry.expiry < now {
+                    expired_hashes
+                        .entry(entry.volume_id)
+                        .or_default()
+                        .push(*hash);
+                }
+            }
+        }
+
+        if expired_hashes.is_empty() {
+            return Ok(result);
+        }
+
+        // Phase 2: Remove expired entries from mem_index (instant visibility)
+        {
+            let mut idx = self.mem_index.write();
+            for hashes in expired_hashes.values() {
+                for hash in hashes {
+                    idx.remove(hash);
+                }
+            }
+        }
+
+        // Phase 3: Check if any volumes are now fully empty and can be deleted
+        let volume_paths = self.volume_paths.read().clone();
+        for (vol_id, hashes) in &expired_hashes {
+            result.push((*vol_id, hashes.len()));
+
+            // Check if volume is now completely empty in the index
+            let vol_has_entries = {
+                let idx = self.mem_index.read();
+                let has = idx.iter_all().any(|(_, e)| e.volume_id == *vol_id);
+                has
+            };
+
+            if !vol_has_entries {
+                // Volume is fully expired — close FD and delete file
+                self.mem_index.write().close_volume(*vol_id);
+                if let Some(path) = volume_paths.get(vol_id) {
+                    let _ = fs::remove_file(path);
+                }
+                self.volume_paths.write().remove(vol_id);
+            }
+        }
+
+        // Phase 4: Deferred redb cleanup — batch all expired hashes into one txn
+        {
+            let all_expired: Vec<[u8; 32]> = expired_hashes
+                .into_values()
+                .flat_map(|v| v.into_iter())
+                .collect();
+
+            if !all_expired.is_empty() {
+                let db = self.db.read();
+                if let Ok(txn) = db.begin_write() {
+                    if let Ok(mut table) = txn.open_table(INDEX_TABLE) {
+                        for hash in &all_expired {
+                            let _ = table.remove(hash.as_slice());
+                        }
+                    }
+                    let _ = txn.commit();
+                }
+                // Also remove from pending buffer
+                let mut pending = self.pending_index.lock();
+                let expired_set: std::collections::HashSet<[u8; 32]> =
+                    all_expired.into_iter().collect();
+                pending.retain(|(h, _)| !expired_set.contains(h));
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Seal the active volume only if it has entries (Issue #3405).
+    ///
+    /// Used by TTL rotation timer: seal at time intervals, but skip if empty.
+    fn seal_if_nonempty(&self) -> PyResult<bool> {
+        let has_entries = {
+            let active = self.active.lock();
+            active.as_ref().is_some_and(|v| v.entry_count() > 0)
+        };
+        if has_entries {
+            self.do_seal_active()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 // ─── Internal methods (not exposed to Python) ───────────────────────────────
 
 impl VolumeEngine {
+    /// Core put implementation shared by `put()` and `put_with_expiry()`.
+    fn put_impl(&self, hash_hex: &str, data: &[u8], expiry: f64) -> PyResult<bool> {
+        let hash = hex_to_hash(hash_hex)?;
+
+        // Dedup check: O(1) via in-memory index (Issue #3404)
+        // Use lookup_raw to bypass expiry check — we want to dedup even against expired entries
+        // that haven't been swept yet (content is still physically present).
+        if self.mem_index.read().lookup_raw(&hash).is_some() {
+            return Ok(false);
+        }
+
+        // Append to active volume
+        let (volume_id, offset) = self.append_to_active(&hash, data)?;
+
+        // Buffer index entry (not committed to redb yet)
+        let entry = IndexEntry {
+            volume_id,
+            offset,
+            size: data.len() as u32,
+            timestamp: now_unix_secs(),
+            expiry,
+        };
+
+        let should_flush = {
+            let mut pending = self.pending_index.lock();
+            pending.push((hash, entry));
+            pending.len() >= self.index_batch_size
+        };
+
+        // Update in-memory index for O(1) reads (Issue #3404)
+        self.mem_index.write().insert(
+            hash,
+            MemIndexEntry {
+                volume_id,
+                offset,
+                size: data.len() as u32,
+                expiry,
+            },
+        );
+
+        // Flush when buffer is full
+        if should_flush {
+            self.flush_pending_index()?;
+        }
+
+        self.total_bytes
+            .fetch_add(data.len() as u64, Ordering::Relaxed);
+
+        Ok(true)
+    }
+
     /// Remove empty directories recursively (bottom-up cleanup after migration).
     fn cleanup_empty_dirs(dir: &Path) {
         if let Ok(entries) = fs::read_dir(dir) {
@@ -1212,6 +1350,7 @@ impl VolumeEngine {
                                         offset: toc_entry.offset,
                                         size: toc_entry.size,
                                         timestamp: now,
+                                        expiry: 0.0, // TOC rebuild: no expiry info, assume permanent
                                     };
                                     table
                                         .insert(
@@ -1225,6 +1364,7 @@ impl VolumeEngine {
                                             volume_id: *vol_id,
                                             offset: toc_entry.offset,
                                             size: toc_entry.size,
+                                            expiry: 0.0,
                                         },
                                     );
                                     indexed_hashes.insert(toc_entry.hash.to_vec());
@@ -1293,6 +1433,7 @@ impl VolumeEngine {
                             volume_id: entry.volume_id,
                             offset: entry.offset,
                             size: entry.size,
+                            expiry: entry.expiry,
                         },
                     );
                 } else {
@@ -1438,6 +1579,7 @@ impl VolumeEngine {
                             offset: new_offset,
                             size: entry.size,
                             timestamp: entry.timestamp,
+                            expiry: entry.expiry,
                         };
                         let db = self.db.read();
                         let txn = db.begin_write().map_err(db_err)?;
@@ -1456,6 +1598,7 @@ impl VolumeEngine {
                                 volume_id: new_vol_id,
                                 offset: new_offset,
                                 size: entry.size,
+                                expiry: entry.expiry,
                             },
                         );
 
@@ -1590,6 +1733,7 @@ mod tests {
             offset: 1234567890,
             size: 9999,
             timestamp: 1700000000.5,
+            expiry: 1700003600.0,
         };
         let bytes = entry.to_bytes();
         let decoded = IndexEntry::from_bytes(&bytes).unwrap();
@@ -1597,6 +1741,24 @@ mod tests {
         assert_eq!(decoded.offset, 1234567890);
         assert_eq!(decoded.size, 9999);
         assert!((decoded.timestamp - 1700000000.5).abs() < f64::EPSILON);
+        assert!((decoded.expiry - 1700003600.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_index_entry_v1_compat() {
+        // v1 entries (24 bytes) should decode with expiry = 0.0
+        let entry = IndexEntry {
+            volume_id: 1,
+            offset: 100,
+            size: 50,
+            timestamp: 1700000000.0,
+            expiry: 0.0,
+        };
+        let bytes = entry.to_bytes();
+        // Simulate a v1 entry by only passing first 24 bytes
+        let decoded = IndexEntry::from_bytes(&bytes[..24]).unwrap();
+        assert_eq!(decoded.volume_id, 1);
+        assert!((decoded.expiry - 0.0).abs() < f64::EPSILON);
     }
 
     #[test]

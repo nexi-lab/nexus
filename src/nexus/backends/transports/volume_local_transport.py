@@ -11,18 +11,28 @@ Volume engine benefits:
     - Batched fdatasync at seal time (not per-blob)
     - redb index for O(1) hash → (volume, offset, size) lookup
 
+TTL bucket routing (Issue #3405):
+    - Writes with a TTL are routed to a TTL-bucketed VolumeEngine
+    - Each bucket has its own directory, index, and volume lifecycle
+    - Expired volumes are deleted wholesale (single unlink, no per-file GC)
+    - GC only operates on the permanent engine
+
 Crash recovery:
     - Active volumes are .tmp files — deleted on startup
     - Sealed volumes have TOC at end — can rebuild index from TOCs
     - Startup reconciliation handles all crash scenarios
 
 Issue #3403: CAS volume packing.
+Issue #3405: Volume-level TTL.
 """
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import time
 from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from nexus.backends.transports.local_transport import LocalTransport
@@ -33,6 +43,41 @@ logger = logging.getLogger(__name__)
 # Key prefix that routes to the volume engine (CAS content blobs)
 _CAS_PREFIX = "cas/"
 
+# ─── TTL bucket definitions (Issue #3405) ────────────────────────────────────
+
+# (bucket_name, max_ttl_seconds, rotation_interval_seconds)
+TTL_BUCKETS: list[tuple[str, float, float]] = [
+    ("1m", 5 * 60, 60),  # < 5 minutes, rotate every 1 min
+    ("5m", 30 * 60, 5 * 60),  # 5–30 minutes, rotate every 5 min
+    ("1h", 4 * 3600, 3600),  # 30min–4 hours, rotate every 1 hour
+    ("1d", 48 * 3600, 86400),  # 4–48 hours, rotate every 1 day
+    ("1w", 14 * 86400, 7 * 86400),  # 2–14 days, rotate every 1 week
+]
+
+
+def ceil_bucket(ttl_seconds: float) -> str | None:
+    """Map a TTL duration to its bucket name.
+
+    Returns the smallest bucket whose max_ttl >= ttl_seconds.
+    Returns None if ttl_seconds exceeds all buckets (→ permanent engine).
+
+    Raises ValueError for ttl_seconds <= 0.
+
+    >>> ceil_bucket(30)
+    '1m'
+    >>> ceil_bucket(300)
+    '5m'
+    >>> ceil_bucket(86400)
+    '1d'
+    >>> ceil_bucket(999999)  # exceeds all buckets
+    """
+    if ttl_seconds <= 0:
+        raise ValueError(f"TTL must be positive, got {ttl_seconds}")
+    for name, max_ttl, _ in TTL_BUCKETS:
+        if ttl_seconds <= max_ttl:
+            return name
+    return None  # exceeds all buckets → permanent
+
 
 class VolumeLocalTransport:
     """Volume-packed Transport for local CAS storage.
@@ -41,6 +86,10 @@ class VolumeLocalTransport:
     CAS blob keys (cas/...) are routed to the Rust VolumeEngine.
     All other keys (dirs/..., uploads/...) are handled by an internal
     LocalTransport for filesystem-native directory operations.
+
+    TTL-aware writes (Issue #3405): when `put_blob_ttl()` is called with a
+    TTL, the blob is routed to a TTL-bucketed engine. Standard `put_blob()`
+    goes to the permanent engine.
 
     Args:
         root_path: Root directory for all storage.
@@ -62,31 +111,72 @@ class VolumeLocalTransport:
         compaction_sparsity_threshold: float = 0.4,
     ) -> None:
         self._root = Path(root_path).resolve()
+        self._volume_available = False
+        self._VolumeEngine = None  # Class reference for lazy creation
 
-        # Volume engine for CAS blobs (Rust)
-        volumes_dir = self._root / "cas_volumes"
+        # Try to import Rust VolumeEngine
         try:
             from nexus_fast import VolumeEngine
 
-            self._engine = VolumeEngine(
-                str(volumes_dir),
-                target_volume_size,
-                compaction_rate_limit,
-                compaction_sparsity_threshold,
-            )
+            self._VolumeEngine = VolumeEngine
             self._volume_available = True
-            logger.info("CAS volume engine initialized at %s", volumes_dir)
         except ImportError:
-            self._engine = None
-            self._volume_available = False
             logger.warning(
                 "nexus_fast.VolumeEngine not available, "
                 "falling back to file-per-blob LocalTransport"
             )
 
+        # Permanent engine for non-TTL CAS blobs
+        self._engine = None
+        self._target_volume_size = target_volume_size
+        self._compaction_rate_limit = compaction_rate_limit
+        self._compaction_sparsity_threshold = compaction_sparsity_threshold
+
+        if self._volume_available:
+            volumes_dir = self._root / "cas_volumes"
+            self._engine = self._VolumeEngine(
+                str(volumes_dir),
+                target_volume_size,
+                compaction_rate_limit,
+                compaction_sparsity_threshold,
+            )
+            logger.info("CAS volume engine (permanent) initialized at %s", volumes_dir)
+
+        # TTL-bucketed engines (Issue #3405): lazily created on first write
+        self._ttl_engines: dict[str, object] = {}
+        # Rotation config per bucket: bucket_name → rotation_interval_seconds
+        self._ttl_rotation: dict[str, float] = {name: interval for name, _, interval in TTL_BUCKETS}
+        # Track last rotation time per bucket
+        self._ttl_last_rotation: dict[str, float] = {}
+
         # Delegate transport for non-CAS keys (dirs, uploads, etc.)
         # Also serves as fallback if VolumeEngine is unavailable.
         self._delegate = LocalTransport(root_path=root_path, fsync=fsync)
+
+    def _get_ttl_engine(self, bucket: str) -> object:
+        """Get or create a TTL-bucketed VolumeEngine (lazy creation)."""
+        engine = self._ttl_engines.get(bucket)
+        if engine is not None:
+            return engine
+
+        if not self._volume_available:
+            raise BackendError(
+                "VolumeEngine not available for TTL bucket",
+                backend="volume_local",
+                path=bucket,
+            )
+
+        ttl_dir = self._root / "cas_volumes" / f"ttl_{bucket}"
+        engine = self._VolumeEngine(
+            str(ttl_dir),
+            self._target_volume_size,
+            self._compaction_rate_limit,
+            self._compaction_sparsity_threshold,
+        )
+        self._ttl_engines[bucket] = engine
+        self._ttl_last_rotation[bucket] = time.time()
+        logger.info("CAS volume engine (TTL %s) initialized at %s", bucket, ttl_dir)
+        return engine
 
     def _is_cas_key(self, key: str) -> bool:
         """Check if a key should be routed to the volume engine."""
@@ -96,56 +186,99 @@ class VolumeLocalTransport:
         """Extract content hash from a CAS key like 'cas/ab/cd/abcdef...'."""
         return key.split("/")[-1]
 
+    @contextmanager
+    def _cas_op(self, key: str, op_name: str):
+        """Context manager for CAS operations — extracts hash and wraps errors.
+
+        Yields (hash_hex, engine) if the key is a CAS key.
+        Raises BackendError on failure. Re-raises NexusFileNotFoundError.
+
+        Usage::
+
+            with self._cas_op(key, "get") as (hash_hex, engine):
+                return engine.some_method(hash_hex)
+        """
+        hash_hex = self._hash_from_key(key)
+        try:
+            yield hash_hex, self._engine
+        except NexusFileNotFoundError:
+            raise
+        except Exception as e:
+            raise BackendError(
+                f"Volume {op_name} failed: {e}", backend="volume_local", path=key
+            ) from e
+
     # === Transport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
         if self._is_cas_key(key):
-            hash_hex = self._hash_from_key(key)
-            try:
-                self._engine.put(hash_hex, data)
+            with self._cas_op(key, "put") as (hash_hex, engine):
+                engine.put(hash_hex, data)
                 return None
-            except Exception as e:
-                raise BackendError(
-                    f"Volume put failed: {e}", backend="volume_local", path=key
-                ) from e
         return self._delegate.put_blob(key, data, content_type)
+
+    def put_blob_ttl(
+        self, key: str, data: bytes, ttl_seconds: float, content_type: str = ""
+    ) -> str | None:
+        """Write a CAS blob with TTL-based volume routing (Issue #3405).
+
+        Routes to the appropriate TTL-bucketed engine based on ttl_seconds.
+        Non-CAS keys are delegated to the filesystem transport.
+        """
+        if self._is_cas_key(key) and ttl_seconds > 0:
+            bucket = ceil_bucket(ttl_seconds)
+            if bucket is not None:
+                hash_hex = self._hash_from_key(key)
+                engine = self._get_ttl_engine(bucket)
+                try:
+                    expiry = time.time() + ttl_seconds
+                    engine.put_with_expiry(hash_hex, data, expiry)
+                    return None
+                except Exception as e:
+                    raise BackendError(
+                        f"Volume TTL put failed: {e}", backend="volume_local", path=key
+                    ) from e
+            # TTL exceeds all buckets — fall through to permanent
+        return self.put_blob(key, data, content_type)
 
     def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
-            try:
-                # read_content: O(1) HashMap lookup + pread (Issue #3404)
-                data = self._engine.read_content(hash_hex)
+            # Check TTL engines first, then permanent
+            for engine in self._ttl_engines.values():
+                try:
+                    data = engine.read_content(hash_hex)
+                    if data is not None:
+                        return bytes(data), None
+                except Exception:
+                    pass
+            # Permanent engine
+            with self._cas_op(key, "get") as (h, engine):
+                data = engine.read_content(h)
                 if data is None:
                     raise NexusFileNotFoundError(key)
                 return bytes(data), None
-            except NexusFileNotFoundError:
-                raise
-            except Exception as e:
-                raise BackendError(
-                    f"Volume get failed: {e}", backend="volume_local", path=key
-                ) from e
         return self._delegate.get_blob(key, version_id)
 
     def delete_blob(self, key: str) -> None:
         if self._is_cas_key(key):
-            hash_hex = self._hash_from_key(key)
-            try:
-                existed = self._engine.delete(hash_hex)
+            with self._cas_op(key, "delete") as (hash_hex, engine):
+                existed = engine.delete(hash_hex)
                 if not existed:
                     raise NexusFileNotFoundError(key)
                 return
-            except NexusFileNotFoundError:
-                raise
-            except Exception as e:
-                raise BackendError(
-                    f"Volume delete failed: {e}", backend="volume_local", path=key
-                ) from e
         self._delegate.delete_blob(key)
 
     def blob_exists(self, key: str) -> bool:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
+            # Check TTL engines first
+            for engine in self._ttl_engines.values():
+                try:
+                    if engine.exists(hash_hex):
+                        return True
+                except Exception:
+                    pass
             try:
                 return bool(self._engine.exists(hash_hex))
             except Exception:
@@ -155,26 +288,30 @@ class VolumeLocalTransport:
     def get_blob_size(self, key: str) -> int:
         if self._is_cas_key(key):
             hash_hex = self._hash_from_key(key)
-            try:
-                size = self._engine.get_size(hash_hex)
+            # Check TTL engines first
+            for engine in self._ttl_engines.values():
+                try:
+                    size = engine.get_size(hash_hex)
+                    if size is not None:
+                        return int(size)
+                except Exception:
+                    pass
+            with self._cas_op(key, "get_size") as (h, engine):
+                size = engine.get_size(h)
                 if size is None:
                     raise NexusFileNotFoundError(key)
                 return int(size)
-            except NexusFileNotFoundError:
-                raise
-            except Exception as e:
-                raise BackendError(
-                    f"Volume get_size failed: {e}", backend="volume_local", path=key
-                ) from e
         return self._delegate.get_blob_size(key)
 
     def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         if prefix.startswith(_CAS_PREFIX) and self._volume_available:
-            # Volume engine doesn't have directories — synthesize from index
-            hashes_ts = self._engine.list_content_hashes()
-            blob_keys = [f"cas/{h[:2]}/{h[2:4]}/{h}" for h, _ts in hashes_ts]
+            # Aggregate from permanent + all TTL engines
+            all_hashes_ts = list(self._engine.list_content_hashes())
+            for engine in self._ttl_engines.values():
+                with contextlib.suppress(Exception):
+                    all_hashes_ts.extend(engine.list_content_hashes())
+            blob_keys = [f"cas/{h[:2]}/{h[2:4]}/{h}" for h, _ts in all_hashes_ts]
             if delimiter:
-                # Filter to keys matching prefix at current level
                 matching = [k for k in blob_keys if k.startswith(prefix)]
                 return sorted(matching), []
             return sorted(blob_keys), []
@@ -182,7 +319,6 @@ class VolumeLocalTransport:
 
     def copy_blob(self, src_key: str, dst_key: str) -> None:
         if self._is_cas_key(src_key) and self._is_cas_key(dst_key):
-            # CAS copy = read from source volume, write to active volume
             data, _ = self.get_blob(src_key)
             self.put_blob(dst_key, data)
             return
@@ -197,7 +333,6 @@ class VolumeLocalTransport:
         self._delegate.copy_blob(src_key, dst_key)
 
     def create_directory_marker(self, key: str) -> None:
-        # Always delegate to filesystem transport (volumes don't have directories)
         self._delegate.create_directory_marker(key)
 
     def stream_blob(
@@ -207,7 +342,6 @@ class VolumeLocalTransport:
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         if self._is_cas_key(key):
-            # Read full blob from volume, yield in chunks
             data, _ = self.get_blob(key)
             for i in range(0, len(data), chunk_size):
                 yield data[i : i + chunk_size]
@@ -217,52 +351,32 @@ class VolumeLocalTransport:
     # === Extended Methods (used by CASAddressingEngine via hasattr) ===
 
     def put_blob_nosync(self, key: str, data: bytes) -> None:
-        """Write without fsync — for reconstructable metadata.
-
-        Volume engine batches fsync at seal time, so this is the same as put_blob.
-        """
+        """Write without fsync — volume engine batches fsync at seal time."""
         if self._is_cas_key(key):
-            hash_hex = self._hash_from_key(key)
-            try:
-                self._engine.put(hash_hex, data)
-            except Exception as e:
-                raise BackendError(
-                    f"Volume put_nosync failed: {e}", backend="volume_local", path=key
-                ) from e
-            return
+            with self._cas_op(key, "put_nosync") as (hash_hex, engine):
+                engine.put(hash_hex, data)
+                return
         self._delegate.put_blob_nosync(key, data)
 
     def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
-        """Move a file into the volume (read file, append to volume, delete source)."""
+        """Move a file into the volume."""
         if self._is_cas_key(key):
             src = Path(src_path)
-            try:
+            with self._cas_op(key, "put_from_path") as (hash_hex, engine):
                 data = src.read_bytes()
-                hash_hex = self._hash_from_key(key)
-                self._engine.put(hash_hex, data)
+                engine.put(hash_hex, data)
                 src.unlink(missing_ok=True)
                 return None
-            except Exception as e:
-                raise BackendError(
-                    f"Volume put_from_path failed: {e}", backend="volume_local", path=key
-                ) from e
         return self._delegate.put_blob_from_path(key, src_path)
 
     def get_blob_mtime(self, key: str) -> float:
         """Blob write timestamp. For GC age threshold."""
         if self._is_cas_key(key):
-            hash_hex = self._hash_from_key(key)
-            try:
-                ts = self._engine.get_timestamp(hash_hex)
+            with self._cas_op(key, "get_mtime") as (hash_hex, engine):
+                ts = engine.get_timestamp(hash_hex)
                 if ts is None:
                     raise NexusFileNotFoundError(key)
                 return float(ts)
-            except NexusFileNotFoundError:
-                raise
-            except Exception as e:
-                raise BackendError(
-                    f"Volume get_mtime failed: {e}", backend="volume_local", path=key
-                ) from e
         return self._delegate.get_blob_mtime(key)
 
     # === New Methods (transport protocol extensions) ===
@@ -272,6 +386,7 @@ class VolumeLocalTransport:
 
         Returns list of (hash_hex, timestamp_secs) tuples.
         Used by GC for reachability scan and by Bloom filter for seeding.
+        Only returns hashes from the permanent engine (GC scope).
         """
         if self._volume_available:
             try:
@@ -279,17 +394,12 @@ class VolumeLocalTransport:
             except Exception as e:
                 logger.warning("Volume list_content_hashes failed: %s", e)
                 return []
-        # Fallback: scan filesystem
         return self._delegate.list_content_hashes()
 
     def batch_get_blobs(self, keys: list[str]) -> dict[str, bytes | None]:
-        """Batch read multiple blobs efficiently.
-
-        Groups CAS reads into a single batch_get call to the volume engine
-        for sequential I/O within volumes. Non-CAS keys are read individually.
-        """
+        """Batch read multiple blobs efficiently."""
         result: dict[str, bytes | None] = {}
-        cas_keys: dict[str, str] = {}  # key → hash_hex
+        cas_keys: dict[str, str] = {}
         other_keys: list[str] = []
 
         for key in keys:
@@ -298,7 +408,6 @@ class VolumeLocalTransport:
             else:
                 other_keys.append(key)
 
-        # Batch read CAS blobs via volume engine
         if cas_keys and self._volume_available:
             try:
                 hash_to_key: dict[str, str] = {h: k for k, h in cas_keys.items()}
@@ -308,12 +417,10 @@ class VolumeLocalTransport:
                     if matched_key is not None:
                         key = matched_key
                         result[key] = bytes(data)
-                # Fill missing with None
                 for key in cas_keys:
                     if key not in result:
                         result[key] = None
             except Exception:
-                # Fallback to individual reads
                 for key in cas_keys:
                     try:
                         data, _ = self.get_blob(key)
@@ -321,7 +428,6 @@ class VolumeLocalTransport:
                     except Exception:
                         result[key] = None
 
-        # Read non-CAS keys individually
         for key in other_keys:
             try:
                 data, _ = self._delegate.get_blob(key)
@@ -355,6 +461,10 @@ class VolumeLocalTransport:
         """Close the volume engine (seals active volume)."""
         if self._volume_available:
             self._engine.close()
+        for engine in self._ttl_engines.values():
+            with contextlib.suppress(Exception):
+                engine.close()
+        self._ttl_engines.clear()
 
     def migrate_from_files(
         self,
@@ -363,19 +473,7 @@ class VolumeLocalTransport:
         delete_originals: bool = True,
         rate_limit_bytes: int = 0,
     ) -> tuple[int, int, int]:
-        """Migrate existing one-file-per-hash CAS blobs into volumes.
-
-        Scans the cas/ directory for files matching the cas/{h[:2]}/{h[2:4]}/{h}
-        layout, packs them into volumes, and optionally deletes the originals.
-
-        Args:
-            batch_size: Files to migrate per batch before sealing (default 1000).
-            delete_originals: Delete original files after migration (default True).
-            rate_limit_bytes: Max bytes per call (0 = unlimited).
-
-        Returns:
-            (files_migrated, files_skipped, bytes_migrated)
-        """
+        """Migrate existing one-file-per-hash CAS blobs into volumes."""
         if not self._volume_available:
             return (0, 0, 0)
 
@@ -389,12 +487,54 @@ class VolumeLocalTransport:
             )
         )
 
+    # === TTL Volume Management (Issue #3405) ===
+
+    def expire_ttl_volumes(self) -> list[tuple[str, int]]:
+        """Run TTL expiry across all TTL-bucketed engines.
+
+        Returns list of (bucket_name, total_entries_expired) tuples.
+        """
+        results: list[tuple[str, int]] = []
+        for bucket, engine in self._ttl_engines.items():
+            try:
+                vol_results = engine.expire_ttl_volumes()
+                total = sum(count for _, count in vol_results)
+                if total > 0:
+                    results.append((bucket, total))
+                    logger.info("TTL bucket %s: expired %d entries", bucket, total)
+            except Exception as e:
+                logger.warning("TTL expiry failed for bucket %s: %s", bucket, e)
+        return results
+
+    def rotate_ttl_volumes(self) -> int:
+        """Seal TTL volumes that have exceeded their rotation interval.
+
+        Returns count of volumes sealed.
+        """
+        sealed = 0
+        now = time.time()
+        for bucket, engine in self._ttl_engines.items():
+            interval = self._ttl_rotation.get(bucket, 60)
+            last = self._ttl_last_rotation.get(bucket, 0.0)
+            if now - last >= interval:
+                try:
+                    if engine.seal_if_nonempty():
+                        sealed += 1
+                except Exception as e:
+                    logger.warning("TTL rotation failed for bucket %s: %s", bucket, e)
+                self._ttl_last_rotation[bucket] = now
+        return sealed
+
+    @property
+    def ttl_engine_count(self) -> int:
+        """Number of active TTL-bucketed engines."""
+        return len(self._ttl_engines)
+
     # === Internal Helpers ===
 
     def move_blob(self, src_key: str, dst_key: str) -> None:
         """Atomic move — delegate to appropriate transport."""
         if self._is_cas_key(src_key) or self._is_cas_key(dst_key):
-            # Cross-transport move = copy + delete
             data, _ = self.get_blob(src_key)
             self.put_blob(dst_key, data)
             self.delete_blob(src_key)

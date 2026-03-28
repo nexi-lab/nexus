@@ -34,10 +34,10 @@ class FileMetadata(_message.Message):
         "modified_at",
         "version",
         "zone_id",
-        "created_by",
         "owner_id",
         "entry_type",
         "target_zone_id",
+        "ttl_seconds",
     )
     PATH_FIELD_NUMBER: _ClassVar[int]
     BACKEND_NAME_FIELD_NUMBER: _ClassVar[int]
@@ -49,10 +49,10 @@ class FileMetadata(_message.Message):
     MODIFIED_AT_FIELD_NUMBER: _ClassVar[int]
     VERSION_FIELD_NUMBER: _ClassVar[int]
     ZONE_ID_FIELD_NUMBER: _ClassVar[int]
-    CREATED_BY_FIELD_NUMBER: _ClassVar[int]
     OWNER_ID_FIELD_NUMBER: _ClassVar[int]
     ENTRY_TYPE_FIELD_NUMBER: _ClassVar[int]
     TARGET_ZONE_ID_FIELD_NUMBER: _ClassVar[int]
+    TTL_SECONDS_FIELD_NUMBER: _ClassVar[int]
     path: str
     backend_name: str
     physical_path: str
@@ -63,10 +63,10 @@ class FileMetadata(_message.Message):
     modified_at: str
     version: int
     zone_id: str
-    created_by: str
     owner_id: str
     entry_type: DirEntryType
     target_zone_id: str
+    ttl_seconds: float
     def __init__(
         self,
         path: str | None = ...,
@@ -79,8 +79,8 @@ class FileMetadata(_message.Message):
         modified_at: str | None = ...,
         version: int | None = ...,
         zone_id: str | None = ...,
-        created_by: str | None = ...,
         owner_id: str | None = ...,
         entry_type: DirEntryType | str | None = ...,
         target_zone_id: str | None = ...,
+        ttl_seconds: float | None = ...,
     ) -> None: ...

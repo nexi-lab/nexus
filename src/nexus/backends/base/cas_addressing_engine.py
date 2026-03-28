@@ -253,7 +253,13 @@ class CASAddressingEngine(Backend):
             # One stat() (~17μs) is much cheaper than a full put_blob (~760μs).
             is_new = not self._transport.blob_exists(key)
             if is_new:
-                self._transport.put_blob(key, content)
+                # TTL routing (Issue #3405): if context has ttl_seconds,
+                # route to a TTL-bucketed volume via put_blob_ttl.
+                ttl = getattr(context, "ttl_seconds", None) if context else None
+                if ttl and ttl > 0 and hasattr(self._transport, "put_blob_ttl"):
+                    self._transport.put_blob_ttl(key, content, ttl)
+                else:
+                    self._transport.put_blob(key, content)
 
             # No .meta for non-CDC content — ref_count eliminated.
 

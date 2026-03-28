@@ -25,6 +25,7 @@ mod simd;
 mod stream;
 mod trigram;
 mod volume_engine;
+mod volume_index;
 
 use pyo3::prelude::*;
 

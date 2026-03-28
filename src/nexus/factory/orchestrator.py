@@ -371,7 +371,7 @@ async def _register_vfs_hooks(
             default_context=nx._init_cred,
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=_ss.get("permission_enforcer"),
-            descendant_checker=getattr(nx, "_descendant_checker", None),
+            descendant_checker=nx.service("descendant_checker"),
             lease_table=_lease_table,
         )
         await _enlist("permission", _perm_hook)

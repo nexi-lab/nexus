@@ -92,7 +92,7 @@ class TestNexusFSServiceComposition:
         assert fs.service("mcp")._filesystem == fs
         # SearchService should have metadata and permission_enforcer
         assert fs.service("search").metadata == fs.metadata
-        assert fs.service("search")._permission_enforcer == fs._permission_enforcer
+        assert fs.service("search")._permission_enforcer == fs.service("permission_enforcer")
 
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None

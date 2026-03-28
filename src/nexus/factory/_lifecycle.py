@@ -51,7 +51,7 @@ async def _wire_services(
     from nexus.factory.service_routing import enlist_services
 
     _svc = services or {}
-    nx._permission_enforcer = _svc.get("permission_enforcer")  # Issue #1706: override sentinel
+    # permission_enforcer is now accessed via ServiceRegistry (enlist), not kernel DI.
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -164,11 +164,8 @@ async def _wire_services(
         except Exception as exc:
             logger.debug("[LINK] RaftLockManager upgrade skipped: %s", exc)
 
-    # Kernel DI: _descendant_checker is a kernel component (like Linux LSM hook),
-    # not an external service — inject directly onto the kernel instance.
-    _dc = getattr(_wired, "descendant_checker", None)
-    if _dc is not None:
-        nx._descendant_checker = _dc
+    # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
+    # No kernel DI needed — PermissionCheckHook holds the reference internally.
 
     # Issue #1788: Lock manager owned by EventsService (LocalLockManager by default).
     # Upgraded to RaftLockManager above if federation is available.

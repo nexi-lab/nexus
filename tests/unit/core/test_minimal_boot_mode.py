@@ -107,7 +107,7 @@ class TestSlimBootViaFactory:
         # System services should be empty (no record store)
         # Issue #1801: _system_services deleted — check via ServiceRegistry
         assert nx.service("rebac") is None or nx.service("rebac")._rebac_manager is None
-        assert nx._permission_enforcer is None
+        assert nx.service("permission_enforcer") is None
 
     @pytest.mark.asyncio
     async def test_minimal_mode_nexus_has_router(self, tmp_path: "Path") -> None:
@@ -353,7 +353,7 @@ class TestSlimIntegrationViaConnect:
         # Services should be empty
         # Issue #1801: _system_services deleted — check via ServiceRegistry
         assert nx.service("rebac") is None or nx.service("rebac")._rebac_manager is None
-        assert nx._permission_enforcer is None
+        assert nx.service("permission_enforcer") is None
         # Issue #1570: audit_store accessed from container, not flat attr
         # Issue #1801: check via ServiceRegistry instead of _system_services
         assert nx.service("audit") is None

@@ -19,7 +19,7 @@ from nexus.contracts.exceptions import (
 )
 from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import DT_DIR, FileMetadata
-from nexus.contracts.types import OperationContext, Permission
+from nexus.contracts.types import OperationContext
 from nexus.core.config import (
     CacheConfig,
     DistributedConfig,
@@ -139,16 +139,10 @@ class NexusFS(  # type: ignore[misc]
         # operations. External callers should pass explicit context= to syscalls.
         self._init_cred: OperationContext | None = init_cred
 
-        # Issue #1815: default AllowAllEnforcer — real value wired by factory._do_link().
-        # Kernel constructs allow-all default (like Linux DAC with root).
-        # Factory overrides with ReBACPermissionEnforcer at link-time.
-        from nexus.core.permission import AllowAllEnforcer
-
-        self._permission_enforcer: Any = AllowAllEnforcer()
-        # Issue #1764: sentinel for kernel LSM-style hook (like _permission_enforcer).
-        # Real value injected by factory._do_link() via _wired.descendant_checker.
-        # Consider rename → _descendant_access_checker for clarity.
-        self._descendant_checker: Any = None
+        # Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks.
+        # PermissionCheckHook (bricks/rebac) registers via enlist() → hook_spec().
+        # No hook registered = no check = zero overhead (like Linux without LSM modules).
+        # _permission_enforcer and _descendant_checker removed in Phase 4 PR 2.
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
         # Issue #1788: distributed lock manager removed — now routed through EventsService.
@@ -343,10 +337,10 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def namespace_manager(self) -> Any | None:
-        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
-        enforcer = self._permission_enforcer
-        if enforcer is not None:
-            return getattr(enforcer, "namespace_manager", None)
+        """Public accessor for the NamespaceManager (via ServiceRegistry)."""
+        _pe = self.service("permission_enforcer")
+        if _pe is not None:
+            return getattr(_pe, "namespace_manager", None)
         return None
 
     @property
@@ -3903,10 +3897,17 @@ class NexusFS(  # type: ignore[misc]
                     results[path] = None
                     continue
 
-                # Check permission if enforcement enabled
+                # Permission check via KernelDispatch INTERCEPT (like all other syscalls)
                 if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
+                    from nexus.contracts.exceptions import PermissionDeniedError
+                    from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
                     ctx = self._resolve_cred(context)
-                    if not self._descendant_checker.has_access(path, Permission.READ, ctx):
+                    try:
+                        self._dispatch.intercept_pre_stat(
+                            _SHC(path=path, context=ctx, permission="READ")
+                        )
+                    except PermissionDeniedError:
                         results[path] = None
                         continue
 

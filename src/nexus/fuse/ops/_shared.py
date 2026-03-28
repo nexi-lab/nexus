@@ -298,49 +298,81 @@ async def get_file_content(
 ) -> bytes:
     """Get file content with appropriate view transformation.
 
+    Issue #3397: Integrates lease-based cache coherence inline (rather than
+    via the sync lease_gated_get()) because this function is already async
+    and called from within asyncio.run().
+
+    Flow: validity check → L1 hit → lease validate/acquire → L2/L3 fetch → cache
+
     Cache hierarchy: L1 (memory) -> L2 (disk) -> L3/L4 (backend).
     """
-    # Check parsed cache first
+    coordinator = ctx.cache
+
+    # For parsed views, check parsed cache first
     if view_type and (ctx.mode.value == "text" or ctx.mode.value == "smart"):
-        cached_parsed = ctx.cache.get_parsed(path, view_type)
-        if cached_parsed is not None:
+        cached_parsed = coordinator.get_parsed(path, view_type)
+        if cached_parsed is not None and coordinator._check_validity(path):
             logger.debug(f"[FUSE-CONTENT] PARSED CACHE HIT: {path}")
             return cached_parsed
 
-    # L1: Check in-memory content cache
-    content = ctx.cache.get_content(path)
+    # Lease-gated content read (Issue #3397)
+    # Step 1: Hot path — validity cache + L1
+    if coordinator._check_validity(path):
+        cached = coordinator.get_content(path)
+        if cached is not None:
+            logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT (leased): {path} ({len(cached)} bytes)")
+            return _maybe_parse(ctx, path, view_type, cached)
 
-    if content is not None:
-        logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT: {path} ({len(content)} bytes)")
-    else:
-        # L2: Check local disk cache
-        content = get_from_local_disk_cache(ctx, path)
-
-        if content is not None:
-            logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+    # Step 2: Validate/acquire lease (if lease manager present)
+    has_lease = False
+    if coordinator.lease_manager is not None:
+        lease = coordinator._validate_lease(path)
+        if lease is not None:
+            coordinator._set_validity(path, lease.expires_at)
+            cached = coordinator.get_content(path)
+            if cached is not None:
+                return _maybe_parse(ctx, path, view_type, cached)
+            has_lease = True
         else:
-            # L3/L4: Read from backend
-            read_ctx = ctx.context
-            logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
-            fetch_start = time.time()
-            raw_content = await ctx.nexus_fs.sys_read(path, context=read_ctx)
-            fetch_time = time.time() - fetch_start
-            assert isinstance(raw_content, bytes), "Expected bytes from read()"
-            content = raw_content
-            logger.info(
-                f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
-            )
+            lease = coordinator._acquire_read_lease(path)
+            has_lease = lease is not None
+    else:
+        # No lease manager — check L1 directly (backward compat)
+        cached = coordinator.get_content(path)
+        if cached is not None:
+            logger.info(f"[FUSE-CONTENT] L1 MEMORY HIT: {path} ({len(cached)} bytes)")
+            return _maybe_parse(ctx, path, view_type, cached)
+        has_lease = True  # no lease manager = always "has lease" for caching
 
-            put_to_local_disk_cache(ctx, path, content, priority=cache_priority)
+    # Step 3: L2/L3 fetch
+    content = get_from_local_disk_cache(ctx, path)
+    if content is not None:
+        logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
+    else:
+        read_ctx = ctx.context
+        logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
+        fetch_start = time.time()
+        raw_content = await ctx.nexus_fs.sys_read(path, context=read_ctx)
+        fetch_time = time.time() - fetch_start
+        assert isinstance(raw_content, bytes), "Expected bytes from read()"
+        content = raw_content
+        logger.info(
+            f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
+        )
+        put_to_local_disk_cache(ctx, path, content, priority=cache_priority)
 
-        # Populate L1 memory cache
-        ctx.cache.cache_content(path, content)
+    # Only cache if we hold a lease (Decision 11A: no caching without lease)
+    if has_lease:
+        coordinator.cache_content(path, content)
 
-    # In binary mode or raw access, return as-is
+    return _maybe_parse(ctx, path, view_type, content)
+
+
+def _maybe_parse(ctx: FUSESharedContext, path: str, view_type: str | None, content: bytes) -> bytes:
+    """Apply view transformation if needed, caching the parsed result."""
     if ctx.mode.value == "binary" or view_type is None:
         return content
 
-    # In text mode, try to parse
     if ctx.mode.value == "text" or (ctx.mode.value == "smart" and view_type):
         import importlib as _il
 

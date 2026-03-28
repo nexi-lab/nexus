@@ -408,10 +408,35 @@ class FUSELeaseCoordinator:
         return self._lease_manager
 
     def close(self) -> None:
-        """Shut down the lease event loop thread. Idempotent."""
+        """Shut down lease state and event loop thread. Idempotent.
+
+        Cleanup steps:
+        1. Unregister our revocation callback (prevents stale callback invocations)
+        2. Revoke all leases held by this mount (frees resources for other mounts)
+        3. Stop the event loop thread
+        """
         if self._closed:
             return
         self._closed = True
+
+        # Unregister callback + revoke holder's leases before stopping the loop
+        if self._lease_manager is not None:
+            callback_id = f"fuse-coordinator-{self._holder_id}"
+            self._lease_manager.unregister_revocation_callback(callback_id)
+            # Revoke all leases held by this mount (best-effort)
+            if self._lease_loop is not None and not self._lease_loop.is_closed():
+                try:
+                    future = asyncio.run_coroutine_threadsafe(
+                        self._lease_manager.revoke_holder(self._holder_id),
+                        self._lease_loop,
+                    )
+                    future.result(timeout=2.0)
+                except Exception:
+                    logger.debug(
+                        "[FUSE-LEASE] Best-effort holder revocation failed",
+                        exc_info=True,
+                    )
+
         if self._lease_loop is not None and not self._lease_loop.is_closed():
             self._lease_loop.call_soon_threadsafe(self._lease_loop.stop)
         if self._lease_thread is not None:

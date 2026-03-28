@@ -153,12 +153,28 @@ class MutationHandler:
             logger.error(f"Destination {new_path} already exists")
             raise FuseOSError(errno.EEXIST)
 
-        if await ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context):
+        is_dir = await ctx.nexus_fs.sys_is_directory(old_path, context=ctx.context)
+        # Collect descendant paths BEFORE the move so we can revoke them
+        descendant_paths: list[str] = []
+        if is_dir:
+            try:
+                files = await ctx.nexus_fs.sys_readdir(
+                    old_path, recursive=True, details=True, context=ctx.context
+                )
+                for file_info in files:
+                    if isinstance(file_info, dict):
+                        src_file = file_info["path"]
+                        descendant_paths.append(src_file)
+                        # Also add the new destination path for each descendant
+                        dest_file = src_file.replace(old_path, new_path, 1)
+                        descendant_paths.append(dest_file)
+            except Exception:
+                pass  # Best-effort; top-level revocation still happens
             await self._rename_directory(old_path, new_path)
         else:
             await self._rename_file(old_path, new_path)
 
-        # Invalidate caches for both paths + parents (Issue #3397: lease revocation)
+        # Invalidate caches for both paths + parents + descendants (Issue #3397)
         invalidation_paths = [old_path, new_path]
         old_parent = old_path.rsplit("/", 1)[0] or "/"
         new_parent = new_path.rsplit("/", 1)[0] or "/"
@@ -172,6 +188,8 @@ class MutationHandler:
             invalidation_paths.append(old)
         if new != new_path:
             invalidation_paths.append(new)
+        # Revoke leases on all descendant files moved during directory rename
+        invalidation_paths.extend(descendant_paths)
         ctx.cache.invalidate_and_revoke(invalidation_paths)
         invalidate_dir_cache(ctx, old_path)
         invalidate_dir_cache(ctx, new_path)

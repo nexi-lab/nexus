@@ -189,9 +189,10 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-`write(consistency=)` supports ``"sc"`` (Raft consensus, default) or ``"ec"``
-(local-first, async replication via EC WAL). Separate redb trees — EC does not
-bloat the Raft log.
+`write(consistency=)` and `sys_write(consistency=)` support ``"sc"`` (strong
+consistency, default) or ``"ec"`` (eventually consistent, local-first with
+async replication). The kernel ABC defines the contract; drivers decide how
+to implement SC vs EC (e.g. Raft consensus for SC, EC WAL for EC).
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 

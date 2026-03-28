@@ -94,6 +94,7 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
@@ -106,6 +107,8 @@ class NexusFilesystemABC(ABC):
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset to start writing at.
             context: Operation context.
+            consistency: Metastore consistency — ``"sc"`` (strong, default)
+                or ``"ec"`` (eventual, local-first). Issue #1828.
 
         Returns:
             Dict with path and bytes_written.
@@ -361,7 +364,7 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        consistency: str = "sc",  # noqa: ARG002  # used by NexusFS override
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write with metadata update (VFS convenience).
 
@@ -374,13 +377,15 @@ class NexusFilesystemABC(ABC):
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset to start writing at.
             context: Operation context.
-            consistency: Metastore consistency — ``"sc"`` (strong, Raft) or
-                ``"ec"`` (eventual, local-first EC WAL). Issue #1828.
+            consistency: Metastore consistency — ``"sc"`` (strong, default)
+                or ``"ec"`` (eventual, local-first). Issue #1828.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
         """
-        await self.sys_write(path, buf, count=count, offset=offset, context=context)
+        await self.sys_write(
+            path, buf, count=count, offset=offset, context=context, consistency=consistency
+        )
         meta = await self.sys_stat(path, context=context)
         return meta or {}
 

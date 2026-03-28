@@ -352,6 +352,19 @@ async def _register_vfs_hooks(
     if permission_checker is not None:
         from nexus.bricks.rebac.permission_hook import PermissionCheckHook
 
+        # Permission write leases — check once, write many (Issue #3394)
+        _lease_table = None
+        if nx._enforce_permissions:
+            from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
+
+            _lease_table = PermissionLeaseTable()
+            # Wire invalidation: CacheCoordinator clears leases on permission mutation
+            _rebac_mgr = _ss.get("rebac_manager")
+            if _rebac_mgr is not None and hasattr(_rebac_mgr, "_cache_coordinator"):
+                _rebac_mgr._cache_coordinator.register_lease_invalidator(
+                    "perm-write-lease", lambda _zone_id: _lease_table.invalidate_all()
+                )
+
         _perm_hook = PermissionCheckHook(
             checker=permission_checker,
             metadata_store=nx.metadata,
@@ -359,6 +372,7 @@ async def _register_vfs_hooks(
             enforce_permissions=nx._enforce_permissions,
             permission_enforcer=_ss.get("permission_enforcer"),
             descendant_checker=getattr(nx, "_descendant_checker", None),
+            lease_table=_lease_table,
         )
         await _enlist("permission", _perm_hook)
 

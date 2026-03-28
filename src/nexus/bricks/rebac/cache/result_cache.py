@@ -34,14 +34,20 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
 # Issue #3192: Using cachebox (Rust-backed) TTLCache for lock-free cache internals.
 # The RLock is retained for Python-side secondary index consistency.
-try:
-    from cachebox import TTLCache
-except ImportError:
-    from cachetools import TTLCache  # type: ignore[assignment]  # fallback
+# Runtime: prefer cachebox, fall back to cachetools.
+# Type-checking: use cachetools (broader stubs available).
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cachetools import TTLCache
+else:
+    try:
+        from cachebox import TTLCache
+    except ImportError:
+        from cachetools import TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -141,7 +147,6 @@ class ReBACPermissionCache:
         # An entry cached before the latest cross-zone invalidation is treated as miss.
         self._read_fence: Any = None  # ReadFence | None
         # Per-key fence generation at cache write time: key -> generation
-        # Evicted naturally when the TTLCache evicts the corresponding entry.
         self._fence_stamps: dict[str, int] = {}
 
         # Split caches for grants and denials (Issue #877)
@@ -641,12 +646,11 @@ class ReBACPermissionCache:
             True/False if cached, None if not cached or expired
         """
         start_time = time.perf_counter()
-
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
             # Check grant cache first (Issue #877)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             # If not in grant cache, check denial cache
@@ -654,13 +658,10 @@ class ReBACPermissionCache:
                 result = self._denial_cache.get(key)
 
             # Issue #3396: Read fence staleness check.
-            # If the entry was cached before the latest cross-zone invalidation
-            # for this zone, treat it as a miss.  Cost: ~50ns (dict lookup + int cmp).
             if result is not None and self._read_fence is not None:
                 zone_part = zone_id if zone_id else ROOT_ZONE_ID
                 entry_gen = self._fence_stamps.get(key, 0)
                 if self._read_fence.is_stale(zone_part, entry_gen):
-                    # Evict the stale entry
                     self._grant_cache.pop(key, None)
                     self._denial_cache.pop(key, None)
                     self._fence_stamps.pop(key, None)
@@ -860,8 +861,6 @@ class ReBACPermissionCache:
             )
 
             # Issue #3396: Stamp entry with fence generation at write time.
-            # On read, entries from before the latest cross-zone invalidation
-            # are treated as misses.
             if self._read_fence is not None:
                 self._fence_stamps[key] = self._read_fence.generation(zone_part)
 
@@ -1142,15 +1141,13 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Get cached value (existing logic)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             if result is None:
                 result = self._denial_cache.get(key)
 
             # Issue #3396: Read fence staleness check (same as get()).
-            # Must be applied here too since this is the main permission-check
-            # fast path used by ReBACManager.check().
             if result is not None and self._read_fence is not None:
                 zone_part = zone_id if zone_id else ROOT_ZONE_ID
                 entry_gen = self._fence_stamps.get(key, 0)

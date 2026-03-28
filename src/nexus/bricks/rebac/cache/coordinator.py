@@ -1281,7 +1281,7 @@ class CacheCoordinator:
 
     def get_stats(self) -> dict[str, Any]:
         """Get coordinator statistics."""
-        stats = {
+        stats: dict[str, Any] = {
             "total_invalidations": self._invalidation_count,
             "zone_graph_invalidations": self._zone_graph_invalidations,
             "l1_invalidations": self._l1_invalidations,

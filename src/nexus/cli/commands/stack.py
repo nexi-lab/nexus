@@ -994,6 +994,22 @@ def down(volumes: bool) -> None:
     console.print(f"[bold]Stopping Nexus preset: {preset}[/bold]")
     result = _run_compose(cf, profiles, *args, extra_env=compose_env)
     if result.returncode == 0:
+        # When --volumes is used, also clear Raft state from the host-mounted
+        # data directory.  Docker volumes are cleaned by `docker compose down -v`
+        # but host-mounted dirs (nexus-data/) are not.  Stale Raft logs contain
+        # old node IDs that prevent single-node leader election on restart.
+        if volumes:
+            import shutil
+
+            data_dir = Path(config.get("data_dir", "./nexus-data")).resolve()
+            raft_dirs = list(data_dir.glob("*/raft")) + list(data_dir.glob("*/sm"))
+            for rd in raft_dirs:
+                if rd.exists():
+                    shutil.rmtree(rd) if rd.is_dir() else rd.unlink()
+            if raft_dirs:
+                console.print(
+                    f"[dim]  Cleared {len(raft_dirs)} Raft state path(s) from {data_dir}[/dim]"
+                )
         console.print("[green]✓[/green] Stack stopped.")
     else:
         console.print("[red]Error:[/red] Failed to stop stack.")

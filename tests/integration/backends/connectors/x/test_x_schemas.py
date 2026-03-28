@@ -176,7 +176,7 @@ class TestXConnectorCapabilities:
     def test_has_skill_doc_capability(self):
         from nexus.backends.connectors.x.connector import XConnectorBackend
 
-        assert BackendFeature.SKILL_DOC in XConnectorBackend._CAPABILITIES
+        assert BackendFeature.SKILL_DOC in XConnectorBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
         from nexus.backends.connectors.x.connector import XConnectorBackend

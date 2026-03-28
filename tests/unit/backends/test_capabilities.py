@@ -2,12 +2,12 @@
 
 Tests:
 1. BackendFeature enum completeness
-2. Backend.has_capability() contract
-3. Backend.capabilities is frozenset (immutable)
+2. Backend.has_feature() contract
+3. Backend.backend_features is frozenset (immutable)
 4. DelegatingBackend delegates capabilities correctly
 5. Convenience frozensets are correct
 6. Registry stores capabilities at registration time
-7. Registry query methods (get_capabilities, list_by_capability)
+7. Registry query methods (get_backend_features, list_by_feature)
 """
 
 from collections.abc import Iterator
@@ -102,27 +102,27 @@ class TestConvenienceFrozensets:
 
 
 class TestBackendCapabilities:
-    """Backend.capabilities and has_capability() contract."""
+    """Backend.backend_features and has_feature() contract."""
 
     def test_default_capabilities_is_empty_frozenset(self) -> None:
-        """Backend ABC default _CAPABILITIES is empty."""
-        assert frozenset() == Backend._CAPABILITIES
+        """Backend ABC default _BACKEND_FEATURES is empty."""
+        assert frozenset() == Backend._BACKEND_FEATURES
 
     def test_capabilities_property_returns_frozenset(self) -> None:
-        """capabilities property returns the class _CAPABILITIES."""
-        assert isinstance(Backend._CAPABILITIES, frozenset)
+        """capabilities property returns the class _BACKEND_FEATURES."""
+        assert isinstance(Backend._BACKEND_FEATURES, frozenset)
 
-    def test_has_capability_true_when_present(self) -> None:
-        """has_capability returns True when capability is in _CAPABILITIES."""
+    def test_has_feature_true_when_present(self) -> None:
+        """has_feature returns True when capability is in _BACKEND_FEATURES."""
         mock = MagicMock(spec=Backend)
-        mock.has_capability = lambda cap: cap in frozenset({BackendFeature.RENAME})
-        assert mock.has_capability(BackendFeature.RENAME)
+        mock.has_feature = lambda cap: cap in frozenset({BackendFeature.RENAME})
+        assert mock.has_feature(BackendFeature.RENAME)
 
-    def test_has_capability_false_when_absent(self) -> None:
-        """has_capability returns False when capability is not in _CAPABILITIES."""
+    def test_has_feature_false_when_absent(self) -> None:
+        """has_feature returns False when capability is not in _BACKEND_FEATURES."""
         mock = MagicMock(spec=Backend)
-        mock.has_capability = lambda cap: cap in frozenset()
-        assert not mock.has_capability(BackendFeature.RENAME)
+        mock.has_feature = lambda cap: cap in frozenset()
+        assert not mock.has_feature(BackendFeature.RENAME)
 
 
 # ---------------------------------------------------------------------------
@@ -138,22 +138,24 @@ class TestDelegatingBackendCapabilities:
         mock = MagicMock(spec=Backend)
         mock.name = "test-inner"
         caps = frozenset({BackendFeature.RENAME, BackendFeature.STREAMING})
-        type(mock).capabilities = PropertyMock(return_value=caps)
+        type(mock).backend_features = PropertyMock(return_value=caps)
         return mock
 
     def test_capabilities_delegated(self, inner_with_caps: MagicMock) -> None:
         wrapper = DelegatingBackend(inner_with_caps)
-        assert wrapper.capabilities == frozenset({BackendFeature.RENAME, BackendFeature.STREAMING})
+        assert wrapper.backend_features == frozenset(
+            {BackendFeature.RENAME, BackendFeature.STREAMING}
+        )
 
     def test_capabilities_cached_in_init(self, inner_with_caps: MagicMock) -> None:
         wrapper = DelegatingBackend(inner_with_caps)
-        assert wrapper._cached_capabilities is not None
-        assert isinstance(wrapper._cached_capabilities, frozenset)
+        assert wrapper._cached_backend_features is not None
+        assert isinstance(wrapper._cached_backend_features, frozenset)
 
-    def test_has_capability_uses_cached(self, inner_with_caps: MagicMock) -> None:
+    def test_has_feature_uses_cached(self, inner_with_caps: MagicMock) -> None:
         wrapper = DelegatingBackend(inner_with_caps)
-        assert wrapper.has_capability(BackendFeature.RENAME)
-        assert not wrapper.has_capability(BackendFeature.SIGNED_URL)
+        assert wrapper.has_feature(BackendFeature.RENAME)
+        assert not wrapper.has_feature(BackendFeature.SIGNED_URL)
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +181,7 @@ class TestRegistryCapabilities:
         """Create a minimal fake backend class."""
 
         class FakeBackend(Backend):
-            _CAPABILITIES = caps or frozenset()
+            _BACKEND_FEATURES = caps or frozenset()
 
             def __init__(self) -> None:
                 pass
@@ -244,37 +246,37 @@ class TestRegistryCapabilities:
         cls = self._make_fake_backend(caps)
         ConnectorRegistry.register("test_cap_backend", cls)
         info = ConnectorRegistry.get_info("test_cap_backend")
-        assert info.capabilities == caps
+        assert info.backend_features == caps
 
     def test_register_stores_empty_capabilities(self) -> None:
         cls = self._make_fake_backend(frozenset())
         ConnectorRegistry.register("test_empty_cap", cls)
         info = ConnectorRegistry.get_info("test_empty_cap")
-        assert info.capabilities == frozenset()
+        assert info.backend_features == frozenset()
 
-    def test_get_capabilities(self) -> None:
+    def test_get_backend_features(self) -> None:
         caps = frozenset({BackendFeature.SIGNED_URL})
         cls = self._make_fake_backend(caps)
         ConnectorRegistry.register("test_get_cap", cls)
-        assert ConnectorRegistry.get_capabilities("test_get_cap") == caps
+        assert ConnectorRegistry.get_backend_features("test_get_cap") == caps
 
-    def test_list_by_capability(self) -> None:
+    def test_list_by_feature(self) -> None:
         caps1 = frozenset({BackendFeature.RENAME})
         caps2 = frozenset({BackendFeature.RENAME, BackendFeature.STREAMING})
         cls1 = self._make_fake_backend(caps1)
         cls2 = self._make_fake_backend(caps2)
         ConnectorRegistry.register("test_lbc1", cls1)
         ConnectorRegistry.register("test_lbc2", cls2)
-        results = ConnectorRegistry.list_by_capability(BackendFeature.RENAME)
+        results = ConnectorRegistry.list_by_feature(BackendFeature.RENAME)
         result_names = {r.name for r in results}
         assert "test_lbc1" in result_names
         assert "test_lbc2" in result_names
 
-    def test_list_by_capability_excludes_non_matching(self) -> None:
+    def test_list_by_feature_excludes_non_matching(self) -> None:
         caps = frozenset({BackendFeature.RENAME})
         cls = self._make_fake_backend(caps)
         ConnectorRegistry.register("test_lbc_excl", cls)
-        results = ConnectorRegistry.list_by_capability(BackendFeature.SIGNED_URL)
+        results = ConnectorRegistry.list_by_feature(BackendFeature.SIGNED_URL)
         result_names = {r.name for r in results}
         assert "test_lbc_excl" not in result_names
 

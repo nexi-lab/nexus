@@ -22,7 +22,7 @@ from nexus.backends.connectors.cli.sync_types import DeltaItem, DeltaSyncResult,
 
 def _make_backend(
     name: str = "gmail",
-    capabilities: frozenset | None = None,
+    backend_features: frozenset | None = None,
     sync_delta_result: Any = None,
     has_sync_delta: bool = False,
     has_caching: bool = False,
@@ -31,12 +31,12 @@ def _make_backend(
     backend = MagicMock()
     backend.name = name
 
-    if capabilities is None:
+    if backend_features is None:
         from nexus.contracts.backend_features import BackendFeature
 
         capabilities = frozenset({BackendFeature.SYNC_ELIGIBLE})
-    backend.capabilities = capabilities
-    backend.has_capability = MagicMock(side_effect=lambda c: c in capabilities)
+    backend.backend_features = backend_features
+    backend.has_feature = MagicMock(side_effect=lambda c: c in capabilities)
 
     if has_sync_delta:
         backend.sync_delta = MagicMock(return_value=sync_delta_result)
@@ -127,7 +127,7 @@ class TestCapabilityFiltering:
     @pytest.mark.asyncio
     async def test_skips_non_sync_eligible(self) -> None:
         """Connectors without SYNC_ELIGIBLE are skipped."""
-        backend = _make_backend(capabilities=frozenset())  # No SYNC_ELIGIBLE
+        backend = _make_backend(backend_features=frozenset())  # No SYNC_ELIGIBLE
         route = _make_route(backend)
 
         mount_svc = _make_mount_service([{"mount_point": "/mnt/test"}])
@@ -145,7 +145,7 @@ class TestCapabilityFiltering:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 
@@ -268,7 +268,7 @@ class TestDeltaSyncToMetastore:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result={"added": [], "deleted": [], "history_id": "100"},
         )
@@ -295,7 +295,7 @@ class TestDeltaSyncToMetastore:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result={"added": [], "deleted": [], "full_sync": True},
         )
@@ -324,7 +324,7 @@ class TestErrorHandling:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 
@@ -346,7 +346,7 @@ class TestErrorHandling:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
             has_sync_delta=True,
             sync_delta_result=None,  # Will be overridden
         )
@@ -384,7 +384,7 @@ class TestErrorHandling:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = _make_backend(
-            capabilities=frozenset({BackendFeature.SYNC_ELIGIBLE}),
+            backend_features=frozenset({BackendFeature.SYNC_ELIGIBLE}),
         )
         route = _make_route(backend)
 

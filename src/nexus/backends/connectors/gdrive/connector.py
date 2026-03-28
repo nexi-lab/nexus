@@ -133,7 +133,7 @@ class GoogleDriveConnectorBackend(
     - Rate limited by Google Drive API quotas
     """
 
-    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.SKILL_DOC,
             BackendFeature.WRITE_BACK,

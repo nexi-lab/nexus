@@ -464,12 +464,12 @@ class PermissionEnforcer:
 
             # Check if user has EITHER the path-specific capability OR the wildcard capability
             # Wildcard capability (admin:read:*) grants access to ALL paths
-            has_capability = (
+            has_feature = (
                 required_capability in context.admin_capabilities
                 or wildcard_capability in context.admin_capabilities
             )
 
-            if not has_capability:
+            if not has_feature:
                 self._log_bypass_denied(
                     context,
                     path,

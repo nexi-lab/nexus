@@ -109,7 +109,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     - External article content not included (just URLs)
     """
 
-    _CAPABILITIES = frozenset(
+    _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,

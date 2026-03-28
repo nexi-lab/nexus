@@ -251,7 +251,7 @@ class TestSlackConnectorCapabilities:
     def test_has_skill_doc_capability(self):
         from nexus.backends.connectors.slack.connector import SlackConnectorBackend
 
-        assert BackendFeature.SKILL_DOC in SlackConnectorBackend._CAPABILITIES
+        assert BackendFeature.SKILL_DOC in SlackConnectorBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
         from nexus.backends.connectors.slack.connector import SlackConnectorBackend

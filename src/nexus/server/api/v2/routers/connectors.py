@@ -190,7 +190,7 @@ def list_connectors(_: dict = Depends(require_auth)) -> ConnectorsListResponse:
                 name=info.name,
                 description=info.description,
                 category=info.category,
-                capabilities=sorted(str(c) for c in info.capabilities),
+                capabilities=sorted(str(c) for c in info.backend_features),
                 user_scoped=info.user_scoped,
             )
         )
@@ -244,7 +244,7 @@ async def list_available_connectors(
                 name=info.name,
                 description=info.description,
                 category=info.category,
-                capabilities=sorted(str(c) for c in info.capabilities),
+                capabilities=sorted(str(c) for c in info.backend_features),
                 user_scoped=info.user_scoped,
                 auth_status=str(auth_state.get("auth_status", "unknown")),
                 auth_source=auth_state.get("auth_source"),
@@ -266,7 +266,7 @@ def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
     info = ConnectorRegistry.get_info(name)
     return ConnectorCapabilitiesResponse(
         name=info.name,
-        capabilities=sorted(str(c) for c in info.capabilities),
+        capabilities=sorted(str(c) for c in info.backend_features),
     )
 
 
@@ -728,7 +728,7 @@ async def write_to_connector(
 
         backend = _route.backend if _route else None
         _caps: frozenset[str] = (
-            getattr(backend, "capabilities", frozenset()) if backend else frozenset()
+            getattr(backend, "backend_features", frozenset()) if backend else frozenset()
         )
         is_cli_connector = BackendFeature.CLI_BACKED in _caps
 

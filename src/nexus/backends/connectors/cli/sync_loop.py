@@ -147,7 +147,7 @@ class ConnectorSyncLoop:
             # Only sync connectors that declare SYNC_ELIGIBLE (Decision #5A)
             from nexus.contracts.backend_features import BackendFeature
 
-            caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+            caps: frozenset[str] = getattr(backend, "backend_features", frozenset())
             if BackendFeature.SYNC_ELIGIBLE not in caps:
                 continue
 

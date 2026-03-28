@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
     """AWS S3 connector with direct path mapping, caching, and multipart upload."""
 
-    _CAPABILITIES = BLOB_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = BLOB_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,

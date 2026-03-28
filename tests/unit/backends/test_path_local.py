@@ -68,7 +68,7 @@ class TestPathLocalRegistration:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = PathLocalBackend(root_path=tmp_path)
-        assert BackendFeature.ROOT_PATH in backend.capabilities
+        assert BackendFeature.ROOT_PATH in backend.backend_features
         assert backend.has_root_path is True
         assert backend.name == "path_local"
 

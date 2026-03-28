@@ -83,14 +83,14 @@ class IsolatedBackend(Backend):
     # ── Capability Discovery (Issue #2069) ─────────────────────────────
 
     @property
-    def capabilities(self) -> frozenset[Any]:
+    def backend_features(self) -> frozenset[Any]:
         """Delegate to inner backend's capabilities (cached via _cached_prop)."""
-        result = self._cached_prop("capabilities")
+        result = self._cached_prop("backend_features")
         return result if isinstance(result, frozenset) else frozenset()
 
-    def has_capability(self, cap: object) -> bool:
+    def has_feature(self, cap: object) -> bool:
         """Check capability using cached frozenset."""
-        return cap in self.capabilities
+        return cap in self.backend_features
 
     # ── Content operations (CAS) ────────────────────────────────────────
 

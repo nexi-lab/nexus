@@ -78,7 +78,7 @@ class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
         ),
     }
 
-    _CAPABILITIES = frozenset(
+    _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.SKILL_DOC,
             BackendFeature.WRITE_BACK,
@@ -86,12 +86,12 @@ class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
         }
     )
 
-    def has_capability(self, cap: BackendFeature) -> bool:
-        return cap in self._CAPABILITIES
+    def has_feature(self, cap: BackendFeature) -> bool:
+        return cap in self._BACKEND_FEATURES
 
     @property
     def capabilities(self) -> frozenset[BackendFeature]:
-        return self._CAPABILITIES
+        return self._BACKEND_FEATURES
 
 
 class FakeGHSyncProvider:
@@ -246,9 +246,9 @@ class TestConnectorLifecycleE2E:
     def test_step8_capability_declaration(self) -> None:
         """Step 8: Connector declares correct capabilities."""
         connector = FakeGHConnector()
-        assert connector.has_capability(BackendFeature.SKILL_DOC)
-        assert connector.has_capability(BackendFeature.WRITE_BACK)
-        assert connector.has_capability(BackendFeature.CLI_BACKED)
+        assert connector.has_feature(BackendFeature.SKILL_DOC)
+        assert connector.has_feature(BackendFeature.WRITE_BACK)
+        assert connector.has_feature(BackendFeature.CLI_BACKED)
 
     @pytest.mark.asyncio
     async def test_step9_sync_provider_satisfies_protocol(self) -> None:

@@ -127,7 +127,7 @@ class XConnectorBackend(
     - Fixed virtual directory structure
     """
 
-    _CAPABILITIES = OAUTH_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.SKILL_DOC,
         }

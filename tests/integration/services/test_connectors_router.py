@@ -70,13 +70,13 @@ class TestListConnectors:
                 name="path_gcs",
                 description="Google Cloud Storage",
                 category="storage",
-                capabilities=frozenset({BackendFeature.SIGNED_URL, BackendFeature.RENAME}),
+                backend_features=frozenset({BackendFeature.SIGNED_URL, BackendFeature.RENAME}),
             ),
             _make_connector_info(
                 name="gmail_connector",
                 description="Gmail",
                 category="api",
-                capabilities=frozenset({BackendFeature.OAUTH}),
+                backend_features=frozenset({BackendFeature.OAUTH}),
                 user_scoped=True,
             ),
         ]
@@ -101,7 +101,7 @@ class TestListConnectors:
         mock_registry.list_all.return_value = [
             _make_connector_info(
                 name="test",
-                capabilities=frozenset(
+                backend_features=frozenset(
                     {
                         BackendFeature.STREAMING,
                         BackendFeature.BATCH_CONTENT,
@@ -128,7 +128,9 @@ class TestGetConnectorCapabilities:
         mock_registry.is_registered.return_value = True
         mock_registry.get_info.return_value = _make_connector_info(
             name="s3_connector",
-            capabilities=frozenset({BackendFeature.SIGNED_URL, BackendFeature.MULTIPART_UPLOAD}),
+            backend_features=frozenset(
+                {BackendFeature.SIGNED_URL, BackendFeature.MULTIPART_UPLOAD}
+            ),
         )
         resp = _client.get("/api/v2/connectors/s3_connector/capabilities")
         assert resp.status_code == 200
@@ -148,7 +150,7 @@ class TestGetConnectorCapabilities:
         mock_registry.is_registered.return_value = True
         mock_registry.get_info.return_value = _make_connector_info(
             name="basic_backend",
-            capabilities=frozenset(),
+            backend_features=frozenset(),
         )
         resp = _client.get("/api/v2/connectors/basic_backend/capabilities")
         assert resp.status_code == 200

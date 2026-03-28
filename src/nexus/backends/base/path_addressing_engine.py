@@ -52,7 +52,7 @@ class PathAddressingEngine(Backend):
         versioning_enabled: Whether versioning is enabled on the bucket.
     """
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = BLOB_BACKEND_FEATURES
 
     def __init__(
         self,

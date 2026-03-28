@@ -102,7 +102,7 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         ),
     }
 
-    _CAPABILITIES: ClassVar[frozenset[BackendFeature]] = frozenset(
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
             BackendFeature.CAS,
             BackendFeature.ROOT_PATH,

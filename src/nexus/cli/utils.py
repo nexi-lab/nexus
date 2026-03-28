@@ -105,7 +105,7 @@ IS_SYSTEM_OPTION = click.option(
     help="Run operation as system (limited to /system/* paths).",
 )
 
-ADMIN_CAPABILITIES_OPTION = click.option(
+ADMIN_BACKEND_FEATURES_OPTION = click.option(
     "--admin-capability",
     "admin_capabilities",
     multiple=True,
@@ -466,7 +466,7 @@ def add_context_options(func: Any) -> Any:
     """
     import functools
 
-    @ADMIN_CAPABILITIES_OPTION
+    @ADMIN_BACKEND_FEATURES_OPTION
     @IS_SYSTEM_OPTION
     @IS_ADMIN_OPTION
     @ZONE_ID_OPTION

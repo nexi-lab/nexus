@@ -38,7 +38,7 @@ def _make_sync_eligible_backend(
             BackendFeature.CACHE_BULK_READ,
         }
     )
-    backend.has_capability = MagicMock(side_effect=lambda c: c in backend.capabilities)
+    backend.has_feature = MagicMock(side_effect=lambda c: c in backend.capabilities)
     backend.use_metadata_listing = True
     backend._has_caching = MagicMock(return_value=False)
 

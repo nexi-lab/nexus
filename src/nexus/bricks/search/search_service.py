@@ -772,7 +772,7 @@ class SearchService:
         from nexus.contracts.backend_features import BackendFeature
 
         backend = route.backend
-        caps: frozenset[str] = getattr(backend, "capabilities", frozenset())
+        caps: frozenset[str] = getattr(backend, "backend_features", frozenset())
         use_metastore = BackendFeature.SYNC_ELIGIBLE in caps and getattr(
             backend, "use_metadata_listing", False
         )

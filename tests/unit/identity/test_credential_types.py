@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 
 from nexus.contracts.credential_types import (
-    MAX_CAPABILITIES_PER_CREDENTIAL,
+    MAX_BACKEND_FEATURES_PER_CREDENTIAL,
     MAX_DELEGATION_DEPTH,
     Ability,
     Capability,
@@ -185,7 +185,7 @@ class TestCredentialStatus:
 
 class TestConstants:
     def test_max_capabilities(self) -> None:
-        assert MAX_CAPABILITIES_PER_CREDENTIAL == 20
+        assert MAX_BACKEND_FEATURES_PER_CREDENTIAL == 20
 
     def test_max_delegation_depth(self) -> None:
         assert MAX_DELEGATION_DEPTH == 3

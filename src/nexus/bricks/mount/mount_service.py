@@ -144,9 +144,7 @@ class MountService:
             # Skill doc generation (via mount_hooks if available)
             from nexus.contracts.backend_features import BackendFeature
 
-            if hasattr(backend, "has_capability") and backend.has_capability(
-                BackendFeature.SKILL_DOC
-            ):
+            if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.SKILL_DOC):
                 await self._generate_skill_docs(mount_point, backend)
 
             # Search indexing — index the mount point so content is discoverable.

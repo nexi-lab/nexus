@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    fuse3 libfuse3-dev libfuse-dev fuse gcc build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . /app
+
+RUN pip install --no-cache-dir -e ".[dev]" fusepy 2>/dev/null || \
+    pip install --no-cache-dir -e . fusepy
+
+CMD ["python", "/app/tests/e2e/self_contained/test_fuse_docker_e2e.py"]

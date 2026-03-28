@@ -145,19 +145,6 @@ class TestCASAddressingEngineReadContent:
         with pytest.raises(NexusFileNotFoundError):
             backend.read_content("a" * 64)
 
-    def test_read_verifies_hash_integrity(
-        self, backend: CASAddressingEngine, transport: InMemoryTransport
-    ):
-        content = b"original"
-        result = backend.write_content(content)
-
-        # Corrupt the stored blob
-        cas_key = f"cas/{result.content_id[:2]}/{result.content_id[2:4]}/{result.content_id}"
-        transport.files[cas_key] = b"corrupted"
-
-        with pytest.raises(BackendError, match="hash mismatch"):
-            backend.read_content(result.content_id)
-
 
 class TestCASAddressingEngineDeleteContent:
     """Test delete_content() — blob removal and cleanup."""

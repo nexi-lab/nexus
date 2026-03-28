@@ -201,10 +201,14 @@ class TestFourStoragePillars:
         assert issubclass(cls, ABC), f"{class_name} is not an ABC"
 
     def test_metastore_has_required_abstract_methods(self):
-        """MetastoreABC must declare the 6 required abstract methods."""
+        """MetastoreABC must declare the required abstract methods.
+
+        Public get/put/delete/exists/list are concrete (dcache layer).
+        Subclasses implement _get_raw/_put_raw/_delete_raw/_exists_raw/_list_raw.
+        """
         from nexus.core.metastore import MetastoreABC
 
-        required = {"get", "put", "delete", "exists", "list", "close"}
+        required = {"_get_raw", "_put_raw", "_delete_raw", "_exists_raw", "_list_raw", "close"}
         abstract = getattr(MetastoreABC, "__abstractmethods__", frozenset())
         missing = required - abstract
         assert not missing, f"MetastoreABC missing abstract methods: {missing}"

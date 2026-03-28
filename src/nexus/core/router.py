@@ -20,7 +20,7 @@ Architecture:
 
 import posixpath
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 
@@ -44,6 +44,7 @@ class _MountEntry:
     readonly: bool
     admin_only: bool
     io_profile: str
+    stream_backend_factory: Any = None  # Callable[[str, int], StreamBackend] | None
 
 
 @dataclass
@@ -130,6 +131,7 @@ class PathRouter:
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
+        stream_backend_factory: Any = None,
     ) -> None:
         """Register a backend at *mount_point* for path routing.
 
@@ -144,6 +146,10 @@ class PathRouter:
             readonly: Whether mount is readonly.
             admin_only: Whether mount requires admin privileges.
             io_profile: I/O tuning profile.
+            stream_backend_factory: Optional callable ``(path, capacity) -> StreamBackend``
+                for creating DT_STREAM with non-default backing store (e.g. CAS, WAL).
+                When set, ``sys_setattr(entry_type=DT_STREAM)`` under this mount uses
+                the factory instead of the default in-memory StreamBuffer.
 
         Raises:
             ValueError: If mount_point is invalid.
@@ -155,6 +161,7 @@ class PathRouter:
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
+            stream_backend_factory=stream_backend_factory,
         )
 
     def _register_mount_entry(
@@ -165,6 +172,7 @@ class PathRouter:
         readonly: bool,
         admin_only: bool,
         io_profile: str,
+        stream_backend_factory: Any = None,
     ) -> None:
         """Register the runtime mount entry for path routing."""
         self._backends[mount_point] = _MountEntry(
@@ -172,6 +180,7 @@ class PathRouter:
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
+            stream_backend_factory=stream_backend_factory,
         )
 
     def route(
@@ -306,6 +315,21 @@ class PathRouter:
             )
         except ValueError:
             return None
+
+    def get_mount_entry_for_path(self, path: str) -> "_MountEntry | None":
+        """Find the mount entry covering *path* via longest-prefix match.
+
+        Returns the raw ``_MountEntry`` (internal, includes stream_backend_factory).
+        For public mount info, use ``get_mount()`` instead.
+        """
+        current = path
+        while True:
+            entry = self._backends.get(current)
+            if entry is not None:
+                return entry
+            if current == "/":
+                return None
+            current = current.rsplit("/", 1)[0] or "/"
 
     def remove_mount(self, mount_point: str) -> bool:
         """Remove a mount from the in-memory routing table.

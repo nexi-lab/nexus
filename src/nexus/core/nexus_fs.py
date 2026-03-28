@@ -883,8 +883,17 @@ class NexusFS(  # type: ignore[misc]
         if entry_type == DT_STREAM:
             from nexus.core.stream import StreamError
 
+            # Check if mount provides a custom stream backend factory
+            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory StreamBuffer.
+            _mount_entry = self.router.get_mount_entry_for_path(path)
+            _factory = _mount_entry.stream_backend_factory if _mount_entry else None
+
             try:
-                self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
+                if _factory is not None:
+                    backend = _factory(path, capacity)
+                    self._stream_manager.create_from_backend(path, backend, owner_id=owner_id)
+                else:
+                    self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
             except StreamError as exc:
                 raise BackendError(str(exc)) from exc
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}

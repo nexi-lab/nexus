@@ -369,11 +369,9 @@ async def _register_vfs_hooks(
 
     _on = _make_gate(svc_on)
 
-    _coordinator = nx.service_coordinator
-
     async def _enlist(name: str, hook: Any) -> None:
-        """Enlist hook via coordinator — the single entry point."""
-        await _coordinator.enlist(name, hook)
+        """Enlist hook via sys_setattr — factory is the first user."""
+        await nx.sys_setattr(f"/__sys__/services/{name}", service=hook)
 
     # ── Zone write guard hook (Issue #1790) ────────────────────────
     # Rejects writes to zones being deprovisioned (Issue #2061).

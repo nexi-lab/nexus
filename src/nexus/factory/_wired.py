@@ -229,7 +229,7 @@ async def _boot_post_kernel_services(
                 mount_service=mount_service,
                 router=router,
             )
-            await nx._service_registry.enlist("connector_sync_loop", connector_sync)
+            await nx.sys_setattr("/__sys__/services/connector_sync_loop", service=connector_sync)
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop created (starts on first request)")
         except Exception:
             logger.debug("[BOOT:WIRED] ConnectorSyncLoop not available")
@@ -323,7 +323,7 @@ async def _boot_post_kernel_services(
             from nexus.core.agent_registry import AgentRegistry
 
             _agent_reg = AgentRegistry()
-            await nx._service_registry.enlist("agent_registry", _agent_reg)
+            await nx.sys_setattr("/__sys__/services/agent_registry", service=_agent_reg)
             logger.debug("[BOOT:WIRED] AgentRegistry constructed by wired tier")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AgentRegistry unavailable: %s", exc)
@@ -345,7 +345,7 @@ async def _boot_post_kernel_services(
                 policy=QoSEvictionPolicy(),
                 tuning=_eviction_tuning,
             )
-            await nx._service_registry.enlist("eviction_manager", _eviction_manager)
+            await nx.sys_setattr("/__sys__/services/eviction_manager", service=_eviction_manager)
             logger.debug("[BOOT:WIRED] EvictionManager created (QoS-aware)")
         except Exception as exc:
             logger.warning("[BOOT:WIRED] EvictionManager unavailable: %s", exc)
@@ -361,7 +361,7 @@ async def _boot_post_kernel_services(
                 agent_registry=_agent_reg,
                 zone_id=ROOT_ZONE_ID,
             )
-            await nx._service_registry.enlist("acp_service", _acp_service)
+            await nx.sys_setattr("/__sys__/services/acp_service", service=_acp_service)
             logger.debug("[BOOT:WIRED] AcpService created")
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AcpService unavailable: %s", exc)

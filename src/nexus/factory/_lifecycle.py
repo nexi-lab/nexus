@@ -126,13 +126,13 @@ async def _wire_services(
     )
 
     # Issue #1708: ServiceRegistry now has integrated lifecycle (formerly SLC).
-    await enlist_services(nx._service_registry, _wired)
+    await enlist_services(nx, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
     # NexusFS.__init__). Root mount ("/") was added to PathRouter in
     # create_nexus_fs() before __init__ — adopt retroactively registers
     # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
-    await nx._service_registry.enlist("driver_coordinator", nx._driver_coordinator)
+    await nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
     nx._driver_coordinator.adopt_existing_mount("/")
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
@@ -143,11 +143,11 @@ async def _wire_services(
 
     # Enlist all system+brick services into ServiceRegistry.
     # Canonical name mapping consolidated in service_routing.py.
-    await enlist_services(nx._service_registry, _svc)
+    await enlist_services(nx, _svc)
 
     # Federation — wire from parameter (profile-gated, created before kernel).
     if federation is not None:
-        await nx._service_registry.enlist("federation", federation)
+        await nx.sys_setattr("/__sys__/services/federation", service=federation)
         logger.debug("[LINK] Federation service enlisted")
 
         # Upgrade lock manager: LocalLockManager → RaftLockManager

@@ -21,10 +21,12 @@ writes to existing files in that directory.  This matches the ReBAC
 inheritance model where WRITE on a directory implies WRITE on children.
 
 Integration:
-    - Checked in ``PermissionCheckHook.on_pre_write()`` (fast path)
+    - Checked in ``PermissionCheckHook.on_pre_write/read/delete/rmdir()``
+      (fast path)
     - Stamped after successful ReBAC check (slow path)
     - Invalidated by ``CacheCoordinator.invalidate_for_write()`` via
-      registered callback (zone-wide clear on any permission mutation)
+      registered callback (path-targeted for direct grants, zone-wide
+      fallback for group/inherited changes)
     - ``invalidate_agent()`` called on agent termination / permission change
 
 References:
@@ -37,6 +39,8 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+
+from nexus.lib.path_utils import parent_path
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.lease import Clock
@@ -64,12 +68,17 @@ class PermissionLeaseTable:
     Stores ``(checked_path, agent_id) -> expiry_monotonic`` in a plain
     dict.  Validation is a single dict lookup + float comparison (~100ns).
 
+    Secondary indexes ``_by_path`` and ``_by_agent`` enable O(1) targeted
+    invalidation for path-specific revocation (Issue #3398 decision 3A)
+    and agent termination cleanup (Issue #3398 decision 2A).
+
     Thread-safety: CPython's GIL protects dict reads/writes.  The worst
     case for a concurrent read during a write is a false negative (lease
     appears missing → falls through to full ReBAC check, which is safe).
 
-    Memory: bounded by ``max_entries``.  When exceeded, the table is
-    cleared entirely — equivalent to a cold start.
+    Memory: bounded by ``max_entries``.  When at 90% capacity, expired
+    entries are lazily evicted.  If still over cap after eviction, the
+    table is cleared entirely — equivalent to a cold start.
 
     Example::
 
@@ -83,6 +92,7 @@ class PermissionLeaseTable:
 
     DEFAULT_TTL = 30.0
     DEFAULT_MAX_ENTRIES = 100_000
+    _EVICTION_THRESHOLD = 0.9  # trigger lazy eviction at 90% capacity
 
     def __init__(
         self,
@@ -97,13 +107,20 @@ class PermissionLeaseTable:
         # (normalized_path, agent_id) -> monotonic expiry timestamp
         self._table: dict[tuple[str, str], float] = {}
 
+        # Secondary indexes for O(1) targeted invalidation (Issue #3398)
+        # path -> set of agent_ids that hold leases on this path
+        self._by_path: dict[str, set[str]] = {}
+        # agent_id -> set of paths that this agent holds leases on
+        self._by_agent: dict[str, set[str]] = {}
+
         # Metrics
         self._hits = 0
         self._misses = 0
         self._stamps = 0
         self._invalidations = 0
+        self._evictions = 0
 
-    # -- path normalization ---------------------------------------------------
+    # -- path helpers ----------------------------------------------------------
 
     @staticmethod
     def _normalize(path: str) -> str:
@@ -112,17 +129,42 @@ class PermissionLeaseTable:
             return path
         return path.rstrip("/")
 
-    # -- core operations ------------------------------------------------------
+    # -- secondary index maintenance -------------------------------------------
 
-    @staticmethod
-    def _parent(path: str) -> str | None:
-        """Get parent directory path, or None if root."""
-        if path == "/":
-            return None
-        last_slash = path.rfind("/")
-        if last_slash == 0:
-            return "/"
-        return path[:last_slash] if last_slash > 0 else None
+    def _index_add(self, normalized_path: str, agent_id: str) -> None:
+        """Add an entry to secondary indexes."""
+        by_path = self._by_path.get(normalized_path)
+        if by_path is None:
+            by_path = set()
+            self._by_path[normalized_path] = by_path
+        by_path.add(agent_id)
+
+        by_agent = self._by_agent.get(agent_id)
+        if by_agent is None:
+            by_agent = set()
+            self._by_agent[agent_id] = by_agent
+        by_agent.add(normalized_path)
+
+    def _index_remove(self, normalized_path: str, agent_id: str) -> None:
+        """Remove an entry from secondary indexes."""
+        by_path = self._by_path.get(normalized_path)
+        if by_path is not None:
+            by_path.discard(agent_id)
+            if not by_path:
+                del self._by_path[normalized_path]
+
+        by_agent = self._by_agent.get(agent_id)
+        if by_agent is not None:
+            by_agent.discard(normalized_path)
+            if not by_agent:
+                del self._by_agent[agent_id]
+
+    def _index_clear(self) -> None:
+        """Clear all secondary indexes."""
+        self._by_path.clear()
+        self._by_agent.clear()
+
+    # -- core operations -------------------------------------------------------
 
     def check(self, path: str, agent_id: str) -> bool:
         """Check if a valid permission lease exists.
@@ -143,7 +185,7 @@ class PermissionLeaseTable:
             if expiry is not None and now < expiry:
                 self._hits += 1
                 return True
-            current = self._parent(current)
+            current = parent_path(current)
         self._misses += 1
         return False
 
@@ -153,60 +195,102 @@ class PermissionLeaseTable:
         Called after a full ReBAC check passes.  Subsequent writes to
         the same (path, agent_id) pair within the TTL skip the check.
         """
-        # Size cap: clear all if above threshold (Decision #13D)
-        if len(self._table) >= self._max_entries:
+        normalized = self._normalize(path)
+        # Lazy eviction at 90% capacity (Issue #3398 decision 15A)
+        if len(self._table) >= int(self._max_entries * self._EVICTION_THRESHOLD):
+            self._evict_expired()
+            # Full clear only if still over cap after eviction
+            if len(self._table) >= self._max_entries:
+                logger.debug(
+                    "[PermissionLeaseTable] Size cap reached (%d) after eviction, clearing all",
+                    len(self._table),
+                )
+                self._table.clear()
+                self._index_clear()
+
+        key = (normalized, agent_id)
+        is_new = key not in self._table
+        self._table[key] = self._clock.monotonic() + (ttl if ttl is not None else self._ttl)
+        if is_new:
+            self._index_add(normalized, agent_id)
+        self._stamps += 1
+
+    def _evict_expired(self) -> None:
+        """Remove expired entries from the table and indexes.
+
+        Called lazily when table approaches capacity.  O(n) scan but
+        only triggers at 90% capacity — not on every stamp.
+        """
+        now = self._clock.monotonic()
+        expired_keys = [k for k, v in self._table.items() if v <= now]
+        for key in expired_keys:
+            del self._table[key]
+            self._index_remove(key[0], key[1])
+        if expired_keys:
+            self._evictions += len(expired_keys)
             logger.debug(
-                "[PermissionLeaseTable] Size cap reached (%d), clearing all leases",
+                "[PermissionLeaseTable] Evicted %d expired entries, %d remain",
+                len(expired_keys),
                 len(self._table),
             )
-            self._table.clear()
-        self._table[(self._normalize(path), agent_id)] = self._clock.monotonic() + (
-            ttl if ttl is not None else self._ttl
-        )
-        self._stamps += 1
 
     def invalidate_all(self) -> None:
         """Clear all leases (zone-wide revocation).
 
-        Called by CacheCoordinator on any permission mutation.
+        Called by CacheCoordinator on group/inherited permission mutations.
         """
         if self._table:
             self._table.clear()
+            self._index_clear()
             self._invalidations += 1
             logger.debug("[PermissionLeaseTable] All leases invalidated")
 
     def invalidate_path(self, path: str) -> None:
         """Clear all leases for a specific checked path.
 
-        Removes leases for all agents on the given path.  O(n) scan
-        of the table — acceptable for targeted revocation but prefer
-        ``invalidate_all()`` for zone-wide events.
+        Uses the ``_by_path`` secondary index for O(k) targeted removal
+        where k = number of agents holding leases on this path (typically
+        1-5).  Used for direct-grant permission mutations (Issue #3398
+        decision 3A).
         """
         normalized = self._normalize(path)
-        keys_to_remove = [k for k in self._table if k[0] == normalized]
-        for k in keys_to_remove:
-            del self._table[k]
-        if keys_to_remove:
-            self._invalidations += 1
+        agent_ids = self._by_path.get(normalized)
+        if not agent_ids:
+            return
+        # Copy because we mutate during iteration
+        for aid in list(agent_ids):
+            key = (normalized, aid)
+            self._table.pop(key, None)
+            self._index_remove(normalized, aid)
+        self._invalidations += 1
 
     def invalidate_agent(self, agent_id: str) -> None:
         """Clear all leases for a specific agent.
 
-        Called on agent termination or agent-level permission change.
-        O(n) scan of the table.
+        Uses the ``_by_agent`` secondary index for O(k) targeted removal
+        where k = number of paths this agent holds leases on.
+        Called on agent termination or agent-level permission change
+        (Issue #3398 decision 2A).
         """
-        keys_to_remove = [k for k in self._table if k[1] == agent_id]
-        for k in keys_to_remove:
-            del self._table[k]
-        if keys_to_remove:
+        paths = self._by_agent.get(agent_id)
+        if not paths:
+            return
+        count = 0
+        # Copy because we mutate during iteration
+        for p in list(paths):
+            key = (p, agent_id)
+            if self._table.pop(key, None) is not None:
+                count += 1
+            self._index_remove(p, agent_id)
+        if count:
             self._invalidations += 1
             logger.debug(
                 "[PermissionLeaseTable] Invalidated %d lease(s) for agent %s",
-                len(keys_to_remove),
+                count,
                 agent_id,
             )
 
-    # -- diagnostics ----------------------------------------------------------
+    # -- diagnostics -----------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
         """Return operational metrics for monitoring."""
@@ -215,6 +299,7 @@ class PermissionLeaseTable:
             "lease_misses": self._misses,
             "lease_stamps": self._stamps,
             "lease_invalidations": self._invalidations,
+            "lease_evictions": self._evictions,
             "active_leases": len(self._table),
         }
 

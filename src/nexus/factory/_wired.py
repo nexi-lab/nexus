@@ -372,6 +372,12 @@ async def _boot_post_kernel_services(
         # Late-bind PipeManager for DT_PIPE registration of agent stdio.
         if hasattr(_acp_service, "bind_pipe_manager"):
             _acp_service.bind_pipe_manager(getattr(nx, "_pipe_manager", None))
+        # Wire agent termination → permission lease revocation (Issue #3398 decision 2A)
+        _perm_lease_table = services.get("permission_lease_table")
+        if _perm_lease_table is not None and hasattr(_acp_service, "register_on_terminate"):
+            _acp_service.register_on_terminate(
+                "perm-lease-revoke", _perm_lease_table.invalidate_agent
+            )
         try:
             from nexus.services.acp.acp_rpc_service import AcpRPCService
 

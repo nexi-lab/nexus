@@ -177,8 +177,12 @@ class CacheCoordinator:
         # Namespace cache invalidators: callback(subject_type, subject_id, zone_id)
         # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
         self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
-        # Permission lease invalidators: callback(zone_id) — zone-wide clear (Issue #3394)
-        self._lease_invalidators: list[tuple[str, Callable[[str], None]]] = []
+        # Permission lease invalidators (Issue #3394, #3398):
+        # callback(zone_id, subject, relation, object) — path-targeted for direct
+        # grants, zone-wide fallback for group/inherited changes (decision 3A/7A).
+        self._lease_invalidators: list[
+            tuple[str, Callable[[str, tuple[str, str], str, tuple[str, str]], None]]
+        ] = []
         # Tiger L2 (Dragonfly) invalidators: callback(subj_type, subj_id, permission, res_type, zone_id)
         # Explicit L2 cache delete on write — replaces TTL-only expiry (Issue #3395)
         self._tiger_l2_invalidators: list[
@@ -328,16 +332,18 @@ class CacheCoordinator:
     def register_lease_invalidator(
         self,
         callback_id: str,
-        callback: "Callable[[str], None]",
+        callback: "Callable[[str, tuple[str, str], str, tuple[str, str]], None]",
     ) -> None:
-        """Register a permission lease invalidation callback (Issue #3394).
+        """Register a permission lease invalidation callback (Issue #3394, #3398).
 
-        Called on every rebac_write/rebac_delete to invalidate permission
-        leases (zone-wide clear).  The callback receives the zone_id.
+        Called on every rebac_write/rebac_delete.  The callback receives
+        the full tuple context so it can decide between path-targeted
+        invalidation (direct grants) and zone-wide clear (group/inherited
+        changes).  See Issue #3398 decisions 3A/7A.
 
         Args:
             callback_id: Unique identifier for this callback
-            callback: Function(zone_id) — should clear all permission leases
+            callback: Function(zone_id, subject, relation, object)
         """
         for cid, _ in self._lease_invalidators:
             if cid == callback_id:
@@ -424,8 +430,8 @@ class CacheCoordinator:
         # 2.5. Tiger L2 (Dragonfly) cache — explicit delete (Issue #3395)
         self._notify_tiger_l2_invalidators(subject_type, subject_id, relation, object_type, zone_id)
 
-        # 3. Permission leases — zone-wide clear (Issue #3394)
-        self._notify_lease_invalidators(zone_id)
+        # 3. Permission leases — path-targeted or zone-wide (Issue #3394, #3398)
+        self._notify_lease_invalidators(zone_id, subject, relation, object)
 
         # 4. Boundary cache (external callbacks)
         self._notify_boundary_invalidators(
@@ -453,21 +459,30 @@ class CacheCoordinator:
                 object_id=object_id,
             )
 
-        # Steps 9-10: Cross-zone publishing — skipped when local_only=True
+        # Steps 9-11: Cross-zone publishing — skipped when local_only=True
         # to prevent ping-pong loops when the consumer handler re-enters.
         if not local_only:
+            _payload = {
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "relation": relation,
+                "object_type": object_type,
+                "object_id": object_id,
+            }
+
             # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
             if self._pubsub:
                 self._pubsub.publish_invalidation(
                     zone_id=zone_id,
                     layer="all",
-                    payload={
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "relation": relation,
-                        "object_type": object_type,
-                        "object_id": object_id,
-                    },
+                    payload=_payload,
+                )
+                # Lease-specific hint for cross-zone lease revocation (Issue #3398 decision 4A).
+                # Remote zones subscribe to "lease" layer to invalidate their local lease tables.
+                self._pubsub.publish_invalidation(
+                    zone_id=zone_id,
+                    layer="lease",
+                    payload=_payload,
                 )
 
             # 10. Durable Stream: Publish cross-zone guaranteed delivery (Issue #3396)
@@ -476,11 +491,7 @@ class CacheCoordinator:
                     target_zone_id=zone_id,
                     payload={
                         "source_zone": zone_id,
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "relation": relation,
-                        "object_type": object_type,
-                        "object_id": object_id,
+                        **_payload,
                     },
                 )
 
@@ -536,8 +547,13 @@ class CacheCoordinator:
         if self._l1_cache:
             self._l1_cache.clear()
 
-        # Permission leases (Issue #3394)
-        self._notify_lease_invalidators(zone_id or "root")
+        # Permission leases — zone-wide clear (nuclear option)
+        self._notify_lease_invalidators(
+            zone_id or "root",
+            ("*", "*"),  # wildcard subject → forces zone-wide clear
+            "*",
+            ("*", "*"),
+        )
 
         if self._boundary_cache:
             self._boundary_cache.clear()
@@ -1106,8 +1122,18 @@ class CacheCoordinator:
         self._l1_cache.invalidate_subject(subject_type, subject_id, zone_id)
         self._l1_cache.invalidate_object(object_type, object_id, zone_id)
 
-    def _notify_lease_invalidators(self, zone_id: str) -> None:
-        """Notify permission lease invalidators — zone-wide clear (Issue #3394).
+    def _notify_lease_invalidators(
+        self,
+        zone_id: str,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],  # noqa: A002
+    ) -> None:
+        """Notify permission lease invalidators (Issue #3394, #3398).
+
+        Passes the full tuple context so callbacks can decide between
+        path-targeted invalidation (direct grants on files) and zone-wide
+        clear (group/inherited changes).  See decisions 3A/7A.
 
         Called after L1 cache invalidation and before boundary cache
         invalidation to ensure stale leases cannot be used during the
@@ -1120,7 +1146,7 @@ class CacheCoordinator:
 
         for callback_id, callback in self._lease_invalidators:
             try:
-                callback(zone_id)
+                callback(zone_id, subject, relation, object)
             except Exception:
                 self._callback_failure_count += 1
                 logger.warning(

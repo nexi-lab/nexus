@@ -179,7 +179,7 @@ class TestConsumerAckFailure:
 
     @pytest.mark.asyncio
     async def test_handler_failure_does_not_ack(self):
-        """When a handler raises, the message should still be ACKed (fail-open)."""
+        """When a handler raises, the message is NOT ACKed — stays in PEL for retry."""
         mock_client = MagicMock()
         mock_client.xack = AsyncMock(return_value=1)
 
@@ -202,10 +202,11 @@ class TestConsumerAckFailure:
             {b"data": b'{"source_zone": "z", "key": "val"}'},
         )
 
-        # Message should still be ACKed (fail-open design)
-        # The handler error is logged but doesn't prevent ACK
+        # Message should NOT be ACKed — stays in PEL for redelivery
+        mock_client.xack.assert_not_called()
         stats = stream.stats()
         assert stats["consume_errors"] >= 1
+        assert stats["consumed"] == 0  # Not counted as consumed
 
     @pytest.mark.asyncio
     async def test_malformed_message_is_acked(self):

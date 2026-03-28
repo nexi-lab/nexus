@@ -1148,6 +1148,19 @@ class ReBACPermissionCache:
             if result is None:
                 result = self._denial_cache.get(key)
 
+            # Issue #3396: Read fence staleness check (same as get()).
+            # Must be applied here too since this is the main permission-check
+            # fast path used by ReBACManager.check().
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._grant_cache.pop(key, None)
+                    self._denial_cache.pop(key, None)
+                    self._fence_stamps.pop(key, None)
+                    result = None
+                    is_grant_hit = False
+
             # Track metrics
             if self._enable_metrics:
                 elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -1213,6 +1226,8 @@ class ReBACPermissionCache:
             if key in self._denial_cache:
                 del self._denial_cache[key]
                 count += 1
+            # Issue #3396: clean up fence stamps to prevent memory leak
+            self._fence_stamps.pop(key, None)
         return count
 
     def _collect_matching_keys(
@@ -1533,6 +1548,8 @@ class ReBACPermissionCache:
             self._object_index.clear()
             self._path_prefix_index.clear()
             self._entry_metadata.clear()
+            # Issue #3396: Clear fence stamps to prevent memory leak
+            self._fence_stamps.clear()
             if self._enable_metrics:
                 logger.info("L1 cache cleared (grant, denial caches, and indexes)")
 

@@ -317,20 +317,29 @@ class DurableInvalidationStream:
                 # Extract source zone from payload or stream key
                 source_zone = payload.get("source_zone", self._zone_id)
 
-                # Invoke handlers
+                # Invoke handlers — all must succeed before ACK.
+                # If any handler fails, the message stays in the PEL and will
+                # be redelivered by reclaim_pending() (DLQ after max retries).
+                handler_failed = False
                 for handler_id, handler in self._handlers:
                     try:
                         await handler(source_zone, payload)
                     except Exception:
                         self._consume_errors += 1
+                        handler_failed = True
                         logger.warning(
-                            "[DurableStream] Handler %s failed for %s",
+                            "[DurableStream] Handler %s failed for %s — not ACKing",
                             handler_id,
                             msg_id,
                             exc_info=True,
                         )
+                        break  # Don't run remaining handlers on partial failure
 
-                # ACK the message
+                if handler_failed:
+                    # Leave in PEL for redelivery via reclaim_pending()
+                    return
+
+                # All handlers succeeded — ACK and advance fence
                 await self._client.xack(stream_key, self._group_name, msg_id)
                 self._consumed += 1
 

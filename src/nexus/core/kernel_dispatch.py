@@ -244,17 +244,17 @@ class KernelDispatch:
         _pending = set(self._background_tasks)
         try:
             done, still_pending = await asyncio.wait(_pending, timeout=timeout)
+            for task in still_pending:
+                task.cancel()
+            if still_pending:
+                await asyncio.gather(*still_pending, return_exceptions=True)
         except RuntimeError:
             # Tasks belong to a different event loop (e.g. pytest loop vs
-            # TestClient loop). Cancel what we can and discard references.
+            # TestClient loop in Python 3.13+). Best-effort cancel + discard.
             for task in _pending:
                 task.cancel()
+        finally:
             self._background_tasks.clear()
-            return
-        for task in still_pending:
-            task.cancel()
-        if still_pending:
-            await asyncio.gather(*still_pending, return_exceptions=True)
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 

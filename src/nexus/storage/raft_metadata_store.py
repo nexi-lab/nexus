@@ -126,6 +126,7 @@ class RaftMetadataStore(MetastoreABC):
             engine: Metastore or ZoneHandle instance (PyO3 FFI)
             zone_id: Zone ID for this store
         """
+        super().__init__()
         if engine is None:
             raise ValueError("engine must be provided")
 
@@ -261,7 +262,7 @@ class RaftMetadataStore(MetastoreABC):
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
         return cls(engine=metastore, zone_id=zone_id)
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         """Get metadata for a file.
 
         Args:
@@ -272,7 +273,7 @@ class RaftMetadataStore(MetastoreABC):
         """
         return self._get_engine(path)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store or update file metadata.
 
         Args:
@@ -298,7 +299,7 @@ class RaftMetadataStore(MetastoreABC):
         """
         return self._engine.is_committed(token)
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata.
 
         Args:
@@ -310,7 +311,7 @@ class RaftMetadataStore(MetastoreABC):
         """
         return self._delete_engine(path, consistency=consistency)
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         """Check if metadata exists for a path.
 
         Args:
@@ -319,7 +320,7 @@ class RaftMetadataStore(MetastoreABC):
         Returns:
             True if metadata exists, False otherwise
         """
-        return self.get(path) is not None
+        return self._get_raw(path) is not None
 
     def is_implicit_directory(self, path: str) -> bool:
         """Check if a path is an implicit directory.
@@ -345,12 +346,13 @@ class RaftMetadataStore(MetastoreABC):
         entries = self._engine.list_metadata(prefix)
         return len(entries) > 0
 
-    def list(
+    def _list_raw(
         self,
         prefix: str = "",
         recursive: bool = True,
         zone_id: str | None = None,
         accessible_int_ids: set[int] | None = None,
+        **kwargs: Any,
     ) -> list[FileMetadata]:
         """List all files with given path prefix.
 
@@ -377,7 +379,7 @@ class RaftMetadataStore(MetastoreABC):
                 raise ValueError(f"zone_id filter '{zone_id}' passed to a non-zone-scoped store")
         return self._list_engine(prefix, recursive)
 
-    def list_iter(
+    def _list_iter_raw(
         self,
         prefix: str = "",
         recursive: bool = True,
@@ -520,11 +522,11 @@ class RaftMetadataStore(MetastoreABC):
     # Batch Operations
     # =========================================================================
 
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         """Get metadata for multiple files.
 
         Uses native get_metadata_multi when available (single FFI call)
-        instead of N individual get() calls.
+        instead of N individual _get_raw() calls.
 
         Args:
             paths: List of virtual paths
@@ -542,9 +544,9 @@ class RaftMetadataStore(MetastoreABC):
                 for path, data in results
             }
         # Fallback: individual calls when batch API not yet compiled
-        return {path: self.get(path) for path in paths}
+        return {path: self._get_raw(path) for path in paths}
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
         """Store or update multiple file metadata entries atomically.
 
         All entries are serialized upfront to fail fast on bad data.
@@ -588,7 +590,7 @@ class RaftMetadataStore(MetastoreABC):
                 logger.warning("put_batch rollback failed for %d paths", len(path_list))
             raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
 
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
         """Delete multiple file metadata entries atomically.
 
         Uses batch FFI calls: get_metadata_multi (1 call) for rollback snapshots

@@ -159,6 +159,7 @@ class SQLiteMetastore(MetastoreABC):
     """
 
     def __init__(self, db_path: str | Path) -> None:
+        super().__init__()
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -180,30 +181,30 @@ class SQLiteMetastore(MetastoreABC):
     # Abstract method implementations
     # ------------------------------------------------------------------
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         row = self._conn.execute("SELECT * FROM metadata WHERE path = ?", (path,)).fetchone()
         return _row_to_metadata(row) if row else None
 
     @_retry_on_busy
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         del consistency
         self._conn.execute(_UPSERT, _metadata_to_tuple(metadata))
         self._conn.commit()
         return None
 
     @_retry_on_busy
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         del consistency
         cur = self._conn.execute("DELETE FROM metadata WHERE path = ? RETURNING path", (path,))
         deleted = cur.fetchone()
         self._conn.commit()
         return {"deleted": path} if deleted else None
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         row = self._conn.execute("SELECT 1 FROM metadata WHERE path = ?", (path,)).fetchone()
         return row is not None
 
-    def list(self, prefix: str = "", recursive: bool = True, **_kw: Any) -> list[FileMetadata]:
+    def _list_raw(self, prefix: str = "", recursive: bool = True, **_kw: Any) -> list[FileMetadata]:
         if prefix:
             rows = self._conn.execute(
                 "SELECT * FROM metadata WHERE path LIKE ? ESCAPE '\\'",
@@ -234,7 +235,7 @@ class SQLiteMetastore(MetastoreABC):
     # Concrete overrides for better performance
     # ------------------------------------------------------------------
 
-    def list_iter(
+    def _list_iter_raw(
         self, prefix: str = "", recursive: bool = True, **_kw: Any
     ) -> Iterator[FileMetadata]:
         """Memory-efficient iteration — yields rows one at a time from the cursor."""
@@ -253,7 +254,7 @@ class SQLiteMetastore(MetastoreABC):
                 continue
             yield meta
 
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         if not paths:
             return {}
         placeholders = ",".join("?" for _ in paths)
@@ -265,14 +266,14 @@ class SQLiteMetastore(MetastoreABC):
         return {p: found.get(p) for p in paths}
 
     @_retry_on_busy
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
         if not metadata_list:
             return
         self._conn.executemany(_UPSERT, [_metadata_to_tuple(m) for m in metadata_list])
         self._conn.commit()
 
     @_retry_on_busy
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
         if not paths:
             return
         placeholders = ",".join("?" for _ in paths)

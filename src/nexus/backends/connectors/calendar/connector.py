@@ -1,9 +1,10 @@
-"""Google Calendar connector backend with OAuth 2.0 authentication.
+"""Google Calendar connector — PathAddressingEngine + CalendarTransport composition.
 
-This connector provides full CRUD access to Google Calendar events,
-organizing them as YAML files in a virtual filesystem.
-
-Use case: Access and manage Google Calendar events through Nexus mount.
+Architecture (Transport × Addressing):
+    PathCalendarBackend(PathAddressingEngine)
+        └── CalendarTransport(Transport)
+              ├── Calendar API calls (I/O)
+              └── OAuth token from OperationContext
 
 Storage structure:
     /
@@ -12,34 +13,24 @@ Storage structure:
     │   └── _new.yaml               # Write here to create new event
     └── {calendar_id}/              # Other calendars
         └── {event_id}.yaml
-
-Key features:
-- OAuth 2.0 authentication (user-scoped)
-- Full CRUD operations (Create, Read, Update, Delete)
-- Agent-friendly validation with self-correcting errors
-- Checkpoint/rollback support for reversible operations
-- Auto-generated SKILL.md documentation
-- Database-backed caching via CacheConnectorMixin
-
-Authentication:
-    Uses OAuth 2.0 flow via TokenManager:
-    - User authorizes via browser
-    - Tokens stored encrypted in database
-    - Automatic refresh when expired
 """
+
+from __future__ import annotations
 
 import logging
 from contextlib import suppress
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-import yaml
-
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import (
+    CheckpointMixin,
     ConfirmLevel,
     OpTraits,
     Reversibility,
+    SkillDocMixin,
+    TraitBasedMixin,
+    ValidatedMixin,
     ValidationError,
 )
 from nexus.backends.connectors.calendar.errors import ERROR_REGISTRY
@@ -48,17 +39,14 @@ from nexus.backends.connectors.calendar.schemas import (
     DeleteEventSchema,
     UpdateEventSchema,
 )
-from nexus.backends.connectors.oauth_base import OAuthConnectorBase
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION
+from nexus.backends.connectors.calendar.transport import CalendarTransport
+from nexus.backends.connectors.oauth import OAuthConnectorMixin
+from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
-# Suppress annoying googleapiclient discovery cache warnings
-logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
-
 if TYPE_CHECKING:
-    from googleapiclient.discovery import Resource
-
     from nexus.contracts.types import OperationContext
     from nexus.storage.record_store import RecordStoreABC
 
@@ -72,37 +60,36 @@ logger = logging.getLogger(__name__)
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="google-calendar",
 )
-class GoogleCalendarConnectorBackend(OAuthConnectorBase):
-    """Google Calendar connector backend with full CRUD support.
-
-    This backend syncs events from Google Calendar API and organizes them
-    as YAML files. Supports create, read, update, and delete operations
-    with agent-friendly validation.
+class PathCalendarBackend(
+    PathAddressingEngine,
+    CacheConnectorMixin,
+    OAuthConnectorMixin,
+    SkillDocMixin,
+    ValidatedMixin,
+    TraitBasedMixin,
+    CheckpointMixin,
+):
+    """Google Calendar connector: PathAddressingEngine + CalendarTransport composition.
 
     Features:
+    - Full CRUD (Create, Read, Update, Delete events)
     - OAuth 2.0 authentication (per-user credentials)
-    - Event syncing from calendars
-    - CRUD operations with validation
+    - Agent-friendly validation with self-correcting errors
     - Checkpoint/rollback for reversible operations
-    - Auto-generated SKILL.md documentation
-
-    Folder Structure:
-    - / - Root directory (lists calendars)
-    - /primary/ - User's primary calendar
-    - /{calendar_id}/ - Other calendars
-    - /{calendar_id}/{event_id}.yaml - Event files
-    - /{calendar_id}/_new.yaml - Write here to create new event
+    - Persistent caching via CacheConnectorMixin
     """
 
-    # =========================================================================
-    # Mixin Configuration
-    # =========================================================================
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
+        {
+            BackendFeature.CACHE_BULK_READ,
+            BackendFeature.CACHE_SYNC,
+        }
+    )
 
     # SkillDocMixin config
     SKILL_NAME = "gcalendar"
-    SKILL_DIR = ".skill"  # Will be at <mount_path>/.skill/
+    SKILL_DIR = ".skill"
 
-    # Domain-specific examples for SKILL.md generation
     NESTED_EXAMPLES: dict[str, list[str]] = {
         "start": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
         "end": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
@@ -117,8 +104,6 @@ class GoogleCalendarConnectorBackend(OAuthConnectorBase):
         "recurrence": '["RRULE:FREQ=WEEKLY;BYDAY=MO"]',
         "send_notifications": "true",
     }
-
-    # Example YAML files for agents
     EXAMPLES = {
         "create_meeting.yaml": """# agent_intent: User requested to schedule a team meeting
 summary: Weekly Team Sync
@@ -180,17 +165,18 @@ send_notifications: true
             intent_min_length=10,
         ),
         "delete_event": OpTraits(
-            reversibility=Reversibility.FULL,  # Can restore from trash
-            confirm=ConfirmLevel.EXPLICIT,  # Requires confirm: true
+            reversibility=Reversibility.FULL,
+            confirm=ConfirmLevel.EXPLICIT,
             checkpoint=True,
             intent_min_length=10,
         ),
     }
 
-    # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
 
-    # Connection arguments for registry-based instantiation
+    # Enable metadata-based listing
+    use_metadata_listing = True
+
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "token_manager_db": ConnectionArg(
             type=ArgType.PATH,
@@ -225,244 +211,130 @@ send_notifications: true
         max_events_per_calendar: int = 250,
         metadata_store: Any = None,
     ):
-        """Initialize Google Calendar connector backend.
+        # 1. Initialize OAuth
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
-        Args:
-            token_manager_db: Path to TokenManager database (e.g., ~/.nexus/nexus.db)
-            user_email: Optional user email for OAuth lookup. If None, uses authenticated
-                       user from OperationContext (recommended for multi-user scenarios)
-            provider: OAuth provider name from config (default: "gcalendar")
-            record_store: Optional RecordStoreABC instance for content caching.
-            max_events_per_calendar: Maximum number of events to fetch per calendar (default: 250).
-            metadata_store: MetastoreABC instance for file_paths table (optional).
-        """
-        super().__init__(
-            token_manager_db=token_manager_db,
-            user_email=user_email,
+        # 2. Create CalendarTransport
+        cal_transport = CalendarTransport(
+            token_manager=self.token_manager,
             provider=provider,
-            record_store=record_store,
-            metadata_store=metadata_store,
+            user_email=user_email,
+            max_events_per_calendar=max_events_per_calendar,
         )
+        self._cal_transport = cal_transport
+
+        # 3. Initialize PathAddressingEngine
+        PathAddressingEngine.__init__(self, transport=cal_transport, backend_name="gcalendar")
+
+        # 4. Cache and metadata
+        self.session_factory = record_store.session_factory if record_store else None
+        self.metadata_store = metadata_store
         self.max_events_per_calendar = max_events_per_calendar
 
+        # 5. CheckpointMixin state
+        self._checkpoints: dict[str, Any] = {}
+
+        # 6. Register OAuth provider
+        self._register_oauth_provider()
+
+    # -- Properties --
+
     @property
-    def name(self) -> str:
-        """Backend identifier name."""
-        return "gcalendar"
+    def user_scoped(self) -> bool:
+        return True
 
-    # =========================================================================
-    # OAuth / Service
-    # =========================================================================
+    @property
+    def has_token_manager(self) -> bool:
+        return True
 
-    def _get_calendar_service(self, context: "OperationContext | None" = None) -> "Resource":
-        """Get Google Calendar service with user's OAuth credentials.
+    # -- OAuth provider registration (same as OAuthConnectorBase) --
 
-        Args:
-            context: Operation context (provides user_id if user_email not configured)
+    _PROVIDER_ALIASES: dict[str, list[str]] = {
+        "google": ["gmail", "gcalendar", "google-drive", "google-cloud-storage"],
+    }
 
-        Returns:
-            Calendar service instance
-
-        Raises:
-            BackendError: If credentials not found or user not authenticated
-        """
+    def _register_oauth_provider(self) -> None:
         try:
-            from googleapiclient.discovery import build
-        except ImportError:
-            raise BackendError(
-                "google-api-python-client not installed. "
-                "Install with: pip install google-api-python-client",
-                backend="gcalendar",
-            ) from None
+            import importlib as _il
 
-        # Determine which user's tokens to use
-        if self.user_email:
-            user_email = self.user_email
-        elif context and context.user_id:
-            user_email = context.user_id
-        else:
-            raise BackendError(
-                "Calendar backend requires either configured user_email "
-                "or authenticated user in OperationContext",
-                backend="gcalendar",
-            )
+            OAuthProviderFactory = _il.import_module(
+                "nexus.bricks.auth.oauth.factory"
+            ).OAuthProviderFactory
 
-        # Get valid access token from TokenManager
-        from nexus.lib.sync_bridge import run_sync
+            factory = OAuthProviderFactory()
+            candidates = [self.provider]
+            backend_name = getattr(self, "name", "")
+            if backend_name and backend_name != self.provider:
+                candidates.append(backend_name)
+            for alias, targets in self._PROVIDER_ALIASES.items():
+                if self.provider == alias:
+                    candidates.extend(targets)
 
-        try:
-            zone_id = (
-                context.zone_id
-                if context and hasattr(context, "zone_id") and context.zone_id
-                else "root"
-            )
+            for candidate in candidates:
+                try:
+                    provider_instance = factory.create_provider(name=candidate)
+                    self.token_manager.register_provider(self.provider, provider_instance)
+                    logger.info(
+                        "Registered OAuth provider '%s' (resolved from '%s') for %s backend",
+                        candidate,
+                        self.provider,
+                        self.name,
+                    )
+                    return
+                except ValueError:
+                    continue
 
-            access_token = run_sync(
-                self.token_manager.get_valid_token(
-                    provider=self.provider,
-                    user_email=user_email,
-                    zone_id=zone_id,
-                )
+            logger.warning(
+                "OAuth provider '%s' not available (tried: %s). "
+                "OAuth flow must be initiated manually via the Integrations page.",
+                self.provider,
+                ", ".join(candidates),
             )
         except Exception as e:
-            raise BackendError(
-                f"Failed to get valid OAuth token for user {user_email}: {e}",
-                backend="gcalendar",
-            ) from e
+            logger.error("Failed to register OAuth provider: %s", e)
 
-        from google.oauth2.credentials import Credentials
+    # =================================================================
+    # Transport context binding
+    # =================================================================
 
-        creds = Credentials(token=access_token)
-        return build("calendar", "v3", credentials=creds)
+    def _bind_transport(self, context: "OperationContext | None") -> None:
+        """Bind the transport to the current request context (OAuth token)."""
+        self._transport = self._cal_transport.with_context(context)
 
-    # =========================================================================
-    # YAML Formatting
-    # =========================================================================
-
-    def _format_event_as_yaml(self, event: dict[str, Any]) -> bytes:
-        """Format calendar event as YAML bytes.
-
-        Args:
-            event: Event data from Google Calendar API
-
-        Returns:
-            Formatted YAML as bytes
-        """
-        # Extract relevant fields
-        yaml_data = {
-            "id": event.get("id"),
-            "summary": event.get("summary", "(No title)"),
-            "description": event.get("description"),
-            "location": event.get("location"),
-            "start": event.get("start"),
-            "end": event.get("end"),
-            "created": event.get("created"),
-            "updated": event.get("updated"),
-            "status": event.get("status"),
-            "organizer": event.get("organizer"),
-            "attendees": event.get("attendees"),
-            "recurrence": event.get("recurrence"),
-            "recurringEventId": event.get("recurringEventId"),
-            "htmlLink": event.get("htmlLink"),
-        }
-
-        # Remove None values
-        yaml_data = {k: v for k, v in yaml_data.items() if v is not None}
-
-        yaml_output: str = yaml.dump(
-            yaml_data,
-            default_flow_style=False,
-            allow_unicode=True,
-            sort_keys=False,
-        )
-        return yaml_output.encode("utf-8")
-
-    def _parse_yaml_content(self, content: bytes) -> dict[str, Any]:
-        """Parse YAML content from agent request.
-
-        Extracts agent_intent and confirm from comments.
-
-        Args:
-            content: YAML content as bytes
-
-        Returns:
-            Parsed data dict including agent_intent and confirm
-        """
-        text = content.decode("utf-8")
-        lines = text.split("\n")
-
-        data: dict[str, Any] = {}
-
-        # Extract comments (agent_intent, confirm, user_confirmed)
-        for line in lines:
-            line = line.strip()
-            if line.startswith("# agent_intent:"):
-                data["agent_intent"] = line.replace("# agent_intent:", "").strip()
-            elif line.startswith("# confirm:"):
-                value = line.replace("# confirm:", "").strip().lower()
-                data["confirm"] = value == "true"
-            elif line.startswith("# user_confirmed:"):
-                value = line.replace("# user_confirmed:", "").strip().lower()
-                data["user_confirmed"] = value == "true"
-
-        # Parse YAML body
-        yaml_content = yaml.safe_load(text) or {}
-        if isinstance(yaml_content, dict):
-            data.update(yaml_content)
-
-        return data
-
-    # =========================================================================
-    # Backend Interface - Read Operations
-    # =========================================================================
+    # =================================================================
+    # Content operations — override for Calendar CRUD
+    # =================================================================
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
-        """Read event content from cache or Google Calendar API.
-
-        Args:
-            content_hash: Ignored for connector backends
-            context: Operation context with backend_path
-
-        Returns:
-            Event content as YAML bytes
-
-        Raises:
-            NexusFileNotFoundError: If event doesn't exist
-            BackendError: If read operation fails
-        """
-        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
                 backend="gcalendar",
             )
 
-        path = context.backend_path.strip("/")
-        parts = path.split("/")
+        self._bind_transport(context)
 
-        # Must be calendar_id/event_id.yaml
-        if len(parts) != 2 or not parts[1].endswith(".yaml"):
-            raise NexusFileNotFoundError(context.backend_path)
-
-        calendar_id = parts[0]
-        event_id = parts[1].replace(".yaml", "")
-
-        # Skip special files
-        if event_id.startswith("_"):
-            raise NexusFileNotFoundError(context.backend_path)
-
-        # Check cache first
+        # Cache check
         cache_path = self._get_cache_path(context) or context.backend_path
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
                 return cached.content_binary
 
-        # Fetch from Google Calendar API
-        try:
-            service = self._get_calendar_service(context)
-            event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
-        except Exception as e:
-            raise NexusFileNotFoundError(context.backend_path) from e
+        # Delegate to PathAddressingEngine → transport.fetch
+        content = super().read_content(content_id, context)
 
-        content = self._format_event_as_yaml(event)
-
-        # Cache the result
+        # Cache result
         if self._has_caching():
             with suppress(Exception):
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=event.get("etag", IMMUTABLE_VERSION),
+                    backend_version=IMMUTABLE_VERSION,
                     zone_id=zone_id,
                 )
-
         return content
-
-    # =========================================================================
-    # Backend Interface - Write Operations (CUD)
-    # =========================================================================
 
     def write_content(
         self,
@@ -472,31 +344,17 @@ send_notifications: true
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        """Write event content - handles create and update.
-
-        For create: Write to /{calendar_id}/_new.yaml
-        For update: Write to /{calendar_id}/{event_id}.yaml
-
-        Args:
-            content: YAML content with event data
-            context: Operation context with backend_path
-
-        Returns:
-            Event ID (for create) or "updated" (for update)
-
-        Raises:
-            ValidationError: If validation fails
-            BackendError: If operation fails
-        """
+        """Handle create/update with validation + checkpoints."""
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
                 backend="gcalendar",
             )
 
+        self._bind_transport(context)
+
         path = context.backend_path.strip("/")
         parts = path.split("/")
-
         if len(parts) != 2:
             raise BackendError(
                 f"Invalid path: {path}. Expected: calendar_id/event_id.yaml",
@@ -506,74 +364,52 @@ send_notifications: true
         calendar_id = parts[0]
         filename = parts[1]
 
-        # Parse content
-        data = self._parse_yaml_content(content)
+        # Parse YAML for validation
+        data = CalendarTransport._parse_yaml_content(content)
 
-        # Determine operation
         if filename == "_new.yaml":
-            result = self._create_event(calendar_id, data, context)
+            result = self._create_event(calendar_id, data, context, content)
         elif filename.endswith(".yaml"):
-            event_id = filename.replace(".yaml", "")
-            result = self._update_event(calendar_id, event_id, data, context)
+            event_id = filename.removesuffix(".yaml")
+            result = self._update_event(calendar_id, event_id, data, context, content)
         else:
             raise BackendError(
                 f"Invalid filename: {filename}. Use _new.yaml for create or {{event_id}}.yaml for update.",
                 backend="gcalendar",
             )
-
         return WriteResult(content_id=result, version=result, size=len(content))
 
     def _create_event(
-        self, calendar_id: str, data: dict[str, Any], context: "OperationContext | None"
+        self,
+        calendar_id: str,
+        data: dict[str, Any],
+        context: "OperationContext | None",
+        raw_content: bytes,
     ) -> str:
-        """Create a new calendar event.
-
-        Args:
-            calendar_id: Calendar ID
-            data: Event data
-            context: Operation context
-
-        Returns:
-            Created event ID
-
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Validate traits
+        """Validate, checkpoint, then delegate to transport.store()."""
         warnings = self.validate_traits("create_event", data)
-        for warning in warnings:
-            logger.warning(f"Create event warning: {warning}")
+        for w in warnings:
+            logger.warning("Create event warning: %s", w)
+        self.validate_schema("create_event", data)
 
-        # Validate schema
-        validated = self.validate_schema("create_event", data)
-
-        # Create checkpoint
         checkpoint = self.create_checkpoint("create_event", metadata={"calendar_id": calendar_id})
 
-        # Build event body for API
-        event_body = self._build_event_body(validated)
-
         try:
-            service = self._get_calendar_service(context)
-            created_event = (
-                service.events().insert(calendarId=calendar_id, body=event_body).execute()
-            )
+            blob_path = self._get_key_path(f"{calendar_id}/_new.yaml")
+            event_id = self._transport.store(blob_path, raw_content) or ""
 
-            event_id: str = created_event.get("id", "")
-
-            # Complete checkpoint with created state
             if checkpoint:
                 self.complete_checkpoint(
                     checkpoint.checkpoint_id,
                     {"event_id": event_id, "calendar_id": calendar_id},
                 )
-
-            logger.info(f"Created calendar event: {event_id}")
+            logger.info("Created calendar event: %s", event_id)
             return event_id
-
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
+            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+                raise
             raise BackendError(f"Failed to create event: {e}", backend="gcalendar") from e
 
     def _update_event(
@@ -582,34 +418,18 @@ send_notifications: true
         event_id: str,
         data: dict[str, Any],
         context: "OperationContext | None",
+        raw_content: bytes,
     ) -> str:
-        """Update an existing calendar event.
-
-        Args:
-            calendar_id: Calendar ID
-            event_id: Event ID
-            data: Update data
-            context: Operation context
-
-        Returns:
-            "updated"
-
-        Raises:
-            ValidationError: If validation fails
-        """
-        # Validate traits
+        """Validate, checkpoint with previous state, then delegate to transport.store()."""
         warnings = self.validate_traits("update_event", data)
-        for warning in warnings:
-            logger.warning(f"Update event warning: {warning}")
+        for w in warnings:
+            logger.warning("Update event warning: %s", w)
+        self.validate_schema("update_event", data)
 
-        # Validate schema
-        validated = self.validate_schema("update_event", data)
-
-        service = self._get_calendar_service(context)
-
-        # Get current event for checkpoint
+        # Fetch current event for checkpoint
         try:
-            current_event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            blob_path = self._get_key_path(f"{calendar_id}/{event_id}.yaml")
+            current_bytes, _ = self._transport.fetch(blob_path)
         except Exception as e:
             raise ValidationError(
                 code="EVENT_NOT_FOUND",
@@ -618,71 +438,52 @@ send_notifications: true
                 skill_section="operations",
             ) from e
 
-        # Create checkpoint with previous state
+        import yaml as _yaml
+
+        current_event = _yaml.safe_load(current_bytes) or {}
+
         checkpoint = self.create_checkpoint(
             "update_event",
             previous_state=current_event,
             metadata={"calendar_id": calendar_id, "event_id": event_id},
         )
 
-        # Build update body (merge with existing)
-        event_body = self._build_event_body(validated, current_event)
-
         try:
-            service.events().update(
-                calendarId=calendar_id, eventId=event_id, body=event_body
-            ).execute()
-
+            self._transport.store(blob_path, raw_content)
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-
-            logger.info(f"Updated calendar event: {event_id}")
+            logger.info("Updated calendar event: %s", event_id)
             return "updated"
-
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
+            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+                raise
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
-        """Delete a calendar event.
-
-        Args:
-            content_hash: Ignored
-            context: Operation context with backend_path
-
-        Raises:
-            ValidationError: If validation fails
-            BackendError: If delete fails
-        """
-        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
                 backend="gcalendar",
             )
 
+        self._bind_transport(context)
+
         path = context.backend_path.strip("/")
         parts = path.split("/")
-
         if len(parts) != 2 or not parts[1].endswith(".yaml"):
             raise BackendError(f"Invalid path for delete: {path}", backend="gcalendar")
 
         calendar_id = parts[0]
-        event_id = parts[1].replace(".yaml", "")
+        event_id = parts[1].removesuffix(".yaml")
 
-        # delete_content is a backend-level interface method. Agent-facing
-        # deletes must go through write_content() with YAML containing
-        # "# agent_intent: ..." and "# confirm: true" — trait validation
-        # is enforced in that path. Do NOT fabricate confirmation data here
-        # as that would bypass the explicit-confirmation safety contract.
         logger.info("delete_content called for event %s in calendar %s", event_id, calendar_id)
 
-        service = self._get_calendar_service(context)
-
-        # Get current event for checkpoint
+        # Fetch current event for checkpoint
+        blob_path = self._get_key_path(f"{calendar_id}/{event_id}.yaml")
         try:
-            current_event = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+            current_bytes, _ = self._transport.fetch(blob_path)
         except Exception as e:
             raise ValidationError(
                 code="EVENT_NOT_FOUND",
@@ -690,7 +491,10 @@ send_notifications: true
                 skill_path=self.skill_md_path,
             ) from e
 
-        # Create checkpoint
+        import yaml as _yaml
+
+        current_event = _yaml.safe_load(current_bytes) or {}
+
         checkpoint = self.create_checkpoint(
             "delete_event",
             previous_state=current_event,
@@ -698,214 +502,93 @@ send_notifications: true
         )
 
         try:
-            service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-
+            self._transport.remove(blob_path)
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
-
-            logger.info(f"Deleted calendar event: {event_id}")
-
+            logger.info("Deleted calendar event: %s", event_id)
         except Exception as e:
             if checkpoint:
                 self.clear_checkpoint(checkpoint.checkpoint_id)
+            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+                raise
             raise BackendError(f"Failed to delete event: {e}", backend="gcalendar") from e
 
-    def _build_event_body(
-        self, validated: Any, existing: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
-        """Build Google Calendar API event body from validated data.
-
-        Args:
-            validated: Validated Pydantic model
-            existing: Existing event data (for updates)
-
-        Returns:
-            Event body dict for Google Calendar API
-        """
-        body: dict[str, Any] = existing.copy() if existing else {}
-
-        # Handle Pydantic model or dict
-        if hasattr(validated, "model_dump"):
-            data = validated.model_dump(exclude_unset=True, exclude_none=True)
-        else:
-            data = validated
-
-        # Remove our custom fields
-        data.pop("agent_intent", None)
-        data.pop("confirm", None)
-        data.pop("user_confirmed", None)
-
-        # Map fields to Google Calendar API format
-        if "summary" in data:
-            body["summary"] = data["summary"]
-        if "description" in data:
-            body["description"] = data["description"]
-        if "location" in data:
-            body["location"] = data["location"]
-        if "start" in data:
-            start = data["start"]
-            if hasattr(start, "model_dump"):
-                start = start.model_dump()
-            body["start"] = start
-        if "end" in data:
-            end = data["end"]
-            if hasattr(end, "model_dump"):
-                end = end.model_dump()
-            body["end"] = end
-        if "attendees" in data:
-            attendees = data["attendees"]
-            body["attendees"] = [
-                a.model_dump() if hasattr(a, "model_dump") else a for a in attendees
-            ]
-        if "recurrence" in data:
-            body["recurrence"] = data["recurrence"]
-        if "visibility" in data:
-            body["visibility"] = data["visibility"]
-        if "colorId" in data:
-            body["colorId"] = data["colorId"]
-
-        return body
-
-    # =========================================================================
-    # Backend Interface - Directory Operations
-    # =========================================================================
-
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
-        """Check if event exists."""
-        _ = content_id  # Unused for connector backends
         if not context or not context.backend_path:
             return False
-
-        try:
-            self.read_content("", context)
-            return True
-        except Exception:
-            return False
+        self._bind_transport(context)
+        return super().content_exists(content_id, context)
 
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
-        """Get event content size."""
         if not context:
             return 0
 
-        # Check cache first
         if hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 return cached_size
 
-        # Read content to get size
-        content = self.read_content(content_id, context)
-        return len(content)
+        self._bind_transport(context)
+        return super().get_content_size(content_id, context)
+
+    # =================================================================
+    # Version support
+    # =================================================================
 
     def get_version(self, path: str, context: "OperationContext | None" = None) -> str | None:
-        """Get version for a calendar event file."""
         try:
-            if context and hasattr(context, "backend_path") and context.backend_path:
-                backend_path = context.backend_path
-            else:
-                backend_path = path.lstrip("/")
-
+            backend_path = (
+                context.backend_path
+                if context and hasattr(context, "backend_path") and context.backend_path
+                else path.lstrip("/")
+            )
             if not backend_path.endswith(".yaml"):
                 return None
-
-            parts = backend_path.split("/")
-            if len(parts) != 2:
+            if len(backend_path.split("/")) != 2:
                 return None
-
-            # For events, return etag from API or cached version
             return IMMUTABLE_VERSION
-
         except Exception:
             return None
 
+    # =================================================================
+    # Directory operations — override for Calendar virtual directories
+    # =================================================================
+
     def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
-        """Check if path is a directory."""
-        _ = context  # Unused
         path = path.strip("/")
         if not path:
-            return True  # Root is always a directory
-
-        parts = path.split("/")
-        # Calendar IDs (single part) are directories, event files are not
-        return len(parts) == 1
+            return True
+        return len(path.split("/")) == 1
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
-        """List directory contents.
-
-        Args:
-            path: Directory path to list
-            context: Operation context for authentication
-
-        Returns:
-            List of entry names
-        """
-        path = path.strip("/")
-
-        # Root directory - list calendars
-        if not path:
-            return self._list_calendars(context)
-
-        # Calendar directory - list events
-        return self._list_events(path, context)
-
-    def _list_calendars(self, context: "OperationContext | None") -> list[str]:
-        """List available calendars."""
         try:
-            service = self._get_calendar_service(context)
-            calendars_result = service.calendarList().list().execute()
-            calendars = calendars_result.get("items", [])
+            path = path.strip("/")
+            self._bind_transport(context)
 
-            entries = []
-            for cal in calendars:
-                cal_id = cal.get("id", "")
-                if cal_id == context.user_id if context else False:
-                    entries.append("primary/")
-                else:
-                    # Use summary as folder name if available, otherwise ID
-                    entries.append(f"{cal_id}/")
+            if not path:
+                # Root → list calendars
+                _keys, prefixes = self._transport.list_keys(prefix="", delimiter="/")
+                return prefixes
 
-            # Always include primary
-            if "primary/" not in entries:
-                entries.insert(0, "primary/")
+            # Calendar → list events
+            keys, _prefixes = self._transport.list_keys(prefix=path, delimiter="/")
+            cal_prefix = f"{path}/"
+            files = []
+            for key in keys:
+                name = key[len(cal_prefix) :] if key.startswith(cal_prefix) else key
+                if name:
+                    files.append(name)
+            return sorted(files)
 
-            return sorted(set(entries))
-
+        except (FileNotFoundError, NotADirectoryError):
+            raise
         except Exception as e:
-            raise BackendError(f"Failed to list calendars: {e}", backend="gcalendar") from e
-
-    def _list_events(self, calendar_id: str, context: "OperationContext | None") -> list[str]:
-        """List events in a calendar."""
-        try:
-            service = self._get_calendar_service(context)
-
-            # Get events from now onwards
-            now = datetime.now(UTC).isoformat()
-
-            events_result = (
-                service.events()
-                .list(
-                    calendarId=calendar_id,
-                    timeMin=now,
-                    maxResults=self.max_events_per_calendar,
-                    singleEvents=True,
-                    orderBy="startTime",
-                )
-                .execute()
-            )
-            events = events_result.get("items", [])
-
-            entries = []
-            for event in events:
-                event_id = event.get("id")
-                if event_id:
-                    entries.append(f"{event_id}.yaml")
-
-            return sorted(entries)
-
-        except Exception as e:
+            if isinstance(e, BackendError):
+                raise
             raise BackendError(
-                f"Failed to list events in calendar {calendar_id}: {e}",
+                f"Failed to list directory {path}: {e}",
                 backend="gcalendar",
+                path=path,
             ) from e
 
     def mkdir(
@@ -915,8 +598,6 @@ send_notifications: true
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory (not supported - calendars are created via Google)."""
-        _, _, _, _ = path, parents, exist_ok, context  # Unused
         raise BackendError(
             "Cannot create calendars via Nexus. Use Google Calendar to create new calendars.",
             backend="gcalendar",
@@ -928,8 +609,6 @@ send_notifications: true
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Remove directory (not supported)."""
-        _, _, _ = path, recursive, context  # Unused
         raise BackendError(
             "Cannot delete calendars via Nexus. Use Google Calendar to manage calendars.",
             backend="gcalendar",

@@ -605,12 +605,12 @@ def main():
     print(f"Skip API calls: {args.skip_api}")
 
     # Import after path setup
-    from nexus.backends.gmail_connector import GmailConnectorBackend
+    from nexus.backends.connectors.gmail.connector import PathGmailBackend
     from nexus.contracts.constants import ROOT_ZONE_ID
     from nexus.contracts.types import OperationContext
 
     # Create backend
-    backend = GmailConnectorBackend(
+    backend = PathGmailBackend(
         token_manager_db=db_url,
         user_email=args.user,
     )

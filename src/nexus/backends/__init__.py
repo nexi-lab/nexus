@@ -44,10 +44,10 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     "HNConnectorBackend": ("nexus.backends.connectors.hn.connector", "HNConnectorBackend"),
     "SlackConnectorBackend": ("nexus.backends.connectors.slack.connector", "SlackConnectorBackend"),
     "LocalConnectorBackend": ("nexus.backends.storage.local_connector", "LocalConnectorBackend"),
-    "GmailConnectorBackend": ("nexus.backends.connectors.gmail.connector", "GmailConnectorBackend"),
-    "GoogleCalendarConnectorBackend": (
+    "PathGmailBackend": ("nexus.backends.connectors.gmail.connector", "PathGmailBackend"),
+    "PathCalendarBackend": (
         "nexus.backends.connectors.calendar.connector",
-        "GoogleCalendarConnectorBackend",
+        "PathCalendarBackend",
     ),
     # GWS CLI connectors (Issue #3148 — gws-backed replacements)
     "GmailCLIConnector": (
@@ -229,6 +229,6 @@ __all__ = [
     "HNConnectorBackend",
     "SlackConnectorBackend",
     "LocalConnectorBackend",
-    "GmailConnectorBackend",
-    "GoogleCalendarConnectorBackend",
+    "PathGmailBackend",
+    "PathCalendarBackend",
 ]

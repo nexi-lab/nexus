@@ -108,8 +108,8 @@ def profiles():
     )
 
 
-def _get_tool(server, name):
-    return server._tool_manager._tools[name]
+async def _get_tool(server, name):
+    return await server.get_tool(name)
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +225,7 @@ class TestDiscoveryEndToEnd:
         )
 
         server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
-        tool_fn = _get_tool(server, "nexus_discovery_search_tools")
+        tool_fn = await _get_tool(server, "nexus_discovery_search_tools")
 
         ctx = Mock()
         ctx.get_state = Mock(
@@ -256,7 +256,7 @@ class TestDiscoveryEndToEnd:
         )
 
         server = await create_mcp_server(nx=mock_nx, tool_namespace_middleware=middleware)
-        tool_fn = _get_tool(server, "nexus_discovery_get_tool_details")
+        tool_fn = await _get_tool(server, "nexus_discovery_get_tool_details")
 
         ctx = Mock()
         ctx.get_state = Mock(

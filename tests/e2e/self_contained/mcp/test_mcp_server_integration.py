@@ -20,28 +20,32 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ============================================================================
 
 
-def get_tool(server, tool_name: str):
+async def get_tool(server, tool_name: str):
     """Helper to get a tool from the MCP server."""
-    return server._tool_manager._tools[tool_name]
+    return await server.get_tool(tool_name)
 
 
-def get_prompt(server, prompt_name: str):
+async def get_prompt(server, prompt_name: str):
     """Helper to get a prompt from the MCP server."""
-    return server._prompt_manager._prompts[prompt_name]
+    return await server.get_prompt(prompt_name)
 
 
-def get_resource_template(server, uri_pattern: str):
+async def get_resource_template(server, uri_pattern: str):
     """Helper to get a resource template from the MCP server."""
-    templates = server._resource_manager._templates
-    for template_key, template in templates.items():
-        if uri_pattern in str(template_key):
+    templates = await server.list_resource_templates()
+    for template in templates:
+        if uri_pattern in str(getattr(template, "uri_template", "")):
             return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
 
-def tool_exists(server, tool_name: str) -> bool:
+async def tool_exists(server, tool_name: str) -> bool:
     """Check if a tool exists in the server."""
-    return tool_name in server._tool_manager._tools
+    try:
+        result = await server.get_tool(tool_name)
+        return result is not None
+    except (KeyError, Exception):
+        return False
 
 
 def extract_items(result: str | list | dict) -> list:
@@ -126,7 +130,7 @@ class TestFileOperationsIntegration:
     async def test_write_and_read_file(self, mcp_server, nexus_fs):
         """Test writing and then reading a file."""
         # Write file using MCP tool
-        write_tool = get_tool(mcp_server, "nexus_write_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
         write_result = await write_tool.fn(
             path="/integration_test.txt", content="Integration test content"
         )
@@ -134,7 +138,7 @@ class TestFileOperationsIntegration:
         assert "Successfully wrote" in write_result
 
         # Read file using MCP tool
-        read_tool = get_tool(mcp_server, "nexus_read_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
         read_result = await read_tool.fn(path="/integration_test.txt")
 
         assert read_result == "Integration test content"
@@ -147,13 +151,13 @@ class TestFileOperationsIntegration:
     async def test_create_list_and_delete_workflow(self, mcp_server, nexus_fs):
         """Test complete file lifecycle: create, list, delete."""
         # Create multiple files
-        write_tool = get_tool(mcp_server, "nexus_write_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
         await write_tool.fn(path="/workflow/file1.txt", content="File 1")
         await write_tool.fn(path="/workflow/file2.txt", content="File 2")
         await write_tool.fn(path="/workflow/file3.txt", content="File 3")
 
         # List files
-        list_tool = get_tool(mcp_server, "nexus_list_files")
+        list_tool = await get_tool(mcp_server, "nexus_list_files")
         list_result = await list_tool.fn(path="/workflow")
         files = extract_items(list_result)
 
@@ -162,7 +166,7 @@ class TestFileOperationsIntegration:
         assert any("/workflow/file1.txt" in str(p) for p in file_paths)
 
         # Delete one file
-        delete_tool = get_tool(mcp_server, "nexus_delete_file")
+        delete_tool = await get_tool(mcp_server, "nexus_delete_file")
         delete_result = await delete_tool.fn(path="/workflow/file2.txt")
 
         assert "Successfully deleted" in delete_result
@@ -175,9 +179,9 @@ class TestFileOperationsIntegration:
     @pytest.mark.asyncio
     async def test_directory_operations(self, mcp_server, nexus_fs):
         """Test directory creation and removal."""
-        mkdir_tool = get_tool(mcp_server, "nexus_mkdir")
-        rmdir_tool = get_tool(mcp_server, "nexus_rmdir")
-        write_tool = get_tool(mcp_server, "nexus_write_file")
+        mkdir_tool = await get_tool(mcp_server, "nexus_mkdir")
+        rmdir_tool = await get_tool(mcp_server, "nexus_rmdir")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
 
         # Create directory
         mkdir_result = await mkdir_tool.fn(path="/testdir")
@@ -199,7 +203,7 @@ class TestFileOperationsIntegration:
     @pytest.mark.asyncio
     async def test_file_info_integration(self, mcp_server, test_files):
         """Test getting file information for real files."""
-        info_tool = get_tool(mcp_server, "nexus_file_info")
+        info_tool = await get_tool(mcp_server, "nexus_file_info")
 
         # Get info for existing file
         result = await info_tool.fn(path="/test.txt")
@@ -219,9 +223,10 @@ class TestFileOperationsIntegration:
 class TestSearchIntegration:
     """Integration tests for search operations."""
 
-    def test_glob_search(self, mcp_server, test_files):
+    @pytest.mark.asyncio
+    async def test_glob_search(self, mcp_server, test_files):
         """Test glob search with real files."""
-        glob_tool = get_tool(mcp_server, "nexus_glob")
+        glob_tool = await get_tool(mcp_server, "nexus_glob")
 
         # Search for .txt files
         result = glob_tool.fn(pattern="**/*.txt", path="/")
@@ -243,7 +248,7 @@ class TestSearchIntegration:
         )
         await nexus_fs.write("/search/file3.py", b"# TODO: implement feature\nimport sys")
 
-        grep_tool = get_tool(mcp_server, "nexus_grep")
+        grep_tool = await get_tool(mcp_server, "nexus_grep")
 
         # Search for TODO comments
         result = await grep_tool.fn(pattern="TODO", path="/search")
@@ -267,17 +272,18 @@ class TestResourcesAndPromptsIntegration:
     )
     async def test_file_resource_access(self, mcp_server, test_files):
         """Test accessing files through resource endpoints."""
-        resource = get_resource_template(mcp_server, "nexus://files/")
+        resource = await get_resource_template(mcp_server, "nexus://files/")
 
         # Access file through resource
         result = await resource.fn(path="/test.txt")
 
         assert result == "Hello, World!"
 
-    def test_prompts_integration(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_prompts_integration(self, mcp_server):
         """Test prompt generation."""
         # Test file analysis prompt
-        file_prompt = get_prompt(mcp_server, "file_analysis_prompt")
+        file_prompt = await get_prompt(mcp_server, "file_analysis_prompt")
         result = file_prompt.fn(file_path="/test.txt")
 
         assert "/test.txt" in result
@@ -285,7 +291,7 @@ class TestResourcesAndPromptsIntegration:
         assert "Analyze" in result
 
         # Test search and summarize prompt
-        search_prompt = get_prompt(mcp_server, "search_and_summarize_prompt")
+        search_prompt = await get_prompt(mcp_server, "search_and_summarize_prompt")
         result_search = search_prompt.fn(query="authentication")
 
         assert "authentication" in result_search
@@ -298,9 +304,9 @@ class TestMultiToolWorkflows:
     @pytest.mark.asyncio
     async def test_create_search_modify_workflow(self, mcp_server, nexus_fs):
         """Test workflow: create files, search, modify, verify."""
-        write_tool = get_tool(mcp_server, "nexus_write_file")
-        read_tool = get_tool(mcp_server, "nexus_read_file")
-        glob_tool = get_tool(mcp_server, "nexus_glob")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
+        glob_tool = await get_tool(mcp_server, "nexus_glob")
 
         # Step 1: Create multiple Python files
         await write_tool.fn(path="/project/main.py", content="def main():\n    pass")
@@ -326,9 +332,9 @@ class TestMultiToolWorkflows:
     @pytest.mark.asyncio
     async def test_bulk_file_operations(self, mcp_server, nexus_fs):
         """Test handling multiple files efficiently."""
-        write_tool = get_tool(mcp_server, "nexus_write_file")
-        list_tool = get_tool(mcp_server, "nexus_list_files")
-        delete_tool = get_tool(mcp_server, "nexus_delete_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
+        list_tool = await get_tool(mcp_server, "nexus_list_files")
+        delete_tool = await get_tool(mcp_server, "nexus_delete_file")
 
         # Create 20 files
         for i in range(20):
@@ -355,7 +361,7 @@ class TestErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_read_nonexistent_file(self, mcp_server):
         """Test reading a file that doesn't exist."""
-        read_tool = get_tool(mcp_server, "nexus_read_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
         result = await read_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
@@ -364,17 +370,18 @@ class TestErrorHandlingIntegration:
     @pytest.mark.asyncio
     async def test_delete_nonexistent_file(self, mcp_server):
         """Test deleting a file that doesn't exist."""
-        delete_tool = get_tool(mcp_server, "nexus_delete_file")
+        delete_tool = await get_tool(mcp_server, "nexus_delete_file")
         result = await delete_tool.fn(path="/nonexistent/file.txt")
 
         assert "Error" in result
         assert "not found" in result.lower() or "deleted" in result.lower()
 
-    def test_invalid_json_in_workflow_execute(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_invalid_json_in_workflow_execute(self, mcp_server):
         """Test workflow execution with invalid JSON input."""
         # Get workflow tool (it may not be available without workflow system)
-        if tool_exists(mcp_server, "nexus_execute_workflow"):
-            exec_tool = get_tool(mcp_server, "nexus_execute_workflow")
+        if await tool_exists(mcp_server, "nexus_execute_workflow"):
+            exec_tool = await get_tool(mcp_server, "nexus_execute_workflow")
             result = exec_tool.fn(name="test", inputs="{invalid json")
 
             # Should contain an error message (either from JSON parsing or workflow not available)
@@ -384,14 +391,15 @@ class TestErrorHandlingIntegration:
 class TestMemoryIntegration:
     """Integration tests for memory system."""
 
-    def test_store_and_query_memory(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_store_and_query_memory(self, mcp_server):
         """Test storing and querying memories."""
         # Check if memory tools are available
-        if not tool_exists(mcp_server, "nexus_store_memory"):
+        if not await tool_exists(mcp_server, "nexus_store_memory"):
             pytest.skip("Memory system not available")
 
-        store_tool = get_tool(mcp_server, "nexus_store_memory")
-        query_tool = get_tool(mcp_server, "nexus_query_memory")
+        store_tool = await get_tool(mcp_server, "nexus_store_memory")
+        query_tool = await get_tool(mcp_server, "nexus_query_memory")
 
         # Store a memory
         store_result = store_tool.fn(
@@ -417,11 +425,12 @@ class TestMemoryIntegration:
                     # If parsing fails, that's okay - memory may not be fully configured
                     pass
 
-    def test_memory_not_available_graceful(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_memory_not_available_graceful(self, mcp_server):
         """Test that memory tools gracefully handle unavailable memory system."""
         # Even if memory system isn't available, tools should return helpful message
-        if tool_exists(mcp_server, "nexus_store_memory"):
-            store_tool = get_tool(mcp_server, "nexus_store_memory")
+        if await tool_exists(mcp_server, "nexus_store_memory"):
+            store_tool = await get_tool(mcp_server, "nexus_store_memory")
             result = store_tool.fn(content="Test content", memory_type="test", importance=0.5)
 
             # Should either succeed or provide clear error message
@@ -431,23 +440,25 @@ class TestMemoryIntegration:
 class TestWorkflowIntegration:
     """Integration tests for workflow system."""
 
-    def test_list_workflows(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_list_workflows(self, mcp_server):
         """Test listing available workflows."""
-        if not tool_exists(mcp_server, "nexus_list_workflows"):
+        if not await tool_exists(mcp_server, "nexus_list_workflows"):
             pytest.skip("Workflow system not available")
 
-        list_tool = get_tool(mcp_server, "nexus_list_workflows")
+        list_tool = await get_tool(mcp_server, "nexus_list_workflows")
         result = list_tool.fn()
 
         # Should return JSON list or indicate not available
         assert "not available" in result or result.startswith("[") or result.startswith("{")
 
-    def test_execute_workflow(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_execute_workflow(self, mcp_server):
         """Test executing a workflow."""
-        if not tool_exists(mcp_server, "nexus_execute_workflow"):
+        if not await tool_exists(mcp_server, "nexus_execute_workflow"):
             pytest.skip("Workflow system not available")
 
-        exec_tool = get_tool(mcp_server, "nexus_execute_workflow")
+        exec_tool = await get_tool(mcp_server, "nexus_execute_workflow")
         result = exec_tool.fn(name="test_workflow", inputs=None)
 
         # Should return result or indicate workflow not found/not available
@@ -462,12 +473,13 @@ class TestWorkflowIntegration:
 class TestSemanticSearchIntegration:
     """Integration tests for semantic search."""
 
-    def test_semantic_search_availability(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_semantic_search_availability(self, mcp_server):
         """Test semantic search tool availability and behavior."""
-        if not tool_exists(mcp_server, "nexus_semantic_search"):
+        if not await tool_exists(mcp_server, "nexus_semantic_search"):
             pytest.skip("Semantic search tool not registered")
 
-        search_tool = get_tool(mcp_server, "nexus_semantic_search")
+        search_tool = await get_tool(mcp_server, "nexus_semantic_search")
         result = search_tool.fn(query="test files", limit=5)
 
         # Should return JSON results or indicate not available
@@ -481,16 +493,17 @@ class TestSandboxIntegration:
         True,  # Skip by default - requires Docker/E2B setup
         reason="Requires sandbox providers (Docker or E2B) to be configured",
     )
-    def test_sandbox_lifecycle(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_sandbox_lifecycle(self, mcp_server):
         """Test complete sandbox lifecycle: create, execute, stop."""
         # Check if sandbox tools are available
-        if not tool_exists(mcp_server, "nexus_sandbox_create"):
+        if not await tool_exists(mcp_server, "nexus_sandbox_create"):
             pytest.skip("Sandbox tools not available")
 
-        create_tool = get_tool(mcp_server, "nexus_sandbox_create")
-        python_tool = get_tool(mcp_server, "nexus_python")
-        list_tool = get_tool(mcp_server, "nexus_sandbox_list")
-        stop_tool = get_tool(mcp_server, "nexus_sandbox_stop")
+        create_tool = await get_tool(mcp_server, "nexus_sandbox_create")
+        python_tool = await get_tool(mcp_server, "nexus_python")
+        list_tool = await get_tool(mcp_server, "nexus_sandbox_list")
+        stop_tool = await get_tool(mcp_server, "nexus_sandbox_stop")
 
         # Create sandbox
         create_result = create_tool.fn(name="integration-test", ttl_minutes=5)
@@ -517,14 +530,15 @@ class TestSandboxIntegration:
         True,  # Skip by default
         reason="Requires sandbox providers to be configured",
     )
-    def test_sandbox_bash_execution(self, mcp_server):
+    @pytest.mark.asyncio
+    async def test_sandbox_bash_execution(self, mcp_server):
         """Test bash command execution in sandbox."""
-        if not tool_exists(mcp_server, "nexus_sandbox_create"):
+        if not await tool_exists(mcp_server, "nexus_sandbox_create"):
             pytest.skip("Sandbox tools not available")
 
-        create_tool = get_tool(mcp_server, "nexus_sandbox_create")
-        bash_tool = get_tool(mcp_server, "nexus_bash")
-        stop_tool = get_tool(mcp_server, "nexus_sandbox_stop")
+        create_tool = await get_tool(mcp_server, "nexus_sandbox_create")
+        bash_tool = await get_tool(mcp_server, "nexus_bash")
+        stop_tool = await get_tool(mcp_server, "nexus_sandbox_stop")
 
         # Create sandbox
         create_result = create_tool.fn(name="bash-test")
@@ -564,12 +578,12 @@ class TestServerConfiguration:
 
             assert server is not None
             assert server.name == "integration-test-server"
-            assert len(server._tool_manager._tools) >= 14
+            assert len(await server.list_tools()) >= 14
 
             # Verify all core tools are present
-            assert tool_exists(server, "nexus_read_file")
-            assert tool_exists(server, "nexus_write_file")
-            assert tool_exists(server, "nexus_list_files")
+            assert await tool_exists(server, "nexus_read_file")
+            assert await tool_exists(server, "nexus_write_file")
+            assert await tool_exists(server, "nexus_list_files")
         finally:
             nx.close()
 
@@ -583,8 +597,8 @@ class TestServerConfiguration:
         assert server2.name == "server2"
 
         # Both should work with the same filesystem
-        write_tool1 = get_tool(server1, "nexus_write_file")
-        read_tool2 = get_tool(server2, "nexus_read_file")
+        write_tool1 = await get_tool(server1, "nexus_write_file")
+        read_tool2 = await get_tool(server2, "nexus_read_file")
 
         await write_tool1.fn(path="/shared_file.txt", content="Shared content")
         result = await read_tool2.fn(path="/shared_file.txt")
@@ -601,12 +615,12 @@ class TestComprehensiveMCPToolsWorkflow:
         # This test mirrors the comprehensive bash script test_mcp_tools.sh
 
         # Step 1: Test nexus_mkdir - Create test directory
-        mkdir_tool = get_tool(mcp_server, "nexus_mkdir")
+        mkdir_tool = await get_tool(mcp_server, "nexus_mkdir")
         mkdir_result = await mkdir_tool.fn(path="/mcp_integration_test")
         assert "Successfully created" in mkdir_result
 
         # Step 2: Test nexus_write_file - Write test files
-        write_tool = get_tool(mcp_server, "nexus_write_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
 
         write_result1 = await write_tool.fn(
             path="/mcp_integration_test/test1.txt", content="Hello from MCP Test!"
@@ -624,12 +638,12 @@ class TestComprehensiveMCPToolsWorkflow:
         assert "Successfully wrote" in write_result3
 
         # Step 3: Test nexus_read_file
-        read_tool = get_tool(mcp_server, "nexus_read_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
         read_result = await read_tool.fn(path="/mcp_integration_test/test1.txt")
         assert "Hello from MCP Test" in read_result
 
         # Step 4: Test nexus_list_files
-        list_tool = get_tool(mcp_server, "nexus_list_files")
+        list_tool = await get_tool(mcp_server, "nexus_list_files")
         list_result = await list_tool.fn(
             path="/mcp_integration_test", recursive=False, details=True
         )
@@ -639,19 +653,19 @@ class TestComprehensiveMCPToolsWorkflow:
         assert any("test2.py" in str(name) for name in file_names)
 
         # Step 5: Test nexus_file_info
-        info_tool = get_tool(mcp_server, "nexus_file_info")
+        info_tool = await get_tool(mcp_server, "nexus_file_info")
         info_result = await info_tool.fn(path="/mcp_integration_test/test1.txt")
         info = json.loads(info_result)
         assert info["exists"] is True
 
         # Step 6: Test nexus_glob
-        glob_tool = get_tool(mcp_server, "nexus_glob")
+        glob_tool = await get_tool(mcp_server, "nexus_glob")
         glob_result = glob_tool.fn(pattern="*.txt", path="/mcp_integration_test")
         glob_matches = extract_items(glob_result)
         assert any("test1.txt" in match for match in glob_matches)
 
         # Step 7: Test nexus_grep
-        grep_tool = get_tool(mcp_server, "nexus_grep")
+        grep_tool = await get_tool(mcp_server, "nexus_grep")
         grep_result = await grep_tool.fn(
             pattern="Hello", path="/mcp_integration_test", ignore_case=False
         )
@@ -659,15 +673,15 @@ class TestComprehensiveMCPToolsWorkflow:
         assert len(grep_matches) > 0
 
         # Step 8: Test nexus_semantic_search (optional)
-        if tool_exists(mcp_server, "nexus_semantic_search"):
-            search_tool = get_tool(mcp_server, "nexus_semantic_search")
+        if await tool_exists(mcp_server, "nexus_semantic_search"):
+            search_tool = await get_tool(mcp_server, "nexus_semantic_search")
             search_result = search_tool.fn(query="test files", limit=5)
             # Should return result or indicate not available
             assert "not available" in search_result or search_result.startswith("[")
 
         # Step 9: Test nexus_store_memory (optional)
-        if tool_exists(mcp_server, "nexus_store_memory"):
-            memory_store_tool = get_tool(mcp_server, "nexus_store_memory")
+        if await tool_exists(mcp_server, "nexus_store_memory"):
+            memory_store_tool = await get_tool(mcp_server, "nexus_store_memory")
             memory_result = memory_store_tool.fn(
                 content="This is a test memory from integration test",
                 memory_type="test",
@@ -677,22 +691,22 @@ class TestComprehensiveMCPToolsWorkflow:
             assert "Successfully stored" in memory_result or "not available" in memory_result
 
         # Step 10: Test nexus_query_memory (optional)
-        if tool_exists(mcp_server, "nexus_query_memory"):
-            memory_query_tool = get_tool(mcp_server, "nexus_query_memory")
+        if await tool_exists(mcp_server, "nexus_query_memory"):
+            memory_query_tool = await get_tool(mcp_server, "nexus_query_memory")
             query_result = memory_query_tool.fn(query="test", memory_type=None, limit=5)
             # Should return results or indicate not available
             assert "not available" in query_result or query_result.startswith("[")
 
         # Step 11: Test nexus_list_workflows (optional)
-        if tool_exists(mcp_server, "nexus_list_workflows"):
-            workflows_tool = get_tool(mcp_server, "nexus_list_workflows")
+        if await tool_exists(mcp_server, "nexus_list_workflows"):
+            workflows_tool = await get_tool(mcp_server, "nexus_list_workflows")
             workflows_result = workflows_tool.fn()
             # Should return list or indicate not available
             assert "not available" in workflows_result or workflows_result.startswith("[")
 
         # Step 12: Test nexus_execute_workflow (optional)
-        if tool_exists(mcp_server, "nexus_execute_workflow"):
-            exec_workflow_tool = get_tool(mcp_server, "nexus_execute_workflow")
+        if await tool_exists(mcp_server, "nexus_execute_workflow"):
+            exec_workflow_tool = await get_tool(mcp_server, "nexus_execute_workflow")
             exec_result = exec_workflow_tool.fn(name="test_workflow", inputs=None)
             # Should return result or indicate not available/not found
             assert (
@@ -702,12 +716,12 @@ class TestComprehensiveMCPToolsWorkflow:
             )
 
         # Step 13: Test nexus_delete_file
-        delete_tool = get_tool(mcp_server, "nexus_delete_file")
+        delete_tool = await get_tool(mcp_server, "nexus_delete_file")
         delete_result = await delete_tool.fn(path="/mcp_integration_test/data.json")
         assert "Successfully deleted" in delete_result
 
         # Step 14: Test nexus_rmdir
-        rmdir_tool = get_tool(mcp_server, "nexus_rmdir")
+        rmdir_tool = await get_tool(mcp_server, "nexus_rmdir")
         rmdir_result = await rmdir_tool.fn(path="/mcp_integration_test", recursive=True)
         assert "Successfully removed" in rmdir_result
 
@@ -721,8 +735,8 @@ class TestPerformanceCharacteristics:
     @pytest.mark.asyncio
     async def test_large_file_handling(self, mcp_server, nexus_fs):
         """Test handling of large files."""
-        write_tool = get_tool(mcp_server, "nexus_write_file")
-        read_tool = get_tool(mcp_server, "nexus_read_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
 
         # Create a moderately large file (1MB)
         large_content = "x" * (1024 * 1024)  # 1MB
@@ -738,8 +752,8 @@ class TestPerformanceCharacteristics:
     @pytest.mark.asyncio
     async def test_many_small_files(self, mcp_server, nexus_fs):
         """Test handling many small files efficiently."""
-        write_tool = get_tool(mcp_server, "nexus_write_file")
-        glob_tool = get_tool(mcp_server, "nexus_glob")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
+        glob_tool = await get_tool(mcp_server, "nexus_glob")
 
         # Create 100 small files
         for i in range(100):
@@ -754,8 +768,8 @@ class TestPerformanceCharacteristics:
     @pytest.mark.asyncio
     async def test_deep_directory_nesting(self, mcp_server, nexus_fs):
         """Test handling deeply nested directories."""
-        write_tool = get_tool(mcp_server, "nexus_write_file")
-        read_tool = get_tool(mcp_server, "nexus_read_file")
+        write_tool = await get_tool(mcp_server, "nexus_write_file")
+        read_tool = await get_tool(mcp_server, "nexus_read_file")
 
         # Create deeply nested file
         deep_path = "/" + "/".join([f"level{i}" for i in range(20)]) + "/file.txt"

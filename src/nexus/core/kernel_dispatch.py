@@ -178,7 +178,7 @@ class KernelDispatch:
         dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
         ...actual VFS operation...
         dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
-        await dispatch.notify(event)         # phase 2: OBSERVE
+        await dispatch.notify(event)         # phase 2: OBSERVE (inline + deferred)
     """
 
     __slots__ = (
@@ -191,6 +191,7 @@ class KernelDispatch:
         "_observer_registry",
         "_mount_hooks",
         "_unmount_hooks",
+        "_background_tasks",
     )
 
     def __init__(self) -> None:
@@ -216,6 +217,44 @@ class KernelDispatch:
         # MOUNT/UNMOUNT: driver lifecycle hooks (Issue #1811)
         self._mount_hooks: list[VFSMountHook] = []
         self._unmount_hooks: list[VFSUnmountHook] = []
+
+        # Issue #3391: tracked background tasks for deferred OBSERVE dispatch.
+        # Strong references prevent GC of in-flight tasks (CPython #91887).
+        self._background_tasks: set[asyncio.Task] = set()
+
+    # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
+
+    def _on_background_task_done(self, task: asyncio.Task) -> None:
+        """Done-callback for background observer tasks — log exceptions, discard ref."""
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("Background observer task %s failed: %s", task.get_name(), exc)
+
+    async def shutdown(self, *, timeout: float = 5.0) -> None:
+        """Drain background observer tasks (call during kernel teardown).
+
+        Handles cross-loop scenarios (e.g. TestClient calling aclose() on
+        a different event loop than the one that spawned the tasks).
+        """
+        if not self._background_tasks:
+            return
+        _pending = set(self._background_tasks)
+        try:
+            done, still_pending = await asyncio.wait(_pending, timeout=timeout)
+            for task in still_pending:
+                task.cancel()
+            if still_pending:
+                await asyncio.gather(*still_pending, return_exceptions=True)
+        except RuntimeError:
+            # Tasks belong to a different event loop (e.g. pytest loop vs
+            # TestClient loop in Python 3.13+). Best-effort cancel + discard.
+            for task in _pending:
+                task.cancel()
+        finally:
+            self._background_tasks.clear()
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 
@@ -586,14 +625,21 @@ class KernelDispatch:
     async def intercept_post_rmdir(self, ctx: RmdirHookContext) -> None:
         await self._post_dispatch("rmdir", "on_post_rmdir", ctx)
 
-    # ── OBSERVE dispatch (Issue #1812, #1748) ────────────────────────────
+    # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
     async def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — fire-and-forget to all registered observers.
+        """OBSERVE phase — hybrid inline/deferred dispatch.
 
-        Rust ``ObserverRegistry`` filters by ``event_mask`` bitmask before
-        crossing to Python.  Matching observers run concurrently via
-        ``gather(return_exceptions=True)`` — fault-isolated, no ordering.
+        Inline observers (``OBSERVE_INLINE=True``, default): run via
+        ``asyncio.gather`` on the caller's path — suited for fast,
+        in-process work (e.g. resolving FileWatcher futures).
+
+        Deferred observers (``OBSERVE_INLINE=False``): spawned as tracked
+        background tasks — true fire-and-forget from the caller's
+        perspective (e.g. EventBus publish to Redis/NATS).
+
+        Issue #3391: inspired by DFUSE (arXiv:2503.18191) — eliminate
+        I/O round-trips from the write critical path.
         """
         from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
@@ -605,13 +651,29 @@ class KernelDispatch:
         if not observers:
             return
 
+        inline: list[tuple[Any, str]] = []
+        deferred: list[tuple[Any, str]] = []
+        for obs, name in observers:
+            if getattr(obs, "OBSERVE_INLINE", True):
+                inline.append((obs, name))
+            else:
+                deferred.append((obs, name))
+
         async def _safe(obs: Any, name: str) -> None:
             try:
                 await obs.on_mutation(event)
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", name, exc)
 
-        await asyncio.gather(*(_safe(obs, name) for obs, name in observers))
+        # Inline: await on caller's path (fast observers)
+        if inline:
+            await asyncio.gather(*(_safe(obs, name) for obs, name in inline))
+
+        # Deferred: fire-and-forget background tasks (I/O-bound observers)
+        for obs, name in deferred:
+            task = asyncio.create_task(_safe(obs, name), name=f"observe-{name}")
+            self._background_tasks.add(task)
+            task.add_done_callback(self._on_background_task_done)
 
     # ── MOUNT/UNMOUNT hooks (Issue #1811) ──────────────────────────────
 

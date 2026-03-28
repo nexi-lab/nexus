@@ -194,7 +194,7 @@ async def _boot_post_kernel_services(
             permission_enforcer=services.get("permission_enforcer"),
             router=router,
             rebac_manager=services.get("rebac_manager"),
-            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            enforce_permissions=nx._perm_config.enforce,
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,

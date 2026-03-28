@@ -120,9 +120,10 @@ class PermissionCheckHook:
         if ctx.old_metadata is not None:
             checked_path = ctx.path
         else:
-            checked_path = self._get_parent_path(ctx.path)
-            if checked_path is None:
+            parent = self._get_parent_path(ctx.path)
+            if parent is None:
                 return  # root path — no parent to check
+            checked_path = parent
 
         # Extract agent_id from context (Decision #7A).
         # If unavailable, skip lease — falls through to full check every time.

@@ -114,7 +114,7 @@ async def _wire_services(
         permission_enforcer=_svc.get("permission_enforcer"),
         metadata_store=nx.metadata,
         default_context=nx._init_cred,
-        enforce_permissions=nx._enforce_permissions,
+        enforce_permissions=nx._perm_config.enforce,
     )
 
     # --- Boot wired services → register into ServiceRegistry ---

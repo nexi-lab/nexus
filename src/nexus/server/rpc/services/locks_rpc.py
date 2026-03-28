@@ -18,8 +18,9 @@ class LocksRPCService:
         self._lock_manager = lock_manager
 
     @rpc_expose(description="List active locks")
-    async def lock_list(self, zone_id: str | None = None) -> dict[str, Any]:
-        locks = await self._lock_manager.list_locks(zone_id=zone_id)
+    async def lock_list(self, zone_id: str | None = None) -> dict[str, Any]:  # noqa: ARG002
+        # zone_id is already bound at construction time in AdvisoryLockManager
+        locks = await self._lock_manager.list_locks()
         return {
             "locks": [self._lock_to_dict(lk) for lk in locks],
             "count": len(locks),

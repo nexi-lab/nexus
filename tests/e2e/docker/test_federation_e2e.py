@@ -831,8 +831,8 @@ class TestLeaderFailover:
                 timeout=15,
             )
 
-        # Stop node-1
-        subprocess.run(["docker", "stop", "nexus-node-1"], timeout=30, check=True)
+        # Stop node-1 (container name from docker-compose.dynamic-federation-test.yml)
+        subprocess.run(["docker", "stop", "nexus-dyn-node-1"], timeout=30, check=True)
 
         try:
             # Wait for node-2 healthy
@@ -855,7 +855,7 @@ class TestLeaderFailover:
 
         finally:
             # Restart node-1
-            subprocess.run(["docker", "start", "nexus-node-1"], timeout=30, check=True)
+            subprocess.run(["docker", "start", "nexus-dyn-node-1"], timeout=30, check=True)
             _wait_healthy([cluster["node1"]], timeout=60)
 
         # Node-1 catches up: new files readable

@@ -36,12 +36,12 @@ jobs:
           - os: windows-latest
             artifact_name: nexus-windows-x86_64
 
-          # Intel Mac (x86_64) — macos-13 is the last Intel runner
-          - os: macos-13
+          # Intel Mac (x86_64) — matches the runner used in release.yml
+          - os: macos-15-intel
             artifact_name: nexus-macos-x86_64
 
           # Apple Silicon (arm64)
-          - os: macos-15
+          - os: macos-14
             artifact_name: nexus-macos-arm64
 
     steps:
@@ -81,12 +81,6 @@ jobs:
         shell: bash -el {0}
         run: rustup component add rustfmt clippy
 
-      # raft-proto build.rs requires protoc >= 3.1.0 for codegen
-      - name: Install protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
       # Cache compiled Rust artifacts across runs to speed up re-builds.
       - name: Rust build cache
         uses: Swatinem/rust-cache@v2
@@ -115,8 +109,8 @@ jobs:
             -m rust/nexus_pyo3/Cargo.toml
 
       # Use --features python only: consensus + grpc are EXPERIMENTAL and
-      # "not used in production" (see Cargo.toml). --no-default-features is
-      # required because default = ["full"] pulls in grpc which needs protoc.
+      # "not used in production" (see Cargo.toml). Skipping them avoids
+      # the protobuf-build protoc version-check bug entirely.
       - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
         shell: bash -el {0}
         run: |

@@ -37,6 +37,7 @@ class RemoteMetastore(MetastoreABC):
     """
 
     def __init__(self, transport: "RPCTransport") -> None:
+        super().__init__()
         self._transport = transport
 
     # === RPC Transport ===
@@ -47,7 +48,7 @@ class RemoteMetastore(MetastoreABC):
 
     # === MetastoreABC Implementation ===
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         """Get metadata for a file by proxying ``stat`` to the server.
 
         Raises transport errors so callers can distinguish "not found"
@@ -63,7 +64,7 @@ class RemoteMetastore(MetastoreABC):
                 return MetadataMapper.from_json(meta_dict)
         return None
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store metadata by proxying ``sys_setattr`` to the server.
 
         The *consistency* hint is forwarded so the server can honour it.
@@ -75,21 +76,23 @@ class RemoteMetastore(MetastoreABC):
         )
         return None
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata by proxying ``delete`` to the server."""
         result = self._call_rpc("sys_unlink", {"path": path, "consistency": consistency})
         if isinstance(result, dict):
             return result
         return {"path": path}
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         """Check if metadata exists by proxying ``exists`` to the server."""
         result = self._call_rpc("sys_access", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
         return bool(result)
 
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
+    def _list_raw(
+        self, prefix: str = "", recursive: bool = True, **kwargs: Any
+    ) -> list[FileMetadata]:
         """List files by proxying ``list`` to the server."""
         params: dict[str, Any] = {"path": prefix or "/", "recursive": recursive}
         if kwargs:

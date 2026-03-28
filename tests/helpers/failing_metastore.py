@@ -48,6 +48,7 @@ class FailingMetastore(MetastoreABC):
         fail_on_nth: int = 0,
         fail_permanently: bool = False,
     ) -> None:
+        super().__init__()
         self._inner = inner
         self._fail_on = set(fail_on) if fail_on else set()
         self._fail_on_nth = fail_on_nth
@@ -83,23 +84,25 @@ class FailingMetastore(MetastoreABC):
 
     # === Abstract method implementations ===
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         self._maybe_fail("get")
         return self._inner.get(path)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         self._maybe_fail("put")
         return self._inner.put(metadata, consistency=consistency)
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         self._maybe_fail("delete")
         return self._inner.delete(path, consistency=consistency)
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         self._maybe_fail("exists")
         return self._inner.exists(path)
 
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
+    def _list_raw(
+        self, prefix: str = "", recursive: bool = True, **kwargs: Any
+    ) -> list[FileMetadata]:
         self._maybe_fail("list")
         return self._inner.list(prefix, recursive, **kwargs)
 
@@ -112,21 +115,21 @@ class FailingMetastore(MetastoreABC):
         self._maybe_fail("is_committed")
         return self._inner.is_committed(token)
 
-    def list_iter(
+    def _list_iter_raw(
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
     ) -> Iterator[FileMetadata]:
         self._maybe_fail("list_iter")
         return self._inner.list_iter(prefix, recursive, **kwargs)
 
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         self._maybe_fail("get_batch")
         return self._inner.get_batch(paths)
 
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
         self._maybe_fail("delete_batch")
         self._inner.delete_batch(paths)
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
         self._maybe_fail("put_batch")
         self._inner.put_batch(metadata_list)
 

@@ -44,6 +44,7 @@ class DictMetastore(MetastoreABC):
     """
 
     def __init__(self, storage_path: str | Path | None = None) -> None:
+        super().__init__()
         self._store: dict[str, FileMetadata] = {}
         self._file_metadata: dict[str, dict[str, Any]] = {}
         self._storage_path = Path(storage_path) if storage_path is not None else None
@@ -86,10 +87,10 @@ class DictMetastore(MetastoreABC):
 
     # -- abstract methods --------------------------------------------------
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         return self._store.get(path)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         del consistency
         self._store[metadata.path] = metadata
         self._flush()
@@ -111,7 +112,7 @@ class DictMetastore(MetastoreABC):
         self._flush()
         return _CasResult(success=True, current_version=metadata.version)
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         del consistency
         if path in self._store:
             del self._store[path]
@@ -120,10 +121,10 @@ class DictMetastore(MetastoreABC):
             return {"deleted": path}
         return None
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         return path in self._store
 
-    def list(self, prefix: str = "", recursive: bool = True, **_kw: Any) -> list[FileMetadata]:
+    def _list_raw(self, prefix: str = "", recursive: bool = True, **_kw: Any) -> list[FileMetadata]:
         results = [m for p, m in self._store.items() if p.startswith(prefix)]
         if not recursive:
             depth = prefix.rstrip("/").count("/") + 1
@@ -163,16 +164,16 @@ class DictMetastore(MetastoreABC):
             total_count=len(all_items),
         )
 
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         return {p: self._store.get(p) for p in paths}
 
-    def delete_batch(self, paths: Sequence[str]) -> None:
+    def _delete_batch_raw(self, paths: Sequence[str]) -> None:
         for p in paths:
             self._store.pop(p, None)
             self._file_metadata.pop(p, None)
         self._flush()
 
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
         for m in metadata_list:
             self._store[m.path] = m
         self._flush()

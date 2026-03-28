@@ -16,7 +16,7 @@ Usage:
 """
 
 import logging
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +61,7 @@ class FederatedMetadataProxy(MetastoreABC):
         # Map EC tokens to the store that issued them, so is_committed()
         # polls the correct zone's Raft log instead of always the root.
         self._token_stores: dict[int, "RaftMetadataStore"] = {}
+        super().__init__()
 
     @classmethod
     def from_zone_manager(
@@ -182,14 +183,14 @@ class FederatedMetadataProxy(MetastoreABC):
     # MetastoreABC — abstract methods
     # =========================================================================
 
-    def get(self, path: str) -> FileMetadata | None:
+    def _get_raw(self, path: str) -> FileMetadata | None:
         resolved = self._resolve(path)
         meta = resolved.store.get(resolved.path)
         if meta is None:
             return None
         return self._remap_metadata(meta, resolved.mount_chain)
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         resolved = self._resolve(metadata.path)
         zone_meta = self._to_zone_metadata(metadata, resolved)
         zone_meta = self._enrich_backend_name(zone_meta)
@@ -202,11 +203,11 @@ class FederatedMetadataProxy(MetastoreABC):
         store = self._token_stores.get(token, self._root_store)
         return store.is_committed(token)
 
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         resolved = self._resolve(path)
         return resolved.store.delete(resolved.path, consistency=consistency)
 
-    def exists(self, path: str) -> bool:
+    def _exists_raw(self, path: str) -> bool:
         resolved = self._resolve(path)
         return resolved.store.exists(resolved.path)
 
@@ -258,7 +259,7 @@ class FederatedMetadataProxy(MetastoreABC):
 
         return remapped
 
-    def list(
+    def _list_raw(
         self,
         prefix: str = "",
         recursive: bool = True,
@@ -268,15 +269,7 @@ class FederatedMetadataProxy(MetastoreABC):
         resolved = self._resolve(resolve_path)
         return self._walk_mount_tree(resolved, recursive, **kwargs)
 
-    def list_iter(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        **kwargs: Any,
-    ) -> Iterator[FileMetadata]:
-        resolve_path = prefix if prefix else "/"
-        resolved = self._resolve(resolve_path)
-        yield from self._walk_mount_tree(resolved, recursive, **kwargs)
+    # list_iter inherited from MetastoreABC (delegates to _list_raw)
 
     def close(self) -> None:
         self._root_store.close()
@@ -287,7 +280,7 @@ class FederatedMetadataProxy(MetastoreABC):
     # Batch operations — group by zone for efficiency
     # =========================================================================
 
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+    def _get_batch_raw(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
         zone_groups: dict[str, list[tuple[str, str, list[tuple[str, str]]]]] = {}
         for path in paths:
             resolved = self._resolve(path)

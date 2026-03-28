@@ -178,6 +178,10 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     """Create a RaftMetadataStore backed by a FakeLocalRaft."""
     fake = fake or FakeLocalRaft()
     store = object.__new__(RaftMetadataStore)
+    # MetastoreABC.__init__ sets dcache attrs — replicate since we bypass __init__
+    store._dcache = {}
+    store._dcache_hits = 0
+    store._dcache_misses = 0
     store._engine = fake
     store._client = None
     store._zone_id = None
@@ -643,12 +647,14 @@ class TestMultiZoneIsolation:
         """Two stores with separate engines and zone_ids should be isolated."""
         fake_a = FakeLocalRaft()
         store_a = object.__new__(RaftMetadataStore)
+        store_a._dcache, store_a._dcache_hits, store_a._dcache_misses = {}, 0, 0
         store_a._engine = fake_a
         store_a._client = None
         store_a._zone_id = "zone_a"
 
         fake_b = FakeLocalRaft()
         store_b = object.__new__(RaftMetadataStore)
+        store_b._dcache, store_b._dcache_hits, store_b._dcache_misses = {}, 0, 0
         store_b._engine = fake_b
         store_b._client = None
         store_b._zone_id = "zone_b"
@@ -671,6 +677,7 @@ class TestMultiZoneIsolation:
         """zone_id filter should not raise assertion when store has zone_id set."""
         fake = FakeLocalRaft()
         store = object.__new__(RaftMetadataStore)
+        store._dcache, store._dcache_hits, store._dcache_misses = {}, 0, 0
         store._engine = fake
         store._client = None
         store._zone_id = "zone_a"

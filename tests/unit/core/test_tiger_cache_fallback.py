@@ -400,51 +400,77 @@ class TestBatchOperations:
         assert k2 not in results
 
 
-class TestDeleteExact:
-    """Tests for delete_exact L2 Dragonfly operation (Issue #3395)."""
+class TestEvictCached:
+    """Tests for evict_cached — L1 + L2 coordinated eviction (Issue #3395)."""
 
-    def test_delete_l2_calls_dragonfly_op_with_correct_params(self, tiger_cache):
-        """delete_l2 should invoke _run_dragonfly_op with delete_exact and 1s timeout."""
-        tiger_cache._dragonfly = MagicMock()
+    def test_evict_cached_clears_l1_entries(self, tiger_cache):
+        """evict_cached must remove matching in-memory L1 entries."""
+        # Populate L1 with zone-scoped and zone-agnostic entries
+        k_zone = CacheKey("user", "alice", "read", "file", "zone-1")
+        k_nozone = CacheKey("user", "alice", "read", "file", "")
+        k_other = CacheKey("user", "bob", "read", "file", "zone-1")
+        tiger_cache._cache[k_zone] = (RoaringBitmap([1]), 1, time.time())
+        tiger_cache._cache[k_nozone] = (RoaringBitmap([2]), 1, time.time())
+        tiger_cache._cache[k_other] = (RoaringBitmap([3]), 1, time.time())
 
-        with patch.object(tiger_cache, "_run_dragonfly_op", return_value=1) as mock_op:
-            result = tiger_cache.delete_l2(
-                subject_type="user",
-                subject_id="alice",
-                permission="read",
-                resource_type="file",
-                zone_id="zone-1",
-            )
-
-            mock_op.assert_called_once_with(
-                operation="delete_exact",
-                subject_type="user",
-                subject_id="alice",
-                permission="read",
-                resource_type="file",
-                zone_id="zone-1",
-                timeout=1.0,
-            )
-            assert result == 1
-
-    def test_delete_l2_returns_zero_when_dragonfly_disabled(self, tiger_cache):
-        """delete_l2 should return 0 when Dragonfly is not configured."""
-        assert tiger_cache._dragonfly is None
-        result = tiger_cache.delete_l2(
+        tiger_cache.evict_cached(
             subject_type="user",
             subject_id="alice",
             permission="read",
             resource_type="file",
             zone_id="zone-1",
         )
-        assert result == 0
 
-    def test_delete_l2_handles_none_result_gracefully(self, tiger_cache):
-        """delete_l2 should return 0 when _run_dragonfly_op returns None (timeout/error)."""
+        # Both alice entries evicted (zone-scoped and zone-agnostic)
+        assert k_zone not in tiger_cache._cache
+        assert k_nozone not in tiger_cache._cache
+        # Bob's entry untouched
+        assert k_other in tiger_cache._cache
+
+    def test_evict_cached_deletes_both_l2_keys(self, tiger_cache):
+        """evict_cached must delete both zone-scoped and zone-agnostic L2 keys."""
+        tiger_cache._dragonfly = MagicMock()
+
+        calls = []
+
+        def _track_op(**kwargs):
+            calls.append(kwargs.get("zone_id"))
+            return 1
+
+        with patch.object(tiger_cache, "_run_dragonfly_op", side_effect=_track_op):
+            tiger_cache.evict_cached(
+                subject_type="user",
+                subject_id="alice",
+                permission="read",
+                resource_type="file",
+                zone_id="zone-1",
+            )
+
+        # Two L2 deletes: zone-scoped then zone-agnostic
+        assert calls == ["zone-1", ""]
+
+    def test_evict_cached_returns_zero_when_dragonfly_disabled(self, tiger_cache):
+        """evict_cached returns L1 eviction count only when Dragonfly is off."""
+        assert tiger_cache._dragonfly is None
+        k = CacheKey("user", "alice", "read", "file", "zone-1")
+        tiger_cache._cache[k] = (RoaringBitmap([1]), 1, time.time())
+
+        result = tiger_cache.evict_cached(
+            subject_type="user",
+            subject_id="alice",
+            permission="read",
+            resource_type="file",
+            zone_id="zone-1",
+        )
+        assert result == 1
+        assert k not in tiger_cache._cache
+
+    def test_evict_cached_handles_none_result_gracefully(self, tiger_cache):
+        """evict_cached returns 0 when _run_dragonfly_op returns None (timeout)."""
         tiger_cache._dragonfly = MagicMock()
 
         with patch.object(tiger_cache, "_run_dragonfly_op", return_value=None):
-            result = tiger_cache.delete_l2(
+            result = tiger_cache.evict_cached(
                 subject_type="user",
                 subject_id="alice",
                 permission="read",
@@ -453,7 +479,7 @@ class TestDeleteExact:
             )
             assert result == 0
 
-    def test_delete_exact_key_format_matches_set(self, tiger_cache):
+    def test_evict_cached_key_format_matches_set(self, tiger_cache):
         """delete_exact must construct the same key format as set operation."""
         tiger_cache._dragonfly = MagicMock()
         tiger_cache._dragonfly_url = "redis://localhost:6379"
@@ -468,7 +494,7 @@ class TestDeleteExact:
                 mock_redis.return_value = mock_client
                 mock_client.delete.return_value = 1
 
-                tiger_cache.delete_l2(
+                tiger_cache.evict_cached(
                     subject_type="user",
                     subject_id="alice",
                     permission="read",
@@ -476,6 +502,9 @@ class TestDeleteExact:
                     zone_id="zone-1",
                 )
 
-                mock_client.delete.assert_called_once_with("tiger:user:alice:read:file:zone-1")
+                # Two DELs: zone-scoped then zone-agnostic
+                assert mock_client.delete.call_count == 2
+                mock_client.delete.assert_any_call("tiger:user:alice:read:file:zone-1")
+                mock_client.delete.assert_any_call("tiger:user:alice:read:file")
         finally:
             tiger_cache._l2_executor.shutdown(wait=False)

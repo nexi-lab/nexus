@@ -386,7 +386,7 @@ class ReBACManager:
             tc = self._tiger_cache
 
             def _tiger_l2_cb(st: str, si: str, perm: str, rt: str, zid: str) -> None:
-                tc.delete_l2(st, si, perm, rt, zid)
+                tc.evict_cached(st, si, perm, rt, zid)
 
             self._cache_coordinator.register_tiger_l2_invalidator("tiger_bitmap", _tiger_l2_cb)
 

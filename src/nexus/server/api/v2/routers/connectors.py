@@ -138,6 +138,36 @@ class SchemaResponse(BaseModel):
     content: str
 
 
+class AuthInitRequest(BaseModel):
+    """Request to initiate OAuth for a connector."""
+
+    connector_name: str = Field(..., description="Connector name (e.g., gmail_connector)")
+    provider: str | None = Field(None, description="OAuth provider override")
+
+
+class AuthInitResponse(BaseModel):
+    """Response from auth init with URL to open in browser."""
+
+    auth_url: str
+    state_token: str
+    provider: str
+    expires_in: int = 300  # 5 minutes
+
+
+class AuthStatusRequest(BaseModel):
+    """Query params for auth status polling."""
+
+    state_token: str
+
+
+class AuthStatusResponse(BaseModel):
+    """Auth completion status."""
+
+    status: str  # "pending", "completed", "denied", "expired", "error"
+    connector_name: str
+    message: str | None = None
+
+
 class MountInfo(BaseModel):
     """Info about a mounted connector."""
 
@@ -204,33 +234,21 @@ async def list_available_connectors(
     _: dict = Depends(require_auth),
 ) -> list[AvailableConnector]:
     """List connectors with auth and mount status (for TUI Connectors tab)."""
+    from nexus.backends import _register_optional_backends
     from nexus.backends.base.registry import ConnectorRegistry
 
+    _register_optional_backends()
+
     nx = _get_nx(request)
-    mount_svc = nx.service("mount")
     auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
 
-    # Get mounted connectors
-    mounted: dict[str, str] = {}  # connector_type -> mount_point
-    if mount_svc:
-        try:
-            mounts = await mount_svc.list_mounts()
-            for m in mounts:
-                mp = m.get("mount_point", "")
-                if mp.startswith("/mnt/"):
-                    # Infer type from mount point name
-                    mounted[mp] = mp
-        except Exception:
-            pass
+    # Build connector_type -> mount_point map by inverting _mount_types
+    # (which stores mount_point -> connector_type).
+    type_to_mount: dict[str, str] = {ct: mp for mp, ct in _mount_types.items()}
 
     result = []
     for info in ConnectorRegistry.list_all():
-        # Check if this connector is mounted
-        mount_path = None
-        for mp in mounted:
-            if info.name.replace("_connector", "") in mp:
-                mount_path = mp
-                break
+        mount_path = type_to_mount.get(info.name)
 
         auth_state = {"auth_status": "unknown", "auth_source": None}
         if auth_svc is not None:
@@ -267,6 +285,267 @@ def get_connector_capabilities(name: str) -> ConnectorCapabilitiesResponse:
     return ConnectorCapabilitiesResponse(
         name=info.name,
         capabilities=sorted(str(c) for c in info.backend_features),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints (Issue #3182)
+# ---------------------------------------------------------------------------
+
+# Module-level pending auth state (TTL managed by cleanup).
+# Maps state_token -> {connector_name, provider, created_at, status}
+_pending_auth: dict[str, dict[str, Any]] = {}
+
+# Module-level mount tracking: mount_point -> connector_type.
+# Populated by mount/unmount endpoints so /available can show mount status
+# without relying on fragile router introspection through CAS wrappers.
+_mount_types: dict[str, str] = {}
+
+
+@router.post("/auth/init", response_model=AuthInitResponse)
+async def init_connector_auth(
+    req: AuthInitRequest,
+    request: Request,
+    _: dict = Depends(require_auth),
+) -> AuthInitResponse:
+    """Initiate OAuth flow for a connector. Returns a URL to open in a browser."""
+    import secrets
+    import time
+
+    import yaml
+
+    from nexus.backends.base.registry import ConnectorRegistry
+
+    # Validate connector exists
+    if not ConnectorRegistry.is_registered(req.connector_name):
+        raise HTTPException(status_code=404, detail=f"Connector '{req.connector_name}' not found")
+
+    info = ConnectorRegistry.get_info(req.connector_name)
+
+    # Resolve provider — use explicit override or infer from connector's service_name
+    provider = req.provider or info.service_name
+    if not provider:
+        raise HTTPException(
+            status_code=400, detail=f"No OAuth provider for connector '{req.connector_name}'"
+        )
+
+    import os
+
+    nx = _get_nx(request)
+
+    # Generate state token
+    state_token = secrets.token_urlsafe(32)
+
+    # Build OAuth authorization URL
+    # Look up provider config from oauth.yaml
+    oauth_config: dict[str, Any] = {}
+    try:
+        configs_dir = getattr(nx, "configs_dir", None)
+        oauth_path = None
+        for search_path in [
+            configs_dir and os.path.join(configs_dir, "oauth.yaml"),
+            os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "../../../../../../configs/oauth.yaml")
+            ),
+        ]:
+            if search_path and os.path.exists(search_path):
+                oauth_path = search_path
+                break
+
+        if oauth_path:
+            with open(oauth_path) as f:
+                all_config = yaml.safe_load(f)
+
+            # Try direct provider name, then aliases
+            provider_aliases = {
+                "gmail": "gmail",
+                "gmail_connector": "gmail",
+                "calendar_connector": "gcalendar",
+                "gcalendar": "gcalendar",
+                "gdrive_connector": "google-drive",
+                "google-drive": "google-drive",
+                "slack_connector": "slack",
+                "slack": "slack",
+                "x_connector": "x",
+                "x": "x",
+                "gws_connector": "google-drive",
+            }
+            lookup = provider_aliases.get(
+                provider, provider_aliases.get(req.connector_name, provider)
+            )
+            providers = all_config.get("providers", {})
+            oauth_config = providers.get(lookup, providers.get(provider, {}))
+    except Exception:
+        logger.debug("Failed to load oauth.yaml", exc_info=True)
+
+    if not oauth_config:
+        raise HTTPException(
+            status_code=400, detail=f"No OAuth configuration found for provider '{provider}'"
+        )
+
+    # Build authorization URL
+    scopes = oauth_config.get("scopes", [])
+    client_id_env = oauth_config.get("client_id_env", "")
+    client_id = os.environ.get(client_id_env, "")
+    redirect_uri = all_config.get("redirect_uri", "http://localhost:5173/oauth/callback")
+
+    if not client_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"OAuth client ID not configured. Set environment variable: {client_id_env}",
+        )
+
+    # Determine authorization endpoint based on provider
+    provider_class = oauth_config.get("provider_class", "")
+    if (
+        "google" in provider_class.lower()
+        or "gmail" in lookup
+        or "gcalendar" in lookup
+        or "google" in lookup
+    ):
+        auth_url = (
+            f"https://accounts.google.com/o/oauth2/v2/auth"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&response_type=code"
+            f"&scope={'+'.join(scopes)}"
+            f"&state={state_token}"
+            f"&access_type=offline"
+            f"&prompt=consent"
+        )
+    elif "slack" in provider_class.lower() or "slack" in lookup:
+        auth_url = (
+            f"https://slack.com/oauth/v2/authorize"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&scope={','.join(scopes)}"
+            f"&state={state_token}"
+        )
+    elif lookup == "x":
+        auth_url = (
+            f"https://twitter.com/i/oauth2/authorize"
+            f"?client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&response_type=code"
+            f"&scope={'+'.join(scopes)}"
+            f"&state={state_token}"
+            f"&code_challenge=challenge&code_challenge_method=plain"
+        )
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported OAuth provider: {provider}")
+
+    # Snapshot the current auth state so we can detect a *change* during polling.
+    # Without this, pre-existing auth for the same connector would immediately
+    # report "completed" — a correctness bug for concurrent auth attempts.
+    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
+    baseline_status = "unknown"
+    if auth_svc is not None:
+        try:
+            baseline = await auth_svc.get_connector_auth_state(info.service_name)
+            baseline_status = str(baseline.get("auth_status", "unknown"))
+        except Exception:
+            pass
+
+    # Store pending auth state with the baseline snapshot
+    _pending_auth[state_token] = {
+        "connector_name": req.connector_name,
+        "provider": provider,
+        "created_at": time.time(),
+        "status": "pending",
+        "baseline_auth_status": baseline_status,
+    }
+
+    # Cleanup expired entries (>5 min old)
+    cutoff = time.time() - 300
+    expired = [k for k, v in _pending_auth.items() if v["created_at"] < cutoff]
+    for k in expired:
+        del _pending_auth[k]
+
+    resolved_provider = lookup if "lookup" in dir() else provider
+    return AuthInitResponse(
+        auth_url=auth_url,
+        state_token=state_token,
+        provider=resolved_provider,
+    )
+
+
+@router.get("/auth/status", response_model=AuthStatusResponse)
+async def get_auth_status(
+    state_token: str,
+    request: Request,
+    _: dict = Depends(require_auth),
+) -> AuthStatusResponse:
+    """Poll for OAuth completion status."""
+    import time
+
+    # Check pending auth state
+    pending = _pending_auth.get(state_token)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Unknown or expired auth state token")
+
+    connector_name = pending["connector_name"]
+    created_at = pending["created_at"]
+
+    # Check if expired (5 min TTL)
+    if time.time() - created_at > 300:
+        del _pending_auth[state_token]
+        return AuthStatusResponse(
+            status="expired",
+            connector_name=connector_name,
+            message="Auth session expired. Please try again.",
+        )
+
+    # Check if auth was completed by querying the auth service.
+    # Only report "completed" when the auth state *changed* from the baseline
+    # captured at init time. This prevents pre-existing auth from causing
+    # false completion and makes concurrent auth attempts distinguishable.
+    baseline_status = pending.get("baseline_auth_status", "unknown")
+    nx = _get_nx(request)
+    auth_svc = getattr(request.app.state, "auth_service", None) or nx.service("auth")
+
+    if auth_svc is not None:
+        try:
+            from nexus.backends.base.registry import ConnectorRegistry
+
+            info = ConnectorRegistry.get_info(connector_name)
+            auth_state = await auth_svc.get_connector_auth_state(info.service_name)
+            status = str(auth_state.get("auth_status", "unknown"))
+
+            if status == "authed" and baseline_status != "authed":
+                # Auth state changed to authed — this flow completed.
+                # Invalidate ALL pending tokens for the same connector so
+                # concurrent auth/init calls don't also claim completion.
+                # The losing tokens will get 404 on next poll, which the
+                # TUI handles as "expired — retry".
+                stale = [
+                    k for k, v in _pending_auth.items() if v["connector_name"] == connector_name
+                ]
+                for k in stale:
+                    del _pending_auth[k]
+                return AuthStatusResponse(
+                    status="completed",
+                    connector_name=connector_name,
+                    message="Authentication successful.",
+                )
+            elif status == "expired" and baseline_status != "expired":
+                return AuthStatusResponse(
+                    status="denied",
+                    connector_name=connector_name,
+                    message="Authentication was denied or token expired.",
+                )
+            elif status == "error" and baseline_status != "error":
+                return AuthStatusResponse(
+                    status="error",
+                    connector_name=connector_name,
+                    message="Authentication failed. Check provider configuration.",
+                )
+        except Exception as e:
+            logger.debug("Error checking auth status for %s: %s", connector_name, e)
+
+    return AuthStatusResponse(
+        status="pending",
+        connector_name=connector_name,
+        message="Waiting for authentication...",
     )
 
 
@@ -402,6 +681,7 @@ async def mount_connector(
             readonly=req.readonly,
             context=mount_context,
         )
+        _mount_types[req.mount_point] = req.connector_type
         return MountResponse(mounted=True, mount_point=str(result))
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))
@@ -422,6 +702,8 @@ async def list_mounted_connectors(
         mp = m.get("mount_point", "")
         skill_name = None
         operations: list[str] = []
+        sync_status: str | None = None
+        last_sync: str | None = None
         try:
             # Route to a dummy file path inside the mount to get the backend
             route = nx.router.route(f"{mp.rstrip('/')}/_.yaml")
@@ -435,8 +717,39 @@ async def list_mounted_connectors(
                     operations = list(schemas.keys())
                 elif traits:
                     operations = list(traits.keys())
+
+                # Extract sync status from backend state or cache metadata.
+                # Backends that implement sync track their last sync time and
+                # status via _last_sync_at / _sync_status attributes or via
+                # the cache mixin's session metadata.
+                sync_status = getattr(backend, "_sync_status", None)
+                raw_last_sync = getattr(backend, "_last_sync_at", None)
+                if raw_last_sync is not None:
+                    import datetime
+
+                    if isinstance(raw_last_sync, (int, float)):
+                        dt = datetime.datetime.fromtimestamp(raw_last_sync, tz=datetime.UTC)
+                    elif isinstance(raw_last_sync, datetime.datetime):
+                        dt = raw_last_sync
+                    else:
+                        dt = None
+                    if dt:
+                        delta = datetime.datetime.now(tz=datetime.UTC) - dt
+                        secs = int(delta.total_seconds())
+                        if secs < 60:
+                            last_sync = f"{secs}s ago"
+                        elif secs < 3600:
+                            last_sync = f"{secs // 60}m ago"
+                        else:
+                            last_sync = f"{secs // 3600}h ago"
         except Exception:
             pass
+
+        # Fall back to mount-level metadata for sync info
+        if sync_status is None:
+            sync_status = m.get("sync_status")
+        if last_sync is None:
+            last_sync = m.get("last_sync")
 
         result.append(
             MountInfo(
@@ -444,6 +757,8 @@ async def list_mounted_connectors(
                 readonly=m.get("readonly", False),
                 skill_name=skill_name,
                 operations=operations,
+                sync_status=sync_status,
+                last_sync=last_sync,
             )
         )
 
@@ -460,6 +775,7 @@ async def unmount_connector(
     mount_svc = _get_mount_service(request)
     try:
         await mount_svc.remove_mount(mount_point=req.mount_point)
+        _mount_types.pop(req.mount_point, None)
         return MountResponse(mounted=False, mount_point=req.mount_point)
     except Exception as e:
         return MountResponse(mounted=False, mount_point=req.mount_point, error=str(e))

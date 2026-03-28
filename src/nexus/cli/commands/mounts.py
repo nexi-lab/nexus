@@ -11,7 +11,6 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
-import inspect
 import json
 import sys
 from typing import Any
@@ -138,28 +137,38 @@ async def _async_add_mount(
             console.print(f"[red]Error:[/red] Invalid JSON in config_json: {e}")
             sys.exit(1)
 
-        # Get filesystem (works with both local and remote)
-        nx = await get_filesystem(remote_url, remote_api_key)
+        import os
 
-        # Call add_mount via mount_service
+        import httpx
+
+        base_url = remote_url or os.environ.get("NEXUS_URL", "")
+        api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+        if not base_url:
+            console.print("[red]Error:[/red] NEXUS_URL required")
+            console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
+            sys.exit(1)
+
         console.print("[yellow]Adding mount...[/yellow]")
 
-        try:
-            mount_svc = nx.service("mount")
-            assert mount_svc is not None
-            mount_result = mount_svc.add_mount(
-                mount_point=mount_point,
-                backend_type=backend_type,
-                backend_config=config_dict,
-                readonly=readonly,
-                io_profile=io_profile,
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.post(
+                f"{base_url.rstrip('/')}/api/v2/connectors/mount",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "connector_type": backend_type,
+                    "mount_point": mount_point,
+                    "config": config_dict,
+                    "readonly": readonly,
+                },
             )
-            mount_id = await mount_result if inspect.isawaitable(mount_result) else mount_result
+            resp.raise_for_status()
+            result = resp.json()
+
+        if result.get("mounted"):
+            mount_id = result.get("mount_point", mount_point)
             console.print(f"[green]\u2713[/green] Mount added successfully (ID: {mount_id})")
-        except AttributeError:
-            # Fallback for older NexusFS that doesn't have mount_service
-            console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
-            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
+        else:
+            console.print(f"[red]Error:[/red] {result.get('error', 'Mount failed')}")
             sys.exit(1)
 
         console.print()
@@ -202,26 +211,27 @@ async def _async_remove_mount(
     mount_point: str, remote_url: str | None, remote_api_key: str | None
 ) -> None:
     try:
-        # Get filesystem (works with both local and remote)
-        nx = await get_filesystem(remote_url, remote_api_key)
+        import os
 
-        # Call remove_mount via mount_service
+        import httpx
+
+        base_url = remote_url or os.environ.get("NEXUS_URL", "")
+        api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+        if not base_url:
+            console.print("[red]Error:[/red] NEXUS_URL required")
+            console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
+            sys.exit(1)
+
         console.print(f"[yellow]Removing mount at {mount_point}...[/yellow]")
 
-        try:
-            mount_svc = nx.service("mount")
-            assert mount_svc is not None
-            remove_result = mount_svc.remove_mount(mount_point=mount_point)
-            result = await remove_result if inspect.isawaitable(remove_result) else remove_result
-            if result.get("removed"):
-                console.print("[green]\u2713[/green] Mount removed successfully")
-            else:
-                console.print(f"[red]Error:[/red] Mount not found: {mount_point}")
-                sys.exit(1)
-        except AttributeError:
-            console.print("[red]Error:[/red] This Nexus instance doesn't support dynamic mounts")
-            console.print("[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version")
-            sys.exit(1)
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.post(
+                f"{base_url.rstrip('/')}/api/v2/connectors/unmount",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={"connector_type": "", "mount_point": mount_point},
+            )
+            resp.raise_for_status()
+            console.print("[green]\u2713[/green] Mount removed successfully")
 
     except Exception as e:
         handle_error(e)
@@ -271,23 +281,25 @@ async def _async_list_mounts(
 ) -> None:
     timing = CommandTiming()
     try:
-        # Get filesystem (works with both local and remote)
-        nx = await get_filesystem(remote_url, remote_api_key)
-
-        # Call list_mounts via mount_service
+        # List mounts via HTTP API (gRPC port may differ from default)
         with timing.phase("server"):
-            try:
-                mount_svc = nx.service("mount")
-                assert mount_svc is not None
-                mounts = await mount_svc.list_mounts()
-            except AttributeError:
-                console.print(
-                    "[red]Error:[/red] This Nexus instance doesn't support listing mounts"
-                )
-                console.print(
-                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
-                )
+            import os
+
+            import httpx
+
+            base_url = remote_url or os.environ.get("NEXUS_URL", "")
+            api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+            if not base_url:
+                console.print("[red]Error:[/red] NEXUS_URL required")
+                console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
                 sys.exit(1)
+            async with httpx.AsyncClient(timeout=10) as http:
+                resp = await http.get(
+                    f"{base_url.rstrip('/')}/api/v2/connectors/mounts",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                resp.raise_for_status()
+                mounts = resp.json()
 
         # Note: owner/zone filtering not yet supported in remote mode
         if owner or zone:
@@ -546,23 +558,24 @@ async def _async_sync_mount(
                 console.print("[cyan](dry run - no changes will be made)[/cyan]")
 
         with timing.phase("server"):
-            try:
-                result = await nx.service("sync").sync_mount_flat(
-                    mount_point=mount_point,
-                    path=path,
-                    recursive=True,
-                    dry_run=dry_run,
-                    sync_content=not no_cache,
-                    include_patterns=include_patterns,
-                    exclude_patterns=exclude_patterns,
-                    generate_embeddings=embeddings,
-                )
-            except AttributeError:
-                console.print("[red]Error:[/red] This Nexus instance doesn't support sync_mount")
-                console.print(
-                    "[yellow]Hint:[/yellow] Make sure you're using the latest Nexus version"
-                )
+            import os
+
+            import httpx
+
+            base_url = remote_url or os.environ.get("NEXUS_URL", "")
+            api_key = remote_api_key or os.environ.get("NEXUS_API_KEY", "")
+            if not base_url:
+                console.print("[red]Error:[/red] NEXUS_URL required")
+                console.print("[yellow]Hint:[/yellow] eval $(nexus env)")
                 sys.exit(1)
+            async with httpx.AsyncClient(timeout=120) as http:
+                resp = await http.post(
+                    f"{base_url.rstrip('/')}/api/v2/connectors/sync",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"mount_point": mount_point, "full_sync": False},
+                )
+                resp.raise_for_status()
+                result = resp.json()
 
         def _render_sync(data: dict[str, Any]) -> None:
             console.print()

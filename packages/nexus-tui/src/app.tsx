@@ -34,6 +34,7 @@ const SearchPanel = lazy(() => import("./panels/search/search-panel.js"));
 const WorkflowsPanel = lazy(() => import("./panels/workflows/workflows-panel.js"));
 const EventsPanel = lazy(() => import("./panels/events/events-panel.js"));
 const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-panel.js"));
+const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.js"));
 
 const TABS: readonly Tab[] = [
   { id: "files", label: "Files", shortcut: "1" },
@@ -46,6 +47,7 @@ const TABS: readonly Tab[] = [
   { id: "workflows", label: "Flow", shortcut: "8" },
   { id: "infrastructure", label: "Event", shortcut: "9" },
   { id: "console", label: "CLI", shortcut: "0" },
+  { id: "connectors", label: "Conn", shortcut: "C" },
 ];
 
 function PanelRouter(): React.ReactNode {
@@ -72,6 +74,8 @@ function PanelRouter(): React.ReactNode {
       return <EventsPanel />;
     case "console":
       return <ApiConsolePanel />;
+    case "connectors":
+      return <ConnectorsPanel />;
     default:
       return (
         <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -170,6 +174,7 @@ export function App(): React.ReactNode {
           "8": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("workflows"); },
           "9": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("infrastructure"); },
           "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
+          "shift+c": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("connectors"); },
           "ctrl+i": toggleIdentitySwitcher,
           "ctrl+d": () => {
             // Disconnect and go back to setup menu

@@ -104,11 +104,15 @@ def _to_file_item(entry: dict[str, Any], prefix: str) -> "FileItemResponse":
     # entry_type 0 with no etag and size 0 is likely an implicit directory
     # (created by writing files underneath it in CAS-based storage).
     et = entry.get("entry_type", 0)
-    is_dir = (
-        et in (1, 2)
-        or raw_path.endswith("/")
-        or (et == 0 and entry.get("size", 0) == 0 and not entry.get("etag"))
-    )
+    has_extension = "." in raw_path.rstrip("/").rsplit("/", 1)[-1]
+    # Size-zero entries without extensions are directories (mount points, folders).
+    # This overrides explicit is_directory=False from the metastore which
+    # incorrectly marks mount points as files.
+    looks_like_dir = entry.get("size", 0) == 0 and not entry.get("etag") and not has_extension
+    if "is_directory" in entry and not looks_like_dir:
+        is_dir = bool(entry["is_directory"])
+    else:
+        is_dir = et in (1, 2) or raw_path.endswith("/") or looks_like_dir
     clean_path = raw_path.rstrip("/")
     name = (
         clean_path[len(prefix) :]
@@ -832,6 +836,56 @@ def create_async_files_router(
                             )
                         result = detail_list
 
+            # Inject mount point parent directories into the listing.
+            # Mount points exist in the VFS router but not in the metastore,
+            # so sys_readdir doesn't return them. We synthesize directory
+            # entries for immediate children of the listed path that are
+            # mount point ancestors.
+            try:
+                mount_svc = fs.service("mount")
+                if mount_svc:
+                    mount_list_result = mount_svc.list_mounts()
+                    if hasattr(mount_list_result, "__await__"):
+                        mounts_raw = await mount_list_result
+                    else:
+                        mounts_raw = mount_list_result
+                    listed_prefix = path.rstrip("/") + "/"
+                    existing_paths = {
+                        (e.get("path", "") if isinstance(e, dict) else str(e)).rstrip("/")
+                        for e in (
+                            result if isinstance(result, list) else getattr(result, "items", [])
+                        )
+                    }
+                    for m in mounts_raw:
+                        mp = (m.get("mount_point", "") if isinstance(m, dict) else str(m)).rstrip(
+                            "/"
+                        )
+                        if not mp.startswith(listed_prefix) and not (
+                            path == "/" and mp.startswith("/")
+                        ):
+                            continue
+                        # Find the immediate child segment
+                        relative = mp.lstrip("/") if path == "/" else mp[len(listed_prefix) :]
+                        child = relative.split("/")[0] if "/" in relative else relative
+                        if not child:
+                            continue
+                        child_path = f"{path.rstrip('/')}/{child}"
+                        if child_path.rstrip("/") not in existing_paths:
+                            synthetic = {
+                                "path": child_path,
+                                "name": child,
+                                "entry_type": 1,
+                                "size": 0,
+                                "is_directory": True,
+                            }
+                            if isinstance(result, list):
+                                result.append(synthetic)
+                            elif hasattr(result, "items"):
+                                result.items.append(synthetic)
+                            existing_paths.add(child_path.rstrip("/"))
+            except Exception:
+                pass  # Best effort — listing still works without mount injection
+
             prefix = path.rstrip("/") + "/"
             # The listed path itself (e.g. "/" → empty name) must not appear
             # in its own listing — that causes infinite recursion in tree UIs.
@@ -853,11 +907,20 @@ def create_async_files_router(
             # internal entries (cfg:, ns:) consume an entire page.
             if limit is not None:
                 file_items: list[FileItemResponse] = []
-                has_more = result.has_more
-                next_cursor_raw = result.next_cursor
+                # sys_readdir may return a paginated object (with .items,
+                # .has_more, .next_cursor) or a plain list for connector
+                # backends. Normalize to avoid AttributeError.
+                if isinstance(result, list):
+                    _page_items = result
+                    has_more = False
+                    next_cursor_raw = None
+                else:
+                    _page_items = result.items
+                    has_more = result.has_more
+                    next_cursor_raw = result.next_cursor
 
                 # Collect visible items from current page
-                for entry in result.items:
+                for entry in _page_items:
                     if _is_visible(entry):
                         file_items.append(_to_file_item(entry, prefix))
 
@@ -871,11 +934,17 @@ def create_async_files_router(
                         limit=limit,
                         cursor=next_cursor_raw,
                     )
-                    for entry in result.items:
+                    if isinstance(result, list):
+                        _page_items = result
+                        has_more = False
+                        next_cursor_raw = None
+                    else:
+                        _page_items = result.items
+                        has_more = result.has_more
+                        next_cursor_raw = result.next_cursor
+                    for entry in _page_items:
                         if _is_visible(entry):
                             file_items.append(_to_file_item(entry, prefix))
-                    has_more = result.has_more
-                    next_cursor_raw = result.next_cursor
 
                 next_cursor = (
                     base64.b64encode(next_cursor_raw.encode("utf-8")).decode("ascii")

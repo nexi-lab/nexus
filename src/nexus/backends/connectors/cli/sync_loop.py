@@ -404,7 +404,16 @@ class ConnectorSyncLoop:
                 import hashlib
 
                 content_hash = hashlib.sha256(content).hexdigest()
-                virtual_path = f"{mp}/{item.path}" if item.path else f"{mp}/{item.id}"
+                raw_path = item.path or item.id
+                # Apply display_path transform for human-readable filenames (#3258)
+                if hasattr(backend, "display_path"):
+                    try:
+                        display = backend.display_path(raw_path, content)
+                        if display:
+                            raw_path = display
+                    except Exception:
+                        pass  # Fall back to raw path
+                virtual_path = f"{mp}/{raw_path}"
 
                 # Write FileMetadata to metastore
                 metastore = getattr(self._mount_service, "_metastore", None)

@@ -391,7 +391,8 @@ class NexusFSGateway:
         Returns:
             True if hierarchy manager exists and inheritance is enabled
         """
-        hm = getattr(self._fs, "_hierarchy_manager", None)
+        rm = self.rebac_manager
+        hm = getattr(rm, "hierarchy_manager", None) if rm is not None else None
         if hm is not None:
             return getattr(hm, "enable_inheritance", False)
         return False
@@ -410,7 +411,8 @@ class NexusFSGateway:
         Returns:
             Number of tuples created
         """
-        hm = getattr(self._fs, "_hierarchy_manager", None)
+        rm = self.rebac_manager
+        hm = getattr(rm, "hierarchy_manager", None) if rm is not None else None
         if hm is not None and hasattr(hm, "ensure_parent_tuples_batch"):
             return hm.ensure_parent_tuples_batch(paths, zone_id=zone_id)
         return 0
@@ -421,7 +423,8 @@ class NexusFSGateway:
         zone_id: str | None = None,
     ) -> Any:
         """Remove parent tuples for a path."""
-        hm = getattr(self._fs, "_hierarchy_manager", None)
+        rm = self.rebac_manager
+        hm = getattr(rm, "hierarchy_manager", None) if rm is not None else None
         if hm is not None and hasattr(hm, "remove_parent_tuples"):
             return hm.remove_parent_tuples(path, zone_id=zone_id)
         return 0

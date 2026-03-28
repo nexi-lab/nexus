@@ -1099,6 +1099,84 @@ impl WitnessZoneRegistry {
         Ok(handle)
     }
 
+    /// Auto-join a zone on first Raft message (raft-rs ConfChange contract).
+    ///
+    /// When a witness receives a Raft message for an unknown zone, it auto-creates
+    /// the zone with `skip_bootstrap=true` and empty peers. The leader will send a
+    /// snapshot with the correct voter set after the ConfChange(AddNode) is committed.
+    #[allow(clippy::result_large_err)]
+    pub fn auto_join_zone(
+        &self,
+        zone_id: &str,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
+        use crate::raft::{RaftConfig, RaftStorage};
+        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
+
+        if let Some(entry) = self.zones.get(zone_id) {
+            return Ok(entry.node.clone());
+        }
+
+        let zone_path = self.base_path.join(zone_id);
+        let store = RedbStore::open(zone_path.join("sm"))
+            .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
+        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
+            TransportError::Connection(format!("Failed to open raft storage: {}", e))
+        })?;
+        let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
+            TransportError::Connection(format!("Failed to create witness state machine: {}", e))
+        })?;
+
+        // skip_bootstrap=true: empty ConfState, leader sends snapshot
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            is_witness: true,
+            skip_bootstrap: true,
+            election_tick: 10_000_000, // witness never campaigns
+            ..Default::default()
+        };
+
+        let (handle, mut driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
+            .map_err(|e| {
+                TransportError::Connection(format!("Failed to create witness ZoneConsensus: {}", e))
+            })?;
+
+        let shared_peers: super::SharedPeerMap = Arc::new(RwLock::new(HashMap::new()));
+        driver.set_peer_map(shared_peers.clone());
+
+        let client_config = ClientConfig {
+            tls: self.tls.clone(),
+            ..Default::default()
+        };
+        let transport_loop = TransportLoop::new(
+            driver,
+            shared_peers,
+            RaftClientPool::with_config(client_config),
+        )
+        .with_zone_id(zone_id.to_string());
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
+
+        tracing::info!(
+            "Witness auto-joined zone '{}' (node_id={}, skip_bootstrap=true)",
+            zone_id,
+            self.node_id,
+        );
+
+        self.zones.insert(
+            zone_id.to_string(),
+            WitnessZoneEntry {
+                node: handle.clone(),
+                shutdown_tx,
+                _transport_handle: transport_handle,
+            },
+        );
+
+        Ok(handle)
+    }
+
     /// Get the ZoneConsensus handle for a zone.
     pub fn get_node(&self, zone_id: &str) -> Option<ZoneConsensus<WitnessStateMachine>> {
         self.zones.get(zone_id).map(|e| e.node.clone())
@@ -1200,17 +1278,28 @@ impl ZoneTransportService for WitnessServiceImpl {
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
 
-        // Route by zone_id — same pattern as ZoneTransportServiceImpl for full nodes
-        let node = self.registry.get_node(&req.zone_id).ok_or_else(|| {
-            Status::not_found(format!(
-                "zone '{}' not found on witness",
+        // Route by zone_id — auto-join unknown zones (raft-rs ConfChange contract:
+        // when a new zone is created with this witness as a peer, the leader sends
+        // Raft messages before the witness knows about the zone. Auto-join creates
+        // the zone with skip_bootstrap=true; leader will send snapshot.)
+        let node = match self.registry.get_node(&req.zone_id) {
+            Some(n) => n,
+            None => {
                 if req.zone_id.is_empty() {
-                    "<empty>"
-                } else {
-                    &req.zone_id
+                    return Err(Status::not_found("empty zone_id"));
                 }
-            ))
-        })?;
+                let rt = tokio::runtime::Handle::current();
+                match self.registry.auto_join_zone(&req.zone_id, &rt) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "witness auto-join zone '{}' failed: {}",
+                            req.zone_id, e
+                        )));
+                    }
+                }
+            }
+        };
 
         let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
             Ok(m) => m,

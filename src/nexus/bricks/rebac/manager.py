@@ -379,6 +379,17 @@ class ReBACManager:
             pubsub=self._create_pubsub(),
         )
 
+        # Issue #3395: Wire Tiger L2 (Dragonfly) invalidation into coordinator.
+        # The coordinator expands relation → permissions internally, so the
+        # callback receives individual permissions matching Tiger cache keys.
+        if self._tiger_cache is not None:
+            tc = self._tiger_cache
+
+            def _tiger_l2_cb(st: str, si: str, perm: str, rt: str, zid: str) -> None:
+                tc.evict_cached(st, si, perm, rt, zid)
+
+            self._cache_coordinator.register_tiger_l2_invalidator("tiger_bitmap", _tiger_l2_cb)
+
         # Issue #3192: Wire SharedRingBuffer for cross-process revision broadcasting
         self._wire_shared_ring_buffer()
 

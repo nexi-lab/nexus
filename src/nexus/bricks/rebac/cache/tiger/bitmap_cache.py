@@ -232,6 +232,7 @@ class TigerCache:
         zone_id: str = "",
         bitmap_data: bytes | None = None,
         revision: int = 0,
+        timeout: float = 5.0,
     ) -> Any:
         """Run a Dragonfly operation using sync Redis client.
 
@@ -302,6 +303,10 @@ class TigerCache:
                     )
                     return True
 
+                elif operation == "delete_exact":
+                    # Exact key deletion — O(1) single DEL (Issue #3395)
+                    return client.delete(key)
+
                 elif operation == "invalidate":
                     # Pattern-based invalidation with proper wildcards
                     # Build pattern: use * for empty/None fields
@@ -333,13 +338,82 @@ class TigerCache:
 
         try:
             future = self._l2_executor.submit(run_sync_redis)
-            return future.result(timeout=5.0)
+            return future.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
             logger.warning("[TIGER] L2 Dragonfly operation timed out")
             return None
         except Exception as e:
             logger.warning("[TIGER] L2 Dragonfly error: %s", e)
             return None
+
+    def evict_cached(
+        self,
+        subject_type: str,
+        subject_id: str,
+        permission: str,
+        resource_type: str,
+        zone_id: str = "",
+    ) -> int:
+        """Evict Tiger L1 (in-memory) and L2 (Dragonfly) cached entries (Issue #3395).
+
+        Clears both the in-process bitmap cache and the Dragonfly distributed
+        cache without touching L3 (PostgreSQL).  Called by CacheCoordinator
+        via callback for coordinated invalidation on permission writes.
+
+        Deletes both the zone-scoped L2 key (``tiger:...:zone_id``) and the
+        zone-agnostic key (``tiger:...``) to prevent stale reads via either
+        the ``get_accessible_resources`` or ``check_access`` code paths.
+
+        Returns:
+            Number of entries evicted (L1 + L2).
+        """
+        evicted = 0
+
+        # L1: Evict matching in-memory entries (all zone variants)
+        with self._lock:
+            keys_to_remove = [
+                k
+                for k in self._cache
+                if k.subject_type == subject_type
+                and k.subject_id == subject_id
+                and k.permission == permission
+                and k.resource_type == resource_type
+            ]
+            for k in keys_to_remove:
+                del self._cache[k]
+            evicted += len(keys_to_remove)
+
+        # L2: Delete from Dragonfly (exact key, 1s timeout, fail-open)
+        if self._dragonfly:
+            # Zone-scoped key (tiger:...:zone_id)
+            if zone_id:
+                evicted += (
+                    self._run_dragonfly_op(
+                        operation="delete_exact",
+                        subject_type=subject_type,
+                        subject_id=subject_id,
+                        permission=permission,
+                        resource_type=resource_type,
+                        zone_id=zone_id,
+                        timeout=1.0,
+                    )
+                    or 0
+                )
+            # Zone-agnostic key (tiger:...) — always delete
+            evicted += (
+                self._run_dragonfly_op(
+                    operation="delete_exact",
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    permission=permission,
+                    resource_type=resource_type,
+                    zone_id="",
+                    timeout=1.0,
+                )
+                or 0
+            )
+
+        return evicted
 
     def set_rebac_manager(self, manager: "ReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""

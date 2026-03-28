@@ -216,6 +216,69 @@ class TestCacheCoordinatorCriticalPaths:
 
         assert second_called is True
 
+    def test_tiger_l2_invalidation_in_pipeline_order(self, coordinator, l1_cache, iterator_cache):
+        """Tiger L2 invalidation must fire after L1 but before leases (step 2.5).
+
+        Issue #3395: Explicit L2 Dragonfly cache invalidation for Tiger bitmaps.
+        The coordinator expands relation → permissions, so the callback receives
+        individual permissions (e.g. "read") not the raw relation ("direct_viewer").
+        """
+        call_order: list[str] = []
+
+        def tiger_l2_cb(subj_type, subj_id, permission, res_type, zone_id):
+            call_order.append("tiger_l2")
+
+        def lease_cb(zone_id):
+            call_order.append("lease")
+
+        l1_cache.invalidate_subject.side_effect = lambda *a, **kw: call_order.append("l1")
+        iterator_cache.invalidate_zone.side_effect = lambda *a, **kw: call_order.append("iterator")
+
+        coordinator.register_tiger_l2_invalidator("t1", tiger_l2_cb)
+        coordinator.register_lease_invalidator("lease1", lease_cb)
+
+        coordinator.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/doc.txt"),
+        )
+
+        assert "l1" in call_order
+        assert "tiger_l2" in call_order
+        assert "lease" in call_order
+        # L1 (step 2) < Tiger L2 (step 2.5) < leases (step 3)
+        assert call_order.index("l1") < call_order.index("tiger_l2")
+        assert call_order.index("tiger_l2") < call_order.index("lease")
+
+    def test_tiger_l2_callback_failure_does_not_block_leases(self, coordinator):
+        """A failing Tiger L2 callback must not prevent lease/boundary invalidation.
+
+        Issue #3395: Fail-open — Dragonfly errors must not block the write path.
+        """
+        lease_called = False
+
+        def failing_tiger_cb(subj_type, subj_id, permission, res_type, zone_id):
+            raise RuntimeError("dragonfly down")
+
+        def lease_cb(zone_id):
+            nonlocal lease_called
+            lease_called = True
+
+        coordinator.register_tiger_l2_invalidator("t1", failing_tiger_cb)
+        coordinator.register_lease_invalidator("lease1", lease_cb)
+
+        # Should not raise
+        coordinator.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/doc.txt"),
+        )
+
+        assert lease_called is True
+        assert coordinator.get_stats()["callback_failure_count"] >= 1
+
     def test_callback_failure_increments_boundary_invalidation_count(self, coordinator):
         """Even when callbacks fail, the boundary invalidation count increments."""
 
@@ -416,6 +479,13 @@ class TestCacheCoordinatorRegistration:
         assert coordinator.unregister_namespace_invalidator("n1") is True
         assert coordinator.get_stats()["registered_namespace_invalidators"] == 0
         assert coordinator.unregister_namespace_invalidator("n1") is False
+
+        # Tiger L2 (Issue #3395)
+        coordinator.register_tiger_l2_invalidator("t1", lambda *a: None)
+        assert coordinator.get_stats()["registered_tiger_l2_invalidators"] == 1
+        assert coordinator.unregister_tiger_l2_invalidator("t1") is True
+        assert coordinator.get_stats()["registered_tiger_l2_invalidators"] == 0
+        assert coordinator.unregister_tiger_l2_invalidator("t1") is False
 
     def test_duplicate_registration_is_idempotent(self):
         """Re-registering the same callback_id must not create duplicates."""

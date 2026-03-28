@@ -1,4 +1,4 @@
-"""Unit tests for CASAddressingEngine — CAS addressing over InMemoryBlobTransport.
+"""Unit tests for CASAddressingEngine — CAS addressing over InMemoryTransport.
 
 Tests cover:
 - Content-addressable write/read/delete with hash-based paths
@@ -21,11 +21,11 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
 
-# === InMemoryBlobTransport ===
+# === InMemoryTransport ===
 
 
-class InMemoryBlobTransport:
-    """Minimal in-memory BlobTransport for testing."""
+class InMemoryTransport:
+    """Minimal in-memory Transport for testing."""
 
     transport_name: str = "memory"
 
@@ -91,12 +91,12 @@ class InMemoryBlobTransport:
 
 
 @pytest.fixture
-def transport() -> InMemoryBlobTransport:
-    return InMemoryBlobTransport()
+def transport() -> InMemoryTransport:
+    return InMemoryTransport()
 
 
 @pytest.fixture
-def backend(transport: InMemoryBlobTransport) -> CASAddressingEngine:
+def backend(transport: InMemoryTransport) -> CASAddressingEngine:
     return CASAddressingEngine(transport, backend_name="test-cas")
 
 
@@ -107,7 +107,7 @@ class TestCASAddressingEngineWriteContent:
     """Test write_content() — CAS dedup."""
 
     def test_write_stores_at_cas_path(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryTransport
     ):
         content = b"hello world"
         h = hash_content(content)
@@ -146,7 +146,7 @@ class TestCASAddressingEngineReadContent:
             backend.read_content("a" * 64)
 
     def test_read_verifies_hash_integrity(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryTransport
     ):
         content = b"original"
         result = backend.write_content(content)
@@ -162,9 +162,7 @@ class TestCASAddressingEngineReadContent:
 class TestCASAddressingEngineDeleteContent:
     """Test delete_content() — blob removal and cleanup."""
 
-    def test_delete_removes_blob(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
-    ):
+    def test_delete_removes_blob(self, backend: CASAddressingEngine, transport: InMemoryTransport):
         content = b"delete me"
         result = backend.write_content(content)
         h = result.content_id
@@ -179,7 +177,7 @@ class TestCASAddressingEngineDeleteContent:
             backend.delete_content("b" * 64)
 
     def test_delete_cleans_up_meta_sidecar(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: CASAddressingEngine, transport: InMemoryTransport
     ):
         content = b"cleanup"
         result = backend.write_content(content)
@@ -268,13 +266,11 @@ class TestCASAddressingEngineBatchRead:
 class TestCASAddressingEngineDirectories:
     """Test directory operations (CAS uses dirs/ prefix)."""
 
-    def test_mkdir_creates_marker(
-        self, backend: CASAddressingEngine, transport: InMemoryBlobTransport
-    ):
+    def test_mkdir_creates_marker(self, backend: CASAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("data")
         assert "dirs/data/" in transport.files
 
-    def test_mkdir_root_noop(self, backend: CASAddressingEngine, transport: InMemoryBlobTransport):
+    def test_mkdir_root_noop(self, backend: CASAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("")
         # Root always exists, no marker created
         assert not any(k.startswith("dirs/") for k in transport.files)
@@ -294,7 +290,7 @@ class TestCASAddressingEngineDirectories:
         backend.mkdir("data")
         assert backend.is_directory("data") is True
 
-    def test_rmdir(self, backend: CASAddressingEngine, transport: InMemoryBlobTransport):
+    def test_rmdir(self, backend: CASAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("data")
         backend.rmdir("data")
         assert "dirs/data/" not in transport.files
@@ -311,11 +307,11 @@ class TestCASAddressingEngineDirectories:
 class TestCASAddressingEngineName:
     """Test name property and default name generation."""
 
-    def test_custom_name(self, transport: InMemoryBlobTransport):
+    def test_custom_name(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="my-cas")
         assert backend.name == "my-cas"
 
-    def test_default_name(self, transport: InMemoryBlobTransport):
+    def test_default_name(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport)
         assert backend.name == "cas-memory"
 
@@ -323,7 +319,7 @@ class TestCASAddressingEngineName:
 class TestVerifyOnRead:
     """Test verify_on_read flag — configurable integrity hash on read."""
 
-    def test_verify_on_read_true_detects_corruption(self, transport: InMemoryBlobTransport):
+    def test_verify_on_read_true_detects_corruption(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=True)
         content = b"original"
         result = backend.write_content(content)
@@ -333,7 +329,7 @@ class TestVerifyOnRead:
         with pytest.raises(BackendError, match="hash mismatch"):
             backend.read_content(result.content_id)
 
-    def test_verify_on_read_false_skips_hash(self, transport: InMemoryBlobTransport):
+    def test_verify_on_read_false_skips_hash(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test", verify_on_read=False)
         content = b"original"
         result = backend.write_content(content)
@@ -344,7 +340,7 @@ class TestVerifyOnRead:
         data = backend.read_content(result.content_id)
         assert data == b"corrupted"
 
-    def test_verify_on_read_default_is_true(self, transport: InMemoryBlobTransport):
+    def test_verify_on_read_default_is_true(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test")
         assert backend._verify_on_read is True
 
@@ -352,7 +348,7 @@ class TestVerifyOnRead:
 class TestDedupSkip:
     """Test dedup skip — blob_exists check before put_blob on write."""
 
-    def test_dedup_write_skips_put_blob(self, transport: InMemoryBlobTransport):
+    def test_dedup_write_skips_put_blob(self, transport: InMemoryTransport):
         """On dedup, put_blob should not be called the second time."""
         from unittest.mock import patch
 
@@ -376,7 +372,7 @@ class TestDedupSkip:
         # put_blob should NOT have been called for the content blob
         assert content_key not in put_calls
 
-    def test_fresh_write_calls_put_blob(self, transport: InMemoryBlobTransport):
+    def test_fresh_write_calls_put_blob(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test")
         content = b"fresh content"
         result = backend.write_content(content)
@@ -389,7 +385,7 @@ class TestDedupSkip:
 class TestNoMetaForNonCDC:
     """Test that non-CDC writes do NOT create .meta sidecars."""
 
-    def test_write_no_meta_sidecar(self, transport: InMemoryBlobTransport):
+    def test_write_no_meta_sidecar(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test")
         result = backend.write_content(b"small content")
         h = result.content_id

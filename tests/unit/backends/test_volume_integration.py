@@ -230,12 +230,12 @@ class TestCASLocalBackendWithVolumes:
         assert isinstance(entries, list)
 
     def test_fallback_to_local_transport(self, tmp_path):
-        """use_volume_packing=False should use LocalBlobTransport."""
+        """use_volume_packing=False should use LocalTransport."""
         from nexus.backends.storage.cas_local import CASLocalBackend
-        from nexus.backends.transports.local_transport import LocalBlobTransport
+        from nexus.backends.transports.local_transport import LocalTransport
 
         backend = CASLocalBackend(root_path=tmp_path, use_volume_packing=False)
-        assert isinstance(backend._transport, LocalBlobTransport)
+        assert isinstance(backend._transport, LocalTransport)
 
         content = b"fallback test"
         result = backend.write_content(content)

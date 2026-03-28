@@ -1,4 +1,4 @@
-"""S3 BlobTransport — raw key→blob I/O over AWS S3.
+"""S3 Transport — raw key→blob I/O over AWS S3.
 
 Shared between PathS3Backend (path addressing) and potential future
 S3CASAddressingEngine (CAS addressing).
@@ -28,10 +28,10 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 logger = logging.getLogger(__name__)
 
 
-class S3BlobTransport:
+class S3Transport:
     """Raw key→blob I/O over AWS S3.
 
-    Implements the BlobTransport protocol (structural typing — no inheritance).
+    Implements the Transport protocol (structural typing — no inheritance).
     """
 
     transport_name: str = "s3"
@@ -130,7 +130,7 @@ class S3BlobTransport:
         except Exception:
             return False
 
-    # === BlobTransport Protocol Methods ===
+    # === Transport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
         try:
@@ -360,7 +360,7 @@ class S3BlobTransport:
                     self.abort_multipart(key, upload_id)
             raise
 
-    # === S3-Specific Extras (not part of BlobTransport protocol) ===
+    # === S3-Specific Extras (not part of Transport protocol) ===
 
     def generate_presigned_url(
         self, key: str, expires_in: int = 3600, method: str = "get_object"

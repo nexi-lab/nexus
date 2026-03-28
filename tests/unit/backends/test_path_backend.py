@@ -1,4 +1,4 @@
-"""Unit tests for PathAddressingEngine — path addressing over InMemoryBlobTransport.
+"""Unit tests for PathAddressingEngine — path addressing over InMemoryTransport.
 
 Tests cover:
 - Path-based write/read/delete (requires OperationContext with backend_path)
@@ -25,11 +25,11 @@ from nexus.contracts.types import OperationContext
 from nexus.core.hash_fast import hash_content
 from nexus.core.object_store import WriteResult
 
-# === InMemoryBlobTransport ===
+# === InMemoryTransport ===
 
 
-class InMemoryBlobTransport:
-    """Minimal in-memory BlobTransport for testing."""
+class InMemoryTransport:
+    """Minimal in-memory Transport for testing."""
 
     transport_name: str = "memory"
 
@@ -105,17 +105,17 @@ def _make_context(backend_path: str, virtual_path: str | None = None) -> Operati
 
 
 @pytest.fixture
-def transport() -> InMemoryBlobTransport:
-    return InMemoryBlobTransport()
+def transport() -> InMemoryTransport:
+    return InMemoryTransport()
 
 
 @pytest.fixture
-def backend(transport: InMemoryBlobTransport) -> PathAddressingEngine:
+def backend(transport: InMemoryTransport) -> PathAddressingEngine:
     return PathAddressingEngine(transport, backend_name="test-path", bucket_name="test-bucket")
 
 
 @pytest.fixture
-def prefixed_backend(transport: InMemoryBlobTransport) -> PathAddressingEngine:
+def prefixed_backend(transport: InMemoryTransport) -> PathAddressingEngine:
     return PathAddressingEngine(
         transport, backend_name="test-prefixed", bucket_name="test-bucket", prefix="data"
     )
@@ -128,7 +128,7 @@ class TestPathAddressingEngineWriteContent:
     """Test write_content() — path-based storage."""
 
     def test_write_stores_at_backend_path(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         ctx = _make_context("docs/file.txt")
         result = backend.write_content(b"hello world", context=ctx)
@@ -147,7 +147,7 @@ class TestPathAddressingEngineWriteContent:
             backend.write_content(b"no path", context=_make_context(""))
 
     def test_write_with_prefix(
-        self, prefixed_backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, prefixed_backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         ctx = _make_context("file.txt")
         prefixed_backend.write_content(b"prefixed", context=ctx)
@@ -186,9 +186,7 @@ class TestPathAddressingEngineReadContent:
 class TestPathAddressingEngineDeleteContent:
     """Test delete_content()."""
 
-    def test_delete_removes_blob(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
-    ):
+    def test_delete_removes_blob(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         ctx = _make_context("file.txt")
         backend.write_content(b"delete me", context=ctx)
         assert "file.txt" in transport.files
@@ -284,17 +282,17 @@ class TestPathAddressingEngineBatchRead:
 class TestPathAddressingEngineDirectories:
     """Test directory operations."""
 
-    def test_mkdir(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
+    def test_mkdir(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("data")
         assert "data/" in transport.files
 
     def test_mkdir_with_prefix(
-        self, prefixed_backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, prefixed_backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         prefixed_backend.mkdir("subdir")
         assert "data/subdir/" in transport.files
 
-    def test_mkdir_root_noop(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
+    def test_mkdir_root_noop(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("")
         assert not any(k.endswith("/") for k in transport.files)
 
@@ -313,7 +311,7 @@ class TestPathAddressingEngineDirectories:
         backend.mkdir("data")
         assert backend.is_directory("data") is True
 
-    def test_rmdir(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
+    def test_rmdir(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         backend.mkdir("data")
         backend.rmdir("data")
         assert "data/" not in transport.files
@@ -330,7 +328,7 @@ class TestPathAddressingEngineDirectories:
 class TestPathAddressingEngineRename:
     """Test rename_file (copy + delete)."""
 
-    def test_rename(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
+    def test_rename(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         transport.files["old.txt"] = b"content"
 
         backend.rename_file("old.txt", "new.txt")
@@ -343,7 +341,7 @@ class TestPathAddressingEngineRename:
             backend.rename_file("missing.txt", "new.txt")
 
     def test_rename_dest_exists_raises(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         transport.files["old.txt"] = b"old"
         transport.files["new.txt"] = b"new"
@@ -355,7 +353,7 @@ class TestPathAddressingEngineRename:
 class TestPathAddressingEngineBulkDownload:
     """Test _bulk_download_blobs (BackendIOService compat)."""
 
-    def test_bulk_download(self, backend: PathAddressingEngine, transport: InMemoryBlobTransport):
+    def test_bulk_download(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         transport.files["a.txt"] = b"content_a"
         transport.files["b.txt"] = b"content_b"
 
@@ -368,7 +366,7 @@ class TestPathAddressingEngineBulkDownload:
         assert backend._bulk_download_blobs([]) == {}
 
     def test_bulk_download_handles_failures(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         transport.files["exists.txt"] = b"data"
 
@@ -396,11 +394,11 @@ class TestPathAddressingEnginePrefix:
 class TestPathAddressingEngineName:
     """Test name property and default name generation."""
 
-    def test_custom_name(self, transport: InMemoryBlobTransport):
+    def test_custom_name(self, transport: InMemoryTransport):
         backend = PathAddressingEngine(transport, backend_name="my-path")
         assert backend.name == "my-path"
 
-    def test_default_name(self, transport: InMemoryBlobTransport):
+    def test_default_name(self, transport: InMemoryTransport):
         backend = PathAddressingEngine(transport)
         assert backend.name == "path-memory"
 
@@ -408,9 +406,7 @@ class TestPathAddressingEngineName:
 class TestPathAddressingEngineOffsetWrite:
     """Test offset write (POSIX pwrite semantics) for PAS."""
 
-    def test_offset_write_splice(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
-    ):
+    def test_offset_write_splice(self, backend: PathAddressingEngine, transport: InMemoryTransport):
         """Write at offset splices into existing content."""
         ctx = _make_context("file.txt")
         backend.write_content(b"Hello World", context=ctx)
@@ -420,7 +416,7 @@ class TestPathAddressingEngineOffsetWrite:
         assert data == b"Hello Earth"
 
     def test_offset_write_beyond_eof_zero_fills(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         """Offset beyond EOF zero-fills the gap."""
         ctx = _make_context("file.txt")
@@ -432,7 +428,7 @@ class TestPathAddressingEngineOffsetWrite:
         assert result.size == 7
 
     def test_offset_zero_unchanged(
-        self, backend: PathAddressingEngine, transport: InMemoryBlobTransport
+        self, backend: PathAddressingEngine, transport: InMemoryTransport
     ):
         """offset=0 (default) behaves as whole-file replace."""
         ctx = _make_context("file.txt")

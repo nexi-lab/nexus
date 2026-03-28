@@ -1,7 +1,7 @@
 """Tests for OpenAI-compatible LLM backend.
 
 Tests cover:
-- LLMBlobTransport: in-memory blob operations
+- LLMTransport: in-memory blob operations
 - OpenAICompatibleBackend: thin CASAddressingEngine subclass (no write_content override)
   - write_content(): inherited from CASAddressingEngine (pure CAS, no LLM call)
   - generate_streaming(): pure LLM compute, yields tokens
@@ -18,58 +18,58 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
+from nexus.backends.compute.llm_transport import LLMTransport
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
 # =============================================================================
-# LLMBlobTransport tests
+# LLMTransport tests
 # =============================================================================
 
 
-class TestLLMBlobTransport:
+class TestLLMTransport:
     """Test in-memory blob transport."""
 
     def test_put_and_get(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("key1", b"hello")
         data, version = t.get_blob("key1")
         assert data == b"hello"
         assert version is None
 
     def test_get_missing_raises(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
             t.get_blob("missing")
 
     def test_delete(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("key1", b"data")
         t.delete_blob("key1")
         assert not t.blob_exists("key1")
 
     def test_delete_missing_raises(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
             t.delete_blob("missing")
 
     def test_blob_exists(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         assert not t.blob_exists("key1")
         t.put_blob("key1", b"data")
         assert t.blob_exists("key1")
 
     def test_get_blob_size(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("key1", b"hello")
         assert t.get_blob_size("key1") == 5
 
     def test_get_blob_size_missing_raises(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
             t.get_blob_size("missing")
 
     def test_list_blobs(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("cas/ab/cd/hash1", b"data1")
         t.put_blob("cas/ab/cd/hash2", b"data2")
         t.put_blob("cas/ef/gh/hash3", b"data3")
@@ -78,36 +78,36 @@ class TestLLMBlobTransport:
         assert "cas/ab/cd/" in prefixes
 
     def test_copy_blob(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("src", b"content")
         t.copy_blob("src", "dst")
         data, _ = t.get_blob("dst")
         assert data == b"content"
 
     def test_copy_missing_raises(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
             t.copy_blob("missing", "dst")
 
     def test_stream_blob(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("key1", b"abcdefghij")
         chunks = list(t.stream_blob("key1", chunk_size=4))
         assert chunks == [b"abcd", b"efgh", b"ij"]
 
     def test_create_directory_marker(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.create_directory_marker("dirs/mydir/")
         assert t.blob_exists("dirs/mydir/")
         data, _ = t.get_blob("dirs/mydir/")
         assert data == b""
 
     def test_transport_name(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         assert t.transport_name == "llm_memory"
 
     def test_overwrite(self) -> None:
-        t = LLMBlobTransport()
+        t = LLMTransport()
         t.put_blob("key1", b"old")
         t.put_blob("key1", b"new")
         data, _ = t.get_blob("key1")

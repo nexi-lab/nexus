@@ -1,8 +1,8 @@
 """OpenAI-compatible LLM backend — CAS addressing + LLM transport.
 
 Thin CASAddressingEngine subclass: registration + CONNECTION_ARGS + OpenAI client.
-Follows the same composition pattern as CASLocalBackend (CAS + LocalBlobTransport)
-and CASGCSBackend (CAS + GCSBlobTransport).
+Follows the same composition pattern as CASLocalBackend (CAS + LocalTransport)
+and CASGCSBackend (CAS + GCSTransport).
 
     nexus mount /zone/llm/openai --backend=openai_compatible \
         --config='{"base_url":"https://api.sudorouter.ai","api_key":"sk-..."}'
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.compute.llm_blob_transport import LLMBlobTransport
+from nexus.backends.compute.llm_transport import LLMTransport
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
@@ -137,7 +137,7 @@ class OpenAICompatibleBackend(CASAddressingEngine):
         self._client = _build_openai_client(base_url, api_key, timeout)
 
         # In-memory transport for CAS blobs
-        transport = LLMBlobTransport()
+        transport = LLMTransport()
 
         super().__init__(transport, backend_name="openai_compatible")
 

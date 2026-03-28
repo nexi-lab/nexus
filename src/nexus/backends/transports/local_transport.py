@@ -1,6 +1,6 @@
-"""Local filesystem BlobTransport — raw key→blob I/O on local disk.
+"""Local filesystem Transport — raw key→blob I/O on local disk.
 
-Implements the BlobTransport protocol using direct writes with optional
+Implements the Transport protocol using direct writes with optional
 fsync for durability. CAS is idempotent (same hash = same bytes), so
 temp+replace atomicity is unnecessary — direct write is safe and faster.
 
@@ -30,10 +30,10 @@ from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 logger = logging.getLogger(__name__)
 
 
-class LocalBlobTransport:
+class LocalTransport:
     """Raw key→blob I/O on local filesystem.
 
-    Implements the BlobTransport protocol (structural typing — no inheritance).
+    Implements the Transport protocol (structural typing — no inheritance).
 
     Args:
         root_path: Root directory for all blob storage.
@@ -65,7 +65,7 @@ class LocalBlobTransport:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._known_parents.add(parent)
 
-    # === BlobTransport Protocol Methods ===
+    # === Transport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
         """Direct write: raw fd → fsync → done. No temp+replace.

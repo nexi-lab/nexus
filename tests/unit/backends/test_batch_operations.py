@@ -20,8 +20,8 @@ from nexus.contracts.types import OperationContext
 from nexus.core.object_store import WriteResult
 
 
-class InMemoryBlobTransport:
-    """Minimal in-memory BlobTransport for tests."""
+class InMemoryTransport:
+    """Minimal in-memory Transport for tests."""
 
     transport_name = "memory"
 
@@ -71,7 +71,7 @@ class MockBlobConnector(PathAddressingEngine, CacheConnectorMixin):
     """Mock blob connector for testing batch operations."""
 
     def __init__(self, session_factory):
-        transport = InMemoryBlobTransport()
+        transport = InMemoryTransport()
         super().__init__(transport, backend_name="test_blob_backend")
         self.session_factory = session_factory
         self.versions: dict[str, str] = {}
@@ -585,7 +585,7 @@ class MockS3ConnectorForBatch(PathAddressingEngine, CacheConnectorMixin):
     batch_read_workers: int = 4  # Low for tests
 
     def __init__(self) -> None:
-        transport = InMemoryBlobTransport()
+        transport = InMemoryTransport()
         super().__init__(transport, backend_name="s3_connector", bucket_name="test-bucket")
         self.read_count: int = 0
         self.session_factory = None

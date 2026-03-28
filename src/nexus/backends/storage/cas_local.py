@@ -10,7 +10,7 @@ content cache, VFSSemaphore, and CDCEngine (chunking).
 
 VolumeLocalTransport packs CAS blobs into append-only volume files with a
 redb index, reducing inode overhead and enabling batched fsync. Falls back
-to LocalBlobTransport if the Rust VolumeEngine is unavailable.
+to LocalTransport if the Rust VolumeEngine is unavailable.
 
 CDC routing is handled by CASAddressingEngine base class via Feature DI —
 CASLocalBackend only instantiates and passes CDCEngine.
@@ -36,7 +36,7 @@ from nexus.backends.base.registry import ArgType, ConnectionArg, register_connec
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 from nexus.backends.engines.cdc import CDCEngine
 from nexus.backends.engines.multipart import MultipartUpload
-from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.transports.local_transport import LocalTransport
 from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
@@ -53,7 +53,7 @@ DEFAULT_CAS_BLOOM_FP_RATE = 0.01
 
 
 def _init_bloom_from_transport(
-    transport: VolumeLocalTransport | LocalBlobTransport,
+    transport: VolumeLocalTransport | LocalTransport,
     capacity: int,
     fp_rate: float,
 ) -> Any:
@@ -134,18 +134,18 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         self.cas_root.mkdir(parents=True, exist_ok=True)
         self.dir_root.mkdir(parents=True, exist_ok=True)
 
-        # Build transport — VolumeLocalTransport with fallback to LocalBlobTransport
+        # Build transport — VolumeLocalTransport with fallback to LocalTransport
         # VolumeLocalTransport packs CAS blobs into volumes; falls back internally
         # if VolumeEngine is unavailable (Issue #3403).
-        # Both VolumeLocalTransport and LocalBlobTransport implement BlobTransport
+        # Both VolumeLocalTransport and LocalTransport implement Transport
         # structurally (Protocol), but mypy can't verify VolumeLocalTransport against
-        # the Protocol since it uses dynamic PyO3 dispatch. Using BlobTransport annotation
+        # the Protocol since it uses dynamic PyO3 dispatch. Using Transport annotation
         # directly would fail for VolumeLocalTransport.
         transport: Any
         if use_volume_packing:
             transport = VolumeLocalTransport(root_path=self.root_path, fsync=True)
         else:
-            transport = LocalBlobTransport(root_path=self.root_path, fsync=True)
+            transport = LocalTransport(root_path=self.root_path, fsync=True)
 
         # Seed Bloom filter from transport (works for both volume and file storage)
         bloom = _init_bloom_from_transport(transport, bloom_capacity, bloom_fp_rate)

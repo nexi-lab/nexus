@@ -1,7 +1,7 @@
 """Google Cloud Storage backend with CAS deduplication.
 
 Thin subclass of CASAddressingEngine that:
-- Creates a GCSBlobTransport for raw GCS I/O
+- Creates a GCSTransport for raw GCS I/O
 - Registers as "cas_gcs" connector via @register_connector
 - Declares CONNECTION_ARGS for factory instantiation
 - Overrides batch_read_content with GCS-optimized parallel downloads
@@ -86,9 +86,9 @@ class CASGCSBackend(CASAddressingEngine):
         upload_timeout: float = 300.0,
     ):
         try:
-            from nexus.backends.transports.gcs_transport import GCSBlobTransport
+            from nexus.backends.transports.gcs_transport import GCSTransport
 
-            transport = GCSBlobTransport(
+            transport = GCSTransport(
                 bucket_name=bucket_name,
                 project_id=project_id,
                 credentials_path=credentials_path,

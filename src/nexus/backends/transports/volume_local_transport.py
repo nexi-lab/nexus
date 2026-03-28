@@ -1,8 +1,8 @@
-"""Volume-packed local BlobTransport — append-only volume files for CAS.
+"""Volume-packed local Transport — append-only volume files for CAS.
 
 Wraps the Rust VolumeEngine (nexus_fast.VolumeEngine) and implements the
-BlobTransport protocol. Routes CAS blob keys (cas/...) to the volume engine
-and delegates directory operations (dirs/...) to an internal LocalBlobTransport.
+Transport protocol. Routes CAS blob keys (cas/...) to the volume engine
+and delegates directory operations (dirs/...) to an internal LocalTransport.
 
 Volume engine benefits:
     - Packs thousands of blobs into append-only volume files
@@ -25,7 +25,7 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 
-from nexus.backends.transports.local_transport import LocalBlobTransport
+from nexus.backends.transports.local_transport import LocalTransport
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -35,16 +35,16 @@ _CAS_PREFIX = "cas/"
 
 
 class VolumeLocalTransport:
-    """Volume-packed BlobTransport for local CAS storage.
+    """Volume-packed Transport for local CAS storage.
 
-    Implements the full BlobTransport protocol (structural typing).
+    Implements the full Transport protocol (structural typing).
     CAS blob keys (cas/...) are routed to the Rust VolumeEngine.
     All other keys (dirs/..., uploads/...) are handled by an internal
-    LocalBlobTransport for filesystem-native directory operations.
+    LocalTransport for filesystem-native directory operations.
 
     Args:
         root_path: Root directory for all storage.
-        fsync: Whether LocalBlobTransport uses fsync (for dirs/uploads).
+        fsync: Whether LocalTransport uses fsync (for dirs/uploads).
         target_volume_size: Override volume size in bytes (0 = dynamic).
         compaction_rate_limit: I/O rate limit for compaction (bytes/sec).
         compaction_sparsity_threshold: Trigger compaction above this (0.0-1.0).
@@ -81,12 +81,12 @@ class VolumeLocalTransport:
             self._volume_available = False
             logger.warning(
                 "nexus_fast.VolumeEngine not available, "
-                "falling back to file-per-blob LocalBlobTransport"
+                "falling back to file-per-blob LocalTransport"
             )
 
         # Delegate transport for non-CAS keys (dirs, uploads, etc.)
         # Also serves as fallback if VolumeEngine is unavailable.
-        self._delegate = LocalBlobTransport(root_path=root_path, fsync=fsync)
+        self._delegate = LocalTransport(root_path=root_path, fsync=fsync)
 
     def _is_cas_key(self, key: str) -> bool:
         """Check if a key should be routed to the volume engine."""
@@ -96,7 +96,7 @@ class VolumeLocalTransport:
         """Extract content hash from a CAS key like 'cas/ab/cd/abcdef...'."""
         return key.split("/")[-1]
 
-    # === BlobTransport Protocol Methods ===
+    # === Transport Protocol Methods ===
 
     def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
         if self._is_cas_key(key):

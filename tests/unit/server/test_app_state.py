@@ -79,11 +79,11 @@ class TestInitAppState:
         """init_app_state should flatten NexusFS attrs onto app.state via service()."""
         app = _make_app()
         mock_fs = MagicMock()
-        mock_fs._permission_enforcer = "pe"
         # Mock service() to return values for enlisted services
         _svc_map = {
             "event_bus": "eb",
             "write_observer": "wo",
+            "permission_enforcer": "pe",
             "observability_subsystem": "obs",
             "eviction_manager": "em",
         }

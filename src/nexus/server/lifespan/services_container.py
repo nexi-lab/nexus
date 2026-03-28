@@ -138,7 +138,7 @@ class LifespanServices:
             session_factory=getattr(nx, "SessionLocal", None) if nx else None,
             sql_engine=getattr(nx, "_sql_engine", None) if nx else None,
             entity_registry=_svc("entity_registry"),
-            permission_enforcer=(getattr(nx, "_permission_enforcer", None) if nx else None),
+            permission_enforcer=(_svc("permission_enforcer") if nx else None),
             rebac_manager=_svc("rebac_manager"),
             event_bus=getattr(nx, "_event_bus_infra", None) if nx else None,
             coordination_client=(getattr(nx, "_coordination_client", None) if nx else None),

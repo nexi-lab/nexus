@@ -1,6 +1,6 @@
 """FileWatcher — kernel file change notification (inotify equivalent).
 
-Kernel primitive (§4.5) providing file change notification with two paths:
+Kernel primitive (§4.3) providing file change notification with two paths:
 
     Local (kernel-owned):
         ``on_mutation()`` registered as VFSObserver on KernelDispatch.

@@ -739,13 +739,39 @@ class NexusFS(  # type: ignore[misc]
         - Path exists + different entry_type → ValueError (immutable after creation)
 
         Args:
-            path: Virtual file path.
+            path: Virtual file path. Paths under ``/__sys__/`` are kernel
+            management operations (service/hook registration), not filesystem
+            metadata.
             context: Operation context.
             **attrs: Metadata attributes. Include ``entry_type`` to create.
 
         Returns:
             Dict with path, created flag, and type-specific fields.
         """
+        # ── /__sys__/ kernel management dispatch ──────────────────────
+        # Service and hook registration via syscall. These paths bypass
+        # the normal metastore path — kernel routes them to ServiceRegistry
+        # or KernelDispatch instead.
+        if path.startswith("/__sys__/services/"):
+            name = path.rsplit("/", 1)[-1]
+            service = attrs.get("service")
+            if service is None:
+                raise ValueError(
+                    f"sys_setattr(/__sys__/services/{name}) requires 'service' attribute"
+                )
+            await self._service_registry.enlist(name, service)
+            return {"path": path, "registered": True, "service": name}
+
+        if path.startswith("/__sys__/hooks/"):
+            # Standalone hook registration. Services with hook_spec use
+            # /__sys__/services/ instead (enlist auto-detects hooks).
+            # TODO: Add KernelDispatch.register_hook(name, hook) for
+            # standalone hooks (debug tracers, temporary observers).
+            raise NotImplementedError(
+                "Standalone hook registration via /__sys__/hooks/ not yet supported. "
+                "Use /__sys__/services/ with a service that declares hook_spec()."
+            )
+
         path = self._validate_path(path)
 
         meta = self.metadata.get(path)
@@ -3095,6 +3121,17 @@ class NexusFS(  # type: ignore[misc]
             AccessDeniedError: If access is denied (zone isolation or read-only namespace).
             PermissionError: If path is read-only or user doesn't have write permission.
         """
+        # ── /__sys__/ kernel management dispatch ──────────────────────
+        if path.startswith("/__sys__/services/"):
+            name = path.rsplit("/", 1)[-1]
+            await self._service_registry.unregister_service_full(name)
+            return {"path": path, "unregistered": True, "service": name}
+
+        if path.startswith("/__sys__/hooks/"):
+            raise NotImplementedError(
+                "Standalone hook removal via /__sys__/hooks/ not yet supported."
+            )
+
         # DT_PIPE fast-path: skip validate/zone_check/resolve/metastore.get
         if self._pipe_manager is not None and path in self._pipe_manager._buffers:
             return self._pipe_destroy(path)

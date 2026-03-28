@@ -192,7 +192,7 @@ etag ownership and zone isolation.
 **Consistency parameter** (Issue #1828): `write(consistency=)` accepts ``"sc"``
 (strong consistency, Raft consensus — default) or ``"ec"`` (eventually
 consistent, local-first via EC WAL). EC writes apply locally then replicate
-asynchronously; callers poll ``is_committed(token)`` for replication status.
+asynchronously via the background transport loop.
 The EC WAL (Rust, redb) provides seq/watermark/idempotent-apply primitives.
 EC and Raft log are separate redb trees — EC writes do not bloat Raft consensus log.
 

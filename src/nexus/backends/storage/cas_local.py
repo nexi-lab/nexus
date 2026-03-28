@@ -196,18 +196,18 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         *,
         contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        """Read multiple content items via transport batch_get_blobs.
+        """Read multiple content items via transport batch_fetch.
 
-        Uses transport.batch_get_blobs() for efficient bulk reads — works for
+        Uses transport.batch_fetch() for efficient bulk reads — works for
         both volume-packed storage (batch pread) and file-per-blob (mmap bulk).
-        Falls back to sequential reads if batch_get_blobs is unavailable.
+        Falls back to sequential reads if batch_fetch is unavailable.
         """
         if len(content_ids) <= 1:
             return super().batch_read_content(content_ids, context, contexts=contexts)
 
-        if hasattr(self._transport, "batch_get_blobs"):
+        if hasattr(self._transport, "batch_fetch"):
             keys = [self._blob_key(cid) for cid in content_ids]
-            key_results = self._transport.batch_get_blobs(keys)
+            key_results = self._transport.batch_fetch(keys)
             result: dict[str, bytes | None] = {}
             for cid, key in zip(content_ids, keys, strict=True):
                 result[cid] = key_results.get(key)

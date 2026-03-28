@@ -194,7 +194,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         else:
             backend_path = path.lstrip("/")
 
-        blob_path = self._get_blob_path(backend_path)
+        blob_path = self._get_key_path(backend_path)
         return self._gcs_transport.get_generation(blob_path)
 
     def get_file_info(self, path: str, context: "OperationContext | None" = None) -> FileInfo:
@@ -203,7 +203,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         else:
             backend_path = path.lstrip("/")
 
-        blob_path = self._get_blob_path(backend_path)
+        blob_path = self._get_key_path(backend_path)
         meta = self._gcs_transport.reload_blob_metadata(blob_path)
 
         return FileInfo(
@@ -218,14 +218,14 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         backend_paths: list[str],
         contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, str | None]:
-        """Optimized: single list_blobs() API call for all versions."""
+        """Optimized: single list_keys() API call for all versions."""
         if not backend_paths:
             return {}
 
-        blob_paths_map = {self._get_blob_path(path): path for path in backend_paths}
+        blob_paths_map = {self._get_key_path(path): path for path in backend_paths}
 
         try:
-            blobs = self._gcs_transport.bucket.list_blobs(
+            blobs = self._gcs_transport.bucket.list_keys(
                 prefix=self.prefix if self.prefix else None
             )
 
@@ -258,9 +258,9 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         else:
             backend_path = path.lstrip("/")
 
-        blob_path = self._get_blob_path(backend_path)
+        blob_path = self._get_key_path(backend_path)
 
-        if not self._gcs_transport.blob_exists(blob_path):
+        if not self._gcs_transport.exists(blob_path):
             raise NexusFileNotFoundError(path)
 
         expires_in = min(expires_in, 604800)
@@ -282,7 +282,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
             )
 
         cache_path = self._get_cache_path(context) or context.backend_path
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
 
         # Check cache first
         if self._has_caching():
@@ -298,7 +298,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         if self.versioning_enabled and content_id and self._is_version_id(content_id):
             version_id = content_id
 
-        content, generation = self._transport.get_blob(blob_path, version_id)
+        content, generation = self._transport.fetch(blob_path, version_id)
 
         # Cache the result
         if self._has_caching():
@@ -333,9 +333,9 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         if hasattr(context, "virtual_path") and context.virtual_path:
             virtual_path = context.virtual_path
 
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
         content_type = self._detect_content_type(context.backend_path, content)
-        new_version = self._transport.put_blob(blob_path, content, content_type)
+        new_version = self._transport.store(blob_path, content, content_type)
 
         # Update cache
         if self._has_caching():

@@ -423,7 +423,7 @@ class DataMigrator:
         Yields:
             FileInfo for each matching blob
         """
-        blobs = bucket.list_blobs(prefix=prefix)
+        blobs = bucket.list_keys(prefix=prefix)
 
         for blob in blobs:
             # Skip directories

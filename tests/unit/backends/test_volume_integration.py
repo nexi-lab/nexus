@@ -107,15 +107,15 @@ class TestVolumeLocalTransportIntegration:
 
         # CAS write
         cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-        transport.put_blob(cas_key, b"cas data")
+        transport.store(cas_key, b"cas data")
 
         # Dir operation
-        transport.create_directory_marker("dirs/test/")
-        assert transport.blob_exists("dirs/test/")
+        transport.create_dir("dirs/test/")
+        assert transport.exists("dirs/test/")
 
         # CAS read (seal first for volume transport)
         transport.seal_active_volume()
-        data, _ = transport.get_blob(cas_key)
+        data, _ = transport.fetch(cas_key)
         assert data == b"cas data"
 
     def test_meta_sidecar_goes_to_delegate(self, tmp_path):
@@ -123,9 +123,9 @@ class TestVolumeLocalTransportIntegration:
         transport = self._make_transport(tmp_path)
 
         meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
-        transport.put_blob(meta_key, b'{"is_chunked_manifest": true}')
+        transport.store(meta_key, b'{"is_chunked_manifest": true}')
 
-        data, _ = transport.get_blob(meta_key)
+        data, _ = transport.fetch(meta_key)
         assert b"is_chunked_manifest" in data
 
     def test_volume_stats(self, tmp_path):
@@ -139,14 +139,14 @@ class TestVolumeLocalTransportIntegration:
         transport = self._make_transport(tmp_path)
 
         cas_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
-        transport.put_blob(cas_key, b"cas blob")
+        transport.store(cas_key, b"cas blob")
 
         meta_key = "cas/ab/cd/abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890.meta"
-        transport.put_blob(meta_key, b"meta blob")
+        transport.store(meta_key, b"meta blob")
 
         transport.seal_active_volume()
 
-        result = transport.batch_get_blobs([cas_key, meta_key])
+        result = transport.batch_fetch([cas_key, meta_key])
         assert result[cas_key] == b"cas blob"
         assert result[meta_key] == b"meta blob"
 

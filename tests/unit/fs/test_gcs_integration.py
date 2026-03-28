@@ -88,7 +88,7 @@ class InMemoryBlobStore:
         mock_blob.generation = 1
         return mock_blob
 
-    def list_blobs(self, prefix: str = "", **kwargs: Any) -> list[MagicMock]:
+    def list_keys(self, prefix: str = "", **kwargs: Any) -> list[MagicMock]:
         results = []
         for key, data in self._blobs.items():
             if key.startswith(prefix):
@@ -110,7 +110,7 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     mock_client = MagicMock()
     mock_bucket = MagicMock()
     mock_bucket.blob = blob_store.blob
-    mock_bucket.list_blobs = blob_store.list_blobs
+    mock_bucket.list_blobs = blob_store.list_keys
     mock_bucket.exists.return_value = True
     mock_bucket.name = "test-gcs-bucket"
     mock_client.bucket.return_value = mock_bucket

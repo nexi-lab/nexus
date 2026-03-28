@@ -31,75 +31,75 @@ class TestLLMTransport:
 
     def test_put_and_get(self) -> None:
         t = LLMTransport()
-        t.put_blob("key1", b"hello")
-        data, version = t.get_blob("key1")
+        t.store("key1", b"hello")
+        data, version = t.fetch("key1")
         assert data == b"hello"
         assert version is None
 
     def test_get_missing_raises(self) -> None:
         t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
-            t.get_blob("missing")
+            t.fetch("missing")
 
     def test_delete(self) -> None:
         t = LLMTransport()
-        t.put_blob("key1", b"data")
-        t.delete_blob("key1")
-        assert not t.blob_exists("key1")
+        t.store("key1", b"data")
+        t.remove("key1")
+        assert not t.exists("key1")
 
     def test_delete_missing_raises(self) -> None:
         t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
-            t.delete_blob("missing")
+            t.remove("missing")
 
-    def test_blob_exists(self) -> None:
+    def test_exists(self) -> None:
         t = LLMTransport()
-        assert not t.blob_exists("key1")
-        t.put_blob("key1", b"data")
-        assert t.blob_exists("key1")
+        assert not t.exists("key1")
+        t.store("key1", b"data")
+        assert t.exists("key1")
 
-    def test_get_blob_size(self) -> None:
+    def test_get_size(self) -> None:
         t = LLMTransport()
-        t.put_blob("key1", b"hello")
-        assert t.get_blob_size("key1") == 5
+        t.store("key1", b"hello")
+        assert t.get_size("key1") == 5
 
-    def test_get_blob_size_missing_raises(self) -> None:
+    def test_get_size_missing_raises(self) -> None:
         t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
-            t.get_blob_size("missing")
+            t.get_size("missing")
 
-    def test_list_blobs(self) -> None:
+    def test_list_keys(self) -> None:
         t = LLMTransport()
-        t.put_blob("cas/ab/cd/hash1", b"data1")
-        t.put_blob("cas/ab/cd/hash2", b"data2")
-        t.put_blob("cas/ef/gh/hash3", b"data3")
-        blobs, prefixes = t.list_blobs("cas/ab/")
+        t.store("cas/ab/cd/hash1", b"data1")
+        t.store("cas/ab/cd/hash2", b"data2")
+        t.store("cas/ef/gh/hash3", b"data3")
+        blobs, prefixes = t.list_keys("cas/ab/")
         assert len(prefixes) == 1  # cas/ab/cd/
         assert "cas/ab/cd/" in prefixes
 
-    def test_copy_blob(self) -> None:
+    def test_copy_key(self) -> None:
         t = LLMTransport()
-        t.put_blob("src", b"content")
-        t.copy_blob("src", "dst")
-        data, _ = t.get_blob("dst")
+        t.store("src", b"content")
+        t.copy_key("src", "dst")
+        data, _ = t.fetch("dst")
         assert data == b"content"
 
     def test_copy_missing_raises(self) -> None:
         t = LLMTransport()
         with pytest.raises(NexusFileNotFoundError):
-            t.copy_blob("missing", "dst")
+            t.copy_key("missing", "dst")
 
-    def test_stream_blob(self) -> None:
+    def test_stream(self) -> None:
         t = LLMTransport()
-        t.put_blob("key1", b"abcdefghij")
-        chunks = list(t.stream_blob("key1", chunk_size=4))
+        t.store("key1", b"abcdefghij")
+        chunks = list(t.stream("key1", chunk_size=4))
         assert chunks == [b"abcd", b"efgh", b"ij"]
 
-    def test_create_directory_marker(self) -> None:
+    def test_create_dir(self) -> None:
         t = LLMTransport()
-        t.create_directory_marker("dirs/mydir/")
-        assert t.blob_exists("dirs/mydir/")
-        data, _ = t.get_blob("dirs/mydir/")
+        t.create_dir("dirs/mydir/")
+        assert t.exists("dirs/mydir/")
+        data, _ = t.fetch("dirs/mydir/")
         assert data == b""
 
     def test_transport_name(self) -> None:
@@ -108,9 +108,9 @@ class TestLLMTransport:
 
     def test_overwrite(self) -> None:
         t = LLMTransport()
-        t.put_blob("key1", b"old")
-        t.put_blob("key1", b"new")
-        data, _ = t.get_blob("key1")
+        t.store("key1", b"old")
+        t.store("key1", b"new")
+        data, _ = t.fetch("key1")
         assert data == b"new"
 
 

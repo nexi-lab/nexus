@@ -76,7 +76,7 @@ class TestGCWithVolumes:
         # Write 5 blobs
         for i in range(5):
             h = make_hash(i)
-            transport.put_blob(f"cas/{h[:2]}/{h[2:4]}/{h}", f"data_{i}".encode())
+            transport.store(f"cas/{h[:2]}/{h[2:4]}/{h}", f"data_{i}".encode())
 
         # Seal so they're visible
         transport.seal_active_volume()
@@ -90,16 +90,16 @@ class TestGCWithVolumes:
         # Hashes 0-2 should still exist, 3-4 should be gone
         for i in range(3):
             h = make_hash(i)
-            assert transport.blob_exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
+            assert transport.exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
         for i in range(3, 5):
             h = make_hash(i)
-            assert not transport.blob_exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
+            assert not transport.exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
 
     def test_gc_respects_grace_period(self, tmp_path):
         engine, transport = self._make_engine_and_transport(tmp_path)
 
         h = make_hash(99)
-        transport.put_blob(f"cas/{h[:2]}/{h[2:4]}/{h}", b"fresh data")
+        transport.store(f"cas/{h[:2]}/{h[2:4]}/{h}", b"fresh data")
         transport.seal_active_volume()
 
         # No references, but grace period of 1 hour
@@ -108,7 +108,7 @@ class TestGCWithVolumes:
         gc._collect()
 
         # Should still exist (within grace period)
-        assert transport.blob_exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
+        assert transport.exists(f"cas/{h[:2]}/{h[2:4]}/{h}")
 
     def test_gc_skips_when_no_metastore(self, tmp_path):
         engine, transport = self._make_engine_and_transport(tmp_path)

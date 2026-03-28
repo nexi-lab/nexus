@@ -44,7 +44,7 @@ class Transport(Protocol):
 
     transport_name: str
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         """Store a blob at *key*.
 
         Args:
@@ -58,7 +58,7 @@ class Transport(Protocol):
         """
         ...
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         """Retrieve a blob.
 
         Args:
@@ -74,7 +74,7 @@ class Transport(Protocol):
         """
         ...
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         """Delete a blob.
 
         Raises:
@@ -82,11 +82,11 @@ class Transport(Protocol):
         """
         ...
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         """Check whether a blob exists at *key*."""
         ...
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         """Return blob size in bytes.
 
         Raises:
@@ -94,7 +94,7 @@ class Transport(Protocol):
         """
         ...
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """List blobs under *prefix*.
 
         Returns:
@@ -103,7 +103,7 @@ class Transport(Protocol):
         """
         ...
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         """Copy a blob from *src_key* to *dst_key*.
 
         Raises:
@@ -111,14 +111,14 @@ class Transport(Protocol):
         """
         ...
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         """Create an empty directory marker blob at *key*.
 
         The key should typically end with ``/``.
         """
         ...
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
@@ -139,7 +139,7 @@ class Transport(Protocol):
         """
         ...
 
-    def put_blob_chunked(
+    def store_chunked(
         self,
         key: str,
         chunks: Iterator[bytes],

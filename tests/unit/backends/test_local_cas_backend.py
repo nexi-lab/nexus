@@ -260,21 +260,21 @@ class TestIncrementalChunkWrite:
         return b
 
     def test_incremental_write_skips_existing_chunks(self, cdc_backend):
-        """Second write of identical content should skip put_blob for all chunks."""
+        """Second write of identical content should skip store for all chunks."""
         content = b"A" * 2048  # Above threshold, will be chunked
 
         cdc_backend.write_content(content)
 
-        # Patch put_blob to count non-meta blob writes on second write
-        original_put_blob = cdc_backend._transport.put_blob
+        # Patch store to count non-meta blob writes on second write
+        original_store = cdc_backend._transport.store
         blob_writes = []
 
-        def counting_put_blob(key, data, *args, **kwargs):
+        def counting_store(key, data, *args, **kwargs):
             if not key.endswith(".meta"):
                 blob_writes.append(key)
-            return original_put_blob(key, data, *args, **kwargs)
+            return original_store(key, data, *args, **kwargs)
 
-        cdc_backend._transport.put_blob = counting_put_blob
+        cdc_backend._transport.store = counting_store
 
         # Second write — chunks already exist, should be deduped
         cdc_backend.write_content(content)
@@ -327,16 +327,16 @@ class TestIncrementalChunkWrite:
         content = b"N" * 2048
         b.write_content(content)
 
-        # Patch put_blob to count non-meta blob writes on second write
-        original_put_blob = b._transport.put_blob
+        # Patch store to count non-meta blob writes on second write
+        original_store = b._transport.store
         blob_writes = []
 
-        def counting_put_blob(key, data, *args, **kwargs):
+        def counting_store(key, data, *args, **kwargs):
             if not key.endswith(".meta"):
                 blob_writes.append(key)
-            return original_put_blob(key, data, *args, **kwargs)
+            return original_store(key, data, *args, **kwargs)
 
-        b._transport.put_blob = counting_put_blob
+        b._transport.store = counting_store
 
         r2 = b.write_content(content)
 
@@ -456,13 +456,13 @@ class TestOffsetWriteCDC:
         r1 = cdc_backend.write_content(content)
 
         # Get chunk hashes from original manifest
-        m1_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r1.content_id))[0]
+        m1_data = cdc_backend._transport.fetch(cdc_backend._blob_key(r1.content_id))[0]
         m1 = ChunkedReference.from_json(m1_data)
 
         # Write 10 bytes at offset 10 (within first chunk region only)
         r2 = cdc_backend.write_content(b"Z" * 10, r1.content_id, offset=10)
 
-        m2_data = cdc_backend._transport.get_blob(cdc_backend._blob_key(r2.content_id))[0]
+        m2_data = cdc_backend._transport.fetch(cdc_backend._blob_key(r2.content_id))[0]
         m2 = ChunkedReference.from_json(m2_data)
 
         # Suffix chunks (after the affected region) should have the same hashes

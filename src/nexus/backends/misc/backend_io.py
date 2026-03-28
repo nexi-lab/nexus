@@ -97,7 +97,7 @@ class BackendIOService:
     ) -> dict[str, bytes]:
         """Batch read content directly from backend (bypassing cache).
 
-        Leverages _bulk_download_blobs() for efficient parallel downloads when
+        Leverages _bulk_download() for efficient parallel downloads when
         available (PathAddressingEngine subclasses). Falls back to sequential
         reads for other connector types.
 
@@ -111,25 +111,25 @@ class BackendIOService:
         connector = self._connector
 
         # Check if this connector has bulk download support
-        if hasattr(connector, "_bulk_download_blobs") and hasattr(connector, "_get_blob_path"):
+        if hasattr(connector, "_bulk_download") and hasattr(connector, "_get_key_path"):
             logger.info(f"[BATCH-READ] Using bulk download for {len(paths)} paths")
 
-            blob_paths = [connector._get_blob_path(path) for path in paths]
+            blob_paths = [connector._get_key_path(path) for path in paths]
 
             version_ids: dict[str, str] = {}
             if contexts:
                 for path in paths:
                     context = contexts.get(path)
                     if context and hasattr(context, "version_id") and context.version_id:
-                        blob_path = connector._get_blob_path(path)
+                        blob_path = connector._get_key_path(path)
                         version_ids[blob_path] = context.version_id
 
-            blob_results = connector._bulk_download_blobs(
+            blob_results = connector._bulk_download(
                 blob_paths,
                 version_ids=version_ids if version_ids else None,
             )
 
-            blob_to_backend = {connector._get_blob_path(p): p for p in paths}
+            blob_to_backend = {connector._get_key_path(p): p for p in paths}
             results: dict[str, bytes] = {}
             for blob_path, content in blob_results.items():
                 backend_path = blob_to_backend.get(blob_path)
@@ -175,10 +175,10 @@ class BackendIOService:
         connector = self._connector
 
         # Try direct blob download first (bypasses cache in read_content)
-        if hasattr(connector, "_download_blob") and hasattr(connector, "_get_blob_path"):
+        if hasattr(connector, "_download") and hasattr(connector, "_get_key_path"):
             try:
-                blob_path = connector._get_blob_path(path)
-                content: bytes = connector._download_blob(blob_path)
+                blob_path = connector._get_key_path(path)
+                content: bytes = connector._download(blob_path)
                 return content
             except Exception as e:
                 logger.debug("Direct blob download failed for %s: %s", path, e)

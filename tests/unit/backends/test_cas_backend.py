@@ -32,29 +32,29 @@ class InMemoryTransport:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         self.files[key] = data
         return None
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         return self.files[key], None
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         del self.files[key]
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         return key in self.files
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         if key not in self.files:
             raise NexusFileNotFoundError(key)
         return len(self.files[key])
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         blob_keys = [k for k in self.files if k.startswith(prefix)]
         common_prefixes: list[str] = []
         if delimiter:
@@ -69,15 +69,15 @@ class InMemoryTransport:
             blob_keys = [k for k in blob_keys if delimiter not in k[len(prefix) :]]
         return sorted(blob_keys), common_prefixes
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         if src_key not in self.files:
             raise NexusFileNotFoundError(src_key)
         self.files[dst_key] = self.files[src_key]
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         self.files[key] = b""
 
-    def stream_blob(
+    def stream(
         self, key: str, chunk_size: int = 8192, version_id: str | None = None
     ) -> Iterator[bytes]:
         if key not in self.files:
@@ -304,33 +304,33 @@ class TestCASAddressingEngineName:
 
 
 class TestDedupSkip:
-    """Test dedup skip — blob_exists check before put_blob on write."""
+    """Test dedup skip — exists check before store on write."""
 
-    def test_dedup_write_skips_put_blob(self, transport: InMemoryTransport):
-        """On dedup, put_blob should not be called the second time."""
+    def test_dedup_write_skips_store(self, transport: InMemoryTransport):
+        """On dedup, store should not be called the second time."""
         from unittest.mock import patch
 
         backend = CASAddressingEngine(transport, backend_name="test")
         content = b"dedup test"
         backend.write_content(content)
 
-        # Track put_blob calls via mock wrapper
+        # Track store calls via mock wrapper
         h = hash_content(content)
         content_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
-        original_put = transport.put_blob
+        original_put = transport.store
         put_calls: list[str] = []
 
         def tracking_put(key: str, data: bytes, content_type: str = "") -> str | None:
             put_calls.append(key)
             return original_put(key, data, content_type)
 
-        with patch.object(transport, "put_blob", side_effect=tracking_put):
+        with patch.object(transport, "store", side_effect=tracking_put):
             backend.write_content(content)  # second write = dedup
 
-        # put_blob should NOT have been called for the content blob
+        # store should NOT have been called for the content blob
         assert content_key not in put_calls
 
-    def test_fresh_write_calls_put_blob(self, transport: InMemoryTransport):
+    def test_fresh_write_calls_store(self, transport: InMemoryTransport):
         backend = CASAddressingEngine(transport, backend_name="test")
         content = b"fresh content"
         result = backend.write_content(content)

@@ -139,8 +139,8 @@ class CASGarbageCollector:
                 # Preferred: transport provides (hash, timestamp) pairs directly
                 content_entries = transport.list_content_hashes()
             else:
-                # Legacy fallback: walk filesystem via list_blobs
-                content_entries = self._list_blobs_fallback(transport)
+                # Legacy fallback: walk filesystem via list_keys
+                content_entries = self._list_keys_fallback(transport)
         except Exception:
             logger.debug("CAS GC: enumeration failed for %s", engine.name, exc_info=True)
             return
@@ -157,10 +157,10 @@ class CASGarbageCollector:
             # Delete blob + meta sidecar
             blob_key = engine._blob_key(content_hash)
             with contextlib.suppress(Exception):
-                transport.delete_blob(blob_key)
+                transport.remove(blob_key)
             meta_key = engine._meta_key(content_hash)
             with contextlib.suppress(Exception):
-                transport.delete_blob(meta_key)
+                transport.remove(meta_key)
 
             # Evict from meta cache
             if engine._meta_cache is not None:
@@ -172,22 +172,19 @@ class CASGarbageCollector:
             logger.info("CAS GC: collected %d unreferenced blobs for %s", collected, engine.name)
 
     @staticmethod
-    def _list_blobs_fallback(transport: Any) -> list[tuple[str, float]]:
-        """Legacy fallback: enumerate blobs via list_blobs + mtime.
+    def _list_keys_fallback(transport: Any) -> list[tuple[str, float]]:
+        """Legacy fallback: enumerate blobs via list_keys + mtime.
 
         Used when transport doesn't support list_content_hashes().
         """
-        blob_keys, _ = transport.list_blobs(prefix="cas/", delimiter="")
+        blob_keys, _ = transport.list_keys(prefix="cas/", delimiter="")
         entries: list[tuple[str, float]] = []
         for blob_key in blob_keys:
             if blob_key.endswith(".meta"):
                 continue
             content_hash = blob_key.split("/")[-1]
             try:
-                if hasattr(transport, "get_blob_mtime"):
-                    mtime = transport.get_blob_mtime(blob_key)
-                else:
-                    mtime = 0.0
+                mtime = transport.get_mtime(blob_key) if hasattr(transport, "get_mtime") else 0.0
             except Exception:
                 mtime = 0.0
             entries.append((content_hash, mtime))
@@ -229,7 +226,7 @@ class CASGarbageCollector:
         engine = self._engine
         key = engine._blob_key(manifest_hash)
         try:
-            manifest_data, _ = engine._transport.get_blob(key)
+            manifest_data, _ = engine._transport.fetch(key)
             manifest: dict[str, Any] = json.loads(manifest_data)
             for chunk in manifest.get("chunks", []):
                 chunk_hash = chunk.get("chunk_hash")

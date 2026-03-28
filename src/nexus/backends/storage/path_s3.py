@@ -182,13 +182,13 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         backend_path = (
             context.backend_path if context and context.backend_path else path.lstrip("/")
         )
-        return self._s3_transport.get_version_id(self._get_blob_path(backend_path))
+        return self._s3_transport.get_version_id(self._get_key_path(backend_path))
 
     def get_file_info(self, path: str, context: "OperationContext | None" = None) -> FileInfo:
         backend_path = (
             context.backend_path if context and context.backend_path else path.lstrip("/")
         )
-        meta = self._s3_transport.get_object_metadata(self._get_blob_path(backend_path))
+        meta = self._s3_transport.get_object_metadata(self._get_key_path(backend_path))
         # S3 VersionId fallback: use "etag:<etag>" when versioning is off
         version_id = meta["version_id"]
         if not version_id or version_id == "null":
@@ -209,8 +209,8 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         backend_path = (
             context.backend_path if context and context.backend_path else path.lstrip("/")
         )
-        blob_path = self._get_blob_path(backend_path)
-        if not self._s3_transport.blob_exists(blob_path):
+        blob_path = self._get_key_path(backend_path)
+        if not self._s3_transport.exists(blob_path):
             raise NexusFileNotFoundError(path)
         return {
             "url": self._s3_transport.generate_presigned_url(blob_path, expires_in),
@@ -227,26 +227,26 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         metadata: dict[str, str] | None = None,
     ) -> str:
         return self._s3_transport.init_multipart(
-            self._get_blob_path(backend_path), content_type, metadata
+            self._get_key_path(backend_path), content_type, metadata
         )
 
     def upload_part(
         self, backend_path: str, upload_id: str, part_number: int, data: bytes
     ) -> dict[str, Any]:
         return self._s3_transport.upload_part(
-            self._get_blob_path(backend_path), upload_id, part_number, data
+            self._get_key_path(backend_path), upload_id, part_number, data
         )
 
     def complete_multipart(
         self, backend_path: str, upload_id: str, parts: list[dict[str, Any]]
     ) -> str:
-        blob_path = self._get_blob_path(backend_path)
+        blob_path = self._get_key_path(backend_path)
         self._s3_transport.complete_multipart(blob_path, upload_id, parts)
-        content, _ = self._s3_transport.get_blob(blob_path)
+        content, _ = self._s3_transport.fetch(blob_path)
         return self._compute_hash(content)
 
     def abort_multipart(self, backend_path: str, upload_id: str) -> None:
-        self._s3_transport.abort_multipart(self._get_blob_path(backend_path), upload_id)
+        self._s3_transport.abort_multipart(self._get_key_path(backend_path), upload_id)
 
     # === Content Operations with Caching ===
 
@@ -271,8 +271,8 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         if self.versioning_enabled and content_id and self._is_version_id(content_id):
             version_id = content_id
 
-        blob_path = self._get_blob_path(context.backend_path)
-        content, resp_version = self._transport.get_blob(blob_path, version_id)
+        blob_path = self._get_key_path(context.backend_path)
+        content, resp_version = self._transport.fetch(blob_path, version_id)
 
         if self._has_caching():
             try:
@@ -307,9 +307,9 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
             else context.backend_path
         )
 
-        blob_path = self._get_blob_path(context.backend_path)
+        blob_path = self._get_key_path(context.backend_path)
         content_type = self._detect_content_type(context.backend_path, content)
-        new_version = self._transport.put_blob(blob_path, content, content_type)
+        new_version = self._transport.store(blob_path, content, content_type)
 
         if self._has_caching():
             try:

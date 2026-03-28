@@ -140,8 +140,8 @@ class TestSharedPrefixDedup:
         # Read back manifests to check chunk sharing
         from nexus.backends.engines.cdc import ChunkedReference
 
-        manifest_a_data, _ = backend._transport.get_blob(backend._blob_key(hash_a))
-        manifest_b_data, _ = backend._transport.get_blob(backend._blob_key(hash_b))
+        manifest_a_data, _ = backend._transport.fetch(backend._blob_key(hash_a))
+        manifest_b_data, _ = backend._transport.fetch(backend._blob_key(hash_b))
         manifest_a = ChunkedReference.from_json(manifest_a_data)
         manifest_b = ChunkedReference.from_json(manifest_b_data)
 

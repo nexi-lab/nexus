@@ -58,7 +58,7 @@ class LocalTransport:
 
         CAS has at most 65,536 two-level dirs (cas/ab/cd/). Once created,
         they are never deleted during normal operation, so we cache the
-        result. On ENOENT from os.open we evict and retry (see put_blob).
+        result. On ENOENT from os.open we evict and retry (see store).
         """
         parent = str(path.parent)
         if parent not in self._known_parents:
@@ -67,7 +67,7 @@ class LocalTransport:
 
     # === Transport Protocol Methods ===
 
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None:
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None:
         """Direct write: raw fd → fsync → done. No temp+replace.
 
         CAS is idempotent (same hash = same bytes), so direct write is safe.
@@ -92,7 +92,7 @@ class LocalTransport:
             os.close(fd)
         return None
 
-    def get_blob_mtime(self, key: str) -> float:
+    def get_mtime(self, key: str) -> float:
         """Blob mtime as Unix timestamp. For GC age threshold."""
         path = self._resolve(key)
         try:
@@ -100,7 +100,7 @@ class LocalTransport:
         except FileNotFoundError:
             raise NexusFileNotFoundError(key) from None
 
-    def put_blob_nosync(self, key: str, data: bytes) -> None:
+    def store_nosync(self, key: str, data: bytes) -> None:
         """Direct write without fsync — for reconstructable metadata.
 
         CDC meta JSON is reconstructable (chunk/manifest flags for GC).
@@ -115,7 +115,7 @@ class LocalTransport:
         finally:
             os.close(fd)
 
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]:
         path = self._resolve(key)
         try:
             return path.read_bytes(), None
@@ -128,7 +128,7 @@ class LocalTransport:
                 path=key,
             ) from e
 
-    def delete_blob(self, key: str) -> None:
+    def remove(self, key: str) -> None:
         path = self._resolve(key)
         if not path.exists():
             raise NexusFileNotFoundError(key)
@@ -148,7 +148,7 @@ class LocalTransport:
                 path=key,
             ) from e
 
-    def blob_exists(self, key: str) -> bool:
+    def exists(self, key: str) -> bool:
         try:
             path = self._resolve(key)
             # For directory markers (keys ending with /), check dir existence
@@ -158,7 +158,7 @@ class LocalTransport:
         except Exception:
             return False
 
-    def get_blob_size(self, key: str) -> int:
+    def get_size(self, key: str) -> int:
         path = self._resolve(key)
         if not path.exists():
             raise NexusFileNotFoundError(key)
@@ -171,7 +171,7 @@ class LocalTransport:
                 path=key,
             ) from e
 
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]:
         """S3-style listing with prefix and delimiter support.
 
         Returns (blob_keys, common_prefixes):
@@ -226,7 +226,7 @@ class LocalTransport:
 
         return sorted(blob_keys), sorted(common_prefixes)
 
-    def copy_blob(self, src_key: str, dst_key: str) -> None:
+    def copy_key(self, src_key: str, dst_key: str) -> None:
         src_path = self._resolve(src_key)
         if not src_path.is_file():
             raise NexusFileNotFoundError(src_key)
@@ -241,7 +241,7 @@ class LocalTransport:
                 path=src_key,
             ) from e
 
-    def create_directory_marker(self, key: str) -> None:
+    def create_dir(self, key: str) -> None:
         """Create an empty file as a directory marker.
 
         For local filesystem, we create actual directories instead of
@@ -264,7 +264,7 @@ class LocalTransport:
                 path=key,
             ) from e
 
-    def move_blob(self, src_key: str, dst_key: str) -> None:
+    def move(self, src_key: str, dst_key: str) -> None:
         """Atomic move (rename) of a blob or directory."""
         src_path = self._resolve(src_key)
         if not src_path.exists():
@@ -282,7 +282,7 @@ class LocalTransport:
                 path=src_key,
             ) from e
 
-    def stream_blob(
+    def stream(
         self,
         key: str,
         chunk_size: int = 8192,
@@ -306,7 +306,7 @@ class LocalTransport:
                 path=key,
             ) from e
 
-    def put_blob_chunked(
+    def store_chunked(
         self,
         key: str,
         chunks: "Iterator[bytes]",
@@ -333,7 +333,7 @@ class LocalTransport:
             ) from e
         return None
 
-    def put_blob_from_path(self, key: str, src_path: str | Path) -> str | None:
+    def store_from_path(self, key: str, src_path: str | Path) -> str | None:
         """Atomic move: src_path → final blob path (no memory copy).
 
         Used by CASAddressingEngine.write_stream to avoid loading streamed content
@@ -375,7 +375,7 @@ class LocalTransport:
                     continue
         return result
 
-    def batch_get_blobs(self, keys: list[str]) -> dict[str, bytes | None]:
+    def batch_fetch(self, keys: list[str]) -> dict[str, bytes | None]:
         """Batch read multiple blobs, using Rust parallel mmap when available.
 
         Falls back to sequential reads if nexus_fast is not available.
@@ -399,7 +399,7 @@ class LocalTransport:
         result = {}
         for key in keys:
             try:
-                data, _ = self.get_blob(key)
+                data, _ = self.fetch(key)
                 result[key] = data
             except Exception:
                 result[key] = None

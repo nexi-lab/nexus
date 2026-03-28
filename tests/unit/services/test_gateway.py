@@ -58,10 +58,11 @@ def mock_fs():
 
     fs._rebac_manager = MagicMock()
     fs._rebac_manager.rebac_delete = MagicMock()
-    fs._hierarchy_manager = MagicMock()
-    fs._hierarchy_manager.enable_inheritance = True
-    fs._hierarchy_manager.ensure_parent_tuples_batch = MagicMock(return_value=2)
-    fs._hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
+    # hierarchy_manager is accessed via rebac_manager.hierarchy_manager (not fs._hierarchy_manager)
+    fs._rebac_manager.hierarchy_manager = MagicMock()
+    fs._rebac_manager.hierarchy_manager.enable_inheritance = True
+    fs._rebac_manager.hierarchy_manager.ensure_parent_tuples_batch = MagicMock(return_value=2)
+    fs._rebac_manager.hierarchy_manager.remove_parent_tuples = MagicMock(return_value=1)
     fs.router = MagicMock()
     fs.SessionLocal = MagicMock()
     fs.read = AsyncMock(return_value={"content": b"data", "path": "/test/file.txt"})
@@ -301,8 +302,8 @@ class TestHierarchyOperations:
         assert gateway.hierarchy_enabled is True
 
     def test_hierarchy_disabled(self, mock_fs):
-        """hierarchy_enabled returns False when manager is None."""
-        mock_fs._hierarchy_manager = None
+        """hierarchy_enabled returns False when rebac_manager is None."""
+        mock_fs._rebac_manager = None
         gw = NexusFSGateway(mock_fs)
         assert gw.hierarchy_enabled is False
 
@@ -317,14 +318,14 @@ class TestHierarchyOperations:
         assert result == 1
 
     def test_ensure_parent_tuples_no_manager(self, mock_fs):
-        """Returns 0 when hierarchy manager is None."""
-        mock_fs._hierarchy_manager = None
+        """Returns 0 when rebac_manager is None."""
+        mock_fs._rebac_manager = None
         gw = NexusFSGateway(mock_fs)
         assert gw.ensure_parent_tuples_batch(["/a"]) == 0
 
     def test_remove_parent_tuples_no_manager(self, mock_fs):
-        """Returns 0 when hierarchy manager is None."""
-        mock_fs._hierarchy_manager = None
+        """Returns 0 when rebac_manager is None."""
+        mock_fs._rebac_manager = None
         gw = NexusFSGateway(mock_fs)
         assert gw.remove_parent_tuples("/test") == 0
 

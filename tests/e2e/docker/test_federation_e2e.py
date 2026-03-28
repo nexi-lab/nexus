@@ -382,7 +382,9 @@ class TestMountTopology:
             assert "error" not in mk, f"mkdir {mount_path} failed: {mk}"
 
             # Mount zone — retry on both nodes (mkdir commit may not have
-            # replicated to the node handling this request yet)
+            # replicated to the node handling this request yet).
+            # Treat "already a DT_MOUNT" as success (idempotent — zone may have
+            # been auto-mounted during Raft zone join on node-2).
             mounted = False
             for target in [cluster["grpc1"], cluster["grpc2"]]:
                 r = _grpc_call(
@@ -396,6 +398,11 @@ class TestMountTopology:
                     api_key=api_key,
                 )
                 if "error" not in r:
+                    mounted = True
+                    break
+                # Already mounted is fine — Raft replication may have auto-mounted
+                err_msg = str(r.get("error", {}).get("message", ""))
+                if "already a DT_MOUNT" in err_msg:
                     mounted = True
                     break
             assert mounted, f"mount {target_zone} at {mount_path} failed on both nodes: {r}"
@@ -413,7 +420,9 @@ class TestMountTopology:
             {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
             api_key=api_key,
         )
-        assert "error" not in r, f"mount cross-link failed: {r}"
+        # Already mounted is fine (idempotent)
+        err_msg = str(r.get("error", {}).get("message", ""))
+        assert "error" not in r or "already a DT_MOUNT" in err_msg, f"mount cross-link failed: {r}"
 
     def test_unmount_remount_cycle(self, cluster, api_key):
         """Unmount corp-sales, verify inaccessible, remount, verify accessible."""

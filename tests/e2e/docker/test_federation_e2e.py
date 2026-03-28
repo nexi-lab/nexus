@@ -434,27 +434,40 @@ class TestMountTopology:
         w = _grpc_call(grpc1, "write", {"path": path, "content": f"before-{uid}"}, api_key=api_key)
         assert "error" not in w, f"Pre-unmount write failed: {w}"
 
-        # Unmount corp-sales
-        um = _grpc_call(
-            grpc1,
-            "federation_unmount",
-            {"parent_zone": "corp", "path": "/corp/sales"},
-            api_key=api_key,
-        )
-        assert "error" not in um, f"Unmount failed: {um}"
+        # Unmount corp-sales — retry on both nodes (leader may differ per zone)
+        um = None
+        for target in [cluster["grpc1"], cluster["grpc2"]]:
+            um = _grpc_call(
+                target,
+                "federation_unmount",
+                {"parent_zone": "corp", "path": "/corp/sales"},
+                api_key=api_key,
+            )
+            if "error" not in um:
+                break
+        assert um is not None and "error" not in um, f"Unmount failed on both nodes: {um}"
 
         # File should be inaccessible through mount path
         r = _grpc_call(grpc1, "read", {"path": path}, api_key=api_key)
         assert "error" in r, "File should be inaccessible after unmount"
 
-        # Remount
-        rm = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {"parent_zone": "corp", "path": "/corp/sales", "target_zone": "corp-sales"},
-            api_key=api_key,
+        # Remount — retry on both nodes
+        rm = None
+        for target in [cluster["grpc1"], cluster["grpc2"]]:
+            rm = _grpc_call(
+                target,
+                "federation_mount",
+                {"parent_zone": "corp", "path": "/corp/sales", "target_zone": "corp-sales"},
+                api_key=api_key,
+            )
+            if "error" not in rm:
+                break
+            err_msg = str(rm.get("error", {}).get("message", ""))
+            if "already a DT_MOUNT" in err_msg:
+                break
+        assert rm is not None and ("error" not in rm or "already a DT_MOUNT" in str(rm)), (
+            f"Remount failed: {rm}"
         )
-        assert "error" not in rm, f"Remount failed: {rm}"
 
         # File should be accessible again
         r2 = _grpc_call(grpc1, "read", {"path": path}, api_key=api_key)

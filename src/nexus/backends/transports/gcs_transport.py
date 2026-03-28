@@ -333,6 +333,67 @@ class GCSTransport:
                 path=key,
             ) from e
 
+    def get_blob_range(self, key: str, offset: int, size: int) -> bytes:
+        """Read a byte range from a GCS object (single HTTP request).
+
+        Uses ``download_as_bytes(start=, end=)`` — GCS end is *inclusive*.
+
+        Args:
+            key: Object key.
+            offset: Start byte offset (0-based).
+            size: Number of bytes to read.
+
+        Returns:
+            The requested byte range.
+
+        Issue #3406: Volume-level cold tiering — range reads.
+        """
+        try:
+            blob = self.bucket.blob(key)
+            # GCS end parameter is inclusive, so end = offset + size - 1
+            data: bytes = blob.download_as_bytes(
+                start=offset,
+                end=offset + size - 1,
+                timeout=self._operation_timeout,
+                retry=retry.Retry(deadline=120),
+            )
+            return bytes(data)
+
+        except NotFound as e:
+            raise NexusFileNotFoundError(key) from e
+        except Exception as e:
+            raise BackendError(
+                f"Failed to range-read blob at {key} (offset={offset}, size={size}): {e}",
+                backend="gcs",
+                path=key,
+            ) from e
+
+    def upload_file(
+        self, key: str, local_path: str, chunk_size: int = 8 * 1024 * 1024
+    ) -> str | None:
+        """Upload a local file to GCS via resumable chunked upload.
+
+        Args:
+            key: Destination object key.
+            local_path: Path to the local file.
+            chunk_size: Upload chunk size in bytes (default 8 MB).
+
+        Returns:
+            Generation number string if versioning enabled, else None.
+
+        Issue #3406: Volume-level cold tiering — volume upload.
+        """
+
+        def _file_chunks() -> Iterator[bytes]:
+            with open(local_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return self.store_chunked(key, _file_chunks())
+
     # === GCS-Specific Extras (not part of Transport protocol) ===
 
     def generate_signed_url(self, key: str, expires_in: int = 3600, method: str = "GET") -> str:

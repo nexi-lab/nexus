@@ -255,6 +255,17 @@ class NexusConfig(BaseModel):
         description="Multiple backend mount configurations (type, mount_point, config, priority, readonly)",
     )
 
+    # Cold tiering configuration (v0.9.15, Issue #3406)
+    tiering: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Volume cold tiering: upload sealed CAS volumes to S3/GCS. "
+            "Keys: enabled, quiet_period, min_volume_size, cloud_backend (s3|gcs), "
+            "cloud_bucket, upload_rate_limit, local_cache_size, "
+            "burst_read_threshold, burst_read_window"
+        ),
+    )
+
     # OAuth provider configuration
     oauth: OAuthConfig | None = Field(
         default=None,

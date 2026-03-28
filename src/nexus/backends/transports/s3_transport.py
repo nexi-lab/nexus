@@ -315,6 +315,73 @@ class S3Transport:
                 path=key,
             ) from e
 
+    def get_blob_range(self, key: str, offset: int, size: int) -> bytes:
+        """Read a byte range from an S3 object (single HTTP request).
+
+        Uses the ``Range`` header — S3 range is *inclusive* on both ends.
+
+        Args:
+            key: Object key.
+            offset: Start byte offset (0-based).
+            size: Number of bytes to read.
+
+        Returns:
+            The requested byte range.
+
+        Issue #3406: Volume-level cold tiering — range reads.
+        """
+        try:
+            # S3 Range header: bytes=start-end (inclusive)
+            range_header = f"bytes={offset}-{offset + size - 1}"
+            response = self.s3_client.get_object(
+                Bucket=self.bucket_name,
+                Key=key,
+                Range=range_header,
+            )
+            return bytes(response["Body"].read())
+
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code in ("NoSuchKey", "404"):
+                raise NexusFileNotFoundError(key) from e
+            if error_code == "InvalidRange":
+                raise BackendError(
+                    f"Invalid range for {key}: offset={offset}, size={size}",
+                    backend="s3",
+                    path=key,
+                ) from e
+            raise BackendError(
+                f"Failed to range-read blob at {key} (offset={offset}, size={size}): {e}",
+                backend="s3",
+                path=key,
+            ) from e
+
+    def upload_file(
+        self, key: str, local_path: str, chunk_size: int = 8 * 1024 * 1024
+    ) -> str | None:
+        """Upload a local file to S3 via multipart upload.
+
+        Args:
+            key: Destination object key.
+            local_path: Path to the local file.
+            chunk_size: Upload chunk size in bytes (default 8 MB).
+
+        Returns:
+            Version ID string if versioning enabled, else None.
+
+        Issue #3406: Volume-level cold tiering — volume upload.
+        """
+
+        def _file_chunks() -> Iterator[bytes]:
+            with open(local_path, "rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+
+        return self.store_chunked(key, _file_chunks())
+
     # S3 multipart minimum part size (5 MB) — except for the last part.
     _MIN_PART_SIZE = 5 * 1024 * 1024
 

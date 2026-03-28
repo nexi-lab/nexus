@@ -227,6 +227,27 @@ Four pillars, separated by access pattern — not by domain:
 
 The kernel starts with just a Metastore. Everything else is layered on without changing a line of kernel code.
 
+### Cold tiering (Issue #3406)
+
+Sealed CAS volumes are automatically uploaded to S3/GCS when they go quiet, cutting cold storage costs by ~80%. The local redb index is retained for O(1) lookups; reads use a single HTTP range request.
+
+Add to your `nexus.yaml`:
+
+```yaml
+tiering:
+  enabled: true
+  quiet_period: 3600          # seconds before a sealed volume is tiered
+  min_volume_size: 104857600  # 100 MB minimum
+  cloud_backend: s3           # or gcs
+  cloud_bucket: my-bucket
+```
+
+Features: write-ahead crash recovery, LRU volume cache with burst detection, streaming downloads (no full-volume RAM buffering), automatic rehydration for burst read patterns.
+
+**Credentials**: AWS env vars / `~/.aws/credentials` / IAM role for S3, or Application Default Credentials for GCS.
+
+**`nexus-fs` (slim package)**: Tiering requires `nexus-ai-fs` (full package). The slim `nexus-fs` package excludes `nexus/services/` where the tiering service lives. If using `nexus-fs`, install cloud extras separately: `pip install nexus-fs[s3]` or `nexus-fs[gcs]`.
+
 ## Contributing
 
 ```bash

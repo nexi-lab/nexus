@@ -36,7 +36,6 @@ class WirableFS(Protocol):
 
     def sys_read(self, path: str, **kwargs: Any) -> bytes: ...
 
-    _enforce_permissions: bool
     _record_store: "RecordStoreABC | None"
     _init_cred: "OperationContext | None"
     _config: Any

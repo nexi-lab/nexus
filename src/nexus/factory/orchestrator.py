@@ -354,7 +354,7 @@ async def _register_vfs_hooks(
 
         # Permission write leases — check once, write many (Issue #3394)
         _lease_table = None
-        if nx._enforce_permissions:
+        if nx._perm_config.enforce:
             from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
 
             _lease_table = PermissionLeaseTable()
@@ -369,7 +369,7 @@ async def _register_vfs_hooks(
             checker=permission_checker,
             metadata_store=nx.metadata,
             default_context=nx._init_cred,
-            enforce_permissions=nx._enforce_permissions,
+            enforce_permissions=nx._perm_config.enforce,
             permission_enforcer=_ss.get("permission_enforcer"),
             descendant_checker=nx.service("descendant_checker"),
             lease_table=_lease_table,

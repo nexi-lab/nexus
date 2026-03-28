@@ -37,7 +37,7 @@ async def health_check(request: Request) -> HealthResponse | Any:
 
     nx_fs = request.app.state.nexus_fs
     if nx_fs:
-        enforce_permissions = getattr(nx_fs, "_enforce_permissions", None)
+        enforce_permissions = getattr(getattr(nx_fs, "_perm_config", None), "enforce", None)
         enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
 
         # Federation mode: ensure topology is initialized (standard Raft lifecycle).

@@ -70,7 +70,7 @@ async def _boot_post_kernel_services(
 
         rebac_service = ReBACService(
             rebac_manager=services.get("rebac_manager"),
-            enforce_permissions=nx._enforce_permissions,
+            enforce_permissions=nx._perm_config.enforce,
             enable_audit_logging=True,
             circuit_breaker=services.get("rebac_circuit_breaker"),
             file_reader=nx.sys_read,
@@ -194,7 +194,7 @@ async def _boot_post_kernel_services(
             permission_enforcer=services.get("permission_enforcer"),
             router=router,
             rebac_manager=services.get("rebac_manager"),
-            enforce_permissions=getattr(nx, "_enforce_permissions", True),
+            enforce_permissions=nx._perm_config.enforce,
             default_context=nx._init_cred,
             record_store=getattr(nx, "_record_store", None),
             gateway=gateway,
@@ -242,7 +242,7 @@ async def _boot_post_kernel_services(
 
             share_link_service = ShareLinkService(
                 gateway=gateway,
-                enforce_permissions=nx._enforce_permissions,
+                enforce_permissions=nx._perm_config.enforce,
             )
             logger.debug("[BOOT:WIRED] ShareLinkService created")
         except Exception as exc:

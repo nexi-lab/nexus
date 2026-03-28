@@ -107,7 +107,9 @@ class NexusFS(  # type: ignore[misc]
         self._enable_memory_paging = memory.enable_paging
         self._memory_main_capacity = memory.main_capacity
         self._memory_recall_max_age_hours = memory.recall_max_age_hours
-        self._enforce_permissions = permissions.enforce
+        # _enforce_permissions removed — permission enforcement is fully delegated
+        # to KernelDispatch INTERCEPT hooks. PermissionCheckHook holds the flag
+        # internally. No hook = no check = zero overhead (~20ns set lookup).
         self._enforce_zone_isolation = permissions.enforce_zone_isolation
         self.allow_admin_bypass = permissions.allow_admin_bypass
 
@@ -572,23 +574,22 @@ class NexusFS(  # type: ignore[misc]
             # Check if it's an implicit directory first (for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
 
-            # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
-            # Hook raises PermissionDeniedError to deny.
-            if self._enforce_permissions:
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+            # Permission check via KernelDispatch INTERCEPT hook.
+            # No hook registered = no check = zero overhead (~20ns set lookup).
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-                try:
-                    self._dispatch.intercept_pre_stat(
-                        _SHC(
-                            path=path,
-                            context=ctx,
-                            permission="TRAVERSE" if is_implicit_dir else "READ",
-                            extra={"is_implicit_directory": is_implicit_dir},
-                        )
+            try:
+                self._dispatch.intercept_pre_stat(
+                    _SHC(
+                        path=path,
+                        context=ctx,
+                        permission="TRAVERSE" if is_implicit_dir else "READ",
+                        extra={"is_implicit_directory": is_implicit_dir},
                     )
-                except PermissionDeniedError:
-                    return False
+                )
+            except PermissionDeniedError:
+                return False
 
             # Check metastore entry_type: DT_DIR and DT_MOUNT are directories.
             # This is a fast ~5 us redb read that avoids calling into the backend.
@@ -1404,34 +1405,29 @@ class NexusFS(  # type: ignore[misc]
         if not validated_paths:
             return results
 
-        # Issue #1815: Batch permission check via KernelDispatch INTERCEPT hook.
+        # Batch permission check via KernelDispatch INTERCEPT hook.
+        # No hook = no check = all paths allowed.
         perm_start = time.time()
         allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-            # Skip permission check if permissions are disabled
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.types import OperationContext
-                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+        try:
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.types import OperationContext
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-                ctx = self._resolve_cred(context)
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed: list[str] = []
-                for p in validated_paths:
-                    try:
-                        self._dispatch.intercept_pre_stat(
-                            _SHC(path=p, context=ctx, permission="READ")
-                        )
-                        allowed.append(p)
-                    except PermissionDeniedError:
-                        pass
-                allowed_set = set(allowed)
-            except Exception as e:
-                logger.error("[READ-BULK] Permission check failed: %s", e)
-                if not skip_errors:
-                    raise
+            ctx = self._resolve_cred(context)
+            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+            allowed: list[str] = []
+            for p in validated_paths:
+                try:
+                    self._dispatch.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
+                    allowed.append(p)
+                except PermissionDeniedError:
+                    pass
+            allowed_set = set(allowed)
+        except Exception as e:
+            logger.error("[READ-BULK] Permission check failed: %s", e)
+            if not skip_errors:
+                raise
                 # If skip_errors, assume no files are allowed
                 allowed_set = set()
 
@@ -3602,24 +3598,23 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
         ctx = self._resolve_cred(context)
         if is_implicit_dir:
-            if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-                try:
-                    self._dispatch.intercept_pre_stat(
-                        _SHC(
-                            path=path,
-                            context=ctx,
-                            permission="TRAVERSE",
-                            extra={"is_implicit_directory": True},
-                        )
+            try:
+                self._dispatch.intercept_pre_stat(
+                    _SHC(
+                        path=path,
+                        context=ctx,
+                        permission="TRAVERSE",
+                        extra={"is_implicit_directory": True},
                     )
-                except PermissionDeniedError:
-                    raise PermissionError(
-                        f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
-                        f"permission for '{path}'"
-                    ) from None
+                )
+            except PermissionDeniedError:
+                raise PermissionError(
+                    f"Access denied: User '{ctx.user_id}' does not have TRAVERSE "
+                    f"permission for '{path}'"
+                ) from None
         else:
             from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
@@ -3724,34 +3719,29 @@ class NexusFS(  # type: ignore[misc]
         if not validated_paths:
             return results
 
-        # Issue #1815: Batch permission check via KernelDispatch INTERCEPT hook.
+        # Batch permission check via KernelDispatch INTERCEPT hook.
         perm_start = time.time()
         allowed_set: set[str]
-        if not self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-            allowed_set = set(validated_paths)
-        else:
-            try:
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.types import OperationContext
-                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+        try:
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.types import OperationContext
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-                ctx = self._resolve_cred(context)
-                assert isinstance(ctx, OperationContext), "Context must be OperationContext"
-                allowed: list[str] = []
-                for p in validated_paths:
-                    try:
-                        self._dispatch.intercept_pre_stat(
-                            _SHC(path=p, context=ctx, permission="READ")
-                        )
-                        allowed.append(p)
-                    except PermissionDeniedError:
-                        pass
-                allowed_set = set(allowed)
-            except Exception as e:
-                logger.error("[STAT-BULK] Permission check failed: %s", e)
-                if not skip_errors:
-                    raise
-                allowed_set = set()
+            ctx = self._resolve_cred(context)
+            assert isinstance(ctx, OperationContext), "Context must be OperationContext"
+            allowed: list[str] = []
+            for p in validated_paths:
+                try:
+                    self._dispatch.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
+                    allowed.append(p)
+                except PermissionDeniedError:
+                    pass
+            allowed_set = set(allowed)
+        except Exception as e:
+            logger.error("[STAT-BULK] Permission check failed: %s", e)
+            if not skip_errors:
+                raise
+            allowed_set = set()
 
         perm_elapsed = time.time() - perm_start
         logger.info(
@@ -3846,22 +3836,21 @@ class NexusFS(  # type: ignore[misc]
             is_implicit_dir = self.metadata.is_implicit_directory(path)
 
             # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
-            if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                from nexus.contracts.exceptions import PermissionDeniedError
-                from nexus.contracts.vfs_hooks import AccessHookContext as _AHC
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.vfs_hooks import AccessHookContext as _AHC
 
-                ctx = self._resolve_cred(context)
-                try:
-                    self._dispatch.intercept_pre_access(
-                        _AHC(
-                            path=path,
-                            context=ctx,
-                            permission="TRAVERSE" if is_implicit_dir else "READ",
-                            extra={"is_implicit_directory": is_implicit_dir},
-                        )
+            ctx = self._resolve_cred(context)
+            try:
+                self._dispatch.intercept_pre_access(
+                    _AHC(
+                        path=path,
+                        context=ctx,
+                        permission="TRAVERSE" if is_implicit_dir else "READ",
+                        extra={"is_implicit_directory": is_implicit_dir},
                     )
-                except PermissionDeniedError:
-                    return False
+                )
+            except PermissionDeniedError:
+                return False
 
             # Check if file exists explicitly
             if self.metadata.exists(path):
@@ -3967,19 +3956,18 @@ class NexusFS(  # type: ignore[misc]
                     results[path] = None
                     continue
 
-                # Permission check via KernelDispatch INTERCEPT (like all other syscalls)
-                if self._enforce_permissions:  # type: ignore[attr-defined]  # allowed
-                    from nexus.contracts.exceptions import PermissionDeniedError
-                    from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+                # Permission check via KernelDispatch INTERCEPT.
+                from nexus.contracts.exceptions import PermissionDeniedError
+                from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-                    ctx = self._resolve_cred(context)
-                    try:
-                        self._dispatch.intercept_pre_stat(
-                            _SHC(path=path, context=ctx, permission="READ")
-                        )
-                    except PermissionDeniedError:
-                        results[path] = None
-                        continue
+                ctx = self._resolve_cred(context)
+                try:
+                    self._dispatch.intercept_pre_stat(
+                        _SHC(path=path, context=ctx, permission="READ")
+                    )
+                except PermissionDeniedError:
+                    results[path] = None
+                    continue
 
                 # Check if it's a directory
                 is_dir = await self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed

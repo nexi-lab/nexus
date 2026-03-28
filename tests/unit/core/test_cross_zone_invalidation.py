@@ -215,31 +215,31 @@ class TestCrossZoneInvalidation:
         assert fence_b.watermark("zone-a") > 0
 
     def test_read_fence_detects_stale_cache(self, fence_b):
-        """A cached result from before the watermark is detected as stale."""
-        # Cache was populated at sequence 5
-        cached_sequence = 5
+        """A cached result from before a fence advance is detected as stale."""
+        # Cache was populated at generation 0 (no invalidations yet)
+        cached_gen = fence_b.generation("zone-a")  # 0
+        assert fence_b.is_stale("zone-a", cached_gen) is False
 
-        # No revocation yet — cache is fresh
-        assert fence_b.is_stale("zone-a", cached_sequence) is False
+        # Zone B receives a cross-zone invalidation → generation advances to 1
+        fence_b.advance("zone-a")
 
-        # Zone B receives a revocation at sequence 10
-        fence_b.advance("zone-a", 10)
-
-        # Now the cache is stale
-        assert fence_b.is_stale("zone-a", cached_sequence) is True
-        # A fresh cache entry at sequence 10 or later is not stale
-        assert fence_b.is_stale("zone-a", 10) is False
-        assert fence_b.is_stale("zone-a", 15) is False
+        # Entry cached at gen 0 is now stale (current gen is 1)
+        assert fence_b.is_stale("zone-a", cached_gen) is True
+        # An entry cached at gen 1 (current) is fresh
+        assert fence_b.is_stale("zone-a", fence_b.generation("zone-a")) is False
 
     def test_read_fence_independent_per_zone(self, fence_b):
-        """Watermarks are tracked independently per zone."""
-        fence_b.advance("zone-a", 10)
-        fence_b.advance("zone-c", 5)
+        """Generations are tracked independently per zone."""
+        fence_b.advance("zone-a")  # zone-a gen = 1
+        fence_b.advance("zone-a")  # zone-a gen = 2
+        fence_b.advance("zone-c")  # zone-c gen = 1
 
-        # zone-a watermark doesn't affect zone-c check
-        assert fence_b.is_stale("zone-a", 7) is True
-        assert fence_b.is_stale("zone-c", 7) is False
-        assert fence_b.is_stale("zone-c", 3) is True
+        # Entry cached at gen 1 for zone-a is stale (current = 2)
+        assert fence_b.is_stale("zone-a", 1) is True
+        # Entry cached at gen 1 for zone-c is fresh (current = 1)
+        assert fence_b.is_stale("zone-c", 1) is False
+        # Entry cached at gen 0 for zone-c is stale (current = 1)
+        assert fence_b.is_stale("zone-c", 0) is True
 
     def test_coordinator_publishes_to_durable_stream(self):
         """CacheCoordinator.invalidate_for_write() publishes to durable stream."""
@@ -349,8 +349,8 @@ class TestCrossZoneInvalidation:
         assert len(zone_b_invalidated) == 1
         assert zone_b_invalidated[0]["subject_id"] == "alice"
 
-        # Verify: Zone B's read fence was advanced
-        assert fence_b.watermark("zone-b") > 0
+        # Verify: Zone B's read fence generation was advanced
+        assert fence_b.generation("zone-b") > 0
 
-        # Verify: A cached result from before the watermark is stale
+        # Verify: An entry cached at generation 0 (before the invalidation) is stale
         assert fence_b.is_stale("zone-b", 0) is True

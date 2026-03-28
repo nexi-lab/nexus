@@ -499,12 +499,13 @@ class TestCrossZoneInvalidationLatency:
         from nexus.bricks.rebac.cache.read_fence import ReadFence
 
         fence = ReadFence()
-        # Simulate 10 zones with watermarks
+        # Simulate 10 zones with different generation counts
         for i in range(10):
-            fence.advance(f"zone-{i}", 1000 + i * 100)
+            for _ in range(10 + i):
+                fence.advance(f"zone-{i}")
 
         def check():
-            return fence.is_stale("zone-5", 900)
+            return fence.is_stale("zone-5", 0)  # gen 0 is always stale after advance
 
         result = benchmark(check)
         assert result is True
@@ -517,11 +518,9 @@ class TestCrossZoneInvalidationLatency:
         from nexus.bricks.rebac.cache.read_fence import ReadFence
 
         fence = ReadFence()
-        seq = [0]
 
         def advance():
-            seq[0] += 1
-            fence.advance("zone-a", seq[0])
+            fence.advance("zone-a")
 
         benchmark(advance)
 

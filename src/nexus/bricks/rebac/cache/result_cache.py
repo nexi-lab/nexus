@@ -137,9 +137,12 @@ class ReBACPermissionCache:
         self._revision_ring_buffer: Any = None  # SharedRingBuffer | None
 
         # Read fence for cross-zone staleness detection (Issue #3396)
-        # When set, cache hits are checked against per-zone watermarks.
-        # A cached result from before the watermark is treated as a miss.
+        # When set, cache hits are checked against per-zone generation counters.
+        # An entry cached before the latest cross-zone invalidation is treated as miss.
         self._read_fence: Any = None  # ReadFence | None
+        # Per-key fence generation at cache write time: key -> generation
+        # Evicted naturally when the TTLCache evicts the corresponding entry.
+        self._fence_stamps: dict[str, int] = {}
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -639,16 +642,6 @@ class ReBACPermissionCache:
         """
         start_time = time.perf_counter()
 
-        # Read fence check (Issue #3396): if the zone's cache has been invalidated
-        # by a cross-zone event more recent than our cached revision, treat as miss.
-        # Cost: ~50-100ns (one dict lookup + one int comparison).
-        if self._read_fence is not None and zone_id is not None:
-            cached_rev = self._get_current_revision(zone_id)
-            if cached_rev > 0 and self._read_fence.is_stale(zone_id, cached_rev):
-                if self._enable_metrics:
-                    self._misses += 1
-                return None
-
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:
@@ -659,6 +652,20 @@ class ReBACPermissionCache:
             # If not in grant cache, check denial cache
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check.
+            # If the entry was cached before the latest cross-zone invalidation
+            # for this zone, treat it as a miss.  Cost: ~50ns (dict lookup + int cmp).
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    # Evict the stale entry
+                    self._grant_cache.pop(key, None)
+                    self._denial_cache.pop(key, None)
+                    self._fence_stamps.pop(key, None)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -851,6 +858,12 @@ class ReBACPermissionCache:
                 zone_part,
                 path_prefixes or None,
             )
+
+            # Issue #3396: Stamp entry with fence generation at write time.
+            # On read, entries from before the latest cross-zone invalidation
+            # are treated as misses.
+            if self._read_fence is not None:
+                self._fence_stamps[key] = self._read_fence.generation(zone_part)
 
             if self._enable_metrics:
                 self._sets += 1

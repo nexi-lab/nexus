@@ -334,32 +334,16 @@ class DurableInvalidationStream:
                 await self._client.xack(stream_key, self._group_name, msg_id)
                 self._consumed += 1
 
-                # Advance read fence watermark
+                # Advance read fence generation — signals to the L1 cache that
+                # any entries stamped before this generation are stale.
                 if self._read_fence:
-                    # Use the stream message ID's timestamp portion as sequence
-                    seq = self._extract_sequence(msg_id)
-                    if seq is not None:
-                        self._read_fence.advance(source_zone, seq)
+                    self._read_fence.advance(source_zone)
 
             except Exception:
                 self._consume_errors += 1
                 logger.warning("[DurableStream] Failed to process %s", msg_id, exc_info=True)
 
     # -- helpers --------------------------------------------------------------
-
-    @staticmethod
-    def _extract_sequence(msg_id: bytes | str) -> int | None:
-        """Extract the timestamp portion of a Redis Stream message ID.
-
-        Redis Stream IDs are formatted as '<timestamp_ms>-<seq>'.
-        We use the timestamp as the monotonic sequence for the read fence.
-        """
-        try:
-            id_str = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
-            ts_part = id_str.split("-")[0]
-            return int(ts_part)
-        except (ValueError, IndexError, AttributeError):
-            return None
 
     async def _ensure_consumer_groups(self) -> None:
         """Create consumer groups if they don't exist."""

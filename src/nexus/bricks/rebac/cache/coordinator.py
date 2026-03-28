@@ -394,6 +394,8 @@ class CacheCoordinator:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],  # noqa: A002
+        *,
+        local_only: bool = False,
     ) -> None:
         """Invalidate all caches after a permission write.
 
@@ -405,6 +407,9 @@ class CacheCoordinator:
             subject: (subject_type, subject_id)
             relation: Relation that was written
             object: (object_type, object_id)
+            local_only: If True, skip cross-zone publishing (steps 9-10).
+                Used by the durable stream consumer handler to avoid
+                re-broadcasting received invalidations (ping-pong loop).
         """
         self._invalidation_count += 1
         subject_type, subject_id = subject
@@ -448,33 +453,36 @@ class CacheCoordinator:
                 object_id=object_id,
             )
 
-        # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
-        if self._pubsub:
-            self._pubsub.publish_invalidation(
-                zone_id=zone_id,
-                layer="all",
-                payload={
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "relation": relation,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                },
-            )
+        # Steps 9-10: Cross-zone publishing — skipped when local_only=True
+        # to prevent ping-pong loops when the consumer handler re-enters.
+        if not local_only:
+            # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
+            if self._pubsub:
+                self._pubsub.publish_invalidation(
+                    zone_id=zone_id,
+                    layer="all",
+                    payload={
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "relation": relation,
+                        "object_type": object_type,
+                        "object_id": object_id,
+                    },
+                )
 
-        # 10. Durable Stream: Publish cross-zone guaranteed delivery (Issue #3396)
-        if self._durable_stream:
-            self._durable_stream.publish(
-                target_zone_id=zone_id,
-                payload={
-                    "source_zone": zone_id,
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "relation": relation,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                },
-            )
+            # 10. Durable Stream: Publish cross-zone guaranteed delivery (Issue #3396)
+            if self._durable_stream:
+                self._durable_stream.publish(
+                    target_zone_id=zone_id,
+                    payload={
+                        "source_zone": zone_id,
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "relation": relation,
+                        "object_type": object_type,
+                        "object_id": object_id,
+                    },
+                )
 
     def invalidate_zone_graph(self, zone_id: str | None = None) -> None:
         """Invalidate zone graph cache.

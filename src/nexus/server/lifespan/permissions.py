@@ -192,12 +192,18 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
         if coordinator is not None:
 
             async def _on_cross_zone_invalidation(source_zone: str, payload: dict) -> None:
-                """Handle incoming durable stream event by invalidating local caches."""
+                """Handle incoming durable stream event by invalidating local caches.
+
+                Uses local_only=True to prevent re-broadcasting: the invalidation
+                was already published by the originating zone — this zone only needs
+                to invalidate its own caches, not relay to other zones.
+                """
                 coordinator.invalidate_for_write(
                     zone_id=source_zone,
                     subject=(payload.get("subject_type", ""), payload.get("subject_id", "")),
                     relation=payload.get("relation", ""),
                     object=(payload.get("object_type", ""), payload.get("object_id", "")),
+                    local_only=True,
                 )
 
             durable_stream.register_handler("local-cache-invalidate", _on_cross_zone_invalidation)
@@ -223,13 +229,38 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
             # Register as a lease invalidator: on permission mutation,
             # force-revoke all distributed leases for the affected zone.
             if coordinator is not None:
+                _dlm = distributed_lease_mgr  # capture for closure
 
                 def _distributed_lease_invalidate(affected_zone_id: str) -> None:
-                    """Zone-wide distributed lease revocation on permission change."""
-                    # This is sync context — schedule async revocation as fire-and-forget.
-                    # The local PermissionLeaseTable already handles the fast path;
-                    # this ensures cross-zone lease state is eventually consistent.
-                    pass  # Distributed lease cleanup is handled via durable stream events
+                    """Zone-wide distributed lease revocation on permission change.
+
+                    This runs in sync context (from invalidate_for_write).
+                    Schedules the async revocation as fire-and-forget on the
+                    running event loop. If no loop is running (e.g. during
+                    tests), the revocation is skipped — TTL expiry is the
+                    safety net.
+                    """
+                    import asyncio
+
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        return  # No event loop — skip (TTL fallback)
+
+                    async def _revoke() -> None:
+                        try:
+                            # Scan and revoke all leases in this zone
+                            pattern = f"lease:{affected_zone_id}:*"
+                            async for key in _dlm._client.scan_iter(match=pattern, count=100):
+                                await _dlm._client.delete(key)
+                        except Exception:
+                            logger.debug(
+                                "[DistributedLease] Zone-wide revoke failed for %s",
+                                affected_zone_id,
+                                exc_info=True,
+                            )
+
+                    loop.create_task(_revoke(), name=f"dlm-revoke-{affected_zone_id}")
 
                 coordinator.register_lease_invalidator(
                     "distributed_lease", _distributed_lease_invalidate

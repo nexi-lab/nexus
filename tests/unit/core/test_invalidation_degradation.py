@@ -272,7 +272,7 @@ class TestFullDegradation:
         l1.invalidate_object.assert_called()
 
     def test_read_fence_frozen_when_stream_down(self):
-        """When no events are consumed, the read fence watermark stays frozen.
+        """When no events are consumed, the read fence generation stays frozen.
 
         Cached results eventually expire via TTL — the read fence doesn't
         block reads when the stream is down, it just can't detect staleness
@@ -280,39 +280,41 @@ class TestFullDegradation:
         """
         fence = ReadFence()
 
-        # Initially, everything is "fresh" (watermark is 0)
+        # Initially, everything is "fresh" (generation is 0)
         assert fence.is_stale("zone-a", 0) is False
-        assert fence.is_stale("zone-a", 100) is False
 
-        # Simulate: stream was working, advanced to 50
-        fence.advance("zone-a", 50)
+        # Simulate: stream was working, 3 invalidation events consumed
+        fence.advance("zone-a")  # gen = 1
+        fence.advance("zone-a")  # gen = 2
+        fence.advance("zone-a")  # gen = 3
 
         # Now stream goes down — no more advances
-        # Cached results from before 50 are detected as stale
-        assert fence.is_stale("zone-a", 30) is True
-        # Cached results from 50+ are still "fresh" (best available info)
-        assert fence.is_stale("zone-a", 50) is False
-        assert fence.is_stale("zone-a", 100) is False
+        # Entries cached at gen < 3 are detected as stale
+        assert fence.is_stale("zone-a", 1) is True
+        assert fence.is_stale("zone-a", 2) is True
+        # Entry cached at current gen (3) is fresh
+        assert fence.is_stale("zone-a", 3) is False
 
         stats = fence.stats()
         assert stats["zones_tracked"] == 1
-        assert stats["watermarks"]["zone-a"] == 50
+        assert stats["watermarks"]["zone-a"] == 3
 
-    def test_read_fence_watermark_never_goes_backward(self):
-        """Watermark monotonically increases even with out-of-order events."""
+    def test_read_fence_generation_always_increments(self):
+        """Generation monotonically increases by 1 per advance."""
         fence = ReadFence()
-        fence.advance("zone-a", 100)
-        fence.advance("zone-a", 50)  # Out-of-order (ignored)
-        fence.advance("zone-a", 150)
+        fence.advance("zone-a")
+        fence.advance("zone-a")
+        fence.advance("zone-a")
 
-        assert fence.watermark("zone-a") == 150
+        assert fence.watermark("zone-a") == 3
 
     def test_read_fence_reset_zone(self):
-        """Reset clears the watermark for a zone."""
+        """Reset clears the generation for a zone."""
         fence = ReadFence()
-        fence.advance("zone-a", 100)
-        fence.advance("zone-b", 200)
+        fence.advance("zone-a")
+        fence.advance("zone-a")
+        fence.advance("zone-b")
 
         fence.reset_zone("zone-a")
         assert fence.watermark("zone-a") == 0
-        assert fence.watermark("zone-b") == 200
+        assert fence.watermark("zone-b") == 1

@@ -129,9 +129,15 @@ class FailingMetastore(MetastoreABC):
         self._maybe_fail("delete_batch")
         self._inner.delete_batch(paths)
 
-    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",
+        skip_snapshot: bool = False,
+    ) -> None:
         self._maybe_fail("put_batch")
-        self._inner.put_batch(metadata_list)
+        self._inner.put_batch(metadata_list, consistency=consistency, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
         self._maybe_fail("batch_get_content_ids")

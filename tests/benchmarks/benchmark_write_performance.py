@@ -229,11 +229,166 @@ async def run_benchmark(enable_deferred: bool = False):
         }
 
 
+async def run_write_back_benchmark():
+    """Benchmark write-back mode with timing breakdown (Issue #3393, T4).
+
+    Measures:
+    - VFS lock hold time (content write + metadata enqueue)
+    - Metadata enqueue time
+    - Batch flush latency (single Raft round for N writes)
+    - P50/P95/P99 for all of the above
+    """
+    import os
+
+    from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.contracts.types import OperationContext
+    from nexus.core.config import ParseConfig, PermissionConfig
+    from nexus.factory import create_nexus_fs
+
+    print("=" * 70)
+    print("WRITE-BACK BENCHMARK (Issue #3393 — metadata buffer)")
+    print("=" * 70)
+
+    # Enable the metadata buffer via env var
+    os.environ["NEXUS_METADATA_BUFFER"] = "1"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            storage_path = Path(tmp_dir) / "storage"
+            storage_path.mkdir()
+            db_path = Path(tmp_dir) / "nexus.db"
+
+            backend = CASLocalBackend(str(storage_path))
+            nx = await create_nexus_fs(
+                backend=backend,
+                metadata_store=RaftMetadataStore.embedded(str(db_path).replace(".db", "-raft")),
+                record_store=SQLAlchemyRecordStore(db_path=str(db_path)),
+                permissions=PermissionConfig(enforce=False),
+                parsing=ParseConfig(auto_parse=False),
+                init_cred=TEST_CONTEXT,
+            )
+
+            ctx = OperationContext(
+                user_id="benchmark_user",
+                groups=[],
+                zone_id="benchmark_zone",
+                is_admin=True,
+            )
+
+            content_1kb = b"x" * 1024
+            num_files = 100
+
+            # ---- Benchmark: write-back single writes ----
+            print("\n[1] WRITE-BACK SINGLE WRITES (1KB, consistency='wb')")
+            print("-" * 50)
+
+            write_times = []
+            for i in range(num_files):
+                path = f"/bench/wb/file_{i:04d}.txt"
+                start = time.perf_counter()
+                await nx.write(path, content_1kb, context=ctx, consistency="wb")
+                elapsed = time.perf_counter() - start
+                write_times.append(elapsed * 1000)
+
+            write_times_sorted = sorted(write_times)
+            p50 = write_times_sorted[int(num_files * 0.50)]
+            p95 = write_times_sorted[int(num_files * 0.95)]
+            p99 = write_times_sorted[int(num_files * 0.99)]
+
+            print(f"  Files written:   {num_files}")
+            print(f"  Avg write time:  {statistics.mean(write_times):.3f}ms")
+            print(f"  P50:             {p50:.3f}ms")
+            print(f"  P95:             {p95:.3f}ms")
+            print(f"  P99:             {p99:.3f}ms")
+            print(f"  Min:             {min(write_times):.3f}ms")
+            print(f"  Max:             {max(write_times):.3f}ms")
+            print(f"  Throughput:      {num_files / (sum(write_times) / 1000):.1f} files/sec")
+
+            # ---- Benchmark: SC single writes for comparison ----
+            print("\n[2] SC SINGLE WRITES (1KB, consistency='sc')")
+            print("-" * 50)
+
+            sc_times = []
+            for i in range(num_files):
+                path = f"/bench/sc/file_{i:04d}.txt"
+                start = time.perf_counter()
+                await nx.write(path, content_1kb, context=ctx, consistency="sc")
+                elapsed = time.perf_counter() - start
+                sc_times.append(elapsed * 1000)
+
+            sc_sorted = sorted(sc_times)
+            print(f"  Files written:   {num_files}")
+            print(f"  Avg write time:  {statistics.mean(sc_times):.3f}ms")
+            print(f"  P50:             {sc_sorted[int(num_files * 0.50)]:.3f}ms")
+            print(f"  P95:             {sc_sorted[int(num_files * 0.95)]:.3f}ms")
+            print(f"  P99:             {sc_sorted[int(num_files * 0.99)]:.3f}ms")
+            print(f"  Throughput:      {num_files / (sum(sc_times) / 1000):.1f} files/sec")
+
+            # ---- Benchmark: flush latency ----
+            print("\n[3] FLUSH LATENCY (batched Raft commit)")
+            print("-" * 50)
+
+            from nexus.storage.buffered_metadata_store import BufferedMetadataStore
+
+            if isinstance(nx.metadata, BufferedMetadataStore):
+                # Write a fresh batch to measure flush
+                flush_batch_sizes = [10, 50, 100]
+                for batch_n in flush_batch_sizes:
+                    for i in range(batch_n):
+                        path = f"/bench/flush_{batch_n}/file_{i:04d}.txt"
+                        await nx.write(path, content_1kb, context=ctx, consistency="wb")
+
+                    start = time.perf_counter()
+                    nx.metadata.flush()
+                    flush_elapsed = (time.perf_counter() - start) * 1000
+
+                    print(
+                        f"  Batch size {batch_n:>3d}: "
+                        f"{flush_elapsed:.2f}ms total, "
+                        f"{flush_elapsed / batch_n:.3f}ms/item"
+                    )
+
+                stats = nx.metadata.get_buffer_stats()
+                print(f"\n  Buffer stats: {stats}")
+            else:
+                print("  (metadata buffer not active — skipping flush benchmark)")
+
+            # ---- Summary ----
+            print("\n" + "=" * 70)
+            print("WRITE-BACK vs SC COMPARISON")
+            print("=" * 70)
+            wb_avg = statistics.mean(write_times)
+            sc_avg = statistics.mean(sc_times)
+            if sc_avg > 0:
+                speedup = sc_avg / wb_avg
+                print(f"  WB avg:    {wb_avg:.3f}ms")
+                print(f"  SC avg:    {sc_avg:.3f}ms")
+                print(f"  Speedup:   {speedup:.1f}x")
+
+            nx.close()
+
+            return {
+                "wb_avg_ms": wb_avg,
+                "wb_p50_ms": p50,
+                "wb_p95_ms": p95,
+                "wb_p99_ms": p99,
+                "sc_avg_ms": sc_avg,
+                "speedup": speedup if sc_avg > 0 else 0,
+            }
+    finally:
+        os.environ.pop("NEXUS_METADATA_BUFFER", None)
+
+
 if __name__ == "__main__":
     import json
 
     # Check command line args
-    if len(sys.argv) > 1 and sys.argv[1] == "--deferred":
+    if len(sys.argv) > 1 and sys.argv[1] == "--write-back":
+        # Run write-back mode benchmark (Issue #3393)
+        results = run_write_back_benchmark()
+        print("\n[JSON Results - WRITE-BACK]")
+        print(json.dumps(results, indent=2))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--deferred":
         # Run only deferred mode
         results = run_benchmark(enable_deferred=True)
         print("\n[JSON Results - DEFERRED]")

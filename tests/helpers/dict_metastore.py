@@ -73,7 +73,13 @@ class DictMetastore(MetastoreABC):
             self._store.pop(p, None)
             self._file_metadata.pop(p, None)
 
-    def _put_batch_raw(self, metadata_list: Sequence[FileMetadata]) -> None:
+    def _put_batch_raw(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+        skip_snapshot: bool = False,  # noqa: ARG002
+    ) -> None:
         for m in metadata_list:
             self._store[m.path] = m
 

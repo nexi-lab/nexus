@@ -116,6 +116,9 @@ class NexusFS(  # type: ignore[misc]
         # Three pillars: metadata (required), record store, cache store
         # No self.backend — all I/O goes through router.route().backend
         self.metadata: MetastoreABC = metadata_store
+        # Issue #3393: default consistency for write operations.
+        # Set to "wb" by the factory when BufferedMetadataStore is active.
+        self._default_write_consistency: str = "sc"
         self._record_store = record_store
         self._sql_engine: Any = None
         self._db_session_factory: Any = None
@@ -384,6 +387,42 @@ class NexusFS(  # type: ignore[misc]
         return context.zone_id, context.agent_id, getattr(context, "is_admin", False)
 
     # Issue #1790: _check_zone_writable() deleted — now handled by
+    def _build_write_metadata(
+        self,
+        *,
+        path: str,
+        backend_name: str,
+        content_hash: str,
+        size: int,
+        existing_meta: "FileMetadata | None",
+        now: datetime,
+        zone_id: str | None,
+        context: "OperationContext | None",
+    ) -> "FileMetadata":
+        """Build FileMetadata for a sys_write result.
+
+        Shared by both the external-route and VFS-locked write paths
+        to avoid duplicating version calculation, owner resolution,
+        and field mapping.
+        """
+        new_version = (existing_meta.version + 1) if existing_meta else 1
+        ctx = self._resolve_cred(context)
+        owner_id = existing_meta.owner_id if existing_meta else (ctx.subject_id or ctx.user_id)
+        _ttl = getattr(context, "ttl_seconds", None) or 0.0
+        return FileMetadata(
+            path=path,
+            backend_name=backend_name,
+            physical_path=content_hash,
+            size=size,
+            etag=content_hash,
+            created_at=existing_meta.created_at if existing_meta else now,
+            modified_at=now,
+            version=new_version,
+            zone_id=zone_id or "root",
+            owner_id=owner_id,
+            ttl_seconds=_ttl,
+        )
+
     # ZoneWriteGuardHook (pre-intercept on all write-like operations).
 
     def _parse_context(self, context: OperationContext | dict | None = None) -> OperationContext:
@@ -2301,7 +2340,7 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        consistency: str = "sc",
+        consistency: str | None = None,
         ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
@@ -2322,10 +2361,10 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
-            consistency: Metastore consistency level — ``"sc"`` (strong, default,
-                Raft consensus) or ``"ec"`` (eventual, local-first via EC WAL).
-                EC writes return immediately and replicate asynchronously.
-                Issue #1828.
+            consistency: Metadata consistency mode — ``"sc"`` (strong, Raft
+                consensus), ``"ec"`` (eventual, fire-and-forget), or ``"wb"``
+                (write-back, buffered for batched flush).  Defaults to
+                _default_write_consistency ("wb" when buffer active, else "sc").
             ttl: TTL in seconds for ephemeral content (Issue #3405).
                 Routes to TTL-bucketed volume; None = permanent.
 
@@ -2338,6 +2377,7 @@ class NexusFS(  # type: ignore[misc]
             buf = buf[:count]
 
         path = self._validate_path(path)
+        _consistency = consistency if consistency is not None else self._default_write_consistency
 
         # PRE-DISPATCH: virtual path resolvers
         _handled, _result = self._dispatch.resolve_write(path, buf)
@@ -2349,7 +2389,7 @@ class NexusFS(  # type: ignore[misc]
             context = self._ensure_context_ttl(context, ttl)
 
         return await self._write_internal(
-            path=path, content=buf, offset=offset, context=context, consistency=consistency
+            path=path, content=buf, offset=offset, context=context, consistency=_consistency
         )
 
     async def _write_internal(
@@ -2435,23 +2475,17 @@ class NexusFS(  # type: ignore[misc]
                 context=context,
             )
             content_hash = wr.content_id
-            new_version = (meta.version + 1) if meta else 1
-            ctx = self._resolve_cred(context)
-            owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
-            _ttl = getattr(context, "ttl_seconds", None) or 0.0
-            metadata = FileMetadata(
+            metadata = self._build_write_metadata(
                 path=path,
                 backend_name=route.backend.name,
-                physical_path=content_hash,
+                content_hash=content_hash,
                 size=wr.size if offset > 0 else len(content),
-                etag=content_hash,
-                created_at=meta.created_at if meta else now,
-                modified_at=now,
-                version=new_version,
-                zone_id=zone_id or "root",
-                owner_id=owner_id,
-                ttl_seconds=_ttl,
+                existing_meta=meta,
+                now=now,
+                zone_id=zone_id,
+                context=context,
             )
+            new_version = metadata.version
             # Local external backends need metadata persisted locally
             if not _is_remote:
                 self.metadata.put(metadata, consistency=consistency)
@@ -2471,28 +2505,17 @@ class NexusFS(  # type: ignore[misc]
                 # HDFS/GFS pattern: content cleanup is async via background GC.
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-                # Calculate new version number (increment if updating)
-                new_version = (meta.version + 1) if meta else 1
-
-                # Store metadata with content hash as both etag and physical_path
-                # Issue #920: Set owner_id for O(1) permission checks (only on new files)
-                ctx = self._resolve_cred(context)
-                owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
-
-                _ttl = getattr(context, "ttl_seconds", None) or 0.0
-                metadata = FileMetadata(
+                metadata = self._build_write_metadata(
                     path=path,
                     backend_name=route.backend.name,
-                    physical_path=content_hash,
+                    content_hash=content_hash,
                     size=_wr.size if offset > 0 else len(content),
-                    etag=content_hash,
-                    created_at=meta.created_at if meta else now,
-                    modified_at=now,
-                    version=new_version,
-                    zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
-                    owner_id=owner_id,
-                    ttl_seconds=_ttl,
+                    existing_meta=meta,
+                    now=now,
+                    zone_id=zone_id,
+                    context=context,
                 )
+                new_version = metadata.version
 
                 self.metadata.put(metadata, consistency=consistency)
 

@@ -125,6 +125,9 @@ class OperationContext:
     read_set: "ReadSet | None" = None
     track_reads: bool = False
 
+    # TTL for ephemeral content — routes to TTL-bucketed volumes (Issue #3405)
+    ttl_seconds: float | None = None
+
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
         if self.subject_id is None:

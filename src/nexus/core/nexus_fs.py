@@ -390,6 +390,12 @@ class NexusFS(  # type: ignore[misc]
 
         return parse_context(context)
 
+    def _ensure_context_ttl(self, context: OperationContext | None, ttl: float) -> OperationContext:
+        """Ensure context exists and has ttl_seconds set (Issue #3405)."""
+        if context is not None:
+            return _dc_replace(context, ttl_seconds=ttl)
+        return OperationContext(user_id="anonymous", groups=[], ttl_seconds=ttl)
+
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """Validate and normalize virtual path. Delegates to lib/path_utils."""
         return validate_path(path, allow_root=allow_root)
@@ -1969,6 +1975,7 @@ class NexusFS(  # type: ignore[misc]
         offset: int = 0,
         context: OperationContext | None = None,
         consistency: str = "sc",
+        ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
@@ -1983,6 +1990,8 @@ class NexusFS(  # type: ignore[misc]
             context: Optional operation context for permission checks.
             consistency: Metastore consistency — ``"sc"`` (strong, default)
                 or ``"ec"`` (eventual, local-first). Issue #1828.
+            ttl: TTL in seconds for ephemeral content (Issue #3405).
+                Routes to TTL-bucketed volume; None = permanent.
 
         Returns:
             Dict with path and bytes_written.
@@ -2044,6 +2053,9 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
+        # Thread TTL into context (Issue #3405)
+        if ttl is not None and ttl > 0:
+            context = self._ensure_context_ttl(context, ttl)
         await self._write_internal(
             path=path, content=buf, offset=offset, context=context, consistency=consistency
         )
@@ -2194,6 +2206,7 @@ class NexusFS(  # type: ignore[misc]
         offset: int = 0,
         context: OperationContext | None = None,
         consistency: str = "sc",
+        ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
 
@@ -2217,6 +2230,8 @@ class NexusFS(  # type: ignore[misc]
                 Raft consensus) or ``"ec"`` (eventual, local-first via EC WAL).
                 EC writes return immediately and replicate asynchronously.
                 Issue #1828.
+            ttl: TTL in seconds for ephemeral content (Issue #3405).
+                Routes to TTL-bucketed volume; None = permanent.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
@@ -2232,6 +2247,10 @@ class NexusFS(  # type: ignore[misc]
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
             return _result
+
+        # Thread TTL into context (Issue #3405)
+        if ttl is not None and ttl > 0:
+            context = self._ensure_context_ttl(context, ttl)
 
         return await self._write_internal(
             path=path, content=buf, offset=offset, context=context, consistency=consistency
@@ -2323,6 +2342,7 @@ class NexusFS(  # type: ignore[misc]
             new_version = (meta.version + 1) if meta else 1
             ctx = self._resolve_cred(context)
             owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
+            _ttl = getattr(context, "ttl_seconds", None) or 0.0
             metadata = FileMetadata(
                 path=path,
                 backend_name=route.backend.name,
@@ -2334,6 +2354,7 @@ class NexusFS(  # type: ignore[misc]
                 version=new_version,
                 zone_id=zone_id or "root",
                 owner_id=owner_id,
+                ttl_seconds=_ttl,
             )
             # Local external backends need metadata persisted locally
             if not _is_remote:
@@ -2362,6 +2383,7 @@ class NexusFS(  # type: ignore[misc]
                 ctx = self._resolve_cred(context)
                 owner_id = meta.owner_id if meta else (ctx.subject_id or ctx.user_id)
 
+                _ttl = getattr(context, "ttl_seconds", None) or 0.0
                 metadata = FileMetadata(
                     path=path,
                     backend_name=route.backend.name,
@@ -2373,6 +2395,7 @@ class NexusFS(  # type: ignore[misc]
                     version=new_version,
                     zone_id=zone_id or "root",  # Issue #904, #773: pre-existing default
                     owner_id=owner_id,
+                    ttl_seconds=_ttl,
                 )
 
                 self.metadata.put(metadata, consistency=consistency)

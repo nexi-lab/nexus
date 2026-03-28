@@ -70,6 +70,7 @@ message FileMetadata {
   // path resolution — federation extends with Raft consensus per zone.
   string target_zone_id = 14;
 
-  // Field 15 reserved: i_links_count moved to zone-level __i_links_count__
-  // reserved key in Raft metadata (not per-file, per-zone).
+  // TTL in seconds for ephemeral content (0 or unset = permanent).
+  // Routes to TTL-bucketed volumes for zero-cost expiry (Issue #3405).
+  double ttl_seconds = 15;
 }

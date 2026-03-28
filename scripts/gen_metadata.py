@@ -61,6 +61,7 @@ PROTO_TYPE_MAP: dict[str, str] = {
     "string": "str",
     "int64": "int",
     "int32": "int",
+    "double": "float",
     "bool": "bool",
     "DirEntryType": "int",  # Enum stored as int in Python
 }
@@ -82,6 +83,7 @@ NULLABLE_STRING_FIELDS: set[str] = {
 FIELD_DEFAULTS: dict[str, str] = {
     "version": "1",
     "entry_type": "0",
+    "ttl_seconds": "0.0",
 }
 
 # String fields that get interned in CompactFileMetadata

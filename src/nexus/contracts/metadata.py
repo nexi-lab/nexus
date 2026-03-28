@@ -50,10 +50,11 @@ class FileMetadata:
     created_at: datetime | None = None
     modified_at: datetime | None = None
     version: int = 1
-    zone_id: str | None = None  # Kernel namespace partition ID (P0 invariant)
-    owner_id: str | None = None  # Kernel posix_uid for O(1) DAC
+    zone_id: str | None = None
+    owner_id: str | None = None
     entry_type: int = 0
-    target_zone_id: str | None = None  # Mount target namespace (DT_MOUNT only)
+    target_zone_id: str | None = None
+    ttl_seconds: float = 0.0
 
     @property
     def is_reg(self) -> bool:
@@ -116,6 +117,7 @@ class FileMetadata:
             "owner_id": self.owner_id,
             "entry_type": self.entry_type,
             "target_zone_id": self.target_zone_id,
+            "ttl_seconds": self.ttl_seconds,
         }
 
     def validate(self) -> None:

@@ -219,8 +219,8 @@ class TestMemIndexMemory:
         assert loaded > base
 
         per_entry = loaded / 1000
-        # Should be < 100 bytes per entry (32 key + 16 value + overhead)
-        assert per_entry < 100, f"per_entry={per_entry} too high"
+        # Should be < 120 bytes per entry (32 key + 24 value + overhead)
+        assert per_entry < 120, f"per_entry={per_entry} too high"
 
     def test_stats_include_mem_index(self, tmp_path):
         """stats() includes mem_index info."""
@@ -255,8 +255,8 @@ class TestSnapshotSidecar:
 
         snap = self._snapshot_path(vol_dir)
         assert os.path.exists(snap)
-        # 16 header + 10 entries × 48 bytes = 496 bytes
-        assert os.path.getsize(snap) == 16 + 10 * 48
+        # 16 header + 10 entries × 56 bytes = 576 bytes (v2: includes expiry field)
+        assert os.path.getsize(snap) == 16 + 10 * 56
 
     def test_startup_uses_snapshot(self, tmp_path):
         """Second startup loads from snapshot (fast path)."""

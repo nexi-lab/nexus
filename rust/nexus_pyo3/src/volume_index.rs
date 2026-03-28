@@ -18,21 +18,44 @@ use ahash::AHashMap;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Entry header size in volume files: hash(32) + size(4) + flags(1) = 37 bytes.
 /// Must match `ENTRY_HEADER_SIZE` in `volume_engine.rs`.
 const ENTRY_HEADER_SIZE: u64 = 37;
 
+/// Current Unix timestamp in seconds (f64).
+fn now_unix_secs() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+}
+
 /// Compact index entry for in-memory O(1) lookup.
 ///
-/// 16 bytes total: volume_id(4) + offset(8) + size(4).
-/// Omits timestamp (only needed for GC, served from redb).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// 24 bytes total: volume_id(4) + offset(8) + size(4) + expiry(8).
+/// Expiry is a Unix timestamp (f64); 0.0 means permanent (no expiry).
+/// Issue #3405: TTL-bucketed volumes use expiry for read-time rejection.
+#[derive(Clone, Copy, Debug)]
 pub struct MemIndexEntry {
     pub volume_id: u32,
     pub offset: u64,
     pub size: u32,
+    /// Unix timestamp when this entry expires. 0.0 = permanent (never expires).
+    pub expiry: f64,
 }
+
+impl PartialEq for MemIndexEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.volume_id == other.volume_id
+            && self.offset == other.offset
+            && self.size == other.size
+            && self.expiry.to_bits() == other.expiry.to_bits()
+    }
+}
+
+impl Eq for MemIndexEntry {}
 
 /// Result of a `read_content` attempt.
 pub enum ReadContentResult {
@@ -75,15 +98,25 @@ impl VolumeIndex {
     }
 
     /// O(1) lookup of content location by hash.
+    /// Returns None for expired entries (Issue #3405).
     #[inline]
     pub fn lookup(&self, hash: &[u8; 32]) -> Option<MemIndexEntry> {
-        self.map.get(hash).copied()
+        self.map
+            .get(hash)
+            .copied()
+            .filter(|e| e.expiry == 0.0 || e.expiry >= now_unix_secs())
     }
 
-    /// Check if a hash exists in the index.
+    /// Check if a hash exists in the index (excludes expired entries).
     #[inline]
     pub fn contains(&self, hash: &[u8; 32]) -> bool {
-        self.map.contains_key(hash)
+        self.lookup(hash).is_some()
+    }
+
+    /// Raw lookup without expiry check — used by the sweeper/GC.
+    #[inline]
+    pub fn lookup_raw(&self, hash: &[u8; 32]) -> Option<MemIndexEntry> {
+        self.map.get(hash).copied()
     }
 
     /// Insert or update an entry.
@@ -98,15 +131,44 @@ impl VolumeIndex {
         self.map.remove(hash).is_some()
     }
 
+    /// Iterate over all entries (including expired ones) — used by tests/GC.
+    #[allow(dead_code)]
+    pub fn iter_all(&self) -> impl Iterator<Item = (&[u8; 32], &MemIndexEntry)> {
+        self.map.iter()
+    }
+
+    /// Remove all entries belonging to a volume (Issue #3405: volume-level expiry).
+    /// Returns the number of entries removed.
+    pub fn remove_by_volume(&mut self, volume_id: u32) -> usize {
+        let before = self.map.len();
+        self.map.retain(|_, entry| entry.volume_id != volume_id);
+        before - self.map.len()
+    }
+
+    /// Bulk-load entries from an iterator.
+    #[allow(dead_code)]
+    pub fn load_entries(&mut self, entries: impl Iterator<Item = ([u8; 32], MemIndexEntry)>) {
+        for (hash, entry) in entries {
+            self.map.insert(hash, entry);
+        }
+    }
+
     /// Lookup + pread in a single operation (no Python round-trip).
     ///
     /// Uses `read_at` (pread) for thread-safe concurrent reads from cached FDs.
+    /// Issue #3405: checks entry expiry before reading — expired entries return NotFound.
     #[cfg(unix)]
     pub fn read_content(&self, hash: &[u8; 32]) -> ReadContentResult {
         let entry = match self.map.get(hash) {
             Some(e) => *e,
             None => return ReadContentResult::NotFound,
         };
+
+        // Read-time expiry check (Issue #3405): reject expired entries before pread.
+        // expiry == 0.0 means permanent (no expiry).
+        if entry.expiry > 0.0 && entry.expiry < now_unix_secs() {
+            return ReadContentResult::NotFound;
+        }
 
         let file = match self.volumes.get(&entry.volume_id) {
             Some(f) => f,
@@ -128,7 +190,13 @@ impl VolumeIndex {
     #[cfg(not(unix))]
     pub fn read_content(&self, hash: &[u8; 32]) -> ReadContentResult {
         match self.map.get(hash) {
-            Some(e) => ReadContentResult::NoFd(*e),
+            Some(e) => {
+                // Read-time expiry check (Issue #3405)
+                if e.expiry > 0.0 && e.expiry < now_unix_secs() {
+                    return ReadContentResult::NotFound;
+                }
+                ReadContentResult::NoFd(*e)
+            }
             None => ReadContentResult::NotFound,
         }
     }
@@ -159,7 +227,7 @@ impl VolumeIndex {
 
     /// Estimated memory usage in bytes.
     pub fn memory_bytes(&self) -> usize {
-        // AHashMap (hashbrown) layout: each bucket = key(32) + value(16) = 48 bytes + 1 control byte
+        // AHashMap (hashbrown) layout: each bucket = key(32) + value(24) = 56 bytes + 1 control byte
         // Load factor ~87.5%, so capacity ≈ len * 8/7
         let entry_size = std::mem::size_of::<[u8; 32]>() + std::mem::size_of::<MemIndexEntry>();
         let capacity = self.map.capacity().max(self.map.len());
@@ -193,12 +261,12 @@ impl VolumeIndex {
 
     /// Snapshot magic bytes.
     const SNAPSHOT_MAGIC: &'static [u8; 4] = b"NIDX";
-    /// Snapshot version.
-    const SNAPSHOT_VERSION: u32 = 1;
+    /// Snapshot version — bumped to 2 for expiry field (Issue #3405).
+    const SNAPSHOT_VERSION: u32 = 2;
     /// Header: magic(4) + version(4) + entry_count(8) = 16 bytes.
     const SNAPSHOT_HEADER_SIZE: usize = 16;
-    /// Per-entry: hash(32) + volume_id(4) + offset(8) + size(4) = 48 bytes.
-    const SNAPSHOT_ENTRY_SIZE: usize = 48;
+    /// Per-entry: hash(32) + volume_id(4) + offset(8) + size(4) + expiry(8) = 56 bytes.
+    const SNAPSHOT_ENTRY_SIZE: usize = 56;
 
     /// Save the index to a flat binary file for fast startup.
     ///
@@ -213,12 +281,13 @@ impl VolumeIndex {
         f.write_all(&Self::SNAPSHOT_VERSION.to_le_bytes())?;
         f.write_all(&(self.map.len() as u64).to_le_bytes())?;
 
-        // Entries
+        // Entries (v2: includes expiry field)
         for (hash, entry) in &self.map {
             f.write_all(hash)?;
             f.write_all(&entry.volume_id.to_le_bytes())?;
             f.write_all(&entry.offset.to_le_bytes())?;
             f.write_all(&entry.size.to_le_bytes())?;
+            f.write_all(&entry.expiry.to_le_bytes())?;
         }
 
         f.sync_data()?;
@@ -266,12 +335,14 @@ impl VolumeIndex {
                 let volume_id = u32::from_le_bytes(chunk[32..36].try_into().unwrap());
                 let offset = u64::from_le_bytes(chunk[36..44].try_into().unwrap());
                 let size = u32::from_le_bytes(chunk[44..48].try_into().unwrap());
+                let expiry = f64::from_le_bytes(chunk[48..56].try_into().unwrap());
                 (
                     hash,
                     MemIndexEntry {
                         volume_id,
                         offset,
                         size,
+                        expiry,
                     },
                 )
             })
@@ -303,6 +374,7 @@ mod tests {
             volume_id: vol,
             offset,
             size,
+            expiry: 0.0, // permanent
         }
     }
 

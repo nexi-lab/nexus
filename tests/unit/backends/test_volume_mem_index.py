@@ -234,6 +234,172 @@ class TestMemIndexMemory:
         assert stats["mem_index_entries"] == 1
 
 
+class TestSnapshotSidecar:
+    """Test snapshot persistence for fast startup (mem_index.bin)."""
+
+    def _snapshot_path(self, vol_dir: str) -> str:
+        import os
+
+        return os.path.join(vol_dir, "mem_index.bin")
+
+    def test_close_creates_snapshot(self, tmp_path):
+        """close() writes mem_index.bin snapshot file with correct size."""
+        import os
+
+        vol_dir = str(tmp_path / "vol")
+        engine = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(10):
+            engine.put(make_hash(i), f"data_{i}".encode())
+        engine.seal_active()
+        engine.close()
+
+        snap = self._snapshot_path(vol_dir)
+        assert os.path.exists(snap)
+        # 16 header + 10 entries × 48 bytes = 496 bytes
+        assert os.path.getsize(snap) == 16 + 10 * 48
+
+    def test_startup_uses_snapshot(self, tmp_path):
+        """Second startup loads from snapshot (fast path)."""
+        vol_dir = str(tmp_path / "vol")
+
+        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(20):
+            engine1.put(make_hash(i), f"snap_{i}".encode())
+        engine1.seal_active()
+        engine1.close()
+        del engine1
+
+        # Re-open — should use snapshot
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        assert engine2.stats()["mem_index_entries"] == 20
+
+        # All data readable
+        for i in range(20):
+            data = engine2.read_content(make_hash(i))
+            assert data is not None
+            assert bytes(data) == f"snap_{i}".encode()
+        engine2.close()
+
+    def test_snapshot_invalidated_on_crash(self, tmp_path):
+        """Snapshot is ignored when .tmp files indicate crash."""
+        import os
+
+        vol_dir = str(tmp_path / "vol")
+
+        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(10):
+            engine1.put(make_hash(i), b"crash_test")
+        engine1.seal_active()
+        engine1.close()
+        del engine1
+
+        snap = self._snapshot_path(vol_dir)
+        assert os.path.exists(snap)
+
+        # Simulate crash: create a .tmp file
+        tmp_file = os.path.join(vol_dir, "vol_ffffffff.tmp")
+        with open(tmp_file, "w") as f:
+            f.write("crash artifact")
+
+        # Re-open — should detect .tmp, delete snapshot, fall back to redb
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        # .tmp should be cleaned up
+        assert not os.path.exists(tmp_file)
+        # Data should still be correct (loaded from redb)
+        assert engine2.stats()["mem_index_entries"] == 10
+        for i in range(10):
+            assert engine2.exists(make_hash(i))
+        engine2.close()
+
+    def test_snapshot_rejected_on_count_mismatch(self, tmp_path):
+        """Snapshot is rejected if entry count doesn't match redb."""
+
+        vol_dir = str(tmp_path / "vol")
+
+        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(10):
+            engine1.put(make_hash(i), b"mismatch_test")
+        engine1.seal_active()
+        engine1.close()
+        del engine1
+
+        snap = self._snapshot_path(vol_dir)
+        # Corrupt snapshot: truncate to remove some entries
+        with open(snap, "r+b") as f:
+            f.truncate(16 + 5 * 48)  # Only 5 entries instead of 10
+
+        # Re-open — should reject snapshot, fall back to redb
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        assert engine2.stats()["mem_index_entries"] == 10
+        for i in range(10):
+            assert engine2.exists(make_hash(i))
+        engine2.close()
+
+    def test_snapshot_rejected_on_volume_deleted(self, tmp_path):
+        """Snapshot is rejected if referenced volumes no longer exist."""
+        import os
+
+        vol_dir = str(tmp_path / "vol")
+
+        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(5):
+            engine1.put(make_hash(i), b"vol_delete_test")
+        engine1.seal_active()
+        engine1.close()
+        del engine1
+
+        # Delete volume files
+        for f in os.listdir(vol_dir):
+            if f.endswith(".vol"):
+                os.remove(os.path.join(vol_dir, f))
+
+        # Re-open — snapshot references missing volumes, should reject
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        # Stale entries should be removed
+        assert engine2.stats()["mem_index_entries"] == 0
+        engine2.close()
+
+    def test_no_snapshot_first_boot(self, tmp_path):
+        """First boot without snapshot falls back to redb scan."""
+        vol_dir = str(tmp_path / "vol")
+
+        engine = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        for i in range(5):
+            engine.put(make_hash(i), b"first_boot")
+        engine.seal_active()
+
+        # No close() → no snapshot written. Reopen via del + new.
+        del engine
+
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        # Should load from redb (no snapshot)
+        assert engine2.stats()["mem_index_entries"] == 5
+        for i in range(5):
+            assert engine2.exists(make_hash(i))
+        engine2.close()
+
+    def test_snapshot_corrupt_magic_rejected(self, tmp_path):
+        """Snapshot with bad magic bytes is rejected."""
+
+        vol_dir = str(tmp_path / "vol")
+
+        engine1 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        engine1.put(make_hash(0), b"magic_test")
+        engine1.seal_active()
+        engine1.close()
+        del engine1
+
+        snap = self._snapshot_path(vol_dir)
+        # Corrupt magic bytes
+        with open(snap, "r+b") as f:
+            f.write(b"XXXX")
+
+        engine2 = VolumeEngine(vol_dir, target_volume_size=1024 * 1024)
+        assert engine2.stats()["mem_index_entries"] == 1
+        assert engine2.exists(make_hash(0))
+        engine2.close()
+
+
 class TestMemIndexCompaction:
     """Test that compaction updates mem_index entries and FDs."""
 

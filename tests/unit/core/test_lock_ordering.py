@@ -4,6 +4,8 @@ Validates:
     1. Debug-mode ordering assertions detect L2 → L1 violations.
     2. Observer context rejects L1/L2 acquisition.
     3. Cross-zone concurrent lock acquisition completes without deadlock.
+    4. Multiple locks of the same layer are tracked with correct multiplicity.
+    5. Nested observer contexts are handled correctly.
 
 See: docs/architecture/LOCK-ORDERING.md
 """
@@ -90,7 +92,59 @@ class TestLockOrderingViolation:
 
 
 # ---------------------------------------------------------------------------
-# Test 2: Observer context rejection
+# Test 2: Multiplicity — partial release must not clear the layer
+# ---------------------------------------------------------------------------
+
+
+class TestLockMultiplicity:
+    """Verify that multiple locks of the same layer are reference-counted."""
+
+    def test_partial_release_keeps_layer(self, monkeypatch):
+        """Acquiring L2 twice and releasing once must still track L2 as held."""
+        mod = _enable_lock_debug(monkeypatch)
+
+        # Acquire two advisory locks (e.g. on different paths).
+        mod.mark_acquired(mod.L2_ADVISORY)
+        mod.mark_acquired(mod.L2_ADVISORY)
+
+        # Release one — L2 should still be tracked.
+        mod.mark_released(mod.L2_ADVISORY)
+
+        # L2 is still held, so L1 must be forbidden.
+        with pytest.raises(mod.LockOrderError, match="L1:VFS.*L2:Advisory"):
+            mod.assert_can_acquire(mod.L1_VFS)
+
+        # Release the second — now L1 should be allowed.
+        mod.mark_released(mod.L2_ADVISORY)
+        mod.assert_can_acquire(mod.L1_VFS)
+
+    def test_multiple_vfs_locks_rename_pattern(self, monkeypatch):
+        """Rename acquires two L1 locks; releasing one must not clear L1."""
+        mod = _enable_lock_debug(monkeypatch)
+
+        mod.mark_acquired(mod.L1_VFS)
+        mod.mark_acquired(mod.L1_VFS)
+
+        # Release first lock.
+        mod.mark_released(mod.L1_VFS)
+
+        # L1 still held — same-layer re-acquire is fine.
+        mod.assert_can_acquire(mod.L1_VFS)
+
+        # Release second lock — fully clear.
+        mod.mark_released(mod.L1_VFS)
+
+    def test_release_without_acquire_is_safe(self, monkeypatch):
+        """Releasing a layer that was never acquired should not crash."""
+        mod = _enable_lock_debug(monkeypatch)
+
+        # Should not raise or go negative.
+        mod.mark_released(mod.L1_VFS)
+        mod.mark_released(mod.L2_ADVISORY)
+
+
+# ---------------------------------------------------------------------------
+# Test 3: Observer context rejection
 # ---------------------------------------------------------------------------
 
 
@@ -144,7 +198,46 @@ class TestObserverContextRejection:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Cross-zone concurrent lock acquisition (deadlock-free)
+# Test 4: Nested observer context safety
+# ---------------------------------------------------------------------------
+
+
+class TestNestedObserverContext:
+    """Verify that nested observer dispatch does not prematurely clear state."""
+
+    def test_nested_enter_exit(self, monkeypatch):
+        """Two enters require two exits to clear observer context."""
+        mod = _enable_lock_debug(monkeypatch)
+
+        mod.enter_observer_context()
+        mod.enter_observer_context()
+
+        # One exit — still in observer context.
+        mod.exit_observer_context()
+        assert mod.is_observer_context()
+
+        # L1 still forbidden.
+        with pytest.raises(mod.LockOrderError, match="observer"):
+            mod.assert_can_acquire(mod.L1_VFS)
+
+        # Second exit — now clear.
+        mod.exit_observer_context()
+        assert not mod.is_observer_context()
+        mod.assert_can_acquire(mod.L1_VFS)
+
+    def test_exit_without_enter_is_safe(self, monkeypatch):
+        """Exiting observer context without entering should not go negative."""
+        mod = _enable_lock_debug(monkeypatch)
+
+        mod.exit_observer_context()
+        assert not mod.is_observer_context()
+
+        # Should still allow L1.
+        mod.assert_can_acquire(mod.L1_VFS)
+
+
+# ---------------------------------------------------------------------------
+# Test 5: Cross-zone concurrent lock acquisition (deadlock-free)
 # ---------------------------------------------------------------------------
 
 

@@ -63,29 +63,32 @@ _LAYER_NAMES = {
 # Per-task / per-thread state
 # ---------------------------------------------------------------------------
 
-# ContextVar tracks lock layers held by the current asyncio task.
+# ContextVar tracks lock layer *counts* held by the current asyncio task.
+# dict[layer, count] — supports multiple acquisitions of the same layer.
 # Falls back to thread-local for synchronous callers.
-_held_layers: ContextVar[set[int]] = ContextVar("_held_layers")
+_held_layers: ContextVar[dict[int, int]] = ContextVar("_held_layers")
 
-# Observer tagging: set to True in tasks spawned by KernelDispatch.notify().
-_in_observer: ContextVar[bool] = ContextVar("_in_observer", default=False)
+# Observer depth counter: incremented on enter, decremented on exit.
+# Positive value means we're inside an observer callback. Using a counter
+# instead of a boolean makes nested observer dispatch safe.
+_observer_depth: ContextVar[int] = ContextVar("_observer_depth", default=0)
 
 # Thread-local fallback for synchronous code paths.
 _thread_state = threading.local()
 
 
-def _get_held() -> set[int]:
-    """Get the set of lock layers held by the current task/thread."""
+def _get_held() -> dict[int, int]:
+    """Get the lock layer counts held by the current task/thread."""
     try:
         return _held_layers.get()
     except LookupError:
         # No asyncio task context — use thread-local.
         if not hasattr(_thread_state, "held"):
-            _thread_state.held = set()
+            _thread_state.held: dict[int, int] = {}
         return _thread_state.held
 
 
-def _set_held(layers: set[int]) -> None:
+def _set_held(layers: dict[int, int]) -> None:
     """Set the held layers for the current task/thread."""
     try:
         _held_layers.set(layers)
@@ -116,7 +119,7 @@ def assert_can_acquire(layer: int) -> None:
         return
 
     # Rule 2: observer context check.
-    if _in_observer.get(False) and layer <= L2_ADVISORY:
+    if _observer_depth.get(0) > 0 and layer <= L2_ADVISORY:
         layer_name = _LAYER_NAMES.get(layer, f"L{layer}")
         raise LockOrderError(
             f"Lock ordering violation: observer task attempted to acquire "
@@ -142,53 +145,64 @@ def assert_can_acquire(layer: int) -> None:
 def mark_acquired(layer: int) -> None:
     """Record that the current task/thread now holds *layer*.
 
+    Increments the hold count for *layer* (supports multiple acquisitions).
     No-op when ``LOCK_DEBUG_ENABLED`` is False.
     """
     if not LOCK_DEBUG_ENABLED:
         return
     held = _get_held()
-    new = held | {layer}
-    _set_held(new)
+    held[layer] = held.get(layer, 0) + 1
+    _set_held(held)
 
 
 def mark_released(layer: int) -> None:
-    """Record that the current task/thread released *layer*.
+    """Record that the current task/thread released one hold of *layer*.
 
+    Decrements the hold count; only removes the layer when count reaches zero.
     No-op when ``LOCK_DEBUG_ENABLED`` is False.
     """
     if not LOCK_DEBUG_ENABLED:
         return
     held = _get_held()
-    new = held - {layer}
-    _set_held(new)
+    count = held.get(layer, 0)
+    if count <= 1:
+        held.pop(layer, None)
+    else:
+        held[layer] = count - 1
+    _set_held(held)
 
 
 def enter_observer_context() -> None:
     """Tag the current task as running inside an observer callback.
+
+    Uses a depth counter so nested observer dispatch is safe — each
+    ``enter`` must be paired with an ``exit``.
 
     Called by ``KernelDispatch.notify()`` before dispatching to observers.
     No-op when ``LOCK_DEBUG_ENABLED`` is False.
     """
     if not LOCK_DEBUG_ENABLED:
         return
-    _in_observer.set(True)
+    _observer_depth.set(_observer_depth.get(0) + 1)
 
 
 def exit_observer_context() -> None:
-    """Clear the observer tag for the current task.
+    """Decrement the observer depth counter for the current task.
 
+    Only clears the observer state when the outermost callback exits.
     No-op when ``LOCK_DEBUG_ENABLED`` is False.
     """
     if not LOCK_DEBUG_ENABLED:
         return
-    _in_observer.set(False)
+    depth = _observer_depth.get(0)
+    _observer_depth.set(max(0, depth - 1))
 
 
 def is_observer_context() -> bool:
-    """Return True if the current task is tagged as an observer.
+    """Return True if the current task is inside an observer callback.
 
     Always returns False when ``LOCK_DEBUG_ENABLED`` is False.
     """
     if not LOCK_DEBUG_ENABLED:
         return False
-    return _in_observer.get(False)
+    return _observer_depth.get(0) > 0

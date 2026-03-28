@@ -163,6 +163,7 @@ business logic**.
 | **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
 
 `mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
+`mount` is `sys_setattr(entry_type=DT_MOUNT, backend=...)`, `umount` is `sys_rmdir` on DT_MOUNT path.
 
 **Primitive usage pattern:**
 

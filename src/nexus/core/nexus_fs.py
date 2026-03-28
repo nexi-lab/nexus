@@ -475,6 +475,15 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
         logger.debug("  -> PRE-INTERCEPT passed for rmdir on %s", path)
 
+        # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
+        _mount_meta = self.metadata.get(path)
+        if _mount_meta is not None and _mount_meta.is_mount:
+            removed = self._driver_coordinator.unmount(path)
+            if removed:
+                self.metadata.delete(path)
+                logger.info("sys_rmdir: unmounted %s", path)
+            return
+
         # Route to backend with write access check (rmdir requires write permission)
         route = self.router.route(
             path,
@@ -750,9 +759,11 @@ class NexusFS(  # type: ignore[misc]
 
         # --- IDEMPOTENT OPEN: same entry_type → recover buffer ---
         if "entry_type" in attrs:
-            from nexus.contracts.metadata import DT_PIPE, DT_STREAM
+            from nexus.contracts.metadata import DT_MOUNT, DT_PIPE, DT_STREAM
 
             requested_type = attrs["entry_type"]
+            if meta.entry_type == requested_type and requested_type == DT_MOUNT:
+                return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_PIPE:
                 self._pipe_manager.open(path, capacity=attrs.get("capacity", 65_536))
                 return {"path": path, "created": False, "entry_type": requested_type}
@@ -782,10 +793,57 @@ class NexusFS(  # type: ignore[misc]
 
     def _setattr_create(self, path: str, entry_type: int, attrs: dict[str, Any]) -> dict[str, Any]:
         """Create an inode via sys_setattr upsert — dispatches by entry_type."""
-        from nexus.contracts.metadata import DT_PIPE, DT_STREAM
+        from nexus.contracts.metadata import DT_MOUNT, DT_PIPE, DT_STREAM
 
         capacity = attrs.get("capacity", 65_536)
         owner_id = attrs.get("owner_id")
+
+        if entry_type == DT_MOUNT:
+            # Mount a backend to this path via DriverLifecycleCoordinator.
+            # Accepts a pre-constructed backend instance (kernel module API)
+            # or backend_type + config for service-level construction (future).
+            backend = attrs.get("backend")
+            if backend is None:
+                raise ValueError(
+                    "sys_setattr(entry_type=DT_MOUNT) requires 'backend' attribute "
+                    "(pre-constructed ObjectStoreABC instance)"
+                )
+            readonly = attrs.get("readonly", False)
+            admin_only = attrs.get("admin_only", False)
+            io_profile = attrs.get("io_profile", "balanced")
+            zone_id = attrs.get("zone_id", ROOT_ZONE_ID)
+            target_zone_id = attrs.get("target_zone_id")
+
+            self._driver_coordinator.mount(
+                path,
+                backend,
+                readonly=readonly,
+                admin_only=admin_only,
+                io_profile=io_profile,
+            )
+
+            # Write DT_MOUNT metadata to metastore
+            now = datetime.now(UTC)
+            metadata = FileMetadata(
+                path=path,
+                backend_name=backend.name,
+                physical_path="",
+                size=0,
+                entry_type=DT_MOUNT,
+                mime_type="inode/mount",
+                created_at=now,
+                modified_at=now,
+                version=1,
+                zone_id=zone_id,
+                target_zone_id=target_zone_id,
+            )
+            self.metadata.put(metadata)
+            return {
+                "path": path,
+                "created": True,
+                "entry_type": entry_type,
+                "backend": backend.name,
+            }
 
         if entry_type == DT_PIPE:
             from nexus.core.pipe import PipeError

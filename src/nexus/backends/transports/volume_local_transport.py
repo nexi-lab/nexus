@@ -506,6 +506,18 @@ class VolumeLocalTransport:
                 logger.warning("TTL expiry failed for bucket %s: %s", bucket, e)
         return results
 
+    def flush_expired_index(self) -> int:
+        """Deferred redb cleanup for expired TTL entries.
+
+        Called after expire_ttl_volumes() at lower priority. Readers already see
+        expired entries as gone (via mem_index), so this is for on-disk consistency.
+        """
+        total = 0
+        for engine in self._ttl_engines.values():
+            with contextlib.suppress(Exception):
+                total += engine.flush_expired_index()
+        return total
+
     def rotate_ttl_volumes(self) -> int:
         """Seal TTL volumes that have exceeded their rotation interval.
 

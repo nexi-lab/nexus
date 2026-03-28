@@ -82,12 +82,17 @@ class TTLVolumeSweeper:
         entries_expired = 0
         volumes_sealed = 0
 
-        # Phase 1: Expire entries and delete fully-expired volumes
+        # Phase 1: Expire entries and delete fully-expired volumes (mem_index: instant)
         try:
             results = self._transport.expire_ttl_volumes()
             entries_expired = sum(count for _, count in results)
         except Exception:
             logger.exception("TTL volume expiry failed")
+
+        # Phase 1b: Deferred redb cleanup (background, non-blocking for reads)
+        # Best-effort: startup recovery handles orphaned redb entries.
+        with contextlib.suppress(Exception):
+            self._transport.flush_expired_index()
 
         # Phase 2: Rotate volumes that exceeded their interval
         try:

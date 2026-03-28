@@ -967,7 +967,8 @@ impl VolumeEngine {
             }
         }
 
-        // Phase 4: Deferred redb cleanup — batch all expired hashes into one txn
+        // Phase 4: Deferred — remove from pending buffer only (fast).
+        // redb cleanup is deferred to flush_expired_index() for batch efficiency.
         {
             let all_expired: Vec<[u8; 32]> = expired_hashes
                 .into_values()
@@ -975,16 +976,7 @@ impl VolumeEngine {
                 .collect();
 
             if !all_expired.is_empty() {
-                let db = self.db.read();
-                if let Ok(txn) = db.begin_write() {
-                    if let Ok(mut table) = txn.open_table(INDEX_TABLE) {
-                        for hash in &all_expired {
-                            let _ = table.remove(hash.as_slice());
-                        }
-                    }
-                    let _ = txn.commit();
-                }
-                // Also remove from pending buffer
+                // Remove from pending buffer (in-memory, fast)
                 let mut pending = self.pending_index.lock();
                 let expired_set: std::collections::HashSet<[u8; 32]> =
                     all_expired.into_iter().collect();
@@ -993,6 +985,54 @@ impl VolumeEngine {
         }
 
         Ok(result)
+    }
+
+    /// Flush expired entries from the redb persistent index.
+    ///
+    /// This is the deferred cleanup step — called after expire_ttl_volumes()
+    /// at a lower priority. Readers already see expired entries as gone (via
+    /// mem_index), so this is purely for on-disk consistency.
+    ///
+    /// Safe to skip on shutdown — startup recovery handles orphaned redb entries
+    /// (entries pointing to deleted volumes are cleaned during recover_on_startup).
+    fn flush_expired_index(&self) -> PyResult<usize> {
+        let now = now_unix_secs();
+        let mut removed = 0usize;
+
+        let db = self.db.read();
+        let read_txn = db.begin_read().map_err(db_err)?;
+        let table = read_txn.open_table(INDEX_TABLE).map_err(db_err)?;
+
+        // Collect expired keys
+        let mut expired_keys: Vec<Vec<u8>> = Vec::new();
+        for item in table.iter().map_err(db_err)? {
+            let (key, val) = item.map_err(db_err)?;
+            if let Some(entry) = IndexEntry::from_bytes(val.value()) {
+                if entry.expiry > 0.0 && entry.expiry < now {
+                    expired_keys.push(key.value().to_vec());
+                }
+            }
+        }
+        drop(table);
+        drop(read_txn);
+
+        if expired_keys.is_empty() {
+            return Ok(0);
+        }
+
+        // Batch delete in a single write transaction
+        let write_txn = db.begin_write().map_err(db_err)?;
+        {
+            let mut table = write_txn.open_table(INDEX_TABLE).map_err(db_err)?;
+            for key in &expired_keys {
+                if table.remove(key.as_slice()).map_err(db_err)?.is_some() {
+                    removed += 1;
+                }
+            }
+        }
+        write_txn.commit().map_err(db_err)?;
+
+        Ok(removed)
     }
 
     /// Seal the active volume only if it has entries (Issue #3405).

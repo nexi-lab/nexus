@@ -181,13 +181,18 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
 detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
+
+`write(consistency=)` and `sys_write(consistency=)` support ``"sc"`` (strong
+consistency, default) or ``"ec"`` (eventually consistent, local-first with
+async replication). The kernel ABC defines the contract; drivers decide how
+to implement SC vs EC (e.g. Raft consensus for SC, EC WAL for EC).
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 

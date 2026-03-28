@@ -1968,6 +1968,7 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
@@ -1980,6 +1981,8 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Optional operation context for permission checks.
+            consistency: Metastore consistency — ``"sc"`` (strong, default)
+                or ``"ec"`` (eventual, local-first). Issue #1828.
 
         Returns:
             Dict with path and bytes_written.
@@ -2041,7 +2044,9 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
-        await self._write_internal(path=path, content=buf, offset=offset, context=context)
+        await self._write_internal(
+            path=path, content=buf, offset=offset, context=context, consistency=consistency
+        )
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2188,6 +2193,7 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
 
@@ -2207,6 +2213,10 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
+            consistency: Metastore consistency level — ``"sc"`` (strong, default,
+                Raft consensus) or ``"ec"`` (eventual, local-first via EC WAL).
+                EC writes return immediately and replicate asynchronously.
+                Issue #1828.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
@@ -2223,7 +2233,9 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        return await self._write_internal(path=path, content=buf, offset=offset, context=context)
+        return await self._write_internal(
+            path=path, content=buf, offset=offset, context=context, consistency=consistency
+        )
 
     async def _write_internal(
         self,

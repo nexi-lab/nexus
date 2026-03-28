@@ -34,14 +34,20 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
 # Issue #3192: Using cachebox (Rust-backed) TTLCache for lock-free cache internals.
 # The RLock is retained for Python-side secondary index consistency.
-try:
-    from cachebox import TTLCache
-except ImportError:
-    from cachetools import TTLCache  # type: ignore[assignment]  # fallback
+# Runtime: prefer cachebox, fall back to cachetools.
+# Type-checking: use cachetools (broader stubs available).
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from cachetools import TTLCache
+else:
+    try:
+        from cachebox import TTLCache
+    except ImportError:
+        from cachetools import TTLCache
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -135,6 +141,13 @@ class ReBACPermissionCache:
         # SharedRingBuffer for cross-process revision broadcasting (Issue #3192)
         # When set, revision updates are read from mmap instead of DB queries.
         self._revision_ring_buffer: Any = None  # SharedRingBuffer | None
+
+        # Read fence for cross-zone staleness detection (Issue #3396)
+        # When set, cache hits are checked against per-zone generation counters.
+        # An entry cached before the latest cross-zone invalidation is treated as miss.
+        self._read_fence: Any = None  # ReadFence | None
+        # Per-key fence generation at cache write time: key -> generation
+        self._fence_stamps: dict[str, int] = {}
 
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
@@ -637,12 +650,23 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Check grant cache first (Issue #877)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             # If not in grant cache, check denial cache
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check.
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._grant_cache.pop(key, None)
+                    self._denial_cache.pop(key, None)
+                    self._fence_stamps.pop(key, None)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -835,6 +859,10 @@ class ReBACPermissionCache:
                 zone_part,
                 path_prefixes or None,
             )
+
+            # Issue #3396: Stamp entry with fence generation at write time.
+            if self._read_fence is not None:
+                self._fence_stamps[key] = self._read_fence.generation(zone_part)
 
             if self._enable_metrics:
                 self._sets += 1
@@ -1113,11 +1141,22 @@ class ReBACPermissionCache:
 
         with self._lock:
             # Get cached value (existing logic)
-            result = self._grant_cache.get(key)
+            result: bool | None = self._grant_cache.get(key)
             is_grant_hit = result is not None
 
             if result is None:
                 result = self._denial_cache.get(key)
+
+            # Issue #3396: Read fence staleness check (same as get()).
+            if result is not None and self._read_fence is not None:
+                zone_part = zone_id if zone_id else ROOT_ZONE_ID
+                entry_gen = self._fence_stamps.get(key, 0)
+                if self._read_fence.is_stale(zone_part, entry_gen):
+                    self._grant_cache.pop(key, None)
+                    self._denial_cache.pop(key, None)
+                    self._fence_stamps.pop(key, None)
+                    result = None
+                    is_grant_hit = False
 
             # Track metrics
             if self._enable_metrics:
@@ -1184,6 +1223,8 @@ class ReBACPermissionCache:
             if key in self._denial_cache:
                 del self._denial_cache[key]
                 count += 1
+            # Issue #3396: clean up fence stamps to prevent memory leak
+            self._fence_stamps.pop(key, None)
         return count
 
     def _collect_matching_keys(
@@ -1504,6 +1545,8 @@ class ReBACPermissionCache:
             self._object_index.clear()
             self._path_prefix_index.clear()
             self._entry_metadata.clear()
+            # Issue #3396: Clear fence stamps to prevent memory leak
+            self._fence_stamps.clear()
             if self._enable_metrics:
                 logger.info("L1 cache cleared (grant, denial caches, and indexes)")
 

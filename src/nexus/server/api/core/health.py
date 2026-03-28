@@ -200,6 +200,24 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
         if health["components"]["resiliency"]["status"] == "degraded":
             health["status"] = "degraded"
 
+    # Durable invalidation stream health + PEL monitoring (Issue #3396)
+    _durable = getattr(state, "durable_stream", None)
+    if _durable is not None:
+        try:
+            durable_health = await _durable.health_check()
+            health["components"]["durable_invalidation"] = durable_health
+            if durable_health.get("status") == "degraded":
+                health["status"] = "degraded"
+        except Exception as e:
+            health["components"]["durable_invalidation"] = {"status": "error", "error": str(e)}
+    else:
+        health["components"]["durable_invalidation"] = {"status": "disabled"}
+
+    # Read fence stats (Issue #3396)
+    _fence = getattr(state, "read_fence", None)
+    if _fence is not None:
+        health["components"]["read_fence"] = _fence.stats()
+
     return health
 
 

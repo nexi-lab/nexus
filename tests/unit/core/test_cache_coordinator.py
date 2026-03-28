@@ -314,7 +314,11 @@ class TestCacheCoordinatorCriticalPaths:
                 object=("file", "/doc.txt"),
             )
 
-        ns_messages = [r for r in caplog.records if "Namespace invalidator" in r.message]
+        ns_messages = [
+            r
+            for r in caplog.records
+            if "Callback" in r.message and "namespace" in r.message.lower()
+        ]
         assert len(ns_messages) > 0
 
 
@@ -496,3 +500,179 @@ class TestCacheCoordinatorRegistration:
         coordinator.register_boundary_invalidator("b1", cb)
 
         assert coordinator.get_stats()["registered_boundary_invalidators"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests — DT_STREAM integration (Issue #3396 decision 11A)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheCoordinatorStreamIntegration:
+    """Tests for coordinator with DT_STREAM enabled.
+
+    When a stream is active, boundary/visibility/namespace dispatch
+    to the stream instead of looping callbacks directly.
+    """
+
+    @pytest.fixture
+    def stream(self):
+        from nexus.bricks.rebac.cache.invalidation_stream import InvalidationStream
+
+        return InvalidationStream(max_size=1000)
+
+    @pytest.fixture
+    def coordinator_with_stream(self, l1_cache, boundary_cache, iterator_cache, stream):
+        coord = CacheCoordinator(
+            l1_cache=l1_cache,
+            boundary_cache=boundary_cache,
+            iterator_cache=iterator_cache,
+            zone_graph_cache={"zone-a": {"tuples": []}},
+            invalidation_stream=stream,
+        )
+        return coord
+
+    def test_boundary_dispatches_to_stream(self, coordinator_with_stream, stream):
+        """With DT_STREAM active, boundary events go to stream, not callbacks."""
+        direct_calls = []
+        coordinator_with_stream.register_boundary_invalidator(
+            "b1", lambda *a: direct_calls.append(a)
+        )
+
+        coordinator_with_stream.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="direct_editor",
+            object=("file", "/doc.txt"),
+        )
+
+        # Direct callbacks should NOT be called (stream handles dispatch)
+        assert len(direct_calls) == 0
+        # Stream should have at least 1 event (the L1_CACHE event from step 8)
+        stats = stream.get_stats()
+        assert stats["total_events"] >= 1
+
+    def test_stream_events_contain_correct_payload(self, coordinator_with_stream, stream):
+        """Stream events must contain the invalidation payload."""
+        received = []
+        stream.register_consumer("test", received.append)
+
+        coordinator_with_stream.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="direct_viewer",
+            object=("file", "/doc.txt"),
+        )
+
+        # Should have L1_CACHE event from step 8
+        l1_events = [e for e in received if e.event_type.value == "l1_cache"]
+        assert len(l1_events) >= 1
+        event = l1_events[0]
+        assert event.zone_id == "zone-a"
+        assert event.payload["subject_type"] == "user"
+        assert event.payload["subject_id"] == "alice"
+
+    def test_l1_and_iterator_always_called_directly(
+        self, coordinator_with_stream, l1_cache, iterator_cache
+    ):
+        """L1 and iterator caches are always invalidated directly, not via stream."""
+        coordinator_with_stream.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="editor",
+            object=("file", "/doc.txt"),
+        )
+
+        l1_cache.invalidate_subject.assert_called()
+        l1_cache.invalidate_object.assert_called()
+        iterator_cache.invalidate_zone.assert_called_with("zone-a")
+
+    def test_stats_include_stream_enabled(self, coordinator_with_stream):
+        """Stats should report stream_enabled: True."""
+        stats = coordinator_with_stream.get_stats()
+        assert stats["stream_enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Tests — Durable stream + read fence integration (Issue #3396)
+# ---------------------------------------------------------------------------
+
+
+class TestCacheCoordinatorDurableStream:
+    """Tests for durable stream publish in the invalidation pipeline."""
+
+    def test_durable_stream_publish_called_in_pipeline(self, l1_cache, iterator_cache):
+        """Durable stream publish is step 10 in the pipeline."""
+        mock_durable = MagicMock()
+        mock_durable.publish = MagicMock(return_value=True)
+
+        from nexus.bricks.rebac.cache.coordinator_config import (
+            CoordinatorConfig,
+            InvalidationChannels,
+        )
+
+        config = CoordinatorConfig(channels=InvalidationChannels(durable_stream=mock_durable))
+
+        coordinator = CacheCoordinator(
+            l1_cache=l1_cache,
+            iterator_cache=iterator_cache,
+            zone_graph_cache={"zone-a": {}},
+            config=config,
+        )
+
+        coordinator.invalidate_for_write(
+            zone_id="zone-a",
+            subject=("user", "alice"),
+            relation="editor",
+            object=("file", "/doc.txt"),
+        )
+
+        mock_durable.publish.assert_called_once()
+        call_args = mock_durable.publish.call_args
+        # publish(target_zone_id=..., payload=...) — keyword args
+        assert call_args.kwargs["target_zone_id"] == "zone-a"
+        payload = call_args.kwargs["payload"]
+        assert payload["subject_type"] == "user"
+        assert payload["relation"] == "editor"
+
+    def test_stats_include_durable_and_fence(self, l1_cache):
+        """Stats should report durable_stream_enabled and read_fence_enabled."""
+        from nexus.bricks.rebac.cache.coordinator_config import (
+            CoordinatorConfig,
+            InvalidationChannels,
+        )
+        from nexus.bricks.rebac.cache.read_fence import ReadFence
+
+        mock_durable = MagicMock()
+        mock_durable.stats.return_value = {"published": 0}
+        fence = ReadFence()
+
+        config = CoordinatorConfig(
+            channels=InvalidationChannels(
+                durable_stream=mock_durable,
+                read_fence=fence,
+            )
+        )
+
+        coordinator = CacheCoordinator(l1_cache=l1_cache, config=config)
+        stats = coordinator.get_stats()
+
+        assert stats["durable_stream_enabled"] is True
+        assert stats["read_fence_enabled"] is True
+        assert "durable_stream" in stats
+        assert "read_fence" in stats
+
+    def test_config_backward_compat(self, l1_cache, boundary_cache, iterator_cache):
+        """Legacy individual params still work when config is not provided."""
+        coordinator = CacheCoordinator(
+            l1_cache=l1_cache,
+            boundary_cache=boundary_cache,
+            iterator_cache=iterator_cache,
+            zone_graph_cache={"z": {}},
+            enable_async_recompute=False,
+        )
+
+        stats = coordinator.get_stats()
+        assert stats["stream_enabled"] is False
+        assert stats["pubsub_enabled"] is False
+        assert stats["durable_stream_enabled"] is False
+        assert stats["read_fence_enabled"] is False

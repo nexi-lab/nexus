@@ -7,21 +7,24 @@ When a permission tuple is written/deleted, the coordinator ensures
 all affected caches are properly invalidated in the correct order:
 1. Zone graph cache (in-memory tuple cache)
 2. L1 permission check cache (targeted by subject + object)
-3. Permission leases — zone-wide clear (Issue #3394)
-4. Boundary cache (permission inheritance boundaries)
-5. Directory visibility cache (dir listing optimization)
-6. Iterator cache (pagination cursors)
+3. Tiger L2 (Dragonfly) cache — explicit delete (Issue #3395)
+4. Permission leases — zone-wide clear (Issue #3394)
+5. Boundary cache (permission inheritance boundaries)
+6. Directory visibility cache (dir listing optimization)
 7. Namespace cache — dcache + mount table (Issue #1244)
-8. Leopard cache (transitive group closure) - via callbacks
-9. Tiger cache (materialized bitmaps) - via callbacks
+8. Iterator cache (pagination cursors)
+9. DT_STREAM — intra-zone ordered invalidation (Issue #3192)
+10. Pub/Sub — cross-zone fire-and-forget hints (Issue #3192)
+11. Durable Stream — cross-zone guaranteed delivery (Issue #3396)
 
 Also handles:
 - L2 (database) cache invalidation with precise targeting (Issue #2179 Step 2.5)
 - Eager cache recomputation for simple direct relations (PR #969)
 - Expired tuple/cache cleanup (maintenance)
 - Cache statistics (monitoring)
+- Read fence watermark advancement (Issue #3396)
 
-Related: Issue #1459 (decomposition), Issue #2179 (rebac-brick), Issue #1244, Issue #1077
+Related: Issue #1459, #2179, #1244, #1077, #3396
 """
 
 import concurrent.futures
@@ -30,6 +33,12 @@ import time as time_module
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.bricks.rebac.cache.coordinator_config import (
+    CoordinatorConfig,
+    DatabaseCallbacks,
+    InvalidationChannels,
+    RecomputeCallbacks,
+)
 from nexus.bricks.rebac.cache.invalidation_stream import (
     InvalidationEventType,
     InvalidationStream,
@@ -42,7 +51,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
     from nexus.bricks.rebac.cache.boundary import PermissionBoundaryCache
+    from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
     from nexus.bricks.rebac.cache.iterator import IteratorCache
+    from nexus.bricks.rebac.cache.read_fence import ReadFence
     from nexus.bricks.rebac.cache.result_cache import ReBACPermissionCache
     from nexus.bricks.rebac.domain import Entity
 
@@ -78,72 +89,85 @@ class CacheCoordinator:
         iterator_cache: "IteratorCache | None" = None,
         zone_graph_cache: "MutableMapping[str, Any] | None" = None,
         *,
-        # Database access callbacks (Issue #2179 Step 2.5)
+        # Grouped config (Issue #3396) — preferred
+        config: CoordinatorConfig | None = None,
+        # Legacy individual params (backward compat — used if config is None)
         connection_factory: "Callable[..., Any] | None" = None,
         get_connection: "Callable[[], Any] | None" = None,
         close_connection: "Callable[[Any], None] | None" = None,
         create_cursor: "Callable[[Any], Any] | None" = None,
         fix_sql: "Callable[[str], str] | None" = None,
-        # Eager recompute callbacks
         get_namespace_cb: "Callable[[str], Any] | None" = None,
         compute_permission_cb: "Callable[..., bool] | None" = None,
         cache_check_result_cb: "Callable[..., None] | None" = None,
-        # DT_STREAM for intra-zone invalidation (Issue #3192)
         invalidation_stream: "InvalidationStream | None" = None,
-        # Pub/Sub for cross-zone invalidation hints (Issue #3192)
         pubsub: "PubSubInvalidation | None" = None,
-        # Async eager recompute — disable for SQLite/StaticPool where
-        # background threads share the same DBAPI connection (segfault).
         enable_async_recompute: bool = True,
-        # Stats / cleanup
         cache_ttl_seconds: int = 300,
         get_tuple_version: "Callable[[], int] | None" = None,
         set_tuple_version: "Callable[[int], None] | None" = None,
     ) -> None:
         """Initialize the coordinator.
 
-        Args:
-            l1_cache: L1 in-memory permission check cache
-            boundary_cache: Permission boundary cache
-            iterator_cache: Paginated query iterator cache
-            zone_graph_cache: Zone tuple graph cache dict (shared reference)
-            connection_factory: Context manager for database connections
-            get_connection: Get a raw DBAPI connection
-            close_connection: Close a raw DBAPI connection
-            create_cursor: Create a cursor from a connection
-            fix_sql: Adapt SQL placeholders for the DB dialect
-            get_namespace_cb: Lookup namespace config by object type
-            compute_permission_cb: Compute a permission (for eager recompute)
-            cache_check_result_cb: Store a check result in cache
-            cache_ttl_seconds: L2 cache TTL for stats reporting
-            get_tuple_version: Get current tuple version counter
-            set_tuple_version: Set tuple version counter
+        Accepts either a ``CoordinatorConfig`` (preferred) or individual
+        keyword arguments (backward compat).  If ``config`` is provided,
+        individual channel/db/recompute params are ignored.
         """
         self._l1_cache = l1_cache
         self._boundary_cache = boundary_cache
         self._iterator_cache = iterator_cache
         self._zone_graph_cache = zone_graph_cache
 
-        # Database access
-        self._connection_factory = connection_factory
-        self._get_connection = get_connection
-        self._close_connection = close_connection
-        self._create_cursor = create_cursor
-        self._fix_sql = fix_sql
+        # Resolve config — prefer grouped, fall back to individual params
+        if config is not None:
+            channels = config.channels
+            db = config.database
+            rc = config.recompute
+            _enable_async = config.enable_async_recompute
+            _ttl = config.cache_ttl_seconds
+            _get_tv = config.get_tuple_version
+            _set_tv = config.set_tuple_version
+        else:
+            channels = InvalidationChannels(stream=invalidation_stream, pubsub=pubsub)
+            db = DatabaseCallbacks(
+                connection_factory=connection_factory,
+                get_connection=get_connection,
+                close_connection=close_connection,
+                create_cursor=create_cursor,
+                fix_sql=fix_sql,
+            )
+            rc = RecomputeCallbacks(
+                get_namespace=get_namespace_cb,
+                compute_permission=compute_permission_cb,
+                cache_check_result=cache_check_result_cb,
+            )
+            _enable_async = enable_async_recompute
+            _ttl = cache_ttl_seconds
+            _get_tv = get_tuple_version
+            _set_tv = set_tuple_version
 
-        # DT_STREAM + Pub/Sub (Issue #3192)
-        self._stream = invalidation_stream
-        self._pubsub = pubsub
+        # Database access
+        self._connection_factory = db.connection_factory
+        self._get_connection = db.get_connection
+        self._close_connection = db.close_connection
+        self._create_cursor = db.create_cursor
+        self._fix_sql = db.fix_sql
+
+        # Channels (Issue #3192, #3396)
+        self._stream = channels.stream
+        self._pubsub = channels.pubsub
+        self._durable_stream: DurableInvalidationStream | None = channels.durable_stream
+        self._read_fence: ReadFence | None = channels.read_fence
 
         # Eager recompute
-        self._get_namespace_cb = get_namespace_cb
-        self._compute_permission_cb = compute_permission_cb
-        self._cache_check_result_cb = cache_check_result_cb
+        self._get_namespace_cb = rc.get_namespace
+        self._compute_permission_cb = rc.compute_permission
+        self._cache_check_result_cb = rc.cache_check_result
 
         # Stats / cleanup
-        self._cache_ttl_seconds = cache_ttl_seconds
-        self._get_tuple_version = get_tuple_version
-        self._set_tuple_version = set_tuple_version
+        self._cache_ttl_seconds = _ttl
+        self._get_tuple_version = _get_tv
+        self._set_tuple_version = _set_tv
 
         # Callback registries for external caches (boundary, visibility, etc.)
         self._boundary_invalidators: list[
@@ -163,7 +187,7 @@ class CacheCoordinator:
 
         # Async eager recompute (Issue #3192)
         self._recompute_executor: concurrent.futures.ThreadPoolExecutor | None = None
-        self._async_recompute_enabled = enable_async_recompute
+        self._async_recompute_enabled = _enable_async
         self._recompute_submitted = 0
         self._recompute_completed = 0
         self._recompute_failed = 0
@@ -213,6 +237,14 @@ class CacheCoordinator:
     def set_pubsub(self, pubsub: "PubSubInvalidation") -> None:
         """Set the Pub/Sub for cross-zone invalidation hints."""
         self._pubsub = pubsub
+
+    def set_durable_stream(self, durable: "DurableInvalidationStream") -> None:
+        """Set the durable cross-zone invalidation stream (Issue #3396)."""
+        self._durable_stream = durable
+
+    def set_read_fence(self, fence: "ReadFence") -> None:
+        """Set the read fence for cross-zone staleness detection (Issue #3396)."""
+        self._read_fence = fence
 
     # ------------------------------------------------------------------
     # Callback registration
@@ -362,6 +394,8 @@ class CacheCoordinator:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],  # noqa: A002
+        *,
+        local_only: bool = False,
     ) -> None:
         """Invalidate all caches after a permission write.
 
@@ -373,6 +407,9 @@ class CacheCoordinator:
             subject: (subject_type, subject_id)
             relation: Relation that was written
             object: (object_type, object_id)
+            local_only: If True, skip cross-zone publishing (steps 9-10).
+                Used by the durable stream consumer handler to avoid
+                re-broadcasting received invalidations (ping-pong loop).
         """
         self._invalidation_count += 1
         subject_type, subject_id = subject
@@ -416,19 +453,36 @@ class CacheCoordinator:
                 object_id=object_id,
             )
 
-        # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
-        if self._pubsub:
-            self._pubsub.publish_invalidation(
-                zone_id=zone_id,
-                layer="all",
-                payload={
-                    "subject_type": subject_type,
-                    "subject_id": subject_id,
-                    "relation": relation,
-                    "object_type": object_type,
-                    "object_id": object_id,
-                },
-            )
+        # Steps 9-10: Cross-zone publishing — skipped when local_only=True
+        # to prevent ping-pong loops when the consumer handler re-enters.
+        if not local_only:
+            # 9. Pub/Sub: Publish cross-zone hint (Issue #3192)
+            if self._pubsub:
+                self._pubsub.publish_invalidation(
+                    zone_id=zone_id,
+                    layer="all",
+                    payload={
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "relation": relation,
+                        "object_type": object_type,
+                        "object_id": object_id,
+                    },
+                )
+
+            # 10. Durable Stream: Publish cross-zone guaranteed delivery (Issue #3396)
+            if self._durable_stream:
+                self._durable_stream.publish(
+                    target_zone_id=zone_id,
+                    payload={
+                        "source_zone": zone_id,
+                        "subject_type": subject_type,
+                        "subject_id": subject_id,
+                        "relation": relation,
+                        "object_type": object_type,
+                        "object_id": object_id,
+                    },
+                )
 
     def invalidate_zone_graph(self, zone_id: str | None = None) -> None:
         """Invalidate zone graph cache.
@@ -905,6 +959,55 @@ class CacheCoordinator:
             logger.info("Cache statistics reset")
 
     # ------------------------------------------------------------------
+    # Generic dispatch helper (Issue #3396 decision 5A — DRY)
+    # ------------------------------------------------------------------
+
+    def _dispatch_to_layer(
+        self,
+        event_type: InvalidationEventType,
+        zone_id: str,
+        callbacks: "list[tuple[str, Callable[..., None]]]",
+        callback_invoker: "Callable[[Callable[..., None]], None]",
+        *,
+        stream_payload: dict[str, Any] | None = None,
+        metric_attr: str | None = None,
+    ) -> None:
+        """Dispatch an invalidation event to stream consumers or callbacks.
+
+        Consolidates the repeated pattern: if DT_STREAM → append to stream,
+        else → loop callbacks with try/except isolation.
+
+        Args:
+            event_type: InvalidationEventType for stream dispatch.
+            zone_id: Zone where the invalidation occurred.
+            callbacks: List of (callback_id, callback_fn) pairs.
+            callback_invoker: Closure that calls a single callback with the
+                right arguments (varies per layer).
+            stream_payload: Payload dict for stream.append() (if stream active).
+            metric_attr: Optional attribute name to increment (e.g. '_boundary_invalidations').
+        """
+        if not callbacks and not self._stream:
+            return
+
+        if metric_attr:
+            setattr(self, metric_attr, getattr(self, metric_attr, 0) + 1)
+
+        if self._stream and stream_payload is not None:
+            self._stream.append(event_type, zone_id, **stream_payload)
+        else:
+            for callback_id, callback in callbacks:
+                try:
+                    callback_invoker(callback)
+                except Exception:
+                    self._callback_failure_count += 1
+                    logger.warning(
+                        "[CacheCoordinator] Callback %s failed for %s",
+                        callback_id,
+                        event_type.value,
+                        exc_info=True,
+                    )
+
+    # ------------------------------------------------------------------
     # Internal helpers (L1 + zone graph)
     # ------------------------------------------------------------------
 
@@ -1085,34 +1188,25 @@ class CacheCoordinator:
         # Map relation to permissions
         permissions = RELATION_TO_PERMISSIONS.get(relation, [relation])
 
-        self._boundary_invalidations += 1
+        def _invoke_boundary(cb: "Callable[..., None]") -> None:
+            for permission in permissions:
+                cb(zone_id, subject_type, subject_id, permission, object_id)
 
-        # When DT_STREAM is active, publish to stream (consumers handle dispatch).
-        # Otherwise fall back to legacy callback loop. (Issue #3192)
-        if self._stream:
-            self._stream.append(
-                InvalidationEventType.BOUNDARY,
-                zone_id,
-                subject_type=subject_type,
-                subject_id=subject_id,
-                relation=relation,
-                object_type=object_type,
-                object_id=object_id,
-                permissions=permissions,
-            )
-        else:
-            for callback_id, callback in self._boundary_invalidators:
-                for permission in permissions:
-                    try:
-                        callback(zone_id, subject_type, subject_id, permission, object_id)
-                    except Exception:
-                        self._callback_failure_count += 1
-                        logger.warning(
-                            "[CacheCoordinator] Boundary invalidator %s failed for %s",
-                            callback_id,
-                            permission,
-                            exc_info=True,
-                        )
+        self._dispatch_to_layer(
+            InvalidationEventType.BOUNDARY,
+            zone_id,
+            self._boundary_invalidators,
+            _invoke_boundary,
+            stream_payload={
+                "subject_type": subject_type,
+                "subject_id": subject_id,
+                "relation": relation,
+                "object_type": object_type,
+                "object_id": object_id,
+                "permissions": permissions,
+            },
+            metric_attr="_boundary_invalidations",
+        )
 
         # Always invalidate the internal boundary cache directly
         if self._boundary_cache:
@@ -1135,27 +1229,14 @@ class CacheCoordinator:
         if object_type not in ("file", "memory", "resource"):
             return
 
-        self._visibility_invalidations += 1
-
-        if self._stream:
-            self._stream.append(
-                InvalidationEventType.VISIBILITY,
-                zone_id,
-                object_type=object_type,
-                object_id=object_id,
-            )
-        else:
-            for callback_id, callback in self._visibility_invalidators:
-                try:
-                    callback(zone_id, object_id)
-                except Exception:
-                    self._callback_failure_count += 1
-                    logger.warning(
-                        "[CacheCoordinator] Visibility invalidator %s failed for %s",
-                        callback_id,
-                        object_id,
-                        exc_info=True,
-                    )
+        self._dispatch_to_layer(
+            InvalidationEventType.VISIBILITY,
+            zone_id,
+            self._visibility_invalidators,
+            lambda cb: cb(zone_id, object_id),
+            stream_payload={"object_type": object_type, "object_id": object_id},
+            metric_attr="_visibility_invalidations",
+        )
 
     def notify_namespace_invalidators(
         self,
@@ -1177,28 +1258,14 @@ class CacheCoordinator:
         if not self._namespace_invalidators and not self._stream:
             return
 
-        self._namespace_invalidations += 1
-
-        if self._stream:
-            self._stream.append(
-                InvalidationEventType.NAMESPACE,
-                zone_id,
-                subject_type=subject_type,
-                subject_id=subject_id,
-            )
-        else:
-            for callback_id, callback in self._namespace_invalidators:
-                try:
-                    callback(subject_type, subject_id, zone_id)
-                except Exception:
-                    self._callback_failure_count += 1
-                    logger.warning(
-                        "[CacheCoordinator] Namespace invalidator %s failed for %s:%s",
-                        callback_id,
-                        subject_type,
-                        subject_id,
-                        exc_info=True,
-                    )
+        self._dispatch_to_layer(
+            InvalidationEventType.NAMESPACE,
+            zone_id,
+            self._namespace_invalidators,
+            lambda cb: cb(subject_type, subject_id, zone_id),
+            stream_payload={"subject_type": subject_type, "subject_id": subject_id},
+            metric_attr="_namespace_invalidations",
+        )
 
     def _invalidate_iterator(self, zone_id: str) -> None:
         """Invalidate iterator cache for a zone."""
@@ -1214,7 +1281,7 @@ class CacheCoordinator:
 
     def get_stats(self) -> dict[str, Any]:
         """Get coordinator statistics."""
-        return {
+        stats: dict[str, Any] = {
             "total_invalidations": self._invalidation_count,
             "zone_graph_invalidations": self._zone_graph_invalidations,
             "l1_invalidations": self._l1_invalidations,
@@ -1235,7 +1302,14 @@ class CacheCoordinator:
             "async_recompute_failed": self._recompute_failed,
             "stream_enabled": self._stream is not None,
             "pubsub_enabled": self._pubsub is not None,
+            "durable_stream_enabled": self._durable_stream is not None,
+            "read_fence_enabled": self._read_fence is not None,
         }
+        if self._durable_stream:
+            stats["durable_stream"] = self._durable_stream.stats()
+        if self._read_fence:
+            stats["read_fence"] = self._read_fence.stats()
+        return stats
 
     def reset_stats(self) -> None:
         """Reset metrics counters."""

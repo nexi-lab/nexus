@@ -25,6 +25,7 @@ from sqlalchemy import create_engine, text
 from nexus.bricks.rebac.consistency.metastore_namespace_store import (
     MetastoreNamespaceStore,
 )
+from nexus.bricks.rebac.consistency.metastore_version_store import MetastoreVersionStore
 from nexus.bricks.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 from tests.helpers.dict_metastore import DictMetastore
@@ -90,6 +91,7 @@ def manager(engine, test_zone):
         engine=engine,
         is_postgresql=True,
         namespace_store=MetastoreNamespaceStore(DictMetastore()),
+        version_store=MetastoreVersionStore(DictMetastore()),
     )
     yield manager
 

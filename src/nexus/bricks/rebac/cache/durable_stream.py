@@ -262,11 +262,27 @@ class DurableInvalidationStream:
     # -- consumer loop (async background) -------------------------------------
 
     async def _consume_loop(self) -> None:
-        """Background task: read from Redis Streams and process events."""
+        """Background task: read from Redis Streams and process events.
+
+        Periodically reclaims failed messages from the PEL (every
+        _RECLAIM_INTERVAL iterations) so transient handler failures
+        are retried instead of stranded forever.
+        """
         sem = asyncio.Semaphore(self._consumer_concurrency)
+        iterations_since_reclaim = 0
+        _RECLAIM_EVERY = 30  # Reclaim PEL every ~30 read cycles (~60s at 2s block)
 
         while not self._closed:
             try:
+                # Periodically reclaim stranded messages from PEL
+                iterations_since_reclaim += 1
+                if iterations_since_reclaim >= _RECLAIM_EVERY:
+                    iterations_since_reclaim = 0
+                    try:
+                        await self.reclaim_pending()
+                    except Exception:
+                        logger.debug("[DurableStream] Reclaim cycle failed", exc_info=True)
+
                 stream_key = encode_channel(self._stream_prefix, self._zone_id, "all")
                 # XREADGROUP GROUP <group> <consumer> COUNT <n> BLOCK <ms> STREAMS <key> >
                 results = await self._client.xreadgroup(

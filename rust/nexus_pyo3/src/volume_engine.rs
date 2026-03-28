@@ -380,6 +380,11 @@ pub struct VolumeEngine {
     /// In-memory index for O(1) lookups — mirrors redb, avoids disk I/O on reads.
     /// Issue #3404.
     mem_index: RwLock<VolumeIndex>,
+    /// Per-volume max expiry timestamp (Issue #3405).
+    /// When `now > max_expiry` for a sealed volume, the entire volume can be
+    /// deleted with a single `unlink()` — no per-entry scanning needed.
+    /// Only populated for volumes that contain TTL entries (expiry > 0).
+    volume_max_expiry: RwLock<HashMap<u32, f64>>,
 }
 
 fn db_err(e: impl std::fmt::Display) -> PyErr {
@@ -435,6 +440,7 @@ impl VolumeEngine {
             pending_index: Mutex::new(Vec::with_capacity(256)),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         // Startup recovery (also populates in-memory index)
@@ -905,83 +911,56 @@ impl VolumeEngine {
         Ok((migrated, skipped, bytes_migrated))
     }
 
-    /// Expire all entries whose expiry timestamp has passed (Issue #3405).
+    /// Expire entire sealed TTL volumes whose max_expiry has passed (Issue #3405).
     ///
-    /// Removes expired entries from the in-memory index immediately.
-    /// Collects expired volume IDs for deferred redb cleanup.
+    /// Volume-level expiry: iterates volumes (not entries), checks per-volume
+    /// max_expiry, and deletes the entire volume with a single `unlink()`.
+    /// All entries for that volume are bulk-removed from mem_index.
+    /// No per-file GC scanning needed.
+    ///
     /// Returns list of (volume_id, entries_removed) tuples.
-    ///
-    /// This is the sweeper's primary entry point. The caller (Python timer)
-    /// invokes this periodically; Rust handles all state transitions atomically.
     fn expire_ttl_volumes(&self) -> PyResult<Vec<(u32, usize)>> {
         let now = now_unix_secs();
         let mut result: Vec<(u32, usize)> = Vec::new();
 
-        // Phase 1: Identify expired entries from mem_index
-        let mut expired_hashes: HashMap<u32, Vec<[u8; 32]>> = HashMap::new();
-        {
-            let idx = self.mem_index.read();
-            for (hash, entry) in idx.iter_all() {
-                if entry.expiry > 0.0 && entry.expiry < now {
-                    expired_hashes
-                        .entry(entry.volume_id)
-                        .or_default()
-                        .push(*hash);
-                }
-            }
-        }
+        // Phase 1: Identify expired volumes by max_expiry (O(volumes), not O(entries))
+        let expired_volume_ids: Vec<u32> = {
+            let max_exp = self.volume_max_expiry.read();
+            max_exp
+                .iter()
+                .filter(|(_, &max_exp)| max_exp > 0.0 && now > max_exp)
+                .map(|(&vol_id, _)| vol_id)
+                .collect()
+        };
 
-        if expired_hashes.is_empty() {
+        if expired_volume_ids.is_empty() {
             return Ok(result);
         }
 
-        // Phase 2: Remove expired entries from mem_index (instant visibility)
-        {
-            let mut idx = self.mem_index.write();
-            for hashes in expired_hashes.values() {
-                for hash in hashes {
-                    idx.remove(hash);
-                }
+        // Phase 2: For each expired volume — bulk-remove entries, close FD, unlink file
+        for vol_id in &expired_volume_ids {
+            // Bulk-remove all entries for this volume from mem_index
+            let entries_removed = self.mem_index.write().remove_by_volume(*vol_id);
+
+            // Close cached file descriptor
+            self.mem_index.write().close_volume(*vol_id);
+
+            // Delete the volume file (single unlink — the core promise of Issue #3405)
+            if let Some(path) = self.volume_paths.read().get(vol_id) {
+                let _ = fs::remove_file(path);
             }
-        }
+            self.volume_paths.write().remove(vol_id);
 
-        // Phase 3: Check if any volumes are now fully empty and can be deleted
-        let volume_paths = self.volume_paths.read().clone();
-        for (vol_id, hashes) in &expired_hashes {
-            result.push((*vol_id, hashes.len()));
+            // Remove from max_expiry tracker
+            self.volume_max_expiry.write().remove(vol_id);
 
-            // Check if volume is now completely empty in the index
-            let vol_has_entries = {
-                let idx = self.mem_index.read();
-                let has = idx.iter_all().any(|(_, e)| e.volume_id == *vol_id);
-                has
-            };
-
-            if !vol_has_entries {
-                // Volume is fully expired — close FD and delete file
-                self.mem_index.write().close_volume(*vol_id);
-                if let Some(path) = volume_paths.get(vol_id) {
-                    let _ = fs::remove_file(path);
-                }
-                self.volume_paths.write().remove(vol_id);
-            }
-        }
-
-        // Phase 4: Deferred — remove from pending buffer only (fast).
-        // redb cleanup is deferred to flush_expired_index() for batch efficiency.
-        {
-            let all_expired: Vec<[u8; 32]> = expired_hashes
-                .into_values()
-                .flat_map(|v| v.into_iter())
-                .collect();
-
-            if !all_expired.is_empty() {
-                // Remove from pending buffer (in-memory, fast)
+            // Remove entries for this volume from pending buffer
+            {
                 let mut pending = self.pending_index.lock();
-                let expired_set: std::collections::HashSet<[u8; 32]> =
-                    all_expired.into_iter().collect();
-                pending.retain(|(h, _)| !expired_set.contains(h));
+                pending.retain(|(_, entry)| entry.volume_id != *vol_id);
             }
+
+            result.push((*vol_id, entries_removed));
         }
 
         Ok(result)
@@ -989,34 +968,33 @@ impl VolumeEngine {
 
     /// Flush expired entries from the redb persistent index.
     ///
-    /// This is the deferred cleanup step — called after expire_ttl_volumes()
-    /// at a lower priority. Readers already see expired entries as gone (via
-    /// mem_index), so this is purely for on-disk consistency.
+    /// Scans redb for entries whose volume_id no longer exists in volume_paths
+    /// (already deleted by expire_ttl_volumes). This is the deferred cleanup
+    /// step — readers already see expired entries as gone via mem_index.
     ///
-    /// Safe to skip on shutdown — startup recovery handles orphaned redb entries
-    /// (entries pointing to deleted volumes are cleaned during recover_on_startup).
+    /// Safe to skip on shutdown — startup recovery handles orphaned redb entries.
     fn flush_expired_index(&self) -> PyResult<usize> {
-        let now = now_unix_secs();
         let mut removed = 0usize;
+        let volume_paths = self.volume_paths.read().clone();
 
         let db = self.db.read();
         let read_txn = db.begin_read().map_err(db_err)?;
         let table = read_txn.open_table(INDEX_TABLE).map_err(db_err)?;
 
-        // Collect expired keys
-        let mut expired_keys: Vec<Vec<u8>> = Vec::new();
+        // Collect keys pointing to deleted volumes (already unlinked by expire_ttl_volumes)
+        let mut orphaned_keys: Vec<Vec<u8>> = Vec::new();
         for item in table.iter().map_err(db_err)? {
             let (key, val) = item.map_err(db_err)?;
             if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                if entry.expiry > 0.0 && entry.expiry < now {
-                    expired_keys.push(key.value().to_vec());
+                if !volume_paths.contains_key(&entry.volume_id) {
+                    orphaned_keys.push(key.value().to_vec());
                 }
             }
         }
         drop(table);
         drop(read_txn);
 
-        if expired_keys.is_empty() {
+        if orphaned_keys.is_empty() {
             return Ok(0);
         }
 
@@ -1024,7 +1002,7 @@ impl VolumeEngine {
         let write_txn = db.begin_write().map_err(db_err)?;
         {
             let mut table = write_txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            for key in &expired_keys {
+            for key in &orphaned_keys {
                 if table.remove(key.as_slice()).map_err(db_err)?.is_some() {
                     removed += 1;
                 }
@@ -1094,6 +1072,15 @@ impl VolumeEngine {
                 expiry,
             },
         );
+
+        // Track per-volume max expiry for volume-level TTL (Issue #3405)
+        if expiry > 0.0 {
+            let mut max_exp = self.volume_max_expiry.write();
+            let current = max_exp.entry(volume_id).or_insert(0.0);
+            if expiry > *current {
+                *current = expiry;
+            }
+        }
 
         // Flush when buffer is full
         if should_flush {
@@ -1460,6 +1447,7 @@ impl VolumeEngine {
         let count = table.len().map_err(db_err)? as usize;
         let mut idx = VolumeIndex::with_capacity(count);
         let mut stale_keys: Vec<Vec<u8>> = Vec::new();
+        let mut max_expiry_map: HashMap<u32, f64> = HashMap::new();
 
         for item in table.iter().map_err(db_err)? {
             let (key, val) = item.map_err(db_err)?;
@@ -1476,6 +1464,13 @@ impl VolumeEngine {
                             expiry: entry.expiry,
                         },
                     );
+                    // Rebuild volume_max_expiry from persisted entries (Issue #3405)
+                    if entry.expiry > 0.0 {
+                        let current = max_expiry_map.entry(entry.volume_id).or_insert(0.0);
+                        if entry.expiry > *current {
+                            *current = entry.expiry;
+                        }
+                    }
                 } else {
                     stale_keys.push(key.value().to_vec());
                 }
@@ -1495,6 +1490,9 @@ impl VolumeEngine {
             }
             txn.commit().map_err(db_err)?;
         }
+
+        // Persist rebuilt max_expiry map
+        *self.volume_max_expiry.write() = max_expiry_map;
 
         Ok(idx)
     }

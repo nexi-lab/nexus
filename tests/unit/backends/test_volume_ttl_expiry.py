@@ -166,6 +166,12 @@ class TestExpireTTLVolumes:
         engine.close()
 
     def test_expire_keeps_unexpired_entries(self, tmp_path) -> None:
+        """Volume-level expiry: volume not deleted until ALL entries expire.
+
+        Even though one entry is past expiry, the volume's max_expiry is
+        the live entry's expiry (future). The volume stays. The expired
+        entry is still invisible at read-time (mem_index expiry check).
+        """
         from nexus_fast import VolumeEngine
 
         engine = VolumeEngine(str(tmp_path / "vol"))
@@ -177,11 +183,13 @@ class TestExpireTTLVolumes:
         engine.put_with_expiry(h_live, b"live", time.time() + 3600)
         engine.seal_active()
 
+        # Volume not expired yet — max_expiry is the live entry's expiry
         result = engine.expire_ttl_volumes()
-        total_expired = sum(count for _, count in result)
-        assert total_expired == 1
+        assert result == []  # no volumes expired
 
+        # But expired entry is invisible at read-time
         assert engine.read_content(h_expired) is None
+        # Live entry is still readable
         assert engine.read_content(h_live) is not None
         engine.close()
 

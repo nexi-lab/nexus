@@ -131,9 +131,18 @@ impl VolumeIndex {
         self.map.remove(hash).is_some()
     }
 
-    /// Iterate over all entries (including expired ones) — used by sweeper/GC.
+    /// Iterate over all entries (including expired ones) — used by tests/GC.
+    #[allow(dead_code)]
     pub fn iter_all(&self) -> impl Iterator<Item = (&[u8; 32], &MemIndexEntry)> {
         self.map.iter()
+    }
+
+    /// Remove all entries belonging to a volume (Issue #3405: volume-level expiry).
+    /// Returns the number of entries removed.
+    pub fn remove_by_volume(&mut self, volume_id: u32) -> usize {
+        let before = self.map.len();
+        self.map.retain(|_, entry| entry.volume_id != volume_id);
+        before - self.map.len()
     }
 
     /// Bulk-load entries from an iterator.

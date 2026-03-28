@@ -87,16 +87,21 @@ def run_benchmark(count: int = 100_000) -> None:
         print(
             f"  {status} {count:,} entries expired in {expire_time * 1000:.1f}ms (target: < {target_ms}ms)"
         )
-        print(f"  {status} All entries verified as gone: {sample_missing == min(1000, count)}")
+        all_gone = sample_missing == min(1000, count)
+        print(f"  {status} All entries verified as gone: {all_gone}")
         print(f"{'=' * 60}")
 
         engine.close()
 
+        return expire_time * 1000, all_gone
+
 
 @pytest.mark.timeout(120)
 def test_ttl_expiry_benchmark():
-    """Pytest entry — runs at 50K to keep CI fast while still meaningful."""
-    run_benchmark(count=50_000)
+    """Acceptance criterion: 100K expired files cleaned in < 100ms."""
+    expire_ms, all_gone = run_benchmark(count=100_000)
+    assert expire_ms < 100, f"100K expiry took {expire_ms:.1f}ms, target is < 100ms"
+    assert all_gone, "Not all expired entries were cleaned"
 
 
 if __name__ == "__main__":

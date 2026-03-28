@@ -4622,6 +4622,9 @@ class NexusFS(  # type: ignore[misc]
         Calls coordinator lifecycle methods first (async), then
         delegates to close() for sync resource cleanup.
         """
+        # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
+        await self._dispatch.shutdown()
+
         coord = self.service_coordinator
         if coord is not None:
             await coord.stop_persistent_services()

@@ -477,3 +477,104 @@ class TestCachedConsistencyLatency:
             zone_id=ZONE_ID,
         )
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Cross-zone invalidation latency (Issue #3396)
+# ---------------------------------------------------------------------------
+
+
+class TestCrossZoneInvalidationLatency:
+    """Benchmark cross-zone invalidation components.
+
+    Measures latency of the read fence check and the full invalidation
+    pipeline with durable stream publish.
+    """
+
+    def test_read_fence_check_latency(self, benchmark):
+        """Read fence is_stale() should be <1μs (dict lookup + int compare).
+
+        Target: p50 <0.001ms (1μs), p99 <0.01ms (10μs)
+        """
+        from nexus.bricks.rebac.cache.read_fence import ReadFence
+
+        fence = ReadFence()
+        # Simulate 10 zones with watermarks
+        for i in range(10):
+            fence.advance(f"zone-{i}", 1000 + i * 100)
+
+        def check():
+            return fence.is_stale("zone-5", 900)
+
+        result = benchmark(check)
+        assert result is True
+
+    def test_read_fence_advance_latency(self, benchmark):
+        """ReadFence.advance() should be <1μs.
+
+        Target: p50 <0.001ms (1μs)
+        """
+        from nexus.bricks.rebac.cache.read_fence import ReadFence
+
+        fence = ReadFence()
+        seq = [0]
+
+        def advance():
+            seq[0] += 1
+            fence.advance("zone-a", seq[0])
+
+        benchmark(advance)
+
+    def test_durable_stream_publish_latency(self, benchmark):
+        """Sync publish (queue append) should be <10μs.
+
+        This is the in-process deque append, not the Redis round-trip.
+        Target: p50 <0.01ms (10μs)
+        """
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
+
+        stream = DurableInvalidationStream(redis_client=MagicMock(), zone_id="bench")
+
+        payload = {
+            "subject_type": "user",
+            "subject_id": "alice",
+            "relation": "editor",
+            "object_type": "file",
+            "object_id": "/doc.txt",
+        }
+
+        result = benchmark(stream.publish, "zone-target", payload)
+        assert result is True
+
+    def test_invalidation_pipeline_with_durable_stream(self, benchmark, seeded_manager):
+        """Full invalidation pipeline including durable stream publish step.
+
+        Measures the overhead of adding the durable stream publish to the
+        existing invalidation pipeline.
+        Target: <2x overhead vs pipeline without durable stream
+        """
+        from unittest.mock import MagicMock
+
+        from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
+        from nexus.bricks.rebac.cache.read_fence import ReadFence
+
+        m = seeded_manager
+        coord = m._cache_coordinator
+
+        # Wire mock durable stream + read fence
+        mock_durable = DurableInvalidationStream(redis_client=MagicMock(), zone_id=ZONE_ID)
+        fence = ReadFence()
+        coord.set_durable_stream(mock_durable)
+        coord.set_read_fence(fence)
+
+        def invalidate():
+            coord.invalidate_for_write(
+                zone_id=ZONE_ID,
+                subject=SUBJECT_ALICE,
+                relation="editor",
+                object=("file", "/workspace/file_0.txt"),
+            )
+
+        benchmark(invalidate)

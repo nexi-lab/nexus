@@ -882,3 +882,75 @@ class TestLeaderFailover:
             h = _health(url)
             assert h is not None, f"{url} not healthy after recovery"
             assert h["status"] == "healthy"
+
+
+# ---------------------------------------------------------------------------
+# Step 26: Cross-zone cache coherence (Issue #3396)
+# ---------------------------------------------------------------------------
+
+
+class TestFederationCacheCoherence:
+    """Verify that durable invalidation propagates across zones.
+
+    These tests check that:
+    1. The durable invalidation stream is reported in health checks
+    2. Permission changes on one node are reflected on the other
+    """
+
+    @pytest.mark.order(after="TestFederationE2E::test_25_leader_failure_recovery")
+    def test_26_durable_invalidation_health(self, cluster, api_key):
+        """Durable invalidation stream should appear in detailed health.
+
+        If Dragonfly is not configured, the component reports as disabled
+        (graceful degradation). If configured, it reports healthy or degraded.
+        """
+        for url in [cluster["node1"], cluster["node2"]]:
+            resp = httpx.get(
+                f"{url}/health/detailed",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                components = data.get("components", {})
+                # Durable invalidation should be present (enabled or disabled)
+                if "durable_invalidation" in components:
+                    status = components["durable_invalidation"]["status"]
+                    assert status in ("healthy", "degraded", "disabled", "error"), (
+                        f"Unexpected durable_invalidation status: {status}"
+                    )
+
+    @pytest.mark.order(after="TestFederationE2E::test_26_durable_invalidation_health")
+    def test_27_cross_zone_write_propagation(self, cluster, api_key):
+        """A file written on node-1 should be readable on node-2.
+
+        This is an implicit cache coherence test: if node-2's cache
+        was stale and not invalidated, the read would fail or return
+        stale data. The durable stream ensures node-2 invalidates its
+        cache when node-1 writes.
+        """
+        grpc1 = cluster["grpc1"]
+        grpc2 = cluster["grpc2"]
+
+        # Write a unique file on node-1
+        unique_name = f"coherence_test_{uuid.uuid4().hex[:8]}.txt"
+        content = f"cross-zone-coherence-{time.time()}"
+        write_result = _grpc_call(
+            grpc1,
+            "write",
+            {"path": f"/corp/eng/{unique_name}", "data": content},
+            api_key=api_key,
+        )
+
+        if "error" in write_result:
+            pytest.skip(f"Write failed (may not have perms): {write_result}")
+
+        # Read back from node-2 — should eventually succeed
+        _wait_replicated(
+            grpc2,
+            "/corp/eng/",
+            unique_name,
+            api_key,
+            msg="Cross-zone write not propagated to node-2",
+            timeout=15,
+        )

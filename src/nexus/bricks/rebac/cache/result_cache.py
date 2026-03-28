@@ -136,6 +136,11 @@ class ReBACPermissionCache:
         # When set, revision updates are read from mmap instead of DB queries.
         self._revision_ring_buffer: Any = None  # SharedRingBuffer | None
 
+        # Read fence for cross-zone staleness detection (Issue #3396)
+        # When set, cache hits are checked against per-zone watermarks.
+        # A cached result from before the watermark is treated as a miss.
+        self._read_fence: Any = None  # ReadFence | None
+
         # Split caches for grants and denials (Issue #877)
         # Denials use shorter TTL for security - revoked access should be reflected quickly
         # Key format: "subject_type:subject_id:permission:object_type:object_id:zone_id:r{revision_bucket}"
@@ -633,6 +638,17 @@ class ReBACPermissionCache:
             True/False if cached, None if not cached or expired
         """
         start_time = time.perf_counter()
+
+        # Read fence check (Issue #3396): if the zone's cache has been invalidated
+        # by a cross-zone event more recent than our cached revision, treat as miss.
+        # Cost: ~50-100ns (one dict lookup + one int comparison).
+        if self._read_fence is not None and zone_id is not None:
+            cached_rev = self._get_current_revision(zone_id)
+            if cached_rev > 0 and self._read_fence.is_stale(zone_id, cached_rev):
+                if self._enable_metrics:
+                    self._misses += 1
+                return None
+
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
 
         with self._lock:

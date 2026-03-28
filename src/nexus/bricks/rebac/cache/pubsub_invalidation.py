@@ -4,18 +4,20 @@ Best-effort invalidation for cross-zone scenarios. Unlike DT_STREAM
 (which provides ordered, reliable intra-zone invalidation), Pub/Sub
 provides fire-and-forget hints to other zones.
 
-Channels: rebac:invalidation:{zone_id}:{layer}
+Channels: rebac:invalidation|{zone_id}|{layer}
 
 Messages are hints, not commands — a missed message means slightly
 stale cache that will self-correct on TTL expiry.
 
-Related: Issue #3192
+Related: Issue #3192, #3396 (ChannelCodec)
 """
 
 import json
 import logging
 from collections.abc import Callable
 from typing import Any
+
+from nexus.bricks.rebac.cache.channel_codec import decode_channel, encode_channel
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,7 @@ class PubSubInvalidation:
         if not self._enabled:
             return False
 
-        channel = f"{self._channel_prefix}:{zone_id}:{layer}"
+        channel = encode_channel(self._channel_prefix, zone_id, layer)
         message = json.dumps(payload)
 
         try:
@@ -103,7 +105,7 @@ class PubSubInvalidation:
         Returns:
             Subscription ID for unsubscribe
         """
-        channel = f"{self._channel_prefix}:{zone_id}:{layer}"
+        channel = encode_channel(self._channel_prefix, zone_id, layer)
         sub_id = f"{zone_id}:{layer}"
         self._subscribers[sub_id] = callback
         logger.info("[PUBSUB] Subscribed to %s", channel)
@@ -130,11 +132,10 @@ class PubSubInvalidation:
 
         self._received += 1
 
-        # Extract zone and layer from channel
-        parts = channel.split(":")
-        if len(parts) >= 4:
-            zone_id = parts[2]
-            layer = parts[3]
+        # Extract zone and layer from channel using ChannelCodec
+        decoded = decode_channel(channel)
+        if decoded is not None:
+            _prefix, zone_id, layer = decoded
             sub_id = f"{zone_id}:{layer}"
 
             callback = self._subscribers.get(sub_id)

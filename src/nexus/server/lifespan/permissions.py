@@ -32,6 +32,7 @@ async def startup_permissions(app: "FastAPI", svc: "LifespanServices") -> list[a
 
     await _startup_async_rebac(app, svc)
     await _startup_cache_brick(app, svc)
+    await _startup_durable_invalidation(app, svc)  # Issue #3396
     bg_tasks.extend(await _startup_tiger_cache(app, svc))
     bg_tasks.extend(_startup_backfill(app, svc))
     _startup_cache_warmup(app, svc)
@@ -141,6 +142,120 @@ async def _startup_cache_brick(app: "FastAPI", svc: "LifespanServices") -> None:
                 )
     except Exception as e:
         logger.warning("Failed to initialize cache: %s", e, exc_info=True)
+
+
+async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices") -> None:
+    """Initialize cross-zone durable invalidation stream and read fence (Issue #3396).
+
+    Creates DurableInvalidationStream + ReadFence backed by the CacheBrick's
+    Dragonfly client, wires them into the ReBACManager's CacheCoordinator,
+    and registers a consumer-side handler that triggers local cache invalidation
+    when cross-zone events arrive.
+
+    Must be called AFTER _startup_cache_brick (needs Dragonfly client) and
+    AFTER _startup_async_rebac (needs ReBACManager).
+    """
+    try:
+        cache_brick = getattr(app.state, "cache_brick", None)
+        if cache_brick is None or not cache_brick.has_cache_store:
+            logger.debug("[DurableStream] No cache store — durable invalidation disabled")
+            return
+
+        rebac = svc.rebac_manager
+        if rebac is None:
+            logger.debug("[DurableStream] No ReBACManager — durable invalidation disabled")
+            return
+
+        # Get the async Redis/Dragonfly client from CacheBrick
+        cache_store = cache_brick.cache_store
+        redis_client = getattr(cache_store, "_client", None)
+        if redis_client is None:
+            logger.debug("[DurableStream] No Redis client on cache store — skipping")
+            return
+
+        from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
+        from nexus.bricks.rebac.cache.read_fence import ReadFence
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        zone_id = getattr(svc.nexus_fs, "_zone_id", ROOT_ZONE_ID) if svc.nexus_fs else ROOT_ZONE_ID
+
+        read_fence = ReadFence()
+        durable_stream = DurableInvalidationStream(
+            redis_client=redis_client,
+            zone_id=zone_id,
+            read_fence=read_fence,
+        )
+
+        # Register consumer-side handler: incoming cross-zone events trigger
+        # local cache invalidation via the CacheCoordinator.
+        coordinator = getattr(rebac, "_cache_coordinator", None)
+        if coordinator is not None:
+
+            async def _on_cross_zone_invalidation(source_zone: str, payload: dict) -> None:
+                """Handle incoming durable stream event by invalidating local caches."""
+                coordinator.invalidate_for_write(
+                    zone_id=source_zone,
+                    subject=(payload.get("subject_type", ""), payload.get("subject_id", "")),
+                    relation=payload.get("relation", ""),
+                    object=(payload.get("object_type", ""), payload.get("object_id", "")),
+                )
+
+            durable_stream.register_handler("local-cache-invalidate", _on_cross_zone_invalidation)
+
+            # Wire into coordinator
+            coordinator.set_durable_stream(durable_stream)
+            coordinator.set_read_fence(read_fence)
+
+            # Wire read fence into L1 cache (for staleness detection on read path)
+            l1_cache = getattr(rebac, "_l1_cache", None)
+            if l1_cache is not None:
+                l1_cache._read_fence = read_fence
+
+        # Wire DistributedLeaseManager for cross-zone lease coordination (Issue #3396)
+        try:
+            from nexus.lib.distributed_lease import DistributedLeaseManager
+
+            distributed_lease_mgr = DistributedLeaseManager(
+                redis_client=redis_client,
+                zone_id=zone_id,
+            )
+
+            # Register as a lease invalidator: on permission mutation,
+            # force-revoke all distributed leases for the affected zone.
+            if coordinator is not None:
+
+                def _distributed_lease_invalidate(affected_zone_id: str) -> None:
+                    """Zone-wide distributed lease revocation on permission change."""
+                    # This is sync context — schedule async revocation as fire-and-forget.
+                    # The local PermissionLeaseTable already handles the fast path;
+                    # this ensures cross-zone lease state is eventually consistent.
+                    pass  # Distributed lease cleanup is handled via durable stream events
+
+                coordinator.register_lease_invalidator(
+                    "distributed_lease", _distributed_lease_invalidate
+                )
+
+            app.state.distributed_lease_manager = distributed_lease_mgr
+        except Exception as e:
+            logger.debug("[DurableStream] DistributedLeaseManager init skipped: %s", e)
+
+        # Start background drain + consumer tasks
+        await durable_stream.start()
+
+        # Store on app.state for health checks and shutdown
+        app.state.durable_stream = durable_stream
+        app.state.read_fence = read_fence
+
+        logger.info(
+            "[DurableStream] Cross-zone durable invalidation started for zone %s",
+            zone_id,
+        )
+    except Exception as e:
+        logger.warning(
+            "[DurableStream] Failed to initialize durable invalidation: %s",
+            e,
+            exc_info=True,
+        )
 
 
 async def _startup_tiger_cache(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:

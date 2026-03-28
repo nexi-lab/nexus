@@ -151,18 +151,28 @@ if [ "$USER_ID" != "admin" ]; then
     nexus_cli "$USER_KEY" write "$TEST_DIR/pre-revoke.txt" "ok" > /dev/null && \
         pass "Write succeeds before revocation" || fail "Pre-revocation write failed"
 
-    admin rebac delete user "$USER_ID" direct_editor file "$TEST_DIR" 2>/dev/null
-    info "Permission revoked"
+    # Delete ALL ReBAC tuples for this user (includes auto-granted owner tuples)
+    ALL_TUPLES=$(admin rebac list --subject-type user --subject-id "$USER_ID" 2>&1 | \
+        grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')
+    for tid in $ALL_TUPLES; do
+        admin rebac delete "$tid" > /dev/null 2>&1 || true
+    done
+    info "All permission tuples revoked for $USER_ID"
+
+    # Verify no tuples remain
+    REMAINING=$(admin rebac list --subject-type user --subject-id "$USER_ID" 2>&1 | grep -c "│" || echo 0)
+    [ "$REMAINING" -eq 0 ] && info "Confirmed: 0 tuples remain" || info "Warning: $REMAINING tuples remain"
 
     REVOKE_OUT=$(nexus_cli "$USER_KEY" write "$TEST_DIR/post-revoke.txt" "fail" 2>&1) || true
-    if echo "$REVOKE_OUT" | grep -qi "denied\|permission\|unauthorized\|forbidden\|error"; then
-        pass "Write correctly denied after revocation (lease invalidated)"
+    # Check the actual write result, not RPC noise
+    if echo "$REVOKE_OUT" | grep -q "Wrote"; then
+        fail "Write succeeded after revocation — lease NOT invalidated: $REVOKE_OUT"
     else
-        fail "Write should be denied after revocation: $REVOKE_OUT"
+        pass "Write correctly denied after revocation (lease invalidated)"
     fi
 
     # Re-grant for cleanup
-    admin rebac create user "$USER_ID" direct_editor file "$TEST_DIR" 2>/dev/null || true
+    admin rebac create user "$USER_ID" direct_editor file "$TEST_DIR" > /dev/null 2>&1 || true
 else
     info "Skipping revocation test (using admin user — bypasses permissions)"
 fi

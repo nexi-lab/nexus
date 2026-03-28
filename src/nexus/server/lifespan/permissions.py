@@ -158,20 +158,53 @@ async def _startup_durable_invalidation(app: "FastAPI", svc: "LifespanServices")
     try:
         cache_brick = getattr(app.state, "cache_brick", None)
         if cache_brick is None or not cache_brick.has_cache_store:
-            logger.debug("[DurableStream] No cache store — durable invalidation disabled")
+            logger.info("[DurableStream] No cache store — durable invalidation disabled")
             return
 
+        # Try multiple paths to find the ReBACManager.
+        # In some profiles (cluster), it lives inside a ReBACService wrapper
+        # registered via the factory, not as a direct named service.
         rebac = svc.rebac_manager
+        if rebac is None and svc.nexus_fs is not None:
+            # Direct attribute on NexusFS
+            rebac = getattr(svc.nexus_fs, "_rebac_manager", None)
+        if rebac is None and svc.nexus_fs is not None:
+            # Inside ReBACService wrapper (registered as "rebac" in cluster profile).
+            # ServiceRef.__getattr__ transparently delegates to the underlying instance.
+            _svc_fn = getattr(svc.nexus_fs, "service", None)
+            if _svc_fn:
+                for svc_name in ("rebac", "rebac_service", "rebac_manager"):
+                    rebac_svc = _svc_fn(svc_name)
+                    if rebac_svc is not None:
+                        rebac = getattr(rebac_svc, "_rebac_manager", None)
+                        if rebac is not None:
+                            logger.debug(
+                                "[DurableStream] Found ReBACManager via service '%s'", svc_name
+                            )
+                            break
         if rebac is None:
-            logger.debug("[DurableStream] No ReBACManager — durable invalidation disabled")
+            # From AsyncReBACManager on app.state
+            async_rebac = getattr(app.state, "async_rebac_manager", None)
+            if async_rebac is not None:
+                rebac = getattr(async_rebac, "_sync_manager", None)
+        if rebac is None:
+            logger.info("[DurableStream] No ReBACManager — durable invalidation disabled")
             return
 
-        # Get the async Redis/Dragonfly client from CacheBrick
+        # Get a raw redis.asyncio.Redis client for Streams API.
+        # CacheBrick wraps Dragonfly in a DragonflyClient that exposes only
+        # high-level methods (get/set/publish).  We need the raw Redis client
+        # for XADD/XREADGROUP/XACK.  Create one from the existing connection pool.
         cache_store = cache_brick.cache_store
-        redis_client = getattr(cache_store, "_client", None)
-        if redis_client is None:
-            logger.debug("[DurableStream] No Redis client on cache store — skipping")
+        dragonfly_client = getattr(cache_store, "_client", None)
+        connection_pool = getattr(dragonfly_client, "_pool", None)
+        if connection_pool is None:
+            logger.debug("[DurableStream] No connection pool on cache store — skipping")
             return
+
+        import redis.asyncio as aioredis
+
+        redis_client = aioredis.Redis(connection_pool=connection_pool)
 
         from nexus.bricks.rebac.cache.durable_stream import DurableInvalidationStream
         from nexus.bricks.rebac.cache.read_fence import ReadFence

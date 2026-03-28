@@ -409,20 +409,28 @@ class TestMountTopology:
 
     def test_mount_crosslink(self, cluster, api_key):
         """Mount corp zone again at /family/work (cross-link)."""
-        grpc1 = cluster["grpc1"]
-
-        mk = _grpc_call(grpc1, "mkdir", {"path": "/family/work", "parents": True}, api_key=api_key)
+        mk = _grpc_call(
+            cluster["grpc1"], "mkdir", {"path": "/family/work", "parents": True}, api_key=api_key
+        )
         assert "error" not in mk, f"mkdir /family/work failed: {mk}"
 
-        r = _grpc_call(
-            grpc1,
-            "federation_mount",
-            {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
-            api_key=api_key,
+        # Retry on both nodes (leader for 'family' zone may differ)
+        r = None
+        for target in [cluster["grpc1"], cluster["grpc2"]]:
+            r = _grpc_call(
+                target,
+                "federation_mount",
+                {"parent_zone": "family", "path": "/family/work", "target_zone": "corp"},
+                api_key=api_key,
+            )
+            if "error" not in r:
+                break
+            err_msg = str(r.get("error", {}).get("message", ""))
+            if "already a DT_MOUNT" in err_msg:
+                break
+        assert r is not None and ("error" not in r or "already a DT_MOUNT" in str(r)), (
+            f"mount cross-link failed on both nodes: {r}"
         )
-        # Already mounted is fine (idempotent)
-        err_msg = str(r.get("error", {}).get("message", ""))
-        assert "error" not in r or "already a DT_MOUNT" in err_msg, f"mount cross-link failed: {r}"
 
     def test_unmount_remount_cycle(self, cluster, api_key):
         """Unmount corp-sales, verify inaccessible, remount, verify accessible."""

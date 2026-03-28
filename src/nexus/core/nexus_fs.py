@@ -2188,6 +2188,7 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        consistency: str = "sc",
     ) -> dict[str, Any]:
         """Write with metadata return (Tier 2 convenience).
 
@@ -2207,6 +2208,10 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
+            consistency: Metastore consistency level — ``"sc"`` (strong, default,
+                Raft consensus) or ``"ec"`` (eventual, local-first via EC WAL).
+                EC writes return immediately and replicate asynchronously.
+                Issue #1828.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).
@@ -2223,7 +2228,9 @@ class NexusFS(  # type: ignore[misc]
         if _handled:
             return _result
 
-        return await self._write_internal(path=path, content=buf, offset=offset, context=context)
+        return await self._write_internal(
+            path=path, content=buf, offset=offset, context=context, consistency=consistency
+        )
 
     async def _write_internal(
         self,

@@ -361,6 +361,7 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
+        consistency: str = "sc",  # noqa: ARG002  # used by NexusFS override
     ) -> dict[str, Any]:
         """Write with metadata update (VFS convenience).
 
@@ -373,6 +374,8 @@ class NexusFilesystemABC(ABC):
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset to start writing at.
             context: Operation context.
+            consistency: Metastore consistency — ``"sc"`` (strong, Raft) or
+                ``"ec"`` (eventual, local-first EC WAL). Issue #1828.
 
         Returns:
             Dict with metadata (etag, version, modified_at, size).

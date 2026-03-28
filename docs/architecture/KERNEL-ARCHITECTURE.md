@@ -181,13 +181,20 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write()`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
 detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
+
+**Consistency parameter** (Issue #1828): `write(consistency=)` accepts ``"sc"``
+(strong consistency, Raft consensus — default) or ``"ec"`` (eventually
+consistent, local-first via EC WAL). EC writes apply locally then replicate
+asynchronously; callers poll ``is_committed(token)`` for replication status.
+The EC WAL (Rust, redb) provides seq/watermark/idempotent-apply primitives.
+EC and Raft log are separate redb trees — EC writes do not bloat Raft consensus log.
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 

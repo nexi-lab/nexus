@@ -282,6 +282,84 @@ class NexusFilesystemABC(ABC):
         """
         ...
 
+    # ── Locking (POSIX flock equivalent) ────────────────────────────
+
+    @abstractmethod
+    async def sys_lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """Acquire advisory lock (POSIX flock(2)). Returns lock_id or None."""
+        ...
+
+    @abstractmethod
+    async def sys_unlock(
+        self, path: str, lock_id: str, *, context: "OperationContext | None" = None
+    ) -> bool:
+        """Release advisory lock. Returns True if released."""
+        ...
+
+    # ── Watch (inotify equivalent) ────────────────────────────────
+
+    @abstractmethod
+    async def sys_watch(
+        self,
+        path: str,
+        timeout: float = 30.0,
+        *,
+        recursive: bool = False,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any] | None:
+        """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout."""
+        ...
+
+    # ── Tier 2: Lock Convenience ──────────────────────────────────
+
+    async def lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 60.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """Acquire lock with blocking wait (Tier 2 over sys_lock).
+
+        Retries sys_lock() until acquired or timeout.
+        Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
+        """
+        import asyncio
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while True:
+            lock_id = await self.sys_lock(
+                path,
+                mode=mode,
+                ttl=ttl,
+                max_holders=max_holders,
+                context=context,
+            )
+            if lock_id is not None:
+                return lock_id
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(0.05, remaining))
+
+    async def unlock(
+        self, lock_id: str, path: str, *, context: "OperationContext | None" = None
+    ) -> bool:
+        """Release lock (Tier 2 alias for sys_unlock)."""
+        return await self.sys_unlock(path, lock_id, context=context)
+
     # ── System Info + Lifecycle ────────────────────────────────────
 
     @abstractmethod

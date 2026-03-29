@@ -32,12 +32,15 @@ NexusFS follows an **OS-inspired layered architecture**.
 
 Every kernel interface belongs to exactly one of four categories:
 
-| Category | Direction | Audience | Kernel relationship |
-|----------|-----------|----------|---------------------|
-| **User Contract** (§2) | ↑ upward | Users, AI, agents, services extending syscalls | Kernel **implements** |
-| **HAL — Driver Contract** (§3) | ↓ downward | Driver implementors | Kernel **requires** |
-| **Kernel Primitive** (§4) | internal | Kernel-internal only | Kernel **owns** |
-| **Kernel-Authored Standard** (§5) | sideways | Services | Kernel **defines** but doesn't own |
+| Category | Direction | Audience | Kernel relationship | API tier |
+|----------|-----------|----------|---------------------|----------|
+| **User Contract** (§2) | ↑ upward | Users, AI, agents, services | Kernel **implements** | Tier 1: Syscalls (`sys_*`) |
+| **HAL — Driver Contract** (§3) | ↓ downward | Driver implementors | Kernel **requires** | Tier 2: 3 pillar ABCs |
+| **Kernel Primitive** (§4) | internal | Kernel-internal only | Kernel **owns** | Tier 3: Kernel Module API (`create_from_backend`, `register_resolver`) |
+| **Kernel-Authored Standard** (§5) | sideways | Services | Kernel **defines** but doesn't own | — (service standards, not kernel API) |
+
+Tier 1 is the only user-facing interface. Tier 3 is for trusted kernel modules
+(federation resolvers, ACP) — analogous to Linux `EXPORT_SYMBOL`.
 
 ### Swap Tiers
 
@@ -53,8 +56,8 @@ Follows Linux's monolithic kernel model, not microkernel:
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
 has zero reads of service containers — all service wiring flows through
 `ServiceRegistry` (`nx.service("name")`), factory-injected closures
-(`functools.partial`), or KernelDispatch hooks. Services flow as a single
-`dict[str, Any]` from factory to `ServiceRegistry.enlist()`.
+(`functools.partial`), or KernelDispatch hooks. Services flow through `sys_setattr("/__sys__/services/X")` — factory
+uses the same syscall API as runtime callers (factory = first user).
 
 **Drivers** use constructor DI at startup — same binary, different config
 (`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
@@ -162,11 +165,12 @@ business logic**.
 | **Metadata** (8) | `sys_stat`, `sys_setattr`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
 | **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
 
-`mkdir` is Tier 2 convenience over `sys_setattr(entry_type=DT_DIR)` — not a kernel syscall.
-`mount` is `sys_setattr(entry_type=DT_MOUNT, backend=...)`, `umount` is `sys_rmdir` on DT_MOUNT path.
-`/__sys__/services/` paths register/unregister services via syscall:
-`sys_setattr("/__sys__/services/X", service=instance)` registers (calls `enlist()`),
-`sys_unlink("/__sys__/services/X")` unregisters (calls `unregister_service_full()`).
+`sys_setattr` is the universal creation/management syscall:
+`mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
+`umount` = `sys_rmdir` on DT_MOUNT path.
+`/__sys__/` paths are kernel management operations (not filesystem metadata):
+`sys_setattr("/__sys__/services/X", service=inst)` registers,
+`sys_unlink("/__sys__/services/X")` unregisters.
 
 **Primitive usage pattern:**
 
@@ -193,10 +197,11 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-`write(consistency=)` and `sys_write(consistency=)` support ``"sc"`` (strong
+**Consistency** applies to metadata operations (metastore put): ``"sc"`` (strong
 consistency, default) or ``"ec"`` (eventually consistent, local-first with
-async replication). The kernel ABC defines the contract; drivers decide how
-to implement SC vs EC (e.g. Raft consensus for SC, EC WAL for EC).
+async replication). Content writes (CAS/backend) are always local. The kernel
+ABC defines the contract; drivers implement SC vs EC. Tier 2 `write()` composes
+content write + metadata update with consistency.
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 

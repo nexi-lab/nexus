@@ -1,4 +1,5 @@
 """Unified filesystem implementation for Nexus."""
+# Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
 
 import builtins
 import contextlib

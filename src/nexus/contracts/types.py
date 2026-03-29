@@ -128,6 +128,10 @@ class OperationContext:
     # TTL for ephemeral content — routes to TTL-bucketed volumes (Issue #3405)
     ttl_seconds: float | None = None
 
+    # Pre-write FileMetadata, passed by kernel to avoid redundant metastore.get()
+    # Used by CAS driver for metadata down-sink (driver-owned metadata persistence).
+    existing_metadata: Any = None
+
     def __post_init__(self) -> None:
         """Validate context and apply defaults."""
         if self.subject_id is None:

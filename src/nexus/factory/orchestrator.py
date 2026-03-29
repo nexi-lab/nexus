@@ -322,6 +322,12 @@ async def create_nexus_fs(
         init_cred=_init_cred,
     )
 
+    # CAS metadata down-sink: inject metastore into CAS backend so the driver
+    # can persist file metadata directly after blob write (like ext4 inode update).
+    # Also used by GC for reachability scans.
+    if hasattr(backend, "set_metastore"):
+        backend.set_metastore(_effective_metadata_store)
+
     # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
     init_ctx = await _wire_services(
         nx,

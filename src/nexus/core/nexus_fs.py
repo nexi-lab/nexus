@@ -2286,7 +2286,9 @@ class NexusFS(  # type: ignore[misc]
         # Thread TTL into context (Issue #3405)
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
-        await self._write_internal(path=path, content=buf, offset=offset, context=context)
+        await self._write_internal(
+            path=path, content=buf, offset=offset, context=context, _meta=_meta
+        )
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2495,6 +2497,7 @@ class NexusFS(  # type: ignore[misc]
         force: bool = False,
         consistency: str = "sc",
         offset: int = 0,
+        _meta: Any = _SENTINEL,
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
@@ -2506,10 +2509,16 @@ class NexusFS(  # type: ignore[misc]
 
         Used by both sys_write (returns int) and write() (returns dict).
 
+        Args:
+            _meta: Pre-fetched FileMetadata from sys_write to avoid redundant
+                metastore.get(). Sentinel default = not provided (fetch inside).
+
         Issue #1323: OCC params removed from kernel write path.
         Issue #1829: Split into _write_content + _dispatch_write_events (SRP).
         """
-        wr = self._write_content(path, content, context, offset=offset, consistency=consistency)
+        wr = self._write_content(
+            path, content, context, offset=offset, consistency=consistency, _meta=_meta
+        )
         return await self._dispatch_write_events(path, wr, content)
 
     def _write_content(
@@ -2519,6 +2528,7 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None,
         offset: int = 0,
         consistency: str = "sc",
+        _meta: Any = _SENTINEL,
     ) -> _WriteContentResult:
         """Content write + metadata commit (locked, synchronous).
 
@@ -2526,6 +2536,10 @@ class NexusFS(  # type: ignore[misc]
         Both ExternalRouteResult and standard VFS paths.
 
         The VFS lock wraps both content write AND metadata put for atomicity.
+
+        Args:
+            _meta: Pre-fetched FileMetadata from sys_write to avoid redundant
+                metastore.get(). Sentinel default = not provided (fetch inside).
 
         Returns:
             _WriteContentResult for async event dispatch by _dispatch_write_events.
@@ -2547,9 +2561,11 @@ class NexusFS(  # type: ignore[misc]
         if route.readonly:
             raise PermissionError(f"Path is read-only: {path}")
 
-        # Get existing metadata for permission check and update detection (single query)
+        # Get existing metadata for permission check and update detection (single query).
+        # sys_write already fetched _meta for pipe/stream dispatch — reuse it to
+        # avoid a redundant metastore.get().
         now = datetime.now(UTC)
-        meta = self.metadata.get(path)
+        meta = self.metadata.get(path) if _meta is _SENTINEL else _meta
 
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
@@ -2612,6 +2628,10 @@ class NexusFS(  # type: ignore[misc]
                 if not _is_remote:
                     self.metadata.put(metadata, consistency=consistency)
             else:
+                # Augment context with existing_metadata so CAS driver can
+                # persist metadata internally (metadata down-sink).
+                context = replace(context, existing_metadata=meta)
+
                 _wr = route.backend.write_content(
                     content,
                     content_id=meta.physical_path if (offset > 0 and meta) else "",
@@ -2624,19 +2644,25 @@ class NexusFS(  # type: ignore[misc]
                 # HDFS/GFS pattern: content cleanup is async via background GC.
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-                metadata = self._build_write_metadata(
-                    path=path,
-                    backend_name=route.backend.name,
-                    content_hash=content_hash,
-                    size=_wr.size if offset > 0 else len(content),
-                    existing_meta=meta,
-                    now=now,
-                    zone_id=zone_id,
-                    context=context,
-                )
+                # CAS driver already persisted metadata — read it for event dispatch.
+                _written_meta = self.metadata.get(path)
+                if _written_meta is not None:
+                    metadata = _written_meta
+                else:
+                    # Fallback: CAS driver has no metastore (e.g. tests without DI wiring).
+                    # Build metadata in kernel as before.
+                    metadata = self._build_write_metadata(
+                        path=path,
+                        backend_name=route.backend.name,
+                        content_hash=content_hash,
+                        size=_wr.size if offset > 0 else len(content),
+                        existing_meta=meta,
+                        now=now,
+                        zone_id=zone_id,
+                        context=context,
+                    )
+                    self.metadata.put(metadata, consistency=consistency)
                 new_version = metadata.version
-
-                self.metadata.put(metadata, consistency=consistency)
 
         return _WriteContentResult(
             content_hash=content_hash,

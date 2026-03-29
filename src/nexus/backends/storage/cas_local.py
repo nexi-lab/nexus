@@ -257,7 +257,13 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
             logger.info("Cold tiering service scheduled to stop on unmount")
 
     def set_metastore(self, metastore: Any) -> None:
-        """Inject metastore reference for reachability-based GC."""
+        """Inject metastore reference for CAS metadata persistence + GC.
+
+        CAS metadata down-sink: the CAS engine persists file metadata
+        (inode update) directly after blob write, eliminating a kernel
+        round-trip.  GC also uses metastore for reachability scans.
+        """
+        self._metastore = metastore  # CASAddressingEngine metadata persistence
         self._gc.set_metastore(metastore)
 
     @property

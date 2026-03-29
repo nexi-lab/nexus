@@ -753,6 +753,26 @@ class NexusFS(  # type: ignore[misc]
         released = await self._lock_manager.force_release(path)
         return {"released": released}
 
+    @rpc_expose(description="Release a lock (normal or force)")
+    async def lock_release(
+        self,
+        path: str,
+        lock_id: str | None = None,
+        force: bool = False,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Release a lock — dispatches to sys_unlock or lock_force_release.
+
+        CLI-friendly: single method handles both normal and force release.
+        """
+        if force:
+            return await self.lock_force_release(path)
+        if not lock_id:
+            raise ValueError("lock_id is required for non-force release")
+        released = await self.sys_unlock(path, lock_id)
+        return {"released": released}
+
     @rpc_expose(description="Get available namespaces")
     def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
         """Return top-level mount names visible to the current user.

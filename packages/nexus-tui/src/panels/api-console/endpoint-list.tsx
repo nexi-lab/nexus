@@ -4,6 +4,7 @@
 
 import React from "react";
 import { useApiConsoleStore, type EndpointInfo } from "../../stores/api-console-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 const METHOD_BADGE: Record<string, string> = {
   GET: "GET   ",
@@ -21,12 +22,9 @@ export function EndpointList(): React.ReactNode {
   const searchQuery = useApiConsoleStore((s) => s.searchQuery);
 
   if (endpoints.length === 0) {
-    const message = searchQuery ? "No endpoints match your search" : "No endpoints loaded";
-    return (
-      <box height="100%" width="100%">
-        <text>{message}</text>
-      </box>
-    );
+    return searchQuery
+      ? <EmptyState message="No endpoints match your search." />
+      : <EmptyState message="No endpoints available." hint="Check server connection." />;
   }
 
   return (

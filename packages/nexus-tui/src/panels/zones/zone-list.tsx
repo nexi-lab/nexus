@@ -6,6 +6,7 @@
 
 import React from "react";
 import type { ZoneResponse } from "../../stores/zones-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface ZoneListProps {
   readonly zones: readonly ZoneResponse[];
@@ -40,11 +41,7 @@ export function ZoneList({
   }
 
   if (zones.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No zones found</text>
-      </box>
-    );
+    return <EmptyState message="No zones found." hint="Press n to create a zone." />;
   }
 
   return (

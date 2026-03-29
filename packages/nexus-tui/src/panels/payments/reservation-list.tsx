@@ -5,6 +5,7 @@
 import React from "react";
 import type { Reservation } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface ReservationListProps {
   readonly reservations: readonly Reservation[];
@@ -42,11 +43,7 @@ export function ReservationList({
   }
 
   if (reservations.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No reservations found</text>
-      </box>
-    );
+    return <EmptyState message="No reservations yet." hint="Reservations are created during transfers." />;
   }
 
   return (

@@ -6,6 +6,7 @@
 
 import React from "react";
 import type { AccessManifest } from "../../stores/access-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface ManifestListProps {
   readonly manifests: readonly AccessManifest[];
@@ -40,11 +41,7 @@ export function ManifestList({
   }
 
   if (manifests.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No access manifests found</text>
-      </box>
-    );
+    return <EmptyState message="No manifests found." hint="Press c to create a manifest." />;
   }
 
   const selected = manifests[selectedIndex];

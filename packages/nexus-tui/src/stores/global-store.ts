@@ -21,7 +21,8 @@ export type PanelId =
   | "workflows"
   | "infrastructure"
   | "console"
-  | "connectors";
+  | "connectors"
+  | "stack";
 
 /** Response from GET /api/v2/features */
 export interface FeaturesResponse {

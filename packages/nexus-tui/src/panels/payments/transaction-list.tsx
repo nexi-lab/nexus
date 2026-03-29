@@ -6,6 +6,7 @@
 import React from "react";
 import type { TransactionRecord, IntegrityResult } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface TransactionListProps {
   readonly transactions: readonly TransactionRecord[];
@@ -48,11 +49,7 @@ export function TransactionList({
   }
 
   if (transactions.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No transactions found</text>
-      </box>
-    );
+    return <EmptyState message="No transactions yet." hint="Press t to create a transfer." />;
   }
 
   const selectedTx = transactions[selectedIndex];

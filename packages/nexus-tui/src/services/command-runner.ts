@@ -128,6 +128,24 @@ export function killAllProcesses(): void {
 // =============================================================================
 
 /**
+ * Find the project root by walking up from CWD looking for .git (file or dir).
+ * This resolves correctly for both normal repos and git worktrees.
+ * Falls back to CWD if not found.
+ */
+function findProjectRoot(): string {
+  const path = require("node:path");
+  const nodeFs = require("node:fs");
+  let dir = process.cwd();
+  for (let i = 0; i < 20; i++) {
+    if (nodeFs.existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return process.cwd();
+}
+
+/**
  * Execute a local nexus subcommand via Bun.spawn().
  *
  * Output is streamed into the CommandRunnerStore for rendering by CommandOutput.
@@ -148,6 +166,10 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
     return;
   }
 
+  // Resolve project root (git/worktree root) so commands like `nexus init`
+  // create nexus.yaml at the right level, not inside packages/nexus-tui/.
+  const projectRoot = findProjectRoot();
+
   // Reset state
   useCommandRunnerStore.setState({
     ...INITIAL_STATE,
@@ -157,11 +179,11 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
 
   // Prefer .venv/bin/nexus (project venv) over system PATH to avoid picking up
   // stale installs (e.g. /opt/anaconda3/bin/nexus which lacks the `up` command).
-  // Walk up from CWD to find .venv/bin/nexus (TUI may run from packages/nexus-tui/).
+  // Walk up from project root to find .venv/bin/nexus.
   const path = require("node:path");
   const nodeFs = require("node:fs");
   let nexusBin = "nexus";
-  let searchDir = process.cwd();
+  let searchDir = projectRoot;
   for (let i = 0; i < 5; i++) {
     const candidate = path.join(searchDir, ".venv", "bin", "nexus");
     if (nodeFs.existsSync(candidate)) {
@@ -174,12 +196,12 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
   }
   const fullArgs = [nexusBin, command, ...args];
 
-  // Read the TUI's own nexus.yaml (in CWD) to pass NEXUS_URL and NEXUS_API_KEY
+  // Read nexus.yaml from project root to pass NEXUS_URL and NEXUS_API_KEY
   // to subcommands like `nexus demo init`.
   const spawnEnv = { ...process.env };
   try {
     const fs = require("node:fs");
-    const yaml = fs.readFileSync("nexus.yaml", "utf-8") as string;
+    const yaml = fs.readFileSync(path.join(projectRoot, "nexus.yaml"), "utf-8") as string;
     const portMatch = yaml.match(/ports:\s*\n(?:\s+\w+:[^\n]*\n)*?\s+http:\s*(\d+)/);
     const keyMatch = yaml.match(/^api_key:\s*["']?([^"'\n]+)["']?/m);
     if (portMatch?.[1] && !spawnEnv.NEXUS_URL) {
@@ -193,8 +215,9 @@ export function executeLocalCommand(command: string, args: readonly string[]): v
   }
 
   try {
-    // Commands run from CWD so each TUI instance gets its own nexus.yaml
+    // Commands run from project root so nexus.yaml is created at the right level
     const proc = Bun.spawn(fullArgs, {
+      cwd: projectRoot,
       stdout: "pipe",
       stderr: "pipe",
       env: spawnEnv,

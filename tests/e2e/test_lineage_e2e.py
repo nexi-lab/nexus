@@ -294,3 +294,109 @@ class TestLineageE2EFlow:
         assert any(d["downstream_urn"] == dst_urn for d in downstream)
 
         print(f"\n✓ Copy lineage verified: {src_path} -> {dst_path}")
+
+    def test_scoped_read3_write1_write2(self, session) -> None:
+        """E2E: read 3 → write 1 → read 2 → write 2, each write gets its own lineage.
+
+        This is the key scenario that motivated scoped tracking.
+        Without scopes, write 2 would get NO lineage.
+        """
+        from nexus.contracts.aspects import AspectRegistry, LineageAspect
+        from nexus.contracts.urn import NexusURN
+        from nexus.storage.lineage_service import LineageService
+        from nexus.storage.session_read_accumulator import get_accumulator
+
+        registry = AspectRegistry.get()
+        if not registry.is_registered("lineage"):
+            registry.register("lineage", LineageAspect, max_versions=5)
+
+        test_id = uuid.uuid4().hex[:8]
+        agent_id = f"e2e-scope-agent-{test_id}"
+        agent_gen = 1
+        zone_id = "root"
+        acc = get_accumulator()
+
+        # --- Task 1: read A, B, C → write output1 ---
+        acc.begin_scope(agent_id, agent_gen, "task-1")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/a.csv", version=1, etag="ea")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/b.csv", version=2, etag="eb")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/c.csv", version=3, etag="ec")
+
+        output1_path = f"/e2e/{test_id}/output1.json"
+        output1_urn = str(NexusURN.for_file(zone_id, output1_path))
+
+        reads_1 = acc.consume(agent_id, agent_gen, scope_id="task-1")
+        assert len(reads_1) == 3
+
+        lineage_1 = LineageAspect.from_session_reads(
+            reads=reads_1, agent_id=agent_id, agent_generation=agent_gen, operation="write"
+        )
+        svc = LineageService(session)
+        svc.record_lineage(
+            entity_urn=output1_urn, lineage=lineage_1, zone_id=zone_id, downstream_path=output1_path
+        )
+        session.commit()
+
+        # --- Task 2: read D, E → write output2 ---
+        acc.begin_scope(agent_id, agent_gen, "task-2")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/d.csv", version=4, etag="ed")
+        acc.record_read(agent_id, agent_gen, f"/e2e/{test_id}/e.csv", version=5, etag="ee")
+
+        output2_path = f"/e2e/{test_id}/output2.json"
+        output2_urn = str(NexusURN.for_file(zone_id, output2_path))
+
+        reads_2 = acc.consume(agent_id, agent_gen, scope_id="task-2")
+        assert len(reads_2) == 2
+
+        lineage_2 = LineageAspect.from_session_reads(
+            reads=reads_2, agent_id=agent_id, agent_generation=agent_gen, operation="write"
+        )
+        svc.record_lineage(
+            entity_urn=output2_urn, lineage=lineage_2, zone_id=zone_id, downstream_path=output2_path
+        )
+        session.commit()
+
+        # --- Verify output1 lineage ---
+        payload1 = svc.get_lineage(output1_urn)
+        assert payload1 is not None
+        assert len(payload1["upstream"]) == 3
+        paths1 = {u["path"] for u in payload1["upstream"]}
+        assert paths1 == {
+            f"/e2e/{test_id}/a.csv",
+            f"/e2e/{test_id}/b.csv",
+            f"/e2e/{test_id}/c.csv",
+        }
+
+        # --- Verify output2 lineage (this was the bug: used to be empty) ---
+        payload2 = svc.get_lineage(output2_urn)
+        assert payload2 is not None, "output2 MUST have lineage (scoped tracking fix)"
+        assert len(payload2["upstream"]) == 2
+        paths2 = {u["path"] for u in payload2["upstream"]}
+        assert paths2 == {
+            f"/e2e/{test_id}/d.csv",
+            f"/e2e/{test_id}/e.csv",
+        }
+
+        # --- Verify reverse index: each input maps to its correct output ---
+        ds_a = svc.find_downstream(f"/e2e/{test_id}/a.csv", zone_id=zone_id)
+        assert any(d["downstream_urn"] == output1_urn for d in ds_a)
+        assert not any(d["downstream_urn"] == output2_urn for d in ds_a)
+
+        ds_d = svc.find_downstream(f"/e2e/{test_id}/d.csv", zone_id=zone_id)
+        assert any(d["downstream_urn"] == output2_urn for d in ds_d)
+        assert not any(d["downstream_urn"] == output1_urn for d in ds_d)
+
+        # --- Verify staleness: change a.csv → only output1 is stale ---
+        stale = svc.check_staleness(
+            f"/e2e/{test_id}/a.csv", current_version=99, current_etag="changed", zone_id=zone_id
+        )
+        assert len(stale) >= 1
+        stale_urns = {s["downstream_urn"] for s in stale}
+        assert output1_urn in stale_urns
+        assert output2_urn not in stale_urns
+
+        print(f"\n✓ Scoped lineage verified for agent {agent_id}")
+        print("  - Task 1: read A,B,C → write output1 → lineage = [A,B,C]")
+        print("  - Task 2: read D,E → write output2 → lineage = [D,E]")
+        print("  - Reverse index correctly isolates inputs per output")
+        print("  - Staleness correctly scoped: changing A only flags output1")

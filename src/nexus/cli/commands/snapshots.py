@@ -128,11 +128,11 @@ def snapshot_list(
             for tx in txns:
                 status = tx.get("status", "")
                 status_style = (
-                    "green"
+                    "nexus.success"
                     if status == "committed"
-                    else "red"
+                    else "nexus.error"
                     if status == "rolled_back"
-                    else "yellow"
+                    else "nexus.warning"
                 )
                 table.add_row(
                     tx.get("transaction_id", "")[:12] + "...",

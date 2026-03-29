@@ -331,17 +331,17 @@ def list_users(
             for key in data:
                 # Determine status
                 status = "Active"
-                status_style = "green"
+                status_style = "nexus.success"
                 if key.get("revoked"):
                     status = "Revoked"
-                    status_style = "red"
+                    status_style = "nexus.error"
                 elif key.get("expires_at"):
                     try:
                         # Parse ISO format datetime
                         expires = datetime.fromisoformat(key["expires_at"].replace("Z", "+00:00"))
                         if expires < datetime.now(UTC):
                             status = "Expired"
-                            status_style = "yellow"
+                            status_style = "nexus.warning"
                     except (ValueError, TypeError):
                         pass
 

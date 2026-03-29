@@ -186,7 +186,7 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
             console.print("\n[bold]Action Results:[/bold]")
             for result in execution.action_results:
                 status_icon = "✓" if result.success else "✗"
-                status_color = "green" if result.success else "red"
+                status_color = "nexus.success" if result.success else "nexus.error"
                 console.print(
                     f"  [{status_color}]{status_icon}[/{status_color}] {result.action_name} ({result.duration_ms:.2f}ms)"
                 )

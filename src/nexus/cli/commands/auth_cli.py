@@ -421,7 +421,7 @@ def auth_doctor() -> None:
     summaries = asyncio.run(service.list_summaries())
     failures = [s for s in summaries if s.status not in {AuthStatus.AUTHED, AuthStatus.UNKNOWN}]
     for summary in summaries:
-        style = "green" if summary.status == AuthStatus.AUTHED else "yellow"
+        style = "nexus.success" if summary.status == AuthStatus.AUTHED else "nexus.warning"
         console.print(
             f"[{style}]{summary.service}[/{style}] {summary.status.value}: {summary.message}"
         )

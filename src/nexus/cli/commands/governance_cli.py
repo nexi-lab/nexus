@@ -66,7 +66,7 @@ def governance_status(
                 console.print("\n[bold]Recent Alerts:[/bold]")
                 for alert in alert_list[:5]:
                     sev = alert.get("severity", "unknown")
-                    color = "red" if sev == "high" else "yellow"
+                    color = "nexus.error" if sev == "high" else "nexus.warning"
                     console.print(f"  [{color}]{sev}[/{color}] {alert.get('description', 'N/A')}")
 
         render_output(
@@ -128,7 +128,13 @@ def governance_alerts(
 
             for alert in alerts:
                 sev = alert.get("severity", "")
-                sev_style = "red" if sev == "high" else "yellow" if sev == "medium" else "dim"
+                sev_style = (
+                    "nexus.error"
+                    if sev == "high"
+                    else "nexus.warning"
+                    if sev == "medium"
+                    else "nexus.muted"
+                )
                 table.add_row(
                     alert.get("created_at", "")[:19],
                     f"[{sev_style}]{sev}[/{sev_style}]",

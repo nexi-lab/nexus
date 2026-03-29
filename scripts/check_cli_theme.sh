@@ -22,11 +22,12 @@ FAILED=0
 #   Composite: [bold red], [/bold red], [dim yellow], [italic cyan], …
 #   Style attrs: style="red", style="bold cyan", style="dim green", …
 #   Dict values: "pending": "yellow", "status": "green", …
+#   Variable assigns: color = "red", status_style = "green", …
 COLORS="red|green|yellow|cyan|magenta|blue|white"
 MODIFIERS="bold|dim|italic|underline|strike|reverse|blink"
 BARE_TAGS=$(grep -rn \
     --include="*.py" \
-    -E "\[/?(($MODIFIERS) )?($COLORS)\]|style=\"(($MODIFIERS) )?($COLORS)\"|\":\s*\"($COLORS)\"" \
+    -E "\[/?(($MODIFIERS) )?($COLORS)\]|style=\"(($MODIFIERS) )?($COLORS)\"|\":\s*\"($COLORS)\"|= \"($COLORS)\"" \
     "$ROOT/src/nexus/cli/" \
     | grep -v 'theme\.py' \
     | grep -v '# noqa: theme' \

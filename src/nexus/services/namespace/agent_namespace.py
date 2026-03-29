@@ -12,7 +12,7 @@ holds the collection of forks behind a ``threading.Lock``.
 """
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.namespace_manager import MountEntry
@@ -77,9 +77,9 @@ class AgentNamespace:
         deleted_keys = self._deleted_keys
         if path in deleted_keys:
             return None
-        overlay_entry = self._overlay.get(path, _MISSING)
+        overlay_entry: MountEntry | object = self._overlay.get(path, _MISSING)
         if overlay_entry is not _MISSING:
-            return overlay_entry
+            return cast("MountEntry", overlay_entry)
         if self.mode == ForkMode.CLEAN:
             return None
         return self._parent_snapshot.get(path)

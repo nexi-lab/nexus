@@ -6,15 +6,21 @@ Tests the Gmail connector end-to-end including:
 - Error formatting with SKILL.md references
 - SKILL.md auto-generation from static file
 - YAML parsing
+- Write operations (send, reply, forward, draft)
+- Delete operations (trash)
+- MIME message building
 
 Note: These tests mock the Gmail API since we can't
 use real OAuth tokens in CI. For full E2E testing with real
 Google API, use OAuth authentication via the integrations page.
 """
 
+import base64
+from email import message_from_bytes
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 from pydantic import ValidationError as PydanticValidationError
 
 from nexus.backends.connectors.base import ValidationError
@@ -23,7 +29,9 @@ from nexus.backends.connectors.gmail.schemas import (
     ReplyEmailSchema,
     SendEmailSchema,
 )
+from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
 from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.contracts.exceptions import BackendError
 from nexus.contracts.types import OperationContext
 from nexus.core.config import PermissionConfig
 from nexus.factory import create_nexus_fs
@@ -47,7 +55,7 @@ def mock_gmail_service():
         "labelIds": ["SENT"],
     }
 
-    # Mock messages().get()
+    # Mock messages().get() — includes Message-ID header for reply/forward tests
     service.users().messages().get().execute.return_value = {
         "id": "msg_123",
         "threadId": "thread_abc",
@@ -58,6 +66,7 @@ def mock_gmail_service():
                 {"name": "To", "value": "recipient@example.com"},
                 {"name": "Subject", "value": "Test Subject"},
                 {"name": "Date", "value": "Mon, 15 Jan 2024 09:00:00 -0800"},
+                {"name": "Message-ID", "value": "<original-msg-id@example.com>"},
             ],
             "body": {"data": "VGVzdCBlbWFpbCBib2R5"},  # Base64: "Test email body"
         },
@@ -72,10 +81,30 @@ def mock_gmail_service():
         ]
     }
 
+    # Mock messages().trash()
+    service.users().messages().trash().execute.return_value = {
+        "id": "msg_123",
+        "labelIds": ["TRASH"],
+    }
+
     # Mock drafts().create()
     service.users().drafts().create().execute.return_value = {
         "id": "draft_123",
         "message": {"id": "msg_draft_123", "threadId": "thread_draft"},
+    }
+
+    # Mock drafts().list()
+    service.users().drafts().list().execute.return_value = {
+        "drafts": [
+            {
+                "id": "draft_1",
+                "message": {"id": "msg_draft_1", "threadId": "thread_d1"},
+            },
+            {
+                "id": "draft_2",
+                "message": {"id": "msg_draft_2", "threadId": "thread_d2"},
+            },
+        ]
     }
 
     return service
@@ -480,3 +509,492 @@ class TestOperationTraits:
         assert traits is not None
         assert traits.reversibility == Reversibility.FULL  # Can delete draft
         assert traits.confirm == ConfirmLevel.INTENT  # Only needs intent
+
+
+# ============================================================================
+# WRITE OPERATIONS TESTS
+# ============================================================================
+
+
+class TestWriteOperations:
+    """Test Gmail write operations (send, reply, forward, draft)."""
+
+    def test_send_email(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test sending a new email via write_content."""
+        content = yaml.dump(
+            {
+                "agent_intent": "User requested to send a project update to the team",
+                "to": ["alice@example.com"],
+                "subject": "Project Update",
+                "body": "Hi team, here is the update.",
+                "confirm": True,
+            }
+        ).encode("utf-8")
+
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="SENT/_new.yaml",
+        )
+
+        result = gmail_backend.write_content(content, context=ctx)
+
+        assert result.content_id == "sent_msg_123"
+        assert result.size == len(content)
+        mock_gmail_service.users().messages().send.assert_called()
+
+    def test_reply_email(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test replying to an email thread via write_content."""
+        content = yaml.dump(
+            {
+                "agent_intent": "User wants to reply to the project thread with feedback",
+                "thread_id": "thread_abc",
+                "message_id": "msg_123",
+                "body": "Thanks for the update! Looks good.",
+                "confirm": True,
+            }
+        ).encode("utf-8")
+
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="SENT/_reply.yaml",
+        )
+
+        result = gmail_backend.write_content(content, context=ctx)
+
+        assert result.content_id == "sent_msg_123"
+        mock_gmail_service.users().messages().send.assert_called()
+
+    def test_forward_email(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test forwarding an email via write_content."""
+        content = yaml.dump(
+            {
+                "agent_intent": "User wants to forward the report to the external partner",
+                "message_id": "msg_123",
+                "to": ["partner@external.com"],
+                "comment": "FYI - Here's the report we discussed.",
+                "confirm": True,
+            }
+        ).encode("utf-8")
+
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="SENT/_forward.yaml",
+        )
+
+        result = gmail_backend.write_content(content, context=ctx)
+
+        assert result.content_id == "sent_msg_123"
+        mock_gmail_service.users().messages().send.assert_called()
+
+    def test_create_draft(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test creating a draft via write_content."""
+        content = yaml.dump(
+            {
+                "agent_intent": "User wants to create a draft for later review and editing",
+                "to": ["client@example.com"],
+                "subject": "Re: Project Proposal",
+                "body": "Thank you for your proposal...",
+            }
+        ).encode("utf-8")
+
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="DRAFTS/_new.yaml",
+        )
+
+        result = gmail_backend.write_content(content, context=ctx)
+
+        assert result.content_id == "draft_123"
+        mock_gmail_service.users().drafts().create.assert_called()
+
+    def test_invalid_write_path(self, gmail_backend, operation_context):
+        """Test that writing to an invalid path raises BackendError."""
+        content = yaml.dump(
+            {
+                "agent_intent": "This should fail because path is invalid for writing",
+                "body": "test",
+                "confirm": True,
+            }
+        ).encode("utf-8")
+
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="INBOX/_new.yaml",  # INBOX doesn't support writes
+        )
+
+        with pytest.raises(BackendError):
+            gmail_backend.write_content(content, context=ctx)
+
+
+# ============================================================================
+# DELETE (TRASH) OPERATIONS TESTS
+# ============================================================================
+
+
+class TestDeleteOperations:
+    """Test Gmail delete (trash) operations."""
+
+    def test_trash_message(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test trashing a message via delete_content."""
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="INBOX/thread_abc-msg_123.yaml",
+        )
+
+        gmail_backend.delete_content("", context=ctx)
+
+        mock_gmail_service.users().messages().trash.assert_called()
+
+    def test_trash_invalid_path(self, gmail_backend, operation_context):
+        """Test that trashing with a sentinel path raises error."""
+        ctx = OperationContext(
+            user_id="test@example.com",
+            groups=[],
+            zone_id="root",
+            backend_path="SENT/_new.yaml",
+        )
+
+        with pytest.raises(BackendError):
+            gmail_backend.delete_content("", context=ctx)
+
+
+# ============================================================================
+# MIME BUILDING TESTS
+# ============================================================================
+
+
+class TestMimeBuilding:
+    """Test MIME message building helpers on GmailTransport."""
+
+    @pytest.fixture
+    def transport(self):
+        """Create a GmailTransport with test config (no real auth)."""
+        transport = GmailTransport(
+            token_manager=MagicMock(),
+            provider="gmail",
+            user_email="me@example.com",
+        )
+        return transport
+
+    def test_build_basic_mime(self, transport):
+        """Test basic MIME message structure."""
+        data = {
+            "to": ["alice@example.com", "bob@example.com"],
+            "subject": "Test Subject",
+            "body": "Hello, this is a test.",
+        }
+
+        msg = transport._build_mime_message(data)
+
+        assert msg["From"] == "me@example.com"
+        assert "alice@example.com" in msg["To"]
+        assert "bob@example.com" in msg["To"]
+        assert msg["Subject"] == "Test Subject"
+
+        # Verify body content
+        body = msg.get_content()
+        assert "Hello, this is a test." in body
+
+    def test_build_mime_with_cc_bcc(self, transport):
+        """Test MIME message with CC and BCC."""
+        data = {
+            "to": ["alice@example.com"],
+            "cc": ["cc@example.com"],
+            "bcc": ["bcc@example.com"],
+            "subject": "With CC/BCC",
+            "body": "Content",
+        }
+
+        msg = transport._build_mime_message(data)
+
+        assert "cc@example.com" in msg["Cc"]
+        assert "bcc@example.com" in msg["Bcc"]
+
+    def test_build_mime_with_html(self, transport):
+        """Test MIME message with HTML alternative."""
+        data = {
+            "to": ["alice@example.com"],
+            "subject": "HTML Email",
+            "body": "Plain text version",
+            "html_body": "<h1>HTML version</h1>",
+        }
+
+        msg = transport._build_mime_message(data)
+
+        # Should be multipart/alternative
+        assert msg.get_content_type() == "multipart/alternative"
+
+        # Verify both parts exist
+        parts = list(msg.iter_parts())
+        assert len(parts) == 2
+        assert parts[0].get_content_type() == "text/plain"
+        assert parts[1].get_content_type() == "text/html"
+
+    def test_build_reply_threading_headers(self, transport):
+        """Test reply MIME has correct threading headers."""
+        data = {
+            "body": "This is my reply.",
+        }
+        original = {
+            "from": "sender@example.com",
+            "to": "me@example.com",
+            "subject": "Original Subject",
+            "headers": {
+                "From": "sender@example.com",
+                "To": "me@example.com",
+                "Subject": "Original Subject",
+                "Message-ID": "<original-123@example.com>",
+            },
+        }
+
+        msg = transport._build_reply_mime(data, original)
+
+        assert msg["Subject"] == "Re: Original Subject"
+        assert msg["In-Reply-To"] == "<original-123@example.com>"
+        assert msg["References"] == "<original-123@example.com>"
+        assert "sender@example.com" in msg["To"]
+
+    def test_build_reply_already_re_prefix(self, transport):
+        """Test reply does not double the Re: prefix."""
+        data = {"body": "Reply text"}
+        original = {
+            "from": "sender@example.com",
+            "subject": "Re: Already replied",
+            "headers": {
+                "From": "sender@example.com",
+                "Subject": "Re: Already replied",
+            },
+        }
+
+        msg = transport._build_reply_mime(data, original)
+
+        assert msg["Subject"] == "Re: Already replied"
+        assert not msg["Subject"].startswith("Re: Re:")
+
+    def test_build_forward_separator(self, transport):
+        """Test forward message includes forwarded separator."""
+        data = {
+            "to": ["forward@example.com"],
+            "comment": "FYI - see below.",
+        }
+        original = {
+            "from": "sender@example.com",
+            "to": "me@example.com",
+            "subject": "Important Report",
+            "date": "2024-01-15T09:00:00-08:00",
+            "body_text": "Here is the report content.",
+            "headers": {
+                "From": "sender@example.com",
+                "To": "me@example.com",
+                "Subject": "Important Report",
+                "Date": "2024-01-15T09:00:00-08:00",
+            },
+        }
+
+        msg = transport._build_forward_mime(data, original)
+
+        assert msg["Subject"] == "Fwd: Important Report"
+        assert "forward@example.com" in msg["To"]
+
+        body = msg.get_content()
+        assert "---------- Forwarded message ----------" in body
+        assert "From: sender@example.com" in body
+        assert "FYI - see below." in body
+        assert "Here is the report content." in body
+
+    def test_encode_mime_raw(self, transport):
+        """Test base64url encoding of MIME message."""
+        data = {
+            "to": ["test@example.com"],
+            "subject": "Encoding Test",
+            "body": "Hello",
+        }
+
+        msg = transport._build_mime_message(data)
+        raw = GmailTransport._encode_mime_raw(msg)
+
+        # Should be valid base64url
+        decoded = base64.urlsafe_b64decode(raw)
+        parsed = message_from_bytes(decoded)
+        assert parsed["Subject"] == "Encoding Test"
+
+
+# ============================================================================
+# LIST DIR WITH DRAFTS / TRASH TESTS
+# ============================================================================
+
+
+class TestListDirWithDraftsTrash:
+    """Test that directory listing includes DRAFTS/ and TRASH/."""
+
+    def test_root_listing_includes_drafts_and_trash(self, gmail_backend, operation_context):
+        """Test that root listing includes DRAFTS/ and TRASH/ folders."""
+        dirs = gmail_backend.list_dir("/", context=operation_context)
+
+        assert "DRAFTS/" in dirs
+        assert "TRASH/" in dirs
+        assert "INBOX/" in dirs
+        assert "SENT/" in dirs
+
+    def test_label_folders_constant(self):
+        """Test LABEL_FOLDERS includes DRAFTS and TRASH."""
+        assert "DRAFTS" in LABEL_FOLDERS
+        assert "TRASH" in LABEL_FOLDERS
+        assert "INBOX" in LABEL_FOLDERS
+        assert "SENT" in LABEL_FOLDERS
+
+    def test_list_drafts_folder(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test listing DRAFTS folder returns draft entries."""
+        dirs = gmail_backend.list_dir("DRAFTS", context=operation_context)
+
+        # Should have 2 drafts from mock
+        assert len(dirs) == 2
+        mock_gmail_service.users().drafts().list.assert_called()
+
+    def test_list_trash_folder(self, gmail_backend, mock_gmail_service, operation_context):
+        """Test listing TRASH folder returns trashed entries."""
+        dirs = gmail_backend.list_dir("TRASH", context=operation_context)
+
+        # Should have 2 messages from mock (messages.list with TRASH label)
+        assert len(dirs) == 2
+        mock_gmail_service.users().messages().list.assert_called()
+
+
+# ============================================================================
+# PARSE KEY TESTS (sentinel support)
+# ============================================================================
+
+
+class TestParseKey:
+    """Test _parse_key with sentinel filenames."""
+
+    def test_parse_standard_key(self):
+        """Test parsing standard message key."""
+        label, thread_id, msg_id = GmailTransport._parse_key("INBOX/thread123-msg456.yaml")
+
+        assert label == "INBOX"
+        assert thread_id == "thread123"
+        assert msg_id == "msg456"
+
+    def test_parse_sentinel_new(self):
+        """Test parsing _new sentinel key."""
+        label, thread_id, sentinel = GmailTransport._parse_key("SENT/_new.yaml")
+
+        assert label == "SENT"
+        assert thread_id is None
+        assert sentinel == "_new"
+
+    def test_parse_sentinel_reply(self):
+        """Test parsing _reply sentinel key."""
+        label, thread_id, sentinel = GmailTransport._parse_key("SENT/_reply.yaml")
+
+        assert label == "SENT"
+        assert thread_id is None
+        assert sentinel == "_reply"
+
+    def test_parse_sentinel_forward(self):
+        """Test parsing _forward sentinel key."""
+        label, thread_id, sentinel = GmailTransport._parse_key("SENT/_forward.yaml")
+
+        assert label == "SENT"
+        assert thread_id is None
+        assert sentinel == "_forward"
+
+    def test_parse_drafts_new(self):
+        """Test parsing DRAFTS/_new sentinel key."""
+        label, thread_id, sentinel = GmailTransport._parse_key("DRAFTS/_new.yaml")
+
+        assert label == "DRAFTS"
+        assert thread_id is None
+        assert sentinel == "_new"
+
+    def test_parse_invalid_key(self):
+        """Test parsing invalid key returns None tuple."""
+        label, thread_id, msg_id = GmailTransport._parse_key("invalid/path/too/deep.yaml")
+
+        assert label is None
+        assert thread_id is None
+        assert msg_id is None
+
+
+# ============================================================================
+# YAML PARSING TESTS
+# ============================================================================
+
+
+class TestYamlParsing:
+    """Test _parse_yaml_content with comment extraction."""
+
+    def test_parse_with_comments(self):
+        """Test parsing YAML with agent_intent and confirm in comments."""
+        content = (
+            b"# agent_intent: User wants to send an email update\n"
+            b"# confirm: true\n"
+            b"to:\n"
+            b"  - alice@example.com\n"
+            b"subject: Test\n"
+            b"body: Hello\n"
+        )
+
+        result = GmailTransport._parse_yaml_content(content)
+
+        assert result["agent_intent"] == "User wants to send an email update"
+        assert result["confirm"] is True
+        assert result["to"] == ["alice@example.com"]
+        assert result["subject"] == "Test"
+
+    def test_parse_without_comments(self):
+        """Test parsing YAML without comment metadata."""
+        content = yaml.dump(
+            {
+                "agent_intent": "Inline intent field",
+                "to": ["bob@example.com"],
+                "body": "Content",
+            }
+        ).encode("utf-8")
+
+        result = GmailTransport._parse_yaml_content(content)
+
+        assert result["agent_intent"] == "Inline intent field"
+        assert result["to"] == ["bob@example.com"]
+
+
+# ============================================================================
+# BACKEND FEATURES TESTS
+# ============================================================================
+
+
+class TestBackendFeatures:
+    """Test backend feature flags."""
+
+    def test_write_back_feature(self, gmail_backend):
+        """Test that Gmail connector has WRITE_BACK feature."""
+        from nexus.contracts.backend_features import BackendFeature
+
+        assert gmail_backend.has_feature(BackendFeature.WRITE_BACK)
+
+    def test_skill_doc_feature(self, gmail_backend):
+        """Test that Gmail connector has SKILL_DOC feature."""
+        from nexus.contracts.backend_features import BackendFeature
+
+        assert gmail_backend.has_feature(BackendFeature.SKILL_DOC)
+
+    def test_oauth_features(self, gmail_backend):
+        """Test that Gmail connector has OAuth features."""
+        from nexus.contracts.backend_features import BackendFeature
+
+        assert gmail_backend.has_feature(BackendFeature.USER_SCOPED)
+        assert gmail_backend.has_feature(BackendFeature.TOKEN_MANAGER)
+        assert gmail_backend.has_feature(BackendFeature.OAUTH)

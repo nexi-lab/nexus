@@ -151,7 +151,7 @@ same pattern as Linux `i_rwsem` release before `fsnotify()`.
 
 ## 6. Debug Assertions
 
-When `NEXUS_LOCK_DEBUG=1` is set, Nexus tracks lock acquisition per-task
+When `NEXUS_DEBUG_LOCK_ORDER=1` is set, Nexus tracks lock acquisition per-task
 and asserts ordering constraints at runtime:
 
 - **Layer ordering**: acquiring L1 while holding L2 raises `LockOrderError`
@@ -163,7 +163,7 @@ See: `lib/lock_order.py` for implementation.
 Enable in development/CI:
 
 ```bash
-NEXUS_LOCK_DEBUG=1 pytest tests/
+NEXUS_DEBUG_LOCK_ORDER=1 pytest tests/
 ```
 
 ---

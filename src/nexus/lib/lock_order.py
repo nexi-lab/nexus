@@ -1,14 +1,17 @@
-"""Debug-mode lock ordering assertions (Issue #3392).
+"""Debug-only lock ordering assertions (Issue #3392).
+
+**DEBUG TOOL ONLY** — for detecting potential deadlocks during development/CI.
+Production: ALWAYS disabled (zero overhead). Enable only for debugging.
 
 Tracks lock acquisition per-task (asyncio) or per-thread and asserts
 that the global lock ordering (L1 → L2 → L3 → L4) is never violated.
 
 Inspired by DFUSE (arXiv:2503.18191) §4.2: deadlock from reversed lock
-ordering in distributed filesystem I/O. This module detects violations
-at runtime so they surface during development/CI instead of production.
+ordering in distributed filesystem I/O. Correct lock design avoids
+deadlock; this module is an additional safety net for verification.
 
 Activation:
-    NEXUS_LOCK_DEBUG=1  — enable lock ordering assertions
+    NEXUS_DEBUG_LOCK_ORDER=1  — enable lock ordering assertions
     (Default: disabled — zero overhead in production)
 
 Lock layers:
@@ -37,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Activation gate
 # ---------------------------------------------------------------------------
 
-LOCK_DEBUG_ENABLED: bool = os.environ.get("NEXUS_LOCK_DEBUG", "").lower() in (
+LOCK_DEBUG_ENABLED: bool = os.environ.get("NEXUS_DEBUG_LOCK_ORDER", "").lower() in (
     "1",
     "true",
     "yes",

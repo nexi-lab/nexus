@@ -4173,13 +4173,36 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Check if file exists")
     async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Tier 2: convenience wrapper — derives from sys_stat.
+        """Tier 2: check if path explicitly exists and is accessible.
 
-        Returns True if path exists and is accessible, False otherwise.
-        Hides the distinction between "not found" and "no access".
+        Returns True if path has explicit metadata or is an implicit directory,
+        False otherwise. Unlike sys_stat, does NOT synthesize directory entries.
         """
         try:
-            return (await self.sys_stat(path, context=context)) is not None
+            path = self._validate_path(path)
+            ctx = self._resolve_cred(context)
+
+            is_implicit_dir = self.metadata.is_implicit_directory(path)
+
+            # Permission check via stat hook (same as _check_is_directory)
+            from nexus.contracts.exceptions import PermissionDeniedError
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
+
+            try:
+                self._dispatch.intercept_pre_stat(
+                    _SHC(
+                        path=path,
+                        context=ctx,
+                        permission="TRAVERSE" if is_implicit_dir else "READ",
+                        extra={"is_implicit_directory": is_implicit_dir},
+                    )
+                )
+            except PermissionDeniedError:
+                return False
+
+            if self.metadata.exists(path):
+                return True
+            return is_implicit_dir
         except Exception:
             return False
 

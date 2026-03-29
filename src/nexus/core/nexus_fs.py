@@ -1588,7 +1588,12 @@ class NexusFS(  # type: ignore[misc]
         # --- Agent lineage: record read into session accumulator (Issue #3417) ---
         # Non-blocking, in-memory only. Records path + version + etag so the
         # lineage hook can attribute this read to the agent's next write.
-        if agent_id and meta is not None:
+        # Gate: only registered agents (subject_type="agent", authenticated via
+        # agent API key) produce lineage. Admin impersonation is excluded.
+        _is_registered_agent = (
+            agent_id and context is not None and getattr(context, "subject_type", "user") == "agent"
+        )
+        if _is_registered_agent and meta is not None:
             try:
                 from nexus.storage.session_read_accumulator import get_accumulator
 

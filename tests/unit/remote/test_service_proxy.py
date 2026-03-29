@@ -137,6 +137,7 @@ class TestBootRemoteServices:
 
         nfs = MagicMock()
         nfs._service_registry = AsyncMock()
+        nfs.sys_setattr = AsyncMock()
 
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:
@@ -171,6 +172,7 @@ class TestBootRemoteServices:
 
         nfs = MagicMock()
         nfs._service_registry = AsyncMock()
+        nfs.sys_setattr = AsyncMock()
 
         _, call_rpc = _make_recorder()
         with patch("nexus.factory.service_routing.enlist_wired_services") as mock_enlist:

@@ -228,7 +228,7 @@ class TestCacheCoordinatorCriticalPaths:
         def tiger_l2_cb(subj_type, subj_id, permission, res_type, zone_id):
             call_order.append("tiger_l2")
 
-        def lease_cb(zone_id):
+        def lease_cb(*args):
             call_order.append("lease")
 
         l1_cache.invalidate_subject.side_effect = lambda *a, **kw: call_order.append("l1")
@@ -261,7 +261,7 @@ class TestCacheCoordinatorCriticalPaths:
         def failing_tiger_cb(subj_type, subj_id, permission, res_type, zone_id):
             raise RuntimeError("dragonfly down")
 
-        def lease_cb(zone_id):
+        def lease_cb(*args):
             nonlocal lease_called
             lease_called = True
 

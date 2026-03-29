@@ -75,6 +75,7 @@ async def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore):
         parsing=ParseConfig(auto_parse=False),
         permissions=PermissionConfig(enforce=False),
         init_cred=TEST_CONTEXT,
+        enable_write_buffer=False,  # sync observer — tests query RecordStore immediately
     )
     yield nx
     nx.close()

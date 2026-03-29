@@ -42,7 +42,10 @@ async def nexus_fs_large(tmp_path, isolated_db):
     backend = CASLocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
     nx = await create_nexus_fs(
-        backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
+        backend=backend,
+        metadata_store=metadata_store,
+        permissions=PermissionConfig(enforce=False),
+        enable_write_buffer=False,  # sync observer — 1000-file burst can overflow pipe buffer
     )
 
     # Create 1000 files in batches

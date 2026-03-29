@@ -3,6 +3,7 @@ name: Code Quality Standards
 on:
   pull_request:
     branches: [main, develop]
+  merge_group:
   push:
     branches: [main, develop, refactor/**]
     paths:

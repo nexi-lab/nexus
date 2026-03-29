@@ -27,7 +27,7 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "federation_unmount",
     ),
     "rebac": ("rebac_check", "rebac_create", "rebac_list_tuples", "rebac_expand"),
-    "events": ("wait_for_changes", "locked"),
+    "events": ("wait_for_changes",),
     "mount": ("add_mount", "remove_mount", "list_mounts"),
     "gateway": (
         "mkdir",

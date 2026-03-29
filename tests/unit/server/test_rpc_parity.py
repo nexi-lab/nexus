@@ -118,6 +118,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Tier 2 convenience wrappers — delegate to sys_lock/sys_unlock which ARE @rpc_expose
         "lock",  # Tier 2 blocking wait over sys_lock (defined in NexusFilesystemABC)
         "unlock",  # Tier 2 alias for sys_unlock (defined in NexusFilesystemABC)
+        "locked",  # Tier 2 async context manager for lock/unlock (defined in NexusFilesystemABC)
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
         # Async methods - TODO: Add async RPC support
@@ -167,7 +168,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Distributed Lock methods - async context managers require special handling
         # Tracked in Issue #1141
         "atomic_update",  # Async - read-modify-write with distributed lock
-        "locked",  # Async context manager - distributed lock acquisition
+        # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
         # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration

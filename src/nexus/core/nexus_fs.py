@@ -1241,7 +1241,7 @@ class NexusFS(  # type: ignore[misc]
         """Acquire advisory lock synchronously via EventsService.
 
         This method bridges sync write() with async lock operations.
-        For async contexts, use `async with events_service.locked()` instead.
+        For async contexts, use `async with nx.locked()` instead.
         """
         import asyncio
 
@@ -1258,7 +1258,7 @@ class NexusFS(  # type: ignore[misc]
             asyncio.get_running_loop()
             raise RuntimeError(
                 "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.service('events_service').locked(path):` and `write(lock=False)` instead."
+                "Use `async with nx.locked(path):` and `write(lock=False)` instead."
             )
         except RuntimeError as e:
             if "event loop detected" in str(e):
@@ -2820,14 +2820,7 @@ class NexusFS(  # type: ignore[misc]
             ...     lambda c: json.dumps({**json.loads(c), "version": 2}).encode()
             ... )
         """
-        _events_ref = self.service("events_service") if hasattr(self, "service") else None
-        if _events_ref is None:
-            raise RuntimeError(
-                "atomic_update() requires EventsService. "
-                "Ensure NexusFS is initialized with services."
-            )
-
-        async with _events_ref.locked(path, timeout=timeout, ttl=ttl) as lock_id:  # noqa: F841
+        async with self.locked(path, timeout=timeout, ttl=ttl, context=context) as lock_id:  # noqa: F841
             content = await self.sys_read(path, context=context)
             new_content = update_fn(content)
             return await self.write(path, new_content, context=context)

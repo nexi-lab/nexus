@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { GovernanceAlert } from "../../stores/access-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface AlertListProps {
   readonly alerts: readonly GovernanceAlert[];
@@ -35,11 +36,7 @@ export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): R
   }
 
   if (alerts.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No governance alerts</text>
-      </box>
-    );
+    return <EmptyState message="No alerts found." />;
   }
 
   return (

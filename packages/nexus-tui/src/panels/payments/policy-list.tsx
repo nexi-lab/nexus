@@ -5,6 +5,7 @@
 import React from "react";
 import type { PolicyRecord } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface PolicyListProps {
   readonly policies: readonly PolicyRecord[];
@@ -27,11 +28,7 @@ export function PolicyList({
   }
 
   if (policies.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No spending policies found</text>
-      </box>
-    );
+    return <EmptyState message="No policies yet." hint="Press Shift+N to create a policy." />;
   }
 
   return (

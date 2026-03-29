@@ -66,9 +66,13 @@ interface YamlConfig {
 
 /**
  * Minimal YAML reader matching the Python CLI search order:
- *   1. ./nexus.yaml
- *   2. ./nexus.yml
- *   3. ~/.nexus/config.yaml
+ *   1. Walk up from CWD looking for nexus.yaml / nexus.yml
+ *   2. ~/.nexus/config.yaml
+ *
+ * Walking up from CWD handles two important cases:
+ *   - Running the TUI from a subdirectory (e.g. packages/nexus-tui/)
+ *   - Running from a git worktree inside the main repo tree, where
+ *     nexus.yaml is gitignored and only exists in the original repo root
  *
  * Only reads top-level `url:` and `api_key:` fields via regex.
  * Avoids pulling in a full YAML parser dependency.
@@ -81,14 +85,26 @@ function readYamlConfig(): YamlConfig {
     const os = require("node:os") as typeof import("node:os");
     const path = require("node:path") as typeof import("node:path");
 
-    // Search order: CWD first, then home dir.
-    // Each TUI instance uses its own nexus.yaml in its CWD to avoid
-    // conflicts with other running Nexus stacks.
-    const candidates = [
-      path.resolve("nexus.yaml"),
-      path.resolve("nexus.yml"),
-      path.join(os.homedir(), ".nexus", "config.yaml"),
-    ];
+    // Walk up from CWD looking for nexus.yaml or nexus.yml.
+    // Stops at the git root (.git file or directory) to avoid leaking
+    // into a parent repository. For git worktrees, this means the search
+    // stops at the worktree root — each worktree should have its own
+    // nexus.yaml (created via `nexus init` from the pre-connection screen).
+    const candidates: string[] = [];
+    let dir = path.resolve(".");
+    for (let i = 0; i < 20; i++) {
+      candidates.push(path.join(dir, "nexus.yaml"));
+      candidates.push(path.join(dir, "nexus.yml"));
+      // Stop after reaching a git root (both regular repos and worktrees)
+      try {
+        if (fs.existsSync(path.join(dir, ".git"))) break;
+      } catch { /* ignore */ }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+    // Fallback: home dir config
+    candidates.push(path.join(os.homedir(), ".nexus", "config.yaml"));
 
     for (const configPath of candidates) {
       try {

@@ -6,6 +6,7 @@ import React from "react";
 import type { ApprovalRequest } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface ApprovalListProps {
   readonly approvals: readonly ApprovalRequest[];
@@ -42,11 +43,7 @@ export function ApprovalList({
   }
 
   if (approvals.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text dimColor>No approval requests found</text>
-      </box>
-    );
+    return <EmptyState message="No approvals yet." hint="Press n to request approval." />;
   }
 
   return (

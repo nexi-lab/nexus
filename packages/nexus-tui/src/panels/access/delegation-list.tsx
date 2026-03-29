@@ -5,6 +5,7 @@
 
 import React from "react";
 import type { DelegationItem } from "../../stores/access-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface DelegationListProps {
   readonly delegations: readonly DelegationItem[];
@@ -40,11 +41,7 @@ export function DelegationList({
   }
 
   if (delegations.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No delegations found</text>
-      </box>
-    );
+    return <EmptyState message="No delegations yet." hint="Press n to create one." />;
   }
 
   return (

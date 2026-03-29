@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { Credential } from "../../stores/access-store.js";
+import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface CredentialListProps {
   readonly credentials: readonly Credential[];
@@ -37,11 +38,7 @@ export function CredentialList({
   }
 
   if (credentials.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No credentials found</text>
-      </box>
-    );
+    return <EmptyState message="No credentials found." hint="Press i to issue a credential." />;
   }
 
   return (

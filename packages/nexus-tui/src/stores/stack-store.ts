@@ -124,23 +124,49 @@ function formatPorts(publishers: { URL?: string; PublishedPort?: number; TargetP
   return parts.join(", ");
 }
 
+function containerFromObj(obj: Record<string, unknown>): ContainerInfo {
+  const publishers = obj.Publishers;
+  return {
+    name: (obj.Name ?? obj.Names ?? "") as string,
+    service: (obj.Service ?? "") as string,
+    state: (obj.State ?? "") as string,
+    health: (obj.Health ?? "") as string,
+    ports: Array.isArray(publishers)
+      ? formatPorts(publishers as { URL?: string; PublishedPort?: number; TargetPort?: number }[])
+      : (obj.Ports ?? "") as string,
+    image: (obj.Image ?? "") as string,
+  };
+}
+
+/**
+ * Parse `docker compose ps --format json` output.
+ * Handles both formats:
+ *   - NDJSON (one JSON object per line) — newer Compose versions
+ *   - JSON array (single `[...]` blob) — older Compose versions
+ */
 function parseDockerPs(output: string): ContainerInfo[] {
-  const containers: ContainerInfo[] = [];
-  for (const line of output.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || !trimmed.startsWith("{")) continue;
+  const trimmed = output.trim();
+  if (!trimmed) return [];
+
+  // Try JSON array first (older Compose: single [...] output)
+  if (trimmed.startsWith("[")) {
     try {
-      const obj = JSON.parse(trimmed);
-      containers.push({
-        name: obj.Name ?? obj.Names ?? "",
-        service: obj.Service ?? "",
-        state: obj.State ?? "",
-        health: obj.Health ?? "",
-        ports: Array.isArray(obj.Publishers)
-          ? formatPorts(obj.Publishers)
-          : obj.Ports ?? "",
-        image: obj.Image ?? "",
-      });
+      const arr = JSON.parse(trimmed);
+      if (Array.isArray(arr)) {
+        return arr.map(containerFromObj);
+      }
+    } catch {
+      // Fall through to NDJSON parsing
+    }
+  }
+
+  // NDJSON: one JSON object per line (newer Compose)
+  const containers: ContainerInfo[] = [];
+  for (const line of trimmed.split("\n")) {
+    const l = line.trim();
+    if (!l || !l.startsWith("{")) continue;
+    try {
+      containers.push(containerFromObj(JSON.parse(l)));
     } catch {
       // Skip non-JSON lines
     }

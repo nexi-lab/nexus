@@ -65,7 +65,7 @@ function ContainerList({
   }
 
   if (containers.length === 0) {
-    return <EmptyState message="No containers found." hint="Press Shift+U to start the stack." />;
+    return <EmptyState message="No containers found." hint="Start the stack with: nexus up" />;
   }
 
   return (
@@ -118,7 +118,7 @@ function ConfigView({
   }
 
   if (!yaml) {
-    return <EmptyState message="No nexus.yaml found." hint="Press I to initialize." />;
+    return <EmptyState message="No nexus.yaml found." hint="Run: nexus init --preset shared" />;
   }
 
   const lines = yaml.split("\n");

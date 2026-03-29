@@ -1,4 +1,9 @@
-"""Storage backends for Nexus."""
+"""Storage backends for Nexus.
+
+See docs/architecture/backend-architecture.md for the Transport × Addressing
+composition model and docs/architecture/connector-transport-matrix.md for
+per-connector implementation details.
+"""
 
 import importlib
 import logging

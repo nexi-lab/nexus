@@ -16,36 +16,36 @@ delete all legacy code.
 
 ### 1.1 New Architecture (#1323) — Active
 
-| File | Lines | Class | Reg Name | Role |
-|---|---|---|---|---|
-| `cas_backend.py` | 588 | `CASBackend(Backend)` | — | CAS addressing engine |
-| `path_backend.py` | 526 | `PathBackend(Backend)` | — | Path addressing engine |
-| `blob_transport.py` | 140 | `BlobTransport` (Protocol) | — | Transport abstraction (9 methods) |
-| `cas_gcs.py` | 153 | `CASGCSBackend(CASBackend)` | `"cas_gcs"` | Thin: CAS + GCS transport |
-| `path_gcs.py` | 368 | `PathGCSBackend(PathBackend)` | `"path_gcs"` | Thin: Path + GCS transport |
-| `path_s3.py` | 321 | `PathS3Backend(PathBackend)` | `"path_s3"` | Thin: Path + S3 transport |
-| `transports/gcs_transport.py` | 326 | `GCSBlobTransport` | — | GCS blob I/O |
-| `transports/s3_transport.py` | 413 | `S3BlobTransport` | — | S3 blob I/O |
+| File | Class | Reg Name | Role |
+|---|---|---|---|
+| `cas_addressing_engine.py` | `CASAddressingEngine(Backend)` | — | CAS addressing engine |
+| `path_addressing_engine.py` | `PathAddressingEngine(Backend)` | — | Path addressing engine |
+| `transport.py` | `Transport` (Protocol) | — | Transport abstraction (10 methods) |
+| `cas_gcs.py` | `CASGCSBackend(CASAddressingEngine)` | `"cas_gcs"` | Thin: CAS + GCS transport |
+| `path_gcs.py` | `PathGCSBackend(PathAddressingEngine)` | `"path_gcs"` | Thin: Path + GCS transport |
+| `path_s3.py` | `PathS3Backend(PathAddressingEngine)` | `"path_s3"` | Thin: Path + S3 transport |
+| `transports/gcs_transport.py` | `GCSTransport` | — | GCS blob I/O |
+| `transports/s3_transport.py` | `S3Transport` | — | S3 blob I/O |
 
-**Naming:** Thin connectors follow the `{addressing}_{transport}` convention established
-in **Section 5.2**. Rename completed in Phase 5.
+**API Connector Transports** (all compose with `PathAddressingEngine`):
+
+| Package | Transport | Backend | Auth |
+|---|---|---|---|
+| `connectors/gmail/` | `GmailTransport` | `PathGmailBackend` | OAuth (Google) |
+| `connectors/calendar/` | `CalendarTransport` | `PathCalendarBackend` | OAuth (Google) |
+| `connectors/gdrive/` | `DriveTransport` | `PathGDriveBackend` | OAuth (Google) |
+| `connectors/slack/` | `SlackTransport` | `PathSlackBackend` | OAuth (Slack) |
+| `connectors/x/` | `XTransport` | `PathXBackend` | OAuth (X) |
+| `connectors/hn/` | `HNTransport` | `PathHNBackend` | None (public) |
+| `connectors/cli/` | `CLITransport` | `PathCLIBackend` | Per-connector env vars |
 
 ### 1.2 Surviving Legacy
 
-| File | Lines | Class | Status |
-|---|---|---|---|
-| `local_connector.py` | 806 | `LocalConnectorBackend` | **Kept** — unique path-based features (symlink safety, inode versioning, L1 cache) |
+| File | Class | Status |
+|---|---|---|
+| `local_connector.py` | `LocalConnectorBackend` | **Kept** — unique path-based features (symlink safety, inode versioning, L1 cache) |
 
-All other legacy backends (`local.py`, `passthrough.py`, `chunked_storage.py`,
-`async_local.py`, `cas_blob_store.py`) have been deleted and replaced by the new
-composition model.
-
-### 1.3 API Connectors — Out of Scope
-
-The API-based connectors (`gdrive_connector.py`, `gmail_connector.py`,
-`gcalendar_connector.py`, `slack_connector.py`, `hn_connector.py`, `x_connector.py`)
-subclass `Backend` directly but interact with REST APIs, not blob stores. The
-`BlobTransport` abstraction does not apply to them. They remain as-is.
+All other legacy backends have been deleted and replaced by the composition model.
 
 ---
 
@@ -54,36 +54,41 @@ subclass `Backend` directly but interact with REST APIs, not blob stores. The
 PR #1323 established the principle: **transport** (WHERE blobs live) and **addressing**
 (HOW blobs are identified) are orthogonal axes.
 
-### 2.1 Composition Matrix (Existing Transports Only)
+### 2.1 Composition Matrix
 
 ```
-                    Transport (WHERE)
-                    Local           GCS             S3
-                  +---------------+---------------+---------------+
-Addressing  CAS   | CASBackend    | CASBackend    | CASBackend    |
-(HOW)             | + LocalBlob   | + GCSBlob     | + S3Blob      |
-                  | Transport     | Transport     | Transport     |
-                  | (existing)    | (existing)    | (planned)     |
-                  +---------------+---------------+---------------+
-            Path  | PathBackend   | PathBackend   | PathBackend   |
-                  | + LocalBlob   | + GCSBlob     | + S3Blob      |
-                  | Transport     | Transport     | Transport     |
-                  | (existing)    | (existing)    | (existing)    |
-                  +---------------+---------------+---------------+
+              Transport (WHERE)
+              Local   GCS    S3    Gmail  GDrive  Slack  X    HN   CLI   Calendar
+Addressing   +------+------+-----+------+-------+------+----+----+-----+---------+
+(HOW)  CAS   | ✓    | ✓    | ✓   |      |       |      |    |    |     |         |
+       Path  | ✓    | ✓    | ✓   | ✓    | ✓     | ✓    | ✓  | ✓  | ✓   | ✓       |
+             +------+------+-----+------+-------+------+----+----+-----+---------+
 ```
 
-**Current state of each cell:**
+**Blob storage cells:**
 
-| Cell | Current Reg Name | Status |
+| Cell | Reg Name | Status |
 |---|---|---|
-| CAS + Local | `"cas_local"` | **Done** — `CASLocalBackend` in `cas_local.py` |
-| CAS + GCS | `"cas_gcs"` | **Done** — thin class exists |
-| CAS + S3 | — | **Future** — `S3BlobTransport` exists but no CAS wiring yet |
-| Path + Local | `"local_connector"` | **Keep** — unique architecture, not replaceable by PathBackend |
-| Path + GCS | `"path_gcs"` | **Done** — thin class exists |
-| Path + S3 | `"path_s3"` | **Done** — thin class exists |
+| CAS + Local | `"cas_local"` | **Done** — `CASLocalBackend` |
+| CAS + GCS | `"cas_gcs"` | **Done** — `CASGCSBackend` |
+| CAS + S3 | — | **Future** — `S3Transport` exists but no CAS wiring yet |
+| Path + Local | `"local_connector"` | **Keep** — unique architecture (symlink safety, inode versioning) |
+| Path + GCS | `"path_gcs"` | **Done** — `PathGCSBackend` |
+| Path + S3 | `"path_s3"` | **Done** — `PathS3Backend` |
 
-Connector names and file names have been standardized per Section 5.2 (Phase 5 — **DONE**).
+**API connector cells** (all Path addressing, `DT_EXTERNAL_STORAGE`):
+
+| Cell | Reg Name | Status |
+|---|---|---|
+| Path + Gmail | `"gmail_connector"` | **Done** — `PathGmailBackend` + `GmailTransport` |
+| Path + GDrive | `"gdrive_connector"` | **Done** — `PathGDriveBackend` + `DriveTransport` |
+| Path + Calendar | `"gcalendar_connector"` | **Done** — `PathCalendarBackend` + `CalendarTransport` |
+| Path + Slack | `"slack_connector"` | **Done** — `PathSlackBackend` + `SlackTransport` |
+| Path + X | `"x_connector"` | **Done** — `PathXBackend` + `XTransport` |
+| Path + HN | `"hn_connector"` | **Done** — `PathHNBackend` + `HNTransport` |
+| Path + CLI | (dynamic) | **Done** — `PathCLIBackend` + `CLITransport` (7 subclasses) |
+
+See `connector-transport-matrix.md` for per-connector method coverage and auth details.
 
 ### 2.2 Addressing Semantics
 
@@ -116,38 +121,55 @@ These are orthogonal. Federation DT_MOUNT increments the zone-level link count i
 metastore — it never touches `Backend.get_ref_count()`. Path-addressed backends return ref_count=1
 because there is no content dedup (each path owns its blob exclusively).
 
-### 2.4 BlobTransport Protocol (9 methods)
+### 2.4 Transport Protocol (10 methods)
 
-From `backends/blob_transport.py` (140 lines):
+From `backends/base/transport.py`:
 
 ```python
 @runtime_checkable
-class BlobTransport(Protocol):
+class Transport(Protocol):
     transport_name: str
-    def put_blob(self, key: str, data: bytes, content_type: str = "") -> str | None: ...
-    def get_blob(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]: ...
-    def delete_blob(self, key: str) -> None: ...
-    def blob_exists(self, key: str) -> bool: ...
-    def get_blob_size(self, key: str) -> int: ...
-    def list_blobs(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]: ...
-    def copy_blob(self, src_key: str, dst_key: str) -> None: ...
-    def create_directory_marker(self, key: str) -> None: ...
-    def stream_blob(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]: ...
+    def store(self, key: str, data: bytes, content_type: str = "") -> str | None: ...
+    def fetch(self, key: str, version_id: str | None = None) -> tuple[bytes, str | None]: ...
+    def remove(self, key: str) -> None: ...
+    def exists(self, key: str) -> bool: ...
+    def get_size(self, key: str) -> int: ...
+    def list_keys(self, prefix: str, delimiter: str = "/") -> tuple[list[str], list[str]]: ...
+    def copy_key(self, src_key: str, dst_key: str) -> None: ...
+    def create_dir(self, key: str) -> None: ...
+    def stream(self, key, chunk_size=8192, version_id=None) -> Iterator[bytes]: ...
+    def store_chunked(self, key, chunks, content_type="") -> str | None: ...
 ```
 
-### 2.5 Transport Inventory (Complete)
+Method names map to REST verbs: `store`=PUT, `fetch`=GET, `remove`=DELETE,
+`exists`=HEAD, `list_keys`=GET collection. This makes API connectors natural —
+REST APIs are filesystems (HATEOAS).
 
-Three transports exist. This is the complete set needed for V0:
+### 2.5 Transport Inventory
 
-| Transport | File | Lines | Status |
-|---|---|---|---|
-| `LocalBlobTransport` | `transports/local_transport.py` | 317 | Extracted from `CASBlobStore` + `LocalBackend` blob I/O |
-| `GCSBlobTransport` | `transports/gcs_transport.py` | 325 | `google.cloud.storage`, signed URLs, generation tracking |
-| `S3BlobTransport` | `transports/s3_transport.py` | 412 | `boto3`, presigned URLs, multipart, versioning |
+**Blob storage transports:**
 
-Linux analogy: `BlobTransport` is the **block device driver** (ext4 doesn't care if
-the disk is SSD or NVMe). `CASBackend`/`PathBackend` are the **filesystem layer**
-(ext4 vs FAT32 — different addressing, same block device interface).
+| Transport | File | Description |
+|---|---|---|
+| `LocalTransport` | `transports/local_transport.py` | Local filesystem I/O |
+| `GCSTransport` | `transports/gcs_transport.py` | Google Cloud Storage, signed URLs |
+| `S3Transport` | `transports/s3_transport.py` | AWS S3, presigned URLs, multipart |
+
+**API connector transports:**
+
+| Transport | File | Description |
+|---|---|---|
+| `GmailTransport` | `connectors/gmail/transport.py` | Gmail API, label-based folders |
+| `CalendarTransport` | `connectors/calendar/transport.py` | Google Calendar API, full CRUD |
+| `DriveTransport` | `connectors/gdrive/transport.py` | Google Drive API, folder ID caching |
+| `SlackTransport` | `connectors/slack/transport.py` | Slack API, channel-based |
+| `XTransport` | `connectors/x/transport.py` | X/Twitter API v2 |
+| `HNTransport` | `connectors/hn/transport.py` | HN Firebase API, read-only |
+| `CLITransport` | `connectors/cli/transport.py` | Subprocess execution |
+
+Linux analogy: `Transport` is the **block device driver** (ext4 doesn't care if
+the disk is SSD, NVMe, or a network API). `CASAddressingEngine`/`PathAddressingEngine`
+are the **filesystem layer** (ext4 vs FAT32 — different addressing, same block device interface).
 
 ---
 

@@ -328,6 +328,21 @@ A concrete class sits at the intersection: e.g. `ReBACManager` implements
 `PermissionProtocol` (Ops) and internally uses `RecordStoreABC` (Data).
 See `ops-scenario-matrix.md` for full proof.
 
+### 3.5 Transport × Addressing Composition
+
+**Linux analogue:** Block device driver (Transport) × filesystem (Addressing)
+
+ObjectStoreABC backends decompose into two orthogonal axes: **Transport** (WHERE —
+raw key→bytes I/O) and **Addressing Engine** (HOW — CAS or Path). Every backend,
+including external API connectors, is a Transport composed with an addressing
+engine. REST APIs are filesystems: `GET` = `fetch`, `PUT` = `store`, `DELETE` = `remove`.
+
+**DT_EXTERNAL_STORAGE** (`entry_type=5`): Mount-time detection via
+`ConnectorRegistry.category` for OAuth APIs and CLI tools.
+
+See `backend-architecture.md` §2 for the full composition matrix and Transport
+protocol. See `connector-transport-matrix.md` for per-connector details.
+
 ---
 
 ## 4. Kernel Primitives

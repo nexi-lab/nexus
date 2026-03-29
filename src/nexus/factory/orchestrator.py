@@ -462,6 +462,14 @@ async def _register_vfs_hooks(
             from nexus.storage.piped_record_store_write_observer import _AUDIT_PIPE_PATH
             from nexus.storage.write_observer_hooks import AuditWriteInterceptor
 
+            # Issue #3399: bind + start the piped observer so the DT_PIPE
+            # is created before AuditWriteInterceptor emits.  The server
+            # lifespan does this in services.py, but create_nexus_fs() callers
+            # (benchmarks, tests, SDK) bypass that path.
+            if hasattr(write_observer, "bind_fs"):
+                write_observer.bind_fs(nx)
+                await write_observer.start()
+
             audit: AuditWriteInterceptor | SyncAuditWriteInterceptor = AuditWriteInterceptor(
                 nx, _AUDIT_PIPE_PATH, strict_mode=strict
             )

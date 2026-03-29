@@ -18,6 +18,15 @@ import os
 import pytest
 
 # ---------------------------------------------------------------------------
+# Issue #3399: default to sync write observer in tests.
+# The piped observer spawns a background consumer task per NexusFS instance;
+# with 10K+ tests this adds significant startup/shutdown overhead and can
+# cause CI timeouts.  Tests that specifically need the piped observer create
+# it directly (e.g. test_piped_write_observer_flush.py).
+# ---------------------------------------------------------------------------
+os.environ.setdefault("NEXUS_ENABLE_WRITE_BUFFER", "false")
+
+# ---------------------------------------------------------------------------
 # Hypothesis profiles (Issue #1303)
 # ---------------------------------------------------------------------------
 

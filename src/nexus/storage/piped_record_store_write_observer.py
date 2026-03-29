@@ -35,11 +35,12 @@ logger = logging.getLogger(__name__)
 
 # Pipe path and capacity (parallel to WorkflowDispatchService constants)
 _AUDIT_PIPE_PATH = "/nexus/pipes/audit-events"
-_AUDIT_PIPE_CAPACITY = 65_536  # 64KB
+_AUDIT_PIPE_CAPACITY = 262_144  # 256KB — headroom for batch writes (Issue #3399)
 
 # Consumer batch processing
 _MAX_BATCH_DRAIN = 100  # Max events to drain per batch
 _MAX_RETRIES = 3
+_LINGER_S = 0.2  # Issue #3399: max wait for more events before flushing (200ms)
 
 
 def _metadata_from_dict(d: dict[str, Any]) -> Any:
@@ -73,10 +74,12 @@ class PipedRecordStoreWriteObserver:
         *,
         strict_mode: bool = True,
         event_signal: "asyncio.Event | None" = None,
+        linger_s: float = _LINGER_S,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._strict_mode = strict_mode
         self._event_signal = event_signal  # Issue #3193: wake delivery worker
+        self._linger_s = linger_s  # Issue #3399: coalesce window for batch flush
 
         # NexusFS reference (deferred injection)
         self._nx: NexusFS | None = None
@@ -154,108 +157,37 @@ class PipedRecordStoreWriteObserver:
             Number of events flushed.
         """
         if not self._pipe_ready or self._nx is None:
-            # Pipe not started — flush pre-buffer directly via sync path
-            return self._flush_pre_buffer_sync()
+            # Pipe not started — flush pre-buffer directly via sync path.
+            # Delegates to flush_sync() which uses _process_events_in_session()
+            # (single source of truth for event dispatch logic).
+            return self.flush_sync()
 
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        # Drain all available events from the pipe (non-blocking)
+        # Drain all available events from the pipe.  Each sys_read() blocks
+        # until data arrives or the pipe is closed, so we wrap every call in
+        # asyncio.wait_for() to avoid hanging on an open-but-empty pipe.
         batch: list[dict[str, Any]] = []
-        deadline = time.monotonic() + timeout
+        remaining = timeout
 
-        while time.monotonic() < deadline:
+        while remaining > 0:
+            t0 = time.monotonic()
             try:
-                data = await self._nx.sys_read(_AUDIT_PIPE_PATH)
+                data = await asyncio.wait_for(
+                    self._nx.sys_read(_AUDIT_PIPE_PATH),
+                    timeout=min(remaining, 0.5),  # per-read cap
+                )
                 batch.append(json.loads(data))
+            except TimeoutError:
+                break  # pipe drained (open but empty)
             except (NexusFileNotFoundError, Exception):
-                break
+                break  # pipe closed or error
+            remaining -= time.monotonic() - t0
 
         if batch:
             await self._flush_batch(batch)
 
         return len(batch)
-
-    def _flush_pre_buffer_sync(self) -> int:
-        """Flush pre-startup buffer directly to RecordStore (synchronous)."""
-        from nexus.storage.operation_logger import OperationLogger
-        from nexus.storage.version_recorder import VersionRecorder
-
-        if not self._pre_buffer:
-            return 0
-
-        events = [json.loads(data) for data in self._pre_buffer]
-        self._pre_buffer.clear()
-
-        try:
-            with self._session_factory() as session:
-                op_logger = OperationLogger(session)
-                recorder = VersionRecorder(session)
-
-                for event in events:
-                    op = event["op"]
-                    zone_id = event.get("zone_id")
-                    agent_id = event.get("agent_id")
-
-                    if op == "write":
-                        op_logger.log_operation(
-                            operation_type="write",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        md = _metadata_from_dict(event["metadata"])
-                        recorder.record_write(md, is_new=event["is_new"])
-                    elif op == "delete":
-                        op_logger.log_operation(
-                            operation_type="delete",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                        recorder.record_delete(event["path"])
-                    elif op == "rename":
-                        op_logger.log_operation(
-                            operation_type="rename",
-                            path=event["path"],
-                            new_path=event.get("new_path"),
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            snapshot_hash=event.get("snapshot_hash"),
-                            metadata_snapshot=event.get("metadata_snapshot"),
-                            status="success",
-                        )
-                    elif op == "mkdir":
-                        op_logger.log_operation(
-                            operation_type="mkdir",
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-                    elif op == "rmdir":
-                        op_type = "rmdir_recursive" if event.get("recursive") else "rmdir"
-                        op_logger.log_operation(
-                            operation_type=op_type,
-                            path=event["path"],
-                            zone_id=zone_id,
-                            agent_id=agent_id,
-                            status="success",
-                        )
-
-                session.commit()
-
-            self._total_flushed += len(events)
-            return len(events)
-        except Exception as e:
-            self._total_failed += len(events)
-            logger.error("PipedRecordStoreWriteObserver pre-buffer flush failed: %s", e)
-            return 0
 
     async def stop(self) -> None:
         """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
@@ -281,12 +213,28 @@ class PipedRecordStoreWriteObserver:
         self.flush_sync()
 
     def flush_sync(self) -> int:
-        """Synchronously drain ``_pre_buffer`` directly to the DB.
+        """Synchronously drain pipe buffer + ``_pre_buffer`` to the DB.
 
         Used by CLI shutdown path (NexusFS.close) where no asyncio loop
-        is running and PipeManager was never injected. Returns count of
-        flushed events.
+        is running. Also called by close callbacks (Issue #3399) to drain
+        remaining pipe events before PipeManager.close_all() clears buffers.
+        Returns count of flushed events.
         """
+        # Issue #3399: drain any remaining events from the pipe buffer
+        # directly (bypassing sys_read) before it gets cleared on close.
+        if self._nx is not None:
+            pm = getattr(self._nx, "_pipe_manager", None)
+            if pm is not None:
+                buf = pm._buffers.get(_AUDIT_PIPE_PATH)
+                if buf is not None:
+                    from nexus.core.pipe import PipeClosedError, PipeEmptyError
+
+                    while True:
+                        try:
+                            self._pre_buffer.append(buf.read_nowait())
+                        except (PipeEmptyError, PipeClosedError, Exception):
+                            break
+
         if not self._pre_buffer:
             return 0
 
@@ -329,15 +277,39 @@ class PipedRecordStoreWriteObserver:
 
             # Drain available events for batching (non-blocking read_nowait)
             batch: list[dict[str, Any]] = [json.loads(first)]
-            if pm is not None:
-                buf = pm._buffers.get(_AUDIT_PIPE_PATH)
-                if buf is not None:
-                    for _ in range(_MAX_BATCH_DRAIN - 1):
+            buf = pm._buffers.get(_AUDIT_PIPE_PATH) if pm is not None else None
+            if buf is not None:
+                for _ in range(_MAX_BATCH_DRAIN - 1):
+                    try:
+                        data = buf.read_nowait()
+                        batch.append(json.loads(data))
+                    except (PipeEmptyError, PipeClosedError, Exception):
+                        break
+
+            # Issue #3399: linger window — if batch isn't full, wait briefly
+            # for more events to coalesce into a single DB transaction.
+            # OTel uses 200ms, Kafka uses 5ms; 200ms is a good default.
+            if buf is not None and len(batch) < _MAX_BATCH_DRAIN and self._linger_s > 0:
+                try:
+                    more = await asyncio.wait_for(
+                        nx.sys_read(_AUDIT_PIPE_PATH), timeout=self._linger_s
+                    )
+                    batch.append(json.loads(more))
+                    # Drain any additional events that arrived during linger
+                    for _ in range(_MAX_BATCH_DRAIN - len(batch)):
                         try:
                             data = buf.read_nowait()
                             batch.append(json.loads(data))
                         except (PipeEmptyError, PipeClosedError, Exception):
                             break
+                except TimeoutError:
+                    pass  # Linger expired, flush what we have
+                except NexusFileNotFoundError:
+                    # Pipe closed during linger — flush collected events and exit
+                    if batch:
+                        await self._flush_batch(batch)
+                    logger.debug("Audit pipe closed during linger, consumer exiting")
+                    break
 
             await self._flush_batch(batch)
 

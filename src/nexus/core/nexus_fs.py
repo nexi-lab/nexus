@@ -4806,6 +4806,15 @@ class NexusFS(  # type: ignore[misc]
 
     def close(self) -> None:
         """Close the filesystem and release resources."""
+        # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
+        # Runs BEFORE pipe/IPC close so callbacks can drain pipe buffers
+        # (Issue #3399: piped write observer needs to flush before buffers clear).
+        for _close_cb in self._close_callbacks:
+            try:
+                _close_cb()
+            except Exception as exc:
+                logger.debug("close: callback failed (best-effort): %s", exc)
+
         # Close IPC primitives — kernel-internal (§4.2)
         if hasattr(self, "_pipe_manager"):
             self._pipe_manager.close_all()
@@ -4814,14 +4823,6 @@ class NexusFS(  # type: ignore[misc]
         # Close peer channel pool (persistent gRPC channels)
         if hasattr(self, "_channel_pool") and self._channel_pool is not None:
             self._channel_pool.close_all()
-
-        # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
-        # Runs BEFORE pillar close so DB connections are still open.
-        for _close_cb in self._close_callbacks:
-            try:
-                _close_cb()
-            except Exception as exc:
-                logger.debug("close: callback failed (best-effort): %s", exc)
 
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.

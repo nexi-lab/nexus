@@ -138,7 +138,10 @@ def _boot_pre_kernel_services(
                 elif env_val in ("false", "0", "no"):
                     use_buffer = False
                 else:
-                    use_buffer = ctx.db_url.startswith(("postgres", "postgresql"))
+                    # Issue #3399: default to piped (async) observer for all profiles.
+                    # DFUSE principle: defer non-consistency-critical work from I/O path.
+                    # Set NEXUS_ENABLE_WRITE_BUFFER=false for strict audit compliance.
+                    use_buffer = True
 
             if use_buffer:
                 from nexus.storage.piped_record_store_write_observer import (

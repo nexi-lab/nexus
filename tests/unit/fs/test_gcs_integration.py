@@ -127,6 +127,9 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
 
+    # Wire metastore into CAS engine (production: done by factory at mount time)
+    backend._metastore = metastore
+
     # Router with mount
     mount_point = "/gcs/test-project/test-gcs-bucket"
     router = PathRouter(metastore)

@@ -2644,26 +2644,17 @@ class NexusFS(  # type: ignore[misc]
                 # HDFS/GFS pattern: content cleanup is async via background GC.
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-                # CAS driver already persisted metadata — read it for event dispatch.
-                # Check etag matches to detect if driver actually updated metadata
-                # (tests without DI wiring will have stale etag from the old write).
-                _written_meta = self.metadata.get(path)
-                if _written_meta is not None and _written_meta.etag == content_hash:
-                    metadata = _written_meta
-                else:
-                    # Fallback: CAS driver has no metastore (e.g. tests without DI wiring).
-                    # Build metadata in kernel as before.
-                    metadata = self._build_write_metadata(
-                        path=path,
-                        backend_name=route.backend.name,
-                        content_hash=content_hash,
-                        size=_wr.size if offset > 0 else len(content),
-                        existing_meta=meta,
-                        now=now,
-                        zone_id=zone_id,
-                        context=context,
+                # Driver persisted metadata inside write_content() (CAS pattern).
+                # Read it back for event dispatch.
+                _post_meta = self.metadata.get(path)
+                if _post_meta is None:
+                    # Driver should have created metadata.
+                    # If not, write path is broken — fail loudly.
+                    raise BackendError(
+                        f"Backend write_content() did not persist metadata for {path}. "
+                        "Ensure metastore is injected into CAS engine."
                     )
-                    self.metadata.put(metadata, consistency=consistency)
+                metadata = _post_meta
                 new_version = metadata.version
 
         return _WriteContentResult(

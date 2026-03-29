@@ -43,6 +43,7 @@ def slim_fs(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
+    backend.set_metastore(metastore)
 
     # Router with mount
     router = PathRouter(metastore)
@@ -81,7 +82,9 @@ def dual_fs(tmp_path: Path):
     data_b.mkdir()
 
     backend_a = CASLocalBackend(root_path=data_a)
+    backend_a.set_metastore(metastore)
     backend_b = CASLocalBackend(root_path=data_b)
+    backend_b.set_metastore(metastore)
 
     router = PathRouter(metastore)
     router.add_mount("/a", backend_a)

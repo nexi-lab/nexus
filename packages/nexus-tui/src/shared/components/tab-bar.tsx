@@ -7,8 +7,8 @@
  */
 
 import React from "react";
+import { useTerminalDimensions } from "@opentui/react";
 import { palette } from "../theme.js";
-import { useTerminalColumns } from "../hooks/use-terminal-columns.js";
 import { shouldUseFullLabels } from "./tab-bar-utils.js";
 
 export type { Tab } from "./tab-bar-utils.js";
@@ -20,7 +20,7 @@ interface TabBarProps {
 }
 
 export function TabBar({ tabs, activeTab }: TabBarProps): React.ReactNode {
-  const columns = useTerminalColumns();
+  const { width: columns } = useTerminalDimensions();
   const fullLabels = shouldUseFullLabels(tabs, columns);
 
   return (

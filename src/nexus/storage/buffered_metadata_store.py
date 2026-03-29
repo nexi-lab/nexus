@@ -343,7 +343,7 @@ class BufferedMetadataStore(MetastoreABC):
                 if "/" in rel:
                     continue
             by_path[m.path] = m
-        return builtins.list(by_path.values())
+        return sorted(by_path.values(), key=lambda meta: meta.path)
 
     def close(self) -> None:
         # Flush remaining items before closing

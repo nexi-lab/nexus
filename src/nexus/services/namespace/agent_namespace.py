@@ -12,12 +12,14 @@ holds the collection of forks behind a ``threading.Lock``.
 """
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.namespace_manager import MountEntry
 
 from nexus.contracts.namespace_fork_types import ForkMode, NamespaceForkInfo
+
+_MISSING = object()
 
 
 class AgentNamespace:
@@ -72,10 +74,12 @@ class AgentNamespace:
         Lookup order: deleted_keys → overlay → parent_snapshot.
         CLEAN mode skips parent_snapshot (fork starts empty).
         """
-        if path in self._deleted_keys:
+        deleted_keys = self._deleted_keys
+        if path in deleted_keys:
             return None
-        if path in self._overlay:
-            return self._overlay[path]
+        overlay_entry: MountEntry | object = self._overlay.get(path, _MISSING)
+        if overlay_entry is not _MISSING:
+            return cast("MountEntry", overlay_entry)
         if self.mode == ForkMode.CLEAN:
             return None
         return self._parent_snapshot.get(path)

@@ -251,9 +251,20 @@ async def create_nexus_fs(
 
     # Issue #3393: Wrap metadata store with write-back buffer.
     # Must happen BEFORE create_nexus_services so services get the same wrapped store.
-    # Always enabled — transparent for SC/EC writes. Disable with NEXUS_METADATA_BUFFER=0.
+    # Callers that explicitly request sync write visibility via
+    # enable_write_buffer=False expect immediate metadata reads too, so skip
+    # the metadata write-back buffer in that mode.
     _effective_metadata_store = metadata_store
-    if os.environ.get("NEXUS_METADATA_BUFFER", "").lower() not in ("0", "false", "no"):
+    _metadata_store_buffered = False
+    _metadata_buffer_enabled = os.environ.get("NEXUS_METADATA_BUFFER", "").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
+    if enable_write_buffer is False:
+        _metadata_buffer_enabled = False
+
+    if _metadata_buffer_enabled:
         from nexus.lib.performance_tuning import resolve_profile_tuning
         from nexus.storage.buffered_metadata_store import BufferedMetadataStore
 
@@ -273,11 +284,14 @@ async def create_nexus_fs(
             flush_interval_sec=_flush_ms / 1000.0,
             max_batch_size=_max_size,
         )
+        _metadata_store_buffered = True
         logger.info(
             "Metadata write-back buffer enabled (flush=%dms, max_batch=%d)",
             _flush_ms,
             _max_size,
         )
+    elif enable_write_buffer is False:
+        logger.info("Metadata write-back buffer disabled: enable_write_buffer=False")
 
     # Create services if record_store is provided and no pre-built services.
     # KERNEL mode (Issue #2194): When record_store is None (e.g. profile=kernel),
@@ -339,7 +353,7 @@ async def create_nexus_fs(
 
     # Issue #3393: Start the metadata write-back buffer's background flush thread
     # and set write-back as the default consistency for all writes.
-    if hasattr(_effective_metadata_store, "_buffer"):
+    if _metadata_store_buffered:
         await _effective_metadata_store.start()
         nx._default_write_consistency = "wb"
 

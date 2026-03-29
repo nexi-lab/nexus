@@ -13,14 +13,13 @@ import click
 from cryptography.fernet import Fernet
 from rich.console import Console
 
-from nexus.cli.theme import NEXUS_THEME
 from nexus.fs._paths import oauth_key_path as _oauth_key_path_fn
 from nexus.fs._paths import token_manager_db as _token_manager_db_fn
 
 # Resolve once at import time for backwards compatibility
 _DEFAULT_DB_PATH = _token_manager_db_fn()
 _DEFAULT_OAUTH_KEY_PATH = _oauth_key_path_fn()
-console = Console(theme=NEXUS_THEME)
+console = Console()
 
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "gws": [
@@ -97,9 +96,7 @@ def get_oauth_encryption_key() -> str:
 
     key = Fernet.generate_key().decode("utf-8")
     _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
-    console.print(
-        f"[nexus.muted]Created local OAuth encryption key: {_DEFAULT_OAUTH_KEY_PATH}[/nexus.muted]"
-    )
+    console.print(f"[dim]Created local OAuth encryption key: {_DEFAULT_OAUTH_KEY_PATH}[/dim]")
     return key
 
 
@@ -151,17 +148,15 @@ def run_google_oauth_setup(
     )
     auth_url = provider.get_authorization_url()
 
-    console.print("\n[bold nexus.success]Google OAuth Setup[/bold nexus.success]")
+    console.print("\n[bold green]Google OAuth Setup[/bold green]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
-    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
+    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost."
+        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost."
     )
-    console.print(
-        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the `code` parameter from that URL."
-    )
+    console.print("[bold yellow]Step 3:[/bold yellow] Copy the `code` parameter from that URL.")
     auth_code = click.prompt("\nEnter authorization code")
 
     async def _exchange_and_store() -> str:
@@ -179,12 +174,10 @@ def run_google_oauth_setup(
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
-        console.print(
-            f"\n[nexus.success]ok[/nexus.success] stored Google OAuth credentials for {user_email}"
-        )
-        console.print(f"[nexus.muted]Credential ID: {cred_id}[/nexus.muted]")
+        console.print(f"\n[green]ok[/green] stored Google OAuth credentials for {user_email}")
+        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
     except Exception as exc:
-        console.print(f"\n[nexus.error]OAuth setup failed:[/nexus.error] {exc}")
+        console.print(f"\n[red]OAuth setup failed:[/red] {exc}")
         sys.exit(1)
 
 
@@ -224,13 +217,13 @@ def run_x_oauth_setup(
     auth_url, pkce_data = provider.get_authorization_url_with_pkce()
     code_verifier = pkce_data["code_verifier"]
 
-    console.print("\n[bold nexus.success]X OAuth Setup[/bold nexus.success]")
+    console.print("\n[bold green]X OAuth Setup[/bold green]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
-    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
+    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold nexus.warning]Step 2:[/bold nexus.warning] Copy the `code` parameter from the redirect URL."
+        "[bold yellow]Step 2:[/bold yellow] Copy the `code` parameter from the redirect URL."
     )
     auth_code = click.prompt("\nEnter authorization code")
 
@@ -249,10 +242,8 @@ def run_x_oauth_setup(
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
-        console.print(
-            f"\n[nexus.success]ok[/nexus.success] stored X OAuth credentials for {user_email}"
-        )
-        console.print(f"[nexus.muted]Credential ID: {cred_id}[/nexus.muted]")
+        console.print(f"\n[green]ok[/green] stored X OAuth credentials for {user_email}")
+        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
     except Exception as exc:
-        console.print(f"\n[nexus.error]OAuth setup failed:[/nexus.error] {exc}")
+        console.print(f"\n[red]OAuth setup failed:[/red] {exc}")
         sys.exit(1)

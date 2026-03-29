@@ -15,8 +15,8 @@ from typing import Any
 import click
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
-from nexus.cli.timing import CommandTiming
 from nexus.cli.theme import console
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     handle_error,

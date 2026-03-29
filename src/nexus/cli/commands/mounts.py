@@ -18,8 +18,8 @@ from typing import Any
 import click
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
-from nexus.cli.timing import CommandTiming
 from nexus.cli.theme import console
+from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     get_filesystem,
@@ -166,9 +166,13 @@ async def _async_add_mount(
 
         if result.get("mounted"):
             mount_id = result.get("mount_point", mount_point)
-            console.print(f"[nexus.success]\u2713[/nexus.success] Mount added successfully (ID: {mount_id})")
+            console.print(
+                f"[nexus.success]\u2713[/nexus.success] Mount added successfully (ID: {mount_id})"
+            )
         else:
-            console.print(f"[nexus.error]Error:[/nexus.error] {result.get('error', 'Mount failed')}")
+            console.print(
+                f"[nexus.error]Error:[/nexus.error] {result.get('error', 'Mount failed')}"
+            )
             sys.exit(1)
 
         console.print()

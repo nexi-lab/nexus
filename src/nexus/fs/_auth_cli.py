@@ -12,11 +12,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.theme import NEXUS_THEME
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 from nexus.fs._oauth_support import get_token_manager, run_google_oauth_setup, run_x_oauth_setup
 
-console = Console(theme=NEXUS_THEME)
+console = Console()
 
 _SERVICE_AUTH_TYPES: dict[str, tuple[str, ...]] = {
     "s3": ("native", "secret"),
@@ -178,13 +177,11 @@ def _print_connect_success(
     *,
     source: str = "stored",
 ) -> None:
-    console.print(
-        f"[nexus.success]ok[/nexus.success] {service_name}: {source} {kind.value} auth is configured"
-    )
-    console.print(f"[nexus.muted]Secret store: {store_path}[/nexus.muted]")
+    console.print(f"[green]ok[/green] {service_name}: {source} {kind.value} auth is configured")
+    console.print(f"[dim]Secret store: {store_path}[/dim]")
     if fields:
-        console.print(f"[nexus.muted]Fields: {', '.join(fields)}[/nexus.muted]")
-    console.print(f"[nexus.muted]Next: nexus-fs auth test {service_name}[/nexus.muted]")
+        console.print(f"[dim]Fields: {', '.join(fields)}[/dim]")
+    console.print(f"[dim]Next: nexus-fs auth test {service_name}[/dim]")
 
 
 def _print_target_readiness_summary(
@@ -197,22 +194,20 @@ def _print_target_readiness_summary(
     failed = [check for check in checks if not check.get("success")]
 
     if ready:
-        console.print(f"[nexus.success]Ready:[/nexus.success] {', '.join(ready)}")
+        console.print(f"[green]Ready:[/green] {', '.join(ready)}")
 
     if not failed:
-        console.print(
-            f"[nexus.success]ok[/nexus.success] {service_name}: all checked targets are ready."
-        )
+        console.print(f"[green]ok[/green] {service_name}: all checked targets are ready.")
         return
 
     console.print(
-        f"[nexus.warning]{service_name} is partially ready.[/nexus.warning] "
+        f"[yellow]{service_name} is partially ready.[/yellow] "
         f"{len(failed)} target(s) still need action."
     )
     for check in failed:
         target = str(check.get("target", ""))
         message = str(check.get("message", ""))
-        console.print(f"[nexus.error]Needs action:[/nexus.error] {target}: {message}")
+        console.print(f"[red]Needs action:[/red] {target}: {message}")
 
     if service_name == "gws":
         email = user_email or os.environ.get("NEXUS_FS_USER_EMAIL")
@@ -239,11 +234,11 @@ def list_auth() -> None:
     """List configured auth across services."""
     service = _build_auth_service()
     summaries = asyncio.run(service.list_summaries())
-    table = Table(title="Unified Auth", show_header=True, header_style="nexus.table_header")
-    table.add_column("Service", style="nexus.value")
-    table.add_column("Kind", style="nexus.value")
-    table.add_column("Status", style="nexus.warning")
-    table.add_column("Source", style="nexus.reference")
+    table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
+    table.add_column("Service", style="green")
+    table.add_column("Kind", style="cyan")
+    table.add_column("Status", style="yellow")
+    table.add_column("Source", style="blue")
     table.add_column("Message")
     for summary in summaries:
         table.add_row(
@@ -254,7 +249,7 @@ def list_auth() -> None:
             summary.message,
         )
     console.print(table)
-    console.print(f"[nexus.muted]Secret store: {service.secret_store_path}[/nexus.muted]")
+    console.print(f"[dim]Secret store: {service.secret_store_path}[/dim]")
 
 
 @auth.command("test")
@@ -281,13 +276,11 @@ def test_auth(service_name: str, user_email: str | None, target: str | None) -> 
     checks = result.get("checks")
     if isinstance(checks, list) and checks:
         table = Table(
-            title=f"{service_name} target readiness",
-            show_header=True,
-            header_style="nexus.table_header",
+            title=f"{service_name} target readiness", show_header=True, header_style="bold cyan"
         )
-        table.add_column("Target", style="nexus.value")
-        table.add_column("Status", style="nexus.warning")
-        table.add_column("Source", style="nexus.reference")
+        table.add_column("Target", style="green")
+        table.add_column("Status", style="yellow")
+        table.add_column("Source", style="blue")
         table.add_column("Message")
         for check in checks:
             table.add_row(
@@ -303,7 +296,7 @@ def test_auth(service_name: str, user_email: str | None, target: str | None) -> 
         raise SystemExit(1)
 
     if result.get("success"):
-        console.print(f"[nexus.success]ok[/nexus.success] {service_name}: {result.get('message')}")
+        console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")
         return
     raise click.ClickException(f"{service_name}: {result.get('message')}")
 
@@ -366,7 +359,7 @@ def disconnect_auth(service_name: str) -> None:
     removed = service.disconnect(service_name)
     if not removed:
         raise click.ClickException(f"No stored auth found for '{service_name}'.")
-    console.print(f"[nexus.success]ok[/nexus.success] Removed stored auth for {service_name}")
+    console.print(f"[green]ok[/green] Removed stored auth for {service_name}")
 
 
 @auth.command("doctor")
@@ -376,7 +369,7 @@ def auth_doctor() -> None:
     summaries = asyncio.run(service.list_summaries())
     failures = [s for s in summaries if s.status not in {AuthStatus.AUTHED, AuthStatus.UNKNOWN}]
     for summary in summaries:
-        style = "nexus.success" if summary.status == AuthStatus.AUTHED else "nexus.warning"
+        style = "green" if summary.status == AuthStatus.AUTHED else "yellow"
         console.print(
             f"[{style}]{summary.service}[/{style}] {summary.status.value}: {summary.message}"
         )

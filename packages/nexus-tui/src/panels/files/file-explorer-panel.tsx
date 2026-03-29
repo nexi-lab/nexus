@@ -34,6 +34,7 @@ import { FilePreview } from "./file-preview.js";
 import { FileEditor } from "./file-editor.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
+import { FileLineage } from "./file-lineage.js";
 import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
@@ -90,7 +91,7 @@ interface BindingContext {
   readonly toggleNode: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
   readonly collapseNode: (path: string) => void;
   readonly fetchPreview: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
-  readonly setMetadataTab: (tab: "metadata" | "aspects" | "schema") => void;
+  readonly setMetadataTab: (tab: "metadata" | "aspects" | "schema" | "lineage") => void;
   readonly catalogAvailable: boolean;
   // Share links
   readonly shareLinks: readonly { link_id: string; status: string }[];
@@ -210,6 +211,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     },
     // Metadata tabs
     m: () => ctx.setMetadataTab("metadata"),
+    l: () => ctx.setMetadataTab("lineage"),
     ...(ctx.catalogAvailable ? {
       a: () => ctx.setMetadataTab("aspects"),
       s: () => ctx.setMetadataTab("schema"),
@@ -581,7 +583,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const { available: catalogAvailable } = useBrickAvailable("catalog");
 
   // Active metadata sub-tab
-  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema">("metadata");
+  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema" | "lineage">("metadata");
   React.useEffect(() => {
     if (!catalogAvailable && (metadataTab === "aspects" || metadataTab === "schema")) {
       setMetadataTab("metadata");
@@ -874,13 +876,14 @@ export default function FileExplorerPanel(): React.ReactNode {
                 {/* Metadata tab bar with aspect count badge */}
                 <box height={1} width="100%">
                   <text>
-                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
+                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "lineage" ? "[Lineage]" : " Lineage "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
                   </text>
                 </box>
 
                 {/* Metadata sidebar (bottom 30%) */}
                 <box flexGrow={3} borderStyle="single">
                   {metadataTab === "metadata" && <FileMetadata item={selectedItem} />}
+                  {metadataTab === "lineage" && <FileLineage item={selectedItem} />}
                   {metadataTab === "aspects" && catalogAvailable && <FileAspects item={selectedItem} />}
                   {metadataTab === "schema" && catalogAvailable && <FileSchema item={selectedItem} />}
                 </box>

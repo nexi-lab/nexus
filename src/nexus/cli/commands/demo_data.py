@@ -342,6 +342,34 @@ PLAN_VERSIONS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Lineage seed data — agent read-to-write dependencies (Issue #3417)
+#
+# Demonstrates: coordinator read architecture.md + code/example.py → wrote plan.md
+# Also: demo_agent read data/sales.csv + data/metrics.json → wrote data/sample.json
+# ---------------------------------------------------------------------------
+
+DEMO_LINEAGE: list[tuple[str, list[dict[str, str | int]], str]] = [
+    # (output_path, upstream_inputs, agent_id)
+    (
+        "/workspace/demo/plan.md",
+        [
+            {"path": "/workspace/demo/notes/architecture.md", "version": 1, "etag": ""},
+            {"path": "/workspace/demo/code/example.py", "version": 1, "etag": ""},
+            {"path": "/workspace/demo/notes/meeting-2026-03.md", "version": 1, "etag": ""},
+        ],
+        "coordinator",
+    ),
+    (
+        "/workspace/demo/data/sample.json",
+        [
+            {"path": "/workspace/demo/data/sales.csv", "version": 1, "etag": ""},
+            {"path": "/workspace/demo/data/metrics.json", "version": 1, "etag": ""},
+        ],
+        "demo_agent",
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Demo directories (ordered parents-first for creation, reversed for deletion)
 # ---------------------------------------------------------------------------
 

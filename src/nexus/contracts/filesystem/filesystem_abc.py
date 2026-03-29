@@ -155,10 +155,11 @@ class NexusFilesystemABC(ABC):
 
     @abstractmethod
     async def sys_unlink(
-        self, path: str, *, context: OperationContext | None = None
+        self, path: str, *, recursive: bool = False, context: OperationContext | None = None
     ) -> dict[str, Any]:
-        """Remove a directory entry (POSIX unlink(2)).
+        """Remove a file or directory entry.
 
+        Unified delete syscall — handles files and directories.
         NOT "delete" — unlink is precise: removes directory entry,
         CAS refcount decrements. Content freed only when refcount=0.
 
@@ -188,16 +189,14 @@ class NexusFilesystemABC(ABC):
 
     # ── Directory ──────────────────────────────────────────────────
 
-    @abstractmethod
     async def sys_rmdir(
         self, path: str, recursive: bool = False, *, context: OperationContext | None = None
     ) -> None:
-        """Remove a directory (POSIX rmdir(2)).
+        """Tier 2: remove directory — delegates to sys_unlink(recursive=).
 
-        Tier 1 default: recursive=False (empty dir only).
-        Use rmdir() (Tier 2) for recursive=True default.
+        Subclasses may override for optimized implementations.
         """
-        ...
+        await self.sys_unlink(path, recursive=recursive, context=context)
 
     # ── Directory (Tier 2 convenience) ───────────────────────────
 

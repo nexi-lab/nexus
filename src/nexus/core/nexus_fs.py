@@ -366,7 +366,7 @@ class NexusFS(  # type: ignore[misc]
         """Hot-swap a service — all quadrants supported (#1452)."""
         await self._service_registry.swap_service(name, new_instance, **kwargs)
 
-    def upgrade_lock_manager(self, lock_manager: Any) -> None:
+    def _upgrade_lock_manager(self, lock_manager: Any) -> None:
         """Hot-swap LocalLockManager → RaftLockManager at link time.
 
         Like FileWatcher.set_remote_watcher() — kernel owns the hook point,

@@ -22,13 +22,14 @@ from nexus.cli.theme import (
     print_warning,
 )
 
-# All 12 semantic tokens that must be present in the theme.
+# All 13 semantic tokens that must be present in the theme.
 EXPECTED_TOKENS = [
     "nexus.success",
     "nexus.warning",
     "nexus.error",
     "nexus.info",
     "nexus.accent",
+    "nexus.table_header",
     "nexus.muted",
     "nexus.hint",
     "nexus.path",

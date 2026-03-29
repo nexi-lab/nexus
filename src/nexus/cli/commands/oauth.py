@@ -124,7 +124,9 @@ def list_credentials(db_path: str | None, zone_id: str | None) -> None:
             return
 
         # Create table
-        table = Table(title="OAuth Credentials", show_header=True, header_style="bold nexus.accent")
+        table = Table(
+            title="OAuth Credentials", show_header=True, header_style="nexus.table_header"
+        )
         table.add_column("Provider", style="nexus.value")
         table.add_column("User Email", style="nexus.success")
         table.add_column("Zone ID", style="nexus.reference")

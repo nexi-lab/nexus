@@ -121,7 +121,7 @@ def list_connectors(
             from rich.table import Table
 
             table = Table(
-                title="Available Connectors", show_header=True, header_style="bold nexus.accent"
+                title="Available Connectors", show_header=True, header_style="nexus.table_header"
             )
             table.add_column("Name", style="nexus.success")
             table.add_column("Description")
@@ -257,7 +257,7 @@ def connectors_capabilities(
             table = Table(
                 title="Connector Capabilities",
                 show_header=True,
-                header_style="bold nexus.accent",
+                header_style="nexus.table_header",
             )
             table.add_column("Name", style="nexus.value")
             table.add_column("Category", style="nexus.success")

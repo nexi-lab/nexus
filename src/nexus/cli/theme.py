@@ -26,7 +26,7 @@ Table column conventions:
     Timestamps / dates  -> style="nexus.muted"
     File paths          -> style="nexus.path"
     Status columns      -> inline per-value tokens (nexus.success/warning/error)
-    Header style        -> header_style="bold nexus.accent"
+    Header style        -> header_style="nexus.table_header"
 
 Usage::
 
@@ -52,6 +52,7 @@ NEXUS_THEME = Theme(
         "nexus.info": "cyan",
         # Brand
         "nexus.accent": "yellow",
+        "nexus.table_header": "bold yellow",
         # Text hierarchy
         "nexus.muted": "dim",
         "nexus.hint": "dim italic",

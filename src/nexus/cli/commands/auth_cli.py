@@ -315,7 +315,7 @@ def list_auth() -> None:
     service = _build_auth_service()
     summaries = asyncio.run(service.list_summaries())
 
-    table = Table(title="Unified Auth", show_header=True, header_style="bold nexus.accent")
+    table = Table(title="Unified Auth", show_header=True, header_style="nexus.table_header")
     table.add_column("Service", style="nexus.success")
     table.add_column("Kind", style="nexus.value")
     table.add_column("Status", style="nexus.warning")

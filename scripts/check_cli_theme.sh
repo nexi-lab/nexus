@@ -34,7 +34,7 @@ fi
 
 # -- Check 2: Valid nexus.* tokens --------------------------------------
 # Extract all [nexus.xxx] references and verify they are in the allowed set.
-VALID_TOKENS="nexus.success|nexus.warning|nexus.error|nexus.info|nexus.accent|nexus.muted|nexus.hint|nexus.path|nexus.value|nexus.label|nexus.identity|nexus.reference"
+VALID_TOKENS="nexus.success|nexus.warning|nexus.error|nexus.info|nexus.accent|nexus.table_header|nexus.muted|nexus.hint|nexus.path|nexus.value|nexus.label|nexus.identity|nexus.reference"
 
 INVALID_TOKENS=$(grep -rn \
     --include="*.py" \

@@ -540,105 +540,11 @@ class NexusFS(  # type: ignore[misc]
         *,
         context: OperationContext | None = None,
     ) -> None:
-        """Remove a directory (recursive=True for rm -rf)."""
-        import errno
+        """Tier 2: convenience wrapper — delegates to sys_unlink(recursive=).
 
-        path = self._validate_path(path)
-
-        ctx = self._resolve_cred(context)
-
-        logger.debug(
-            f"rmdir: path={path}, recursive={recursive}, user={ctx.user_id}, is_admin={ctx.is_admin}"
-        )
-        from nexus.contracts.vfs_hooks import RmdirHookContext
-
-        self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
-        logger.debug("  -> PRE-INTERCEPT passed for rmdir on %s", path)
-
-        # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
-        _mount_meta = self.metadata.get(path)
-        if _mount_meta is not None and _mount_meta.is_mount:
-            removed = self._driver_coordinator.unmount(path)
-            if removed:
-                self.metadata.delete(path)
-                logger.info("sys_rmdir: unmounted %s", path)
-            return
-
-        # Route to backend with write access check (rmdir requires write permission)
-        route = self.router.route(
-            path,
-            is_admin=ctx.is_admin,
-            check_write=True,
-        )
-
-        # Check readonly
-        if route.readonly:
-            raise PermissionError(f"Cannot remove directory from read-only path: {path}")
-
-        # Check if directory contains any files in metadata store
-        # Normalize path to ensure it ends with /
-        dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = self.metadata.list(dir_path)
-
-        if files_in_dir:
-            # Directory is not empty
-            if not recursive:
-                # Raise OSError with ENOTEMPTY errno (same as os.rmdir behavior)
-                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
-
-            # Recursive mode - delete all files in directory
-            # Use batch delete for better performance (single transaction instead of N queries)
-            file_paths = [file_meta.path for file_meta in files_in_dir]
-
-            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
-            # GC. Kernel only deletes metadata.
-
-            # Batch delete from metadata store
-            self.metadata.delete_batch(file_paths)
-
-        # Remove directory in backend (if it still exists)
-        # In CAS systems, the directory may no longer exist after deleting its contents.
-        # BackendError is suppressed because local backends may fail to rmdir a
-        # non-empty directory when content files haven't been GC'd yet.
-        with contextlib.suppress(NexusFileNotFoundError, BackendError):
-            route.backend.rmdir(route.backend_path, recursive=recursive)
-
-        # Also delete the directory's own metadata entry if it exists
-        # Directories can have metadata entries (created by mkdir)
-        try:
-            self.metadata.delete(path)
-        except Exception as e:
-            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
-
-        # Clean up sparse directory index entries (Issue: rmdir not cleaning directory index)
-        # This removes entries from DirectoryEntryModel used by non-recursive list()
-        if hasattr(self.metadata, "delete_directory_entries_recursive"):
-            try:
-                self.metadata.delete_directory_entries_recursive(path)
-            except Exception as e:
-                logger.debug("Failed to clean up directory index for %s: %s", path, e)
-
-        from nexus.contracts.vfs_hooks import RmdirHookContext
-
-        # Issue #3391: Standardized dispatch order — OBSERVE then INTERCEPT
-        await self._dispatch.notify(
-            FileEvent(
-                type=FileEventType.DIR_DELETE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
-            )
-        )
-        await self._dispatch.intercept_post_rmdir(
-            RmdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
-                recursive=recursive,
-            )
-        )
+        Preserves None return type for backward compat (sys_unlink returns dict).
+        """
+        await self.sys_unlink(path, recursive=recursive, context=context)
 
     async def _check_is_directory(
         self,
@@ -3371,15 +3277,22 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Delete file")
     async def sys_unlink(
-        self, path: str, *, context: OperationContext | None = None
+        self,
+        path: str,
+        *,
+        recursive: bool = False,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Remove a directory entry (POSIX unlink(2)).
+        """Remove a file or directory entry.
 
-        Removes file from backend and metadata store.
-        Removes metadata only; CAS blob cleanup deferred to reachability GC.
+        Unified delete syscall — handles both files and directories.
+        For directories, set ``recursive=True`` to delete non-empty dirs.
 
         Args:
-            path: Virtual path to delete (supports memory and pipe paths).
+            path: Virtual path to delete (supports memory, pipe, stream paths).
+            recursive: If True and target is a directory, delete all children
+                first (rm -rf). If False and directory is non-empty, raises
+                OSError(ENOTEMPTY). Ignored for regular files.
             context: Optional operation context for permission checks.
 
         Returns:
@@ -3391,7 +3304,7 @@ class NexusFS(  # type: ignore[misc]
             NexusFileNotFoundError: If file doesn't exist.
             InvalidPathError: If path is invalid.
             BackendError: If delete operation fails.
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace).
+            OSError(ENOTEMPTY): If directory is non-empty and recursive=False.
             PermissionError: If path is read-only or user doesn't have write permission.
         """
         # ── /__sys__/ kernel management dispatch ──────────────────────
@@ -3455,13 +3368,20 @@ class NexusFS(  # type: ignore[misc]
         if meta is None:
             raise NexusFileNotFoundError(path)
 
+        # ── Directory branch: rmdir logic ────────────────────────────
+        if meta.is_dir or meta.is_mount:
+            return await self._unlink_directory(
+                path, meta=meta, route=route, recursive=recursive, context=context
+            )
+
+        # ── File branch: regular unlink ──────────────────────────────
+
         # PRE-INTERCEPT: pre-delete hooks (Issue #899)
         from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
 
         self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
-        # Placed BEFORE physical content delete to preserve audit integrity.
         from nexus.contracts.vfs_hooks import DeleteHookContext
 
         _delete_ctx = DeleteHookContext(
@@ -3474,17 +3394,10 @@ class NexusFS(  # type: ignore[misc]
         await self._dispatch.intercept_post_delete(_delete_ctx)
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
-        # Like Linux i_rwsem: held for I/O duration only, released before observers.
         with self._vfs_locked(path, "write"):
-            # Issue #1320/#1772: Content cleanup deferred to CAS reachability
-            # GC. Kernel only deletes metadata.
-
-            # Remove from metadata
             self.metadata.delete(path)
 
-        # --- Lock released — event dispatch (like Linux inotify after i_rwsem) ---
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        # --- Lock released — event dispatch ---
         await self._dispatch.notify(
             FileEvent(
                 type=FileEventType.FILE_DELETE,
@@ -3493,6 +3406,86 @@ class NexusFS(  # type: ignore[misc]
                 agent_id=agent_id,
                 etag=meta.etag,
                 size=meta.size,
+            )
+        )
+
+        return {}
+
+    async def _unlink_directory(
+        self,
+        path: str,
+        *,
+        meta: "FileMetadata",
+        route: Any,
+        recursive: bool,
+        context: OperationContext | None,
+    ) -> dict[str, Any]:
+        """Internal: directory delete logic (extracted from former sys_rmdir).
+
+        Handles DT_MOUNT unmount, ENOTEMPTY check, recursive child delete,
+        backend rmdir, sparse index cleanup, and rmdir hook dispatch.
+        """
+        import errno
+
+        ctx = self._resolve_cred(context)
+
+        from nexus.contracts.vfs_hooks import RmdirHookContext
+
+        self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
+
+        # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
+        if meta.is_mount:
+            removed = self._driver_coordinator.unmount(path)
+            if removed:
+                self.metadata.delete(path)
+                logger.info("sys_unlink: unmounted %s", path)
+            return {}
+
+        # Check if directory contains any files
+        dir_path = path if path.endswith("/") else path + "/"
+        files_in_dir = self.metadata.list(dir_path)
+
+        if files_in_dir:
+            if not recursive:
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
+            # Recursive: batch delete all children
+            file_paths = [file_meta.path for file_meta in files_in_dir]
+            self.metadata.delete_batch(file_paths)
+
+        # Remove directory in backend (suppress errors — CAS may not have physical dir)
+        with contextlib.suppress(NexusFileNotFoundError, BackendError):
+            route.backend.rmdir(route.backend_path, recursive=recursive)
+
+        # Delete directory's own metadata entry
+        try:
+            self.metadata.delete(path)
+        except Exception as e:
+            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
+
+        # Clean up sparse directory index entries
+        if hasattr(self.metadata, "delete_directory_entries_recursive"):
+            try:
+                self.metadata.delete_directory_entries_recursive(path)
+            except Exception as e:
+                logger.debug("Failed to clean up directory index for %s: %s", path, e)
+
+        # OBSERVE then INTERCEPT (Issue #3391)
+        await self._dispatch.notify(
+            FileEvent(
+                type=FileEventType.DIR_DELETE,
+                path=path,
+                zone_id=ctx.zone_id or ROOT_ZONE_ID,
+                agent_id=ctx.agent_id,
+                user_id=ctx.user_id,
+            )
+        )
+        await self._dispatch.intercept_post_rmdir(
+            RmdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=recursive,
             )
         )
 

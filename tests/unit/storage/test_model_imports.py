@@ -102,6 +102,8 @@ EXPECTED_MODELS = [
     # DataHub Knowledge Platform (Issue #2929)
     "EntityAspectModel",
     "MetadataChangeLogModel",
+    # Lineage Tracking (Issue #3417)
+    "LineageReverseIndexModel",
 ]
 
 

@@ -1612,7 +1612,7 @@ class NexusFS(  # type: ignore[misc]
                         access_type="content",
                     )
             except Exception:
-                pass  # Best-effort; never block reads
+                logger.debug("Lineage read tracking failed (non-critical)", exc_info=True)
 
         # Apply count/offset slicing (POSIX pread semantics)
         if offset or count is not None:

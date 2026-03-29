@@ -1,9 +1,19 @@
 """Unit tests for LineageAspect model and registration (Issue #3417)."""
 
+import pytest
+
 from nexus.contracts.aspects import (
     AspectRegistry,
     LineageAspect,
 )
+
+
+@pytest.fixture(autouse=True)
+def _ensure_lineage_registered():
+    """Ensure lineage aspect is registered (may be cleared by other tests' reset())."""
+    registry = AspectRegistry.get()
+    if not registry.is_registered("lineage"):
+        registry.register("lineage", LineageAspect, max_versions=5)
 
 
 class TestLineageAspectRegistration:

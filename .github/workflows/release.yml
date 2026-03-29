@@ -285,7 +285,42 @@ jobs:
           /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
           /tmp/nexus-fs-release-test/bin/nexus-fs --help
 
+      - name: Detect existing nexus-fs PyPI version
+        id: nexus-fs-pypi
+        run: |
+          NEXUS_FS_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$NEXUS_FS_VERSION" >> "$GITHUB_OUTPUT"
+          export NEXUS_FS_VERSION
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["NEXUS_FS_VERSION"]
+          url = "https://pypi.org/pypi/nexus-fs/json"
+          exists = False
+
+          try:
+              with urllib.request.urlopen(url) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+          else:
+              exists = version in payload.get("releases", {})
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"exists={'true' if exists else 'false'}\n")
+          print(f"nexus-fs version {version} exists on PyPI: {exists}")
+          PY
+
+      - name: Skip nexus-fs PyPI publish
+        if: ${{ steps.nexus-fs-pypi.outputs.exists == 'true' }}
+        run: echo "nexus-fs v${{ steps.nexus-fs-pypi.outputs.version }} already exists on PyPI; skipping publish."
+
       - name: Publish nexus-fs to PyPI
+        if: ${{ steps.nexus-fs-pypi.outputs.exists != 'true' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}

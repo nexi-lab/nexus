@@ -36,30 +36,39 @@ jobs:
   rpc-parity:
     name: RPC Parity Check
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (docs-only)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — skipping RPC parity check"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.13
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Check RPC Parity (ENFORCEMENT)
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           echo "Checking RPC parity..."
           echo "This ensures all public methods are either:"
@@ -72,7 +81,6 @@ jobs:
   build-rust:
     name: Build Rust Extensions (${{ matrix.os }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -80,14 +88,17 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.13
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Build Rust extensions
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: ./.github/actions/build-rust-extensions
         with:
           profile: dev
@@ -96,6 +107,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Upload wheel artifacts
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: rust-wheels-${{ matrix.os }}
@@ -105,7 +117,7 @@ jobs:
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
     needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -114,43 +126,56 @@ jobs:
         python-version: ["3.13"]
 
     steps:
+      - name: Skip notice (docs-only)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — skipping tests"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python ${{ matrix.python-version }}
 
       - name: Download Rust wheels
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/download-artifact@v4
         with:
           name: rust-wheels-${{ matrix.os }}
           path: dist
 
       - name: Install Rust extensions from wheels
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install dist/*.whl
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv pip install -e ".[dev,test]"
 
       - name: Verify Rust extensions
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run python -c "import nexus_fast; print('nexus_fast OK')"
           uv run python -c "from _nexus_raft import Metastore; print('nexus_raft OK')"
         shell: bash
 
       - name: Run unit tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         timeout-minutes: 20
         run: |
           start=$(date +%s)
@@ -162,7 +187,7 @@ jobs:
         shell: bash
 
       - name: Unit test duration (target <3min; fail if >8min)
-        if: always()
+        if: always() && needs.detect-changes.outputs.code_changed == 'true'
         run: |
           if [ ! -f unit_test_duration_sec.txt ]; then exit 0; fi
           dur=$(cat unit_test_duration_sec.txt)
@@ -182,39 +207,51 @@ jobs:
   e2e-self-contained:
     name: E2E Tests (Self-Contained)
     needs: [detect-changes, build-rust]
-    if: needs.detect-changes.outputs.code_changed == 'true'
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Skip notice (docs-only)
+        if: needs.detect-changes.outputs.code_changed != 'true'
+        run: echo "No code changes — skipping E2E tests"
+
       - name: Checkout code
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Install uv
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: astral-sh/setup-uv@v3
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv venv --python 3.13
 
       - name: Download Rust wheels
+        if: needs.detect-changes.outputs.code_changed == 'true'
         uses: actions/download-artifact@v4
         with:
           name: rust-wheels-ubuntu-latest
           path: dist
 
       - name: Install Rust extensions from wheels
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install dist/*.whl
 
       - name: Install dependencies
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: uv pip install -e ".[dev,test]"
 
       - name: Run self-contained e2e tests
+        if: needs.detect-changes.outputs.code_changed == 'true'
         run: |
           uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
         timeout-minutes: 20

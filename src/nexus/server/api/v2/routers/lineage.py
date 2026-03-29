@@ -34,7 +34,7 @@ router = APIRouter(prefix="/api/v2/lineage", tags=["lineage"])
 
 def _verify_urn_zone(urn: str, zone_id: str) -> None:
     """Verify URN belongs to caller's zone (prevent cross-zone data exposure)."""
-    if zone_id == "root":
+    if zone_id in ("root", "default"):
         return
     if f":{zone_id}:" not in urn:
         raise HTTPException(status_code=403, detail="Access denied: URN is outside your zone")

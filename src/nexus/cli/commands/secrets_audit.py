@@ -154,7 +154,7 @@ def secrets_audit_verify(client: SecretsAuditClient, record_id: str) -> ServiceR
             if valid
             else "[nexus.error]Tampered[/nexus.error]"
         )
-        console.print(f"[bold cyan]Integrity Check: {record_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Integrity Check: {record_id}[/bold nexus.value]")
         console.print(f"  Status: {status}")
         if d.get("hash"):
             console.print(f"  Hash:   {d['hash']}")

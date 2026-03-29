@@ -283,7 +283,7 @@ def snapshot_cmd(
         nx: Any = get_filesystem(remote_url, remote_api_key)
         tags = list(tag) if tag else None
 
-        with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
+        with console.status(f"[bold nexus.value]Creating snapshot for workspace '{path}'..."):
             result = nx.service("workspace_rpc").workspace_snapshot(
                 workspace_path=path,
                 description=description,
@@ -431,7 +431,7 @@ def restore_cmd(
                 return
 
         # Perform restore
-        with console.status(f"[bold cyan]Restoring snapshot #{snapshot}..."):
+        with console.status(f"[bold nexus.value]Restoring snapshot #{snapshot}..."):
             result = nx.service("workspace_rpc").workspace_restore(
                 snapshot_number=snapshot, workspace_path=path
             )
@@ -470,7 +470,7 @@ def diff_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        with console.status("[bold cyan]Computing diff between snapshots..."):
+        with console.status("[bold nexus.value]Computing diff between snapshots..."):
             diff = nx.service("workspace_rpc").workspace_diff(
                 snapshot_1=snapshot1, snapshot_2=snapshot2, workspace_path=path
             )

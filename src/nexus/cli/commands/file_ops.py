@@ -262,7 +262,7 @@ def _cat_time_travel(
         render_output(data=data, output_opts=output_opts, timing=timing)
         return
 
-    console.print("[bold cyan]Time-Travel Mode[/bold cyan]")
+    console.print("[bold nexus.value]Time-Travel Mode[/bold nexus.value]")
     console.print(f"[nexus.muted]Operation ID:[/nexus.muted]  {state['operation_id']}")
     console.print(f"[nexus.muted]Operation Time:[/nexus.muted] {state['operation_time']}")
     console.print()
@@ -774,7 +774,7 @@ def copy_cmd(
                 nx.close()
 
                 # Display results
-                console.print("[bold green]✓ Copy Complete![/bold green]")
+                console.print("[bold nexus.success]✓ Copy Complete![/bold nexus.success]")
                 console.print(f"  Files checked: [nexus.value]{stats.files_checked}[/nexus.value]")
                 console.print(
                     f"  Files copied: [nexus.success]{stats.files_copied}[/nexus.success]"
@@ -787,7 +787,9 @@ def copy_cmd(
                 )
 
                 if stats.errors:
-                    console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+                    console.print(
+                        f"\n[bold nexus.error]Errors:[/bold nexus.error] {len(stats.errors)}"
+                    )
                     for error in stats.errors[:10]:  # Show first 10 errors
                         console.print(f"  [nexus.error]•[/nexus.error] {error}")
 
@@ -953,9 +955,9 @@ def sync_cmd(
 
             # Display results
             if dry_run:
-                console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
+                console.print("[bold nexus.warning]DRY RUN RESULTS:[/bold nexus.warning]")
             else:
-                console.print("[bold green]✓ Sync Complete![/bold green]")
+                console.print("[bold nexus.success]✓ Sync Complete![/bold nexus.success]")
 
             console.print(f"  Files checked: [nexus.value]{stats.files_checked}[/nexus.value]")
             console.print(f"  Files copied: [nexus.success]{stats.files_copied}[/nexus.success]")
@@ -972,7 +974,7 @@ def sync_cmd(
                 )
 
             if stats.errors:
-                console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
+                console.print(f"\n[bold nexus.error]Errors:[/bold nexus.error] {len(stats.errors)}")
                 for error in stats.errors[:10]:  # Show first 10 errors
                     console.print(f"  [nexus.error]•[/nexus.error] {error}")
 

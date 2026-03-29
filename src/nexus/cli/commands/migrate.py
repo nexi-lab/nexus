@@ -73,7 +73,9 @@ def status(data_dir: str | None) -> None:
         manager = VersionManager(config)
 
         # Show current version
-        console.print(f"[bold cyan]Nexus Version:[/bold cyan] {nexus_pkg.__version__}")
+        console.print(
+            f"[bold nexus.value]Nexus Version:[/bold nexus.value] {nexus_pkg.__version__}"
+        )
         console.print()
 
         # Show migration history
@@ -94,11 +96,11 @@ def status(data_dir: str | None) -> None:
                         entry.started_at.strftime("%Y-%m-%d %H:%M") if entry.started_at else "N/A"
                     )
                     status_style = {
-                        "completed": "green",
-                        "failed": "red",
-                        "running": "yellow",
-                        "rolled_back": "magenta",
-                    }.get(entry.status, "dim")
+                        "completed": "nexus.success",
+                        "failed": "nexus.error",
+                        "running": "nexus.warning",
+                        "rolled_back": "nexus.identity",
+                    }.get(entry.status, "nexus.muted")
 
                     duration = ""
                     if entry.started_at and entry.completed_at:
@@ -174,7 +176,9 @@ def plan(from_version: str, to_version: str, data_dir: str | None) -> None:
             )
             sys.exit(1)
 
-        console.print(f"[bold cyan]Migration Plan: {from_version} -> {to_version}[/bold cyan]")
+        console.print(
+            f"[bold nexus.value]Migration Plan: {from_version} -> {to_version}[/bold nexus.value]"
+        )
         console.print()
 
         if not path.steps:
@@ -272,9 +276,11 @@ def upgrade(
         console.print()
 
         if result.success:
-            console.print("[bold green]Migration completed successfully![/bold green]")
+            console.print(
+                "[bold nexus.success]Migration completed successfully![/bold nexus.success]"
+            )
         else:
-            console.print("[bold red]Migration failed![/bold red]")
+            console.print("[bold nexus.error]Migration failed![/bold nexus.error]")
 
         # Show result details
         console.print(f"  Steps completed: {result.steps_completed}/{result.steps_total}")
@@ -362,9 +368,11 @@ def rollback(
         console.print()
 
         if result.success:
-            console.print("[bold green]Rollback completed successfully![/bold green]")
+            console.print(
+                "[bold nexus.success]Rollback completed successfully![/bold nexus.success]"
+            )
         else:
-            console.print("[bold red]Rollback failed![/bold red]")
+            console.print("[bold nexus.error]Rollback failed![/bold nexus.error]")
 
         console.print(f"  Duration: {result.duration_seconds:.2f}s")
 
@@ -778,9 +786,9 @@ async def _async_validate(
         console.print()
 
         if result.valid:
-            console.print("[bold green]Validation PASSED[/bold green]")
+            console.print("[bold nexus.success]Validation PASSED[/bold nexus.success]")
         else:
-            console.print("[bold red]Validation FAILED[/bold red]")
+            console.print("[bold nexus.error]Validation FAILED[/bold nexus.error]")
 
         console.print(f"  Files checked: {result.checked_files}")
         console.print(f"  Corrupted: {result.corrupted_files}")
@@ -816,12 +824,12 @@ def _print_import_result(result: "ImportResult", dry_run: bool) -> None:
         dry_run: Whether this was a dry run
     """
     if dry_run:
-        console.print("[bold yellow]DRY RUN RESULTS:[/bold yellow]")
+        console.print("[bold nexus.warning]DRY RUN RESULTS:[/bold nexus.warning]")
     else:
         if result.errors:
-            console.print("[bold red]Import completed with errors[/bold red]")
+            console.print("[bold nexus.error]Import completed with errors[/bold nexus.error]")
         else:
-            console.print("[bold green]Import completed successfully![/bold green]")
+            console.print("[bold nexus.success]Import completed successfully![/bold nexus.success]")
 
     console.print(f"  Files imported: [nexus.success]{result.files_imported}[/nexus.success]")
     console.print(f"  Files skipped: [nexus.warning]{result.files_skipped}[/nexus.warning]")

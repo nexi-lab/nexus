@@ -62,7 +62,7 @@ def init(node_id: int, listen_port: int) -> None:
 
     console.print(
         Panel.fit(
-            f"[bold green]Node initialized[/bold green]\n\n"
+            f"[bold nexus.success]Node initialized[/bold nexus.success]\n\n"
             f"  Node ID:      {identity['node_id']}\n"
             f"  WireGuard IP: {identity['ip']}\n"
             f"  Listen Port:  {identity['listen_port']}\n"

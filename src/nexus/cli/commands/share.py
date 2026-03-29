@@ -141,7 +141,7 @@ def share_show(client: ShareClient, token: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Share Link: {token}[/bold cyan]")
+        console.print(f"[bold nexus.value]Share Link: {token}[/bold nexus.value]")
         console.print(f"  Path:        {d.get('path', 'N/A')}")
         console.print(f"  Permission:  {d.get('permission_level', 'N/A')}")
         console.print(f"  Created:     {d.get('created_at', 'N/A')[:19]}")

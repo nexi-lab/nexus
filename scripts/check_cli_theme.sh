@@ -14,14 +14,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FAILED=0
 
 # -- Check 1: Bare color tags -------------------------------------------
-# Match [red], [/red], [green], [/green], etc. but NOT inside theme.py itself.
-# Also match style="red", style="green", etc.
+# Match bare color names in Rich markup — simple, composite, style attrs, and
+# dict-style color values — but NOT nexus.* tokens and NOT theme.py itself.
+#
+# Catches:
+#   Simple:    [red], [/red], [green], …
+#   Composite: [bold red], [/bold red], [dim yellow], [italic cyan], …
+#   Style attrs: style="red", style="bold cyan", style="dim green", …
+#   Dict values: "pending": "yellow", "status": "green", …
+COLORS="red|green|yellow|cyan|magenta|blue|white"
+MODIFIERS="bold|dim|italic|underline|strike|reverse|blink"
 BARE_TAGS=$(grep -rn \
     --include="*.py" \
-    -E '\[(/?)(red|green|yellow|cyan|magenta|blue)\]|style="(red|green|yellow|cyan|magenta|blue)"' \
+    -E "\[/?(($MODIFIERS) )?($COLORS)\]|style=\"(($MODIFIERS) )?($COLORS)\"|\":\s*\"($COLORS)\"" \
     "$ROOT/src/nexus/cli/" \
     | grep -v 'theme\.py' \
     | grep -v '# noqa: theme' \
+    | grep -vE '\[/?nexus\.' \
     || true)
 
 if [ -n "$BARE_TAGS" ]; then
@@ -33,15 +42,35 @@ else
 fi
 
 # -- Check 2: Valid nexus.* tokens --------------------------------------
-# Extract all [nexus.xxx] references and verify they are in the allowed set.
+# Extract all nexus.xxx references from BOTH bracket markup and style attrs,
+# then verify each is in the allowed set.
+#
+# Contexts matched:
+#   Bracket markup:  [nexus.xxx], [/nexus.xxx]
+#   Style attributes: style="nexus.xxx", header_style="nexus.xxx", etc.
 VALID_TOKENS="nexus.success|nexus.warning|nexus.error|nexus.info|nexus.accent|nexus.table_header|nexus.muted|nexus.hint|nexus.path|nexus.value|nexus.label|nexus.identity|nexus.reference"
 
-INVALID_TOKENS=$(grep -rn \
+# Pass 1: bracket markup  — [nexus.xxx] and [/nexus.xxx]
+INVALID_BRACKET=$(grep -rn \
     --include="*.py" \
     -oE '\[/?nexus\.[a-z_.]+\]' \
     "$ROOT/src/nexus/cli/" \
     | grep -vE "\[/?($VALID_TOKENS)\]" \
     || true)
+
+# Pass 2: style attributes — style="nexus.xxx", header_style="nexus.xxx", etc.
+INVALID_STYLE=$(grep -rn \
+    --include="*.py" \
+    -oE '[a-z_]*style="nexus\.[a-z_.]+"' \
+    "$ROOT/src/nexus/cli/" \
+    | grep -vE "\"($VALID_TOKENS)\"" \
+    || true)
+
+INVALID_TOKENS=""
+[ -n "$INVALID_BRACKET" ] && INVALID_TOKENS="$INVALID_BRACKET"
+if [ -n "$INVALID_STYLE" ]; then
+    [ -n "$INVALID_TOKENS" ] && INVALID_TOKENS="$INVALID_TOKENS"$'\n'"$INVALID_STYLE" || INVALID_TOKENS="$INVALID_STYLE"
+fi
 
 if [ -n "$INVALID_TOKENS" ]; then
     echo "ERROR: Invalid nexus.* tokens found (typo?):"

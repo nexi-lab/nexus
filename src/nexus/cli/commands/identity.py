@@ -48,7 +48,7 @@ def identity_show(client: IdentityClient, agent_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Identity: {agent_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Identity: {agent_id}[/bold nexus.value]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")
         console.print(f"  Key ID:     {d.get('key_id', 'N/A')}")
         console.print(f"  Public Key: {d.get('public_key_hex', d.get('public_key', 'N/A'))}")
@@ -91,7 +91,7 @@ def identity_verify(
             if valid
             else "[nexus.error]Invalid[/nexus.error]"
         )
-        console.print(f"[bold cyan]Verification: {agent_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Verification: {agent_id}[/bold nexus.value]")
         console.print(f"  Status: {status}")
         if d.get("reason"):
             console.print(f"  Reason: {d['reason']}")
@@ -164,7 +164,7 @@ def identity_passport(client: IdentityClient, agent_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Agent Passport: {agent_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Agent Passport: {agent_id}[/bold nexus.value]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")
         console.print(f"  Public Key: {d.get('public_key_hex', d.get('public_key', 'N/A'))}")
         creds = d.get("credentials", [])

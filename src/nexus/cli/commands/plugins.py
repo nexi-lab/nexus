@@ -119,7 +119,7 @@ def plugins_info(plugin_name: str) -> None:
 
         metadata = plugin.metadata()
 
-        console.print(f"\n[bold cyan]{metadata.name}[/bold cyan] v{metadata.version}")
+        console.print(f"\n[bold nexus.value]{metadata.name}[/bold nexus.value] v{metadata.version}")
         console.print(f"{metadata.description}\n")
         console.print(f"[bold]Author:[/bold] {metadata.author}")
 

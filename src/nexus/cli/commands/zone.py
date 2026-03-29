@@ -753,7 +753,7 @@ def import_zone(
         console.print()
         table = Table(title="Import Complete" if result.success else "Import Failed")
         table.add_column("Metric", style="nexus.value")
-        table.add_column("Value", style="nexus.success" if result.success else "red")
+        table.add_column("Value", style="nexus.success" if result.success else "nexus.error")
 
         table.add_row("Files created", f"{result.files_created:,}")
         table.add_row("Files updated", f"{result.files_updated:,}")

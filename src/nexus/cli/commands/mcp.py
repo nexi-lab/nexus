@@ -289,7 +289,7 @@ async def _async_serve(
             console.print()
 
             # Display available tools
-            console.print("[bold cyan]Available Tools:[/bold cyan]")
+            console.print("[bold nexus.value]Available Tools:[/bold nexus.value]")
             tools = [
                 "nexus_read_file",
                 "nexus_write_file",
@@ -311,11 +311,11 @@ async def _async_serve(
                 console.print(f"  • [nexus.value]{tool}[/nexus.value]")
 
             console.print()
-            console.print("[bold cyan]Resources:[/bold cyan]")
+            console.print("[bold nexus.value]Resources:[/bold nexus.value]")
             console.print("  • [nexus.path]nexus://files/{{path}}[/nexus.path] - Browse files")
 
             console.print()
-            console.print("[bold cyan]Prompts:[/bold cyan]")
+            console.print("[bold nexus.value]Prompts:[/bold nexus.value]")
             console.print("  • [nexus.value]file_analysis_prompt[/nexus.value] - Analyze a file")
             console.print(
                 "  • [nexus.value]search_and_summarize_prompt[/nexus.value] - Search and summarize"

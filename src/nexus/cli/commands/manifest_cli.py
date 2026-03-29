@@ -155,7 +155,7 @@ def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Manifest: {manifest_id}[/bold nexus.value]")
         console.print(f"  Name:       {d.get('name', 'N/A')}")
         console.print(f"  Agent:      {d.get('agent_id', 'N/A')}")
         console.print(f"  Valid From: {d.get('valid_from', 'N/A')[:19]}")

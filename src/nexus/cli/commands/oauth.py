@@ -131,8 +131,8 @@ def list_credentials(db_path: str | None, zone_id: str | None) -> None:
         table.add_column("User Email", style="nexus.success")
         table.add_column("Zone ID", style="nexus.reference")
         table.add_column("Status", style="nexus.warning")
-        table.add_column("Expires At", style="white")
-        table.add_column("Last Used", style="white")
+        table.add_column("Expires At")
+        table.add_column("Last Used")
 
         for cred in credentials:
             status = "🔴 Expired" if cred["is_expired"] else "🟢 Valid"
@@ -363,16 +363,16 @@ def setup_gdrive(
     # Generate authorization URL
     auth_url = provider.get_authorization_url()
 
-    console.print("\n[bold green]Google Drive OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]Google Drive OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost (which will fail)."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost (which will fail)."
     )
     console.print(
-        "[bold yellow]Step 3:[/bold yellow] Copy the 'code' parameter from the failed URL:"
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the 'code' parameter from the failed URL:"
     )
     console.print("[nexus.muted]Example: http://localhost/?code=4/0AdLI...[/nexus.muted]")
     console.print(
@@ -531,17 +531,17 @@ def setup_x(
     auth_url, pkce_data = provider.get_authorization_url_with_pkce()
     code_verifier = pkce_data["code_verifier"]
 
-    console.print("\n[bold green]X (Twitter) OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]X (Twitter) OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
     console.print("[bold]Using PKCE:[/bold] Yes (enhanced security)")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost (which will fail)."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost (which will fail)."
     )
     console.print(
-        "[bold yellow]Step 3:[/bold yellow] Copy the 'code' parameter from the failed URL:"
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the 'code' parameter from the failed URL:"
     )
     console.print("[nexus.muted]Example: http://localhost/?code=ABCD...[/nexus.muted]")
     console.print(

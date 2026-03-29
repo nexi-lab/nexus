@@ -55,7 +55,7 @@ def pay_balance(
             data = rpc_call(remote_url, remote_api_key, "pay_balance", agent_id=agent_id)
 
         def _render(d: dict) -> None:
-            console.print("[bold cyan]Balance[/bold cyan]")
+            console.print("[bold nexus.value]Balance[/bold nexus.value]")
             console.print(f"  Available: [nexus.success]{d.get('available', '0')}[/nexus.success]")
             console.print(f"  Reserved:  [nexus.warning]{d.get('reserved', '0')}[/nexus.warning]")
             console.print(f"  Total:     [bold]{d.get('total', '0')}[/bold]")

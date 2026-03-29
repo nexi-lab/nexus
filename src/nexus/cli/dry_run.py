@@ -107,7 +107,7 @@ def render_dry_run(
     source = preview.get("source", "")
     dest = preview.get("dest", "")
 
-    console.print("[bold yellow]DRY RUN[/bold yellow] — no changes will be made")
+    console.print("[bold nexus.warning]DRY RUN[/bold nexus.warning] — no changes will be made")
 
     if source and dest:
         console.print(

@@ -111,7 +111,7 @@ def lock_info(
             data = rpc_call(remote_url, remote_api_key, "lock_info", path=path)
 
         def _render(d: dict) -> None:
-            console.print(f"[bold cyan]Lock Status: {path}[/bold cyan]")
+            console.print(f"[bold nexus.value]Lock Status: {path}[/bold nexus.value]")
             console.print(
                 f"  Locked:  {'[nexus.error]Yes[/nexus.error]' if d.get('locked') else '[nexus.success]No[/nexus.success]'}"
             )

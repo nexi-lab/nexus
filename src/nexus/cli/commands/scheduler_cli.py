@@ -48,7 +48,7 @@ def scheduler_status(client: SchedulerClient) -> ServiceResult:
 
         from nexus.cli.theme import console
 
-        console.print("[bold cyan]Scheduler Status[/bold cyan]")
+        console.print("[bold nexus.value]Scheduler Status[/bold nexus.value]")
         console.print(f"  HRRN Enabled:  {d.get('use_hrrn', 'N/A')}")
 
         # Queue by class table

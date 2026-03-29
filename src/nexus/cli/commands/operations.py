@@ -92,7 +92,7 @@ async def _async_ops_diff(
         nx.close()
 
         # Display results
-        console.print(f"\n[bold cyan]Diff for {path}[/bold cyan]")
+        console.print(f"\n[bold nexus.value]Diff for {path}[/bold nexus.value]")
         console.print(f"[nexus.muted]Operation 1:[/nexus.muted] {operation_1}")
         console.print(f"[nexus.muted]Operation 2:[/nexus.muted] {operation_2}")
         console.print()

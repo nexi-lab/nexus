@@ -255,15 +255,17 @@ def _run_google_oauth_setup(service_name: str, user_email: str) -> None:
     )
     auth_url = provider.get_authorization_url()
 
-    console.print("\n[bold green]Google OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]Google OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]Service:[/bold] {service_name}")
     console.print(f"[bold]User:[/bold] {user_email}")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost."
     )
-    console.print("[bold yellow]Step 3:[/bold yellow] Copy the `code` parameter from that URL.")
+    console.print(
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the `code` parameter from that URL."
+    )
     auth_code = click.prompt("\nEnter authorization code")
 
     async def _exchange_and_store() -> str:

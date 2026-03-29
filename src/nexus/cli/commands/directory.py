@@ -143,7 +143,9 @@ def list_files(
                 else:
                     for entry in entries:
                         if entry["type"] == "directory":
-                            console.print(f"  [bold cyan]{entry['path']}/[/bold cyan]")
+                            console.print(
+                                f"  [bold nexus.value]{entry['path']}/[/bold nexus.value]"
+                            )
                         else:
                             console.print(f"  {entry['path']}")
 
@@ -210,7 +212,7 @@ def _ls_time_travel(
 
     def _print_human(entries: list[dict[str, Any]]) -> None:
         console.print(
-            f"[bold cyan]Time-Travel Mode - Files at operation {at_operation}[/bold cyan]"
+            f"[bold nexus.value]Time-Travel Mode - Files at operation {at_operation}[/bold nexus.value]"
         )
         console.print()
         for entry in entries:
@@ -430,7 +432,9 @@ def tree(
                         connector = "└── " if is_last else "├── "
                         extension = "    " if is_last else "│   "
                         if isinstance(value, dict):
-                            console.print(f"{prefix}{connector}[bold cyan]{name}/[/bold cyan]")
+                            console.print(
+                                f"{prefix}{connector}[bold nexus.value]{name}/[/bold nexus.value]"
+                            )
                             f, s = _print_node(value, prefix + extension, depth + 1)
                             total_files += f
                             total_size += s
@@ -445,7 +449,7 @@ def tree(
                                 console.print(f"{prefix}{connector}{name}")
                     return total_files, total_size
 
-                console.print(f"[bold green]{path}[/bold green]")
+                console.print(f"[bold nexus.success]{path}[/bold nexus.success]")
                 file_count, total_sz = _print_node(tree_dict)
                 console.print()
                 if show_size:

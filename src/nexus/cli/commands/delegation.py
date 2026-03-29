@@ -179,7 +179,7 @@ def delegation_show(client: DelegationClient, delegation_id: str) -> ServiceResu
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Delegation Chain: {delegation_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Delegation Chain: {delegation_id}[/bold nexus.value]")
         chain = d.get("chain", [d])
         for i, link in enumerate(chain):
             prefix = "  └─" if i == len(chain) - 1 else "  ├─"

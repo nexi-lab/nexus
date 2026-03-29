@@ -189,7 +189,7 @@ async def _async_size(
             return f"{size_float:.1f} PB"
 
         # Display summary
-        console.print(f"[bold cyan]Size of {path}:[/bold cyan]")
+        console.print(f"[bold nexus.value]Size of {path}:[/bold nexus.value]")
         console.print(f"  Total size: [nexus.success]{format_size(total_size)}[/nexus.success]")
         console.print(f"  File count: [nexus.value]{file_count:,}[/nexus.value]")
 

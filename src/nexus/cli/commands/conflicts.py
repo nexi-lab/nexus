@@ -91,7 +91,7 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from nexus.cli.theme import console
 
-        console.print(f"[bold cyan]Conflict: {conflict_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Conflict: {conflict_id}[/bold nexus.value]")
         console.print(f"  Path:        {d.get('path', 'N/A')}")
         console.print(f"  Backend:     {d.get('backend_name', 'N/A')}")
         console.print(f"  Strategy:    {d.get('strategy', 'N/A')}")

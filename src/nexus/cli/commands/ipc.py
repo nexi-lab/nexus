@@ -127,6 +127,8 @@ def ipc_count(client: IPCClient, agent_id: str) -> ServiceResult:
         from nexus.cli.theme import console
 
         count = d.get("count", 0)
-        console.print(f"[bold cyan]{agent_id}[/bold cyan]: {count} message(s) in inbox")
+        console.print(
+            f"[bold nexus.value]{agent_id}[/bold nexus.value]: {count} message(s) in inbox"
+        )
 
     return ServiceResult(data=data, human_formatter=_render)

@@ -302,7 +302,7 @@ def grep(
                 console.print()
 
                 for filename in sorted(by_file.keys()):
-                    console.print(f"[bold cyan]{filename}[/bold cyan]")
+                    console.print(f"[bold nexus.value]{filename}[/bold nexus.value]")
                     for m in by_file[filename]:
                         ln = f"{m['line']}:" if line_number else ""
                         console.print(f"  [nexus.warning]{ln}[/nexus.warning] {m['content']}")
@@ -483,7 +483,7 @@ def search_index(
 
             # Show stats
             stats: dict[str, Any] = search_svc.semantic_search_stats()
-            console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
+            console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
             console.print(
                 f"  Total indexed files: [nexus.success]{stats['indexed_files']}[/nexus.success]"
             )
@@ -598,7 +598,7 @@ def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
 
             stats: dict[str, Any] = nx.service("search").semantic_search_stats()
 
-            console.print("\n[bold cyan]Semantic Search Statistics[/bold cyan]")
+            console.print("\n[bold nexus.value]Semantic Search Statistics[/bold nexus.value]")
             console.print(
                 f"  Engine: [nexus.success]{stats.get('engine', stats.get('database_type', 'unknown'))}[/nexus.success]"
             )

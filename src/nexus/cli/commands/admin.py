@@ -321,12 +321,12 @@ def list_users(
             # Create table
             table = Table(title=f"API Keys ({len(data)} total)")
             table.add_column("User ID", style="nexus.value")
-            table.add_column("Name", style="white")
+            table.add_column("Name")
             table.add_column("Key ID", style="nexus.muted")
             table.add_column("Admin", style="nexus.success")
             table.add_column("Created", style="nexus.reference")
             table.add_column("Expires", style="nexus.warning")
-            table.add_column("Status", style="white")
+            table.add_column("Status")
 
             for key in data:
                 # Determine status
@@ -790,7 +790,7 @@ def gc_versions(
 
             table = Table(show_header=False, box=None)
             table.add_column("Metric", style="nexus.value")
-            table.add_column("Value", style="white")
+            table.add_column("Value")
 
             table.add_row("Deleted by age:", str(data.get("deleted_by_age", 0)))
             table.add_row("Deleted by count:", str(data.get("deleted_by_count", 0)))
@@ -855,7 +855,7 @@ def gc_versions_stats(
 
             table = Table(show_header=False, box=None)
             table.add_column("Metric", style="nexus.value")
-            table.add_column("Value", style="white")
+            table.add_column("Value")
 
             table.add_row("Total versions:", f"{data.get('total_versions', 0):,}")
             table.add_row("Unique resources:", f"{data.get('unique_resources', 0):,}")
@@ -889,7 +889,7 @@ def gc_versions_stats(
 
                 config_table = Table(show_header=False, box=None)
                 config_table.add_column("Setting", style="nexus.value")
-                config_table.add_column("Value", style="white")
+                config_table.add_column("Value")
 
                 status = (
                     "[nexus.success]Enabled[/nexus.success]"

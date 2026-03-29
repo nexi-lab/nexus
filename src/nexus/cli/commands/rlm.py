@@ -65,7 +65,7 @@ def rlm_infer(
         iterations = d.get("iterations", d.get("total_iterations", "N/A"))
         tokens = d.get("total_tokens", "N/A")
 
-        console.print(f"[bold cyan]RLM Inference[/bold cyan] ({status})")
+        console.print(f"[bold nexus.value]RLM Inference[/bold nexus.value] ({status})")
         console.print(f"  Iterations: {iterations}")
         console.print(f"  Tokens:     {tokens}")
         console.print()

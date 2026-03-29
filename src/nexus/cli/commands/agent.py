@@ -292,7 +292,7 @@ def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
     data = client.status(agent_id)
 
     def _render(d: dict) -> None:
-        console.print(f"[bold cyan]Agent Status: {agent_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Agent Status: {agent_id}[/bold nexus.value]")
         console.print(f"  Phase:       {d.get('phase', 'N/A')}")
         console.print(f"  Generation:  {d.get('observed_generation', 'N/A')}")
         console.print(f"  Inbox:       {d.get('inbox_depth', 0)} message(s)")
@@ -342,7 +342,7 @@ def agent_spec_show(client: AgentExtClient, agent_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         import json
 
-        console.print(f"[bold cyan]Agent Spec: {agent_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Agent Spec: {agent_id}[/bold nexus.value]")
         console.print(json.dumps(d, indent=2, default=str))
 
     return ServiceResult(data=data, human_formatter=_render)

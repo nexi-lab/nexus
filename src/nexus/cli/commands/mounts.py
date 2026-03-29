@@ -318,7 +318,7 @@ async def _async_list_mounts(
                 status = mount.get("status", "active")
                 if status == "stale":
                     console.print(
-                        f"[nexus.warning]{mount['mount_point']}[/nexus.warning]  [nexus.muted](stale)[/nexus.muted]"
+                        f"[nexus.warning]{mount['mount_point']}[/nexus.warning]  [nexus.warning](stale)[/nexus.warning]"
                     )
                 else:
                     console.print(f"[bold]{mount['mount_point']}[/bold]")
@@ -649,7 +649,7 @@ async def _async_sync_mount(
             errors = data.get("errors", [])
             if errors:
                 console.print()
-                console.print(f"[bold red]Errors ({len(errors)}):[/bold red]")
+                console.print(f"[bold nexus.error]Errors ({len(errors)}):[/bold nexus.error]")
                 for error in errors[:5]:
                     console.print(f"  [nexus.error]\u2022[/nexus.error] {error}")
                 if len(errors) > 5:
@@ -780,7 +780,9 @@ async def _async_sync_status(
                 return
 
             def _render_jobs(data: list[dict[str, Any]]) -> None:
-                console.print(f"[bold nexus.value]Running Sync Jobs ({len(data)})[/bold nexus.value]")
+                console.print(
+                    f"[bold nexus.value]Running Sync Jobs ({len(data)})[/bold nexus.value]"
+                )
                 console.print()
                 for job_item in data:
                     console.print(f"  [bold]{job_item['id'][:8]}...[/bold]")
@@ -802,11 +804,11 @@ async def _async_sync_status(
 def _display_job_status(job: dict[str, Any]) -> None:
     """Display job status in a formatted way."""
     status_colors = {
-        "pending": "yellow",
-        "running": "cyan",
-        "completed": "green",
-        "failed": "red",
-        "cancelled": "yellow",
+        "pending": "nexus.warning",
+        "running": "nexus.value",
+        "completed": "nexus.success",
+        "failed": "nexus.error",
+        "cancelled": "nexus.warning",
     }
     status = job["status"]
     color = status_colors.get(status, "white")
@@ -973,11 +975,11 @@ async def _async_sync_jobs(
 
         def _render(data: list[dict[str, Any]]) -> None:
             status_colors = {
-                "pending": "yellow",
-                "running": "cyan",
-                "completed": "green",
-                "failed": "red",
-                "cancelled": "yellow",
+                "pending": "nexus.warning",
+                "running": "nexus.value",
+                "completed": "nexus.success",
+                "failed": "nexus.error",
+                "cancelled": "nexus.warning",
             }
 
             console.print(f"[bold nexus.value]Sync Jobs ({len(data)} shown)[/bold nexus.value]")

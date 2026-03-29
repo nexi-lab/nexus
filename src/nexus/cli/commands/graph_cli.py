@@ -49,7 +49,7 @@ def graph_entity(client: GraphClient, entity_id: str) -> ServiceResult:
         from nexus.cli.theme import console
 
         ent = d.get("entity", d)
-        console.print(f"[bold cyan]Entity: {entity_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Entity: {entity_id}[/bold nexus.value]")
         console.print(f"  Type:   {ent.get('type', 'N/A')}")
         console.print(f"  Label:  {ent.get('label', ent.get('name', 'N/A'))}")
         props = ent.get("properties", {})
@@ -131,7 +131,7 @@ def graph_subgraph(
 
         nodes = d.get("nodes", [])
         edges = d.get("edges", [])
-        console.print(f"[bold cyan]Subgraph ({len(entity_ids)} seed(s))[/bold cyan]")
+        console.print(f"[bold nexus.value]Subgraph ({len(entity_ids)} seed(s))[/bold nexus.value]")
         console.print(f"  Nodes: {len(nodes)}")
         console.print(f"  Edges: {len(edges)}")
 
@@ -167,7 +167,7 @@ def graph_search(
             console.print("[nexus.warning]No matching entities[/nexus.warning]")
             return
 
-        console.print("[bold cyan]Search Result[/bold cyan]")
+        console.print("[bold nexus.value]Search Result[/bold nexus.value]")
         console.print(f"  Entity ID: {entity.get('entity_id', entity.get('id', 'N/A'))}")
         console.print(f"  Type:      {entity.get('type', 'N/A')}")
         console.print(f"  Name:      {entity.get('name', 'N/A')}")

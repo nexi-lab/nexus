@@ -311,7 +311,7 @@ async def _async_history(
         table.add_column("Session", style="nexus.muted", no_wrap=True)
         table.add_column("Exit", style="nexus.muted")
         table.add_column("Prompt", style="nexus.warning", max_width=40)
-        table.add_column("Response", style="white", max_width=40)
+        table.add_column("Response", max_width=40)
         table.add_column("Model", style="nexus.muted")
         table.add_column("Tokens", style="nexus.muted")
         table.add_column("Cost", style="nexus.muted")

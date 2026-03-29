@@ -61,7 +61,7 @@ def federation_status(
 
         def _render(d: dict[str, Any]) -> None:
             zones = d.get("zones", [])
-            console.print("[bold cyan]Federation Status[/bold cyan]")
+            console.print("[bold nexus.value]Federation Status[/bold nexus.value]")
             console.print(f"  Total zones: [nexus.warning]{len(zones)}[/nexus.warning]")
 
             total_links = sum(z.get("links_count", 0) for z in zones)
@@ -158,7 +158,7 @@ def federation_info(
             data = rpc_call(remote_url, remote_api_key, "federation_cluster_info", zone_id=zone_id)
 
         def _render(d: dict[str, Any]) -> None:
-            console.print(f"[bold cyan]Zone: {d.get('zone_id', zone_id)}[/bold cyan]")
+            console.print(f"[bold nexus.value]Zone: {d.get('zone_id', zone_id)}[/bold nexus.value]")
             console.print(f"  Node ID:     {d.get('node_id', 'N/A')}")
             console.print(f"  Links count: {d.get('links_count', 0)}")
             console.print(f"  Has store:   {d.get('has_store', False)}")

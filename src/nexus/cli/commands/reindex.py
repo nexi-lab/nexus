@@ -284,7 +284,7 @@ def _run_semantic_reindex(
         return
 
     if dry_run:
-        console.print("\n[bold cyan]Dry Run — semantic reindex[/bold cyan]\n")
+        console.print("\n[bold nexus.value]Dry Run — semantic reindex[/bold nexus.value]\n")
         console.print(f"Total files to process: [bold]{len(all_files)}[/bold]")
         console.print("\n[nexus.muted]Run without --dry-run to execute.[/nexus.muted]")
         return
@@ -393,7 +393,7 @@ def _show_dry_run_summary(
     target: str,
 ) -> None:
     """Show a summary of what would be reindexed."""
-    console.print(f"\n[bold cyan]Dry Run — {target} reindex[/bold cyan]\n")
+    console.print(f"\n[bold nexus.value]Dry Run — {target} reindex[/bold nexus.value]\n")
     console.print(f"Total MCL records to process: [bold]{total}[/bold]")
     console.print("\n[nexus.muted]Run without --dry-run to execute.[/nexus.muted]")
 

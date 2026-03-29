@@ -273,9 +273,11 @@ def branches_cmd(
         table.add_column("Parent")
 
         for b in branches:
-            status_color = {"active": "green", "merged": "blue", "discarded": "red"}.get(
-                b.status, "white"
-            )
+            status_color = {
+                "active": "nexus.success",
+                "merged": "nexus.reference",
+                "discarded": "nexus.error",
+            }.get(b.status, "")
             table.add_row(
                 b.branch_name,
                 f"[{status_color}]{b.status}[/{status_color}]",

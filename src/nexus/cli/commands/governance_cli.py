@@ -58,7 +58,7 @@ def governance_status(
             alert_list = alerts.get("alerts", []) if isinstance(alerts, dict) else []
             ring_list = rings.get("rings", []) if isinstance(rings, dict) else []
 
-            console.print("[bold cyan]Governance Status[/bold cyan]")
+            console.print("[bold nexus.value]Governance Status[/bold nexus.value]")
             console.print(f"  Active alerts: [nexus.warning]{len(alert_list)}[/nexus.warning]")
             console.print(f"  Fraud rings:   [nexus.warning]{len(ring_list)}[/nexus.warning]")
 
@@ -175,7 +175,9 @@ def governance_rings(
                 console.print("[nexus.success]No fraud rings detected[/nexus.success]")
                 return
 
-            console.print(f"[bold cyan]Detected Fraud Rings ({len(rings)})[/bold cyan]")
+            console.print(
+                f"[bold nexus.value]Detected Fraud Rings ({len(rings)})[/bold nexus.value]"
+            )
             for i, ring in enumerate(rings, 1):
                 members = ring.get("members", [])
                 score = ring.get("risk_score", 0)

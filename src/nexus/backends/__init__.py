@@ -34,9 +34,9 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
     "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
     "CASGCSBackend": ("nexus.backends.storage.cas_gcs", "CASGCSBackend"),
-    "GoogleDriveConnectorBackend": (
+    "PathGDriveBackend": (
         "nexus.backends.connectors.gdrive.connector",
-        "GoogleDriveConnectorBackend",
+        "PathGDriveBackend",
     ),
     "PathGCSBackend": ("nexus.backends.storage.path_gcs", "PathGCSBackend"),
     "PathS3Backend": ("nexus.backends.storage.path_s3", "PathS3Backend"),
@@ -222,7 +222,7 @@ __all__ = [
     "CASLocalBackend",
     "PathLocalBackend",
     "CASGCSBackend",
-    "GoogleDriveConnectorBackend",
+    "PathGDriveBackend",
     "PathGCSBackend",
     "PathS3Backend",
     "XConnectorBackend",

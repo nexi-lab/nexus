@@ -2651,8 +2651,8 @@ class NexusFS(  # type: ignore[misc]
                     # Driver should have created metadata.
                     # If not, write path is broken — fail loudly.
                     raise BackendError(
-                        f"Backend write_content() did not persist metadata for {path}. "
-                        "Ensure metastore is injected into CAS engine."
+                        f"write_content() completed but metadata not found for {path}. "
+                        "Driver must persist metadata during write_content()."
                     )
                 metadata = _post_meta
                 new_version = metadata.version

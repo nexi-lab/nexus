@@ -86,11 +86,10 @@ function readYamlConfig(): YamlConfig {
     const path = require("node:path") as typeof import("node:path");
 
     // Walk up from CWD looking for nexus.yaml or nexus.yml.
-    // Stops at the git/worktree root (.git file or directory) so we don't
-    // leak into a parent repository. This handles:
-    //   - Running from packages/nexus-tui/ → finds nexus.yaml at repo root
-    //   - Git worktrees (.git is a file) → finds config at worktree root
-    //   - Won't escape into the parent repo that contains the worktree
+    // Stops at the git root (.git file or directory) to avoid leaking
+    // into a parent repository. For git worktrees, this means the search
+    // stops at the worktree root — each worktree should have its own
+    // nexus.yaml (created via `nexus init` from the pre-connection screen).
     const candidates: string[] = [];
     let dir = path.resolve(".");
     for (let i = 0; i < 20; i++) {

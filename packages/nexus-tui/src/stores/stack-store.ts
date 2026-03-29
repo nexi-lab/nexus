@@ -182,8 +182,17 @@ export const useStackStore = create<StackState>((set, get) => ({
         },
       );
 
-      const stdout = await new Response(proc.stdout).text();
-      await proc.exited;
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      if (exitCode !== 0) {
+        const errMsg = stderr.trim() || `docker compose ps exited with code ${exitCode}`;
+        set({ containers: [], containersLoading: false, error: errMsg });
+        return;
+      }
 
       const containers = parseDockerPs(stdout);
       set({ containers, containersLoading: false });
@@ -231,7 +240,7 @@ export const useStackStore = create<StackState>((set, get) => ({
           },
         });
       } else {
-        set({ configYaml: "(nexus.yaml not found)", configLoading: false, paths: null });
+        set({ configYaml: "", configLoading: false, paths: null });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to read nexus.yaml";

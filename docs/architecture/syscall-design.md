@@ -29,20 +29,24 @@ Nexus:   Client      → nx.read()    →                  → NexusFS.sys_read(
 
 All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern).
 
-### Metadata Plane (8)
+### Metadata Plane — Tier 1 (5)
 
 | # | Syscall | Signature | POSIX Ref |
 |---|---------|-----------|-----------|
 | 1 | `sys_stat` | `(path) → FileMetadata \| None` | `stat(2)` |
 | 2 | `sys_setattr` | `(path, **attrs) → FileMetadata` | `chmod/chown/utimes` + `mknod` (DT_DIR, DT_PIPE, DT_STREAM) |
-| 3 | `sys_rmdir` | `(path, recursive=False) → None` | `rmdir(2)` |
-| 4 | `sys_readdir` | `(path, recursive=True) → list` | `readdir(3)` |
-| 5 | `sys_access` | `(path, mode=F_OK) → bool` | `access(2)` |
-| 6 | `sys_rename` | `(old, new) → None` | `rename(2)` |
-| 7 | `sys_unlink` | `(path) → None` | `unlink(2)` |
-| 8 | `sys_is_directory` | `(path) → bool` | `S_ISDIR` macro |
+| 3 | `sys_readdir` | `(path, recursive=True) → list` | `readdir(3)` |
+| 4 | `sys_rename` | `(old, new) → None` | `rename(2)` |
+| 5 | `sys_unlink` | `(path, recursive=False) → dict` | `unlink(2)` + `rmdir(2)` (unified) |
 
-`mkdir(path, parents, exist_ok)` is Tier 2 convenience over `sys_setattr(path, entry_type=DT_DIR)`.
+### Metadata Plane — Tier 2 (convenience wrappers, no `sys_` prefix)
+
+| Method | Delegates to | POSIX Ref |
+|--------|-------------|-----------|
+| `is_directory(path)` | `sys_stat(path)` → `.is_directory` | `S_ISDIR` macro |
+| `access(path)` | metadata.exists + permission check | `access(2)` |
+| `sys_rmdir(path, recursive)` | `sys_unlink(path, recursive=)` | `rmdir(2)` |
+| `mkdir(path, parents, exist_ok)` | `sys_setattr(path, entry_type=DT_DIR)` | `mkdir(2)` |
 
 ### Content Plane (2)
 
@@ -158,18 +162,19 @@ between DataNodes — separate from NameNode API).
 
 ## 5. POSIX Alignment Summary
 
-| Syscall | Aligned? | Notes |
-|---------|----------|-------|
-| `sys_stat` | ✅ | dict vs struct stat (Pythonic) |
-| `sys_setattr` | ✅ | Bundles chmod/chown/utimes + mknod (DT_DIR, DT_PIPE, DT_STREAM) |
-| `sys_rmdir` | ✅ | `recursive` is extension |
-| `sys_readdir` | ✅ | No opendir/closedir (acceptable simplification) |
-| `sys_access` | ⚠️→✅ | Adding mode flags (F_OK/R_OK/W_OK/X_OK) |
-| `sys_rename` | ✅ | — |
-| `sys_unlink` | ⚠️→✅ | Changing to metadata-only |
-| `sys_is_directory` | ✅ | Our extension (S_ISDIR macro equivalent) |
-| `sys_read` | ⚠️→✅ | Adding count/offset, content-only |
-| `sys_write` | ⚠️→✅ | Adding count/offset, content-only, return int |
+| Syscall | Tier | Aligned? | Notes |
+|---------|------|----------|-------|
+| `sys_stat` | 1 | ✅ | dict vs struct stat (Pythonic) |
+| `sys_setattr` | 1 | ✅ | Bundles chmod/chown/utimes + mknod (DT_DIR, DT_PIPE, DT_STREAM) |
+| `sys_readdir` | 1 | ✅ | No opendir/closedir (acceptable simplification) |
+| `sys_rename` | 1 | ✅ | — |
+| `sys_unlink` | 1 | ✅ | Unified: files + directories (`recursive=` for rmdir) |
+| `sys_read` | 1 | ✅ | count/offset, content-only |
+| `sys_write` | 1 | ✅ | count/offset, content-only, return int |
+| `is_directory` | 2 | ✅ | Derives from sys_stat (S_ISDIR macro equivalent) |
+| `access` | 2 | ✅ | metadata.exists + permission check |
+| `sys_rmdir` | 2 | ✅ | Delegates to sys_unlink(recursive=) |
+| `mkdir` | 2 | ✅ | Delegates to sys_setattr(entry_type=DT_DIR) |
 
 ---
 

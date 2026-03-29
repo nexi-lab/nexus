@@ -158,25 +158,34 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
-**13 kernel syscalls**, all POSIX-aligned, all path-addressed:
+**10 kernel syscalls** (7 Tier 1 + 3 Tier 1 non-VFS), all POSIX-aligned, all path-addressed:
 
-| Plane | Syscalls |
-|-------|----------|
-| **Metadata** (8) | `sys_stat`, `sys_setattr`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
+| Plane | Tier 1 Syscalls |
+|-------|-----------------|
+| **Metadata** (5) | `sys_stat`, `sys_setattr`, `sys_readdir`, `sys_rename`, `sys_unlink` |
 | **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
 | **Locking** (2) | `sys_lock` (flock), `sys_unlock` |
 | **Watch** (1) | `sys_watch` (inotify) |
 
+**Tier 2 convenience methods** (Python wrappers over Tier 1, no `sys_` prefix):
+
+| Tier 2 | Delegates to |
+|--------|-------------|
+| `is_directory(path)` | `sys_stat(path)` → `.is_directory` |
+| `access(path)` | metadata.exists + permission check |
+| `sys_rmdir(path, recursive)` | `sys_unlink(path, recursive=)` |
+| `mkdir(path)` | `sys_setattr(path, entry_type=DT_DIR)` |
+
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
-`umount` = `sys_rmdir` on DT_MOUNT path.
+`umount` = `sys_unlink` on DT_MOUNT path (directory branch handles unmount).
 `/__sys__/` paths are kernel management operations (not filesystem metadata):
 `sys_setattr("/__sys__/services/X", service=inst)` registers,
 `sys_unlink("/__sys__/services/X")` unregisters.
 
 **Primitive usage pattern:**
 
-- **Mutating syscalls** (write, unlink, rename, rmdir): full pipeline — VFSRouter →
+- **Mutating syscalls** (write, unlink, rename): full pipeline — VFSRouter →
   VFSLock → KernelDispatch (3-phase) → Metastore → FileEvent
 - **Read**: same pipeline minus FileEvent (reads are not mutations)
 - **Read-only metadata** (stat, access, readdir, is_directory): direct Metastore

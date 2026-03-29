@@ -2653,17 +2653,34 @@ class NexusFS(  # type: ignore[misc]
                 # HDFS/GFS pattern: content cleanup is async via background GC.
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-                # Driver persisted metadata inside write_content() (CAS pattern).
-                # Read it back for event dispatch.
-                _post_meta = self.metadata.get(path)
-                if _post_meta is None:
-                    # Driver should have created metadata.
-                    # If not, write path is broken — fail loudly.
-                    raise BackendError(
-                        f"write_content() completed but metadata not found for {path}. "
-                        "Driver must persist metadata during write_content()."
+                # If driver manages metadata (has _metastore injected), read back
+                # what it wrote. Otherwise, kernel does it (generic_write_end).
+                _driver_manages_meta = getattr(route.backend, "_metastore", None) is not None
+                if _driver_manages_meta:
+                    metadata = self.metadata.get(path) or self._build_write_metadata(
+                        path=path,
+                        backend_name=route.backend.name,
+                        content_hash=content_hash,
+                        size=_wr.size if offset > 0 else len(content),
+                        existing_meta=meta,
+                        now=now,
+                        zone_id=zone_id,
+                        context=context,
                     )
-                metadata = _post_meta
+                else:
+                    # Driver didn't update metadata — kernel fallback
+                    # (like Linux generic_write_end updating i_size/i_mtime).
+                    metadata = self._build_write_metadata(
+                        path=path,
+                        backend_name=route.backend.name,
+                        content_hash=content_hash,
+                        size=_wr.size if offset > 0 else len(content),
+                        existing_meta=meta,
+                        now=now,
+                        zone_id=zone_id,
+                        context=context,
+                    )
+                    self.metadata.put(metadata, consistency=consistency)
                 new_version = metadata.version
 
         return _WriteContentResult(

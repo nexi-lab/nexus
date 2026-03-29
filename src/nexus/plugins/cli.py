@@ -8,9 +8,10 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.theme import NEXUS_THEME
 from nexus.plugins.registry import PluginRegistry
 
-console = Console()
+console = Console(theme=NEXUS_THEME)
 
 
 def _run_async(coro: Any) -> Any:
@@ -47,15 +48,15 @@ def list_plugins(ctx: click.Context) -> None:
     plugins = registry.list_plugins()
 
     if not plugins:
-        console.print("[yellow]No plugins installed.[/yellow]")
+        console.print("[nexus.warning]No plugins installed.[/nexus.warning]")
         console.print("\nInstall plugins with: pip install nexus-plugin-<name>")
         return
 
     table = Table(title="Installed Plugins")
-    table.add_column("Name", style="cyan")
-    table.add_column("Version", style="green")
+    table.add_column("Name", style="nexus.value")
+    table.add_column("Version", style="nexus.success")
     table.add_column("Description")
-    table.add_column("Status", style="yellow")
+    table.add_column("Status", style="nexus.warning")
 
     for metadata in plugins:
         plugin = registry.get_plugin_sync(metadata.name)
@@ -74,12 +75,12 @@ def plugin_info(ctx: click.Context, plugin_name: str) -> None:
     plugin = _run_async(registry.get_plugin(plugin_name))
 
     if not plugin:
-        console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+        console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
         return
 
     metadata = plugin.metadata()
 
-    console.print(f"\n[bold cyan]{metadata.name}[/bold cyan] v{metadata.version}")
+    console.print(f"\n[bold nexus.value]{metadata.name}[/bold nexus.value] v{metadata.version}")
     console.print(f"{metadata.description}\n")
     console.print(f"[bold]Author:[/bold] {metadata.author}")
 
@@ -114,15 +115,15 @@ def enable_plugin(ctx: click.Context, plugin_name: str) -> None:
     plugin = _run_async(registry.get_plugin(plugin_name))
 
     if not plugin:
-        console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+        console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
         return
 
     if plugin.is_enabled():
-        console.print(f"[yellow]Plugin '{plugin_name}' is already enabled.[/yellow]")
+        console.print(f"[nexus.warning]Plugin '{plugin_name}' is already enabled.[/nexus.warning]")
         return
 
     registry.enable_plugin(plugin_name)
-    console.print(f"[green]Enabled plugin '{plugin_name}'[/green]")
+    console.print(f"[nexus.success]Enabled plugin '{plugin_name}'[/nexus.success]")
 
 
 @plugins_cli.command(name="disable")
@@ -134,15 +135,15 @@ def disable_plugin(ctx: click.Context, plugin_name: str) -> None:
     plugin = _run_async(registry.get_plugin(plugin_name))
 
     if not plugin:
-        console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+        console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
         return
 
     if not plugin.is_enabled():
-        console.print(f"[yellow]Plugin '{plugin_name}' is already disabled.[/yellow]")
+        console.print(f"[nexus.warning]Plugin '{plugin_name}' is already disabled.[/nexus.warning]")
         return
 
     registry.disable_plugin(plugin_name)
-    console.print(f"[green]Disabled plugin '{plugin_name}'[/green]")
+    console.print(f"[nexus.success]Disabled plugin '{plugin_name}'[/nexus.success]")
 
 
 @plugins_cli.command(name="install")
@@ -163,10 +164,10 @@ def install_plugin(plugin_name: str) -> None:
         subprocess.check_call(
             ["pip", "install", package_name], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
         )
-        console.print(f"[green]Successfully installed {package_name}[/green]")
+        console.print(f"[nexus.success]Successfully installed {package_name}[/nexus.success]")
         console.print("\nRun 'nexus plugins list' to see the installed plugin")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to install {package_name}[/red]")
+        console.print(f"[nexus.error]Failed to install {package_name}[/nexus.error]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
 
 
@@ -196,9 +197,9 @@ def uninstall_plugin(plugin_name: str, yes: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        console.print(f"[green]Successfully uninstalled {package_name}[/green]")
+        console.print(f"[nexus.success]Successfully uninstalled {package_name}[/nexus.success]")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to uninstall {package_name}[/red]")
+        console.print(f"[nexus.error]Failed to uninstall {package_name}[/nexus.error]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
 
 
@@ -228,7 +229,7 @@ def init_plugin(
 
     from nexus.plugins.scaffold import PLUGIN_TYPES, scaffold_plugin
 
-    console.print(f"Creating {plugin_type} plugin: [cyan]nexus-plugin-{name}[/cyan]")
+    console.print(f"Creating {plugin_type} plugin: [nexus.value]nexus-plugin-{name}[/nexus.value]")
 
     try:
         result = scaffold_plugin(
@@ -239,7 +240,9 @@ def init_plugin(
             description=description,
         )
 
-        console.print(f"\n[green]Created plugin scaffold at {result['project_dir']}[/green]")
+        console.print(
+            f"\n[nexus.success]Created plugin scaffold at {result['project_dir']}[/nexus.success]"
+        )
         console.print(f"\n  Package: {result['package_name']}")
         console.print(f"  Module:  {result['module_name']}")
         console.print(f"  Class:   {result['class_name']}")
@@ -255,6 +258,6 @@ def init_plugin(
         console.print("  nexus plugins list")
 
     except (ValueError, FileExistsError) as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[nexus.error]Error: {e}[/nexus.error]")
     except Exception as e:
-        console.print(f"[red]Failed to create plugin scaffold: {e}[/red]")
+        console.print(f"[nexus.error]Failed to create plugin scaffold: {e}[/nexus.error]")

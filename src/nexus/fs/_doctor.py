@@ -473,10 +473,10 @@ def generate_tip(results: dict[str, list[DoctorCheckResult]]) -> str | None:
 # ---------------------------------------------------------------------------
 
 _STATUS_ICONS = {
-    DoctorStatus.PASS: "[green]✓[/green]",
-    DoctorStatus.FAIL: "[red]✗[/red]",
-    DoctorStatus.NOT_INSTALLED: "[dim]○[/dim]",
-    DoctorStatus.CONNECTED: "[green]●[/green]",
+    DoctorStatus.PASS: "[nexus.success]✓[/nexus.success]",
+    DoctorStatus.FAIL: "[nexus.error]✗[/nexus.error]",
+    DoctorStatus.NOT_INSTALLED: "[nexus.muted]○[/nexus.muted]",
+    DoctorStatus.CONNECTED: "[nexus.success]●[/nexus.success]",
 }
 
 
@@ -493,8 +493,10 @@ def render_doctor(
     from rich.console import Console
     from rich.table import Table
 
+    from nexus.cli.theme import NEXUS_THEME
+
     if console is None:
-        console = Console()
+        console = Console(theme=NEXUS_THEME)
 
     for section_name, checks in results.items():
         if not checks:
@@ -509,7 +511,7 @@ def render_doctor(
             title_style="bold",
         )
         table.add_column("status", width=3, no_wrap=True)
-        table.add_column("name", style="cyan", no_wrap=True)
+        table.add_column("name", style="nexus.value", no_wrap=True)
         table.add_column("detail")
 
         for check in checks:
@@ -519,9 +521,9 @@ def render_doctor(
             if check.install_cmd and check.status == DoctorStatus.NOT_INSTALLED:
                 # Escape Rich markup in install commands (e.g., nexus-fs[s3])
                 escaped_cmd = check.install_cmd.replace("[", r"\[")
-                detail += f"  [dim]({escaped_cmd})[/dim]"
+                detail += f"  [nexus.muted]({escaped_cmd})[/nexus.muted]"
             if check.fix_hint and check.status == DoctorStatus.FAIL:
-                detail += f"\n       [dim]{check.fix_hint}[/dim]"
+                detail += f"\n       [nexus.muted]{check.fix_hint}[/nexus.muted]"
 
             table.add_row(icon, check.name, detail)
 
@@ -535,15 +537,15 @@ def render_doctor(
     failed = sum(1 for c in all_checks if c.status == DoctorStatus.FAIL)
     not_installed = sum(1 for c in all_checks if c.status == DoctorStatus.NOT_INSTALLED)
 
-    summary_parts = [f"[green]{passed} passed[/green]"]
+    summary_parts = [f"[nexus.success]{passed} passed[/nexus.success]"]
     if failed:
-        summary_parts.append(f"[red]{failed} failed[/red]")
+        summary_parts.append(f"[nexus.error]{failed} failed[/nexus.error]")
     if not_installed:
-        summary_parts.append(f"[dim]{not_installed} not installed[/dim]")
+        summary_parts.append(f"[nexus.muted]{not_installed} not installed[/nexus.muted]")
 
     console.print(f"[bold]{total} checks:[/bold] {', '.join(summary_parts)}")
 
     # Context-aware tip
     tip = generate_tip(results)
     if tip:
-        console.print(f"\n[cyan]Tip:[/cyan] {tip}")
+        console.print(f"\n[nexus.info]Tip:[/nexus.info] {tip}")

@@ -484,8 +484,8 @@ def share_cmd(
             remote_url, remote_api_key, "federation_share", local_path=path, zone_id=zone_id
         )
         new_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Shared '{path}' as federation zone[/green]")
-        console.print(f"  Zone ID: [cyan]{new_zone}[/cyan]")
+        console.print(f"[nexus.success]Shared '{path}' as federation zone[/nexus.success]")
+        console.print(f"  Zone ID: [nexus.reference]{new_zone}[/nexus.reference]")
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -531,8 +531,8 @@ def join_cmd(
             local_path=local_path,
         )
         joined_zone = data.get("zone_id", "unknown")
-        console.print(f"[green]Joined federation zone from {peer_addr}[/green]")
-        console.print(f"  Zone ID:     [cyan]{joined_zone}[/cyan]")
+        console.print(f"[nexus.success]Joined federation zone from {peer_addr}[/nexus.success]")
+        console.print(f"  Zone ID:     [nexus.reference]{joined_zone}[/nexus.reference]")
         console.print(f"  Remote path: {remote_path}")
         console.print(f"  Local path:  {local_path}")
     except Exception as e:

@@ -174,7 +174,7 @@ class NexusPlugin(ABC):
                 data = self.read_json_input()
                 content = data.get("content", "")
             except json.JSONDecodeError:
-                console.print("[red]Invalid JSON from stdin[/red]")
+                console.print("[nexus.error]Invalid JSON from stdin[/nexus.error]")
         """
         if not sys.stdin.isatty():
             try:

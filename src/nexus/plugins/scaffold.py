@@ -215,10 +215,9 @@ class {class_name}(NexusPlugin):
 
     async def hello_command(self, name: str = "World") -> None:
         """Example command."""
-        from rich.console import Console
+        from nexus.cli.theme import console
 
-        console = Console()
-        console.print(f"[green]Hello, {{name}}! From {name} plugin.[/green]")
+        console.print(f"[nexus.success]Hello, {{name}}! From {name} plugin.[/nexus.success]")
 '''
 
     if plugin_type == "storage":

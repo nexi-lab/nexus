@@ -1,5 +1,5 @@
 """
-Nexus = filesystem/context plane.
+Nexus — filesystem/context plane.
 
 Nexus combines a VFS-style filesystem interface with deployment-aware context,
 storage, and service composition for agent systems.

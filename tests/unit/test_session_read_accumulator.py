@@ -248,3 +248,157 @@ class TestEmptyAccumulator:
         for _ in range(5):
             reads = acc.consume("agent-empty", 1)
             assert reads == []
+
+
+class TestScopedTracking:
+    """Scoped lineage tracking — per-task read isolation."""
+
+    def test_begin_scope_sets_active(self) -> None:
+        acc = SessionReadAccumulator()
+        assert acc.get_active_scope("agent-1", 1) == "_default"
+        acc.begin_scope("agent-1", 1, "task-A")
+        assert acc.get_active_scope("agent-1", 1) == "task-A"
+
+    def test_reads_go_into_active_scope(self) -> None:
+        acc = SessionReadAccumulator()
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/a.txt")
+        acc.record_read("agent-1", 1, "/b.txt")
+
+        assert acc.peek("agent-1", 1, scope_id="task-A") == 2
+        assert acc.peek("agent-1", 1, scope_id="_default") == 0
+
+    def test_scope_isolation(self) -> None:
+        """Reads in different scopes are isolated."""
+        acc = SessionReadAccumulator()
+
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/a1.txt")
+        acc.record_read("agent-1", 1, "/a2.txt")
+
+        acc.begin_scope("agent-1", 1, "task-B")
+        acc.record_read("agent-1", 1, "/b1.txt")
+
+        reads_a = acc.consume("agent-1", 1, scope_id="task-A")
+        reads_b = acc.consume("agent-1", 1, scope_id="task-B")
+
+        assert len(reads_a) == 2
+        assert reads_a[0]["path"] == "/a1.txt"
+        assert reads_a[1]["path"] == "/a2.txt"
+        assert len(reads_b) == 1
+        assert reads_b[0]["path"] == "/b1.txt"
+
+    def test_consume_only_clears_target_scope(self) -> None:
+        """Consuming one scope doesn't affect other scopes."""
+        acc = SessionReadAccumulator()
+
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/a.txt")
+        acc.begin_scope("agent-1", 1, "task-B")
+        acc.record_read("agent-1", 1, "/b.txt")
+
+        # Consume task-A only
+        acc.consume("agent-1", 1, scope_id="task-A")
+
+        # task-B should still have its read
+        assert acc.peek("agent-1", 1, scope_id="task-B") == 1
+        reads_b = acc.consume("agent-1", 1, scope_id="task-B")
+        assert len(reads_b) == 1
+
+    def test_read3_write1_write2_scenario(self) -> None:
+        """The key scenario: read 3 → write 1 → write 2.
+
+        With scopes, each write gets its own reads.
+        Without scopes, write 2 gets nothing (old bug).
+        """
+        acc = SessionReadAccumulator()
+
+        # Task 1: read A, B, C → write output1
+        acc.begin_scope("agent-1", 1, "task-1")
+        acc.record_read("agent-1", 1, "/a.csv")
+        acc.record_read("agent-1", 1, "/b.csv")
+        acc.record_read("agent-1", 1, "/c.csv")
+
+        reads_1 = acc.consume("agent-1", 1, scope_id="task-1")
+        assert len(reads_1) == 3
+
+        # Task 2: read D, E → write output2
+        acc.begin_scope("agent-1", 1, "task-2")
+        acc.record_read("agent-1", 1, "/d.csv")
+        acc.record_read("agent-1", 1, "/e.csv")
+
+        reads_2 = acc.consume("agent-1", 1, scope_id="task-2")
+        assert len(reads_2) == 2
+        assert reads_2[0]["path"] == "/d.csv"
+        assert reads_2[1]["path"] == "/e.csv"
+
+    def test_default_scope_backward_compat(self) -> None:
+        """Without begin_scope, reads go into _default — same as old behavior."""
+        acc = SessionReadAccumulator()
+        acc.record_read("agent-1", 1, "/a.txt")
+        acc.record_read("agent-1", 1, "/b.txt")
+
+        # consume() without scope_id uses active scope (which is _default)
+        reads = acc.consume("agent-1", 1)
+        assert len(reads) == 2
+
+    def test_end_scope_consumes_and_removes(self) -> None:
+        acc = SessionReadAccumulator()
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/a.txt")
+
+        reads = acc.end_scope("agent-1", 1, "task-A")
+        assert len(reads) == 1
+
+        # Scope is gone — peek returns 0
+        assert acc.peek("agent-1", 1, scope_id="task-A") == 0
+        # Active scope reverted to default
+        assert acc.get_active_scope("agent-1", 1) == "_default"
+
+    def test_end_scope_nonexistent_returns_empty(self) -> None:
+        acc = SessionReadAccumulator()
+        reads = acc.end_scope("agent-1", 1, "no-such-scope")
+        assert reads == []
+
+    def test_explicit_scope_id_on_record(self) -> None:
+        """record_read with explicit scope_id overrides active scope."""
+        acc = SessionReadAccumulator()
+        acc.begin_scope("agent-1", 1, "task-A")
+
+        # Record into task-B explicitly (even though task-A is active)
+        acc.record_read("agent-1", 1, "/b.txt", scope_id="task-B")
+
+        assert acc.peek("agent-1", 1, scope_id="task-A") == 0
+        assert acc.peek("agent-1", 1, scope_id="task-B") == 1
+
+    def test_reactivate_existing_scope(self) -> None:
+        """begin_scope on existing scope reactivates it (appends, doesn't clear)."""
+        acc = SessionReadAccumulator()
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/first.txt")
+
+        acc.begin_scope("agent-1", 1, "task-B")
+        acc.record_read("agent-1", 1, "/other.txt")
+
+        # Reactivate task-A
+        acc.begin_scope("agent-1", 1, "task-A")
+        acc.record_read("agent-1", 1, "/second.txt")
+
+        reads = acc.consume("agent-1", 1, scope_id="task-A")
+        assert len(reads) == 2
+        assert reads[0]["path"] == "/first.txt"
+        assert reads[1]["path"] == "/second.txt"
+
+    def test_max_entries_shared_across_scopes(self) -> None:
+        """Max entries limit applies across all scopes in a session."""
+        acc = SessionReadAccumulator(max_entries=5)
+        acc.begin_scope("agent-1", 1, "task-A")
+        for i in range(3):
+            acc.record_read("agent-1", 1, f"/a{i}.txt")
+
+        acc.begin_scope("agent-1", 1, "task-B")
+        for i in range(2):
+            acc.record_read("agent-1", 1, f"/b{i}.txt")
+
+        # 6th entry should fail (5 total across both scopes)
+        assert acc.record_read("agent-1", 1, "/overflow.txt") is False

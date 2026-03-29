@@ -1,11 +1,14 @@
 """Lineage REST API endpoints (Issue #3417).
 
 Provides endpoints for querying and managing agent lineage:
-- GET /api/v2/lineage/{urn}       -- Get upstream lineage for an entity
-- GET /api/v2/lineage/downstream  -- Find downstream dependents (impact analysis)
-- GET /api/v2/lineage/stale       -- Find stale downstream entities
-- PUT /api/v2/lineage/{urn}       -- Explicitly declare lineage
-- DELETE /api/v2/lineage/{urn}    -- Delete lineage for an entity
+- GET /api/v2/lineage/{urn}             -- Get upstream lineage for an entity
+- GET /api/v2/lineage/downstream/query  -- Find downstream dependents (impact analysis)
+- GET /api/v2/lineage/stale/query       -- Find stale downstream entities
+- PUT /api/v2/lineage/{urn}             -- Explicitly declare lineage
+- DELETE /api/v2/lineage/{urn}          -- Delete lineage for an entity
+- POST /api/v2/lineage/scope/begin      -- Begin a named lineage scope
+- POST /api/v2/lineage/scope/end        -- End a scope (consume + close)
+- GET /api/v2/lineage/scope/active      -- Get the active scope for a session
 """
 
 import logging
@@ -18,6 +21,8 @@ from nexus.server.api.v2.models.lineage import (
     DownstreamResponse,
     LineageResponse,
     PutLineageRequest,
+    ScopeRequest,
+    ScopeResponse,
     StaleEntry,
     StaleResponse,
 )
@@ -198,3 +203,77 @@ async def delete_lineage(
     except Exception as e:
         logger.error("delete_lineage error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete lineage") from e
+
+
+# ---- Scope management endpoints ----
+
+
+@router.post("/scope/begin")
+async def begin_scope(body: ScopeRequest) -> ScopeResponse:
+    """Begin a named lineage scope. Subsequent reads go into this scope.
+
+    Agents call this before starting a task to isolate that task's reads
+    from other reads in the same session. Each scope's reads are consumed
+    independently when the agent writes.
+    """
+    from nexus.storage.session_read_accumulator import get_accumulator
+
+    try:
+        acc = get_accumulator()
+        acc.begin_scope(body.agent_id, body.agent_generation, body.scope_id)
+        return ScopeResponse(
+            agent_id=body.agent_id,
+            scope_id=body.scope_id,
+            active_scope=body.scope_id,
+            reads_count=0,
+        )
+    except Exception as e:
+        logger.error("begin_scope error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to begin scope") from e
+
+
+@router.post("/scope/end")
+async def end_scope(body: ScopeRequest) -> ScopeResponse:
+    """End a named scope and discard unconsumed reads.
+
+    The scope is removed. If it was active, reverts to default scope.
+    Returns the number of reads that were in the scope.
+    """
+    from nexus.storage.session_read_accumulator import get_accumulator
+
+    try:
+        acc = get_accumulator()
+        reads = acc.end_scope(body.agent_id, body.agent_generation, body.scope_id)
+        active = acc.get_active_scope(body.agent_id, body.agent_generation)
+        return ScopeResponse(
+            agent_id=body.agent_id,
+            scope_id=body.scope_id,
+            active_scope=active,
+            reads_count=len(reads),
+        )
+    except Exception as e:
+        logger.error("end_scope error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to end scope") from e
+
+
+@router.get("/scope/active")
+async def get_active_scope(
+    agent_id: str = Query(..., description="Agent ID"),
+    agent_generation: int | None = Query(None, description="Agent generation"),
+) -> ScopeResponse:
+    """Get the currently active lineage scope for an agent session."""
+    from nexus.storage.session_read_accumulator import get_accumulator
+
+    try:
+        acc = get_accumulator()
+        active = acc.get_active_scope(agent_id, agent_generation)
+        count = acc.peek(agent_id, agent_generation, scope_id=active)
+        return ScopeResponse(
+            agent_id=agent_id,
+            scope_id=active,
+            active_scope=active,
+            reads_count=count,
+        )
+    except Exception as e:
+        logger.error("get_active_scope error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to get active scope") from e

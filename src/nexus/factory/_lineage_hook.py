@@ -103,9 +103,12 @@ def _record_lineage_batch(
                         )
                         lineage.operation = "copy"
                     else:
-                        # Write lineage: consume accumulated reads
+                        # Write lineage: consume accumulated reads from active scope.
+                        # If the agent used begin_scope(), only that scope's reads
+                        # are consumed. Otherwise the default scope is used.
                         agent_generation = event.get("agent_generation")
-                        reads = accumulator.consume(agent_id, agent_generation)
+                        scope_id = event.get("lineage_scope")  # explicit scope from event
+                        reads = accumulator.consume(agent_id, agent_generation, scope_id=scope_id)
 
                         if not reads:
                             # No accumulated reads — nothing to record

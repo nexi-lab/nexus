@@ -74,3 +74,20 @@ class PutLineageRequest(ApiModel):
     upstream: list[UpstreamEntry]
     agent_id: str
     agent_generation: int | None = None
+
+
+class ScopeRequest(ApiModel):
+    """Request body for POST /api/v2/lineage/scope/begin and end."""
+
+    agent_id: str
+    agent_generation: int | None = None
+    scope_id: str
+
+
+class ScopeResponse(ApiModel):
+    """Response for scope operations."""
+
+    agent_id: str
+    scope_id: str
+    active_scope: str
+    reads_count: int = 0

@@ -1,9 +1,17 @@
-"""CLIConnector — generic base class for CLI-backed connector backends.
+"""PathCLIBackend — PathAddressingEngine + CLITransport composition.
 
-Implements the ContentStoreProtocol via write_content(content, context)
-by delegating to external CLI tools (gws, gh, etc.). Each concrete
-connector provides a declarative YAML config that defines operations,
-schemas, commands, and traits.
+Refactored from the original CLIConnector to follow the same Transport x
+PathAddressingEngine composition pattern as PathGmailBackend, PathCalendarBackend,
+and PathGDriveBackend.
+
+Architecture:
+    PathCLIBackend(PathAddressingEngine)
+        +-- CLITransport(Transport)
+              +-- subprocess execution (CLI I/O)
+              +-- env-var auth (no OAuth)
+
+The CLITransport handles raw key->bytes I/O via CLI subprocess commands.
+PathAddressingEngine handles addressing, path security, and content operations.
 
 Design decisions (Issue #3148):
     - Implements write_content() with context.backend_path (same as Calendar)
@@ -14,7 +22,7 @@ Design decisions (Issue #3148):
     - CLIErrorMapper for structured error classification (Decision #6A)
     - Leans on TokenManager for caching/refresh (Decision #16A)
 
-Phase 2 deliverable — concrete connectors (Gmail, GitHub) come in Phase 3+.
+Phase 2 deliverable -- concrete connectors (Gmail, GitHub) come in Phase 3+.
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import yaml
 
-from nexus.backends.base.backend import Backend, HandlerStatusResponse
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.connectors.base import (
     CheckpointMixin,
     SkillDocMixin,
@@ -35,6 +43,7 @@ from nexus.backends.connectors.base import (
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
 from nexus.backends.connectors.cli.display_path import DisplayPathMixin
 from nexus.backends.connectors.cli.result import CLIErrorMapper, CLIResult, CLIResultStatus
+from nexus.backends.connectors.cli.transport import CLITransport
 from nexus.contracts.backend_features import (
     CLI_BACKEND_FEATURES,
     OAUTH_BACKEND_FEATURES,
@@ -43,48 +52,44 @@ from nexus.contracts.backend_features import (
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
+    from nexus.backends.base.backend import HandlerStatusResponse
     from nexus.contracts.types import OperationContext
 
 logger = logging.getLogger(__name__)
 
 
-class CLIConnector(
-    Backend,
+class PathCLIBackend(
+    PathAddressingEngine,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,
     DisplayPathMixin,
 ):
-    """Generic base class for CLI-backed connectors.
+    """PathAddressingEngine + CLITransport composition for CLI-backed connectors.
 
     Subclasses configure via class attributes or a ``CLIConnectorConfig``.
     The base class handles:
 
-    - ``write_content()``: YAML parse → schema validate → trait check → CLI exec
-    - ``connect()``: Verify CLI is installed and accessible
+    - ``write_content()``: YAML parse -> schema validate -> trait check -> CLI exec
+    - ``check_connection()``: Verify CLI is installed and accessible
     - ``list_dir()``: Delegate to CLI list command
-    - ``read_content()``: Delegate to CLI get command
+    - ``read_content()``: Delegate to CLI get command via transport
     - Skill doc generation (via SkillDocMixin)
     - Error mapping (via CLIErrorMapper)
     - Token resolution (via TokenManager + OperationContext)
 
     Subclasses must implement:
 
-    - ``_execute_cli(args, stdin, context) -> CLIResult``: Run the CLI
-    - ``name`` property: Backend identifier
+    - ``name`` property: Backend identifier (or rely on default)
 
     Example::
 
-        class GmailCLIConnector(CLIConnector):
+        class GmailCLIConnector(PathCLIBackend):
             SKILL_NAME = "gmail"
             CLI_NAME = "gws"
             CLI_SERVICE = "gmail"
             # ... SCHEMAS, OPERATION_TRAITS, etc.
-
-            def _execute_cli(self, args, stdin, context):
-                # subprocess implementation
-                ...
     """
 
     # --- Class-level configuration (override in subclasses) ---
@@ -110,10 +115,6 @@ class CLIConnector(
         token_manager_db: str | None = None,
         **kwargs: Any,
     ) -> None:
-        # Don't pass arbitrary kwargs to super — Backend/ObjectStoreABC/object
-        # don't accept them. Swallow unknown config keys from BackendFactory.
-        super().__init__()
-
         # Fall back to class-level _DEFAULT_CONFIG for subclasses created
         # by create_connector_class_from_yaml() (Phase 5 config dir loading).
         if config is None:
@@ -143,7 +144,7 @@ class CLIConnector(
             except Exception:
                 logger.debug("TokenManager not available for %s", self.CLI_NAME, exc_info=True)
 
-        # Error mapper — uses config's custom patterns if available
+        # Error mapper -- uses config's custom patterns if available
         extra_patterns = None
         if config and config.error_patterns:
             from nexus.backends.connectors.cli.result import ErrorMapping
@@ -157,13 +158,40 @@ class CLIConnector(
 
         # Apply config values only if the subclass didn't explicitly set them.
         # We check __dict__ to distinguish "subclass set CLI_SERVICE = ''" from
-        # "inherited the default ''" — GitHubConnector explicitly sets "" to mean
+        # "inherited the default ''" -- GitHubConnector explicitly sets "" to mean
         # "no service subcommand".
         if config:
             if "CLI_NAME" not in type(self).__dict__:
                 self.CLI_NAME = config.cli
             if "CLI_SERVICE" not in type(self).__dict__:
                 self.CLI_SERVICE = config.service
+
+        # Initialize CheckpointMixin state (cooperative __init__ is bypassed
+        # because we call PathAddressingEngine.__init__ explicitly below)
+        self._checkpoints: dict[str, Any] = {}
+
+        # Create CLITransport with our execution machinery
+        cli_transport = CLITransport(
+            cli_name=self.CLI_NAME,
+            cli_service=self.CLI_SERVICE,
+            config=config,
+            execute_cli_fn=self._execute_cli,
+            get_user_token_fn=self._get_user_token,
+            build_auth_env_fn=self._build_auth_env,
+        )
+        self._cli_transport = cli_transport
+
+        # Initialize PathAddressingEngine with the CLITransport
+        backend_name = (
+            f"cli:{self.CLI_NAME}:{self.CLI_SERVICE}"
+            if self.CLI_SERVICE
+            else f"cli:{self.CLI_NAME}"
+        )
+        PathAddressingEngine.__init__(
+            self,
+            transport=cli_transport,
+            backend_name=backend_name,
+        )
 
     # --- Sync provider (wires CLISyncProvider into mount sync) ---
 
@@ -172,12 +200,12 @@ class CLIConnector(
 
         Only used for connectors that rely on the generic YAML config for
         list/fetch. Connectors with custom list_dir (e.g., GmailConnector,
-        CalendarConnector) use the BFS path instead — their list_dir has
+        CalendarConnector) use the BFS path instead -- their list_dir has
         connector-specific logic that the generic provider can't replicate.
         """
         if self._config is None:
             return None
-        # If the subclass overrides list_dir, it has custom sync logic —
+        # If the subclass overrides list_dir, it has custom sync logic --
         # don't use the generic provider which builds wrong CLI commands.
         if "list_dir" in type(self).__dict__:
             return None
@@ -193,7 +221,7 @@ class CLIConnector(
     @property
     def name(self) -> str:
         """Backend identifier."""
-        return f"cli:{self.CLI_NAME}:{self.CLI_SERVICE}"
+        return self._backend_name
 
     @property
     def supports_external_content(self) -> bool:
@@ -201,9 +229,13 @@ class CLIConnector(
 
     # --- Connection lifecycle ---
 
-    def check_connection(self, context: "OperationContext | None" = None) -> HandlerStatusResponse:
+    def check_connection(
+        self, context: "OperationContext | None" = None
+    ) -> "HandlerStatusResponse":
         """Check if CLI is available."""
         import shutil
+
+        from nexus.backends.base.backend import HandlerStatusResponse
 
         if not self.CLI_NAME:
             return HandlerStatusResponse(
@@ -225,7 +257,7 @@ class CLIConnector(
 
     # --- Token resolution (Decision #16A: lean on TokenManager) ---
 
-    def _get_user_token(self, context: "OperationContext | None") -> str | None:
+    def _get_user_token(self, context: "OperationContext | None" = None) -> str | None:
         """Resolve per-user, per-zone OAuth token from TokenManager.
 
         Follows the same pattern as Gmail/Calendar connectors: resolve user
@@ -261,7 +293,7 @@ class CLIConnector(
 
         return None
 
-    # --- Write path: YAML → validate → traits → CLI exec ---
+    # --- Write path: YAML -> validate -> traits -> CLI exec ---
 
     def write_content(
         self,
@@ -276,8 +308,8 @@ class CLIConnector(
         Follows the same contract as Calendar/Gmail connectors:
         ``context.backend_path`` determines the operation.
 
-        Pipeline: parse YAML → resolve operation → validate schema →
-        check traits → get token → execute CLI → return result.
+        Pipeline: parse YAML -> resolve operation -> validate schema ->
+        check traits -> get token -> execute CLI -> return result.
         """
         # Backward compatibility: many existing call sites pass
         # write_content(content, context) positionally.
@@ -304,7 +336,7 @@ class CLIConnector(
                 backend=self.name,
             )
 
-        # Parse YAML — extract comment-based metadata from the header block only.
+        # Parse YAML -- extract comment-based metadata from the header block only.
         # Stop at the first non-comment, non-blank line to avoid matching
         # comments inside literal block scalars (e.g. body: |\n  # confirm: true).
         text = content.decode("utf-8") if isinstance(content, bytes) else content
@@ -321,7 +353,7 @@ class CLIConnector(
                         stripped.split(":", 1)[1].strip().lower() == "true"
                     )
             else:
-                break  # First non-comment line — stop scanning
+                break  # First non-comment line -- stop scanning
 
         data = yaml.safe_load(content)
         if not isinstance(data, dict):
@@ -354,7 +386,7 @@ class CLIConnector(
         # Build CLI command
         cli_args = self._build_cli_args(operation, validated, path)
 
-        # Prepare stdin payload — hookable so subclasses (e.g., GmailConnector)
+        # Prepare stdin payload -- hookable so subclasses (e.g., GmailConnector)
         # can return None to use flag-based args instead of stdin YAML.
         payload_yaml = self._prepare_stdin(operation, validated, data)
 
@@ -429,8 +461,8 @@ class CLIConnector(
         if self.CLI_SERVICE:
             args.append(self.CLI_SERVICE)
 
-        # Find the command from config — split multi-word commands into
-        # separate argv elements (e.g., "issue create" → ["issue", "create"])
+        # Find the command from config -- split multi-word commands into
+        # separate argv elements (e.g., "issue create" -> ["issue", "create"])
         if self._config:
             for write_op in self._config.write:
                 if write_op.operation == operation:
@@ -454,7 +486,7 @@ class CLIConnector(
     def _build_auth_env(self, token: str) -> dict[str, str]:
         """Build environment variables for CLI auth.
 
-        All auth is via environment variables — NEVER via CLI flags,
+        All auth is via environment variables -- NEVER via CLI flags,
         which would expose tokens in ``ps`` / ``/proc`` output.
 
         Known CLI env vars:
@@ -469,11 +501,11 @@ class CLIConnector(
             return {"GH_TOKEN": token}
         if cli == "gws":
             return {"GWS_ACCESS_TOKEN": token}
-        # Generic fallback — connector-specific env var
+        # Generic fallback -- connector-specific env var
         env_key = f"{self.CLI_NAME.upper().replace('-', '_')}_ACCESS_TOKEN"
         return {env_key: token}
 
-    # --- CLI execution (subclasses must implement) ---
+    # --- CLI execution (subclasses may override) ---
 
     def _execute_cli(
         self,
@@ -482,7 +514,7 @@ class CLIConnector(
         context: "OperationContext | None" = None,
         env: dict[str, str] | None = None,
     ) -> CLIResult:
-        """Execute a CLI command. Subclasses must override.
+        """Execute a CLI command.
 
         Default implementation uses subprocess. Override for testing
         or custom execution strategies.
@@ -496,6 +528,7 @@ class CLIConnector(
         Returns:
             CLIResult with status, stdout, stderr, exit code.
         """
+        import os
         import shutil
         import subprocess
         import time
@@ -518,8 +551,6 @@ class CLIConnector(
         # - Strip GOOGLE_APPLICATION_CREDENTIALS (breaks gws OAuth in Docker)
         # - Set HOME=/home/nexus for gws/gh (Docker runs as root)
         # - Merge caller-provided auth env vars
-        import os
-
         needs_custom_env = bool(env) or "GOOGLE_APPLICATION_CREDENTIALS" in os.environ
         _nexus_home = "/home/nexus"
         _cli_lower = (cli_binary or "").lower()
@@ -587,7 +618,7 @@ class CLIConnector(
                 stderr=str(e),
             )
 
-    # --- Read operations (delegate to CLI) ---
+    # --- Read operations (override PathAddressingEngine for CLI-specific behavior) ---
 
     def read_content(
         self,
@@ -596,7 +627,7 @@ class CLIConnector(
     ) -> bytes:
         """Read content via CLI get command.
 
-        Auth is via environment variables (never stdin/flags) — consistent
+        Auth is via environment variables (never stdin/flags) -- consistent
         with the write path security model.
         """
         if not context or not context.backend_path:
@@ -611,7 +642,7 @@ class CLIConnector(
         args.append(self._config.read.get_command)
         args.append(context.backend_path)
 
-        # Auth via env vars only (never stdin — tokens visible in /proc on some OS)
+        # Auth via env vars only (never stdin -- tokens visible in /proc on some OS)
         token = self._get_user_token(context)
         auth_env = self._build_auth_env(token) if token else None
         result = self._execute_cli(args, context=context, env=auth_env)
@@ -681,7 +712,7 @@ class CLIConnector(
         Calendar ``+agenda``).  Returns ``{filename: {metadata_dict}}``
         where ``filename`` matches the entries returned by ``list_dir()``.
 
-        Returns ``None`` when not implemented — the sync service falls
+        Returns ``None`` when not implemented -- the sync service falls
         back to per-file ``read_content`` for ``display_path`` resolution.
 
         Subclasses override this to eliminate N serial HTTP calls during
@@ -719,7 +750,7 @@ class CLIConnector(
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Directories are virtual — no-op."""
+        """Directories are virtual -- no-op."""
 
     def rmdir(
         self,
@@ -727,7 +758,7 @@ class CLIConnector(
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Directories are virtual — no-op."""
+        """Directories are virtual -- no-op."""
 
     def is_directory(
         self,

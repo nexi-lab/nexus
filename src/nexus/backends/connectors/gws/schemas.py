@@ -1,6 +1,6 @@
 """Pydantic schemas for Google Workspace CLI connectors (Sheets, Docs, Chat).
 
-Used by CLIConnector for write operation validation. Each schema defines
+Used by PathCLIBackend for write operation validation. Each schema defines
 the YAML structure an agent writes to trigger a CLI operation.
 
 Phase 3 (Issue #3148).

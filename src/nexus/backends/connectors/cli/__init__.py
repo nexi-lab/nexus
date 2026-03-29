@@ -1,7 +1,8 @@
 """CLI connector infrastructure — base classes, protocols, and configuration.
 
 Provides the foundation for CLI-backed connectors (gws, gh, etc.):
-- CLIConnector base class implementing ContentStoreProtocol
+- PathCLIBackend base class (PathAddressingEngine + CLITransport composition)
+- CLITransport implementing the Transport protocol via subprocess
 - ConnectorSyncProvider protocol for delta sync integration
 - CLISyncProvider bridging sync protocol to CLI list/fetch
 - CLIResult / CLIErrorMapper for structured subprocess error handling
@@ -32,8 +33,10 @@ from nexus.backends.connectors.cli.result import (
 )
 
 __all__ = [
-    # Base class
-    "CLIConnector",
+    # Base class (new name)
+    "PathCLIBackend",
+    # Transport
+    "CLITransport",
     # Sync
     "CLISyncProvider",
     "ConnectorSyncProvider",
@@ -61,10 +64,14 @@ __all__ = [
 
 def __getattr__(name: str) -> object:
     """Lazy-load heavy modules to keep import time low."""
-    if name == "CLIConnector":
-        from nexus.backends.connectors.cli.base import CLIConnector
+    if name == "PathCLIBackend":
+        from nexus.backends.connectors.cli.base import PathCLIBackend
 
-        return CLIConnector
+        return PathCLIBackend
+    if name == "CLITransport":
+        from nexus.backends.connectors.cli.transport import CLITransport
+
+        return CLITransport
     if name == "CLISyncProvider":
         from nexus.backends.connectors.cli.sync_provider import CLISyncProvider
 

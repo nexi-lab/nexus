@@ -1,6 +1,6 @@
 """Concrete GitHub CLI connector class.
 
-CLIConnector subclass for GitHub operations via the ``gh`` CLI.
+PathCLIBackend subclass for GitHub operations via the ``gh`` CLI.
 Instantiate directly or via the declarative YAML config.
 
 Phase 6 (Issue #3148).
@@ -21,7 +21,7 @@ from nexus.backends.connectors.base import (
     Reversibility,
 )
 from nexus.backends.connectors.base_errors import TRAIT_ERRORS
-from nexus.backends.connectors.cli.base import CLIConnector
+from nexus.backends.connectors.cli.base import PathCLIBackend
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
 from nexus.backends.connectors.cli.display_path import sanitize_filename
 from nexus.backends.connectors.github.schemas import (
@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
     description="GitHub via gh CLI",
     category="cli",
 )
-class GitHubConnector(CLIConnector):
+class GitHubConnector(PathCLIBackend):
     """GitHub CLI connector via ``gh``."""
 
     SKILL_NAME = "github"

@@ -1,7 +1,7 @@
 """Declarative YAML config loader for CLI connectors.
 
 Loads CLIConnectorConfig from YAML files, validates at load time,
-and creates configured CLIConnector instances.
+and creates configured PathCLIBackend instances.
 
 Phase 2 deliverable (Issue #3148, Decision #12A).
 """
@@ -90,18 +90,18 @@ def create_connector_from_yaml(
     config: CLIConnectorConfig,
     token_manager_db: str | None = None,
 ) -> Any:
-    """Create a CLIConnector instance from a validated config.
+    """Create a PathCLIBackend instance from a validated config.
 
     Args:
         config: Validated connector configuration.
         token_manager_db: Database URL for TokenManager (optional).
 
     Returns:
-        Configured CLIConnector instance.
+        Configured PathCLIBackend instance.
     """
-    from nexus.backends.connectors.cli.base import CLIConnector
+    from nexus.backends.connectors.cli.base import PathCLIBackend
 
-    connector = CLIConnector(
+    connector = PathCLIBackend(
         config=config,
         token_manager_db=token_manager_db,
     )
@@ -142,7 +142,7 @@ def create_connector_class_from_yaml(
     name: str,
     config: CLIConnectorConfig,
 ) -> type:
-    """Create a dedicated CLIConnector subclass with baked-in config.
+    """Create a dedicated PathCLIBackend subclass with baked-in config.
 
     Unlike ``create_connector_from_yaml`` which returns an instance with
     instance-level attribute overrides, this creates a proper subclass
@@ -155,10 +155,10 @@ def create_connector_class_from_yaml(
         config: Validated connector configuration.
 
     Returns:
-        A new CLIConnector subclass with config baked into class attributes.
+        A new PathCLIBackend subclass with config baked into class attributes.
     """
     from nexus.backends.connectors.base import ConfirmLevel, OpTraits, Reversibility
-    from nexus.backends.connectors.cli.base import CLIConnector
+    from nexus.backends.connectors.cli.base import PathCLIBackend
 
     # Build SCHEMAS from config schema references
     schemas: dict[str, Any] = {}
@@ -183,12 +183,12 @@ def create_connector_class_from_yaml(
         )
 
     # Dynamically create a subclass with the config baked in.
-    # _DEFAULT_CONFIG is picked up by CLIConnector.__init__ as fallback
+    # _DEFAULT_CONFIG is picked up by PathCLIBackend.__init__ as fallback
     # when no explicit config= kwarg is provided.
-    cls_name = f"CLIConnector_{name.replace('-', '_').title()}"
+    cls_name = f"PathCLIBackend_{name.replace('-', '_').title()}"
     connector_cls: type = type(
         cls_name,
-        (CLIConnector,),
+        (PathCLIBackend,),
         {
             "SKILL_NAME": config.service,
             "CLI_NAME": config.cli,

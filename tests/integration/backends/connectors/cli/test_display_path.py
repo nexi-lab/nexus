@@ -242,10 +242,10 @@ class TestListDirMetadataDefault:
     """list_dir_metadata returns None by default (opt-in protocol)."""
 
     def test_base_returns_none(self) -> None:
-        from nexus.backends.connectors.cli.base import CLIConnector
+        from nexus.backends.connectors.cli.base import PathCLIBackend
 
         # Use a minimal subclass so we can call the default method.
-        class StubConnector(CLIConnector):
+        class StubConnector(PathCLIBackend):
             pass
 
         connector = StubConnector.__new__(StubConnector)

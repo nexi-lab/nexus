@@ -1,7 +1,7 @@
 """Tests for Google Drive connector backend schemas and mixin integration.
 
 Covers:
-- GoogleDriveConnectorBackend has SCHEMAS, OPERATION_TRAITS, SKILL_NAME
+- PathGDriveBackend has SCHEMAS, OPERATION_TRAITS, SKILL_NAME
 - SKILL_DOC and WRITE_BACK capabilities are declared
 - Mixin class hierarchy is correct
 """
@@ -12,7 +12,7 @@ from nexus.backends.connectors.base import (
     TraitBasedMixin,
     ValidatedMixin,
 )
-from nexus.backends.connectors.gdrive.connector import GoogleDriveConnectorBackend
+from nexus.backends.connectors.gdrive.connector import PathGDriveBackend
 from nexus.backends.connectors.gws.schemas import (
     DeleteFileSchema,
     UpdateFileSchema,
@@ -21,14 +21,14 @@ from nexus.backends.connectors.gws.schemas import (
 from nexus.contracts.backend_features import BackendFeature
 
 
-class TestGoogleDriveConnectorBackendMixins:
+class TestPathGDriveBackendMixins:
     """Test that the connector has correct mixin configuration."""
 
     def test_has_skill_name(self) -> None:
-        assert GoogleDriveConnectorBackend.SKILL_NAME == "gdrive"
+        assert PathGDriveBackend.SKILL_NAME == "gdrive"
 
     def test_has_schemas(self) -> None:
-        schemas = GoogleDriveConnectorBackend.SCHEMAS
+        schemas = PathGDriveBackend.SCHEMAS
         assert "upload_file" in schemas
         assert "update_file" in schemas
         assert "delete_file" in schemas
@@ -37,7 +37,7 @@ class TestGoogleDriveConnectorBackendMixins:
         assert schemas["delete_file"] is DeleteFileSchema
 
     def test_has_operation_traits(self) -> None:
-        traits = GoogleDriveConnectorBackend.OPERATION_TRAITS
+        traits = PathGDriveBackend.OPERATION_TRAITS
         assert "upload_file" in traits
         assert "update_file" in traits
         assert "delete_file" in traits
@@ -46,40 +46,40 @@ class TestGoogleDriveConnectorBackendMixins:
         assert isinstance(traits["delete_file"], OpTraits)
 
     def test_upload_traits(self) -> None:
-        traits = GoogleDriveConnectorBackend.OPERATION_TRAITS["upload_file"]
+        traits = PathGDriveBackend.OPERATION_TRAITS["upload_file"]
         assert traits.reversibility == "full"
         assert traits.confirm == "intent"
         assert traits.checkpoint is True
 
     def test_update_traits(self) -> None:
-        traits = GoogleDriveConnectorBackend.OPERATION_TRAITS["update_file"]
+        traits = PathGDriveBackend.OPERATION_TRAITS["update_file"]
         assert traits.reversibility == "partial"
         assert traits.confirm == "explicit"
 
     def test_delete_traits(self) -> None:
-        traits = GoogleDriveConnectorBackend.OPERATION_TRAITS["delete_file"]
+        traits = PathGDriveBackend.OPERATION_TRAITS["delete_file"]
         assert traits.reversibility == "partial"
         assert traits.confirm == "user"
 
     def test_has_error_registry(self) -> None:
-        registry = GoogleDriveConnectorBackend.ERROR_REGISTRY
+        registry = PathGDriveBackend.ERROR_REGISTRY
         assert "MISSING_AGENT_INTENT" in registry
         assert "MISSING_FILE_ID" in registry
         assert "MISSING_CONFIRM" in registry
 
     def test_skill_doc_capability(self) -> None:
-        caps = GoogleDriveConnectorBackend._BACKEND_FEATURES
+        caps = PathGDriveBackend._BACKEND_FEATURES
         assert BackendFeature.SKILL_DOC in caps
 
     def test_write_back_capability(self) -> None:
-        caps = GoogleDriveConnectorBackend._BACKEND_FEATURES
+        caps = PathGDriveBackend._BACKEND_FEATURES
         assert BackendFeature.WRITE_BACK in caps
 
     def test_inherits_skill_doc_mixin(self) -> None:
-        assert issubclass(GoogleDriveConnectorBackend, SkillDocMixin)
+        assert issubclass(PathGDriveBackend, SkillDocMixin)
 
     def test_inherits_validated_mixin(self) -> None:
-        assert issubclass(GoogleDriveConnectorBackend, ValidatedMixin)
+        assert issubclass(PathGDriveBackend, ValidatedMixin)
 
     def test_inherits_trait_based_mixin(self) -> None:
-        assert issubclass(GoogleDriveConnectorBackend, TraitBasedMixin)
+        assert issubclass(PathGDriveBackend, TraitBasedMixin)

@@ -101,8 +101,8 @@ refcount drain → unhook old → replace → rehook new.
 
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
 |---------|-------------------|---------------------|---------|
-| **Kernel owns** | Creates instance | — | VFSLockManager, KernelDispatch, PipeManager, StreamManager, ServiceRegistry, DriverLifecycleCoordinator |
-| **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_distributed_lock_manager`, `_agent_registry` |
+| **Kernel owns** | Creates instance | — | VFSLockManager, LockManager (advisory), KernelDispatch, PipeManager, StreamManager, FileWatcher, ServiceRegistry, DriverLifecycleCoordinator |
+| **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_agent_registry` |
 
 "Kernel knows" follows the Linux LSM pattern: kernel declares a default (None),
 factory overrides at link-time. The kernel never imports service-layer modules.
@@ -158,12 +158,14 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
-**10 kernel syscalls**, all POSIX-aligned, all path-addressed:
+**13 kernel syscalls**, all POSIX-aligned, all path-addressed:
 
 | Plane | Syscalls |
 |-------|----------|
 | **Metadata** (8) | `sys_stat`, `sys_setattr`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
 | **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
+| **Locking** (2) | `sys_lock` (flock), `sys_unlock` |
+| **Watch** (1) | `sys_watch` (inotify) |
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
@@ -346,6 +348,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
 | **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Sentinel — `None` in `__init__`, injected by factory. Details in §4.4 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | Kernel file change notification + immutable mutation records. FileWatcher: kernel-owned local OBSERVE waiters + kernel-knows `RemoteWatchProtocol`. FileEvent: frozen dataclass. Details in §4.3 |
+| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory lock manager. Kernel-owned local (LocalLockManager via VFSSemaphore) + kernel-knows remote (RaftLockManager via federation `_upgrade_lock_manager()`). Exposed via `sys_lock`/`sys_unlock` syscalls. Details in §4.5 |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
 
@@ -416,6 +419,22 @@ See `federation-memo.md` §7j for design rationale.
 
 In-memory registry of all active agent descriptors (spawn, status, close).
 Profiles without agents (e.g. REMOTE) operate without it.
+
+### 4.5 LockManager — Kernel Advisory Lock
+
+| Property | Value |
+|----------|-------|
+| Linux analogue | `flock(2)` / `fcntl(F_SETLK)` |
+| Package | `lib.distributed_lock` (LocalLockManager, RaftLockManager) |
+| Storage | `sm_locks` redb table (separate from FileMetadata) |
+| Lifecycle | Kernel-owned: LocalLockManager constructed in `__init__`; federation upgrades to RaftLockManager via `_upgrade_lock_manager()` |
+
+Same pattern as FileWatcher: kernel-owned local + kernel-knows remote.
+
+- **Local**: `LocalLockManager` wraps `VFSSemaphore` — exclusive (mutex), shared (RW), counting (semaphore)
+- **Remote**: `RaftLockManager` wraps `RaftMetadataStore.acquire_lock()` — strong consistency via Raft consensus
+- **Syscalls**: `sys_lock` (try-acquire, Tier 1), `sys_unlock` (release, Tier 1), `lock()` (blocking wait, Tier 2)
+- **Upgrade**: `_upgrade_lock_manager()` called by factory at link time when federation is available
 
 ---
 

@@ -38,18 +38,18 @@ const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.
 const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
 
 const TABS: readonly Tab[] = [
-  { id: "files", label: "Files", shortcut: "1" },
-  { id: "versions", label: "Ver", shortcut: "2" },
-  { id: "agents", label: "Agent", shortcut: "3" },
-  { id: "zones", label: "Zone", shortcut: "4" },
-  { id: "access", label: "ACL", shortcut: "5" },
-  { id: "payments", label: "Pay", shortcut: "6" },
-  { id: "search", label: "Find", shortcut: "7" },
-  { id: "workflows", label: "Flow", shortcut: "8" },
-  { id: "infrastructure", label: "Event", shortcut: "9" },
-  { id: "console", label: "CLI", shortcut: "0" },
-  { id: "connectors", label: "Conn", shortcut: "C" },
-  { id: "stack", label: "Stack", shortcut: "S" },
+  { id: "files", label: "Files", fullLabel: "Files", shortcut: "1" },
+  { id: "versions", label: "Ver", fullLabel: "Versions", shortcut: "2" },
+  { id: "agents", label: "Agent", fullLabel: "Agents", shortcut: "3" },
+  { id: "zones", label: "Zone", fullLabel: "Zones", shortcut: "4" },
+  { id: "access", label: "ACL", fullLabel: "Access", shortcut: "5" },
+  { id: "payments", label: "Pay", fullLabel: "Payments", shortcut: "6" },
+  { id: "search", label: "Find", fullLabel: "Search", shortcut: "7" },
+  { id: "workflows", label: "Flow", fullLabel: "Workflows", shortcut: "8" },
+  { id: "infrastructure", label: "Event", fullLabel: "Events", shortcut: "9" },
+  { id: "console", label: "CLI", fullLabel: "Console", shortcut: "0" },
+  { id: "connectors", label: "Conn", fullLabel: "Connectors", shortcut: "C" },
+  { id: "stack", label: "Stack", fullLabel: "Stack", shortcut: "S" },
 ];
 
 function PanelRouter(): React.ReactNode {

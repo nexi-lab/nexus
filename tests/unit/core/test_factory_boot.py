@@ -11,6 +11,9 @@ Issue #2193: Former kernel services moved to system tier.
 """
 
 import dataclasses
+import os
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -479,3 +482,46 @@ class TestBrickServicesFieldCompleteness:
         _ref = nx.service("workflow_engine")
         assert _ref is not None
         assert _ref._service_instance is sentinel_engine
+
+    @pytest.mark.asyncio
+    async def test_create_nexus_fs_disables_metadata_buffer_when_sync_writes_requested(
+        self,
+    ) -> None:
+        """enable_write_buffer=False should also skip metadata write-back buffering."""
+        from nexus.backends.storage.cas_local import CASLocalBackend
+        from nexus.storage.dict_metastore import DictMetastore
+
+        record_store = MagicMock()
+        record_store.engine = MagicMock()
+        record_store.read_engine = MagicMock()
+        record_store.session_factory = MagicMock()
+        record_store.has_read_replica = False
+        record_store.database_url = "sqlite://"
+        record_store.async_session_factory = MagicMock()
+
+        metadata_store = DictMetastore()
+        tmpdir = Path(tempfile.mkdtemp(prefix="nexus-factory-boot-"))
+        backend = CASLocalBackend(str(tmpdir / "data"))
+
+        with (
+            patch.dict(os.environ, {}, clear=False),
+            patch("nexus.storage.buffered_metadata_store.BufferedMetadataStore") as wrapped_store,
+        ):
+            nx = await create_nexus_fs(
+                backend=backend,
+                metadata_store=metadata_store,
+                record_store=record_store,
+                permissions=PermissionConfig(
+                    enforce=False,
+                    enable_deferred=False,
+                    enable_tiger_cache=False,
+                ),
+                distributed=DistributedConfig(
+                    enable_events=False,
+                    enable_workflows=False,
+                ),
+                enable_write_buffer=False,
+            )
+
+        nx.close()
+        wrapped_store.assert_not_called()

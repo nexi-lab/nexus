@@ -22,7 +22,7 @@ from nexus.backends.connectors.base import (
     Reversibility,
     ValidationError,
 )
-from nexus.backends.connectors.cli.base import CLIConnector
+from nexus.backends.connectors.cli.base import PathCLIBackend
 from nexus.backends.connectors.cli.config import (
     AuthConfig,
     CLIConnectorConfig,
@@ -50,7 +50,7 @@ class CreateItemSchema(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class FakeCLIConnector(CLIConnector):
+class FakeCLIBackend(PathCLIBackend):
     """Test connector with mocked CLI execution."""
 
     SKILL_NAME = "test-cli"
@@ -123,7 +123,7 @@ def _context(backend_path: str = "items/_new.yaml") -> MagicMock:
 
 class TestWriteContent:
     def test_successful_write(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         content = b"agent_intent: Testing create item for unit test\ntitle: Test Item\nbody: Hello"
         ctx = _context()
 
@@ -135,7 +135,7 @@ class TestWriteContent:
 
     def test_validated_payload_forwarded_to_cli(self) -> None:
         """Codex fix: verify the validated YAML payload is piped to CLI via stdin."""
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         content = b"agent_intent: Testing create item for unit test\ntitle: Test Item\nbody: Hello"
         ctx = _context()
 
@@ -150,7 +150,7 @@ class TestWriteContent:
 
     def test_auth_token_via_env_not_args(self) -> None:
         """Token goes via env var, never in CLI args (visible in ps)."""
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         # Simulate having a token
         connector._token_manager = type(
             "FakeTM", (), {"get_credentials": lambda self, **kw: {"access_token": "secret-tok-123"}}
@@ -170,13 +170,13 @@ class TestWriteContent:
         assert any("secret-tok-123" in v for v in connector._last_env.values())
 
     def test_missing_context_raises(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
 
         with pytest.raises(Exception, match="backend_path"):
             connector.write_content(b"data", None)
 
     def test_missing_backend_path_raises(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         ctx = MagicMock()
         ctx.backend_path = None
 
@@ -184,14 +184,14 @@ class TestWriteContent:
             connector.write_content(b"data", ctx)
 
     def test_invalid_yaml_raises(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         ctx = _context()
 
         with pytest.raises((yaml.YAMLError, ValueError)):
             connector.write_content(b"[not valid yaml: {{{", ctx)
 
     def test_schema_validation_failure(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         ctx = _context()
         # Missing required 'title' and 'agent_intent'
         content = b"body: just a body"
@@ -200,7 +200,7 @@ class TestWriteContent:
             connector.write_content(content, ctx)
 
     def test_trait_validation_failure(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         ctx = _context()
         # agent_intent too short
         content = b"title: Test\nagent_intent: short"
@@ -209,7 +209,7 @@ class TestWriteContent:
             connector.write_content(content, ctx)
 
     def test_cli_error_propagates(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector._mock_result = CLIResult(
             status=CLIResultStatus.EXIT_ERROR,
             exit_code=1,
@@ -223,7 +223,7 @@ class TestWriteContent:
             connector.write_content(content, ctx)
 
     def test_unknown_path_raises(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         ctx = _context(backend_path="unknown/path.yaml")
         content = b"agent_intent: Testing unknown path resolution\ntitle: Test"
 
@@ -238,15 +238,15 @@ class TestWriteContent:
 
 class TestOperationResolution:
     def test_resolve_from_config(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector._resolve_operation("items/_new.yaml") == "create_item"
 
     def test_resolve_unknown_path(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector._resolve_operation("unknown/path.yaml") is None
 
     def test_resolve_with_prefix(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector._resolve_operation("some/prefix/items/_new.yaml") == "create_item"
 
 
@@ -257,14 +257,14 @@ class TestOperationResolution:
 
 class TestConnectionLifecycle:
     def test_check_connection_cli_not_found(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         with patch("shutil.which", return_value=None):
             result = connector.check_connection()
         assert result.success is False
         assert "not found" in (result.error_message or "")
 
     def test_check_connection_cli_found(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         with patch("shutil.which", return_value="/usr/bin/test-cli"):
             result = connector.check_connection()
         assert result.success is True
@@ -278,23 +278,23 @@ class TestConnectionLifecycle:
 
 class TestCapabilities:
     def test_has_cli_backed(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.CLI_BACKED)
 
     def test_has_skill_doc(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.SKILL_DOC)
 
     def test_has_write_back(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.WRITE_BACK)
 
     def test_has_sync(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.SYNC)
 
     def test_name(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.name == "cli:test-cli:items"
 
 
@@ -305,7 +305,7 @@ class TestCapabilities:
 
 class TestReadOperations:
     def test_list_dir_yaml_output(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector._mock_result = CLIResult(
             status=CLIResultStatus.SUCCESS,
             exit_code=0,
@@ -316,7 +316,7 @@ class TestReadOperations:
         assert result == ["item1", "item2", "item3"]
 
     def test_list_dir_cli_failure(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector._mock_result = CLIResult(
             status=CLIResultStatus.EXIT_ERROR,
             exit_code=1,
@@ -326,7 +326,7 @@ class TestReadOperations:
         assert result == []
 
     def test_read_content(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector._mock_result = CLIResult(
             status=CLIResultStatus.SUCCESS,
             exit_code=0,
@@ -338,7 +338,7 @@ class TestReadOperations:
         assert b"title: Test Item" in result
 
     def test_read_content_no_context(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         result = connector.read_content("hash", None)
         assert result == b""
 
@@ -350,24 +350,24 @@ class TestReadOperations:
 
 class TestStubs:
     def test_mkdir_noop(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector.mkdir("/test", parents=True, exist_ok=True)
 
     def test_rmdir_noop(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector.rmdir("/test")
 
     def test_is_directory(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.is_directory("/items") is True
         assert connector.is_directory("/items/file.yaml") is False
 
     def test_content_exists(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         assert connector.content_exists("hash") is False
 
     def test_delete_content_noop(self) -> None:
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
         connector.delete_content("hash")  # Should not raise
 
 
@@ -385,14 +385,14 @@ class TestCLIEnvIsolation:
         """
         import os
 
-        connector = FakeCLIConnector()
+        connector = FakeCLIBackend()
 
         # Inject GOOGLE_APPLICATION_CREDENTIALS into the environment
         old = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/app/gcs-credentials.json"
         try:
             # Call the REAL _execute_cli (not the fake override)
-            result = CLIConnector._execute_cli(
+            result = PathCLIBackend._execute_cli(
                 connector, ["echo", "hello"], stdin=None, context=None, env=None
             )
         finally:
@@ -407,8 +407,8 @@ class TestCLIEnvIsolation:
 
     def test_auth_env_vars_passed_through(self) -> None:
         """Custom auth env vars (GH_TOKEN, GWS_ACCESS_TOKEN) must be passed."""
-        connector = FakeCLIConnector()
-        result = CLIConnector._execute_cli(
+        connector = FakeCLIBackend()
+        result = PathCLIBackend._execute_cli(
             connector,
             ["env"],
             stdin=None,

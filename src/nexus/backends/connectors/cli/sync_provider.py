@@ -25,23 +25,23 @@ from nexus.backends.connectors.cli.protocol import (
 from nexus.backends.connectors.cli.result import CLIResult
 
 if TYPE_CHECKING:
-    from nexus.backends.connectors.cli.base import CLIConnector
+    from nexus.backends.connectors.cli.base import PathCLIBackend
 
 logger = logging.getLogger(__name__)
 
 
 class CLISyncProvider:
-    """Sync provider that delegates to a CLIConnector for list/fetch operations.
+    """Sync provider that delegates to a PathCLIBackend for list/fetch operations.
 
     Wraps the CLI connector's list_dir/read_content methods into the
     ConnectorSyncProvider protocol. The CLI's delta command (from config)
     is used for incremental sync when a state token is available.
 
     Args:
-        connector: The CLIConnector backend instance.
+        connector: The PathCLIBackend backend instance.
     """
 
-    def __init__(self, connector: "CLIConnector") -> None:
+    def __init__(self, connector: "PathCLIBackend") -> None:
         self._connector = connector
         self._config = connector._config
 

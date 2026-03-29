@@ -1,6 +1,6 @@
 """Concrete Google Workspace CLI connector classes.
 
-Each class is a CLIConnector subclass with baked-in schemas, traits, and
+Each class is a PathCLIBackend subclass with baked-in schemas, traits, and
 CLI configuration. Instantiate directly or via ``create_connector_from_yaml()``
 with the corresponding YAML config.
 
@@ -30,7 +30,7 @@ from nexus.backends.connectors.calendar.schemas import (
     DeleteEventSchema,
     UpdateEventSchema,
 )
-from nexus.backends.connectors.cli.base import CLIConnector
+from nexus.backends.connectors.cli.base import PathCLIBackend
 from nexus.backends.connectors.cli.config import CLIConnectorConfig
 from nexus.backends.connectors.cli.display_path import sanitize_filename
 
@@ -85,7 +85,7 @@ def _load_gws_config(filename: str) -> CLIConnectorConfig | None:
     category="cli",
     service_name="gws",
 )
-class SheetsConnector(CLIConnector):
+class SheetsConnector(PathCLIBackend):
     """Google Sheets CLI connector via ``gws sheets``."""
 
     SKILL_NAME = "sheets"
@@ -170,7 +170,7 @@ class SheetsConnector(CLIConnector):
     category="cli",
     service_name="gws",
 )
-class DocsConnector(CLIConnector):
+class DocsConnector(PathCLIBackend):
     """Google Docs CLI connector via ``gws docs``."""
 
     SKILL_NAME = "docs"
@@ -353,7 +353,7 @@ class DocsConnector(CLIConnector):
     category="cli",
     service_name="gws",
 )
-class ChatConnector(CLIConnector):
+class ChatConnector(PathCLIBackend):
     """Google Chat CLI connector via ``gws chat``."""
 
     SKILL_NAME = "chat"
@@ -441,7 +441,7 @@ class ChatConnector(CLIConnector):
     category="cli",
     service_name="gws",
 )
-class DriveConnector(CLIConnector):
+class DriveConnector(PathCLIBackend):
     """Google Drive CLI connector via ``gws drive``."""
 
     SKILL_NAME = "drive"
@@ -557,7 +557,7 @@ def _gmail_category_from_labels(labels: list[str] | None) -> str:
     category="cli",
     service_name="gws",
 )
-class GmailConnector(CLIConnector):
+class GmailConnector(PathCLIBackend):
     """Gmail CLI connector via ``gws gmail``.
 
     CLI-backed alternative to the existing PathGmailBackend API connector.
@@ -1127,7 +1127,7 @@ class GmailConnector(CLIConnector):
     category="cli",
     service_name="gws",
 )
-class CalendarConnector(CLIConnector):
+class CalendarConnector(PathCLIBackend):
     """Calendar CLI connector via ``gws calendar``.
 
     CLI-backed alternative to the existing PathCalendarBackend.

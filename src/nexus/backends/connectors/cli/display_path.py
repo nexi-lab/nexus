@@ -9,7 +9,7 @@ Design decisions (Issue #3256):
       cap at 140 chars (rclone/eCryptfs safe limit).
     - Collision resolution: O(n) dict-based grouping, append ``_{hash[:8]}``
       only to duplicates (rclone issue #4412 / google-drive-ocamlfuse #390).
-    - DisplayPathMixin: opt-in mixin on CLIConnector, called from both
+    - DisplayPathMixin: opt-in mixin on PathCLIBackend, called from both
       CLISyncProvider and SyncPipelineService sync paths.
 """
 

@@ -167,7 +167,7 @@ def _register_optional_backends() -> None:
 
                         # Create a dedicated subclass with baked-in config
                         # so ConnectorRegistry gets a proper class, not a
-                        # generic CLIConnector that lost its config.
+                        # generic PathCLIBackend that lost its config.
                         connector_cls = create_connector_class_from_yaml(name, config)
                         ConnectorRegistry.register(
                             name=f"cli:{name}",

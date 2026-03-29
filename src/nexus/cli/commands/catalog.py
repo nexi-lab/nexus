@@ -13,7 +13,8 @@ from urllib.parse import quote
 
 import click
 
-from nexus.cli.utils import add_backend_options, console
+from nexus.cli.theme import console
+from nexus.cli.utils import add_backend_options
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +53,12 @@ def catalog_schema(
     try:
         result: dict[str, Any] = client.get(f"/api/v2/catalog/schema/{encoded_path}")
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     schema: dict[str, Any] | None = result.get("schema")
     if schema is None:
-        console.print(f"[yellow]No schema available for {path}[/yellow]")
+        console.print(f"[nexus.warning]No schema available for {path}[/nexus.warning]")
         return
 
     console.print(f"[bold]Schema for {path}[/bold]")
@@ -75,7 +76,7 @@ def catalog_schema(
             nullable = " (nullable)" if col.get("nullable", "False").lower() == "true" else ""
             console.print(f"    {col['name']:20s} {col['type']}{nullable}")
     else:
-        console.print("  [dim]No columns detected[/dim]")
+        console.print("  [nexus.muted]No columns detected[/nexus.muted]")
 
 
 @catalog.command(name="search")
@@ -100,12 +101,12 @@ def catalog_search(
     try:
         result: dict[str, Any] = client.get("/api/v2/catalog/search", params={"column": column})
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     results: list[dict[str, Any]] = result.get("results", [])
     if not results:
-        console.print(f"[yellow]No files found with column '{column}'[/yellow]")
+        console.print(f"[nexus.warning]No files found with column '{column}'[/nexus.warning]")
         return
 
     console.print(f"[bold]Files containing column '{column}':[/bold]")
@@ -115,5 +116,5 @@ def catalog_search(
 
     if result.get("capped"):
         console.print(
-            f"\n[yellow]Results capped at {result['total']}. Refine your search.[/yellow]"
+            f"\n[nexus.warning]Results capped at {result['total']}. Refine your search.[/nexus.warning]"
         )

@@ -124,10 +124,10 @@ def list_files(
                     from rich.table import Table
 
                     table = Table(title=f"Files in {path}")
-                    table.add_column("Type", style="magenta", width=4)
-                    table.add_column("Path", style="cyan")
-                    table.add_column("Size", justify="right", style="green")
-                    table.add_column("Modified", style="yellow")
+                    table.add_column("Type", style="nexus.identity", width=4)
+                    table.add_column("Path", style="nexus.path")
+                    table.add_column("Size", justify="right", style="nexus.success")
+                    table.add_column("Modified", style="nexus.warning")
 
                     for entry in entries:
                         is_dir = entry["type"] == "directory"
@@ -181,7 +181,9 @@ def _ls_time_travel(
     """Handle time-travel ls (--at-operation)."""
     time_travel = getattr(nx, "time_travel_service", None)
     if time_travel is None:
-        console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
+        )
         return
 
     with timing.phase("server"):
@@ -260,10 +262,14 @@ def mkdir(
                 if if_not_exists:
                     with contextlib.suppress(FileExistsError):
                         await nx.mkdir(path, parents=parents, exist_ok=True)
-                    console.print(f"[green]✓[/green] Directory exists: [cyan]{path}[/cyan]")
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] Directory exists: [nexus.path]{path}[/nexus.path]"
+                    )
                 else:
                     await nx.mkdir(path, parents=parents, exist_ok=True)
-                    console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] Created directory [nexus.path]{path}[/nexus.path]"
+                    )
         except Exception as e:
             handle_error(e)
 
@@ -309,10 +315,12 @@ def rmdir(
                 allow_local_default=True,
             ) as nx:
                 if not force and not click.confirm(f"Remove directory {path}?"):
-                    console.print("[yellow]Cancelled[/yellow]")
+                    console.print("[nexus.warning]Cancelled[/nexus.warning]")
                     return
                 await nx.sys_rmdir(path, recursive=recursive)
-            console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Removed directory [nexus.path]{path}[/nexus.path]"
+            )
         except Exception as e:
             handle_error(e)
 
@@ -430,7 +438,7 @@ def tree(
                             total_files += 1
                             if show_size and value is not None:
                                 console.print(
-                                    f"{prefix}{connector}{name} [dim]({_fmt_size(value)})[/dim]"
+                                    f"{prefix}{connector}{name} [nexus.muted]({_fmt_size(value)})[/nexus.muted]"
                                 )
                                 total_size += value
                             else:
@@ -441,9 +449,11 @@ def tree(
                 file_count, total_sz = _print_node(tree_dict)
                 console.print()
                 if show_size:
-                    console.print(f"[dim]{file_count} files, {_fmt_size(total_sz)} total[/dim]")
+                    console.print(
+                        f"[nexus.muted]{file_count} files, {_fmt_size(total_sz)} total[/nexus.muted]"
+                    )
                 else:
-                    console.print(f"[dim]{file_count} files[/dim]")
+                    console.print(f"[nexus.muted]{file_count} files[/nexus.muted]")
 
             render_output(
                 data=tree_data, output_opts=output_opts, timing=timing, human_formatter=_print_human

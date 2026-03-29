@@ -59,8 +59,8 @@ def governance_status(
             ring_list = rings.get("rings", []) if isinstance(rings, dict) else []
 
             console.print("[bold cyan]Governance Status[/bold cyan]")
-            console.print(f"  Active alerts: [yellow]{len(alert_list)}[/yellow]")
-            console.print(f"  Fraud rings:   [yellow]{len(ring_list)}[/yellow]")
+            console.print(f"  Active alerts: [nexus.warning]{len(alert_list)}[/nexus.warning]")
+            console.print(f"  Fraud rings:   [nexus.warning]{len(ring_list)}[/nexus.warning]")
 
             if alert_list:
                 console.print("\n[bold]Recent Alerts:[/bold]")
@@ -76,7 +76,7 @@ def governance_status(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -117,11 +117,11 @@ def governance_alerts(
 
             alerts = d.get("alerts", [])
             if not alerts:
-                console.print("[green]No anomaly alerts[/green]")
+                console.print("[nexus.success]No anomaly alerts[/nexus.success]")
                 return
 
             table = Table(title=f"Anomaly Alerts ({len(alerts)})")
-            table.add_column("Time", style="dim")
+            table.add_column("Time", style="nexus.muted")
             table.add_column("Severity")
             table.add_column("Agent")
             table.add_column("Description")
@@ -144,7 +144,7 @@ def governance_alerts(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -172,14 +172,16 @@ def governance_rings(
         def _render(d: dict) -> None:
             rings = d.get("rings", [])
             if not rings:
-                console.print("[green]No fraud rings detected[/green]")
+                console.print("[nexus.success]No fraud rings detected[/nexus.success]")
                 return
 
             console.print(f"[bold cyan]Detected Fraud Rings ({len(rings)})[/bold cyan]")
             for i, ring in enumerate(rings, 1):
                 members = ring.get("members", [])
                 score = ring.get("risk_score", 0)
-                console.print(f"\n  [bold]Ring {i}[/bold] (risk: [red]{score:.2f}[/red])")
+                console.print(
+                    f"\n  [bold]Ring {i}[/bold] (risk: [nexus.error]{score:.2f}[/nexus.error])"
+                )
                 console.print(f"  Members: {', '.join(members)}")
 
         render_output(
@@ -189,5 +191,5 @@ def governance_rings(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

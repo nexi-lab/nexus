@@ -13,7 +13,8 @@ from urllib.parse import quote
 
 import click
 
-from nexus.cli.utils import add_backend_options, console
+from nexus.cli.theme import console
+from nexus.cli.utils import add_backend_options
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,12 @@ def aspects_list(
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}")
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     aspect_names: list[str] = result.get("aspects", [])
     if not aspect_names:
-        console.print(f"[yellow]No aspects found for {path}[/yellow]")
+        console.print(f"[nexus.warning]No aspects found for {path}[/nexus.warning]")
         return
 
     console.print(f"[bold]Aspects for {path}[/bold]")
@@ -102,7 +103,7 @@ def aspects_get(
     try:
         result = client.get(f"/api/v2/aspects/{quote(urn, safe='')}/{quote(aspect_name, safe='')}")
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     console.print(f"[bold]{aspect_name}[/bold] on {path}")

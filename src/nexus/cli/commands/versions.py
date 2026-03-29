@@ -81,7 +81,7 @@ async def _async_version_history(
         versions = _nx.version_service.list_versions(path)
 
         if not versions:
-            console.print(f"[yellow]No version history found for: {path}[/yellow]")
+            console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
             nx.close()
             return
 
@@ -91,11 +91,11 @@ async def _async_version_history(
 
         # Display table
         table = Table(title=f"Version History: {path}")
-        table.add_column("Version", style="cyan", justify="right")
-        table.add_column("Size", style="green")
+        table.add_column("Version", style="nexus.value", justify="right")
+        table.add_column("Size", style="nexus.success")
         table.add_column("Created At")
         table.add_column("Created By")
-        table.add_column("Source", style="yellow")
+        table.add_column("Source", style="nexus.warning")
         table.add_column("Change Reason")
 
         for v in versions:
@@ -111,7 +111,7 @@ async def _async_version_history(
             )
 
         console.print(table)
-        console.print(f"\n[dim]Total versions: {len(versions)}[/dim]")
+        console.print(f"\n[nexus.muted]Total versions: {len(versions)}[/nexus.muted]")
 
         nx.close()
 
@@ -151,14 +151,14 @@ async def _async_version_get(
         if output:
             # Write to file
             Path(output).write_bytes(content)
-            console.print(f"[green]✓[/green] Wrote version {version} to: {output}")
+            console.print(f"[nexus.success]✓[/nexus.success] Wrote version {version} to: {output}")
         else:
             # Print to stdout
             try:
                 console.print(content.decode("utf-8"))
             except UnicodeDecodeError:
-                console.print("[yellow]Binary content (cannot display)[/yellow]")
-                console.print("[dim]Use --output to save to file[/dim]")
+                console.print("[nexus.warning]Binary content (cannot display)[/nexus.warning]")
+                console.print("[nexus.muted]Use --output to save to file[/nexus.muted]")
 
         nx.close()
 
@@ -210,15 +210,15 @@ async def _async_version_diff(
         if mode == "metadata":
             # diff is a dict in metadata mode
             if not isinstance(diff, dict):
-                console.print("[red]Error: Expected metadata dict from diff[/red]")
+                console.print("[nexus.error]Error: Expected metadata dict from diff[/nexus.error]")
                 nx.close()
                 return
 
             # Display metadata diff as table
             table = Table(title=f"Metadata Diff: v{v1} vs v{v2}")
             table.add_column("Property")
-            table.add_column(f"Version {v1}", style="cyan")
-            table.add_column(f"Version {v2}", style="green")
+            table.add_column(f"Version {v1}", style="nexus.value")
+            table.add_column(f"Version {v2}", style="nexus.success")
 
             table.add_row(
                 "Size",
@@ -238,7 +238,9 @@ async def _async_version_diff(
             table.add_row(
                 "Content Changed",
                 "",
-                "[green]Yes[/green]" if diff.get("content_changed") else "[dim]No[/dim]",
+                "[nexus.success]Yes[/nexus.success]"
+                if diff.get("content_changed")
+                else "[nexus.muted]No[/nexus.muted]",
             )
 
             created_at_v1 = diff.get("created_at_v1")
@@ -291,14 +293,14 @@ async def _async_version_rollback(
         # Get current version for confirmation
         # Check if file exists
         if not await nx.sys_access(path):
-            console.print(f"[red]File not found: {path}[/red]")
+            console.print(f"[nexus.error]File not found: {path}[/nexus.error]")
             nx.close()
             return
 
         # Get version history to determine current version
         versions = _nx.version_service.list_versions(path)
         if not versions:
-            console.print(f"[yellow]No version history found for: {path}[/yellow]")
+            console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
             nx.close()
             return
 
@@ -314,8 +316,8 @@ async def _async_version_rollback(
         # Perform rollback
         _nx.version_service.rollback(path, version)
 
-        console.print(f"[green]✓[/green] Rolled back {path} to version {version}")
-        console.print(f"[dim]New version: {current_version + 1}[/dim]")
+        console.print(f"[nexus.success]✓[/nexus.success] Rolled back {path} to version {version}")
+        console.print(f"[nexus.muted]New version: {current_version + 1}[/nexus.muted]")
 
         nx.close()
 

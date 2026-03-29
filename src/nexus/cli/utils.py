@@ -10,17 +10,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import click
-from rich.console import Console
 
 import nexus
 from nexus import NexusFilesystem
 from nexus.cli.exit_codes import ExitCode
+from nexus.cli.theme import console, print_error
 from nexus.contracts.exceptions import NexusError, NexusFileNotFoundError, ValidationError
 
 if TYPE_CHECKING:
     pass
-
-console = Console()
 
 _LOCAL_WORKSPACE_ENV_KEYS = (
     "NEXUS_URL",
@@ -287,9 +285,9 @@ async def get_filesystem(
                 )
                 return await nexus.connect(config={"profile": "slim", "data_dir": data_dir})
 
-            console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
+            console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
             console.print(
-                "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+                "[nexus.warning]Hint:[/nexus.warning] export NEXUS_URL=http://your-nexus-server:2026"
                 " or use `nexus profile add`"
             )
             sys.exit(ExitCode.CONFIG_ERROR)
@@ -298,7 +296,7 @@ async def get_filesystem(
             config={"profile": "remote", "url": resolved.url, "api_key": resolved.api_key}
         )
     except Exception as e:
-        console.print(f"[red]Error connecting to Nexus:[/red] {e}")
+        console.print(f"[nexus.error]Error connecting to Nexus:[/nexus.error] {e}")
         sys.exit(ExitCode.UNAVAILABLE)
 
 
@@ -320,9 +318,11 @@ async def get_default_filesystem() -> NexusFilesystem:
         )
 
         if not resolved.is_remote:
-            console.print("[red]Error:[/red] NEXUS_URL environment variable is required")
             console.print(
-                "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+                "[nexus.error]Error:[/nexus.error] NEXUS_URL environment variable is required"
+            )
+            console.print(
+                "[nexus.warning]Hint:[/nexus.warning] export NEXUS_URL=http://your-nexus-server:2026"
                 " or use `nexus profile add`"
             )
             sys.exit(ExitCode.CONFIG_ERROR)
@@ -335,7 +335,7 @@ async def get_default_filesystem() -> NexusFilesystem:
             }
         )
     except Exception as e:
-        console.print(f"[red]Error connecting to Nexus:[/red] {e}")
+        console.print(f"[nexus.error]Error connecting to Nexus:[/nexus.error] {e}")
         sys.exit(ExitCode.UNAVAILABLE)
 
 
@@ -387,9 +387,9 @@ def parse_subject(subject_str: str | None) -> tuple[str, str] | None:
         return None
 
     if ":" not in subject_str:
-        console.print(f"[red]Error:[/red] Invalid subject format: {subject_str}")
+        console.print(f"[nexus.error]Error:[/nexus.error] Invalid subject format: {subject_str}")
         console.print(
-            "[yellow]Expected format:[/yellow] type:id (e.g., 'user:alice', 'agent:bot1')"
+            "[nexus.warning]Expected format:[/nexus.warning] type:id (e.g., 'user:alice', 'agent:bot1')"
         )
         sys.exit(ExitCode.USAGE_ERROR)
 
@@ -533,25 +533,25 @@ def handle_error(e: Exception) -> None:
     from nexus.contracts.exceptions import AccessDeniedError, NexusPermissionError
 
     if isinstance(e, PermissionError | AccessDeniedError | NexusPermissionError):
-        console.print(f"[red]Permission Denied:[/red] {e}")
+        print_error("Permission Denied", e)
         sys.exit(ExitCode.PERMISSION_DENIED)
     elif isinstance(e, NexusFileNotFoundError):
-        console.print(f"[red]Error:[/red] {e}")
+        print_error("Error", e)
         sys.exit(ExitCode.NOT_FOUND)
     elif isinstance(e, ValidationError):
-        console.print(f"[red]Validation Error:[/red] {e}")
+        print_error("Validation Error", e)
         sys.exit(ExitCode.USAGE_ERROR)
     elif isinstance(e, TimeoutError):
-        console.print(f"[red]Timeout:[/red] {e}")
+        print_error("Timeout", e)
         sys.exit(ExitCode.TEMPFAIL)
     elif isinstance(e, ConnectionError | OSError):
-        console.print(f"[red]Connection Error:[/red] {e}")
+        print_error("Connection Error", e)
         sys.exit(ExitCode.UNAVAILABLE)
     elif isinstance(e, NexusError):
-        console.print(f"[red]Nexus Error:[/red] {e}")
+        print_error("Nexus Error", e)
         sys.exit(ExitCode.GENERAL_ERROR)
     else:
-        console.print(f"[red]Unexpected error:[/red] {e}")
+        print_error("Unexpected error", e)
         sys.exit(ExitCode.INTERNAL_ERROR)
 
 
@@ -575,7 +575,7 @@ def resolve_content(content: str | None, input_file: Any) -> bytes:
         return sys.stdin.buffer.read()
     if content:
         return content.encode("utf-8")
-    console.print("[red]Error:[/red] Must provide content or use --input")
+    console.print("[nexus.error]Error:[/nexus.error] Must provide content or use --input")
     sys.exit(ExitCode.USAGE_ERROR)
 
 

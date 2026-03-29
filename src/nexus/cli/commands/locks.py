@@ -58,14 +58,14 @@ def lock_list(
 
             locks = d.get("locks", [])
             if not locks:
-                console.print("[yellow]No active locks[/yellow]")
+                console.print("[nexus.warning]No active locks[/nexus.warning]")
                 return
 
             table = Table(title=f"Active Locks ({d.get('count', len(locks))})")
             table.add_column("Path")
             table.add_column("Mode")
             table.add_column("Holders", justify="right")
-            table.add_column("Expires At", style="dim")
+            table.add_column("Expires At", style="nexus.muted")
 
             for lk in locks:
                 table.add_row(
@@ -83,7 +83,7 @@ def lock_list(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -113,7 +113,7 @@ def lock_info(
         def _render(d: dict) -> None:
             console.print(f"[bold cyan]Lock Status: {path}[/bold cyan]")
             console.print(
-                f"  Locked:  {'[red]Yes[/red]' if d.get('locked') else '[green]No[/green]'}"
+                f"  Locked:  {'[nexus.error]Yes[/nexus.error]' if d.get('locked') else '[nexus.success]No[/nexus.success]'}"
             )
             info = d.get("lock_info")
             if info:
@@ -130,7 +130,7 @@ def lock_info(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -163,7 +163,7 @@ def lock_release(
             lock_id=lock_id,
             force=force,
         )
-        console.print(f"[green]Lock released:[/green] {path}")
+        console.print(f"[nexus.success]Lock released:[/nexus.success] {path}")
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

@@ -9,7 +9,8 @@ from typing import Any, cast
 import click
 from rich.table import Table
 
-from nexus.cli.utils import console, handle_error
+from nexus.cli.theme import console
+from nexus.cli.utils import handle_error
 
 
 def _run_async(coro: Any) -> Any:
@@ -78,15 +79,17 @@ def plugins_list() -> None:
         plugin_list = registry.list_plugins()
 
         if not plugin_list:
-            console.print("[yellow]No plugins installed.[/yellow]")
-            console.print("\nInstall plugins with: [cyan]pip install nexus-plugin-<name>[/cyan]")
+            console.print("[nexus.warning]No plugins installed.[/nexus.warning]")
+            console.print(
+                "\nInstall plugins with: [nexus.value]pip install nexus-plugin-<name>[/nexus.value]"
+            )
             return
 
         table = Table(title="Installed Plugins")
-        table.add_column("Name", style="cyan")
-        table.add_column("Version", style="green")
+        table.add_column("Name", style="nexus.value")
+        table.add_column("Version", style="nexus.success")
         table.add_column("Description")
-        table.add_column("Status", style="yellow")
+        table.add_column("Status", style="nexus.warning")
 
         for metadata in plugin_list:
             plugin = registry.get_plugin_sync(metadata.name)
@@ -111,7 +114,7 @@ def plugins_info(plugin_name: str) -> None:
         plugin = registry.get_plugin_sync(plugin_name)
 
         if not plugin:
-            console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+            console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
             return
 
         metadata = plugin.metadata()
@@ -154,15 +157,17 @@ def plugins_enable(plugin_name: str) -> None:
         plugin = registry.get_plugin_sync(plugin_name)
 
         if not plugin:
-            console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+            console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
             return
 
         if plugin.is_enabled():
-            console.print(f"[yellow]Plugin '{plugin_name}' is already enabled.[/yellow]")
+            console.print(
+                f"[nexus.warning]Plugin '{plugin_name}' is already enabled.[/nexus.warning]"
+            )
             return
 
         registry.enable_plugin(plugin_name)
-        console.print(f"[green]Enabled plugin '{plugin_name}'[/green]")
+        console.print(f"[nexus.success]Enabled plugin '{plugin_name}'[/nexus.success]")
 
     except Exception as e:
         handle_error(e)
@@ -177,15 +182,17 @@ def plugins_disable(plugin_name: str) -> None:
         plugin = registry.get_plugin_sync(plugin_name)
 
         if not plugin:
-            console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
+            console.print(f"[nexus.error]Plugin '{plugin_name}' not found.[/nexus.error]")
             return
 
         if not plugin.is_enabled():
-            console.print(f"[yellow]Plugin '{plugin_name}' is already disabled.[/yellow]")
+            console.print(
+                f"[nexus.warning]Plugin '{plugin_name}' is already disabled.[/nexus.warning]"
+            )
             return
 
         registry.disable_plugin(plugin_name)
-        console.print(f"[green]Disabled plugin '{plugin_name}'[/green]")
+        console.print(f"[nexus.success]Disabled plugin '{plugin_name}'[/nexus.success]")
 
     except Exception as e:
         handle_error(e)
@@ -209,10 +216,12 @@ def plugins_install(plugin_name: str) -> None:
         subprocess.check_call(
             ["pip", "install", package_name], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
         )
-        console.print(f"[green]Successfully installed {package_name}[/green]")
-        console.print("\nRun [cyan]'nexus plugins list'[/cyan] to see the installed plugin")
+        console.print(f"[nexus.success]Successfully installed {package_name}[/nexus.success]")
+        console.print(
+            "\nRun [nexus.value]'nexus plugins list'[/nexus.value] to see the installed plugin"
+        )
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to install {package_name}[/red]")
+        console.print(f"[nexus.error]Failed to install {package_name}[/nexus.error]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
 
 
@@ -242,9 +251,9 @@ def plugins_uninstall(plugin_name: str, yes: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        console.print(f"[green]Successfully uninstalled {package_name}[/green]")
+        console.print(f"[nexus.success]Successfully uninstalled {package_name}[/nexus.success]")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]Failed to uninstall {package_name}[/red]")
+        console.print(f"[nexus.error]Failed to uninstall {package_name}[/nexus.error]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
 
 
@@ -274,7 +283,7 @@ def plugins_init(
 
     from nexus.plugins.scaffold import PLUGIN_TYPES, scaffold_plugin
 
-    console.print(f"Creating {plugin_type} plugin: [cyan]nexus-plugin-{name}[/cyan]")
+    console.print(f"Creating {plugin_type} plugin: [nexus.value]nexus-plugin-{name}[/nexus.value]")
 
     try:
         result = scaffold_plugin(
@@ -285,7 +294,9 @@ def plugins_init(
             description=description,
         )
 
-        console.print(f"\n[green]Created plugin scaffold at {result['project_dir']}[/green]")
+        console.print(
+            f"\n[nexus.success]Created plugin scaffold at {result['project_dir']}[/nexus.success]"
+        )
         console.print(f"\n  Package: {result['package_name']}")
         console.print(f"  Module:  {result['module_name']}")
         console.print(f"  Class:   {result['class_name']}")
@@ -298,7 +309,7 @@ def plugins_init(
         console.print("  nexus plugins list")
 
     except (ValueError, FileExistsError) as e:
-        console.print(f"[red]Error: {e}[/red]")
+        console.print(f"[nexus.error]Error: {e}[/nexus.error]")
     except Exception as e:
         handle_error(e)
 
@@ -392,12 +403,16 @@ def _register_plugin_commands(main: click.Group) -> None:
                             plugin_instance = _run_async(_load())
 
                             if not plugin_instance:
-                                console.print(f"[red]Plugin '{p_name}' not found[/red]")
+                                console.print(
+                                    f"[nexus.error]Plugin '{p_name}' not found[/nexus.error]"
+                                )
                                 return
 
                             cmd_method = plugin_instance.commands().get(name)
                             if not cmd_method:
-                                console.print(f"[red]Command '{name}' not found[/red]")
+                                console.print(
+                                    f"[nexus.error]Command '{name}' not found[/nexus.error]"
+                                )
                                 return
 
                             if inspect.iscoroutinefunction(cmd_method):

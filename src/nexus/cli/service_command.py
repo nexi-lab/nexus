@@ -53,9 +53,11 @@ def _validate_url(remote_url: str | None) -> str:
     """Validate that a server URL is provided, exit if not."""
     if not remote_url:
         from nexus.cli.exit_codes import ExitCode
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] Server URL required. Set NEXUS_URL or use --remote-url"
+        )
         sys.exit(ExitCode.CONFIG_ERROR)
     return remote_url
 

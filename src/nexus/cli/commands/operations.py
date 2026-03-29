@@ -82,7 +82,9 @@ async def _async_ops_diff(
 
         time_travel = nx.service("time_travel")
         if time_travel is None:
-            console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
+            )
             nx.close()
             return
 
@@ -91,37 +93,39 @@ async def _async_ops_diff(
 
         # Display results
         console.print(f"\n[bold cyan]Diff for {path}[/bold cyan]")
-        console.print(f"[dim]Operation 1:[/dim] {operation_1}")
-        console.print(f"[dim]Operation 2:[/dim] {operation_2}")
+        console.print(f"[nexus.muted]Operation 1:[/nexus.muted] {operation_1}")
+        console.print(f"[nexus.muted]Operation 2:[/nexus.muted] {operation_2}")
         console.print()
 
         state_1 = diff_result["operation_1"]
         state_2 = diff_result["operation_2"]
 
         if not state_1 and not state_2:
-            console.print("[yellow]File did not exist at either operation point[/yellow]")
+            console.print(
+                "[nexus.warning]File did not exist at either operation point[/nexus.warning]"
+            )
             return
 
         if not state_1:
-            console.print("[green]File was created[/green]")
+            console.print("[nexus.success]File was created[/nexus.success]")
             console.print(f"  Size: {state_2['metadata']['size']:,} bytes")
             console.print(f"  Operation: {state_2['operation_id'][:8]}")
             console.print(f"  Time: {state_2['operation_time']}")
         elif not state_2:
-            console.print("[red]File was deleted[/red]")
+            console.print("[nexus.error]File was deleted[/nexus.error]")
             console.print(f"  Previous size: {state_1['metadata']['size']:,} bytes")
             console.print(f"  Operation: {state_1['operation_id'][:8]}")
             console.print(f"  Time: {state_1['operation_time']}")
         else:
             # Both exist - show changes
             if diff_result["content_changed"]:
-                console.print("[yellow]File content changed[/yellow]")
+                console.print("[nexus.warning]File content changed[/nexus.warning]")
                 console.print(
                     f"  Size: {state_1['metadata']['size']:,} → {state_2['metadata']['size']:,} bytes"
                 )
                 console.print(f"  Size diff: {diff_result['size_diff']:+,} bytes")
             else:
-                console.print("[green]File content unchanged[/green]")
+                console.print("[nexus.success]File content unchanged[/nexus.success]")
 
             console.print()
             console.print("[bold]Operation 1:[/bold]")
@@ -159,16 +163,18 @@ async def _async_ops_diff(
                         if line.startswith("+++") or line.startswith("---"):
                             console.print(f"[bold]{line}[/bold]")
                         elif line.startswith("+"):
-                            console.print(f"[green]{line}[/green]")
+                            console.print(f"[nexus.success]{line}[/nexus.success]")
                         elif line.startswith("-"):
-                            console.print(f"[red]{line}[/red]")
+                            console.print(f"[nexus.error]{line}[/nexus.error]")
                         elif line.startswith("@@"):
-                            console.print(f"[cyan]{line}[/cyan]")
+                            console.print(f"[nexus.value]{line}[/nexus.value]")
                         else:
-                            console.print(f"[dim]{line}[/dim]")
+                            console.print(f"[nexus.muted]{line}[/nexus.muted]")
 
                 except UnicodeDecodeError:
-                    console.print("[yellow]Binary file - content diff not available[/yellow]")
+                    console.print(
+                        "[nexus.warning]Binary file - content diff not available[/nexus.warning]"
+                    )
 
     except Exception as e:
         handle_error(e)
@@ -246,21 +252,25 @@ async def _async_ops_log(
         )
 
         if not operations:
-            console.print("[yellow]No operations found[/yellow]")
+            console.print("[nexus.warning]No operations found[/nexus.warning]")
             nx.close()
             return
 
         # Display table
         table = Table(title="Operation Log")
-        table.add_column("Time", style="cyan")
-        table.add_column("Type", style="yellow")
-        table.add_column("Path", style="green")
-        table.add_column("Agent", style="blue")
+        table.add_column("Time", style="nexus.value")
+        table.add_column("Type", style="nexus.warning")
+        table.add_column("Path", style="nexus.success")
+        table.add_column("Agent", style="nexus.reference")
         table.add_column("Status")
-        table.add_column("Op ID", style="dim")
+        table.add_column("Op ID", style="nexus.muted")
 
         for op in operations:
-            status_display = "[green]✓[/green]" if op["status"] == "success" else "[red]✗[/red]"
+            status_display = (
+                "[nexus.success]✓[/nexus.success]"
+                if op["status"] == "success"
+                else "[nexus.error]✗[/nexus.error]"
+            )
             created_at = op["created_at"].strftime("%Y-%m-%d %H:%M:%S")
 
             # Truncate operation ID for display
@@ -281,7 +291,7 @@ async def _async_ops_log(
             )
 
         console.print(table)
-        console.print(f"\n[dim]Showing {len(operations)} operations[/dim]")
+        console.print(f"\n[nexus.muted]Showing {len(operations)} operations[/nexus.muted]")
 
         nx.close()
 
@@ -327,12 +337,12 @@ def ops_replay(
     try:
         result = client.get("/api/v2/ops/replay", params=params)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     records = result.get("records", [])
     if not records:
-        console.print("[yellow]No MCL records found[/yellow]")
+        console.print("[nexus.warning]No MCL records found[/nexus.warning]")
         return
 
     console.print(f"[bold]MCL Records (from seq {from_sequence}):[/bold]")
@@ -350,7 +360,9 @@ def ops_replay(
 
     if result.get("has_more"):
         next_cursor = result.get("next_cursor", "?")
-        console.print(f"[dim]More records available. Use --from-sequence {next_cursor}[/dim]")
+        console.print(
+            f"[nexus.muted]More records available. Use --from-sequence {next_cursor}[/nexus.muted]"
+        )
 
 
 @click.command(name="undo")
@@ -388,7 +400,7 @@ async def _async_undo(
         )
 
         if not last_op:
-            console.print("[yellow]No operations to undo[/yellow]")
+            console.print("[nexus.warning]No operations to undo[/nexus.warning]")
             nx.close()
             return
 
@@ -414,9 +426,11 @@ async def _async_undo(
         if result["success"]:
             console.print(f"  {result['message']}")
         else:
-            console.print(f"  [yellow]Warning: {result['message']}[/yellow]")
+            console.print(f"  [nexus.warning]Warning: {result['message']}[/nexus.warning]")
 
-        console.print(f"\n[green]✓[/green] Undid operation: {last_op['operation_type']}")
+        console.print(
+            f"\n[nexus.success]✓[/nexus.success] Undid operation: {last_op['operation_type']}"
+        )
 
         nx.close()
 

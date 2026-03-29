@@ -422,6 +422,7 @@ module = [
     "rich.*",
     "alembic.*",
     "google.cloud.*",
+    "yaml",
 ]
 ignore_missing_imports = true
 

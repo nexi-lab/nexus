@@ -47,18 +47,18 @@ def conflicts_list(client: ConflictsClient) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         items = d.get("conflicts", [])
         if not items:
-            console.print("[green]No unresolved conflicts[/green]")
+            console.print("[nexus.success]No unresolved conflicts[/nexus.success]")
             return
 
         table = Table(title=f"Conflicts ({len(items)})")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="nexus.muted")
         table.add_column("Path")
         table.add_column("Backend")
-        table.add_column("Status", style="dim")
+        table.add_column("Status", style="nexus.muted")
 
         for c in items:
             table.add_row(
@@ -89,7 +89,7 @@ def conflicts_show(client: ConflictsClient, conflict_id: str) -> ServiceResult:
     data = client.show(conflict_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Conflict: {conflict_id}[/bold cyan]")
         console.print(f"  Path:        {d.get('path', 'N/A')}")

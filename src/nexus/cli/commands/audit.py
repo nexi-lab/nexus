@@ -76,14 +76,14 @@ def audit_list(
 
             txns = d.get("transactions", [])
             if not txns:
-                console.print("[yellow]No audit entries found[/yellow]")
+                console.print("[nexus.warning]No audit entries found[/nexus.warning]")
                 return
 
             table = Table(title=f"Audit Trail ({len(txns)} entries)")
-            table.add_column("Time", style="dim")
+            table.add_column("Time", style="nexus.muted")
             table.add_column("Buyer")
             table.add_column("Seller")
-            table.add_column("Amount", justify="right", style="green")
+            table.add_column("Amount", justify="right", style="nexus.success")
             table.add_column("Protocol")
             table.add_column("Status")
 
@@ -105,7 +105,7 @@ def audit_list(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -147,9 +147,9 @@ def audit_export(
         if output_file:
             with open(output_file, "w") as f:
                 f.write(content)
-            console.print(f"[green]Exported to {output_file}[/green]")
+            console.print(f"[nexus.success]Exported to {output_file}[/nexus.success]")
         else:
             click.echo(content)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

@@ -11,12 +11,10 @@ import re
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.theme import console
 from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
-
-console = Console()
 
 
 def _parse_skill_md(path: str) -> dict:
@@ -114,7 +112,7 @@ async def _async_call_agent(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
@@ -143,13 +141,15 @@ async def _async_call_agent(
                 if meta.get("cost_usd"):
                     parts.append(f"cost=${meta['cost_usd']:.4f}")
                 if parts:
-                    console.print(f"\n[dim]({', '.join(parts)})[/dim]")
+                    console.print(f"\n[nexus.muted]({', '.join(parts)})[/nexus.muted]")
         else:
-            console.print(f"[red]Agent failed (exit_code={result.get('exit_code')})[/red]")
+            console.print(
+                f"[nexus.error]Agent failed (exit_code={result.get('exit_code')})[/nexus.error]"
+            )
             if result.get("stderr"):
-                console.print(f"[dim]{result['stderr']}[/dim]")
+                console.print(f"[nexus.muted]{result['stderr']}[/nexus.muted]")
             if result.get("timed_out"):
-                console.print("[yellow]Agent timed out[/yellow]")
+                console.print("[nexus.warning]Agent timed out[/nexus.warning]")
 
         nx.close()
     except Exception as e:
@@ -180,22 +180,22 @@ async def _async_list_agents(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
         agents = svc.acp_list_agents()
 
         if not agents:
-            console.print("[yellow]No agents configured[/yellow]")
+            console.print("[nexus.warning]No agents configured[/nexus.warning]")
             nx.close()
             return
 
         table = Table(title="ACP Agents")
-        table.add_column("Agent ID", style="cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Command", style="dim")
-        table.add_column("Enabled", style="dim")
+        table.add_column("Agent ID", style="nexus.value")
+        table.add_column("Name", style="nexus.success")
+        table.add_column("Command", style="nexus.muted")
+        table.add_column("Enabled", style="nexus.muted")
 
         for agent in agents:
             table.add_row(
@@ -235,22 +235,22 @@ async def _async_list_processes(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
         procs = svc.acp_list_processes()
 
         if not procs:
-            console.print("[yellow]No ACP processes[/yellow]")
+            console.print("[nexus.warning]No ACP processes[/nexus.warning]")
             nx.close()
             return
 
         table = Table(title="ACP Processes")
-        table.add_column("PID", style="cyan")
-        table.add_column("Name", style="green")
-        table.add_column("State", style="yellow")
-        table.add_column("Owner", style="dim")
+        table.add_column("PID", style="nexus.value")
+        table.add_column("Name", style="nexus.success")
+        table.add_column("State", style="nexus.warning")
+        table.add_column("Owner", style="nexus.muted")
 
         for p in procs:
             table.add_row(
@@ -294,27 +294,27 @@ async def _async_history(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
         entries = svc.acp_history(limit=limit)
 
         if not entries:
-            console.print("[yellow]No call history[/yellow]")
+            console.print("[nexus.warning]No call history[/nexus.warning]")
             nx.close()
             return
 
         table = Table(title="ACP Call History")
-        table.add_column("PID", style="cyan", no_wrap=True)
-        table.add_column("Agent", style="green")
-        table.add_column("Session", style="dim", no_wrap=True)
-        table.add_column("Exit", style="dim")
-        table.add_column("Prompt", style="yellow", max_width=40)
+        table.add_column("PID", style="nexus.value", no_wrap=True)
+        table.add_column("Agent", style="nexus.success")
+        table.add_column("Session", style="nexus.muted", no_wrap=True)
+        table.add_column("Exit", style="nexus.muted")
+        table.add_column("Prompt", style="nexus.warning", max_width=40)
         table.add_column("Response", style="white", max_width=40)
-        table.add_column("Model", style="dim")
-        table.add_column("Tokens", style="dim")
-        table.add_column("Cost", style="dim")
+        table.add_column("Model", style="nexus.muted")
+        table.add_column("Tokens", style="nexus.muted")
+        table.add_column("Cost", style="nexus.muted")
 
         for entry in entries:
             meta = entry.get("metadata", {})
@@ -383,13 +383,13 @@ async def _async_kill_process(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
         result = svc.acp_kill(pid=pid)
         console.print(
-            f"[green]Killed[/green] {result.get('name', pid)} "
+            f"[nexus.success]Killed[/nexus.success] {result.get('name', pid)} "
             f"(state={result.get('state', 'unknown')})"
         )
 
@@ -441,7 +441,7 @@ async def _async_config_agent(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
@@ -455,18 +455,20 @@ async def _async_config_agent(
                 svc.acp_set_enabled_skills(agent_id=agent_id, skills=skill_list)
                 names = [sk["name"] for sk in skill_list]
                 console.print(
-                    f"[green]Set enabled skills for {agent_id}:[/green] {', '.join(names)}"
+                    f"[nexus.success]Set enabled skills for {agent_id}:[/nexus.success] {', '.join(names)}"
                 )
             else:
                 svc.acp_set_enabled_skills(agent_id=agent_id, skills=[])
-                console.print(f"[green]Cleared enabled skills for {agent_id}[/green]")
+                console.print(
+                    f"[nexus.success]Cleared enabled skills for {agent_id}[/nexus.success]"
+                )
             made_changes = True
 
         # Set system prompt if provided
         if system_prompt is not None:
             svc.acp_set_system_prompt(agent_id=agent_id, content=system_prompt)
             console.print(
-                f"[green]Set system prompt for {agent_id}[/green] ({len(system_prompt)} chars)"
+                f"[nexus.success]Set system prompt for {agent_id}[/nexus.success] ({len(system_prompt)} chars)"
             )
             made_changes = True
 
@@ -480,21 +482,21 @@ async def _async_config_agent(
             current_skills = skills_result.get("skills")
             if current_skills:
                 table = Table(show_header=True)
-                table.add_column("Name", style="cyan")
-                table.add_column("Description", style="dim")
-                table.add_column("Path", style="dim")
+                table.add_column("Name", style="nexus.value")
+                table.add_column("Description", style="nexus.muted")
+                table.add_column("Path", style="nexus.muted")
                 for sk in current_skills:
                     table.add_row(sk["name"], sk.get("description", ""), sk.get("path", ""))
-                console.print("[cyan]Enabled skills:[/cyan]")
+                console.print("[nexus.value]Enabled skills:[/nexus.value]")
                 console.print(table)
             else:
-                console.print("[dim]Enabled skills: (none)[/dim]")
+                console.print("[nexus.muted]Enabled skills: (none)[/nexus.muted]")
 
             current_prompt = prompt_result.get("content")
             if current_prompt:
-                console.print(f"[cyan]System prompt:[/cyan] {current_prompt}")
+                console.print(f"[nexus.value]System prompt:[/nexus.value] {current_prompt}")
             else:
-                console.print("[dim]System prompt: (none)[/dim]")
+                console.print("[nexus.muted]System prompt: (none)[/nexus.muted]")
 
         nx.close()
     except Exception as e:
@@ -533,7 +535,7 @@ async def _async_get_system_prompt(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
@@ -542,7 +544,7 @@ async def _async_get_system_prompt(
         if content:
             console.print(content)
         else:
-            console.print(f"[yellow]No system prompt set for {agent_id}[/yellow]")
+            console.print(f"[nexus.warning]No system prompt set for {agent_id}[/nexus.warning]")
 
         nx.close()
     except Exception as e:
@@ -579,13 +581,13 @@ async def _async_set_system_prompt(
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         svc = nx.service("acp_rpc")
         if svc is None:
-            console.print("[red]ACP service not available[/red]")
+            console.print("[nexus.error]ACP service not available[/nexus.error]")
             nx.close()
             return
 
         result = svc.acp_set_system_prompt(agent_id=agent_id, content=content)
         console.print(
-            f"[green]Set system prompt for {agent_id}[/green] ({result.get('length', 0)} chars)"
+            f"[nexus.success]Set system prompt for {agent_id}[/nexus.success] ({result.get('length', 0)} chars)"
         )
 
         nx.close()

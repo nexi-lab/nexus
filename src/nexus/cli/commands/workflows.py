@@ -7,7 +7,8 @@ import os
 import click
 from rich.table import Table
 
-from nexus.cli.utils import console, handle_error
+from nexus.cli.theme import console
+from nexus.cli.utils import handle_error
 
 
 def _get_engine_with_storage():  # type: ignore[no-untyped-def]
@@ -85,13 +86,13 @@ def workflows_load(file_path: str, enabled: bool) -> None:
         if success:
             status = "enabled" if enabled else "disabled"
             console.print(
-                f"[green]✓[/green] Loaded workflow: [cyan]{definition.name}[/cyan] ({status})"
+                f"[nexus.success]✓[/nexus.success] Loaded workflow: [nexus.value]{definition.name}[/nexus.value] ({status})"
             )
             console.print(f"  Version: {definition.version}")
             console.print(f"  Triggers: {len(definition.triggers)}")
             console.print(f"  Actions: {len(definition.actions)}")
         else:
-            console.print(f"[red]✗[/red] Failed to load workflow from {file_path}")
+            console.print(f"[nexus.error]✗[/nexus.error] Failed to load workflow from {file_path}")
 
     except Exception as e:
         handle_error(e)
@@ -106,17 +107,19 @@ def workflows_list() -> None:
         workflow_list = engine.list_workflows()
 
         if not workflow_list:
-            console.print("[yellow]No workflows loaded.[/yellow]")
-            console.print("\nLoad workflows with: [cyan]nexus workflows load <file>[/cyan]")
+            console.print("[nexus.warning]No workflows loaded.[/nexus.warning]")
+            console.print(
+                "\nLoad workflows with: [nexus.value]nexus workflows load <file>[/nexus.value]"
+            )
             return
 
         table = Table(title="Loaded Workflows")
-        table.add_column("Name", style="cyan")
-        table.add_column("Version", style="green")
+        table.add_column("Name", style="nexus.value")
+        table.add_column("Version", style="nexus.success")
         table.add_column("Description")
         table.add_column("Triggers", justify="right")
         table.add_column("Actions", justify="right")
-        table.add_column("Status", style="yellow")
+        table.add_column("Status", style="nexus.warning")
 
         for workflow in workflow_list:
             status = "✓ Enabled" if workflow["enabled"] else "✗ Disabled"
@@ -157,14 +160,16 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
         engine = _get_engine_with_storage()
 
         # Execute workflow
-        console.print(f"[cyan]Testing workflow:[/cyan] {workflow_name}")
+        console.print(f"[nexus.value]Testing workflow:[/nexus.value] {workflow_name}")
         if file_path:
-            console.print(f"[cyan]File:[/cyan] {file_path}")
+            console.print(f"[nexus.path]File:[/nexus.path] {file_path}")
 
         execution = asyncio.run(engine.trigger_workflow(workflow_name, event_context))
 
         if not execution:
-            console.print(f"[red]✗[/red] Failed to execute workflow '{workflow_name}'")
+            console.print(
+                f"[nexus.error]✗[/nexus.error] Failed to execute workflow '{workflow_name}'"
+            )
             return
 
         # Display results
@@ -186,10 +191,10 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
                     f"  [{status_color}]{status_icon}[/{status_color}] {result.action_name} ({result.duration_ms:.2f}ms)"
                 )
                 if result.error:
-                    console.print(f"    [red]Error: {result.error}[/red]")
+                    console.print(f"    [nexus.error]Error: {result.error}[/nexus.error]")
 
         if execution.error_message:
-            console.print(f"\n[red]Error:[/red] {execution.error_message}")
+            console.print(f"\n[nexus.error]Error:[/nexus.error] {execution.error_message}")
 
     except Exception as e:
         handle_error(e)
@@ -201,7 +206,9 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
 def workflows_runs(workflow_name: str, limit: int) -> None:
     """View workflow execution history."""
     try:
-        console.print("[yellow]Workflow execution history not yet implemented.[/yellow]")
+        console.print(
+            "[nexus.warning]Workflow execution history not yet implemented.[/nexus.warning]"
+        )
         console.print(f"This will show the last {limit} executions of '{workflow_name}'")
         # TODO(#1443): implement workflow execution history when database storage is ready
 
@@ -218,7 +225,9 @@ def workflows_enable(workflow_name: str) -> None:
         engine = _get_engine_with_storage()
         engine.enable_workflow(workflow_name)
 
-        console.print(f"[green]✓[/green] Enabled workflow: [cyan]{workflow_name}[/cyan]")
+        console.print(
+            f"[nexus.success]✓[/nexus.success] Enabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
+        )
 
     except Exception as e:
         handle_error(e)
@@ -233,7 +242,9 @@ def workflows_disable(workflow_name: str) -> None:
         engine = _get_engine_with_storage()
         engine.disable_workflow(workflow_name)
 
-        console.print(f"[yellow]✓[/yellow] Disabled workflow: [cyan]{workflow_name}[/cyan]")
+        console.print(
+            f"[nexus.warning]✓[/nexus.warning] Disabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
+        )
 
     except Exception as e:
         handle_error(e)
@@ -249,9 +260,11 @@ def workflows_unload(workflow_name: str) -> None:
         success = engine.unload_workflow(workflow_name)
 
         if success:
-            console.print(f"[green]✓[/green] Unloaded workflow: [cyan]{workflow_name}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Unloaded workflow: [nexus.value]{workflow_name}[/nexus.value]"
+            )
         else:
-            console.print(f"[red]✗[/red] Workflow '{workflow_name}' not found")
+            console.print(f"[nexus.error]✗[/nexus.error] Workflow '{workflow_name}' not found")
 
     except Exception as e:
         handle_error(e)
@@ -269,15 +282,15 @@ def workflows_discover(directory: str, load: bool) -> None:
         workflows_found = WorkflowLoader.discover_workflows(directory)
 
         if not workflows_found:
-            console.print(f"[yellow]No workflows found in {directory}[/yellow]")
+            console.print(f"[nexus.warning]No workflows found in {directory}[/nexus.warning]")
             return
 
-        console.print(f"[green]✓[/green] Found {len(workflows_found)} workflow(s)")
+        console.print(f"[nexus.success]✓[/nexus.success] Found {len(workflows_found)} workflow(s)")
 
         # Display discovered workflows
         table = Table(title=f"Workflows in {directory}")
-        table.add_column("Name", style="cyan")
-        table.add_column("Version", style="green")
+        table.add_column("Name", style="nexus.value")
+        table.add_column("Version", style="nexus.success")
         table.add_column("Description")
         table.add_column("Triggers", justify="right")
         table.add_column("Actions", justify="right")
@@ -302,7 +315,7 @@ def workflows_discover(directory: str, load: bool) -> None:
                 if engine.load_workflow(workflow, enabled=True):
                     loaded_count += 1
 
-            console.print(f"\n[green]✓[/green] Loaded {loaded_count} workflow(s)")
+            console.print(f"\n[nexus.success]✓[/nexus.success] Loaded {loaded_count} workflow(s)")
 
     except Exception as e:
         handle_error(e)

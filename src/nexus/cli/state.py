@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 # ---------------------------------------------------------------------------
 # Shared config search paths (single source of truth — was duplicated in
@@ -53,7 +53,7 @@ def load_project_config() -> dict[str, Any]:
         if p.exists():
             with open(p) as f:
                 return yaml.safe_load(f) or {}
-    console.print("[red]Error:[/red] No nexus.yaml found. Run `nexus init` first.")
+    console.print("[nexus.error]Error:[/nexus.error] No nexus.yaml found. Run `nexus init` first.")
     raise SystemExit(1)
 
 

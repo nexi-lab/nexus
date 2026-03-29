@@ -76,9 +76,9 @@ def manifest_create(
     )
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[green]Manifest created[/green]")
+        console.print("[nexus.success]Manifest created[/nexus.success]")
         console.print(f"  Manifest ID: {d.get('manifest_id', d.get('id', 'N/A'))}")
         console.print(f"  Agent:       {d.get('agent_id', agent_id)}")
         console.print(f"  Name:        {d.get('name', name)}")
@@ -109,19 +109,19 @@ def manifest_list(client: ManifestClient) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         manifests = d.get("manifests", [])
         if not manifests:
-            console.print("[yellow]No manifests[/yellow]")
+            console.print("[nexus.warning]No manifests[/nexus.warning]")
             return
 
         table = Table(title=f"Access Manifests ({len(manifests)})")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="nexus.muted")
         table.add_column("Agent")
         table.add_column("Name")
         table.add_column("Entries")
-        table.add_column("Valid Until", style="dim")
+        table.add_column("Valid Until", style="nexus.muted")
 
         for m in manifests:
             entry_count = len(m.get("entries", []))
@@ -153,7 +153,7 @@ def manifest_show(client: ManifestClient, manifest_id: str) -> ServiceResult:
     data = client.show(manifest_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Manifest: {manifest_id}[/bold cyan]")
         console.print(f"  Name:       {d.get('name', 'N/A')}")
@@ -187,11 +187,15 @@ def manifest_evaluate(client: ManifestClient, manifest_id: str, tool_name: str) 
     data = client.evaluate(manifest_id, tool_name=tool_name)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         permission = d.get("permission", "deny")
         allowed = permission == "allow"
-        status = "[green]Allowed[/green]" if allowed else "[red]Denied[/red]"
+        status = (
+            "[nexus.success]Allowed[/nexus.success]"
+            if allowed
+            else "[nexus.error]Denied[/nexus.error]"
+        )
         console.print(f"Tool '{tool_name}': {status}")
         if d.get("manifest_id"):
             console.print(f"  Manifest: {d['manifest_id']}")

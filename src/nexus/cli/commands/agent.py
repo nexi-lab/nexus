@@ -6,12 +6,12 @@ Manage AI agents for delegation and multi-agent workflows.
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
 from nexus.cli.clients.agent_ext import AgentExtClient
 from nexus.cli.output import add_output_options
 from nexus.cli.service_command import ServiceResult, service_command
+from nexus.cli.theme import console
 from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
@@ -19,8 +19,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-
-console = Console()
 
 
 @click.group(name="agent")
@@ -102,28 +100,32 @@ def register_cmd(
             if if_not_exists and "already exists" in str(reg_err).lower():
                 try:
                     existing = nx.service("agent_rpc").get_agent(agent_id)
-                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
+                    )
                     console.print(f"  Name: {existing.get('name', name)}")
                     console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
                 except Exception:
-                    console.print(f"[green]✓[/green] Agent already exists: {agent_id}")
+                    console.print(
+                        f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
+                    )
                 nx.close()
                 return
             nx.close()
             raise
 
-        console.print(f"[green]✓[/green] Registered agent: {result['agent_id']}")
+        console.print(f"[nexus.success]✓[/nexus.success] Registered agent: {result['agent_id']}")
         console.print(f"  Name: {result.get('name', name)}")
         if description:
             console.print(f"  Description: {description}")
         console.print(f"  Owner: {result.get('user_id', 'unknown')}")
 
         if with_api_key and result.get("api_key"):
-            console.print("\n[yellow]⚠[/yellow] API Key (save securely):")
+            console.print("\n[nexus.warning]⚠[/nexus.warning] API Key (save securely):")
             console.print(f"  {result['api_key']}")
-            console.print("\n[dim]Note: API key will not be shown again[/dim]")
+            console.print("\n[nexus.muted]Note: API key will not be shown again[/nexus.muted]")
         else:
-            console.print("\n[cyan]ℹ[/cyan] No API key generated (recommended)")
+            console.print("\n[nexus.value]ℹ[/nexus.value] No API key generated (recommended)")
             console.print("  Agent uses owner's auth + X-Agent-ID header")
 
         nx.close()
@@ -149,17 +151,17 @@ def list_cmd(
         agents = nx.service("agent_rpc").list_agents()
 
         if not agents:
-            console.print("[yellow]No agents registered[/yellow]")
+            console.print("[nexus.warning]No agents registered[/nexus.warning]")
             nx.close()
             return
 
         # Create table
         table = Table(title="Registered Agents")
-        table.add_column("Agent ID", style="cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description", style="dim", no_wrap=False)
-        table.add_column("Owner", style="dim")
-        table.add_column("Created", style="dim")
+        table.add_column("Agent ID", style="nexus.value")
+        table.add_column("Name", style="nexus.success")
+        table.add_column("Description", style="nexus.muted", no_wrap=False)
+        table.add_column("Owner", style="nexus.muted")
+        table.add_column("Created", style="nexus.muted")
 
         for agent in agents:
             created = agent.get("created_at", "")
@@ -206,7 +208,7 @@ def info_cmd(
         agent = nx.service("agent_rpc").get_agent(agent_id)
 
         if not agent:
-            console.print(f"[red]✗[/red] Agent not found: {agent_id}")
+            console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
             nx.close()
             return
 
@@ -252,20 +254,20 @@ def delete_cmd(
             try:
                 confirm = input(f"Delete agent '{agent_id}'? [y/N]: ")
                 if confirm.lower() not in ("y", "yes"):
-                    console.print("[yellow]Cancelled[/yellow]")
+                    console.print("[nexus.warning]Cancelled[/nexus.warning]")
                     nx.close()
                     return
             except (EOFError, KeyboardInterrupt):
-                console.print("\n[yellow]Cancelled[/yellow]")
+                console.print("\n[nexus.warning]Cancelled[/nexus.warning]")
                 nx.close()
                 return
 
         result = nx.service("agent_rpc").delete_agent(agent_id)
 
         if result:
-            console.print(f"[green]✓[/green] Deleted agent: {agent_id}")
+            console.print(f"[nexus.success]✓[/nexus.success] Deleted agent: {agent_id}")
         else:
-            console.print(f"[red]✗[/red] Agent not found: {agent_id}")
+            console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
 
         nx.close()
 
@@ -307,7 +309,11 @@ def agent_status(client: AgentExtClient, agent_id: str) -> ServiceResult:
         if conditions:
             console.print("  Conditions:")
             for c in conditions:
-                status_icon = "[green]OK[/green]" if c.get("status") == "True" else "[red]!![/red]"
+                status_icon = (
+                    "[nexus.success]OK[/nexus.success]"
+                    if c.get("status") == "True"
+                    else "[nexus.error]!![/nexus.error]"
+                )
                 console.print(f"    {status_icon} {c.get('type', '')}: {c.get('message', '')}")
 
     return ServiceResult(data=data, human_formatter=_render)

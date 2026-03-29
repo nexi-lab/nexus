@@ -16,9 +16,9 @@ import click
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
 from nexus.cli.timing import CommandTiming
+from nexus.cli.theme import console
 from nexus.cli.utils import (
     add_backend_options,
-    console,
     handle_error,
 )
 
@@ -31,9 +31,9 @@ def _resolve_http_url(remote_url: str | None) -> tuple[str, str | None]:
     api_key = os.environ.get("NEXUS_API_KEY")
 
     if not url:
-        console.print("[red]Error:[/red] NEXUS_URL or --remote-url is required")
+        console.print("[nexus.error]Error:[/nexus.error] NEXUS_URL or --remote-url is required")
         console.print(
-            "[yellow]Hint:[/yellow] export NEXUS_URL=http://your-nexus-server:2026"
+            "[nexus.warning]Hint:[/nexus.warning] export NEXUS_URL=http://your-nexus-server:2026"
             " or use `eval $(nexus env)`"
         )
         sys.exit(1)
@@ -110,19 +110,23 @@ def list_connectors(
 
         if not connectors:
             if category:
-                console.print(f"[yellow]No connectors found in category '{category}'[/yellow]")
+                console.print(
+                    f"[nexus.warning]No connectors found in category '{category}'[/nexus.warning]"
+                )
             else:
-                console.print("[yellow]No connectors registered[/yellow]")
+                console.print("[nexus.warning]No connectors registered[/nexus.warning]")
             return
 
         def _render(items: list[dict[str, Any]]) -> None:
             from rich.table import Table
 
-            table = Table(title="Available Connectors", show_header=True, header_style="bold cyan")
-            table.add_column("Name", style="green")
+            table = Table(
+                title="Available Connectors", show_header=True, header_style="bold nexus.accent"
+            )
+            table.add_column("Name", style="nexus.success")
             table.add_column("Description")
-            table.add_column("Category", style="yellow")
-            table.add_column("Capabilities", style="dim")
+            table.add_column("Category", style="nexus.warning")
+            table.add_column("Capabilities", style="nexus.muted")
 
             for c in items:
                 caps = c.get("capabilities", [])
@@ -137,7 +141,7 @@ def list_connectors(
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(items)} connectors[/dim]")
+            console.print(f"\n[nexus.muted]Total: {len(items)} connectors[/nexus.muted]")
 
         render_output(
             data=connectors,
@@ -176,18 +180,31 @@ def connector_info(
         info = next((c for c in connectors if c["name"] == connector_name), None)
         if not info:
             available = ", ".join(c["name"] for c in connectors)
-            console.print(f"[red]Unknown connector: {connector_name}[/red]")
-            console.print(f"[dim]Available: {available}[/dim]")
+            console.print(f"[nexus.error]Unknown connector: {connector_name}[/nexus.error]")
+            console.print(f"[nexus.muted]Available: {available}[/nexus.muted]")
             sys.exit(1)
 
-        console.print(f"\n[bold cyan]{info['name']}[/bold cyan]")
-        console.print(f"  [dim]Description:[/dim] {info.get('description') or 'No description'}")
-        console.print(f"  [dim]Category:[/dim] {info.get('category', 'unknown')}")
-        console.print(f"  [dim]User-scoped:[/dim] {'Yes' if info.get('user_scoped') else 'No'}")
+        console.print(f"\n[bold nexus.value]{info['name']}[/bold nexus.value]")
+        console.print(
+            f"  [nexus.muted]Description:[/nexus.muted] {info.get('description') or 'No description'}"
+        )
+        console.print(f"  [nexus.muted]Category:[/nexus.muted] {info.get('category', 'unknown')}")
+        console.print(
+            f"  [nexus.muted]User-scoped:[/nexus.muted] {'Yes' if info.get('user_scoped') else 'No'}"
+        )
 
         caps = info.get("capabilities", [])
         if caps:
-            console.print(f"  [dim]Capabilities:[/dim] {', '.join(caps)}")
+            console.print(f"  [nexus.muted]Capabilities:[/nexus.muted] {', '.join(caps)}")
+
+        requires = info.get("requires", [])
+        if requires:
+            console.print(f"  [nexus.muted]Dependencies:[/nexus.muted] {', '.join(requires)}")
+        else:
+            console.print("  [nexus.muted]Dependencies:[/nexus.muted] None (core)")
+
+        if "class" in info:
+            console.print(f"  [nexus.muted]Class:[/nexus.muted] {info['class']}")
 
         console.print()
 
@@ -225,9 +242,13 @@ def connectors_capabilities(
         connectors: list[dict[str, Any]] = data.get("connectors", [])
 
         if name:
-            connectors = [c for c in connectors if c.get("name") == name]
+            connectors = [
+                c for c in connectors if c.get("name") == name or c.get("connector_id") == name
+            ]
             if not connectors:
-                console.print(f"[red]Error:[/red] Connector '{name}' not found")
+                available = ", ".join(c["name"] for c in data.get("connectors", []))
+                console.print(f"[nexus.error]Error:[/nexus.error] Connector '{name}' not found")
+                console.print(f"[nexus.muted]Available: {available}[/nexus.muted]")
                 sys.exit(1)
 
         def _render(items: list[dict[str, Any]]) -> None:
@@ -236,11 +257,11 @@ def connectors_capabilities(
             table = Table(
                 title="Connector Capabilities",
                 show_header=True,
-                header_style="bold cyan",
+                header_style="bold nexus.accent",
             )
-            table.add_column("Name", style="cyan")
-            table.add_column("Category", style="green")
-            table.add_column("Capabilities", style="yellow")
+            table.add_column("Name", style="nexus.value")
+            table.add_column("Category", style="nexus.success")
+            table.add_column("Capabilities", style="nexus.warning")
 
             for c in items:
                 caps = c.get("capabilities", [])
@@ -252,7 +273,7 @@ def connectors_capabilities(
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(items)} connectors[/dim]")
+            console.print(f"\n[nexus.muted]Total: {len(items)} connectors[/nexus.muted]")
 
         render_output(
             data=connectors,

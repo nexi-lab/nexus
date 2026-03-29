@@ -74,9 +74,9 @@ def delegation_create(
     )
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[green]Delegation created[/green]")
+        console.print("[nexus.success]Delegation created[/nexus.success]")
         console.print(f"  ID:          {d.get('delegation_id', 'N/A')}")
         console.print(f"  Coordinator: {d.get('coordinator_agent_id', coordinator)}")
         console.print(f"  Worker:      {d.get('worker_id', worker)}")
@@ -113,20 +113,20 @@ def delegation_list(
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         delegations = d.get("delegations", [])
         if not delegations:
-            console.print("[yellow]No active delegations[/yellow]")
+            console.print("[nexus.warning]No active delegations[/nexus.warning]")
             return
 
         table = Table(title=f"Delegations ({len(delegations)})")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="nexus.muted")
         table.add_column("Coordinator")
         table.add_column("Worker")
         table.add_column("Mode")
         table.add_column("Status")
-        table.add_column("Created", style="dim")
+        table.add_column("Created", style="nexus.muted")
 
         for dlg in delegations:
             table.add_row(
@@ -177,7 +177,7 @@ def delegation_show(client: DelegationClient, delegation_id: str) -> ServiceResu
     data = client.show(delegation_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Delegation Chain: {delegation_id}[/bold cyan]")
         chain = d.get("chain", [d])

@@ -67,9 +67,9 @@ def share_create(
     )
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[green]Share link created[/green]")
+        console.print("[nexus.success]Share link created[/nexus.success]")
         console.print(f"  URL:        {d.get('url', d.get('token', 'N/A'))}")
         console.print(f"  Path:       {d.get('path', path)}")
         console.print(f"  Permission: {d.get('permission_level', permission_level)}")
@@ -98,18 +98,18 @@ def share_list(client: ShareClient, path: str | None) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         links = d.get("links", d.get("share_links", []))
         if not links:
-            console.print("[yellow]No active share links[/yellow]")
+            console.print("[nexus.warning]No active share links[/nexus.warning]")
             return
 
         table = Table(title=f"Share Links ({len(links)})")
-        table.add_column("Token", style="dim")
+        table.add_column("Token", style="nexus.muted")
         table.add_column("Path")
         table.add_column("Permission")
-        table.add_column("Expires", style="dim")
+        table.add_column("Expires", style="nexus.muted")
 
         for link in links:
             table.add_row(
@@ -139,7 +139,7 @@ def share_show(client: ShareClient, token: str) -> ServiceResult:
     data = client.show(token)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Share Link: {token}[/bold cyan]")
         console.print(f"  Path:        {d.get('path', 'N/A')}")

@@ -14,7 +14,7 @@ import click
 from rich.panel import Panel
 from rich.table import Table
 
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 
 @click.group()
@@ -57,7 +57,7 @@ def init(node_id: int, listen_port: int) -> None:
     try:
         identity = init_identity(node_id, listen_port)
     except RuntimeError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     console.print(
@@ -66,8 +66,8 @@ def init(node_id: int, listen_port: int) -> None:
             f"  Node ID:      {identity['node_id']}\n"
             f"  WireGuard IP: {identity['ip']}\n"
             f"  Listen Port:  {identity['listen_port']}\n"
-            f"  Public Key:   [cyan]{identity['public_key']}[/cyan]\n\n"
-            f"[dim]Share the public key with peers.[/dim]",
+            f"  Public Key:   [nexus.value]{identity['public_key']}[/nexus.value]\n\n"
+            f"[nexus.muted]Share the public key with peers.[/nexus.muted]",
             title="nexus network",
         )
     )
@@ -96,7 +96,7 @@ def add_peer(node_id: int, public_key: str, endpoint: str) -> None:
 
     peer = _add_peer(node_id, public_key, endpoint)
     console.print(
-        f"[green]Peer added:[/green] node={peer['node_id']} "
+        f"[nexus.success]Peer added:[/nexus.success] node={peer['node_id']} "
         f"ip={peer['ip']} endpoint={peer['endpoint']}"
     )
 
@@ -113,9 +113,9 @@ def remove_peer(node_id: int) -> None:
     from nexus.network.wireguard import remove_peer as _remove_peer
 
     if _remove_peer(node_id):
-        console.print(f"[green]Peer {node_id} removed.[/green]")
+        console.print(f"[nexus.success]Peer {node_id} removed.[/nexus.success]")
     else:
-        console.print(f"[yellow]Peer {node_id} not found.[/yellow]")
+        console.print(f"[nexus.warning]Peer {node_id} not found.[/nexus.warning]")
 
 
 @network.command()
@@ -127,7 +127,7 @@ def config() -> None:
         identity = load_identity()
         peers = load_peers()
     except FileNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
     wg_config = generate_wg_config(identity, peers)
@@ -144,9 +144,9 @@ def up() -> None:
 
     try:
         msg = tunnel_up()
-        console.print(f"[green]{msg}[/green]")
+        console.print(f"[nexus.success]{msg}[/nexus.success]")
     except (RuntimeError, FileNotFoundError) as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
 
@@ -157,9 +157,9 @@ def down() -> None:
 
     try:
         msg = tunnel_down()
-        console.print(f"[green]{msg}[/green]")
+        console.print(f"[nexus.success]{msg}[/nexus.success]")
     except RuntimeError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from e
 
 
@@ -176,14 +176,16 @@ def status() -> None:
             f"ip={identity['ip']} port={identity['listen_port']}"
         )
     except FileNotFoundError:
-        console.print("[yellow]No identity configured. Run `nexus network init` first.[/yellow]")
+        console.print(
+            "[nexus.warning]No identity configured. Run `nexus network init` first.[/nexus.warning]"
+        )
         return
 
     # Show configured peers
     peers = load_peers()
     if peers:
         table = Table(title="Configured Peers")
-        table.add_column("Node ID", style="cyan")
+        table.add_column("Node ID", style="nexus.value")
         table.add_column("WireGuard IP")
         table.add_column("Endpoint")
         table.add_column("Public Key")
@@ -196,7 +198,7 @@ def status() -> None:
             )
         console.print(table)
     else:
-        console.print("[dim]No peers configured.[/dim]")
+        console.print("[nexus.muted]No peers configured.[/nexus.muted]")
 
     # Show live tunnel status
     console.print()

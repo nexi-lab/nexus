@@ -62,17 +62,17 @@ def federation_status(
         def _render(d: dict[str, Any]) -> None:
             zones = d.get("zones", [])
             console.print("[bold cyan]Federation Status[/bold cyan]")
-            console.print(f"  Total zones: [yellow]{len(zones)}[/yellow]")
+            console.print(f"  Total zones: [nexus.warning]{len(zones)}[/nexus.warning]")
 
             total_links = sum(z.get("links_count", 0) for z in zones)
-            console.print(f"  Total links: [yellow]{total_links}[/yellow]")
+            console.print(f"  Total links: [nexus.warning]{total_links}[/nexus.warning]")
 
             if zones:
                 console.print("\n[bold]Zones:[/bold]")
                 for z in zones:
                     zone_id = z.get("zone_id", "unknown")
                     links = z.get("links_count", 0)
-                    console.print(f"  [cyan]{zone_id}[/cyan]  links={links}")
+                    console.print(f"  [nexus.value]{zone_id}[/nexus.value]  links={links}")
 
         render_output(
             data=data,
@@ -81,7 +81,7 @@ def federation_status(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -109,11 +109,11 @@ def federation_zones(
         def _render(d: dict[str, Any]) -> None:
             zones = d.get("zones", [])
             if not zones:
-                console.print("[dim]No federation zones found[/dim]")
+                console.print("[nexus.muted]No federation zones found[/nexus.muted]")
                 return
 
             table = Table(title=f"Federation Zones ({len(zones)})")
-            table.add_column("Zone ID", style="cyan")
+            table.add_column("Zone ID", style="nexus.value")
             table.add_column("Links", justify="right")
 
             for z in zones:
@@ -130,7 +130,7 @@ def federation_zones(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -170,7 +170,7 @@ def federation_info(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -224,12 +224,12 @@ def federation_mount(
 
         def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
             console.print(
-                f"[green]Mounted zone '{target_zone}' at '{path}' in zone '{parent_zone}'[/green]"
+                f"[nexus.success]Mounted zone '{target_zone}' at '{path}' in zone '{parent_zone}'[/nexus.success]"
             )
 
         render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -274,11 +274,13 @@ def federation_unmount(
             )
 
         def _render(_d: dict[str, Any]) -> None:  # noqa: ARG001
-            console.print(f"[green]Unmounted '{path}' from zone '{parent_zone}'[/green]")
+            console.print(
+                f"[nexus.success]Unmounted '{path}' from zone '{parent_zone}'[/nexus.success]"
+            )
 
         render_output(data=data, output_opts=output_opts, timing=timing, human_formatter=_render)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 

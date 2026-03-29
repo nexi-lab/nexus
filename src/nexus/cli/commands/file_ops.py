@@ -74,11 +74,11 @@ def init(path: str) -> None:
             nx.close()
 
             console.print(
-                f"[green]✓[/green] Initialized Nexus workspace at [cyan]{workspace_path}[/cyan]"
+                f"[nexus.success]✓[/nexus.success] Initialized Nexus workspace at [nexus.path]{workspace_path}[/nexus.path]"
             )
-            console.print(f"  Data directory: [cyan]{data_dir}[/cyan]")
-            console.print(f"  Workspace: [cyan]{workspace_path / 'workspace'}[/cyan]")
-            console.print(f"  Shared: [cyan]{workspace_path / 'shared'}[/cyan]")
+            console.print(f"  Data directory: [nexus.path]{data_dir}[/nexus.path]")
+            console.print(f"  Workspace: [nexus.path]{workspace_path / 'workspace'}[/nexus.path]")
+            console.print(f"  Shared: [nexus.path]{workspace_path / 'shared'}[/nexus.path]")
         except Exception as e:
             handle_error(e)
 
@@ -164,7 +164,7 @@ def cat(
 
                         if file_size > STREAM_THRESHOLD:
                             console.print(
-                                f"[dim]Streaming large file ({file_size:,} bytes)...[/dim]"
+                                f"[nexus.muted]Streaming large file ({file_size:,} bytes)...[/nexus.muted]"
                             )
                             for chunk in nx.stream(  # type: ignore[attr-defined]
                                 path, chunk_size=65536, context=operation_context
@@ -198,11 +198,11 @@ def cat(
             # Human mode
             if metadata and meta_data:
                 console.print("[bold]Metadata:[/bold]")
-                console.print(f"[dim]Path:[/dim]     {meta_data['path']}")
-                console.print(f"[dim]ETag:[/dim]     {meta_data['etag']}")
-                console.print(f"[dim]Version:[/dim]  {meta_data['version']}")
-                console.print(f"[dim]Size:[/dim]     {meta_data['size']} bytes")
-                console.print(f"[dim]Modified:[/dim] {meta_data['modified_at']}")
+                console.print(f"[nexus.muted]Path:[/nexus.muted]     {meta_data['path']}")
+                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {meta_data['etag']}")
+                console.print(f"[nexus.muted]Version:[/nexus.muted]  {meta_data['version']}")
+                console.print(f"[nexus.muted]Size:[/nexus.muted]     {meta_data['size']} bytes")
+                console.print(f"[nexus.muted]Modified:[/nexus.muted] {meta_data['modified_at']}")
                 console.print()
                 console.print("[bold]Content:[/bold]")
 
@@ -235,7 +235,9 @@ def _cat_time_travel(
     """Handle time-travel cat (--at-operation)."""
     time_travel = getattr(nx, "time_travel_service", None)
     if time_travel is None:
-        console.print("[red]Error:[/red] Time-travel is only supported with local NexusFS")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] Time-travel is only supported with local NexusFS"
+        )
         return
 
     with timing.phase("server"):
@@ -261,18 +263,22 @@ def _cat_time_travel(
         return
 
     console.print("[bold cyan]Time-Travel Mode[/bold cyan]")
-    console.print(f"[dim]Operation ID:[/dim]  {state['operation_id']}")
-    console.print(f"[dim]Operation Time:[/dim] {state['operation_time']}")
+    console.print(f"[nexus.muted]Operation ID:[/nexus.muted]  {state['operation_id']}")
+    console.print(f"[nexus.muted]Operation Time:[/nexus.muted] {state['operation_time']}")
     console.print()
 
     if metadata:
         console.print("[bold]Metadata:[/bold]")
-        console.print(f"[dim]Path:[/dim]     {path}")
-        console.print(f"[dim]Size:[/dim]     {state['metadata'].get('size', 0)} bytes")
-        console.print(f"[dim]Owner:[/dim]    {state['metadata'].get('owner', '-')}")
-        console.print(f"[dim]Group:[/dim]    {state['metadata'].get('group', '-')}")
-        console.print(f"[dim]Mode:[/dim]     {state['metadata'].get('mode', '-')}")
-        console.print(f"[dim]Modified:[/dim] {state['metadata'].get('modified_at', '-')}")
+        console.print(f"[nexus.muted]Path:[/nexus.muted]     {path}")
+        console.print(
+            f"[nexus.muted]Size:[/nexus.muted]     {state['metadata'].get('size', 0)} bytes"
+        )
+        console.print(f"[nexus.muted]Owner:[/nexus.muted]    {state['metadata'].get('owner', '-')}")
+        console.print(f"[nexus.muted]Group:[/nexus.muted]    {state['metadata'].get('group', '-')}")
+        console.print(f"[nexus.muted]Mode:[/nexus.muted]     {state['metadata'].get('mode', '-')}")
+        console.print(
+            f"[nexus.muted]Modified:[/nexus.muted] {state['metadata'].get('modified_at', '-')}"
+        )
         console.print()
         console.print("[bold]Content:[/bold]")
 
@@ -295,8 +301,8 @@ def _print_content(path: str, content: bytes) -> None:
         else:
             console.print(text)
     except UnicodeDecodeError:
-        console.print(f"[yellow]Binary file ({len(content)} bytes)[/yellow]")
-        console.print(f"[dim]{content[:100]!r}...[/dim]")
+        console.print(f"[nexus.warning]Binary file ({len(content)} bytes)[/nexus.warning]")
+        console.print(f"[nexus.muted]{content[:100]!r}...[/nexus.muted]")
 
 
 @click.command()
@@ -395,14 +401,14 @@ def write(
                     result = await nx.write(path, file_content, context=ctx)
 
             console.print(
-                f"[green]✓[/green] Wrote {len(file_content)} bytes to [cyan]{path}[/cyan]"
+                f"[nexus.success]✓[/nexus.success] Wrote {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
             )
 
             if show_metadata:
-                console.print(f"[dim]ETag:[/dim]     {result['etag']}")
-                console.print(f"[dim]Version:[/dim]  {result['version']}")
-                console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
-                console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {result['etag']}")
+                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
+                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
+                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
         except Exception as e:
             handle_error(e)
 
@@ -474,14 +480,14 @@ def append(
                 )
 
             console.print(
-                f"[green]✓[/green] Appended {len(file_content)} bytes to [cyan]{path}[/cyan]"
+                f"[nexus.success]✓[/nexus.success] Appended {len(file_content)} bytes to [nexus.path]{path}[/nexus.path]"
             )
 
             if show_metadata:
-                console.print(f"[dim]ETag:[/dim]     {result['etag']}")
-                console.print(f"[dim]Version:[/dim]  {result['version']}")
-                console.print(f"[dim]Size:[/dim]     {result['size']} bytes")
-                console.print(f"[dim]Modified:[/dim] {result['modified_at']}")
+                console.print(f"[nexus.muted]ETag:[/nexus.muted]     {result['etag']}")
+                console.print(f"[nexus.muted]Version:[/nexus.muted]  {result['version']}")
+                console.print(f"[nexus.muted]Size:[/nexus.muted]     {result['size']} bytes")
+                console.print(f"[nexus.muted]Modified:[/nexus.muted] {result['modified_at']}")
         except Exception as e:
             handle_error(e)
 
@@ -575,7 +581,7 @@ def write_batch(
                 dest_prefix = "/" + dest_prefix
 
             # Collect all files matching the pattern
-            console.print(f"[cyan]Scanning[/cyan] {source_path} for files...")
+            console.print(f"[nexus.path]Scanning[/nexus.path] {source_path} for files...")
             all_files = list(source_path.glob(pattern))
 
             # Filter out directories and excluded patterns
@@ -595,11 +601,13 @@ def write_batch(
                     files_to_upload.append(file_path)
 
             if not files_to_upload:
-                console.print("[yellow]No files found matching criteria[/yellow]")
+                console.print("[nexus.warning]No files found matching criteria[/nexus.warning]")
                 nx.close()
                 return
 
-            console.print(f"[cyan]Found {len(files_to_upload)} files to upload[/cyan]")
+            console.print(
+                f"[nexus.value]Found {len(files_to_upload)} files to upload[/nexus.value]"
+            )
 
             # Process files in batches
             total_bytes = 0
@@ -646,15 +654,21 @@ def write_batch(
 
             # Display summary
             console.print()
-            console.print("[green]✓ Batch upload complete![/green]")
-            console.print(f"  Files uploaded:  [cyan]{total_files}[/cyan]")
-            console.print(f"  Total size:      [cyan]{total_bytes:,}[/cyan] bytes")
-            console.print(f"  Time elapsed:    [cyan]{elapsed_time:.2f}[/cyan] seconds")
+            console.print("[nexus.success]✓ Batch upload complete![/nexus.success]")
+            console.print(f"  Files uploaded:  [nexus.value]{total_files}[/nexus.value]")
+            console.print(f"  Total size:      [nexus.value]{total_bytes:,}[/nexus.value] bytes")
+            console.print(
+                f"  Time elapsed:    [nexus.value]{elapsed_time:.2f}[/nexus.value] seconds"
+            )
             if elapsed_time > 0:
                 files_per_sec = total_files / elapsed_time
                 mb_per_sec = (total_bytes / 1024 / 1024) / elapsed_time
-                console.print(f"  Throughput:      [cyan]{files_per_sec:.1f}[/cyan] files/sec")
-                console.print(f"  Bandwidth:       [cyan]{mb_per_sec:.2f}[/cyan] MB/sec")
+                console.print(
+                    f"  Throughput:      [nexus.value]{files_per_sec:.1f}[/nexus.value] files/sec"
+                )
+                console.print(
+                    f"  Bandwidth:       [nexus.value]{mb_per_sec:.2f}[/nexus.value] MB/sec"
+                )
 
         except Exception as e:
             handle_error(e)
@@ -697,7 +711,9 @@ def cp(
 
             nx.close()
 
-            console.print(f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Copied [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path]"
+            )
         except Exception as e:
             handle_error(e)
 
@@ -759,17 +775,21 @@ def copy_cmd(
 
                 # Display results
                 console.print("[bold green]✓ Copy Complete![/bold green]")
-                console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
-                console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
+                console.print(f"  Files checked: [nexus.value]{stats.files_checked}[/nexus.value]")
                 console.print(
-                    f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)"
+                    f"  Files copied: [nexus.success]{stats.files_copied}[/nexus.success]"
                 )
-                console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+                console.print(
+                    f"  Files skipped: [nexus.warning]{stats.files_skipped}[/nexus.warning] (identical)"
+                )
+                console.print(
+                    f"  Bytes transferred: [nexus.value]{stats.bytes_transferred:,}[/nexus.value]"
+                )
 
                 if stats.errors:
                     console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
                     for error in stats.errors[:10]:  # Show first 10 errors
-                        console.print(f"  [red]•[/red] {error}")
+                        console.print(f"  [nexus.error]•[/nexus.error] {error}")
 
             else:
                 # Single file copy
@@ -784,12 +804,12 @@ def copy_cmd(
 
                 if bytes_copied > 0:
                     console.print(
-                        f"[green]✓[/green] Copied [cyan]{source}[/cyan] → [cyan]{dest}[/cyan] "
+                        f"[nexus.success]✓[/nexus.success] Copied [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path] "
                         f"({bytes_copied:,} bytes)"
                     )
                 else:
                     console.print(
-                        f"[yellow]⊘[/yellow] Skipped [cyan]{source}[/cyan] (identical content)"
+                        f"[nexus.warning]⊘[/nexus.warning] Skipped [nexus.path]{source}[/nexus.path] (identical content)"
                     )
 
         except Exception as e:
@@ -836,19 +856,23 @@ def move_cmd(
 
             # Confirm unless --force
             if not force and not click.confirm(f"Move {source} to {dest}?"):
-                console.print("[yellow]Cancelled[/yellow]")
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 nx.close()
                 return
 
-            with console.status(f"[yellow]Moving {source} to {dest}...[/yellow]", spinner="dots"):
+            with console.status(
+                f"[nexus.warning]Moving {source} to {dest}...[/nexus.warning]", spinner="dots"
+            ):
                 success = await move_file(nx, source, dest)
 
             nx.close()
 
             if success:
-                console.print(f"[green]✓[/green] Moved [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+                console.print(
+                    f"[nexus.success]✓[/nexus.success] Moved [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path]"
+                )
             else:
-                console.print(f"[red]Error:[/red] Failed to move {source}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Failed to move {source}")
                 sys.exit(1)
 
         except Exception as e:
@@ -903,13 +927,15 @@ def sync_cmd(
             use_checksum = not no_checksum
 
             # Display sync configuration
-            console.print(f"[cyan]Syncing:[/cyan] {source} → {dest}")
+            console.print(f"[nexus.path]Syncing:[/nexus.path] {source} → {dest}")
             if delete:
-                console.print("  [yellow]⚠ Delete mode enabled[/yellow]")
+                console.print("  [nexus.warning]⚠ Delete mode enabled[/nexus.warning]")
             if dry_run:
-                console.print("  [yellow]DRY RUN - No changes will be made[/yellow]")
+                console.print("  [nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             if not use_checksum:
-                console.print("  [yellow]Checksum disabled - copying all files[/yellow]")
+                console.print(
+                    "  [nexus.warning]Checksum disabled - copying all files[/nexus.warning]"
+                )
             console.print()
 
             # Use progress bar from sync module (tqdm)
@@ -931,20 +957,24 @@ def sync_cmd(
             else:
                 console.print("[bold green]✓ Sync Complete![/bold green]")
 
-            console.print(f"  Files checked: [cyan]{stats.files_checked}[/cyan]")
-            console.print(f"  Files copied: [green]{stats.files_copied}[/green]")
-            console.print(f"  Files skipped: [yellow]{stats.files_skipped}[/yellow] (identical)")
+            console.print(f"  Files checked: [nexus.value]{stats.files_checked}[/nexus.value]")
+            console.print(f"  Files copied: [nexus.success]{stats.files_copied}[/nexus.success]")
+            console.print(
+                f"  Files skipped: [nexus.warning]{stats.files_skipped}[/nexus.warning] (identical)"
+            )
 
             if delete:
-                console.print(f"  Files deleted: [red]{stats.files_deleted}[/red]")
+                console.print(f"  Files deleted: [nexus.error]{stats.files_deleted}[/nexus.error]")
 
             if not dry_run:
-                console.print(f"  Bytes transferred: [cyan]{stats.bytes_transferred:,}[/cyan]")
+                console.print(
+                    f"  Bytes transferred: [nexus.value]{stats.bytes_transferred:,}[/nexus.value]"
+                )
 
             if stats.errors:
                 console.print(f"\n[bold red]Errors:[/bold red] {len(stats.errors)}")
                 for error in stats.errors[:10]:  # Show first 10 errors
-                    console.print(f"  [red]•[/red] {error}")
+                    console.print(f"  [nexus.error]•[/nexus.error] {error}")
 
         except Exception as e:
             handle_error(e)
@@ -983,20 +1013,22 @@ def rm(
 
             # Check if file exists
             if not await nx.sys_access(path):
-                console.print(f"[yellow]File does not exist:[/yellow] {path}")
+                console.print(f"[nexus.warning]File does not exist:[/nexus.warning] {path}")
                 nx.close()
                 return
 
             # Confirm deletion unless --force
             if not force and not click.confirm(f"Delete {path}?"):
-                console.print("[yellow]Cancelled[/yellow]")
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 nx.close()
                 return
 
             await nx.sys_unlink(path)
             nx.close()
 
-            console.print(f"[green]✓[/green] Deleted [cyan]{path}[/cyan]")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Deleted [nexus.path]{path}[/nexus.path]"
+            )
         except Exception as e:
             handle_error(e)
 
@@ -1079,30 +1111,40 @@ def edit(
 
             if preview:
                 if success and applied > 0:
-                    console.print(f"[yellow]Preview:[/yellow] {applied} edit(s) would apply")
+                    console.print(
+                        f"[nexus.warning]Preview:[/nexus.warning] {applied} edit(s) would apply"
+                    )
                     if diff:
                         syntax = Syntax(diff, "diff", theme="monokai")
                         console.print(syntax)
                 else:
-                    console.print("[yellow]Preview:[/yellow] No matches found")
+                    console.print("[nexus.warning]Preview:[/nexus.warning] No matches found")
                 return
 
             if success and applied > 0:
-                console.print(f"[green]✓[/green] {applied} edit(s) applied to [cyan]{path}[/cyan]")
+                console.print(
+                    f"[nexus.success]✓[/nexus.success] {applied} edit(s) applied to [nexus.path]{path}[/nexus.path]"
+                )
                 if etag:
-                    console.print(f"  [dim]etag: {etag}[/dim]")
+                    console.print(f"  [nexus.muted]etag: {etag}[/nexus.muted]")
                 for m in matches:
                     sim = m.get("similarity")
                     method = m.get("method", "exact")
                     if sim and sim < 1.0:
-                        console.print(f"  [dim]match: similarity={sim:.2f} ({method})[/dim]")
+                        console.print(
+                            f"  [nexus.muted]match: similarity={sim:.2f} ({method})[/nexus.muted]"
+                        )
                 if diff:
                     syntax = Syntax(diff, "diff", theme="monokai")
                     console.print(syntax)
             else:
-                console.print(f"[yellow]No matches found[/yellow] for the search string in {path}")
+                console.print(
+                    f"[nexus.warning]No matches found[/nexus.warning] for the search string in {path}"
+                )
                 if fuzzy is None:
-                    console.print("[dim]Hint: use --fuzzy 0.8 for approximate matching[/dim]")
+                    console.print(
+                        "[nexus.muted]Hint: use --fuzzy 0.8 for approximate matching[/nexus.muted]"
+                    )
         except Exception as e:
             handle_error(e)
 

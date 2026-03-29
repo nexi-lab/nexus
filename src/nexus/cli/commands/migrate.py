@@ -82,8 +82,8 @@ def status(data_dir: str | None) -> None:
             history = manager.get_migration_history()
             if history:
                 table = Table()
-                table.add_column("Time", style="dim")
-                table.add_column("Type", style="cyan")
+                table.add_column("Time", style="nexus.muted")
+                table.add_column("Type", style="nexus.value")
                 table.add_column("From")
                 table.add_column("To")
                 table.add_column("Status")
@@ -116,9 +116,9 @@ def status(data_dir: str | None) -> None:
 
                 console.print(table)
             else:
-                console.print("  [dim]No migration history found[/dim]")
+                console.print("  [nexus.muted]No migration history found[/nexus.muted]")
         except Exception as e:
-            console.print(f"  [dim]Could not load history: {e}[/dim]")
+            console.print(f"  [nexus.muted]Could not load history: {e}[/nexus.muted]")
 
         console.print()
 
@@ -130,9 +130,9 @@ def status(data_dir: str | None) -> None:
                 backup_time = backup.get("backup_time", "Unknown")
                 version = backup.get("nexus_version", "Unknown")
                 console.print(f"  - {backup_time} (v{version})")
-                console.print(f"    [dim]{backup['path']}[/dim]")
+                console.print(f"    [nexus.muted]{backup['path']}[/nexus.muted]")
         else:
-            console.print("  [dim]No backups found[/dim]")
+            console.print("  [nexus.muted]No backups found[/nexus.muted]")
 
     except Exception as e:
         handle_error(e)
@@ -169,38 +169,44 @@ def plan(from_version: str, to_version: str, data_dir: str | None) -> None:
         path = manager.plan_upgrade(from_version, to_version)
 
         if path is None:
-            console.print(f"[red]No migration path found from {from_version} to {to_version}[/red]")
+            console.print(
+                f"[nexus.error]No migration path found from {from_version} to {to_version}[/nexus.error]"
+            )
             sys.exit(1)
 
         console.print(f"[bold cyan]Migration Plan: {from_version} -> {to_version}[/bold cyan]")
         console.print()
 
         if not path.steps:
-            console.print("[green]No migration steps needed (same version)[/green]")
+            console.print("[nexus.success]No migration steps needed (same version)[/nexus.success]")
             return
 
         console.print(f"[bold]Steps ({len(path.steps)}):[/bold]")
         for i, step in enumerate(path.steps, 1):
             flags = []
             if step.requires_backup:
-                flags.append("[yellow]backup required[/yellow]")
+                flags.append("[nexus.warning]backup required[/nexus.warning]")
             if step.is_destructive:
-                flags.append("[red]destructive[/red]")
+                flags.append("[nexus.error]destructive[/nexus.error]")
 
             flag_str = f" ({', '.join(flags)})" if flags else ""
-            console.print(f"  {i}. [cyan]{step.name}[/cyan]{flag_str}")
+            console.print(f"  {i}. [nexus.value]{step.name}[/nexus.value]{flag_str}")
             console.print(f"     {step.description}")
-            console.print(f"     [dim]{step.from_version} -> {step.to_version}[/dim]")
+            console.print(
+                f"     [nexus.muted]{step.from_version} -> {step.to_version}[/nexus.muted]"
+            )
 
         console.print()
 
         # Summary
         if path.total_requires_backup:
-            console.print("[yellow]Backup recommended before migration[/yellow]")
+            console.print("[nexus.warning]Backup recommended before migration[/nexus.warning]")
         if path.has_destructive_steps:
-            console.print("[red]Warning: Migration contains destructive steps[/red]")
+            console.print(
+                "[nexus.error]Warning: Migration contains destructive steps[/nexus.error]"
+            )
         if not path.all_rollbackable:
-            console.print("[yellow]Warning: Not all steps support rollback[/yellow]")
+            console.print("[nexus.warning]Warning: Not all steps support rollback[/nexus.warning]")
 
     except Exception as e:
         handle_error(e)
@@ -247,7 +253,7 @@ def upgrade(
         manager = VersionManager(config)
 
         if dry_run:
-            console.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             console.print()
 
         console.print(f"[bold]Upgrading: {from_version} -> {to_version}[/bold]")
@@ -275,17 +281,17 @@ def upgrade(
         console.print(f"  Duration: {result.duration_seconds:.2f}s")
 
         if result.backup_path:
-            console.print(f"  Backup: [dim]{result.backup_path}[/dim]")
+            console.print(f"  Backup: [nexus.muted]{result.backup_path}[/nexus.muted]")
 
         if result.warnings:
             console.print()
-            console.print("[yellow]Warnings:[/yellow]")
+            console.print("[nexus.warning]Warnings:[/nexus.warning]")
             for warning in result.warnings:
                 console.print(f"  - {warning}")
 
         if result.errors:
             console.print()
-            console.print("[red]Errors:[/red]")
+            console.print("[nexus.error]Errors:[/nexus.error]")
             for error in result.errors:
                 console.print(f"  - {error}")
             sys.exit(1)
@@ -335,13 +341,13 @@ def rollback(
         current_version = manager.get_current_version()
 
         if dry_run:
-            console.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             console.print()
 
         console.print(f"[bold]Rolling back: {current_version} -> {to_version}[/bold]")
 
         if from_backup:
-            console.print(f"  Using backup: [dim]{from_backup}[/dim]")
+            console.print(f"  Using backup: [nexus.muted]{from_backup}[/nexus.muted]")
 
         def progress_callback(message: str, current: int, total: int) -> None:
             console.print(f"  [{current}/{total}] {message}")
@@ -364,13 +370,13 @@ def rollback(
 
         if result.warnings:
             console.print()
-            console.print("[yellow]Warnings:[/yellow]")
+            console.print("[nexus.warning]Warnings:[/nexus.warning]")
             for warning in result.warnings:
                 console.print(f"  - {warning}")
 
         if result.errors:
             console.print()
-            console.print("[red]Errors:[/red]")
+            console.print("[nexus.error]Errors:[/nexus.error]")
             for error in result.errors:
                 console.print(f"  - {error}")
             sys.exit(1)
@@ -424,11 +430,11 @@ def backup_cmd(list_backups: bool, data_dir: str | None) -> None:
 
                 console.print(table)
             else:
-                console.print("[dim]No backups found[/dim]")
+                console.print("[nexus.muted]No backups found[/nexus.muted]")
         else:
             console.print("[bold]Creating backup...[/bold]")
             backup_path = manager.create_backup()
-            console.print(f"[green]Backup created:[/green] {backup_path}")
+            console.print(f"[nexus.success]Backup created:[/nexus.success] {backup_path}")
 
     except Exception as e:
         handle_error(e)
@@ -463,16 +469,16 @@ def restore(backup_path: str, dry_run: bool, data_dir: str | None) -> None:
         manager = VersionManager(config)
 
         if dry_run:
-            console.print("[yellow]DRY RUN - Would restore from:[/yellow]")
+            console.print("[nexus.warning]DRY RUN - Would restore from:[/nexus.warning]")
             console.print(f"  {backup_path}")
             return
 
         console.print(f"[bold]Restoring from backup:[/bold] {backup_path}")
 
         if manager.restore_backup(backup_path):
-            console.print("[green]Restore completed successfully![/green]")
+            console.print("[nexus.success]Restore completed successfully![/nexus.success]")
         else:
-            console.print("[red]Restore failed![/red]")
+            console.print("[nexus.error]Restore failed![/nexus.error]")
             sys.exit(1)
 
     except Exception as e:
@@ -524,7 +530,7 @@ async def _async_import_s3(
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
 
         if dry_run:
-            console.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             console.print()
 
         console.print(f"[bold]Importing from S3:[/bold] s3://{bucket}/{prefix}")
@@ -610,7 +616,7 @@ async def _async_import_gcs(
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
 
         if dry_run:
-            console.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             console.print()
 
         console.print(f"[bold]Importing from GCS:[/bold] gs://{bucket}/{prefix}")
@@ -685,7 +691,7 @@ async def _async_import_fs(
         from nexus.migrations.data_migrator import DataMigrator, ImportOptions
 
         if dry_run:
-            console.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - No changes will be made[/nexus.warning]")
             console.print()
 
         console.print(f"[bold]Importing from:[/bold] {source}")
@@ -783,7 +789,7 @@ async def _async_validate(
 
         if result.warnings:
             console.print()
-            console.print("[yellow]Warnings:[/yellow]")
+            console.print("[nexus.warning]Warnings:[/nexus.warning]")
             for warning in result.warnings[:10]:
                 console.print(f"  - {warning}")
             if len(result.warnings) > 10:
@@ -791,7 +797,7 @@ async def _async_validate(
 
         if result.errors:
             console.print()
-            console.print("[red]Errors:[/red]")
+            console.print("[nexus.error]Errors:[/nexus.error]")
             for error in result.errors[:10]:
                 console.print(f"  - {error}")
             if len(result.errors) > 10:
@@ -817,15 +823,15 @@ def _print_import_result(result: "ImportResult", dry_run: bool) -> None:
         else:
             console.print("[bold green]Import completed successfully![/bold green]")
 
-    console.print(f"  Files imported: [green]{result.files_imported}[/green]")
-    console.print(f"  Files skipped: [yellow]{result.files_skipped}[/yellow]")
-    console.print(f"  Files failed: [red]{result.files_failed}[/red]")
+    console.print(f"  Files imported: [nexus.success]{result.files_imported}[/nexus.success]")
+    console.print(f"  Files skipped: [nexus.warning]{result.files_skipped}[/nexus.warning]")
+    console.print(f"  Files failed: [nexus.error]{result.files_failed}[/nexus.error]")
     console.print(f"  Bytes transferred: {result.bytes_transferred:,}")
     console.print(f"  Duration: {result.duration_seconds:.2f}s")
 
     if result.errors:
         console.print()
-        console.print("[red]Errors:[/red]")
+        console.print("[nexus.error]Errors:[/nexus.error]")
         for error in result.errors[:5]:
             console.print(f"  - {error}")
         if len(result.errors) > 5:

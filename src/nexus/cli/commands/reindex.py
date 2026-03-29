@@ -135,7 +135,7 @@ def reindex(
                 total = session.execute(count_stmt).scalar_one()
 
                 if total == 0:
-                    console.print("[yellow]No MCL records to process[/yellow]")
+                    console.print("[nexus.warning]No MCL records to process[/nexus.warning]")
                 elif dry_run:
                     _show_dry_run_summary(total, mcl_target)
                 else:
@@ -164,7 +164,9 @@ def reindex(
                                 last_sequence = row.sequence_number
                             except Exception as e:
                                 errors += 1
-                                console.print(f"[red]Error at seq {row.sequence_number}: {e}[/red]")
+                                console.print(
+                                    f"[nexus.error]Error at seq {row.sequence_number}: {e}[/nexus.error]"
+                                )
 
                             progress.update(task, advance=1)
 
@@ -173,8 +175,8 @@ def reindex(
                     # Summary
                     console.print()
                     table = Table(title="Reindex Summary")
-                    table.add_column("Metric", style="cyan")
-                    table.add_column("Value", style="green")
+                    table.add_column("Metric", style="nexus.value")
+                    table.add_column("Value", style="nexus.success")
                     table.add_row("Target", mcl_target)
                     table.add_row("Total records", str(total))
                     table.add_row("Processed", str(processed))
@@ -184,7 +186,7 @@ def reindex(
 
                     if errors > 0:
                         console.print(
-                            f"\n[yellow]Resume from sequence {last_sequence + 1} to retry:[/yellow]"
+                            f"\n[nexus.warning]Resume from sequence {last_sequence + 1} to retry:[/nexus.warning]"
                         )
                         console.print(
                             f"  nexus reindex --target {mcl_target} "
@@ -239,8 +241,8 @@ def _reindex_via_rest(
     # Display result
     console.print()
     table = Table(title="Reindex Summary (via REST API)")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
+    table.add_column("Metric", style="nexus.value")
+    table.add_column("Value", style="nexus.success")
     table.add_row("Target", result.get("target", target))
     table.add_row("Total records", str(result.get("total", 0)))
     table.add_row("Processed", str(result.get("processed", 0)))
@@ -248,7 +250,7 @@ def _reindex_via_rest(
     table.add_row("Dry run", str(result.get("dry_run", dry_run)))
     if target == "all":
         console.print(
-            "\n[yellow]Note:[/yellow] Semantic reindex requires local filesystem access "
+            "\n[nexus.warning]Note:[/nexus.warning] Semantic reindex requires local filesystem access "
             "and was skipped. Only search + versions targets were processed."
         )
     console.print(table)
@@ -278,13 +280,13 @@ def _run_semantic_reindex(
     try:
         all_files = _walk_filesystem(nx, "/")
     except Exception as e:
-        console.print(f"[red]Failed to walk filesystem: {e}[/red]")
+        console.print(f"[nexus.error]Failed to walk filesystem: {e}[/nexus.error]")
         return
 
     if dry_run:
         console.print("\n[bold cyan]Dry Run — semantic reindex[/bold cyan]\n")
         console.print(f"Total files to process: [bold]{len(all_files)}[/bold]")
-        console.print("\n[dim]Run without --dry-run to execute.[/dim]")
+        console.print("\n[nexus.muted]Run without --dry-run to execute.[/nexus.muted]")
         return
 
     processed = 0
@@ -354,8 +356,8 @@ def _run_semantic_reindex(
     # Summary
     console.print()
     table = Table(title="Semantic Reindex Summary")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
+    table.add_column("Metric", style="nexus.value")
+    table.add_column("Value", style="nexus.success")
     table.add_row("Total files", str(len(all_files)))
     table.add_row("Processed", str(processed))
     table.add_row("Schemas extracted", str(schemas_extracted))
@@ -393,7 +395,7 @@ def _show_dry_run_summary(
     """Show a summary of what would be reindexed."""
     console.print(f"\n[bold cyan]Dry Run — {target} reindex[/bold cyan]\n")
     console.print(f"Total MCL records to process: [bold]{total}[/bold]")
-    console.print("\n[dim]Run without --dry-run to execute.[/dim]")
+    console.print("\n[nexus.muted]Run without --dry-run to execute.[/nexus.muted]")
 
 
 class _MCLProcessor:

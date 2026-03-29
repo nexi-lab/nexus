@@ -46,7 +46,7 @@ def upload_status(client: UploadClient, upload_id: str) -> ServiceResult:
     data = client.status(upload_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         offset = d.get("offset", 0)
         length = d.get("length", 0)

@@ -58,7 +58,7 @@ def rlm_infer(
     data = client.infer(path, prompt=prompt, model=model, max_iterations=max_iterations)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         status = d.get("status", "unknown")
         answer = d.get("answer", d.get("result", ""))

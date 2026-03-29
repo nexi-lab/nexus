@@ -23,7 +23,7 @@ import click
 import yaml
 
 from nexus.cli.port_utils import DEFAULT_PORTS, derive_ports
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ def _scaffold_tls(tls_dir: Path) -> None:
         return
 
     if not shutil.which("openssl"):
-        console.print(f"  [yellow]openssl not found[/yellow] — created {tls_dir}")
+        console.print(f"  [nexus.warning]openssl not found[/nexus.warning] — created {tls_dir}")
         console.print("  Please provide: ca.crt, server.crt, server.key")
         return
 
@@ -317,9 +317,9 @@ def _scaffold_tls(tls_dir: Path) -> None:
         srv_csr.unlink(missing_ok=True)
         (tls_dir / "ca.srl").unlink(missing_ok=True)
 
-        console.print(f"  [green]TLS certificates generated in {tls_dir}[/green]")
+        console.print(f"  [nexus.success]TLS certificates generated in {tls_dir}[/nexus.success]")
     except subprocess.CalledProcessError:
-        console.print(f"  [yellow]openssl failed[/yellow] — created {tls_dir}")
+        console.print(f"  [nexus.warning]openssl failed[/nexus.warning] — created {tls_dir}")
         console.print("  Please provide: ca.crt, server.crt, server.key")
 
 
@@ -341,7 +341,7 @@ def _create_data_dirs(data_dir: Path, *, tls: bool = False) -> None:
 def _print_local_summary(config_path: Path, data_dir: Path) -> None:
     """Print summary for local preset."""
     console.print()
-    console.print("[green]Initialized Nexus preset: local[/green]")
+    console.print("[nexus.success]Initialized Nexus preset: local[/nexus.success]")
     console.print(f"  Config:   {config_path}")
     console.print(f"  Data dir: {data_dir}")
     console.print()
@@ -356,7 +356,7 @@ def _print_shared_summary(config: dict[str, Any], config_path: Path, data_dir: P
     ports = config.get("ports", {})
 
     console.print()
-    console.print(f"[green]Initialized Nexus preset: {preset}[/green]")
+    console.print(f"[nexus.success]Initialized Nexus preset: {preset}[/nexus.success]")
     console.print(f"  Config:     {config_path}")
     console.print(f"  Data dir:   {data_dir}")
     console.print(f"  Services:   {services}")
@@ -493,7 +493,7 @@ def init(
     # Guard: don't overwrite existing config without --force
     if cfg_path.exists() and not force:
         console.print(
-            f"[yellow]Warning:[/yellow] {cfg_path} already exists. Use --force to overwrite."
+            f"[nexus.warning]Warning:[/nexus.warning] {cfg_path} already exists. Use --force to overwrite."
         )
         raise SystemExit(1)
 
@@ -524,7 +524,7 @@ def init(
         cf = config.get("compose_file", "")
         if compose_file and not Path(cf).exists():
             # User explicitly passed --compose-file but it doesn't exist
-            console.print(f"[red]Error:[/red] Compose file not found: {cf}")
+            console.print(f"[nexus.error]Error:[/nexus.error] Compose file not found: {cf}")
             raise SystemExit(1)
         if not cf or not Path(cf).exists():
             bundled = _bundled_compose_file()
@@ -541,7 +541,7 @@ def init(
                 if sql_file.exists():
                     shutil.copy2(str(sql_file), str(dest_dir / sql_file.name))
             else:
-                console.print(f"[red]Error:[/red] Compose file not found: {cf}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Compose file not found: {cf}")
                 console.print("  Run `nexus init` from the Nexus repo root, or pass")
                 console.print("  --compose-file /absolute/path/to/nexus-stack.yml")
                 raise SystemExit(1)

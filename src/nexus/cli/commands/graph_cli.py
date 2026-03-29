@@ -46,7 +46,7 @@ def graph_entity(client: GraphClient, entity_id: str) -> ServiceResult:
     data = client.entity(entity_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         ent = d.get("entity", d)
         console.print(f"[bold cyan]Entity: {entity_id}[/bold cyan]")
@@ -81,15 +81,15 @@ def graph_neighbors(client: GraphClient, entity_id: str, hops: int) -> ServiceRe
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         neighbors = d.get("neighbors", [])
         if not neighbors:
-            console.print(f"[yellow]No neighbors within {hops} hop(s)[/yellow]")
+            console.print(f"[nexus.warning]No neighbors within {hops} hop(s)[/nexus.warning]")
             return
 
         table = Table(title=f"Neighbors of {entity_id} ({hops} hop(s), {len(neighbors)} found)")
-        table.add_column("Entity ID", style="dim")
+        table.add_column("Entity ID", style="nexus.muted")
         table.add_column("Type")
         table.add_column("Label")
         table.add_column("Depth")
@@ -127,7 +127,7 @@ def graph_subgraph(
     data = client.subgraph(list(entity_ids), max_hops=max_hops)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         nodes = d.get("nodes", [])
         edges = d.get("edges", [])
@@ -159,12 +159,12 @@ def graph_search(
     data = client.search(name, entity_type=entity_type, fuzzy=fuzzy)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         # Server may return a single entity or None
         entity = d.get("entity")
         if entity is None:
-            console.print("[yellow]No matching entities[/yellow]")
+            console.print("[nexus.warning]No matching entities[/nexus.warning]")
             return
 
         console.print("[bold cyan]Search Result[/bold cyan]")

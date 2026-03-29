@@ -46,7 +46,7 @@ def identity_show(client: IdentityClient, agent_id: str) -> ServiceResult:
     data = client.show(agent_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Identity: {agent_id}[/bold cyan]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")
@@ -83,10 +83,14 @@ def identity_verify(
     data = client.verify(agent_id, message=message, signature=signature, key_id=key_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         valid = d.get("valid", False)
-        status = "[green]Valid[/green]" if valid else "[red]Invalid[/red]"
+        status = (
+            "[nexus.success]Valid[/nexus.success]"
+            if valid
+            else "[nexus.error]Invalid[/nexus.error]"
+        )
         console.print(f"[bold cyan]Verification: {agent_id}[/bold cyan]")
         console.print(f"  Status: {status}")
         if d.get("reason"):
@@ -114,17 +118,17 @@ def identity_credentials(client: IdentityClient, agent_id: str) -> ServiceResult
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         creds = d.get("credentials", [])
         if not creds:
-            console.print("[yellow]No active credentials[/yellow]")
+            console.print("[nexus.warning]No active credentials[/nexus.warning]")
             return
 
         table = Table(title=f"Credentials for {agent_id}")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="nexus.muted")
         table.add_column("Issuer DID")
-        table.add_column("Expires", style="dim")
+        table.add_column("Expires", style="nexus.muted")
         table.add_column("Active")
 
         for c in creds:
@@ -158,7 +162,7 @@ def identity_passport(client: IdentityClient, agent_id: str) -> ServiceResult:
     data = {**identity_data, "credentials": creds_data.get("credentials", [])}
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         console.print(f"[bold cyan]Agent Passport: {agent_id}[/bold cyan]")
         console.print(f"  DID:        {d.get('did', 'N/A')}")

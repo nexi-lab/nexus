@@ -61,9 +61,9 @@ def ipc_send(
     data = client.send(sender, recipient, message, message_type=message_type)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[green]Message sent[/green]")
+        console.print("[nexus.success]Message sent[/nexus.success]")
         console.print(f"  Message ID: {d.get('message_id', 'N/A')}")
         console.print(f"  From:       {sender}")
         console.print(f"  To:         {recipient}")
@@ -90,15 +90,15 @@ def ipc_inbox(client: IPCClient, agent_id: str) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         messages = d.get("messages", [])
         if not messages:
-            console.print("[yellow]Inbox empty[/yellow]")
+            console.print("[nexus.warning]Inbox empty[/nexus.warning]")
             return
 
         table = Table(title=f"Inbox for {agent_id} ({len(messages)} messages)")
-        table.add_column("File", style="dim")
+        table.add_column("File", style="nexus.muted")
 
         for msg in messages:
             table.add_row(msg.get("filename", str(msg)))
@@ -124,7 +124,7 @@ def ipc_count(client: IPCClient, agent_id: str) -> ServiceResult:
     data = client.inbox_count(agent_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         count = d.get("count", 0)
         console.print(f"[bold cyan]{agent_id}[/bold cyan]: {count} message(s) in inbox")

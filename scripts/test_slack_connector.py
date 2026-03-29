@@ -160,7 +160,9 @@ def test_slack_connector_initialization():
     print("=" * 80)
 
     try:
-        from nexus.backends.slack_connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import (
+            PathSlackBackend as SlackConnectorBackend,
+        )
 
         # Initialize connector
         db_path = os.path.expanduser("~/.nexus/nexus.db")

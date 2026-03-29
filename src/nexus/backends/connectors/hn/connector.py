@@ -1,54 +1,37 @@
-"""HackerNews connector backend with virtual filesystem mapping.
+"""HackerNews connector backend -- PathAddressingEngine + HNTransport composition.
 
-This connector maps HackerNews API to a virtual filesystem, allowing
-AI agents and applications to browse HN using familiar file operations.
+Architecture (Transport x Addressing):
+    PathHNBackend(PathAddressingEngine)
+        +-- HNTransport(Transport)
+              +-- HN Firebase API calls (I/O)
+              +-- No authentication (public API)
+
+This follows the same pattern as PathGmailBackend, PathCalendarBackend:
+Transport handles raw I/O; PathAddressingEngine handles addressing,
+path security, and content operations.
 
 Virtual filesystem structure:
-    /hn/top/1.json ... 10.json    - Top 10 stories with comments
-    /hn/new/1.json ... 10.json    - Newest 10 stories
-    /hn/best/1.json ... 10.json   - Best 10 stories
-    /hn/ask/1.json ... 10.json    - Ask HN posts
-    /hn/show/1.json ... 10.json   - Show HN posts
-    /hn/jobs/1.json ... 10.json   - Job listings
-
-Features:
-- Read-only access to HackerNews
-- Virtual path mapping (stories → JSON files)
-- TTL-based caching via CacheConnectorMixin
-- Nested comments included in story files
-- No authentication required (public API)
-
-HackerNews API:
-- Base URL: https://hacker-news.firebaseio.com/v0/
-- No rate limit documented
-- Items are immutable once created
-
-Example:
-    >>> from nexus import NexusFS
-    >>> from nexus.backends import HNConnectorBackend
-    >>>
-    >>> nx = NexusFS(backend=HNConnectorBackend())
-    >>>
-    >>> # Read top story
-    >>> story = await nx.sys_read("/hn/top/1.json")
-    >>>
-    >>> # List all feeds
-    >>> nx.ls("/hn/")
+    /top/1.json ... 10.json    - Top 10 stories with comments
+    /new/1.json ... 10.json    - Newest 10 stories
+    /best/1.json ... 10.json   - Best 10 stories
+    /ask/1.json ... 10.json    - Ask HN posts
+    /show/1.json ... 10.json   - Show HN posts
+    /jobs/1.json ... 10.json   - Job listings
 """
 
-import asyncio
+from __future__ import annotations
+
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, ClassVar
 
-import httpx
-
-from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import SkillDocMixin
+from nexus.backends.connectors.hn.transport import VALID_FEEDS, HNTransport
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.contracts.backend_features import BackendFeature
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -56,26 +39,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
-# HackerNews API base URL
-HN_API_BASE = "https://hacker-news.firebaseio.com/v0"
-
-# Cache TTL configuration (in seconds)
-DEFAULT_CACHE_TTL = {
-    "top": 300,  # 5 minutes - changes frequently
-    "new": 60,  # 1 minute - changes very frequently
-    "best": 3600,  # 1 hour - relatively stable
-    "ask": 300,  # 5 minutes
-    "show": 300,  # 5 minutes
-    "jobs": 3600,  # 1 hour - changes slowly
-}
-
-# Number of stories per feed
-DEFAULT_STORIES_PER_FEED = 10
-
-# Maximum comments to fetch (to avoid very long load times)
-MAX_COMMENTS_DEPTH = 5
-MAX_COMMENTS_TOTAL = 100
 
 
 @register_connector(
@@ -85,31 +48,21 @@ MAX_COMMENTS_TOTAL = 100
     requires=["httpx"],
     service_name="hackernews",
 )
-class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
-    """
-    HackerNews connector backend with virtual filesystem mapping.
-
-    Maps HN API to virtual filesystem:
-    - /hn/top/1.json ... 10.json → Top stories with comments
-    - /hn/new/1.json ... 10.json → New stories
-    - /hn/best/1.json ... 10.json → Best stories
-    - /hn/ask/1.json ... 10.json → Ask HN posts
-    - /hn/show/1.json ... 10.json → Show HN posts
-    - /hn/jobs/1.json ... 10.json → Job listings
+class PathHNBackend(
+    PathAddressingEngine,
+    CacheConnectorMixin,
+    SkillDocMixin,
+):
+    """HackerNews connector: PathAddressingEngine + HNTransport composition.
 
     Features:
     - Read-only (HN API doesn't support posting)
     - TTL-based caching via CacheConnectorMixin
     - Nested comments included in story files
-    - No authentication required
-
-    Limitations:
-    - Read-only (no write/delete operations)
-    - Fixed virtual directory structure
-    - External article content not included (just URLs)
+    - No authentication required (public API)
     """
 
-    _BACKEND_FEATURES = frozenset(
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,
@@ -149,11 +102,9 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         cache_ttl: int = 300,
         stories_per_feed: int = 10,
         include_comments: bool = True,
-        # RecordStore for L2 caching (optional)
         record_store: "RecordStoreABC | None" = None,
     ):
-        """
-        Initialize HackerNews connector.
+        """Initialize HackerNews connector.
 
         Args:
             cache_ttl: Default cache TTL in seconds (default: 300)
@@ -164,25 +115,28 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         self.cache_ttl = cache_ttl
         self.stories_per_feed = min(max(stories_per_feed, 1), 30)
         self.include_comments = include_comments
+
+        # 1. Create HNTransport
+        hn_transport = HNTransport(
+            stories_per_feed=self.stories_per_feed,
+            include_comments=include_comments,
+        )
+        self._hn_transport = hn_transport
+
+        # 2. Initialize PathAddressingEngine
+        PathAddressingEngine.__init__(
+            self,
+            transport=hn_transport,
+            backend_name="hn",
+        )
+
+        # 3. Cache setup
         self.session_factory = record_store.session_factory if record_store else None
 
-        # HTTP client for HN API
-        self._client: httpx.AsyncClient | None = None
-
-    @property
-    def name(self) -> str:
-        """Backend identifier name."""
-        return "hn"
+    # -- Skill docs --
 
     def generate_skill_doc(self, mount_path: str) -> str:
-        """Load SKILL.md from static file.
-
-        Args:
-            mount_path: The mount path for this connector instance
-
-        Returns:
-            SKILL.md content with mount path substituted
-        """
+        """Load SKILL.md from static file."""
         import importlib.resources as resources
 
         try:
@@ -191,229 +145,23 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                 .joinpath("SKILL.md")
                 .read_text(encoding="utf-8")
             )
-            # Replace mount path placeholder
             content = content.replace("/mnt/hn/", mount_path)
             return content
         except Exception:
             return super().generate_skill_doc(mount_path)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=HN_API_BASE,
-                timeout=30.0,
-                follow_redirects=True,
-            )
-        return self._client
-
-    async def _close_client(self) -> None:
-        """Close HTTP client."""
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
-            self._client = None
-
-    # === HN API Methods ===
-
-    async def _fetch_item(self, item_id: int) -> dict[str, Any] | None:
-        """Fetch a single item from HN API."""
-        client = await self._get_client()
-        try:
-            response = await client.get(f"/item/{item_id}.json")
-            response.raise_for_status()
-            result: dict[str, Any] | None = response.json()
-            return result
-        except Exception as e:
-            logger.warning(f"Failed to fetch item {item_id}: {e}")
-            return None
-
-    async def _fetch_items_batch(self, item_ids: list[int]) -> list[dict[str, Any]]:
-        """Fetch multiple items in parallel."""
-        tasks = [self._fetch_item(item_id) for item_id in item_ids]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if isinstance(r, dict)]
-
-    async def _fetch_story_ids(self, feed: str) -> list[int]:
-        """Fetch story IDs for a feed (top, new, best, ask, show, jobs)."""
-        client = await self._get_client()
-        endpoint_map = {
-            "top": "/topstories.json",
-            "new": "/newstories.json",
-            "best": "/beststories.json",
-            "ask": "/askstories.json",
-            "show": "/showstories.json",
-            "jobs": "/jobstories.json",
-        }
-
-        endpoint = endpoint_map.get(feed)
-        if not endpoint:
-            raise BackendError(f"Unknown feed: {feed}", backend="hn")
-
-        try:
-            response = await client.get(endpoint)
-            response.raise_for_status()
-            result: list[int] = response.json()
-            return result
-        except Exception as e:
-            raise BackendError(
-                f"Failed to fetch {feed} stories: {e}",
-                backend="hn",
-            ) from e
-
-    async def _fetch_comments_recursive(
-        self,
-        comment_ids: list[int],
-        depth: int = 0,
-        total_fetched: list[int] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Recursively fetch comments with depth/count limits."""
-        if total_fetched is None:
-            total_fetched = [0]
-
-        if depth >= MAX_COMMENTS_DEPTH or total_fetched[0] >= MAX_COMMENTS_TOTAL:
-            return []
-
-        if not comment_ids:
-            return []
-
-        # Limit how many we fetch at this level
-        remaining = MAX_COMMENTS_TOTAL - total_fetched[0]
-        ids_to_fetch = comment_ids[:remaining]
-
-        comments = await self._fetch_items_batch(ids_to_fetch)
-        total_fetched[0] += len(comments)
-
-        # Recursively fetch replies
-        for comment in comments:
-            if comment and "kids" in comment and total_fetched[0] < MAX_COMMENTS_TOTAL:
-                replies = await self._fetch_comments_recursive(
-                    comment["kids"],
-                    depth=depth + 1,
-                    total_fetched=total_fetched,
-                )
-                comment["replies"] = replies
-
-        return comments
-
-    async def _fetch_story_with_comments(
-        self,
-        story_id: int,
-        include_comments: bool = True,
-    ) -> dict[str, Any]:
-        """Fetch a story with all its comments nested."""
-        story = await self._fetch_item(story_id)
-        if not story:
-            raise NexusFileNotFoundError(f"Story {story_id} not found")
-
-        # Fetch comments if requested
-        if include_comments and "kids" in story:
-            comments = await self._fetch_comments_recursive(story["kids"])
-            story["comments"] = comments
-        else:
-            story["comments"] = []
-
-        return story
-
-    async def _fetch_feed_story(
-        self,
-        feed: str,
-        rank: int,
-    ) -> dict[str, Any]:
-        """Fetch a story by its rank in a feed."""
-        story_ids = await self._fetch_story_ids(feed)
-
-        if rank < 1 or rank > len(story_ids):
-            raise NexusFileNotFoundError(f"Rank {rank} out of range (1-{len(story_ids)})")
-
-        story_id = story_ids[rank - 1]
-        story = await self._fetch_story_with_comments(
-            story_id,
-            include_comments=self.include_comments,
-        )
-
-        # Add rank metadata
-        story["_rank"] = rank
-        story["_feed"] = feed
-
-        return story
-
-    # === Path Resolution ===
-
-    def _resolve_path(self, path: str) -> tuple[str, int | None]:
-        """
-        Resolve virtual path to feed and rank.
-
-        Args:
-            path: Virtual path (e.g., "top/1.json", "new/3.json")
-
-        Returns:
-            Tuple of (feed, rank) where rank is 1-based or None for directory
-
-        Raises:
-            BackendError: If path is invalid
-        """
-        path = path.strip("/")
-        if not path:
-            # Root directory
-            return ("", None)
-
-        parts = path.split("/")
-
-        # Handle paths with "hn" prefix
-        if parts and parts[0] == "hn":
-            parts = parts[1:]
-
-        if not parts or parts[0] == "":
-            # Root directory (after removing hn prefix)
-            return ("", None)
-
-        feed = parts[0]
-        valid_feeds = {"top", "new", "best", "ask", "show", "jobs"}
-
-        if feed not in valid_feeds:
-            raise BackendError(f"Unknown feed: {feed}. Valid: {valid_feeds}", backend="hn")
-
-        if len(parts) == 1:
-            # Feed directory (e.g., /hn/top/)
-            return (feed, None)
-
-        if len(parts) == 2:
-            # Story file (e.g., /hn/top/1.json)
-            filename = parts[1]
-            if not filename.endswith(".json"):
-                raise BackendError(f"Invalid file: {filename}", backend="hn")
-
-            try:
-                rank = int(filename.replace(".json", ""))
-                if rank < 1 or rank > self.stories_per_feed:
-                    raise BackendError(
-                        f"Rank {rank} out of range (1-{self.stories_per_feed})",
-                        backend="hn",
-                    )
-                return (feed, rank)
-            except ValueError as e:
-                raise BackendError(f"Invalid rank in {filename}", backend="hn") from e
-
-        raise BackendError(f"Invalid path: {path}", backend="hn")
-
-    # === Backend Interface Implementation ===
+    # =================================================================
+    # Content operations -- override PathAddressingEngine for HN
+    # =================================================================
 
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
-        """
-        Read content from HN API via virtual path.
+        """Read content from HN API via virtual path, with cache check.
 
-        For HN connector, content_hash is ignored - we use backend_path from context.
-
-        Args:
-            content_hash: Ignored for HN connector
-            context: Operation context with backend_path
-
-        Returns:
-            JSON content as bytes
+        For HN connector, content_hash is ignored -- we use backend_path from context.
         """
         if not context or not context.backend_path:
             raise BackendError(
@@ -428,32 +176,11 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         if self._has_caching():
             cached = self._read_from_cache(cache_path, original=True)
             if cached and not cached.stale and cached.content_binary:
-                logger.info(f"[HN] Cache hit: {path}")
+                logger.info("[HN] Cache hit: %s", path)
                 return cached.content_binary
 
-        # Resolve path
-        feed, rank = self._resolve_path(path)
-
-        if rank is None:
-            raise BackendError(
-                f"Cannot read directory: {path}. Use list_dir() instead.",
-                backend="hn",
-            )
-
-        # Fetch from HN API
-        logger.info(f"[HN] Fetching from API: {feed}/{rank}")
-
-        async def _fetch() -> bytes:
-            try:
-                story = await self._fetch_feed_story(feed, rank)
-                content = json.dumps(story, indent=2, ensure_ascii=False).encode("utf-8")
-                return content
-            finally:
-                await self._close_client()
-
-        from nexus.lib.sync_bridge import run_sync
-
-        content = run_sync(_fetch())
+        # Delegate to PathAddressingEngine (which calls transport.fetch)
+        content = super().read_content(content_hash, context)
 
         # Cache the result
         if self._has_caching():
@@ -462,11 +189,11 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
-                    backend_version=None,  # No versioning for HN
+                    backend_version=None,
                     zone_id=zone_id,
                 )
             except Exception as e:
-                logger.warning(f"Failed to cache {path}: {e}")
+                logger.warning("Failed to cache %s: %s", path, e)
 
         return content
 
@@ -478,7 +205,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        """Write content (not supported - HN is read-only)."""
         raise BackendError(
             "HN connector is read-only. HackerNews API does not support posting.",
             backend="hn",
@@ -489,7 +215,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Delete content (not supported - HN is read-only)."""
         raise BackendError(
             "HN connector is read-only. HackerNews API does not support deletion.",
             backend="hn",
@@ -500,36 +225,28 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bool:
-        """Check if content exists."""
         if not context or not context.backend_path:
             return False
-
-        try:
-            feed, rank = self._resolve_path(context.backend_path)
-            return feed != "" and (rank is None or 1 <= rank <= self.stories_per_feed)
-        except BackendError:
-            return False
+        return super().content_exists(content_hash, context)
 
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> int:
-        """Get content size (cache-first, efficient).
-
-        Performance optimization: Checks cache first for actual size.
-        Falls back to 10KB estimate if not cached.
-        """
-        # OPTIMIZATION: Check cache first for actual size
+        """Get content size (cache-first, efficient)."""
+        # Cache optimization: check cache first for actual size
         if context and hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 return cached_size
 
-        # Fallback: Return approximate size estimate
+        # Fallback: return approximate size estimate
         return 10 * 1024  # 10 KB estimate
 
-    # === Directory Operations ===
+    # =================================================================
+    # Directory operations -- override for HN virtual directories
+    # =================================================================
 
     def mkdir(
         self,
@@ -538,7 +255,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory (not supported - fixed structure)."""
         raise BackendError(
             "HN connector has a fixed virtual structure. mkdir() is not supported.",
             backend="hn",
@@ -550,7 +266,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Remove directory (not supported - fixed structure)."""
         raise BackendError(
             "HN connector has a fixed virtual structure. rmdir() is not supported.",
             backend="hn",
@@ -561,61 +276,55 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         path: str,
         context: "OperationContext | None" = None,
     ) -> bool:
-        """Check if path is a directory."""
         path = path.strip("/")
-
-        # Handle hn prefix
         if path.startswith("hn/"):
             path = path[3:]
-
-        # Root or feed directories
         if path == "" or path == "hn":
             return True
-
-        return path in {"top", "new", "best", "ask", "show", "jobs"}
+        return path in VALID_FEEDS
 
     def list_dir(
         self,
         path: str,
         context: "OperationContext | None" = None,
     ) -> list[str]:
-        """
-        List virtual directory contents.
-
-        Args:
-            path: Directory path to list
-            context: Operation context
-
-        Returns:
-            List of entry names (directories have trailing '/')
-
-        Raises:
-            FileNotFoundError: If directory doesn't exist
-        """
+        """List virtual directory contents via HNTransport.list_keys()."""
         path = path.strip("/")
 
         # Handle hn prefix
         if path.startswith("hn/"):
             path = path[3:]
 
-        # Root directory
-        if path == "" or path == "hn":
-            return [
-                "top/",
-                "new/",
-                "best/",
-                "ask/",
-                "show/",
-                "jobs/",
-            ]
+        keys, prefixes = self._transport.list_keys(prefix=path, delimiter="/")
 
-        # Feed directory
-        if path in {"top", "new", "best", "ask", "show", "jobs"}:
-            return [f"{i}.json" for i in range(1, self.stories_per_feed + 1)]
+        # Strip prefix from keys to return just filenames
+        entries: list[str] = []
+        folder_prefix = f"{path}/" if path else ""
+        for key in keys:
+            name = (
+                key[len(folder_prefix) :]
+                if folder_prefix and key.startswith(folder_prefix)
+                else key
+            )
+            if name:
+                entries.append(name)
+        for prefix_entry in prefixes:
+            name = (
+                prefix_entry[len(folder_prefix) :]
+                if folder_prefix and prefix_entry.startswith(folder_prefix)
+                else prefix_entry
+            )
+            if name:
+                entries.append(name)
 
-        raise FileNotFoundError(f"Directory not found: {path}")
+        if not entries and path and path not in VALID_FEEDS and path != "hn":
+            raise FileNotFoundError(f"Directory not found: {path}")
 
-    # === Sync Operation ===
+        return sorted(entries)
+
+    # =================================================================
+    # Sync operation -- pre-fetch stories to cache
+    # =================================================================
 
     def sync(
         self,
@@ -627,33 +336,20 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         generate_embeddings: bool = False,
         context: "OperationContext | None" = None,
     ) -> SyncResult:
-        """
-        Sync HN content to cache.
+        """Sync HN content to cache.
 
         For HN connector, sync pre-fetches stories and caches them.
-
-        Args:
-            path: Specific feed to sync (e.g., "top") or None for all
-            mount_point: Virtual mount point
-            include_patterns: Not used for HN
-            exclude_patterns: Not used for HN
-            max_file_size: Not used for HN
-            generate_embeddings: Generate embeddings for stories
-            context: Operation context
-
-        Returns:
-            SyncResult with statistics
         """
         result = SyncResult()
 
         # Determine which feeds to sync
         if path:
-            path = path.strip("/")
-            if path.startswith("hn/"):
-                path = path[3:]
-            feeds = [path] if path in {"top", "new", "best", "ask", "show", "jobs"} else []
+            path_clean = path.strip("/")
+            if path_clean.startswith("hn/"):
+                path_clean = path_clean[3:]
+            feeds = [path_clean] if path_clean in VALID_FEEDS else []
         else:
-            feeds = ["top", "new", "best", "ask", "show", "jobs"]
+            feeds = list(VALID_FEEDS)
 
         if not feeds:
             return result
@@ -661,15 +357,13 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         async def _sync_feeds() -> None:
             for feed in feeds:
                 try:
-                    # Fetch story IDs
-                    story_ids = await self._fetch_story_ids(feed)
+                    story_ids = await self._hn_transport._fetch_story_ids(feed)
                     ids_to_sync = story_ids[: self.stories_per_feed]
                     result.files_scanned += len(ids_to_sync)
 
-                    # Fetch each story
                     for rank, story_id in enumerate(ids_to_sync, start=1):
                         try:
-                            story = await self._fetch_story_with_comments(
+                            story = await self._hn_transport._fetch_story_with_comments(
                                 story_id,
                                 include_comments=self.include_comments,
                             )
@@ -680,7 +374,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                                 "utf-8"
                             )
 
-                            # Cache if enabled
                             if self._has_caching():
                                 backend_path = f"{feed}/{rank}.json"
                                 virtual_path = (
@@ -706,7 +399,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                 except Exception as e:
                     result.errors.append(f"Failed to sync feed {feed}: {e}")
 
-            await self._close_client()
+            await self._hn_transport._close_client()
 
         from nexus.lib.sync_bridge import run_sync
 

@@ -138,54 +138,54 @@ class TestDeleteTweetSchema:
 
 
 # ---------------------------------------------------------------------------
-# XConnectorBackend class attributes
+# PathXBackend class attributes
 # ---------------------------------------------------------------------------
 
 
 class TestXConnectorCapabilities:
-    """Tests that XConnectorBackend has the expected class attributes."""
+    """Tests that PathXBackend has the expected class attributes."""
 
     def test_has_schemas(self):
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert "create_tweet" in XConnectorBackend.SCHEMAS
-        assert "delete_tweet" in XConnectorBackend.SCHEMAS
-        assert XConnectorBackend.SCHEMAS["create_tweet"] is CreateTweetSchema
-        assert XConnectorBackend.SCHEMAS["delete_tweet"] is DeleteTweetSchema
+        assert "create_tweet" in PathXBackend.SCHEMAS
+        assert "delete_tweet" in PathXBackend.SCHEMAS
+        assert PathXBackend.SCHEMAS["create_tweet"] is CreateTweetSchema
+        assert PathXBackend.SCHEMAS["delete_tweet"] is DeleteTweetSchema
 
     def test_has_operation_traits(self):
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert "create_tweet" in XConnectorBackend.OPERATION_TRAITS
-        assert "delete_tweet" in XConnectorBackend.OPERATION_TRAITS
+        assert "create_tweet" in PathXBackend.OPERATION_TRAITS
+        assert "delete_tweet" in PathXBackend.OPERATION_TRAITS
 
-        create_traits = XConnectorBackend.OPERATION_TRAITS["create_tweet"]
+        create_traits = PathXBackend.OPERATION_TRAITS["create_tweet"]
         assert create_traits.reversibility == Reversibility.PARTIAL
         assert create_traits.confirm == ConfirmLevel.USER
 
-        delete_traits = XConnectorBackend.OPERATION_TRAITS["delete_tweet"]
+        delete_traits = PathXBackend.OPERATION_TRAITS["delete_tweet"]
         assert delete_traits.reversibility == Reversibility.NONE
         assert delete_traits.confirm == ConfirmLevel.USER
 
     def test_has_error_registry(self):
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert "MISSING_AGENT_INTENT" in XConnectorBackend.ERROR_REGISTRY
-        assert "TWEET_TOO_LONG" in XConnectorBackend.ERROR_REGISTRY
+        assert "MISSING_AGENT_INTENT" in PathXBackend.ERROR_REGISTRY
+        assert "TWEET_TOO_LONG" in PathXBackend.ERROR_REGISTRY
 
     def test_has_skill_doc_capability(self):
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert BackendFeature.SKILL_DOC in XConnectorBackend._BACKEND_FEATURES
+        assert BackendFeature.SKILL_DOC in PathXBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert XConnectorBackend.SKILL_NAME == "x"
+        assert PathXBackend.SKILL_NAME == "x"
 
     def test_inherits_validated_mixin(self):
         from nexus.backends.connectors.base import TraitBasedMixin, ValidatedMixin
-        from nexus.backends.connectors.x.connector import XConnectorBackend
+        from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert issubclass(XConnectorBackend, ValidatedMixin)
-        assert issubclass(XConnectorBackend, TraitBasedMixin)
+        assert issubclass(PathXBackend, ValidatedMixin)
+        assert issubclass(PathXBackend, TraitBasedMixin)

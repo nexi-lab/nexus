@@ -164,16 +164,25 @@ class PipedRecordStoreWriteObserver:
 
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        # Drain all available events from the pipe (non-blocking)
+        # Drain all available events from the pipe.  Each sys_read() blocks
+        # until data arrives or the pipe is closed, so we wrap every call in
+        # asyncio.wait_for() to avoid hanging on an open-but-empty pipe.
         batch: list[dict[str, Any]] = []
-        deadline = time.monotonic() + timeout
+        remaining = timeout
 
-        while time.monotonic() < deadline:
+        while remaining > 0:
+            t0 = time.monotonic()
             try:
-                data = await self._nx.sys_read(_AUDIT_PIPE_PATH)
+                data = await asyncio.wait_for(
+                    self._nx.sys_read(_AUDIT_PIPE_PATH),
+                    timeout=min(remaining, 0.5),  # per-read cap
+                )
                 batch.append(json.loads(data))
+            except TimeoutError:
+                break  # pipe drained (open but empty)
             except (NexusFileNotFoundError, Exception):
-                break
+                break  # pipe closed or error
+            remaining -= time.monotonic() - t0
 
         if batch:
             await self._flush_batch(batch)
@@ -204,12 +213,28 @@ class PipedRecordStoreWriteObserver:
         self.flush_sync()
 
     def flush_sync(self) -> int:
-        """Synchronously drain ``_pre_buffer`` directly to the DB.
+        """Synchronously drain pipe buffer + ``_pre_buffer`` to the DB.
 
         Used by CLI shutdown path (NexusFS.close) where no asyncio loop
-        is running and PipeManager was never injected. Returns count of
-        flushed events.
+        is running. Also called by close callbacks (Issue #3399) to drain
+        remaining pipe events before PipeManager.close_all() clears buffers.
+        Returns count of flushed events.
         """
+        # Issue #3399: drain any remaining events from the pipe buffer
+        # directly (bypassing sys_read) before it gets cleared on close.
+        if self._nx is not None:
+            pm = getattr(self._nx, "_pipe_manager", None)
+            if pm is not None:
+                buf = pm._buffers.get(_AUDIT_PIPE_PATH)
+                if buf is not None:
+                    from nexus.core.pipe import PipeClosedError, PipeEmptyError
+
+                    while True:
+                        try:
+                            self._pre_buffer.append(buf.read_nowait())
+                        except (PipeEmptyError, PipeClosedError, Exception):
+                            break
+
         if not self._pre_buffer:
             return 0
 

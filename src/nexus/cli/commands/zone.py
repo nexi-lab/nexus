@@ -156,12 +156,12 @@ def create_zone_cmd(
             store = mgr.create_zone(zone_id, peers=peer_list)
         except Exception as create_err:
             if if_not_exists and "already exists" in str(create_err).lower():
-                console.print(f"[green]✓[/green] Zone already exists: {zone_id}")
+                console.print(f"[nexus.success]✓[/nexus.success] Zone already exists: {zone_id}")
                 mgr.shutdown()
                 return
             raise
 
-        console.print(f"[green]Zone '{zone_id}' created[/green]")
+        console.print(f"[nexus.success]Zone '{zone_id}' created[/nexus.success]")
         console.print(f"  Hostname: {hostname}")
         console.print(f"  Data dir: {data_dir}/{zone_id}/")
         console.print(f"  Bind: {bind}")
@@ -230,7 +230,7 @@ def join_zone_cmd(
         mgr = _get_zone_manager(hostname, data_dir, bind)
         store = mgr.join_zone(zone_id, peers=peer_list)
 
-        console.print(f"[green]Joined zone '{zone_id}'[/green]")
+        console.print(f"[nexus.success]Joined zone '{zone_id}'[/nexus.success]")
         console.print(f"  Hostname: {hostname}")
         console.print(f"  Peers: {', '.join(peer_list)}")
         console.print("  Waiting for leader to send snapshot...")
@@ -296,10 +296,10 @@ def list_zones_cmd(
 
         def _print_human(entries: list[dict[str, Any]]) -> None:
             if not entries:
-                console.print("[dim]No zones found[/dim]")
+                console.print("[nexus.muted]No zones found[/nexus.muted]")
                 return
             table = Table(title=f"Zones ({hostname})")
-            table.add_column("Zone ID", style="cyan")
+            table.add_column("Zone ID", style="nexus.value")
             console.print()
             for entry in entries:
                 table.add_row(entry["zone_id"])
@@ -395,7 +395,7 @@ def mount_zone_cmd(
         mgr.mount(parent_zone, mount_path, target_zone)
 
         console.print(
-            f"[green]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/green]"
+            f"[nexus.success]Mounted zone '{target_zone}' at '{mount_path}' in zone '{parent_zone}'[/nexus.success]"
         )
 
         mgr.shutdown()
@@ -471,7 +471,9 @@ def unmount_zone_cmd(
         mgr = _get_zone_manager(hostname, data_dir, bind)
         mgr.unmount(parent_zone, mount_path)
 
-        console.print(f"[green]Unmounted '{mount_path}' from zone '{parent_zone}'[/green]")
+        console.print(
+            f"[nexus.success]Unmounted '{mount_path}' from zone '{parent_zone}'[/nexus.success]"
+        )
 
         mgr.shutdown()
     except Exception as e:
@@ -564,7 +566,7 @@ def export_zone(
                 if after_time.tzinfo is None:
                     after_time = after_time.replace(tzinfo=UTC)
             except ValueError:
-                console.print(f"[red]Error:[/red] Invalid date format: {after}")
+                console.print(f"[nexus.error]Error:[/nexus.error] Invalid date format: {after}")
                 console.print("Use ISO format: 2025-01-01T00:00:00")
                 sys.exit(1)
 
@@ -588,8 +590,8 @@ def export_zone(
         )
 
         # Run export with progress
-        console.print(f"[cyan]Exporting zone:[/cyan] {zone_id}")
-        console.print(f"[cyan]Output:[/cyan] {output_path}")
+        console.print(f"[nexus.value]Exporting zone:[/nexus.value] {zone_id}")
+        console.print(f"[nexus.path]Output:[/nexus.path] {output_path}")
 
         with Progress(
             SpinnerColumn(),
@@ -609,8 +611,8 @@ def export_zone(
         # Show results
         console.print()
         table = Table(title="Export Complete")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green")
+        table.add_column("Metric", style="nexus.value")
+        table.add_column("Value", style="nexus.success")
 
         table.add_row("Files exported", f"{manifest.file_count:,}")
         table.add_row("Total size", f"{manifest.total_size_bytes:,} bytes")
@@ -700,7 +702,9 @@ def import_zone(
         path_prefix_remap: dict[str, str] = {}
         for remap in path_remap:
             if "=" not in remap:
-                console.print(f"[red]Error:[/red] Invalid path remap format: {remap}")
+                console.print(
+                    f"[nexus.error]Error:[/nexus.error] Invalid path remap format: {remap}"
+                )
                 console.print("Use format: old=new (e.g., --path-remap /old/=/new/)")
                 sys.exit(1)
             old, new = remap.split("=", 1)
@@ -722,12 +726,12 @@ def import_zone(
         )
 
         # Show import configuration
-        console.print(f"[cyan]Importing from:[/cyan] {bundle_path}")
+        console.print(f"[nexus.path]Importing from:[/nexus.path] {bundle_path}")
         if target_zone:
-            console.print(f"[cyan]Target zone:[/cyan] {target_zone}")
-        console.print(f"[cyan]Conflict mode:[/cyan] {conflict}")
+            console.print(f"[nexus.value]Target zone:[/nexus.value] {target_zone}")
+        console.print(f"[nexus.value]Conflict mode:[/nexus.value] {conflict}")
         if dry_run:
-            console.print("[yellow]DRY RUN - no changes will be made[/yellow]")
+            console.print("[nexus.warning]DRY RUN - no changes will be made[/nexus.warning]")
 
         # Run import with progress
         with Progress(
@@ -748,8 +752,8 @@ def import_zone(
         # Show results
         console.print()
         table = Table(title="Import Complete" if result.success else "Import Failed")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="green" if result.success else "red")
+        table.add_column("Metric", style="nexus.value")
+        table.add_column("Value", style="nexus.success" if result.success else "nexus.error")
 
         table.add_row("Files created", f"{result.files_created:,}")
         table.add_row("Files updated", f"{result.files_updated:,}")
@@ -769,7 +773,7 @@ def import_zone(
         # Show errors if any
         if result.errors:
             console.print()
-            console.print("[red]Errors:[/red]")
+            console.print("[nexus.error]Errors:[/nexus.error]")
             for error in result.errors[:10]:  # Show first 10 errors
                 console.print(f"  - {error.path}: {error.message}")
             if len(result.errors) > 10:
@@ -779,7 +783,7 @@ def import_zone(
         # Show warnings if any
         if result.warnings:
             console.print()
-            console.print("[yellow]Warnings:[/yellow]")
+            console.print("[nexus.warning]Warnings:[/nexus.warning]")
             for warning in result.warnings[:5]:
                 console.print(f"  - {warning}")
             if len(result.warnings) > 5:
@@ -787,7 +791,7 @@ def import_zone(
 
         if result.success:
             console.print()
-            console.print("[green]✓ Import completed successfully[/green]")
+            console.print("[nexus.success]✓ Import completed successfully[/nexus.success]")
 
     except Exception as e:
         handle_error(e)
@@ -807,8 +811,8 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
         info = inspect_bundle(bundle_path)
 
         table = Table(title=f"Bundle: {Path(bundle_path).name}")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="green")
+        table.add_column("Property", style="nexus.value")
+        table.add_column("Value", style="nexus.success")
 
         table.add_row("Bundle ID", info["bundle_id"][:8] + "...")
         table.add_row("Format Version", info["format_version"])
@@ -850,14 +854,14 @@ def validate_bundle_cmd(bundle_path: str) -> None:
     try:
         from nexus.bricks.portability import validate_bundle
 
-        console.print(f"[cyan]Validating:[/cyan] {bundle_path}")
+        console.print(f"[nexus.path]Validating:[/nexus.path] {bundle_path}")
 
         is_valid, errors = validate_bundle(bundle_path)
 
         if is_valid:
-            console.print("[green]✓ Bundle is valid[/green]")
+            console.print("[nexus.success]✓ Bundle is valid[/nexus.success]")
         else:
-            console.print("[red]✗ Bundle validation failed:[/red]")
+            console.print("[nexus.error]✗ Bundle validation failed:[/nexus.error]")
             for error in errors:
                 console.print(f"  - {error}")
             sys.exit(1)

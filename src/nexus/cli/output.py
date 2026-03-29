@@ -255,10 +255,9 @@ def render_error(
             envelope["_request_id"] = output_opts.request_id
         click.echo(json.dumps(envelope, indent=2, default=str))
     else:
-        from rich.console import Console
+        from nexus.cli.theme import err_console
 
-        console = Console(stderr=True)
-        console.print(f"[red]Error:[/red] {error}")
+        err_console.print(f"[nexus.error]Error:[/nexus.error] {error}")
 
     sys.exit(exit_code)
 

@@ -38,10 +38,12 @@ def _add_health_check_route(mcp_server: Any) -> None:
             """Health check endpoint for Docker and monitoring."""
             return JSONResponse({"status": "healthy", "service": "nexus-mcp"})
 
-        console.print("[green]✓ Health check endpoint enabled (/health)[/green]")
+        console.print("[nexus.success]✓ Health check endpoint enabled (/health)[/nexus.success]")
 
     except Exception as e:
-        console.print(f"[yellow]Warning: Failed to add health check route: {e}[/yellow]")
+        console.print(
+            f"[nexus.warning]Warning: Failed to add health check route: {e}[/nexus.warning]"
+        )
 
 
 def _add_api_key_middleware(mcp_server: Any) -> None:
@@ -94,12 +96,18 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
         if hasattr(mcp_server, "http_app"):
             app = mcp_server.http_app()
             app.add_middleware(APIKeyMiddleware)
-            console.print("[green]✓ API key middleware enabled (X-Nexus-API-Key header)[/green]")
+            console.print(
+                "[nexus.success]✓ API key middleware enabled (X-Nexus-API-Key header)[/nexus.success]"
+            )
         else:
-            console.print("[yellow]Warning: http_app not available, middleware not added[/yellow]")
+            console.print(
+                "[nexus.warning]Warning: http_app not available, middleware not added[/nexus.warning]"
+            )
 
     except Exception as e:
-        console.print(f"[yellow]Warning: Failed to add API key middleware: {e}[/yellow]")
+        console.print(
+            f"[nexus.warning]Warning: Failed to add API key middleware: {e}[/nexus.warning]"
+        )
 
 
 @click.group(name="mcp")
@@ -281,7 +289,7 @@ async def _async_serve(
             console.print()
 
             # Display available tools
-            console.print("[bold cyan]Available Tools:[/bold cyan]")
+            console.print("[bold nexus.value]Available Tools:[/bold nexus.value]")
             tools = [
                 "nexus_read_file",
                 "nexus_write_file",
@@ -300,23 +308,27 @@ async def _async_serve(
                 "nexus_execute_workflow",
             ]
             for tool in tools:
-                console.print(f"  • [cyan]{tool}[/cyan]")
+                console.print(f"  • [nexus.value]{tool}[/nexus.value]")
 
             console.print()
-            console.print("[bold cyan]Resources:[/bold cyan]")
-            console.print("  • [cyan]nexus://files/{{path}}[/cyan] - Browse files")
+            console.print("[bold nexus.value]Resources:[/bold nexus.value]")
+            console.print("  • [nexus.path]nexus://files/{{path}}[/nexus.path] - Browse files")
 
             console.print()
-            console.print("[bold cyan]Prompts:[/bold cyan]")
-            console.print("  • [cyan]file_analysis_prompt[/cyan] - Analyze a file")
-            console.print("  • [cyan]search_and_summarize_prompt[/cyan] - Search and summarize")
+            console.print("[bold nexus.value]Prompts:[/bold nexus.value]")
+            console.print("  • [nexus.value]file_analysis_prompt[/nexus.value] - Analyze a file")
+            console.print(
+                "  • [nexus.value]search_and_summarize_prompt[/nexus.value] - Search and summarize"
+            )
 
             console.print()
-            console.print(f"[yellow]Starting HTTP server on http://{host}:{port}[/yellow]")
+            console.print(
+                f"[nexus.warning]Starting HTTP server on http://{host}:{port}[/nexus.warning]"
+            )
             console.print()
 
-            console.print("[green]Starting MCP server...[/green]")
-            console.print("[yellow]Press Ctrl+C to stop[/yellow]")
+            console.print("[nexus.success]Starting MCP server...[/nexus.success]")
+            console.print("[nexus.warning]Press Ctrl+C to stop[/nexus.warning]")
             console.print()
 
         # Build manifest resolver callable if available (Issue #2984)
@@ -354,7 +366,7 @@ async def _async_serve(
             mcp_server.run(transport="sse", host=host, port=port)
 
     except KeyboardInterrupt:
-        console.print("\n[yellow]MCP server stopped by user[/yellow]")
+        console.print("\n[nexus.warning]MCP server stopped by user[/nexus.warning]")
     except Exception as e:
         handle_error(e)
 

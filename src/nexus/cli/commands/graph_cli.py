@@ -46,10 +46,10 @@ def graph_entity(client: GraphClient, entity_id: str) -> ServiceResult:
     data = client.entity(entity_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         ent = d.get("entity", d)
-        console.print(f"[bold cyan]Entity: {entity_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Entity: {entity_id}[/bold nexus.value]")
         console.print(f"  Type:   {ent.get('type', 'N/A')}")
         console.print(f"  Label:  {ent.get('label', ent.get('name', 'N/A'))}")
         props = ent.get("properties", {})
@@ -81,15 +81,15 @@ def graph_neighbors(client: GraphClient, entity_id: str, hops: int) -> ServiceRe
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         neighbors = d.get("neighbors", [])
         if not neighbors:
-            console.print(f"[yellow]No neighbors within {hops} hop(s)[/yellow]")
+            console.print(f"[nexus.warning]No neighbors within {hops} hop(s)[/nexus.warning]")
             return
 
         table = Table(title=f"Neighbors of {entity_id} ({hops} hop(s), {len(neighbors)} found)")
-        table.add_column("Entity ID", style="dim")
+        table.add_column("Entity ID", style="nexus.muted")
         table.add_column("Type")
         table.add_column("Label")
         table.add_column("Depth")
@@ -127,11 +127,11 @@ def graph_subgraph(
     data = client.subgraph(list(entity_ids), max_hops=max_hops)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         nodes = d.get("nodes", [])
         edges = d.get("edges", [])
-        console.print(f"[bold cyan]Subgraph ({len(entity_ids)} seed(s))[/bold cyan]")
+        console.print(f"[bold nexus.value]Subgraph ({len(entity_ids)} seed(s))[/bold nexus.value]")
         console.print(f"  Nodes: {len(nodes)}")
         console.print(f"  Edges: {len(edges)}")
 
@@ -159,15 +159,15 @@ def graph_search(
     data = client.search(name, entity_type=entity_type, fuzzy=fuzzy)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         # Server may return a single entity or None
         entity = d.get("entity")
         if entity is None:
-            console.print("[yellow]No matching entities[/yellow]")
+            console.print("[nexus.warning]No matching entities[/nexus.warning]")
             return
 
-        console.print("[bold cyan]Search Result[/bold cyan]")
+        console.print("[bold nexus.value]Search Result[/bold nexus.value]")
         console.print(f"  Entity ID: {entity.get('entity_id', entity.get('id', 'N/A'))}")
         console.print(f"  Type:      {entity.get('type', 'N/A')}")
         console.print(f"  Name:      {entity.get('name', 'N/A')}")

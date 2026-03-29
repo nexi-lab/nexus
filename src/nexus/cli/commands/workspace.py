@@ -5,12 +5,10 @@ from datetime import timedelta
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.theme import console
 from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
-
-console = Console()
 
 
 @click.group(name="workspace")
@@ -98,7 +96,7 @@ def register_cmd(
             ttl=ttl_delta,  # v0.5.0
         )
 
-        console.print(f"[green]✓[/green] Registered workspace: {result['path']}")
+        console.print(f"[nexus.success]✓[/nexus.success] Registered workspace: {result['path']}")
         if result["name"]:
             console.print(f"  Name: {result['name']}")
         if result["description"]:
@@ -134,16 +132,16 @@ def list_cmd(
         workspaces = nx.service("workspace_rpc").list_workspaces()
 
         if not workspaces:
-            console.print("[yellow]No workspaces registered[/yellow]")
+            console.print("[nexus.warning]No workspaces registered[/nexus.warning]")
             nx.close()
             return
 
         # Create table
         table = Table(title="Registered Workspaces")
-        table.add_column("Path", style="cyan")
-        table.add_column("Name", style="green")
+        table.add_column("Path", style="nexus.path")
+        table.add_column("Name", style="nexus.success")
         table.add_column("Description")
-        table.add_column("Created By", style="dim")
+        table.add_column("Created By", style="nexus.muted")
 
         for ws in workspaces:
             table.add_row(
@@ -154,7 +152,7 @@ def list_cmd(
             )
 
         console.print(table)
-        console.print(f"\n[dim]{len(workspaces)} workspace(s) registered[/dim]")
+        console.print(f"\n[nexus.muted]{len(workspaces)} workspace(s) registered[/nexus.muted]")
 
         nx.close()
 
@@ -186,23 +184,25 @@ def unregister_cmd(
         # Get workspace info first
         info = nx.service("workspace_rpc").get_workspace_info(path)
         if not info:
-            console.print(f"[red]✗[/red] Workspace not registered: {path}")
+            console.print(f"[nexus.error]✗[/nexus.error] Workspace not registered: {path}")
             nx.close()
             return
 
         # Confirm
         if not yes:
-            console.print(f"[yellow]⚠[/yellow]  About to unregister workspace: {path}")
+            console.print(
+                f"[nexus.warning]⚠[/nexus.warning]  About to unregister workspace: {path}"
+            )
             if info["name"]:
                 console.print(f"    Name: {info['name']}")
             if info["description"]:
                 console.print(f"    Description: {info['description']}")
             console.print(
-                "\n[dim]Note: Files will NOT be deleted, only registry entry removed[/dim]"
+                "\n[nexus.muted]Note: Files will NOT be deleted, only registry entry removed[/nexus.muted]"
             )
 
             if not click.confirm("Continue?"):
-                console.print("[yellow]Cancelled[/yellow]")
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 nx.close()
                 return
 
@@ -210,9 +210,9 @@ def unregister_cmd(
         result = nx.service("workspace_rpc").unregister_workspace(path)
 
         if result:
-            console.print(f"[green]✓[/green] Unregistered workspace: {path}")
+            console.print(f"[nexus.success]✓[/nexus.success] Unregistered workspace: {path}")
         else:
-            console.print(f"[red]✗[/red] Failed to unregister workspace: {path}")
+            console.print(f"[nexus.error]✗[/nexus.error] Failed to unregister workspace: {path}")
 
         nx.close()
 
@@ -239,7 +239,7 @@ def info_cmd(
         info = nx.service("workspace_rpc").get_workspace_info(path)
 
         if not info:
-            console.print(f"[red]✗[/red] Workspace not registered: {path}")
+            console.print(f"[nexus.error]✗[/nexus.error] Workspace not registered: {path}")
             nx.close()
             return
 
@@ -283,7 +283,7 @@ def snapshot_cmd(
         nx: Any = get_filesystem(remote_url, remote_api_key)
         tags = list(tag) if tag else None
 
-        with console.status(f"[bold cyan]Creating snapshot for workspace '{path}'..."):
+        with console.status(f"[bold nexus.value]Creating snapshot for workspace '{path}'..."):
             result = nx.service("workspace_rpc").workspace_snapshot(
                 workspace_path=path,
                 description=description,
@@ -291,7 +291,7 @@ def snapshot_cmd(
             )
 
         console.print(
-            f"[green]✓[/green] Created snapshot #{result['snapshot_number']} "
+            f"[nexus.success]✓[/nexus.success] Created snapshot #{result['snapshot_number']} "
             f"({result['file_count']} files, {_format_size(result['total_size_bytes'])})"
         )
         console.print(f"  Snapshot ID: {result['snapshot_id']}")
@@ -331,18 +331,20 @@ def log_cmd(
         snapshots = nx.service("workspace_rpc").workspace_log(workspace_path=path, limit=limit)
 
         if not snapshots:
-            console.print(f"[yellow]No snapshots found for workspace '{path}'[/yellow]")
+            console.print(
+                f"[nexus.warning]No snapshots found for workspace '{path}'[/nexus.warning]"
+            )
             nx.close()
             return
 
         # Create table
         table = Table(title=f"Workspace Snapshots for {path}")
-        table.add_column("#", justify="right", style="cyan")
-        table.add_column("Created", style="green")
+        table.add_column("#", justify="right", style="nexus.value")
+        table.add_column("Created", style="nexus.success")
         table.add_column("Files", justify="right")
         table.add_column("Size", justify="right")
         table.add_column("Description")
-        table.add_column("Tags", style="dim")
+        table.add_column("Tags", style="nexus.muted")
 
         for snap in snapshots:
             created_at = snap["created_at"].strftime("%Y-%m-%d %H:%M:%S")
@@ -358,7 +360,7 @@ def log_cmd(
             )
 
         console.print(table)
-        console.print(f"\n[dim]Showing {len(snapshots)} snapshot(s)[/dim]")
+        console.print(f"\n[nexus.muted]Showing {len(snapshots)} snapshot(s)[/nexus.muted]")
 
         nx.close()
 
@@ -406,32 +408,36 @@ def restore_cmd(
                     break
 
         if not snap_info:
-            console.print(f"[red]✗[/red] Snapshot #{snapshot} not found")
+            console.print(f"[nexus.error]✗[/nexus.error] Snapshot #{snapshot} not found")
             nx.close()
             return
 
         # Confirm
         if not yes:
-            console.print(f"[yellow]⚠[/yellow]  About to restore workspace to snapshot #{snapshot}")
+            console.print(
+                f"[nexus.warning]⚠[/nexus.warning]  About to restore workspace to snapshot #{snapshot}"
+            )
             console.print(f"    Created: {snap_info['created_at'].strftime('%Y-%m-%d %H:%M:%S')}")
             console.print(f"    Files: {snap_info['file_count']}")
             if snap_info["description"]:
                 console.print(f"    Description: {snap_info['description']}")
-            console.print("\n[red]This will overwrite the current workspace state![/red]")
+            console.print(
+                "\n[nexus.error]This will overwrite the current workspace state![/nexus.error]"
+            )
 
             if not click.confirm("Continue?"):
-                console.print("[yellow]Cancelled[/yellow]")
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 nx.close()
                 return
 
         # Perform restore
-        with console.status(f"[bold cyan]Restoring snapshot #{snapshot}..."):
+        with console.status(f"[bold nexus.value]Restoring snapshot #{snapshot}..."):
             result = nx.service("workspace_rpc").workspace_restore(
                 snapshot_number=snapshot, workspace_path=path
             )
 
         console.print(
-            f"[green]✓[/green] Restored snapshot #{snapshot} "
+            f"[nexus.success]✓[/nexus.success] Restored snapshot #{snapshot} "
             f"({result['files_restored']} files restored, "
             f"{result['files_deleted']} files deleted)"
         )
@@ -464,7 +470,7 @@ def diff_cmd(
     try:
         nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        with console.status("[bold cyan]Computing diff between snapshots..."):
+        with console.status("[bold nexus.value]Computing diff between snapshots..."):
             diff = nx.service("workspace_rpc").workspace_diff(
                 snapshot_1=snapshot1, snapshot_2=snapshot2, workspace_path=path
             )
@@ -472,31 +478,37 @@ def diff_cmd(
         # Display header
         console.print(f"\n[bold]Diff: Snapshot #{snapshot1} → Snapshot #{snapshot2}[/bold]")
         console.print(
-            f"[dim]{diff['snapshot_1']['created_at'].strftime('%Y-%m-%d %H:%M:%S')} → "
-            f"{diff['snapshot_2']['created_at'].strftime('%Y-%m-%d %H:%M:%S')}[/dim]\n"
+            f"[nexus.muted]{diff['snapshot_1']['created_at'].strftime('%Y-%m-%d %H:%M:%S')} → "
+            f"{diff['snapshot_2']['created_at'].strftime('%Y-%m-%d %H:%M:%S')}[/nexus.muted]\n"
         )
 
         # Added files
         if diff["added"]:
-            console.print(f"[green]Added ({len(diff['added'])} files):[/green]")
+            console.print(f"[nexus.success]Added ({len(diff['added'])} files):[/nexus.success]")
             for file in diff["added"][:20]:  # Limit to 20
                 console.print(f"  + {file['path']} ({_format_size(file['size'])})")
             if len(diff["added"]) > 20:
-                console.print(f"  [dim]... and {len(diff['added']) - 20} more[/dim]")
+                console.print(
+                    f"  [nexus.muted]... and {len(diff['added']) - 20} more[/nexus.muted]"
+                )
             console.print()
 
         # Removed files
         if diff["removed"]:
-            console.print(f"[red]Removed ({len(diff['removed'])} files):[/red]")
+            console.print(f"[nexus.error]Removed ({len(diff['removed'])} files):[/nexus.error]")
             for file in diff["removed"][:20]:
                 console.print(f"  - {file['path']} ({_format_size(file['size'])})")
             if len(diff["removed"]) > 20:
-                console.print(f"  [dim]... and {len(diff['removed']) - 20} more[/dim]")
+                console.print(
+                    f"  [nexus.muted]... and {len(diff['removed']) - 20} more[/nexus.muted]"
+                )
             console.print()
 
         # Modified files
         if diff["modified"]:
-            console.print(f"[yellow]Modified ({len(diff['modified'])} files):[/yellow]")
+            console.print(
+                f"[nexus.warning]Modified ({len(diff['modified'])} files):[/nexus.warning]"
+            )
             for file in diff["modified"][:20]:
                 size_change = file["new_size"] - file["old_size"]
                 size_str = f"{_format_size(file['old_size'])} → {_format_size(file['new_size'])}"
@@ -506,16 +518,18 @@ def diff_cmd(
                     size_str += f" ({_format_size(size_change)})"
                 console.print(f"  ~ {file['path']} ({size_str})")
             if len(diff["modified"]) > 20:
-                console.print(f"  [dim]... and {len(diff['modified']) - 20} more[/dim]")
+                console.print(
+                    f"  [nexus.muted]... and {len(diff['modified']) - 20} more[/nexus.muted]"
+                )
             console.print()
 
         # Summary
         console.print(
-            f"[dim]Summary: "
+            f"[nexus.muted]Summary: "
             f"{len(diff['added'])} added, "
             f"{len(diff['removed'])} removed, "
             f"{len(diff['modified'])} modified, "
-            f"{diff['unchanged']} unchanged[/dim]"
+            f"{diff['unchanged']} unchanged[/nexus.muted]"
         )
 
         nx.close()

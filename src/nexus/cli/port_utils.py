@@ -187,11 +187,13 @@ def resolve_ports(
             claimed.add(port)
         elif strategy == "fail":
             label = PORT_LABELS.get(service, service)
-            from nexus.cli.utils import console
+            from nexus.cli.theme import console
 
-            console.print(f"[red]Error:[/red] Port {port} ({label}) is already in use.")
             console.print(
-                "[yellow]Hint:[/yellow] Use --port-strategy auto to auto-select a free port."
+                f"[nexus.error]Error:[/nexus.error] Port {port} ({label}) is already in use."
+            )
+            console.print(
+                "[nexus.warning]Hint:[/nexus.warning] Use --port-strategy auto to auto-select a free port."
             )
             sys.exit(1)
         elif strategy == "prompt":
@@ -202,14 +204,14 @@ def resolve_ports(
             # "fail" behaviour instead of blocking on a prompt that nobody
             # will answer.  Matches the Create-React-App / Next.js pattern.
             if not sys.stdin.isatty():
-                from nexus.cli.utils import console
+                from nexus.cli.theme import console
 
                 console.print(
-                    f"[red]Error:[/red] Port {port} ({label}) is already in use "
+                    f"[nexus.error]Error:[/nexus.error] Port {port} ({label}) is already in use "
                     f"(non-interactive terminal — cannot prompt)."
                 )
                 console.print(
-                    f"[yellow]Hint:[/yellow] Use --port-strategy auto to auto-select "
+                    f"[nexus.warning]Hint:[/nexus.warning] Use --port-strategy auto to auto-select "
                     f"a free port, or set the port explicitly (suggested: {default_free})."
                 )
                 sys.exit(1)

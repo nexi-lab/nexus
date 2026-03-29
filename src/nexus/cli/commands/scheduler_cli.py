@@ -46,9 +46,9 @@ def scheduler_status(client: SchedulerClient) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
-        console.print("[bold cyan]Scheduler Status[/bold cyan]")
+        console.print("[bold nexus.value]Scheduler Status[/bold nexus.value]")
         console.print(f"  HRRN Enabled:  {d.get('use_hrrn', 'N/A')}")
 
         # Queue by class table
@@ -68,7 +68,7 @@ def scheduler_status(client: SchedulerClient) -> ServiceResult:
                 )
             console.print(table)
         else:
-            console.print("  [yellow]No queued tasks[/yellow]")
+            console.print("  [nexus.warning]No queued tasks[/nexus.warning]")
 
         # Fair-share summary
         fair_share = d.get("fair_share", {})
@@ -101,11 +101,11 @@ def scheduler_queue(client: SchedulerClient) -> ServiceResult:
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         queue_by_class = d.get("queue_by_class", [])
         if not queue_by_class:
-            console.print("[yellow]No queued tasks[/yellow]")
+            console.print("[nexus.warning]No queued tasks[/nexus.warning]")
             return
 
         table = Table(title=f"Queue Metrics ({len(queue_by_class)} classes)")

@@ -58,14 +58,14 @@ def rlm_infer(
     data = client.infer(path, prompt=prompt, model=model, max_iterations=max_iterations)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         status = d.get("status", "unknown")
         answer = d.get("answer", d.get("result", ""))
         iterations = d.get("iterations", d.get("total_iterations", "N/A"))
         tokens = d.get("total_tokens", "N/A")
 
-        console.print(f"[bold cyan]RLM Inference[/bold cyan] ({status})")
+        console.print(f"[bold nexus.value]RLM Inference[/bold nexus.value] ({status})")
         console.print(f"  Iterations: {iterations}")
         console.print(f"  Tokens:     {tokens}")
         console.print()

@@ -114,7 +114,9 @@ def warmup(
             if user:
                 # History-based warmup
                 if not output_opts.quiet and not output_opts.json_output:
-                    console.print(f"[blue]Warming cache based on {user}'s access history...[/blue]")
+                    console.print(
+                        f"[nexus.reference]Warming cache based on {user}'s access history...[/nexus.reference]"
+                    )
                 warmup_stats = await warmer.warmup_from_history(
                     user=user,
                     hours=hours,
@@ -124,7 +126,7 @@ def warmup(
             else:
                 # Directory-based warmup
                 if not output_opts.quiet and not output_opts.json_output:
-                    console.print(f"[blue]Warming cache for {path}...[/blue]")
+                    console.print(f"[nexus.reference]Warming cache for {path}...[/nexus.reference]")
                 warmup_stats = await warmer.warmup_directory(
                     path=path,
                     depth=depth,
@@ -138,14 +140,14 @@ def warmup(
             warmup_data = asyncio.run(run_warmup())
 
         def _render(data: dict[str, Any]) -> None:
-            console.print("\n[green]Cache warmup complete![/green]")
+            console.print("\n[nexus.success]Cache warmup complete![/nexus.success]")
             console.print(f"  Files warmed: {data['files_warmed']}")
             console.print(f"  Metadata warmed: {data['metadata_warmed']}")
             console.print(f"  Content warmed: {data['content_warmed']}")
             console.print(f"  Bytes warmed: {data['bytes_warmed_mb']} MB")
             console.print(f"  Duration: {data['duration_seconds']}s")
             if data["errors"] > 0:
-                console.print(f"  [yellow]Errors: {data['errors']}[/yellow]")
+                console.print(f"  [nexus.warning]Errors: {data['errors']}[/nexus.warning]")
             if data["skipped"] > 0:
                 console.print(f"  Skipped: {data['skipped']}")
 
@@ -223,7 +225,7 @@ def stats(
             console.print("=" * 40)
 
             for cache_name, stats_data in data.items():
-                console.print(f"\n[cyan]{cache_name}:[/cyan]")
+                console.print(f"\n[nexus.value]{cache_name}:[/nexus.value]")
                 if isinstance(stats_data, dict):
                     for key, value in stats_data.items():
                         if isinstance(value, float):
@@ -273,7 +275,7 @@ def clear(
     """
     if not any([metadata, content, permissions, clear_all]):
         console.print(
-            "[yellow]Specify which cache to clear: --metadata, --content, --permissions, or --all[/yellow]"
+            "[nexus.warning]Specify which cache to clear: --metadata, --content, --permissions, or --all[/nexus.warning]"
         )
         return
 
@@ -291,7 +293,7 @@ def clear(
             msg = f"Clear {', '.join(caches)} cache(s)?"
 
         if not click.confirm(msg):
-            console.print("[yellow]Cancelled[/yellow]")
+            console.print("[nexus.warning]Cancelled[/nexus.warning]")
             return
 
     try:
@@ -342,9 +344,9 @@ def clear(
             cleared.append("file_access_tracker")
 
         if cleared:
-            console.print(f"[green]Cleared: {', '.join(cleared)}[/green]")
+            console.print(f"[nexus.success]Cleared: {', '.join(cleared)}[/nexus.success]")
         else:
-            console.print("[yellow]No caches were cleared[/yellow]")
+            console.print("[nexus.warning]No caches were cleared[/nexus.warning]")
 
         nx.close()
 
@@ -390,7 +392,7 @@ def hot(
 
         def _render(data: list[dict[str, Any]]) -> None:
             if not data:
-                console.print("[yellow]No hot files detected yet.[/yellow]")
+                console.print("[nexus.warning]No hot files detected yet.[/nexus.warning]")
                 console.print("Hot files are tracked as the filesystem is used.")
                 return
 
@@ -399,7 +401,7 @@ def hot(
 
             for i, entry in enumerate(data, 1):
                 console.print(
-                    f"{i:3}. [cyan]{entry['path']}[/cyan] ({entry['access_count']} accesses)"
+                    f"{i:3}. [nexus.path]{entry['path']}[/nexus.path] ({entry['access_count']} accesses)"
                 )
 
         render_output(

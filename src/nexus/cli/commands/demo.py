@@ -40,7 +40,7 @@ from nexus.cli.commands.demo_data import (
     MANIFEST_FILENAME,
     PLAN_VERSIONS,
 )
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def _load_project_config() -> dict[str, Any]:
         if p.exists():
             with open(p) as f:
                 return yaml.safe_load(f) or {}
-    console.print("[red]Error:[/red] No nexus.yaml found. Run `nexus init` first.")
+    console.print("[nexus.error]Error:[/nexus.error] No nexus.yaml found. Run `nexus init` first.")
     raise SystemExit(1)
 
 
@@ -184,9 +184,11 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
             await nx.sys_readdir("/")
             return nx
         except Exception as e:
-            console.print(f"[red]Error:[/red] Could not connect to Nexus server: {e}")
             console.print(
-                f"[yellow]Hint:[/yellow] Is `nexus up` running? Expected gRPC on port {grpc_port}."
+                f"[nexus.error]Error:[/nexus.error] Could not connect to Nexus server: {e}"
+            )
+            console.print(
+                f"[nexus.warning]Hint:[/nexus.warning] Is `nexus up` running? Expected gRPC on port {grpc_port}."
             )
             raise
 
@@ -227,7 +229,7 @@ async def _seed_files(
             seeded.append(path)
             created += 1
         except Exception as e:
-            console.print(f"  [yellow]Warning:[/yellow] Could not create {path}: {e}")
+            console.print(f"  [nexus.warning]Warning:[/nexus.warning] Could not create {path}: {e}")
 
     manifest["files"] = seeded
     return created
@@ -1429,15 +1431,17 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     try:
         nx = await _get_nexus_client(config)
     except Exception as e:
-        console.print(f"[red]Error:[/red] Could not connect to Nexus: {e}")
-        console.print("[yellow]Hint:[/yellow] Is the server running? Try `nexus up` first.")
+        console.print(f"[nexus.error]Error:[/nexus.error] Could not connect to Nexus: {e}")
+        console.print(
+            "[nexus.warning]Hint:[/nexus.warning] Is the server running? Try `nexus up` first."
+        )
         raise SystemExit(1) from e
 
     # Load or reset manifest
     if reset:
         old_manifest = _load_manifest(data_dir)
         if old_manifest:
-            console.print("[yellow]Resetting demo data...[/yellow]")
+            console.print("[nexus.warning]Resetting demo data...[/nexus.warning]")
             revoked = _revoke_identities(config, old_manifest)
             if revoked:
                 console.print(f"  Revoked {revoked} identity API keys.")
@@ -1621,32 +1625,34 @@ async def _async_demo_reset() -> None:
 
     manifest = _load_manifest(data_dir)
     if not manifest:
-        console.print("[yellow]No demo data found (no manifest).[/yellow]")
+        console.print("[nexus.warning]No demo data found (no manifest).[/nexus.warning]")
         raise SystemExit(0)
 
     # Revoke identity API keys (best-effort)
     revoked = _revoke_identities(config, manifest)
     if revoked:
-        console.print(f"[green]✓[/green] Revoked {revoked} identity API keys.")
+        console.print(f"[nexus.success]✓[/nexus.success] Revoked {revoked} identity API keys.")
 
     # Delete permission tuples (best-effort, before file deletion)
     try:
         nx = await _get_nexus_client(config)
     except Exception as e:
-        console.print(f"[yellow]Warning:[/yellow] Could not connect to Nexus: {e}")
+        console.print(f"[nexus.warning]Warning:[/nexus.warning] Could not connect to Nexus: {e}")
         nx = None
 
     perms_deleted = _delete_permissions(nx, config) if nx else 0
     if perms_deleted > 0:
-        console.print(f"[green]✓[/green] Deleted {perms_deleted} permission tuples.")
+        console.print(
+            f"[nexus.success]✓[/nexus.success] Deleted {perms_deleted} permission tuples."
+        )
 
     # Delete demo files
     if nx is not None:
         try:
             removed = await _delete_demo_files(nx, manifest)
-            console.print(f"[green]✓[/green] Removed {removed} demo files.")
+            console.print(f"[nexus.success]✓[/nexus.success] Removed {removed} demo files.")
         except Exception as e:
-            console.print(f"[yellow]Warning:[/yellow] Could not remove files: {e}")
+            console.print(f"[nexus.warning]Warning:[/nexus.warning] Could not remove files: {e}")
         with contextlib.suppress(Exception):
             nx.close()
 
@@ -1654,6 +1660,6 @@ async def _async_demo_reset() -> None:
     mp = _manifest_path(data_dir)
     if mp.exists():
         mp.unlink()
-        console.print("[green]✓[/green] Manifest removed.")
+        console.print("[nexus.success]✓[/nexus.success] Manifest removed.")
 
-    console.print("[green]Demo data reset complete.[/green]")
+    console.print("[nexus.success]Demo data reset complete.[/nexus.success]")

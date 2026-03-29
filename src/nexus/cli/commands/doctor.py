@@ -20,8 +20,9 @@ from typing import Any
 import click
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
-from nexus.cli.utils import console, handle_error
+from nexus.cli.utils import handle_error
 
 # ---------------------------------------------------------------------------
 # Check result model
@@ -521,9 +522,9 @@ def _try_fix(result: CheckResult) -> CheckResult | None:
 # ---------------------------------------------------------------------------
 
 _STATUS_ICONS = {
-    CheckStatus.OK: "[green]ok[/green]",
-    CheckStatus.WARNING: "[yellow]warning[/yellow]",
-    CheckStatus.ERROR: "[red]ERROR[/red]",
+    CheckStatus.OK: "[nexus.success]ok[/nexus.success]",
+    CheckStatus.WARNING: "[nexus.warning]warning[/nexus.warning]",
+    CheckStatus.ERROR: "[nexus.error]ERROR[/nexus.error]",
 }
 
 
@@ -565,7 +566,7 @@ def _display_results(results: dict[str, list[CheckResult]]) -> int:
             icon = _STATUS_ICONS[check.status]
             console.print(f"  {icon}  {check.name}: {check.message}")
             if check.fix_hint and check.status != CheckStatus.OK:
-                console.print(f"       [dim]Fix: {check.fix_hint}[/dim]")
+                console.print(f"       [nexus.muted]Fix: {check.fix_hint}[/nexus.muted]")
             if check.status == CheckStatus.ERROR:
                 has_error = True
 
@@ -581,9 +582,9 @@ def _display_results(results: dict[str, list[CheckResult]]) -> int:
     console.print()
     console.print(
         f"[bold]{total} checks:[/bold] "
-        f"[green]{ok_count} ok[/green], "
-        f"[yellow]{warn_count} warnings[/yellow], "
-        f"[red]{err_count} errors[/red]"
+        f"[nexus.success]{ok_count} ok[/nexus.success], "
+        f"[nexus.warning]{warn_count} warnings[/nexus.warning], "
+        f"[nexus.error]{err_count} errors[/nexus.error]"
     )
     return 1 if has_error else 0
 

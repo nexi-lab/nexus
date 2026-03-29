@@ -55,19 +55,19 @@ def secrets_audit_list(
     def _render(d: dict) -> None:
         from rich.table import Table
 
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         events = d.get("events", [])
         if not events:
-            console.print("[yellow]No secret access events[/yellow]")
+            console.print("[nexus.warning]No secret access events[/nexus.warning]")
             return
 
         table = Table(title=f"Secret Access Events ({len(events)})")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="nexus.muted")
         table.add_column("Action")
         table.add_column("Secret")
         table.add_column("Agent")
-        table.add_column("Time", style="dim")
+        table.add_column("Time", style="nexus.muted")
 
         for ev in events:
             table.add_row(
@@ -110,7 +110,7 @@ def secrets_audit_export(
         nexus secrets-audit export --format json --output audit.json
     """
     from nexus.cli.service_command import _validate_url
-    from nexus.cli.utils import console
+    from nexus.cli.theme import console
 
     url = _validate_url(remote_url)
     try:
@@ -121,11 +121,11 @@ def secrets_audit_export(
         if output_file:
             with open(output_file, "w") as f:
                 f.write(content)
-            console.print(f"[green]Exported to {output_file}[/green]")
+            console.print(f"[nexus.success]Exported to {output_file}[/nexus.success]")
         else:
             click.echo(content)
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -146,11 +146,15 @@ def secrets_audit_verify(client: SecretsAuditClient, record_id: str) -> ServiceR
     data = client.verify(record_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         valid = d.get("valid", d.get("integrity_valid", False))
-        status = "[green]Valid[/green]" if valid else "[red]Tampered[/red]"
-        console.print(f"[bold cyan]Integrity Check: {record_id}[/bold cyan]")
+        status = (
+            "[nexus.success]Valid[/nexus.success]"
+            if valid
+            else "[nexus.error]Tampered[/nexus.error]"
+        )
+        console.print(f"[bold nexus.value]Integrity Check: {record_id}[/bold nexus.value]")
         console.print(f"  Status: {status}")
         if d.get("hash"):
             console.print(f"  Hash:   {d['hash']}")

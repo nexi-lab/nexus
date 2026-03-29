@@ -11,7 +11,6 @@ Supported keys:
 from typing import Any
 
 import click
-from rich.console import Console
 
 from nexus.cli.config import (
     SUPPORTED_SETTINGS,
@@ -24,9 +23,8 @@ from nexus.cli.config import (
     set_setting,
 )
 from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
-
-console = Console()
 
 
 @click.group(name="config")
@@ -67,11 +65,11 @@ def show_cmd(output_opts: OutputOptions) -> None:
         table = Table(title=f"Configuration ({get_config_path()})")
         table.add_column("Key", style="bold")
         table.add_column("Value")
-        table.add_column("Source", style="dim")
+        table.add_column("Source", style="nexus.muted")
 
         for key in sorted(merged):
             value, source = merged[key]
-            value_str = str(value) if value is not None else "[dim]null[/dim]"
+            value_str = str(value) if value is not None else "[nexus.muted]null[/nexus.muted]"
             table.add_row(key, value_str, source)
 
         console.print(table)
@@ -98,8 +96,10 @@ def get_cmd(key: str) -> None:
         nexus config get timing.enabled
     """
     if key not in SUPPORTED_SETTINGS:
-        console.print(f"[red]Error:[/red] Unknown setting: {key}")
-        console.print(f"[dim]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/dim]")
+        console.print(f"[nexus.error]Error:[/nexus.error] Unknown setting: {key}")
+        console.print(
+            f"[nexus.muted]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/nexus.muted]"
+        )
         raise SystemExit(1)
 
     config = load_cli_config()
@@ -119,8 +119,10 @@ def set_cmd(key: str, value: str) -> None:
         nexus config set connection.timeout 60
     """
     if key not in SUPPORTED_SETTINGS:
-        console.print(f"[red]Error:[/red] Unknown setting: {key}")
-        console.print(f"[dim]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/dim]")
+        console.print(f"[nexus.error]Error:[/nexus.error] Unknown setting: {key}")
+        console.print(
+            f"[nexus.muted]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/nexus.muted]"
+        )
         raise SystemExit(1)
 
     config = load_cli_config()
@@ -139,8 +141,10 @@ def reset_cmd(key: str) -> None:
         nexus config reset timing.enabled
     """
     if key not in SUPPORTED_SETTINGS:
-        console.print(f"[red]Error:[/red] Unknown setting: {key}")
-        console.print(f"[dim]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/dim]")
+        console.print(f"[nexus.error]Error:[/nexus.error] Unknown setting: {key}")
+        console.print(
+            f"[nexus.muted]Supported keys: {', '.join(sorted(SUPPORTED_SETTINGS))}[/nexus.muted]"
+        )
         raise SystemExit(1)
 
     config = load_cli_config()

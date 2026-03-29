@@ -22,7 +22,7 @@ from nexus.cli.state import (
     load_runtime_state,
     resolve_connection_env,
 )
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 # ---------------------------------------------------------------------------
 # Shell formatting helpers
@@ -145,7 +145,9 @@ def env_cmd(
     env_vars = resolve_connection_env(config, state)
 
     if not env_vars:
-        console.print("[yellow]No connection info found.[/yellow] Run `nexus up` first.")
+        console.print(
+            "[nexus.warning]No connection info found.[/nexus.warning] Run `nexus up` first."
+        )
         raise SystemExit(1)
 
     if json_output:
@@ -189,5 +191,5 @@ def run(command: tuple[str, ...]) -> None:
         result = subprocess.run(list(command), env=run_env)
         sys.exit(result.returncode)
     except FileNotFoundError as err:
-        console.print(f"[red]Error:[/red] Command not found: {command[0]}")
+        console.print(f"[nexus.error]Error:[/nexus.error] Command not found: {command[0]}")
         raise SystemExit(127) from err

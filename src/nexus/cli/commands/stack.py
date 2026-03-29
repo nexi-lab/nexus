@@ -50,7 +50,7 @@ from nexus.cli.state import (
 from nexus.cli.state import (
     save_project_config as _save_project_config,
 )
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 
 
 def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
@@ -212,11 +212,15 @@ def _compose_profiles(compose_file: str) -> set[str]:
     except FileNotFoundError:
         return set()
     except yaml.YAMLError as exc:
-        console.print(f"[yellow]Warning:[/yellow] Failed to parse {compose_file}: {exc}")
+        console.print(
+            f"[nexus.warning]Warning:[/nexus.warning] Failed to parse {compose_file}: {exc}"
+        )
         return set()
 
     if not isinstance(stack, dict):
-        console.print(f"[yellow]Warning:[/yellow] {compose_file} does not contain a valid mapping")
+        console.print(
+            f"[nexus.warning]Warning:[/nexus.warning] {compose_file} does not contain a valid mapping"
+        )
         return set()
 
     profiles: set[str] = set()
@@ -289,9 +293,9 @@ def _find_docker_compose() -> str:
     # Fallback to standalone `docker-compose`
     if shutil.which("docker-compose"):
         return "docker-compose"
-    console.print("[red]Error:[/red] Docker Compose is not installed.")
+    console.print("[nexus.error]Error:[/nexus.error] Docker Compose is not installed.")
     console.print(
-        "[yellow]Hint:[/yellow] Install Docker Desktop or the compose plugin: "
+        "[nexus.warning]Hint:[/nexus.warning] Install Docker Desktop or the compose plugin: "
         "https://docs.docker.com/compose/install/"
     )
     raise SystemExit(1)
@@ -551,8 +555,8 @@ def up(
                 candidate = parent / Path(name).name
                 if candidate.exists():
                     console.print(
-                        f"[yellow]No nexus.yaml in current directory, "
-                        f"but found {candidate}[/yellow]"
+                        f"[nexus.warning]No nexus.yaml in current directory, "
+                        f"but found {candidate}[/nexus.warning]"
                     )
                     console.print(
                         f"  Run `nexus up` from {parent} or "
@@ -569,7 +573,7 @@ def up(
             init_cmd, ["--preset", "shared", "--force"], catch_exceptions=False
         )
         if init_result.exit_code != 0:
-            console.print("[red]Error:[/red] Auto-init failed.")
+            console.print("[nexus.error]Error:[/nexus.error] Auto-init failed.")
             if init_result.output:
                 console.print(init_result.output)
             raise SystemExit(1)
@@ -580,7 +584,7 @@ def up(
 
     if preset == "local":
         console.print(
-            "[yellow]Preset 'local' does not use Docker.[/yellow] "
+            "[nexus.warning]Preset 'local' does not use Docker.[/nexus.warning] "
             "Use `nexus serve` to start a local server, or re-init with "
             "`nexus init --preset shared`."
         )
@@ -589,8 +593,10 @@ def up(
     # Determine compose file
     cf = compose_file or config.get("compose_file", "./nexus-stack.yml")
     if not Path(cf).exists():
-        console.print(f"[red]Error:[/red] Compose file not found: {cf}")
-        console.print("[yellow]Hint:[/yellow] Ensure nexus-stack.yml is in the project root.")
+        console.print(f"[nexus.error]Error:[/nexus.error] Compose file not found: {cf}")
+        console.print(
+            "[nexus.warning]Hint:[/nexus.warning] Ensure nexus-stack.yml is in the project root."
+        )
         raise SystemExit(1)
 
     data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
@@ -622,7 +628,7 @@ def up(
         if container_state == "running":
             # Already running — print status and exit
             console.print()
-            console.print("[green]Nexus stack is already running.[/green]")
+            console.print("[nexus.success]Nexus stack is already running.[/nexus.success]")
             conn_env = resolve_connection_env(config, prev_state)
             console.print()
             console.print("[bold]Connection:[/bold]")
@@ -630,8 +636,8 @@ def up(
                 console.print(f"  export {key}='{value}'")
             console.print()
             console.print(
-                "[dim]Use `nexus up --pull` to update, "
-                "or `nexus down && nexus up` to recreate.[/dim]"
+                "[nexus.muted]Use `nexus up --pull` to update, "
+                "or `nexus down && nexus up` to recreate.[/nexus.muted]"
             )
             return
 
@@ -645,7 +651,7 @@ def up(
             compose_env = _derive_project_env(config, resolved_ports=prev_ports)
             result = _run_compose(cf, profiles, "up", "-d", extra_env=compose_env)
             if result.returncode != 0:
-                console.print("[red]Error:[/red] Failed to resume stack.")
+                console.print("[nexus.error]Error:[/nexus.error] Failed to resume stack.")
                 raise SystemExit(result.returncode)
 
             # Health polling — same guarantees as a fresh start
@@ -656,17 +662,21 @@ def up(
             all_healthy = True
             for service, elapsed, healthy in health_results:
                 if healthy:
-                    console.print(f"  [green]✓[/green] {service} ({elapsed:.1f}s)")
+                    console.print(f"  [nexus.success]✓[/nexus.success] {service} ({elapsed:.1f}s)")
                 else:
-                    console.print(f"  [red]✗[/red] {service} (timed out after {elapsed:.0f}s)")
+                    console.print(
+                        f"  [nexus.error]✗[/nexus.error] {service} (timed out after {elapsed:.0f}s)"
+                    )
                     all_healthy = False
             if not all_healthy:
                 console.print()
-                console.print("[yellow]Some services did not become healthy.[/yellow]")
+                console.print(
+                    "[nexus.warning]Some services did not become healthy.[/nexus.warning]"
+                )
                 console.print("  Run `nexus logs` to investigate.")
                 raise SystemExit(1)
 
-            console.print("[green]✓[/green] Stack resumed.")
+            console.print("[nexus.success]✓[/nexus.success] Stack resumed.")
             conn_env = resolve_connection_env(config, prev_state)
             console.print()
             console.print("[bold]Connection:[/bold]")
@@ -699,7 +709,7 @@ def up(
         if missing:
             for p in missing:
                 console.print(
-                    f"  [yellow]Warning: profile '{p}' not found in {Path(cf).name}, skipping[/yellow]"
+                    f"  [nexus.warning]Warning: profile '{p}' not found in {Path(cf).name}, skipping[/nexus.warning]"
                 )
             profiles = [p for p in profiles if p in available_profiles]
 
@@ -740,10 +750,10 @@ def up(
     console.print(f"[bold]Starting Nexus preset: {preset}[/bold]")
     console.print(f"  Using stack: {cf}")
     if build:
-        console.print("  Image: [green]local build[/green] (from Dockerfile)")
+        console.print("  Image: [nexus.success]local build[/nexus.success] (from Dockerfile)")
     elif using_local_build:
         console.print(
-            f"  Image: [green]{prev_state.get('image_used', 'local')}[/green] (reusing local build)"
+            f"  Image: [nexus.success]{prev_state.get('image_used', 'local')}[/nexus.success] (reusing local build)"
         )
     else:
         image_ref = _resolve_image_ref_from_config(config)
@@ -755,7 +765,7 @@ def up(
 
     # Print port resolution messages
     for msg in port_messages:
-        console.print(f"  [yellow]{msg}[/yellow]")
+        console.print(f"  [nexus.warning]{msg}[/nexus.warning]")
 
     # NOTE: resolved ports are NOT written back to nexus.yaml.
     # They go into .state.json (written after health check).
@@ -793,7 +803,7 @@ def up(
             repo_dockerfile = _find_repo_dockerfile()
             if repo_dockerfile:
                 console.print(
-                    f"[cyan]Nexus:[/cyan] building image from {repo_dockerfile.relative_to(repo_dockerfile.parent.parent)} "
+                    f"[nexus.path]Nexus:[/nexus.path] building image from {repo_dockerfile.relative_to(repo_dockerfile.parent.parent)} "
                     f"→ {local_tag}"
                 )
                 build_result = subprocess.run(
@@ -810,16 +820,18 @@ def up(
                     env={**os.environ, **compose_env},
                 )
                 if build_result.returncode != 0:
-                    console.print("[red]Error:[/red] Docker build failed.")
+                    console.print("[nexus.error]Error:[/nexus.error] Docker build failed.")
                     raise SystemExit(1)
-                console.print(f"[green]Nexus:[/green] built image {local_tag} from source")
+                console.print(
+                    f"[nexus.success]Nexus:[/nexus.success] built image {local_tag} from source"
+                )
                 compose_env["NEXUS_IMAGE_REF"] = local_tag
                 effective_image_used = local_tag
                 effective_build_mode = "local"
                 build = False  # don't pass --build to compose (no build: directive)
             else:
                 console.print(
-                    "[yellow]Warning:[/yellow] --build ignored — compose file "
+                    "[nexus.warning]Warning:[/nexus.warning] --build ignored — compose file "
                     f"({Path(cf).name}) has no build: directive and no Dockerfile found."
                 )
                 build = False
@@ -845,7 +857,7 @@ def up(
 
     result = _run_compose(cf, profiles, *compose_args, extra_env=compose_env)
     if result.returncode != 0:
-        console.print("[red]Error:[/red] Docker Compose failed to start.")
+        console.print("[nexus.error]Error:[/nexus.error] Docker Compose failed to start.")
         raise SystemExit(result.returncode)
 
     if not detach:
@@ -862,14 +874,16 @@ def up(
     all_healthy = True
     for service, elapsed, healthy in results:
         if healthy:
-            console.print(f"  [green]✓[/green] {service} ({elapsed:.1f}s)")
+            console.print(f"  [nexus.success]✓[/nexus.success] {service} ({elapsed:.1f}s)")
         else:
-            console.print(f"  [red]✗[/red] {service} (timed out after {elapsed:.0f}s)")
+            console.print(
+                f"  [nexus.error]✗[/nexus.error] {service} (timed out after {elapsed:.0f}s)"
+            )
             all_healthy = False
 
     if not all_healthy:
         console.print()
-        console.print("[yellow]Some services did not become healthy.[/yellow]")
+        console.print("[nexus.warning]Some services did not become healthy.[/nexus.warning]")
         console.print("  Run `nexus logs` to investigate.")
         raise SystemExit(1)
 
@@ -979,7 +993,9 @@ def down(volumes: bool) -> None:
     preset = config.get("preset", "local")
 
     if preset == "local":
-        console.print("[yellow]Preset 'local' has no Docker services to stop.[/yellow]")
+        console.print(
+            "[nexus.warning]Preset 'local' has no Docker services to stop.[/nexus.warning]"
+        )
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
@@ -1008,11 +1024,11 @@ def down(volumes: bool) -> None:
                     shutil.rmtree(rd) if rd.is_dir() else rd.unlink()
             if raft_dirs:
                 console.print(
-                    f"[dim]  Cleared {len(raft_dirs)} Raft state path(s) from {data_dir}[/dim]"
+                    f"[nexus.muted]  Cleared {len(raft_dirs)} Raft state path(s) from {data_dir}[/nexus.muted]"
                 )
-        console.print("[green]✓[/green] Stack stopped.")
+        console.print("[nexus.success]✓[/nexus.success] Stack stopped.")
     else:
-        console.print("[red]Error:[/red] Failed to stop stack.")
+        console.print("[nexus.error]Error:[/nexus.error] Failed to stop stack.")
         raise SystemExit(result.returncode)
 
 
@@ -1064,7 +1080,9 @@ def restart(build: bool | None) -> None:
     preset = config.get("preset", "local")
 
     if preset == "local":
-        console.print("[yellow]Preset 'local' has no Docker services to restart.[/yellow]")
+        console.print(
+            "[nexus.warning]Preset 'local' has no Docker services to restart.[/nexus.warning]"
+        )
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
@@ -1081,7 +1099,7 @@ def restart(build: bool | None) -> None:
             compose_env.pop("NEXUS_IMAGE_REF", None)
         else:
             console.print(
-                "[yellow]Warning:[/yellow] --build ignored — compose file "
+                "[nexus.warning]Warning:[/nexus.warning] --build ignored — compose file "
                 f"({Path(cf).name}) has no build: directive."
             )
             build = False
@@ -1096,9 +1114,9 @@ def restart(build: bool | None) -> None:
         args.extend(["--pull", "always"])
     result = _run_compose(cf, profiles, *args, extra_env=compose_env)
     if result.returncode == 0:
-        console.print("[green]✓[/green] Stack restarted.")
+        console.print("[nexus.success]✓[/nexus.success] Stack restarted.")
     else:
-        console.print("[red]Error:[/red] Failed to restart stack.")
+        console.print("[nexus.error]Error:[/nexus.error] Failed to restart stack.")
         raise SystemExit(result.returncode)
 
 
@@ -1149,13 +1167,15 @@ def upgrade(
     preset = config.get("preset", "local")
 
     if preset == "local":
-        console.print("[yellow]Preset 'local' does not use a prebuilt image.[/yellow]")
+        console.print(
+            "[nexus.warning]Preset 'local' does not use a prebuilt image.[/nexus.warning]"
+        )
         raise SystemExit(0)
 
     # Validate --channel against known channels
     if channel and channel not in VALID_CHANNELS:
         console.print(
-            f"[red]Error:[/red] Unknown channel '{channel}'. "
+            f"[nexus.error]Error:[/nexus.error] Unknown channel '{channel}'. "
             f"Valid channels: {', '.join(VALID_CHANNELS)}"
         )
         raise SystemExit(1)
@@ -1164,7 +1184,7 @@ def upgrade(
     pin_mode = config.get("image_pin", "")
     if pin_mode and not (image_tag or image_digest or channel):
         console.print(
-            f"[yellow]Warning:[/yellow] This config is pinned via {pin_mode}. "
+            f"[nexus.warning]Warning:[/nexus.warning] This config is pinned via {pin_mode}. "
             "Use --image-tag or --image-digest to change the pin, "
             "or --channel to switch to channel-following mode."
         )
@@ -1191,14 +1211,14 @@ def upgrade(
         compose_env = _derive_project_env(config)
         pull_result = _run_compose(cf, profiles, "pull", "nexus", extra_env=compose_env)
         if pull_result.returncode != 0:
-            console.print("[red]Error:[/red] Failed to pull image.")
+            console.print("[nexus.error]Error:[/nexus.error] Failed to pull image.")
             raise SystemExit(pull_result.returncode)
-        console.print(f"[green]✓[/green] Pulled latest {new_ref}")
+        console.print(f"[nexus.success]✓[/nexus.success] Pulled latest {new_ref}")
         console.print("  Run `nexus restart` to apply.")
         return
 
     if new_ref == current_ref:
-        console.print(f"[green]Already up to date:[/green] {current_ref}")
+        console.print(f"[nexus.success]Already up to date:[/nexus.success] {current_ref}")
         return
 
     console.print("[bold]Image upgrade:[/bold]")
@@ -1225,7 +1245,7 @@ def upgrade(
     config.pop("image_tag", None)
 
     _save_project_config(config)
-    console.print(f"[green]✓[/green] Updated nexus.yaml → {new_ref}")
+    console.print(f"[nexus.success]✓[/nexus.success] Updated nexus.yaml → {new_ref}")
     console.print("  Run `nexus restart` to apply.")
 
 
@@ -1244,7 +1264,9 @@ def stop() -> None:
     preset = config.get("preset", "local")
 
     if preset == "local":
-        console.print("[yellow]Preset 'local' has no Docker services to stop.[/yellow]")
+        console.print(
+            "[nexus.warning]Preset 'local' has no Docker services to stop.[/nexus.warning]"
+        )
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
@@ -1253,9 +1275,9 @@ def stop() -> None:
 
     result = _run_compose(cf, profiles, "stop", extra_env=compose_env)
     if result.returncode == 0:
-        console.print("[green]✓[/green] Stack paused. Resume with `nexus start`.")
+        console.print("[nexus.success]✓[/nexus.success] Stack paused. Resume with `nexus start`.")
     else:
-        console.print("[red]Error:[/red] Failed to stop stack.")
+        console.print("[nexus.error]Error:[/nexus.error] Failed to stop stack.")
         raise SystemExit(result.returncode)
 
 
@@ -1273,7 +1295,9 @@ def start() -> None:
     preset = config.get("preset", "local")
 
     if preset == "local":
-        console.print("[yellow]Preset 'local' has no Docker services to start.[/yellow]")
+        console.print(
+            "[nexus.warning]Preset 'local' has no Docker services to start.[/nexus.warning]"
+        )
         raise SystemExit(0)
 
     cf = config.get("compose_file", "./nexus-stack.yml")
@@ -1282,7 +1306,7 @@ def start() -> None:
 
     result = _run_compose(cf, profiles, "start", extra_env=compose_env)
     if result.returncode == 0:
-        console.print("[green]✓[/green] Stack resumed.")
+        console.print("[nexus.success]✓[/nexus.success] Stack resumed.")
     else:
-        console.print("[red]Error:[/red] Failed to start stack.")
+        console.print("[nexus.error]Error:[/nexus.error] Failed to start stack.")
         raise SystemExit(result.returncode)

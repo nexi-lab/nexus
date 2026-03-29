@@ -16,23 +16,19 @@ from datetime import UTC, datetime
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
-    console,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Type alias for the RPC transport callable returned by get_admin_rpc().
 AdminRPC = Callable[[str, dict[str, Any] | None], Any]
-
-# Rich console for output
-_console = Console()
 
 
 def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
@@ -53,12 +49,14 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
         SystemExit: If URL or API key not provided
     """
     if not url:
-        console.print("[red]Error:[/red] Server URL required. Set NEXUS_URL or use --remote-url")
+        console.print(
+            "[nexus.error]Error:[/nexus.error] Server URL required. Set NEXUS_URL or use --remote-url"
+        )
         sys.exit(1)
 
     if not api_key:
         console.print(
-            "[red]Error:[/red] Admin API key required. Set NEXUS_API_KEY or use --remote-api-key"
+            "[nexus.error]Error:[/nexus.error] Admin API key required. Set NEXUS_API_KEY or use --remote-api-key"
         )
         sys.exit(1)
 
@@ -226,9 +224,9 @@ def create_user(
             result = call_rpc("admin_create_key", params)
 
         def _render(data: dict[str, Any]) -> None:
-            console.print("[green]\u2713[/green] User created successfully")
+            console.print("[nexus.success]\u2713[/nexus.success] User created successfully")
             console.print(
-                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+                "\n[nexus.warning]\u26a0 Save this API key - it will only be shown once![/nexus.warning]\n"
             )
             console.print(f"User ID:     {data['user_id']}")
             console.print(f"Key ID:      {data['key_id']}")
@@ -241,7 +239,7 @@ def create_user(
                 _print_grants(data["grants"])
 
             if email:
-                console.print(f"\n[dim]Email: {email}[/dim]")
+                console.print(f"\n[nexus.muted]Email: {email}[/nexus.muted]")
 
         render_output(
             data=result,
@@ -251,7 +249,7 @@ def create_user(
         )
 
     except Exception as e:
-        console.print(f"[red]Error creating user:[/red] {e}")
+        console.print(f"[nexus.error]Error creating user:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -316,34 +314,34 @@ def list_users(
             keys = result.get("keys", [])
 
         if not keys:
-            console.print("[yellow]No users found.[/yellow]")
+            console.print("[nexus.warning]No users found.[/nexus.warning]")
             return
 
         def _render(data: list[dict[str, Any]]) -> None:
             # Create table
             table = Table(title=f"API Keys ({len(data)} total)")
-            table.add_column("User ID", style="cyan")
-            table.add_column("Name", style="white")
-            table.add_column("Key ID", style="dim")
-            table.add_column("Admin", style="green")
-            table.add_column("Created", style="blue")
-            table.add_column("Expires", style="yellow")
-            table.add_column("Status", style="white")
+            table.add_column("User ID", style="nexus.value")
+            table.add_column("Name")
+            table.add_column("Key ID", style="nexus.muted")
+            table.add_column("Admin", style="nexus.success")
+            table.add_column("Created", style="nexus.reference")
+            table.add_column("Expires", style="nexus.warning")
+            table.add_column("Status")
 
             for key in data:
                 # Determine status
                 status = "Active"
-                status_style = "green"
+                status_style = "nexus.success"
                 if key.get("revoked"):
                     status = "Revoked"
-                    status_style = "red"
+                    status_style = "nexus.error"
                 elif key.get("expires_at"):
                     try:
                         # Parse ISO format datetime
                         expires = datetime.fromisoformat(key["expires_at"].replace("Z", "+00:00"))
                         if expires < datetime.now(UTC):
                             status = "Expired"
-                            status_style = "yellow"
+                            status_style = "nexus.warning"
                     except (ValueError, TypeError):
                         pass
 
@@ -357,7 +355,7 @@ def list_users(
                     f"[{status_style}]{status}[/{status_style}]",
                 )
 
-            _console.print(table)
+            console.print(table)
 
         render_output(
             data=keys,
@@ -367,7 +365,7 @@ def list_users(
         )
 
     except Exception as e:
-        console.print(f"[red]Error listing users:[/red] {e}")
+        console.print(f"[nexus.error]Error listing users:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -397,7 +395,7 @@ def revoke_key(
             result = call_rpc("admin_revoke_key", {"key_id": key_id})
 
         def _render(data: dict[str, Any]) -> None:  # noqa: ARG001
-            console.print("[green]\u2713[/green] API key revoked successfully")
+            console.print("[nexus.success]\u2713[/nexus.success] API key revoked successfully")
             console.print(f"Key ID: {key_id}")
 
         render_output(
@@ -408,7 +406,7 @@ def revoke_key(
         )
 
     except Exception as e:
-        console.print(f"[red]Error revoking key:[/red] {e}")
+        console.print(f"[nexus.error]Error revoking key:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -461,9 +459,9 @@ def create_key(
             result = call_rpc("admin_create_key", params)
 
         def _render(data: dict[str, Any]) -> None:
-            console.print("[green]\u2713[/green] API key created successfully")
+            console.print("[nexus.success]\u2713[/nexus.success] API key created successfully")
             console.print(
-                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+                "\n[nexus.warning]\u26a0 Save this API key - it will only be shown once![/nexus.warning]\n"
             )
             console.print(f"User ID:     {data['user_id']}")
             console.print(f"Key ID:      {data['key_id']}")
@@ -481,7 +479,7 @@ def create_key(
         )
 
     except Exception as e:
-        console.print(f"[red]Error creating key:[/red] {e}")
+        console.print(f"[nexus.error]Error creating key:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -508,7 +506,7 @@ def get_user(
         nexus admin get-user --key-id d6f5e137-5fce-4e06-9432-6e30324dfad1
     """
     if not user_id and not key_id:
-        console.print("[red]Error:[/red] Must provide either --user-id or --key-id")
+        console.print("[nexus.error]Error:[/nexus.error] Must provide either --user-id or --key-id")
         sys.exit(1)
 
     timing = CommandTiming()
@@ -521,7 +519,9 @@ def get_user(
                 list_result = call_rpc("admin_list_keys", {"user_id": user_id, "limit": 1})
                 keys = list_result.get("keys", [])
                 if not keys:
-                    console.print(f"[red]Error:[/red] No keys found for user '{user_id}'")
+                    console.print(
+                        f"[nexus.error]Error:[/nexus.error] No keys found for user '{user_id}'"
+                    )
                     sys.exit(1)
                 key_id = keys[0]["key_id"]
 
@@ -562,7 +562,7 @@ def get_user(
         )
 
     except Exception as e:
-        console.print(f"[red]Error getting user:[/red] {e}")
+        console.print(f"[nexus.error]Error getting user:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -628,9 +628,11 @@ def create_agent_key(
             result = call_rpc("admin_create_key", params)
 
         def _render(data: dict[str, Any]) -> None:
-            console.print("[green]\u2713[/green] Agent API key created successfully")
             console.print(
-                "\n[yellow]\u26a0 Save this API key - it will only be shown once![/yellow]\n"
+                "[nexus.success]\u2713[/nexus.success] Agent API key created successfully"
+            )
+            console.print(
+                "\n[nexus.warning]\u26a0 Save this API key - it will only be shown once![/nexus.warning]\n"
             )
             console.print(f"User ID:     {data['user_id']}")
             console.print(f"Agent ID:    {agent_id}")
@@ -642,10 +644,10 @@ def create_agent_key(
                 _print_grants(data["grants"])
 
             console.print(
-                "\n[cyan]\u2139 Info:[/cyan] This agent can now authenticate independently."
+                "\n[nexus.value]\u2139 Info:[/nexus.value] This agent can now authenticate independently."
             )
             console.print(
-                "[cyan]\u2139[/cyan] Recommended: Use user auth + X-Agent-ID header instead."
+                "[nexus.value]\u2139[/nexus.value] Recommended: Use user auth + X-Agent-ID header instead."
             )
 
         render_output(
@@ -656,7 +658,7 @@ def create_agent_key(
         )
 
     except Exception as e:
-        console.print(f"[red]Error creating agent key:[/red] {e}")
+        console.print(f"[nexus.error]Error creating agent key:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -689,7 +691,7 @@ def update_key(
         nexus admin update-key <key_id> --is-admin false
     """
     if expires_days is None and is_admin is None:
-        console.print("[red]Error:[/red] Must provide --expires-days or --is-admin")
+        console.print("[nexus.error]Error:[/nexus.error] Must provide --expires-days or --is-admin")
         sys.exit(1)
 
     timing = CommandTiming()
@@ -709,7 +711,7 @@ def update_key(
             result = call_rpc("admin_update_key", params)
 
         def _render(data: dict[str, Any]) -> None:
-            console.print("[green]\u2713[/green] API key updated successfully")
+            console.print("[nexus.success]\u2713[/nexus.success] API key updated successfully")
             console.print(f"Key ID: {key_id}")
             if expires_days is not None:
                 console.print(f"New expiry: {data.get('expires_at', 'N/A')}")
@@ -724,7 +726,7 @@ def update_key(
         )
 
     except Exception as e:
-        console.print(f"[red]Error updating key:[/red] {e}")
+        console.print(f"[nexus.error]Error updating key:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -779,12 +781,16 @@ def gc_versions(
             result = call_rpc("admin_gc_versions", params)
 
         def _render(data: dict[str, Any]) -> None:
-            mode = "[yellow]DRY RUN[/yellow]" if dry_run else "[green]EXECUTED[/green]"
+            mode = (
+                "[nexus.warning]DRY RUN[/nexus.warning]"
+                if dry_run
+                else "[nexus.success]EXECUTED[/nexus.success]"
+            )
             console.print(f"\n{mode} Version History Garbage Collection\n")
 
             table = Table(show_header=False, box=None)
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="white")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value")
 
             table.add_row("Deleted by age:", str(data.get("deleted_by_age", 0)))
             table.add_row("Deleted by count:", str(data.get("deleted_by_count", 0)))
@@ -800,10 +806,12 @@ def gc_versions(
             table.add_row("Space reclaimed:", size_str)
             table.add_row("Duration:", f"{data.get('duration_seconds', 0):.2f}s")
 
-            _console.print(table)
+            console.print(table)
 
             if dry_run:
-                console.print("\n[dim]Run with --execute to perform actual deletion[/dim]")
+                console.print(
+                    "\n[nexus.muted]Run with --execute to perform actual deletion[/nexus.muted]"
+                )
 
         render_output(
             data=result,
@@ -813,7 +821,7 @@ def gc_versions(
         )
 
     except Exception as e:
-        console.print(f"[red]Error running GC:[/red] {e}")
+        console.print(f"[nexus.error]Error running GC:[/nexus.error] {e}")
         sys.exit(1)
 
 
@@ -846,8 +854,8 @@ def gc_versions_stats(
             console.print("\n[bold]Version History Statistics[/bold]\n")
 
             table = Table(show_header=False, box=None)
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="white")
+            table.add_column("Metric", style="nexus.value")
+            table.add_column("Value")
 
             table.add_row("Total versions:", f"{data.get('total_versions', 0):,}")
             table.add_row("Unique resources:", f"{data.get('unique_resources', 0):,}")
@@ -872,7 +880,7 @@ def gc_versions_stats(
                 data.get("newest_version", "N/A")[:19] if data.get("newest_version") else "N/A",
             )
 
-            _console.print(table)
+            console.print(table)
 
             # Show GC config
             gc_config = data.get("gc_config", {})
@@ -880,11 +888,13 @@ def gc_versions_stats(
                 console.print("\n[bold]GC Configuration[/bold]\n")
 
                 config_table = Table(show_header=False, box=None)
-                config_table.add_column("Setting", style="cyan")
-                config_table.add_column("Value", style="white")
+                config_table.add_column("Setting", style="nexus.value")
+                config_table.add_column("Value")
 
                 status = (
-                    "[green]Enabled[/green]" if gc_config.get("enabled") else "[red]Disabled[/red]"
+                    "[nexus.success]Enabled[/nexus.success]"
+                    if gc_config.get("enabled")
+                    else "[nexus.error]Disabled[/nexus.error]"
                 )
                 config_table.add_row("Status:", status)
                 config_table.add_row("Retention:", f"{gc_config.get('retention_days', 30)} days")
@@ -895,7 +905,7 @@ def gc_versions_stats(
                     "Run interval:", f"{gc_config.get('run_interval_hours', 24)} hours"
                 )
 
-                _console.print(config_table)
+                console.print(config_table)
 
         render_output(
             data=result,
@@ -905,7 +915,7 @@ def gc_versions_stats(
         )
 
     except Exception as e:
-        console.print(f"[red]Error getting stats:[/red] {e}")
+        console.print(f"[nexus.error]Error getting stats:[/nexus.error] {e}")
         sys.exit(1)
 
 

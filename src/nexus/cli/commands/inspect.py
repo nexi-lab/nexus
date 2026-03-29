@@ -90,8 +90,8 @@ async def _async_info(
 
         def _print_human(d: dict[str, Any]) -> None:
             table = Table(title=f"File Information: {path}")
-            table.add_column("Property", style="cyan")
-            table.add_column("Value", style="green")
+            table.add_column("Property", style="nexus.value")
+            table.add_column("Value", style="nexus.success")
             table.add_row("Path", d["path"])
             table.add_row("Size", f"{d['size']:,} bytes")
             table.add_row("Created", d["created_at"])
@@ -117,7 +117,9 @@ async def _async_info(
 @click.command()
 def version() -> None:
     """Show Nexus version information."""
-    console.print(f"[cyan]Nexus[/cyan] version [green]{nexus.__version__}[/green]")
+    console.print(
+        f"[nexus.value]Nexus[/nexus.value] version [nexus.success]{nexus.__version__}[/nexus.success]"
+    )
 
 
 @click.command(name="size")
@@ -157,13 +159,15 @@ async def _async_size(
         nx = await get_filesystem(remote_url, remote_api_key)
 
         # Get all files with details
-        with console.status(f"[yellow]Calculating size of {path}...[/yellow]", spinner="dots"):
+        with console.status(
+            f"[nexus.warning]Calculating size of {path}...[/nexus.warning]", spinner="dots"
+        ):
             files_raw = await nx.sys_readdir(path, recursive=True, details=True)
 
         nx.close()
 
         if not files_raw:
-            console.print(f"[yellow]No files found in {path}[/yellow]")
+            console.print(f"[nexus.warning]No files found in {path}[/nexus.warning]")
             return
 
         files = cast(list[dict[str, Any]], files_raw)
@@ -185,9 +189,9 @@ async def _async_size(
             return f"{size_float:.1f} PB"
 
         # Display summary
-        console.print(f"[bold cyan]Size of {path}:[/bold cyan]")
-        console.print(f"  Total size: [green]{format_size(total_size)}[/green]")
-        console.print(f"  File count: [cyan]{file_count:,}[/cyan]")
+        console.print(f"[bold nexus.value]Size of {path}:[/bold nexus.value]")
+        console.print(f"  Total size: [nexus.success]{format_size(total_size)}[/nexus.success]")
+        console.print(f"  File count: [nexus.value]{file_count:,}[/nexus.value]")
 
         if details:
             console.print()
@@ -197,8 +201,8 @@ async def _async_size(
             sorted_files = sorted(files, key=lambda f: f["size"], reverse=True)[:10]
 
             table = Table()
-            table.add_column("Size", justify="right", style="green")
-            table.add_column("Path", style="cyan")
+            table.add_column("Size", justify="right", style="nexus.success")
+            table.add_column("Path", style="nexus.path")
 
             for file in sorted_files:
                 table.add_row(format_size(file["size"]), file["path"])

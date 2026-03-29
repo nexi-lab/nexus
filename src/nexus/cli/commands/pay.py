@@ -55,9 +55,9 @@ def pay_balance(
             data = rpc_call(remote_url, remote_api_key, "pay_balance", agent_id=agent_id)
 
         def _render(d: dict) -> None:
-            console.print("[bold cyan]Balance[/bold cyan]")
-            console.print(f"  Available: [green]{d.get('available', '0')}[/green]")
-            console.print(f"  Reserved:  [yellow]{d.get('reserved', '0')}[/yellow]")
+            console.print("[bold nexus.value]Balance[/bold nexus.value]")
+            console.print(f"  Available: [nexus.success]{d.get('available', '0')}[/nexus.success]")
+            console.print(f"  Reserved:  [nexus.warning]{d.get('reserved', '0')}[/nexus.warning]")
             console.print(f"  Total:     [bold]{d.get('total', '0')}[/bold]")
 
         render_output(
@@ -67,7 +67,7 @@ def pay_balance(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -116,7 +116,7 @@ def pay_transfer(
             )
 
         def _render(d: dict) -> None:
-            console.print("[green]Transfer successful[/green]")
+            console.print("[nexus.success]Transfer successful[/nexus.success]")
             console.print(f"  ID:     {d.get('id', 'N/A')}")
             console.print(f"  To:     {d.get('to_agent', to)}")
             console.print(f"  Amount: {d.get('amount', amount)}")
@@ -131,7 +131,7 @@ def pay_transfer(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -166,14 +166,14 @@ def pay_history(
 
             txns = d.get("transactions", [])
             if not txns:
-                console.print("[yellow]No transactions found[/yellow]")
+                console.print("[nexus.warning]No transactions found[/nexus.warning]")
                 return
 
             table = Table(title="Payment History")
-            table.add_column("Time", style="dim")
+            table.add_column("Time", style="nexus.muted")
             table.add_column("From")
             table.add_column("To")
-            table.add_column("Amount", justify="right", style="green")
+            table.add_column("Amount", justify="right", style="nexus.success")
             table.add_column("Status")
 
             for tx in txns:
@@ -193,5 +193,5 @@ def pay_history(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

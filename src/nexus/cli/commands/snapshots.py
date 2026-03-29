@@ -68,7 +68,7 @@ def snapshot_create(
             )
 
         def _render(d: dict) -> None:
-            console.print("[green]Snapshot created[/green]")
+            console.print("[nexus.success]Snapshot created[/nexus.success]")
             console.print(f"  Transaction ID: [bold]{d.get('transaction_id', 'N/A')}[/bold]")
             console.print(f"  Status:         {d.get('status', 'N/A')}")
             expires = d.get("expires_at", "N/A")
@@ -85,7 +85,7 @@ def snapshot_create(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -115,24 +115,24 @@ def snapshot_list(
 
             txns = d.get("transactions", [])
             if not txns:
-                console.print("[yellow]No snapshots found[/yellow]")
+                console.print("[nexus.warning]No snapshots found[/nexus.warning]")
                 return
 
             table = Table(title=f"Snapshots ({len(txns)})")
             table.add_column("Transaction ID", style="bold")
             table.add_column("Status")
             table.add_column("Description")
-            table.add_column("Created", style="dim")
+            table.add_column("Created", style="nexus.muted")
             table.add_column("Entries", justify="right")
 
             for tx in txns:
                 status = tx.get("status", "")
                 status_style = (
-                    "green"
+                    "nexus.success"
                     if status == "committed"
-                    else "red"
+                    else "nexus.error"
                     if status == "rolled_back"
-                    else "yellow"
+                    else "nexus.warning"
                 )
                 table.add_row(
                     tx.get("transaction_id", "")[:12] + "...",
@@ -150,7 +150,7 @@ def snapshot_list(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None
 
 
@@ -178,7 +178,7 @@ def snapshot_restore(
             data = rpc_call(remote_url, remote_api_key, "snapshot_restore", txn_id=txn_id)
 
         def _render(d: dict) -> None:
-            console.print(f"[green]Snapshot restored:[/green] {txn_id}")
+            console.print(f"[nexus.success]Snapshot restored:[/nexus.success] {txn_id}")
             if d:
                 console.print(f"  Status: {d.get('status', 'rolled_back')}")
 
@@ -189,5 +189,5 @@ def snapshot_restore(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

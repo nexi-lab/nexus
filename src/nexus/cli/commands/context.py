@@ -3,12 +3,10 @@
 from typing import Any
 
 import click
-from rich.console import Console
 from rich.table import Table
 
+from nexus.cli.theme import console
 from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
-
-console = Console()
 
 
 def _get_branch_service(nx: Any) -> Any:
@@ -58,12 +56,14 @@ def commit_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available (service not configured)[/red]")
+            console.print(
+                "[nexus.error]Context branching not available (service not configured)[/nexus.error]"
+            )
             return
         result = svc.commit(workspace, message=message, branch_name=branch)
         snap = result["snapshot"]
         console.print(
-            f"[green]✓[/green] Committed v{snap['snapshot_number']} on branch '{result['branch']}'"
+            f"[nexus.success]✓[/nexus.success] Committed v{snap['snapshot_number']} on branch '{result['branch']}'"
         )
         if snap.get("description"):
             console.print(f"  Message: {snap['description']}")
@@ -94,11 +94,11 @@ def branch_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.create_branch(workspace, name, from_branch=from_branch)
         console.print(
-            f"[green]✓[/green] Created branch '{result.branch_name}' "
+            f"[nexus.success]✓[/nexus.success] Created branch '{result.branch_name}' "
             f"from '{result.parent_branch or 'main'}'"
         )
         if result.fork_point_id:
@@ -128,10 +128,10 @@ def checkout_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.checkout(workspace, target)
-        console.print(f"[green]✓[/green] Switched to branch '{result['branch']}'")
+        console.print(f"[nexus.success]✓[/nexus.success] Switched to branch '{result['branch']}'")
         if result.get("restore_info"):
             ri = result["restore_info"]
             console.print(
@@ -172,16 +172,16 @@ def merge_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
         if result.fast_forward:
             console.print(
-                f"[green]✓[/green] Fast-forward merge: '{source}' → '{target or 'current'}'"
+                f"[nexus.success]✓[/nexus.success] Fast-forward merge: '{source}' → '{target or 'current'}'"
             )
         else:
             console.print(
-                f"[green]✓[/green] Merged '{source}' → '{target or 'current'}' "
+                f"[nexus.success]✓[/nexus.success] Merged '{source}' → '{target or 'current'}' "
                 f"(+{result.files_added} -{result.files_removed} ~{result.files_modified})"
             )
         nx.close()
@@ -209,24 +209,24 @@ def log_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         snapshots = svc.log(workspace, limit=limit)
 
         if not snapshots:
-            console.print("[dim]No snapshots found[/dim]")
+            console.print("[nexus.muted]No snapshots found[/nexus.muted]")
             nx.close()
             return
 
         table = Table(title=f"Context Log: {workspace}")
         table.add_column("#", style="bold")
         table.add_column("Description")
-        table.add_column("Created", style="dim")
+        table.add_column("Created", style="nexus.muted")
 
         for s in snapshots:
             table.add_row(
                 str(s.get("snapshot_number", "")),
-                s.get("description", "") or "[dim]no message[/dim]",
+                s.get("description", "") or "[nexus.muted]no message[/nexus.muted]",
                 str(s.get("created_at", ""))[:19],
             )
 
@@ -256,12 +256,12 @@ def branches_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         branches = svc.list_branches(workspace, include_inactive=show_all)
 
         if not branches:
-            console.print("[dim]No branches found[/dim]")
+            console.print("[nexus.muted]No branches found[/nexus.muted]")
             nx.close()
             return
 
@@ -273,13 +273,15 @@ def branches_cmd(
         table.add_column("Parent")
 
         for b in branches:
-            status_color = {"active": "green", "merged": "blue", "discarded": "red"}.get(
-                b.status, "white"
-            )
+            status_color = {
+                "active": "nexus.success",
+                "merged": "nexus.reference",
+                "discarded": "nexus.error",
+            }.get(b.status, "")
             table.add_row(
                 b.branch_name,
                 f"[{status_color}]{b.status}[/{status_color}]",
-                "[green]*[/green]" if b.is_current else "",
+                "[nexus.success]*[/nexus.success]" if b.is_current else "",
                 (b.head_snapshot_id or "")[:12],
                 b.parent_branch or "",
             )
@@ -311,21 +313,21 @@ def diff_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.diff(workspace, from_ref, to_ref)
         added = result.get("added", [])
         removed = result.get("removed", [])
         modified = result.get("modified", [])
         console.print(
-            f"[green]+{len(added)}[/green] added, [red]-{len(removed)}[/red] removed, [yellow]~{len(modified)}[/yellow] modified"
+            f"[nexus.success]+{len(added)}[/nexus.success] added, [nexus.error]-{len(removed)}[/nexus.error] removed, [nexus.warning]~{len(modified)}[/nexus.warning] modified"
         )
         for f in added:
-            console.print(f"  [green]+[/green] {f['path']}")
+            console.print(f"  [nexus.success]+[/nexus.success] {f['path']}")
         for f in removed:
-            console.print(f"  [red]-[/red] {f['path']}")
+            console.print(f"  [nexus.error]-[/nexus.error] {f['path']}")
         for f in modified:
-            console.print(f"  [yellow]~[/yellow] {f['path']}")
+            console.print(f"  [nexus.warning]~[/nexus.warning] {f['path']}")
         nx.close()
     except Exception as e:
         handle_error(e)
@@ -350,12 +352,14 @@ def explore_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.explore(workspace, description)
-        console.print(f"[green]✓[/green] Exploring on branch '{result.branch_name}'")
+        console.print(
+            f"[nexus.success]✓[/nexus.success] Exploring on branch '{result.branch_name}'"
+        )
         if result.skipped_commit:
-            console.print("  [dim]Skipped auto-commit (workspace unchanged)[/dim]")
+            console.print("  [nexus.muted]Skipped auto-commit (workspace unchanged)[/nexus.muted]")
         if result.fork_point_snapshot_id:
             console.print(f"  Fork point: {result.fork_point_snapshot_id[:12]}...")
         nx.close()
@@ -397,14 +401,16 @@ def finish_cmd(
         nx = get_filesystem(remote_url, remote_api_key)
         svc = _get_branch_service(nx)
         if not svc:
-            console.print("[red]Context branching not available[/red]")
+            console.print("[nexus.error]Context branching not available[/nexus.error]")
             return
         result = svc.finish_explore(workspace, branch, outcome=outcome, strategy=strategy)
         if result["outcome"] == "merged":
-            console.print(f"[green]✓[/green] Merged '{branch}' into '{result['merged_into']}'")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Merged '{branch}' into '{result['merged_into']}'"
+            )
         else:
             console.print(
-                f"[yellow]✓[/yellow] Discarded branch '{branch}', returned to '{result['returned_to']}'"
+                f"[nexus.warning]✓[/nexus.warning] Discarded branch '{branch}', returned to '{result['returned_to']}'"
             )
         nx.close()
     except Exception as e:

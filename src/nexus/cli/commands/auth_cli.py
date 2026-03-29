@@ -14,7 +14,7 @@ from rich.table import Table
 
 from nexus.bricks.auth.unified_service import UnifiedAuthService
 from nexus.cli.commands.oauth import get_token_manager, setup_x
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 
@@ -203,11 +203,13 @@ def _print_connect_success(
     *,
     source: str = "stored",
 ) -> None:
-    console.print(f"[green]ok[/green] {service_name}: {source} {kind.value} auth is configured")
-    console.print(f"[dim]Secret store: {store_path}[/dim]")
+    console.print(
+        f"[nexus.success]ok[/nexus.success] {service_name}: {source} {kind.value} auth is configured"
+    )
+    console.print(f"[nexus.muted]Secret store: {store_path}[/nexus.muted]")
     if fields:
-        console.print(f"[dim]Fields: {', '.join(fields)}[/dim]")
-    console.print(f"[dim]Next: nexus auth test {service_name}[/dim]")
+        console.print(f"[nexus.muted]Fields: {', '.join(fields)}[/nexus.muted]")
+    console.print(f"[nexus.muted]Next: nexus auth test {service_name}[/nexus.muted]")
 
 
 def _ensure_google_oauth_env() -> None:
@@ -253,15 +255,17 @@ def _run_google_oauth_setup(service_name: str, user_email: str) -> None:
     )
     auth_url = provider.get_authorization_url()
 
-    console.print("\n[bold green]Google OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]Google OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]Service:[/bold] {service_name}")
     console.print(f"[bold]User:[/bold] {user_email}")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost."
     )
-    console.print("[bold yellow]Step 3:[/bold yellow] Copy the `code` parameter from that URL.")
+    console.print(
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the `code` parameter from that URL."
+    )
     auth_code = click.prompt("\nEnter authorization code")
 
     async def _exchange_and_store() -> str:
@@ -279,10 +283,12 @@ def _run_google_oauth_setup(service_name: str, user_email: str) -> None:
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
-        console.print(f"\n[green]ok[/green] stored Google OAuth credentials for {user_email}")
-        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
+        console.print(
+            f"\n[nexus.success]ok[/nexus.success] stored Google OAuth credentials for {user_email}"
+        )
+        console.print(f"[nexus.muted]Credential ID: {cred_id}[/nexus.muted]")
     except Exception as exc:
-        console.print(f"\n[red]OAuth setup failed:[/red] {exc}")
+        console.print(f"\n[nexus.error]OAuth setup failed:[/nexus.error] {exc}")
         sys.exit(1)
 
 
@@ -311,11 +317,11 @@ def list_auth() -> None:
     service = _build_auth_service()
     summaries = asyncio.run(service.list_summaries())
 
-    table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
-    table.add_column("Service", style="green")
-    table.add_column("Kind", style="cyan")
-    table.add_column("Status", style="yellow")
-    table.add_column("Source", style="blue")
+    table = Table(title="Unified Auth", show_header=True, header_style="nexus.table_header")
+    table.add_column("Service", style="nexus.success")
+    table.add_column("Kind", style="nexus.value")
+    table.add_column("Status", style="nexus.warning")
+    table.add_column("Source", style="nexus.reference")
     table.add_column("Message")
 
     for summary in summaries:
@@ -328,7 +334,7 @@ def list_auth() -> None:
         )
 
     console.print(table)
-    console.print(f"[dim]Secret store: {service.secret_store_path}[/dim]")
+    console.print(f"[nexus.muted]Secret store: {service.secret_store_path}[/nexus.muted]")
 
 
 @auth.command("test")
@@ -339,7 +345,7 @@ def test_auth(service_name: str, user_email: str | None) -> None:
     service = _build_auth_service()
     result = asyncio.run(service.test_service(service_name, user_email=user_email))
     if result.get("success"):
-        console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")
+        console.print(f"[nexus.success]ok[/nexus.success] {service_name}: {result.get('message')}")
         return
     raise click.ClickException(f"{service_name}: {result.get('message')}")
 
@@ -405,7 +411,7 @@ def disconnect_auth(service_name: str) -> None:
     removed = service.disconnect(service_name)
     if not removed:
         raise click.ClickException(f"No stored auth found for '{service_name}'.")
-    console.print(f"[green]ok[/green] Removed stored auth for {service_name}")
+    console.print(f"[nexus.success]ok[/nexus.success] Removed stored auth for {service_name}")
 
 
 @auth.command("doctor")
@@ -415,7 +421,7 @@ def auth_doctor() -> None:
     summaries = asyncio.run(service.list_summaries())
     failures = [s for s in summaries if s.status not in {AuthStatus.AUTHED, AuthStatus.UNKNOWN}]
     for summary in summaries:
-        style = "green" if summary.status == AuthStatus.AUTHED else "yellow"
+        style = "nexus.success" if summary.status == AuthStatus.AUTHED else "nexus.warning"
         console.print(
             f"[{style}]{summary.service}[/{style}] {summary.status.value}: {summary.message}"
         )

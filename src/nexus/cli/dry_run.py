@@ -100,19 +100,21 @@ def render_dry_run(
         return
 
     # Human mode: formatted preview
-    from nexus.cli.utils import console
+    from nexus.cli.theme import console
 
     op = preview.get("operation", "unknown")
     path = preview.get("path", "")
     source = preview.get("source", "")
     dest = preview.get("dest", "")
 
-    console.print("[bold yellow]DRY RUN[/bold yellow] — no changes will be made")
+    console.print("[bold nexus.warning]DRY RUN[/bold nexus.warning] — no changes will be made")
 
     if source and dest:
-        console.print(f"  Would {op}: [cyan]{source}[/cyan] → [cyan]{dest}[/cyan]")
+        console.print(
+            f"  Would {op}: [nexus.path]{source}[/nexus.path] → [nexus.path]{dest}[/nexus.path]"
+        )
     elif path:
-        console.print(f"  Would {op}: [cyan]{path}[/cyan]")
+        console.print(f"  Would {op}: [nexus.path]{path}[/nexus.path]")
 
     # Print any additional details
     skip_keys = {"dry_run", "operation", "path", "source", "dest"}

@@ -186,10 +186,10 @@ def _check_file_permissions(path: Path) -> None:
         file_stat = path.stat()
         mode = file_stat.st_mode
         if mode & (stat.S_IRGRP | stat.S_IWGRP | stat.S_IROTH | stat.S_IWOTH):
-            from rich.console import Console
+            from nexus.cli.theme import err_console
 
-            Console(stderr=True).print(
-                f"[yellow]Warning:[/yellow] {path} has permissions "
+            err_console.print(
+                f"[nexus.warning]Warning:[/nexus.warning] {path} has permissions "
                 f"{oct(stat.S_IMODE(mode))}. "
                 f"Recommended: {oct(_FILE_PERMISSIONS)} (owner read/write only). "
                 f"Fix with: chmod 600 {path}"
@@ -267,10 +267,10 @@ def resolve_connection(
         )
 
     if effective_profile_name and effective_profile_name not in config.profiles:
-        from rich.console import Console
+        from nexus.cli.theme import err_console
 
-        Console(stderr=True).print(
-            f"[yellow]Warning:[/yellow] Profile '{effective_profile_name}' "
+        err_console.print(
+            f"[nexus.warning]Warning:[/nexus.warning] Profile '{effective_profile_name}' "
             f"not found in {get_config_path()}. Falling back to local default."
         )
 

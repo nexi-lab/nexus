@@ -62,7 +62,7 @@ def exchange_list(
         output_opts=output_opts,
         timing=timing,
         human_formatter=lambda _d: console.print(
-            "[yellow]Exchange offer listing is not yet available.[/yellow]\n"
+            "[nexus.warning]Exchange offer listing is not yet available.[/nexus.warning]\n"
             "This feature is planned for Phase 2. See issue #2811."
         ),
     )
@@ -92,7 +92,7 @@ def exchange_create(
         output_opts=output_opts,
         timing=timing,
         human_formatter=lambda _d: console.print(
-            "[yellow]Exchange offer creation is not yet available.[/yellow]\n"
+            "[nexus.warning]Exchange offer creation is not yet available.[/nexus.warning]\n"
             "This feature is planned for Phase 2. See issue #2811."
         ),
     )
@@ -119,7 +119,7 @@ def exchange_show(
         output_opts=output_opts,
         timing=timing,
         human_formatter=lambda _d: console.print(
-            "[yellow]Exchange offer details are not yet available.[/yellow]\n"
+            "[nexus.warning]Exchange offer details are not yet available.[/nexus.warning]\n"
             "This feature is planned for Phase 2. See issue #2811."
         ),
     )
@@ -146,7 +146,7 @@ def exchange_cancel(
         output_opts=output_opts,
         timing=timing,
         human_formatter=lambda _d: console.print(
-            "[yellow]Exchange offer cancellation is not yet available.[/yellow]\n"
+            "[nexus.warning]Exchange offer cancellation is not yet available.[/nexus.warning]\n"
             "This feature is planned for Phase 2. See issue #2811."
         ),
     )

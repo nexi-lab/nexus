@@ -74,12 +74,12 @@ def events_replay(
 
             evts = d.get("events", [])
             if not evts:
-                console.print("[yellow]No events found[/yellow]")
+                console.print("[nexus.warning]No events found[/nexus.warning]")
                 return
 
             table = Table(title=f"Events ({len(evts)})")
-            table.add_column("Seq", style="dim", justify="right")
-            table.add_column("Time", style="dim")
+            table.add_column("Seq", style="nexus.muted", justify="right")
+            table.add_column("Time", style="nexus.muted")
             table.add_column("Type")
             table.add_column("Path")
             table.add_column("Agent")
@@ -101,5 +101,5 @@ def events_replay(
             human_formatter=_render,
         )
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[nexus.error]Error:[/nexus.error] {e}")
         raise SystemExit(1) from None

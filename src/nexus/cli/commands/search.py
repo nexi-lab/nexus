@@ -126,7 +126,7 @@ def glob(
 
             def _print_human(entries: list[dict[str, Any]]) -> None:
                 console.print(
-                    f"[green]Found {len(entries)} files matching[/green] [cyan]{pattern}[/cyan]:"
+                    f"[nexus.success]Found {len(entries)} files matching[/nexus.success] [nexus.value]{pattern}[/nexus.value]:"
                 )
                 if long:
                     for entry in entries:
@@ -295,17 +295,17 @@ def grep(
                     return
 
                 console.print(
-                    f"[green]Found {len(m_list)} matches[/green] for [cyan]{pattern}[/cyan]"
+                    f"[nexus.success]Found {len(m_list)} matches[/nexus.success] for [nexus.value]{pattern}[/nexus.value]"
                 )
                 if search_mode != "auto":
-                    console.print(f"[dim]Search mode: {search_mode}[/dim]")
+                    console.print(f"[nexus.muted]Search mode: {search_mode}[/nexus.muted]")
                 console.print()
 
                 for filename in sorted(by_file.keys()):
-                    console.print(f"[bold cyan]{filename}[/bold cyan]")
+                    console.print(f"[bold nexus.value]{filename}[/bold nexus.value]")
                     for m in by_file[filename]:
                         ln = f"{m['line']}:" if line_number else ""
-                        console.print(f"  [yellow]{ln}[/yellow] {m['content']}")
+                        console.print(f"  [nexus.warning]{ln}[/nexus.warning] {m['content']}")
                     console.print()
 
             render_output(
@@ -390,7 +390,9 @@ def search_init(
         try:
             nx = await get_filesystem(remote_url, remote_api_key)
 
-            with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
+            with console.status(
+                "[nexus.warning]Initializing search engine...[/nexus.warning]", spinner="dots"
+            ):
                 nx.service("search").ainitialize_semantic_search(
                     nx=nx,
                     record_store_engine=None,
@@ -401,14 +403,20 @@ def search_init(
                     chunk_strategy=chunk_strategy,
                 )
 
-            console.print("[green]✓ Search engine initialized successfully![/green]")
-            console.print("  Mode: [cyan]Remote (server-side)[/cyan]")
-            console.print(f"  Provider: [cyan]{provider or 'None (keyword-only)'}[/cyan]")
-            console.print(f"  Chunk size: [cyan]{chunk_size}[/cyan] tokens")
-            console.print(f"  Chunk strategy: [cyan]{chunk_strategy}[/cyan]")
+            console.print(
+                "[nexus.success]✓ Search engine initialized successfully![/nexus.success]"
+            )
+            console.print("  Mode: [nexus.value]Remote (server-side)[/nexus.value]")
+            console.print(
+                f"  Provider: [nexus.value]{provider or 'None (keyword-only)'}[/nexus.value]"
+            )
+            console.print(f"  Chunk size: [nexus.value]{chunk_size}[/nexus.value] tokens")
+            console.print(f"  Chunk strategy: [nexus.value]{chunk_strategy}[/nexus.value]")
 
             if not provider:
-                console.print("\n[yellow]Note:[/yellow] Keyword-only mode enabled (FTS).")
+                console.print(
+                    "\n[nexus.warning]Note:[/nexus.warning] Keyword-only mode enabled (FTS)."
+                )
                 console.print(
                     "For semantic/hybrid search, reinitialize with --provider openai (recommended) or voyage"
                 )
@@ -449,7 +457,9 @@ def search_index(
         try:
             nx = await get_filesystem(remote_url, remote_api_key)
 
-            with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
+            with console.status(
+                f"[nexus.warning]Indexing {path}...[/nexus.warning]", spinner="dots"
+            ):
                 search_svc = nx.service("search")
                 raw_results = search_svc.semantic_search_index(path, recursive=recursive)
 
@@ -465,17 +475,19 @@ def search_index(
             successful = sum(1 for v in results.values() if isinstance(v, int) and v > 0)
             failed = sum(1 for v in results.values() if isinstance(v, int) and v < 0)
 
-            console.print("\n[green]✓ Indexing complete![/green]")
-            console.print(f"  Files indexed: [cyan]{successful}[/cyan]")
-            console.print(f"  Total chunks: [cyan]{total_chunks}[/cyan]")
+            console.print("\n[nexus.success]✓ Indexing complete![/nexus.success]")
+            console.print(f"  Files indexed: [nexus.value]{successful}[/nexus.value]")
+            console.print(f"  Total chunks: [nexus.value]{total_chunks}[/nexus.value]")
             if failed > 0:
-                console.print(f"  Failed: [yellow]{failed}[/yellow]")
+                console.print(f"  Failed: [nexus.warning]{failed}[/nexus.warning]")
 
             # Show stats
             stats: dict[str, Any] = search_svc.semantic_search_stats()
-            console.print("\n[bold cyan]Index Statistics:[/bold cyan]")
-            console.print(f"  Total indexed files: [green]{stats['indexed_files']}[/green]")
-            console.print(f"  Total chunks: [green]{stats['total_chunks']}[/green]")
+            console.print("\n[bold nexus.value]Index Statistics:[/bold nexus.value]")
+            console.print(
+                f"  Total indexed files: [nexus.success]{stats['indexed_files']}[/nexus.success]"
+            )
+            console.print(f"  Total chunks: [nexus.success]{stats['total_chunks']}[/nexus.success]")
 
             nx.close()
         except Exception as e:
@@ -526,7 +538,9 @@ def search_query(
         try:
             nx = await get_filesystem(remote_url, remote_api_key)
 
-            with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
+            with console.status(
+                f"[nexus.warning]Searching for: {query}[/nexus.warning]", spinner="dots"
+            ):
                 search_svc = nx.service("search")
                 raw = search_svc.semantic_search(query, path=path, limit=limit, search_mode=mode)
                 # RPC handler wraps as {"results": [...]}, unwrap if needed
@@ -540,12 +554,12 @@ def search_query(
                 console.print(json.dumps(results, indent=2))
             else:
                 if not results:
-                    console.print(f"[yellow]No results found for:[/yellow] {query}")
+                    console.print(f"[nexus.warning]No results found for:[/nexus.warning] {query}")
                     nx.close()
                     return
 
                 console.print(
-                    f"\n[green]Found {len(results)} results for:[/green] [cyan]{query}[/cyan]\n"
+                    f"\n[nexus.success]Found {len(results)} results for:[/nexus.success] [nexus.value]{query}[/nexus.value]\n"
                 )
 
                 for i, result in enumerate(results, 1):
@@ -558,8 +572,8 @@ def search_query(
                         chunk_text = chunk_text[:200] + "..."
 
                     console.print(f"[bold]{i}. {file_path}[/bold]")
-                    console.print(f"   Score: [green]{score:.3f}[/green]")
-                    console.print(f"   [dim]{chunk_text}[/dim]")
+                    console.print(f"   Score: [nexus.success]{score:.3f}[/nexus.success]")
+                    console.print(f"   [nexus.muted]{chunk_text}[/nexus.muted]")
                     console.print()
 
             nx.close()
@@ -584,20 +598,28 @@ def search_stats(remote_url: str | None, remote_api_key: str | None) -> None:
 
             stats: dict[str, Any] = nx.service("search").semantic_search_stats()
 
-            console.print("\n[bold cyan]Semantic Search Statistics[/bold cyan]")
+            console.print("\n[bold nexus.value]Semantic Search Statistics[/bold nexus.value]")
             console.print(
-                f"  Engine: [green]{stats.get('engine', stats.get('database_type', 'unknown'))}[/green]"
+                f"  Engine: [nexus.success]{stats.get('engine', stats.get('database_type', 'unknown'))}[/nexus.success]"
             )
             console.print(
-                f"  Indexed files: [green]{stats.get('total_files', stats.get('indexed_files', 0))}[/green]"
+                f"  Indexed files: [nexus.success]{stats.get('total_files', stats.get('indexed_files', 0))}[/nexus.success]"
             )
-            console.print(f"  Total chunks: [green]{stats.get('total_chunks', 0)}[/green]")
+            console.print(
+                f"  Total chunks: [nexus.success]{stats.get('total_chunks', 0)}[/nexus.success]"
+            )
             if stats.get("embedding_model"):
-                console.print(f"  Embedding model: [cyan]{stats['embedding_model']}[/cyan]")
+                console.print(
+                    f"  Embedding model: [nexus.value]{stats['embedding_model']}[/nexus.value]"
+                )
             if stats.get("chunk_size"):
-                console.print(f"  Chunk size: [cyan]{stats['chunk_size']}[/cyan] tokens")
+                console.print(
+                    f"  Chunk size: [nexus.value]{stats['chunk_size']}[/nexus.value] tokens"
+                )
             if stats.get("chunk_strategy"):
-                console.print(f"  Chunk strategy: [cyan]{stats['chunk_strategy']}[/cyan]")
+                console.print(
+                    f"  Chunk strategy: [nexus.value]{stats['chunk_strategy']}[/nexus.value]"
+                )
 
             nx.close()
         except Exception as e:

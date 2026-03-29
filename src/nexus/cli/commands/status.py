@@ -14,8 +14,9 @@ from typing import TYPE_CHECKING, Any
 import click
 
 from nexus.cli.output import OutputOptions, add_output_options, render_output
+from nexus.cli.theme import console
 from nexus.cli.timing import CommandTiming
-from nexus.cli.utils import console, handle_error
+from nexus.cli.utils import handle_error
 
 if TYPE_CHECKING:
     from rich.table import Table
@@ -148,10 +149,10 @@ def _build_table(data: dict[str, Any]) -> Table:
     from rich.table import Table as RichTable
 
     table = RichTable(title="Nexus Service Status")
-    table.add_column("Service", style="cyan", no_wrap=True)
+    table.add_column("Service", style="nexus.value", no_wrap=True)
     table.add_column("Status", style="bold")
     table.add_column("Health")
-    table.add_column("Details", style="dim")
+    table.add_column("Details", style="nexus.muted")
 
     # Image row (from nexus.yaml project config)
     image_ref = data.get("image_ref", "")
@@ -164,14 +165,14 @@ def _build_table(data: dict[str, Any]) -> Table:
     # Server row
     if data["server_reachable"]:
         health = data["server_health"] or {}
-        status_str = "[green]running[/green]"
+        status_str = "[nexus.success]running[/nexus.success]"
         health_status = health.get("status", "unknown")
         if health_status in ("healthy", "ok"):
-            health_str = f"[green]{health_status}[/green]"
+            health_str = f"[nexus.success]{health_status}[/nexus.success]"
         elif health_status == "error":
-            health_str = f"[red]{health_status}[/red]"
+            health_str = f"[nexus.error]{health_status}[/nexus.error]"
         else:
-            health_str = f"[yellow]{health_status}[/yellow]"
+            health_str = f"[nexus.warning]{health_status}[/nexus.warning]"
         components = health.get("components", {})
         details_parts: list[str] = []
         for name, info in components.items():
@@ -182,8 +183,8 @@ def _build_table(data: dict[str, Any]) -> Table:
                 details_parts.append(f"{name}={comp_status}")
         detail = ", ".join(details_parts) if details_parts else "all components ok"
     else:
-        status_str = "[red]unreachable[/red]"
-        health_str = "[red]--[/red]"
+        status_str = "[nexus.error]unreachable[/nexus.error]"
+        health_str = "[nexus.error]--[/nexus.error]"
         detail = data["server_url"]
 
     table.add_row("nexus-server (HTTP)", status_str, health_str, detail)
@@ -195,18 +196,18 @@ def _build_table(data: dict[str, Any]) -> Table:
         health_val = svc.get("Health", "")
 
         if state == "running":
-            s = "[green]running[/green]"
+            s = "[nexus.success]running[/nexus.success]"
         elif state == "exited":
-            s = "[red]exited[/red]"
+            s = "[nexus.error]exited[/nexus.error]"
         else:
-            s = f"[yellow]{state}[/yellow]"
+            s = f"[nexus.warning]{state}[/nexus.warning]"
 
         if health_val == "healthy":
-            h = "[green]healthy[/green]"
+            h = "[nexus.success]healthy[/nexus.success]"
         elif health_val:
-            h = f"[yellow]{health_val}[/yellow]"
+            h = f"[nexus.warning]{health_val}[/nexus.warning]"
         else:
-            h = "[dim]--[/dim]"
+            h = "[nexus.muted]--[/nexus.muted]"
 
         ports = svc.get("Publishers", svc.get("Ports", ""))
         port_detail = ""
@@ -221,7 +222,7 @@ def _build_table(data: dict[str, Any]) -> Table:
         table.add_row(name, s, h, port_detail)
 
     if not data["docker_services"] and not data["server_reachable"]:
-        table.add_row("[dim]no services detected[/dim]", "", "", "")
+        table.add_row("[nexus.muted]no services detected[/nexus.muted]", "", "", "")
 
     return table
 
@@ -232,7 +233,7 @@ def _render_table(data: dict[str, Any]) -> None:
 
     if not is_running:
         console.print()
-        console.print("[yellow]Nexus is not running.[/yellow]")
+        console.print("[nexus.warning]Nexus is not running.[/nexus.warning]")
         console.print("  Run `nexus up` to start the stack.")
         console.print()
         return

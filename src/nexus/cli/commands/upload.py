@@ -46,13 +46,13 @@ def upload_status(client: UploadClient, upload_id: str) -> ServiceResult:
     data = client.status(upload_id)
 
     def _render(d: dict) -> None:
-        from nexus.cli.utils import console
+        from nexus.cli.theme import console
 
         offset = d.get("offset", 0)
         length = d.get("length", 0)
         pct = f"{offset / length * 100:.1f}%" if length > 0 else "N/A"
 
-        console.print(f"[bold cyan]Upload: {upload_id}[/bold cyan]")
+        console.print(f"[bold nexus.value]Upload: {upload_id}[/bold nexus.value]")
         console.print(f"  Progress: {pct} ({offset} / {length} bytes)")
 
     return ServiceResult(data=data, human_formatter=_render)

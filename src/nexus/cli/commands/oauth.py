@@ -24,10 +24,9 @@ import sys
 from typing import TYPE_CHECKING
 
 import click
-from rich.console import Console
 from rich.table import Table
 
-from nexus.cli.utils import console
+from nexus.cli.theme import console
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 # Brick imports via importlib to avoid cli→bricks tier violation
@@ -37,9 +36,6 @@ if TYPE_CHECKING:
 else:
     XOAuthProvider = _il.import_module("nexus.bricks.auth.oauth.providers.x").XOAuthProvider
     TokenManager = _il.import_module("nexus.bricks.auth.oauth.token_manager").TokenManager
-
-# Rich console for output
-_console = Console()
 
 
 def get_token_manager(db_path: str | None = None) -> TokenManager:
@@ -124,17 +120,19 @@ def list_credentials(db_path: str | None, zone_id: str | None) -> None:
         credentials = await manager.list_credentials(zone_id=zone_id)
 
         if not credentials:
-            console.print("[yellow]No OAuth credentials found[/yellow]")
+            console.print("[nexus.warning]No OAuth credentials found[/nexus.warning]")
             return
 
         # Create table
-        table = Table(title="OAuth Credentials", show_header=True, header_style="bold magenta")
-        table.add_column("Provider", style="cyan")
-        table.add_column("User Email", style="green")
-        table.add_column("Zone ID", style="blue")
-        table.add_column("Status", style="yellow")
-        table.add_column("Expires At", style="white")
-        table.add_column("Last Used", style="white")
+        table = Table(
+            title="OAuth Credentials", show_header=True, header_style="nexus.table_header"
+        )
+        table.add_column("Provider", style="nexus.value")
+        table.add_column("User Email", style="nexus.success")
+        table.add_column("Zone ID", style="nexus.reference")
+        table.add_column("Status", style="nexus.warning")
+        table.add_column("Expires At")
+        table.add_column("Last Used")
 
         for cred in credentials:
             status = "🔴 Expired" if cred["is_expired"] else "🟢 Valid"
@@ -192,9 +190,13 @@ def revoke_credential(
         success = await manager.revoke_credential(provider, user_email, zone_id or ROOT_ZONE_ID)
 
         if success:
-            console.print(f"[green]✓[/green] Revoked credential: {provider}:{user_email}")
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Revoked credential: {provider}:{user_email}"
+            )
         else:
-            console.print(f"[red]✗[/red] Credential not found: {provider}:{user_email}")
+            console.print(
+                f"[nexus.error]✗[/nexus.error] Credential not found: {provider}:{user_email}"
+            )
             sys.exit(1)
 
     asyncio.run(_revoke())
@@ -236,18 +238,20 @@ def test_credential(
 
     # Register provider (needed for validation)
     # Note: This is a simplified version - in production, you'd load client credentials from config
-    console.print(f"[yellow]⚠ Testing credential for {provider}:{user_email}...[/yellow]")
+    console.print(
+        f"[nexus.warning]⚠ Testing credential for {provider}:{user_email}...[/nexus.warning]"
+    )
 
     async def _test() -> None:
         try:
             # Try to get a valid token (will auto-refresh if needed)
             token = await manager.get_valid_token(provider, user_email, zone_id or ROOT_ZONE_ID)
 
-            console.print("[green]✓[/green] Credential is valid")
-            console.print(f"[dim]Token length: {len(token)} chars[/dim]")
+            console.print("[nexus.success]✓[/nexus.success] Credential is valid")
+            console.print(f"[nexus.muted]Token length: {len(token)} chars[/nexus.muted]")
 
         except Exception as e:
-            console.print(f"[red]✗[/red] Credential test failed: {e}")
+            console.print(f"[nexus.error]✗[/nexus.error] Credential test failed: {e}")
             sys.exit(1)
 
     asyncio.run(_test())
@@ -331,15 +335,15 @@ def setup_gdrive(
 
     # Validate that credentials are provided (either via options or environment)
     if not client_id:
-        console.print("[red]Error:[/red] Google OAuth client ID not provided")
-        console.print("[yellow]Provide via:[/yellow]")
+        console.print("[nexus.error]Error:[/nexus.error] Google OAuth client ID not provided")
+        console.print("[nexus.warning]Provide via:[/nexus.warning]")
         console.print("  --client-id option, OR")
         console.print("  NEXUS_OAUTH_GOOGLE_CLIENT_ID environment variable")
         sys.exit(1)
 
     if not client_secret:
-        console.print("[red]Error:[/red] Google OAuth client secret not provided")
-        console.print("[yellow]Provide via:[/yellow]")
+        console.print("[nexus.error]Error:[/nexus.error] Google OAuth client secret not provided")
+        console.print("[nexus.warning]Provide via:[/nexus.warning]")
         console.print("  --client-secret option, OR")
         console.print("  NEXUS_OAUTH_GOOGLE_CLIENT_SECRET environment variable")
         sys.exit(1)
@@ -359,25 +363,27 @@ def setup_gdrive(
     # Generate authorization URL
     auth_url = provider.get_authorization_url()
 
-    console.print("\n[bold green]Google Drive OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]Google Drive OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost (which will fail)."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost (which will fail)."
     )
     console.print(
-        "[bold yellow]Step 3:[/bold yellow] Copy the 'code' parameter from the failed URL:"
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the 'code' parameter from the failed URL:"
     )
-    console.print("[dim]Example: http://localhost/?code=4/0AdLI...[/dim]")
-    console.print("[dim]Copy everything after 'code=' (the authorization code)[/dim]")
+    console.print("[nexus.muted]Example: http://localhost/?code=4/0AdLI...[/nexus.muted]")
+    console.print(
+        "[nexus.muted]Copy everything after 'code=' (the authorization code)[/nexus.muted]"
+    )
 
     # Get authorization code from user
     auth_code = click.prompt("\nEnter authorization code")
 
     # Exchange code for tokens
-    console.print("\n[dim]Exchanging code for tokens...[/dim]")
+    console.print("\n[nexus.muted]Exchanging code for tokens...[/nexus.muted]")
 
     async def _exchange_and_store() -> str:
         # Exchange code
@@ -394,20 +400,24 @@ def setup_gdrive(
         )
         manager.close()
 
-        console.print(f"[green]✓[/green] Stored credential with ID: {cred_id}")
+        console.print(f"[nexus.success]✓[/nexus.success] Stored credential with ID: {cred_id}")
         return cred_id
 
     import asyncio
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
-        console.print(f"\n[green]✓[/green] Successfully stored credentials for {user_email}")
-        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
+        console.print(
+            f"\n[nexus.success]✓[/nexus.success] Successfully stored credentials for {user_email}"
+        )
+        console.print(f"[nexus.muted]Credential ID: {cred_id}[/nexus.muted]")
         console.print("\n[bold]Next steps:[/bold]")
         console.print("1. Configure Nexus to use Google Drive backend")
-        console.print("2. Use [cyan]nexus oauth test google {user_email}[/cyan] to verify")
+        console.print(
+            "2. Use [nexus.value]nexus oauth test google {user_email}[/nexus.value] to verify"
+        )
     except Exception as e:
-        console.print(f"\n[red]✗[/red] Failed to setup Google Drive: {e}")
+        console.print(f"\n[nexus.error]✗[/nexus.error] Failed to setup Google Drive: {e}")
         sys.exit(1)
 
 
@@ -489,8 +499,8 @@ def setup_x(
 
     # Validate that client_id is provided
     if not client_id:
-        console.print("[red]Error:[/red] X OAuth client ID not provided")
-        console.print("[yellow]Provide via:[/yellow]")
+        console.print("[nexus.error]Error:[/nexus.error] X OAuth client ID not provided")
+        console.print("[nexus.warning]Provide via:[/nexus.warning]")
         console.print("  --client-id option, OR")
         console.print("  NEXUS_OAUTH_X_CLIENT_ID environment variable")
         console.print("\n[bold]Get credentials at:[/bold] https://developer.twitter.com/")
@@ -521,26 +531,30 @@ def setup_x(
     auth_url, pkce_data = provider.get_authorization_url_with_pkce()
     code_verifier = pkce_data["code_verifier"]
 
-    console.print("\n[bold green]X (Twitter) OAuth Setup[/bold green]")
+    console.print("\n[bold nexus.success]X (Twitter) OAuth Setup[/bold nexus.success]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
     console.print(f"[bold]Client ID:[/bold] {client_id}")
     console.print("[bold]Using PKCE:[/bold] Yes (enhanced security)")
-    console.print("\n[bold yellow]Step 1:[/bold yellow] Visit this URL to authorize:")
+    console.print("\n[bold nexus.warning]Step 1:[/bold nexus.warning] Visit this URL to authorize:")
     console.print(f"\n{auth_url}\n")
     console.print(
-        "[bold yellow]Step 2:[/bold yellow] After granting permission, the browser will redirect to localhost (which will fail)."
+        "[bold nexus.warning]Step 2:[/bold nexus.warning] After granting permission, the browser will redirect to localhost (which will fail)."
     )
     console.print(
-        "[bold yellow]Step 3:[/bold yellow] Copy the 'code' parameter from the failed URL:"
+        "[bold nexus.warning]Step 3:[/bold nexus.warning] Copy the 'code' parameter from the failed URL:"
     )
-    console.print("[dim]Example: http://localhost/?code=ABCD...[/dim]")
-    console.print("[dim]Copy everything after 'code=' (the authorization code)[/dim]")
+    console.print("[nexus.muted]Example: http://localhost/?code=ABCD...[/nexus.muted]")
+    console.print(
+        "[nexus.muted]Copy everything after 'code=' (the authorization code)[/nexus.muted]"
+    )
 
     # Get authorization code from user
     auth_code = click.prompt("\nEnter authorization code")
 
     # Exchange code for tokens using PKCE
-    console.print("\n[dim]Exchanging code for tokens (using PKCE verifier)...[/dim]")
+    console.print(
+        "\n[nexus.muted]Exchanging code for tokens (using PKCE verifier)...[/nexus.muted]"
+    )
 
     async def _exchange_and_store() -> str:
         # Exchange code with PKCE verifier
@@ -557,17 +571,23 @@ def setup_x(
         )
         manager.close()
 
-        console.print(f"[green]✓[/green] Stored credential with ID: {cred_id}")
+        console.print(f"[nexus.success]✓[/nexus.success] Stored credential with ID: {cred_id}")
         return cred_id
 
     try:
         cred_id = asyncio.run(_exchange_and_store())
-        console.print(f"\n[green]✓[/green] Successfully stored credentials for {user_email}")
-        console.print(f"[dim]Credential ID: {cred_id}[/dim]")
+        console.print(
+            f"\n[nexus.success]✓[/nexus.success] Successfully stored credentials for {user_email}"
+        )
+        console.print(f"[nexus.muted]Credential ID: {cred_id}[/nexus.muted]")
         console.print("\n[bold]Next steps:[/bold]")
         console.print("1. Configure Nexus to use X connector backend")
-        console.print(f"2. Use [cyan]nexus oauth test twitter {user_email}[/cyan] to verify")
-        console.print("3. Try the example: [cyan]python examples/x_connector_example.py[/cyan]")
+        console.print(
+            f"2. Use [nexus.value]nexus oauth test twitter {user_email}[/nexus.value] to verify"
+        )
+        console.print(
+            "3. Try the example: [nexus.path]python examples/x_connector_example.py[/nexus.path]"
+        )
     except Exception as e:
-        console.print(f"\n[red]✗[/red] Failed to setup X OAuth: {e}")
+        console.print(f"\n[nexus.error]✗[/nexus.error] Failed to setup X OAuth: {e}")
         sys.exit(1)

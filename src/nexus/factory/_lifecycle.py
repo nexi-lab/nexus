@@ -150,25 +150,21 @@ async def _wire_services(
         await nx.sys_setattr("/__sys__/services/federation", service=federation)
         logger.debug("[LINK] Federation service enlisted")
 
-        # Upgrade lock manager: LocalLockManager → RaftLockManager
+        # Upgrade lock manager: LocalLockManager → RaftLockManager (kernel owns)
         try:
             from nexus.raft.lock_manager import RaftLockManager
 
             _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
-            # Find EventsService and upgrade its lock manager.
-            _events_ref = nx._service_registry.service("events_service")
-            _events_svc = _events_ref._service_instance if _events_ref is not None else None
-            if _events_svc is not None and hasattr(_events_svc, "upgrade_lock_manager"):
-                _events_svc.upgrade_lock_manager(_raft_lm)
-            logger.info("[LINK] RaftLockManager upgraded into EventsService")
+            nx._upgrade_lock_manager(_raft_lm)
+            logger.info("[LINK] RaftLockManager upgraded into kernel")
         except Exception as exc:
             logger.debug("[LINK] RaftLockManager upgrade skipped: %s", exc)
 
     # descendant_checker is now accessed via PermissionCheckHook (KernelDispatch INTERCEPT).
     # No kernel DI needed — PermissionCheckHook holds the reference internally.
 
-    # Issue #1788: Lock manager owned by EventsService (LocalLockManager by default).
-    # Upgraded to RaftLockManager above if federation is available.
+    # Issue #1788: Lock manager kernel-owned (NexusFS._lock_manager).
+    # LocalLockManager by default, upgraded to RaftLockManager above if federation available.
 
     # --- Register close callbacks (Issue #1793, #1789) ---
     # Services that need cleanup at close() register callbacks here.

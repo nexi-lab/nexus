@@ -168,9 +168,9 @@ class NexusFS(  # type: ignore[misc]
         # _permission_enforcer and _descendant_checker removed in Phase 4 PR 2.
         # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
         self._overlay_resolver = None
-        # Issue #1788: distributed lock manager removed — now routed through EventsService.
-        # In-process locks use _vfs_lock_manager (kernel owns); advisory locks use
-        # nx.service("events_service").lock() which auto-creates local fallback.
+        # Issue #1788: Advisory lock manager — kernel owned (like FileWatcher).
+        # Local: LocalLockManager (VFSSemaphore). Remote: RaftLockManager (kernel knows,
+        # federation inject via upgrade_lock_manager()). Constructed after _vfs_lock_manager.
         # Issue #1792: AgentRegistry accessed via ServiceRegistry (register_factory).
         # No kernel sentinel — no-agent profiles (REMOTE) never construct it.
         # Issue #1801: _flush_write_observer_fn and _overlay_config_fn closures removed —
@@ -190,6 +190,14 @@ class NexusFS(  # type: ignore[misc]
 
         self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
+
+        # Advisory lock manager — kernel owned (POSIX flock equivalent).
+        # Like FileWatcher: kernel-owned local + kernel-knows remote.
+        # Local: LocalLockManager (VFSSemaphore). Federation: upgrade to RaftLockManager.
+        from nexus.lib.distributed_lock import LocalLockManager
+        from nexus.lib.semaphore import create_vfs_semaphore
+
+        self._lock_manager: Any = LocalLockManager(create_vfs_semaphore(), zone_id=ROOT_ZONE_ID)
 
         # Kernel notification dispatch (INTERCEPT + OBSERVE).
         # Kernel owns dispatch infrastructure — creates empty callback lists.
@@ -357,6 +365,19 @@ class NexusFS(  # type: ignore[misc]
     async def swap_service(self, name: str, new_instance: Any, **kwargs: Any) -> None:
         """Hot-swap a service — all quadrants supported (#1452)."""
         await self._service_registry.swap_service(name, new_instance, **kwargs)
+
+    def _upgrade_lock_manager(self, lock_manager: Any) -> None:
+        """Hot-swap LocalLockManager → RaftLockManager at link time.
+
+        Like FileWatcher.set_remote_watcher() — kernel owns the hook point,
+        federation injects the distributed implementation.
+        """
+        logger.info(
+            "Lock manager upgraded: %s → %s",
+            type(self._lock_manager).__name__,
+            type(lock_manager).__name__,
+        )
+        self._lock_manager = lock_manager
 
     @property
     def namespace_manager(self) -> Any | None:

@@ -42,25 +42,15 @@ class EventsService:
     def __init__(
         self,
         file_watcher: "FileWatcher",
+        lock_manager: "AdvisoryLockManager | None" = None,
         zone_id: str | None = None,
     ):
         self._file_watcher = file_watcher
-        # Always create LocalLockManager — may be upgraded to RaftLockManager
-        # at link time via upgrade_lock_manager().
-        try:
-            from nexus.lib.distributed_lock import LocalLockManager
-            from nexus.lib.semaphore import create_vfs_semaphore
-
-            self._lock_manager: "AdvisoryLockManager | None" = LocalLockManager(
-                create_vfs_semaphore(), zone_id=zone_id or ROOT_ZONE_ID
-            )
-            logger.debug("[EventsService] LocalLockManager created")
-        except Exception as exc:
-            logger.debug("[EventsService] LocalLockManager unavailable: %s", exc)
-            self._lock_manager = None
+        # Lock manager now kernel-owned — passed in from NexusFS._lock_manager.
+        self._lock_manager = lock_manager
         self._zone_id = zone_id
 
-        logger.info("[EventsService] Initialized (delegates to kernel FileWatcher)")
+        logger.info("[EventsService] Initialized (delegates to kernel FileWatcher + LockManager)")
 
     # =========================================================================
     # Infrastructure Detection
@@ -69,19 +59,6 @@ class EventsService:
     def _has_lock_manager(self) -> bool:
         """Check if advisory lock manager is available."""
         return self._lock_manager is not None
-
-    def upgrade_lock_manager(self, lock_manager: "AdvisoryLockManager") -> None:
-        """Hot-swap LocalLockManager → RaftLockManager at link time.
-
-        Safe because this runs during _do_link(), before bootstrap/serve —
-        no concurrent access to ``self._lock_manager``.
-        """
-        logger.info(
-            "[EventsService] Lock manager upgraded: %s → %s",
-            type(self._lock_manager).__name__,
-            type(lock_manager).__name__,
-        )
-        self._lock_manager = lock_manager
 
     def _get_zone_id(self, context: "OperationContext | None") -> str:
         """Get zone ID from context or default."""

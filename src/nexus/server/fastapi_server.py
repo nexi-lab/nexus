@@ -349,13 +349,9 @@ def create_app(
             from nexus.server.rpc.services.federation_rpc import FederationRPCService
 
             _rpc_sources.append(FederationRPCService(_fed))
-        # --- Locks (Issue #1133) ---
-        # Lock manager is kernel-owned (NexusFS._lock_manager).
-        _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
-        if _lock_mgr is not None:
-            from nexus.server.rpc.services.locks_rpc import LocksRPCService
-
-            _rpc_sources.append(LocksRPCService(_lock_mgr))
+        # Lock syscalls (sys_lock, sys_unlock, lock_info, lock_list, etc.)
+        # are @rpc_expose on NexusFS — auto-discovered by _discover_exposed_methods.
+        # LocksRPCService deleted — no separate RPC service needed.
         # --- Pay (Issue #1133) ---
         try:
             from nexus.bricks.pay import CreditsService

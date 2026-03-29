@@ -95,6 +95,19 @@ class MetastoreABC(ABC):
         self._dcache.pop(path, None)
         return self._delete_raw(path, consistency=consistency)
 
+    def dcache_evict_prefix(self, prefix: str) -> int:
+        """Evict all dcache entries whose path starts with *prefix*.
+
+        Used by mount/unmount operations to invalidate stale cross-zone
+        cache entries that were resolved through a now-changed mount point.
+
+        Returns the number of entries evicted.
+        """
+        keys = [k for k in self._dcache if k.startswith(prefix)]
+        for k in keys:
+            del self._dcache[k]
+        return len(keys)
+
     def exists(self, path: str) -> bool:
         """Check if metadata exists for a path (dcache-accelerated)."""
         if path in self._dcache:

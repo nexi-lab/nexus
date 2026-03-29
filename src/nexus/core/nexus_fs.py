@@ -698,6 +698,140 @@ class NexusFS(  # type: ignore[misc]
         except (InvalidPathError, Exception):
             return False
 
+    # ── Locking (POSIX flock equivalent) ──────────────────────────
+
+    @rpc_expose(description="Acquire advisory lock on a path")
+    async def sys_lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: OperationContext | None = None,
+    ) -> str | None:
+        """Acquire advisory lock (POSIX flock(2)). Returns lock_id or None.
+
+        Tier 1 syscall — single try-acquire, returns immediately.
+        Use Tier 2 ``lock()`` for blocking wait with retry.
+        """
+        path = self._validate_path(path)
+        return await self._lock_manager.acquire(
+            path,
+            mode=mode,
+            ttl=ttl,
+            max_holders=max_holders,
+            timeout=0,  # try-once, no blocking
+        )
+
+    @rpc_expose(description="Release advisory lock")
+    async def sys_unlock(
+        self,
+        path: str,
+        lock_id: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> bool:
+        """Release advisory lock. Returns True if released."""
+        path = self._validate_path(path)
+        return await self._lock_manager.release(lock_id, path)
+
+    # ── Watch (inotify equivalent) ────────────────────────────────
+
+    @rpc_expose(description="Wait for file changes on a path")
+    async def sys_watch(
+        self,
+        path: str,
+        timeout: float = 30.0,
+        *,
+        recursive: bool = False,  # noqa: ARG002
+        context: OperationContext | None = None,
+    ) -> dict[str, Any] | None:
+        """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout.
+
+        Delegates to kernel FileWatcher which races local OBSERVE + optional
+        remote watcher (federation) via FIRST_COMPLETED.
+        """
+        path = validate_path(path, allow_root=True)
+        ctx = self._resolve_cred(context)
+        zone_id = getattr(ctx, "zone_id", None) or ROOT_ZONE_ID
+        event = await self._file_watcher.wait(path, timeout=timeout, zone_id=zone_id)
+        if event is None:
+            return None
+        return event.to_dict()
+
+    @rpc_expose(description="Get advisory lock info for a path")
+    async def lock_info(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any] | None:
+        """Get lock info for path (Tier 2 admin query)."""
+        path = self._validate_path(path)
+        info = await self._lock_manager.get_lock_info(path)
+        if info is None:
+            return None
+        return {
+            "path": info.path,
+            "mode": info.mode,
+            "max_holders": info.max_holders,
+            "fence_token": info.fence_token,
+            "holders": [
+                {
+                    "lock_id": h.lock_id,
+                    "holder_info": h.holder_info,
+                    "acquired_at": h.acquired_at,
+                    "expires_at": h.expires_at,
+                }
+                for h in info.holders
+            ],
+        }
+
+    @rpc_expose(description="List active advisory locks")
+    async def lock_list(
+        self,
+        pattern: str = "",
+        limit: int = 100,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """List active advisory locks (Tier 2 admin query)."""
+        locks = await self._lock_manager.list_locks(pattern=pattern, limit=limit)
+        return {
+            "locks": [await self.lock_info(lk.path) for lk in locks],
+            "count": len(locks),
+        }
+
+    @rpc_expose(description="Extend advisory lock TTL (heartbeat)")
+    async def lock_extend(
+        self,
+        lock_id: str,
+        path: str,
+        ttl: float = 60.0,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Extend lock TTL / heartbeat (Tier 2)."""
+        path = self._validate_path(path)
+        result = await self._lock_manager.extend(lock_id, path, ttl=ttl)
+        return {
+            "success": result.success,
+            "lock_info": (await self.lock_info(path)) if result.lock_info else None,
+        }
+
+    @rpc_expose(description="Force-release all holders of a lock (admin)")
+    async def lock_force_release(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,  # noqa: ARG002
+    ) -> dict[str, Any]:
+        """Force-release all holders (Tier 2 admin operation)."""
+        path = self._validate_path(path)
+        released = await self._lock_manager.force_release(path)
+        return {"released": released}
+
     @rpc_expose(description="Get available namespaces")
     def get_top_level_mounts(self, context: OperationContext | None = None) -> builtins.list[str]:
         """Return top-level mount names visible to the current user.

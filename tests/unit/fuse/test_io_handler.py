@@ -94,7 +94,8 @@ class TestWrite:
         mock_nexus_fs.sys_read.return_value = b""
 
         fuse_ops.write("/file.txt", b"data", 0, fd)
-        mock_cache.invalidate_path.assert_called()
+        # Issue #3397: write now calls invalidate_and_revoke instead of invalidate_path
+        mock_cache.invalidate_and_revoke.assert_called()
 
     def test_write_to_virtual_view_raises_erofs(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock

@@ -812,3 +812,92 @@ class TestBlake3HashingBenchmarks:
         available = is_rust_available()
         print(f"\n[INFO] Rust BLAKE3 acceleration: {'AVAILABLE' if available else 'NOT AVAILABLE'}")
         # This test always passes - just informational
+
+
+# =============================================================================
+# FUSE LEASE BENCHMARKS (Issue #3397)
+# =============================================================================
+
+
+try:
+    from nexus.fuse.cache import FUSECacheManager  # noqa: F401
+
+    _HAS_FUSE = True
+except (ImportError, OSError):
+    _HAS_FUSE = False
+
+
+@pytest.mark.benchmark_ci
+@pytest.mark.skipif(not _HAS_FUSE, reason="fusepy not installed")
+class TestFUSELeaseBenchmarks:
+    """Benchmarks for lease-gated FUSE cache operations.
+
+    Measures the overhead of adding lease validation to cached reads
+    and the improvement in cache hit rate from lease-based invalidation.
+    """
+
+    def test_direct_cache_read_baseline(self, benchmark):
+        """Baseline: direct FUSECacheManager.get_attr() without lease."""
+        from nexus.fuse.cache import FUSECacheManager
+
+        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        cache.cache_attr("/bench.txt", {"st_size": 1024, "st_mode": 0o644})
+
+        result = benchmark(cache.get_attr, "/bench.txt")
+        assert result is not None
+
+    def test_lease_gated_read_valid_lease(self, benchmark):
+        """Lease-gated read with valid local validity cache (~100ns target)."""
+        import time
+
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+
+        # Pre-populate cache + validity
+        cache.cache_attr("/bench.txt", {"st_size": 1024})
+        coord._set_validity("/bench.txt", time.monotonic() + 300.0)
+
+        def lease_gated_read():
+            return coord.lease_gated_get(
+                path="/bench.txt",
+                cache_get=lambda: coord.get_attr("/bench.txt"),
+                cache_set=lambda v: coord.cache_attr("/bench.txt", v),
+                fetch_fn=lambda: {"st_size": 9999},
+            )
+
+        result = benchmark(lease_gated_read)
+        assert result == {"st_size": 1024}
+
+    def test_validity_cache_check_overhead(self, benchmark):
+        """Measure overhead of the local validity cache check alone."""
+        import time
+
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+        coord._set_validity("/bench.txt", time.monotonic() + 300.0)
+
+        result = benchmark(coord._check_validity, "/bench.txt")
+        assert result is True
+
+    def test_invalidate_and_revoke_no_lease_manager(self, benchmark):
+        """Invalidation without lease manager (local-only path)."""
+        from nexus.fuse.cache import FUSECacheManager
+        from nexus.fuse.lease_coordinator import FUSELeaseCoordinator
+
+        cache = FUSECacheManager(attr_cache_size=1024, attr_cache_ttl=60)
+        coord = FUSELeaseCoordinator(cache=cache, holder_id="bench-mount")
+        counter = [0]
+
+        def invalidate():
+            counter[0] += 1
+            path = f"/bench_{counter[0]}.txt"
+            cache.cache_attr(path, {"st_size": 1})
+            coord.invalidate_and_revoke([path])
+
+        benchmark(invalidate)

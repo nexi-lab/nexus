@@ -193,10 +193,11 @@ class IOHandler:
             if not ok:
                 await ctx.nexus_fs.write(original_path, new_content, context=ctx.context)
 
-        # Invalidate caches
-        ctx.cache.invalidate_path(original_path)
+        # Invalidate caches + fire-and-forget lease revocation (Issue #3397)
+        invalidation_paths = [original_path]
         if path != original_path:
-            ctx.cache.invalidate_path(path)
+            invalidation_paths.append(path)
+        ctx.cache.invalidate_and_revoke(invalidation_paths)
 
         if ctx.readahead:
             ctx.readahead.invalidate_path(original_path)

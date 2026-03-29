@@ -46,7 +46,7 @@ def _get_subscription_manager(request: Request) -> Any:
 
 @router.post("", status_code=201)
 async def create_subscription(
-    request: Any,
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:
@@ -107,7 +107,7 @@ async def get_subscription(
 @router.patch("/{subscription_id}")
 async def update_subscription(
     subscription_id: str,
-    request: Any,
+    request: Request,
     auth_result: dict[str, Any] = Depends(require_auth),
     subscription_manager: Any = Depends(_get_subscription_manager),
 ) -> JSONResponse:

@@ -113,17 +113,22 @@ def encode_bytes(content: bytes) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}
 
 
+"""The e2e server is started with ``NEXUS_API_KEY=test-e2e-api-key-12345``
+(see ``tests/e2e/conftest.py``).  All requests must carry this key as a
+Bearer token — user-registration based auth is not used here.
+"""
+
+# Static API key matching conftest.py's NEXUS_API_KEY
+_E2E_API_KEY = "test-e2e-api-key-12345"
+_AUTH_HEADERS: dict[str, str] = {"Authorization": f"Bearer {_E2E_API_KEY}"}
+
+
 def make_rpc_request(
     client: httpx.Client,
     method: str,
     params: dict,
-    token: str | None = None,
 ) -> dict:
-    """Make an RPC request to the server."""
-    headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
+    """Make an RPC request to the server using static API key auth."""
     response = client.post(
         f"/api/nfs/{method}",
         json={
@@ -132,38 +137,9 @@ def make_rpc_request(
             "method": method,
             "params": params,
         },
-        headers=headers,
+        headers=_AUTH_HEADERS,
     )
     return response.json()
-
-
-def register_user(client: httpx.Client, username: str, password: str = "password123") -> dict:
-    """Register a new user and return token.
-
-    The e2e server may run in open access mode, so auth may not be required.
-    """
-    # Try to register via auth endpoint
-    try:
-        response = client.post(
-            "/auth/register",
-            json={
-                "email": f"{username}@test.com",
-                "password": password,
-                "username": username,
-                "display_name": f"Test User {username}",
-            },
-        )
-        if response.status_code == 201:
-            return response.json()
-    except Exception:
-        pass
-
-    # If auth endpoint doesn't exist or fails, return mock user for open access mode
-    return {
-        "user_id": f"mock-{username}",
-        "username": username,
-        "access_token": None,  # No token needed for open access mode
-    }
 
 
 # ==============================================================================
@@ -177,12 +153,7 @@ class TestFUSEEventsE2E:
     def test_write_event_fires_webhook(self, test_app: httpx.Client) -> None:
         """Test that writing a file triggers webhook delivery."""
         with MockWebhookServer() as webhook_server:
-            # 1. Register user (may return mock user in open access mode)
-            user = register_user(test_app, f"user_{uuid.uuid4().hex[:8]}")
-            token = user.get("access_token")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-            # 2. Create webhook subscription
+            # 1. Create webhook subscription
             response = test_app.post(
                 "/api/v2/subscriptions",
                 json={
@@ -191,26 +162,25 @@ class TestFUSEEventsE2E:
                     "patterns": ["/**/*"],
                     "name": "test-subscription",
                 },
-                headers=headers,
+                headers=_AUTH_HEADERS,
             )
             assert response.status_code == 201, f"Failed to create subscription: {response.text}"
             subscription = response.json()
             assert subscription.get("id"), "No subscription ID returned"
 
-            # 3. Write a file via RPC
+            # 2. Write a file via RPC
             file_path = f"/test_{uuid.uuid4().hex[:8]}.txt"
             result = make_rpc_request(
                 test_app,
                 "write",
                 {"path": file_path, "content": encode_bytes(b"Hello, World!")},
-                token=token,
             )
             assert "error" not in result, f"Write failed: {result}"
 
-            # 4. Wait for webhook delivery
+            # 3. Wait for webhook delivery
             events = webhook_server.get_events(timeout=5.0)
 
-            # 5. Verify event was received
+            # 4. Verify event was received
             assert len(events) >= 1, f"Expected at least 1 event, got {len(events)}: {events}"
 
             # Find the file_write event
@@ -223,21 +193,15 @@ class TestFUSEEventsE2E:
     def test_delete_event_fires_webhook(self, test_app: httpx.Client) -> None:
         """Test that deleting a file triggers webhook delivery."""
         with MockWebhookServer() as webhook_server:
-            # 1. Register user (may return mock user in open access mode)
-            user = register_user(test_app, f"user_{uuid.uuid4().hex[:8]}")
-            token = user.get("access_token")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-            # 2. Create file first
+            # 1. Create file first
             file_path = f"/test_{uuid.uuid4().hex[:8]}.txt"
             make_rpc_request(
                 test_app,
                 "write",
                 {"path": file_path, "content": encode_bytes(b"To be deleted")},
-                token=token,
             )
 
-            # 3. Create webhook subscription (after file exists)
+            # 2. Create webhook subscription (after file exists)
             response = test_app.post(
                 "/api/v2/subscriptions",
                 json={
@@ -246,20 +210,19 @@ class TestFUSEEventsE2E:
                     "patterns": ["/**/*"],
                     "name": "delete-subscription",
                 },
-                headers=headers,
+                headers=_AUTH_HEADERS,
             )
             assert response.status_code == 201
 
-            # 4. Delete the file
+            # 3. Delete the file
             result = make_rpc_request(
                 test_app,
                 "delete",
                 {"path": file_path},
-                token=token,
             )
             assert "error" not in result, f"Delete failed: {result}"
 
-            # 5. Verify event was received
+            # 4. Verify event was received
             events = webhook_server.get_events(timeout=5.0)
             delete_events = [e for e in events if e.get("event") == "file_delete"]
             assert len(delete_events) >= 1, f"No file_delete event found in: {events}"
@@ -267,12 +230,7 @@ class TestFUSEEventsE2E:
     def test_mkdir_event_fires_webhook(self, test_app: httpx.Client) -> None:
         """Test that creating a directory triggers webhook delivery."""
         with MockWebhookServer() as webhook_server:
-            # 1. Register user (may return mock user in open access mode)
-            user = register_user(test_app, f"user_{uuid.uuid4().hex[:8]}")
-            token = user.get("access_token")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-            # 2. Create webhook subscription
+            # 1. Create webhook subscription
             response = test_app.post(
                 "/api/v2/subscriptions",
                 json={
@@ -281,21 +239,20 @@ class TestFUSEEventsE2E:
                     "patterns": ["/**/*"],
                     "name": "mkdir-subscription",
                 },
-                headers=headers,
+                headers=_AUTH_HEADERS,
             )
             assert response.status_code == 201, f"Failed to create subscription: {response.text}"
 
-            # 3. Create directory
+            # 2. Create directory
             dir_path = f"/testdir_{uuid.uuid4().hex[:8]}"
             result = make_rpc_request(
                 test_app,
                 "mkdir",
                 {"path": dir_path},
-                token=token,
             )
             assert "error" not in result, f"Mkdir failed: {result}"
 
-            # 4. Verify event was received
+            # 3. Verify event was received
             events = webhook_server.get_events(timeout=5.0)
             dir_events = [e for e in events if e.get("event") == "dir_create"]
             assert len(dir_events) >= 1, f"No dir_create event found in: {events}"
@@ -303,12 +260,7 @@ class TestFUSEEventsE2E:
     def test_subscription_test_endpoint(self, test_app: httpx.Client) -> None:
         """Test the subscription test endpoint works."""
         with MockWebhookServer() as webhook_server:
-            # 1. Register user (may return mock user in open access mode)
-            user = register_user(test_app, f"user_{uuid.uuid4().hex[:8]}")
-            token = user.get("access_token")
-            headers = {"Authorization": f"Bearer {token}"} if token else {}
-
-            # 2. Create webhook subscription
+            # 1. Create webhook subscription
             response = test_app.post(
                 "/api/v2/subscriptions",
                 json={
@@ -317,22 +269,22 @@ class TestFUSEEventsE2E:
                     "patterns": ["/**/*"],
                     "name": "test-endpoint-subscription",
                 },
-                headers=headers,
+                headers=_AUTH_HEADERS,
             )
             assert response.status_code == 201
             subscription = response.json()
             sub_id = subscription.get("id")
 
-            # 3. Call test endpoint
+            # 2. Call test endpoint
             test_response = test_app.post(
                 f"/api/v2/subscriptions/{sub_id}/test",
-                headers=headers,
+                headers=_AUTH_HEADERS,
             )
             assert test_response.status_code == 200
             test_result = test_response.json()
             assert test_result.get("success") is True
 
-            # 4. Verify test event was received
+            # 3. Verify test event was received
             events = webhook_server.get_events(timeout=5.0)
             assert len(events) >= 1, "Test event not received"
             assert events[0].get("data", {}).get("_test") is True

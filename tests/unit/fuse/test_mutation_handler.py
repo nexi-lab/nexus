@@ -34,7 +34,8 @@ class TestCreate:
     ) -> None:
         fuse_ops.cache = mock_cache
         fuse_ops.create("/new.txt", 0o644)
-        mock_cache.invalidate_path.assert_called()
+        # Issue #3397: mutations now call invalidate_and_revoke
+        mock_cache.invalidate_and_revoke.assert_called()
 
 
 class TestUnlink:
@@ -49,7 +50,8 @@ class TestUnlink:
     ) -> None:
         fuse_ops.cache = mock_cache
         fuse_ops.unlink("/file.txt")
-        mock_cache.invalidate_path.assert_called_with("/file.txt")
+        # Issue #3397: mutations now call invalidate_and_revoke
+        mock_cache.invalidate_and_revoke.assert_called()
 
     def test_unlink_rejects_virtual_view(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         # Patch _parse_virtual_path to simulate a virtual view

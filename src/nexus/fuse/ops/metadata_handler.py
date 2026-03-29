@@ -37,17 +37,56 @@ class MetadataHandler:
         self._ctx = ctx
 
     async def getattr(self, path: str, _fh: int | None = None) -> dict[str, Any]:
-        """Get file attributes."""
+        """Get file attributes.
+
+        Issue #3397: Integrates lease-based cache coherence inline.
+        Flow: validity check → cache hit → lease validate/acquire → backend fetch → cache
+        """
         ctx = self._ctx
+        coordinator = ctx.cache
         start_time = time.time()
 
-        # Check cache first
-        cached_attrs = ctx.cache.get_attr(path)
-        if cached_attrs is not None:
-            elapsed = time.time() - start_time
-            if elapsed > 0.001:
-                logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
-            return cached_attrs
+        # Step 1: Hot path — validity cache + L1 attr cache (~100ns)
+        if coordinator._check_validity(path):
+            cached = coordinator.get_attr(path)
+            if cached is not None:
+                return cached
+
+        # Step 2: Validate/acquire lease if lease manager present
+        has_lease = False
+        if coordinator.lease_manager is not None:
+            lease = coordinator._validate_lease(path)
+            if lease is not None:
+                coordinator._set_validity(path, lease.expires_at)
+                cached = coordinator.get_attr(path)
+                if cached is not None:
+                    return cached
+                has_lease = True
+            else:
+                lease = coordinator._acquire_read_lease(path)
+                has_lease = lease is not None
+        else:
+            # No lease manager — serve from cache if available (backward compat)
+            cached = coordinator.get_attr(path)
+            if cached is not None:
+                return cached
+            has_lease = True  # always cache when no lease manager
+
+        # Step 3: Backend fetch
+        attrs = await self._fetch_attrs(path)
+
+        # Only cache if we hold a lease (Decision 11A)
+        if has_lease:
+            coordinator.cache_attr(path, attrs)
+
+        elapsed = time.time() - start_time
+        if elapsed > 0.01:
+            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
+        return attrs
+
+    async def _fetch_attrs(self, path: str) -> dict[str, Any]:
+        """Fetch attrs from backend."""
+        ctx = self._ctx
 
         # Handle virtual views (.raw, .txt, .md)
         original_path, view_type = parse_virtual_path_for_fuse(ctx, path)
@@ -65,13 +104,9 @@ class MetadataHandler:
             ok, rust_meta = try_rust(ctx, "GETATTR", "stat", original_path)
             if ok:
                 if rust_meta.is_directory:
-                    attrs = build_dir_attrs()
+                    return build_dir_attrs()
                 else:
-                    attrs = self._build_file_attrs(rust_meta.size)
-                ctx.cache.cache_attr(path, attrs)
-                elapsed = time.time() - start_time
-                logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
-                return attrs
+                    return self._build_file_attrs(rust_meta.size)
 
         # Check if it's a directory
         if await ctx.nexus_fs.sys_is_directory(original_path, context=ctx.context):
@@ -102,7 +137,7 @@ class MetadataHandler:
         uid, gid = resolve_owner_group_to_uid_gid(metadata, uid, gid)
 
         now = time.time()
-        attrs = {
+        return {
             "st_mode": stat.S_IFREG | file_mode,
             "st_nlink": 1,
             "st_size": file_size,
@@ -112,13 +147,6 @@ class MetadataHandler:
             "st_uid": uid,
             "st_gid": gid,
         }
-
-        ctx.cache.cache_attr(path, attrs)
-
-        elapsed = time.time() - start_time
-        if elapsed > 0.01:
-            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
-        return attrs
 
     def _build_file_attrs(self, file_size: int) -> dict[str, Any]:
         """Construct file attrs dict for Rust-provided metadata."""

@@ -115,6 +115,9 @@ def test_all_public_methods_are_exposed_or_excluded():
         "service_coordinator",  # ServiceRegistry lifecycle access — server-only (Issue #1452 Phase 3)
         "swap_service",  # Hot-swap via coordinator — server-only admin operation (Issue #1452 Phase 3)
         "load_all_saved_mounts",  # Internal initialization method - called automatically on startup
+        # Tier 2 convenience wrappers — delegate to sys_lock/sys_unlock which ARE @rpc_expose
+        "lock",  # Tier 2 blocking wait over sys_lock (defined in NexusFilesystemABC)
+        "unlock",  # Tier 2 alias for sys_unlock (defined in NexusFilesystemABC)
         # Server-side only methods (clients get this via HTTP headers)
         "get_etag",  # Returns ETag for early 304 check - clients receive ETags via HTTP headers on read
         # Async methods - TODO: Add async RPC support

@@ -811,7 +811,7 @@ def _display_job_status(job: dict[str, Any]) -> None:
         "cancelled": "nexus.warning",
     }
     status = job["status"]
-    color = status_colors.get(status, "white")
+    color = status_colors.get(status, "")
 
     console.print(f"[bold nexus.value]Sync Job: {job['id']}[/bold nexus.value]")
     console.print()
@@ -987,7 +987,7 @@ async def _async_sync_jobs(
 
             for job in data:
                 job_status = job["status"]
-                color = status_colors.get(job_status, "white")
+                color = status_colors.get(job_status, "")
                 job_id_short = job["id"][:8]
 
                 console.print(

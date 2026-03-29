@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Generator, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from nexus.contracts.cache_store import CacheStoreABC, NullCacheStore
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -37,6 +37,23 @@ from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
+
+
+class _WriteContentResult(NamedTuple):
+    """Result of content-only write phase."""
+
+    content_hash: str
+    size: int
+    metadata: "FileMetadata"  # Built metadata ready for metastore
+    new_version: int
+    is_new: bool  # True if file didn't exist before
+    old_etag: str | None
+    old_metadata: "FileMetadata | None"  # Pre-write metadata for post-write hooks
+    context: "OperationContext"  # Augmented context (with backend_path/virtual_path)
+    zone_id: str | None
+    agent_id: str | None
+    is_remote: bool  # Remote backend — skip local metadata.put
+    is_external: bool  # ExternalRouteResult path
 
 
 class NexusFS(  # type: ignore[misc]
@@ -2410,13 +2427,37 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
-        Performs content write + metadata update + event dispatch.
+        Thin composition of _write_content (locked I/O) + _dispatch_write_events
+        (async event dispatch).
+
         OCC checks (if_match, if_none_match) are done by callers
         (write() convenience method or RPC handlers) BEFORE calling this.
 
         Used by both sys_write (returns int) and write() (returns dict).
 
         Issue #1323: OCC params removed from kernel write path.
+        Issue #1829: Split into _write_content + _dispatch_write_events (SRP).
+        """
+        wr = self._write_content(path, content, context, offset=offset, consistency=consistency)
+        return await self._dispatch_write_events(path, wr, content)
+
+    def _write_content(
+        self,
+        path: str,
+        content: bytes,
+        context: OperationContext | None,
+        offset: int = 0,
+        consistency: str = "sc",
+    ) -> _WriteContentResult:
+        """Content write + metadata commit (locked, synchronous).
+
+        Handles routing, pre-write hooks, backend write, metadata build+put.
+        Both ExternalRouteResult and standard VFS paths.
+
+        The VFS lock wraps both content write AND metadata put for atomicity.
+
+        Returns:
+            _WriteContentResult for async event dispatch by _dispatch_write_events.
         """
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)
@@ -2472,7 +2513,8 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.router import ExternalRouteResult
 
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
-        if isinstance(route, ExternalRouteResult):
+        _is_external = isinstance(route, ExternalRouteResult)
+        if _is_external:
             wr = route.backend.write_content(
                 content,
                 content_id=meta.physical_path if (offset > 0 and meta) else "",
@@ -2524,6 +2566,35 @@ class NexusFS(  # type: ignore[misc]
 
                 self.metadata.put(metadata, consistency=consistency)
 
+        return _WriteContentResult(
+            content_hash=content_hash,
+            size=metadata.size,
+            metadata=metadata,
+            new_version=new_version,
+            is_new=(meta is None),
+            old_etag=meta.etag if meta else None,
+            old_metadata=meta,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            is_remote=_is_remote,
+            is_external=_is_external,
+        )
+
+    async def _dispatch_write_events(
+        self,
+        path: str,
+        result: _WriteContentResult,
+        content: bytes,
+    ) -> dict[str, Any]:
+        """Post-write event dispatch (async, outside lock).
+
+        Fires FileEvent notify (OBSERVE) + intercept_post_write hooks (INTERCEPT).
+        Uses the augmented context from _write_content (stored in result).
+
+        Returns:
+            Dict with metadata {etag, version, modified_at, size}.
+        """
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
@@ -2531,13 +2602,13 @@ class NexusFS(  # type: ignore[misc]
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                agent_id=agent_id,
-                etag=content_hash,
-                size=metadata.size,
-                version=new_version,
-                is_new=(meta is None),
-                old_etag=meta.etag if meta else None,
+                zone_id=result.zone_id or ROOT_ZONE_ID,
+                agent_id=result.agent_id,
+                etag=result.content_hash,
+                size=result.size,
+                version=result.new_version,
+                is_new=result.is_new,
+                old_etag=result.old_etag,
             )
         )
 
@@ -2547,23 +2618,23 @@ class NexusFS(  # type: ignore[misc]
         _write_ctx = WriteHookContext(
             path=path,
             content=content,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            is_new_file=(meta is None),
-            content_hash=content_hash,
-            metadata=metadata,
-            old_metadata=meta,
-            new_version=new_version,
+            context=result.context,
+            zone_id=result.zone_id,
+            agent_id=result.agent_id,
+            is_new_file=result.is_new,
+            content_hash=result.content_hash,
+            metadata=result.metadata,
+            old_metadata=result.old_metadata,
+            new_version=result.new_version,
         )
         await self._dispatch.intercept_post_write(_write_ctx)
 
         # Return metadata for optimistic concurrency control
         return {
-            "etag": content_hash,
-            "version": new_version,
-            "modified_at": now,
-            "size": metadata.size,
+            "etag": result.content_hash,
+            "version": result.new_version,
+            "modified_at": result.metadata.modified_at,
+            "size": result.size,
         }
 
     async def atomic_update(

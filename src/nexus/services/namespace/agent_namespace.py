@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 from nexus.contracts.namespace_fork_types import ForkMode, NamespaceForkInfo
 
+_MISSING = object()
+
 
 class AgentNamespace:
     """Copy-on-write overlay for a forked mount table.
@@ -72,10 +74,12 @@ class AgentNamespace:
         Lookup order: deleted_keys → overlay → parent_snapshot.
         CLEAN mode skips parent_snapshot (fork starts empty).
         """
-        if path in self._deleted_keys:
+        deleted_keys = self._deleted_keys
+        if path in deleted_keys:
             return None
-        if path in self._overlay:
-            return self._overlay[path]
+        overlay_entry = self._overlay.get(path, _MISSING)
+        if overlay_entry is not _MISSING:
+            return overlay_entry
         if self.mode == ForkMode.CLEAN:
             return None
         return self._parent_snapshot.get(path)

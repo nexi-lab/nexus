@@ -159,6 +159,15 @@ class NexusFS(  # type: ignore[misc]
         else:
             self.router = PathRouter(metadata_store)
 
+        # Wire metastore into all mounted backends that support it (CAS pattern).
+        # Like Linux VFS setting sb->s_op at mount time — driver gets inode layer.
+        for _mp in self.router.get_mount_points():
+            _mi = self.router.get_mount(_mp)
+            if _mi is not None and hasattr(_mi.backend, "set_metastore"):
+                _mi.backend.set_metastore(metadata_store)
+            elif _mi is not None and hasattr(_mi.backend, "_metastore"):
+                _mi.backend._metastore = metadata_store
+
         # Issue #1801: kernel process credential — like Linux init_task.cred.
         # Immutable after construction. Used as fallback identity for internal
         # operations. External callers should pass explicit context= to syscalls.

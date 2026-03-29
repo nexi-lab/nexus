@@ -18,6 +18,7 @@ from nexus.contracts.deployment_profile import (
     ALL_BRICK_NAMES,
     BRICK_CACHE,
     BRICK_EVENTLOG,
+    BRICK_FEDERATION,
     BRICK_IPC,
     BRICK_LLM,
     BRICK_NAMESPACE,
@@ -68,8 +69,9 @@ class TestDefaultBrickSets:
         bricks = DeploymentProfile.CLUSTER.default_bricks()
         assert BRICK_STORAGE in bricks
         assert BRICK_IPC in bricks
+        assert BRICK_FEDERATION in bricks
         assert BRICK_EVENTLOG not in bricks  # No audit/events
-        assert len(bricks) == 2
+        assert len(bricks) == 3
 
     def test_embedded_minimal(self) -> None:
         bricks = DeploymentProfile.EMBEDDED.default_bricks()

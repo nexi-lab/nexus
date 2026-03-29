@@ -1231,6 +1231,76 @@ impl PyZoneHandle {
     }
 
     // =========================================================================
+    // Batch Operations
+    // =========================================================================
+
+    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
+    ///
+    /// Args:
+    ///     paths: List of file paths to look up.
+    ///
+    /// Returns:
+    ///     List of (path, metadata_bytes_or_none) tuples.
+    pub fn get_metadata_multi(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
+        let node = self.node.clone();
+        py.detach(|| {
+            self.runtime_handle.block_on(async {
+                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
+                    .await
+                    .map_err(|e| {
+                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
+                    })
+            })
+        })
+    }
+
+    /// Set multiple metadata entries via Raft consensus.
+    ///
+    /// Each entry is proposed as an individual Raft command (matching
+    /// Metastore's per-item semantics). Not batch-atomic — partial
+    /// success is possible if a proposal fails mid-batch.
+    ///
+    /// Args:
+    ///     items: List of (path, value_bytes) tuples to set.
+    ///
+    /// Returns:
+    ///     Number of entries set.
+    pub fn batch_set_metadata(
+        &self,
+        py: Python<'_>,
+        items: Vec<(String, Vec<u8>)>,
+    ) -> PyResult<usize> {
+        let count = items.len();
+        for (path, value) in items {
+            let cmd = Command::SetMetadata { key: path, value };
+            self.propose_command(py, cmd)?;
+        }
+        Ok(count)
+    }
+
+    /// Delete multiple metadata entries via Raft consensus.
+    ///
+    /// Each entry is proposed as an individual Raft command.
+    ///
+    /// Args:
+    ///     keys: List of paths to delete.
+    ///
+    /// Returns:
+    ///     Number of entries deleted.
+    pub fn batch_delete_metadata(&self, py: Python<'_>, keys: Vec<String>) -> PyResult<usize> {
+        let count = keys.len();
+        for key in keys {
+            let cmd = Command::DeleteMetadata { key };
+            self.propose_command(py, cmd)?;
+        }
+        Ok(count)
+    }
+
+    // =========================================================================
     // Cluster Status
     // =========================================================================
 

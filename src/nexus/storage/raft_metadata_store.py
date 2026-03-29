@@ -147,6 +147,36 @@ class RaftMetadataStore(MetastoreABC):
         return self._engine.is_leader()
 
     # =========================================================================
+    # Batch Engine Helpers — DRY fallback for engines without batch methods.
+    # ZoneHandle may not expose batch_set_metadata / batch_delete_metadata;
+    # these helpers fall back to individual calls (Issue #3469).
+    # =========================================================================
+
+    def _engine_batch_set(self, items: list[tuple[str, bytes]]) -> int:
+        """Batch-set metadata entries via the engine.
+
+        Falls back to individual set_metadata() calls when the engine
+        does not expose batch_set_metadata (e.g., ZoneHandle).
+        """
+        if hasattr(self._engine, "batch_set_metadata"):
+            return self._engine.batch_set_metadata(items)
+        for path, data in items:
+            self._engine.set_metadata(path, data)
+        return len(items)
+
+    def _engine_batch_delete(self, keys: list[str]) -> int:
+        """Batch-delete metadata entries via the engine.
+
+        Falls back to individual delete_metadata() calls when the engine
+        does not expose batch_delete_metadata (e.g., ZoneHandle).
+        """
+        if hasattr(self._engine, "batch_delete_metadata"):
+            return self._engine.batch_delete_metadata(keys)
+        for key in keys:
+            self._engine.delete_metadata(key)
+        return len(keys)
+
+    # =========================================================================
     # Shared Engine Helpers — DRY extraction
     # Used by both sync and async public methods for engine mode operations.
     # =========================================================================
@@ -588,9 +618,9 @@ class RaftMetadataStore(MetastoreABC):
             else:
                 snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
 
-        # Phase 3: apply all writes in a single FFI call
+        # Phase 3: apply all writes (single FFI call or fallback loop)
         try:
-            self._engine.batch_set_metadata(serialized)
+            self._engine_batch_set(serialized)
         except Exception as e:
             # Best-effort rollback (only when snapshots were captured)
             if snapshots is not None:
@@ -598,9 +628,9 @@ class RaftMetadataStore(MetastoreABC):
                 delete_paths = [path for path, data in snapshots if data is None]
                 try:
                     if restore_items:
-                        self._engine.batch_set_metadata(restore_items)
+                        self._engine_batch_set(restore_items)
                     if delete_paths:
-                        self._engine.batch_delete_metadata(delete_paths)
+                        self._engine_batch_delete(delete_paths)
                 except Exception:
                     logger.warning("put_batch rollback failed for %d paths", len(serialized))
             raise RuntimeError(f"put_batch failed writing {len(serialized)} entries: {e}") from e
@@ -628,15 +658,15 @@ class RaftMetadataStore(MetastoreABC):
         else:
             snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
 
-        # Phase 2: apply all deletes in a single FFI call
+        # Phase 2: apply all deletes (single FFI call or fallback loop)
         try:
-            self._engine.batch_delete_metadata(path_list)
+            self._engine_batch_delete(path_list)
         except Exception as e:
             # Best-effort rollback: restore entries that were deleted
             rollback_items = [(path, data) for path, data in snapshots if data is not None]
             if rollback_items:
                 try:
-                    self._engine.batch_set_metadata(rollback_items)
+                    self._engine_batch_set(rollback_items)
                 except Exception:
                     logger.warning(
                         "delete_batch rollback failed for %d paths",

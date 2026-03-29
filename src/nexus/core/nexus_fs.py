@@ -2645,8 +2645,10 @@ class NexusFS(  # type: ignore[misc]
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
                 # CAS driver already persisted metadata — read it for event dispatch.
+                # Check etag matches to detect if driver actually updated metadata
+                # (tests without DI wiring will have stale etag from the old write).
                 _written_meta = self.metadata.get(path)
-                if _written_meta is not None:
+                if _written_meta is not None and _written_meta.etag == content_hash:
                     metadata = _written_meta
                 else:
                     # Fallback: CAS driver has no metastore (e.g. tests without DI wiring).

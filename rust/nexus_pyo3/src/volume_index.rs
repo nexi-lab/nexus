@@ -22,6 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Entry header size in volume files: hash(32) + size(4) + flags(1) = 37 bytes.
 /// Must match `ENTRY_HEADER_SIZE` in `volume_engine.rs`.
+#[cfg_attr(not(unix), allow(dead_code))]
 const ENTRY_HEADER_SIZE: u64 = 37;
 
 /// Current Unix timestamp in seconds (f64).
@@ -58,6 +59,7 @@ impl PartialEq for MemIndexEntry {
 impl Eq for MemIndexEntry {}
 
 /// Result of a `read_content` attempt.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub enum ReadContentResult {
     /// Content successfully read via pread.
     Ok(Vec<u8>),

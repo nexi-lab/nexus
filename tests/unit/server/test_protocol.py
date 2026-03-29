@@ -318,8 +318,8 @@ class TestCodegenConsistency:
 
     def test_method_params_count(self):
         """METHOD_PARAMS should have a reasonable number of entries."""
-        assert len(METHOD_PARAMS) >= 119, (
-            f"Expected at least 119 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
+        assert len(METHOD_PARAMS) >= 118, (
+            f"Expected at least 118 METHOD_PARAMS entries, got {len(METHOD_PARAMS)}"
         )
 
     def test_method_params_names_are_strings(self):

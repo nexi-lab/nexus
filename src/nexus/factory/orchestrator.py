@@ -255,6 +255,7 @@ async def create_nexus_fs(
     # enable_write_buffer=False expect immediate metadata reads too, so skip
     # the metadata write-back buffer in that mode.
     _effective_metadata_store = metadata_store
+    _metadata_store_buffered = False
     _metadata_buffer_enabled = os.environ.get("NEXUS_METADATA_BUFFER", "").lower() not in (
         "0",
         "false",
@@ -283,6 +284,7 @@ async def create_nexus_fs(
             flush_interval_sec=_flush_ms / 1000.0,
             max_batch_size=_max_size,
         )
+        _metadata_store_buffered = True
         logger.info(
             "Metadata write-back buffer enabled (flush=%dms, max_batch=%d)",
             _flush_ms,
@@ -351,7 +353,7 @@ async def create_nexus_fs(
 
     # Issue #3393: Start the metadata write-back buffer's background flush thread
     # and set write-back as the default consistency for all writes.
-    if hasattr(_effective_metadata_store, "_buffer"):
+    if _metadata_store_buffered:
         await _effective_metadata_store.start()
         nx._default_write_consistency = "wb"
 

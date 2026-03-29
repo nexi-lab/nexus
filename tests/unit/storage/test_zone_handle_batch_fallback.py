@@ -285,6 +285,25 @@ class TestBufferedFlushWithZoneHandleEngine:
         inner_paths = {m.path for m in inner_items}
         assert inner_paths == {"/multi/1.txt", "/multi/2.txt"}
 
+    def test_list_remains_sorted_across_flush_boundary(self) -> None:
+        """Merged committed+pending listings stay path-sorted for pagination."""
+        engine = FakeZoneHandle()
+        inner = _make_store(engine)
+        store = BufferedMetadataStore(inner)
+
+        for idx in range(50):
+            store.put(_make_metadata(path=f"/paged/file{idx:03d}.txt"), consistency="wb")
+        store.flush()
+
+        for idx in range(50, 100):
+            store.put(_make_metadata(path=f"/paged/file{idx:03d}.txt"), consistency="wb")
+
+        items = store.list(prefix="/paged/")
+        paths = [m.path for m in items]
+
+        assert paths == sorted(paths)
+        assert len(paths) == 100
+
     def test_buffer_stats_after_flush(self) -> None:
         """Buffer stats reflect successful flush."""
         engine = FakeZoneHandle()

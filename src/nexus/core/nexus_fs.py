@@ -136,9 +136,6 @@ class NexusFS(  # type: ignore[misc]
         # Three pillars: metadata (required), record store, cache store
         # No self.backend — all I/O goes through router.route().backend
         self.metadata: MetastoreABC = metadata_store
-        # Issue #3393: default consistency for write operations.
-        # Set to "wb" by the factory when BufferedMetadataStore is active.
-        self._default_write_consistency: str = "sc"
         self._record_store = record_store
         self._sql_engine: Any = None
         self._db_session_factory: Any = None
@@ -2516,9 +2513,9 @@ class NexusFS(  # type: ignore[misc]
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Operation context.
             consistency: Metadata consistency mode — ``"sc"`` (strong, Raft
-                consensus), ``"ec"`` (eventual, fire-and-forget), or ``"wb"``
-                (write-back, buffered for batched flush).  Defaults to
-                _default_write_consistency ("wb" when buffer active, else "sc").
+                consensus) or ``"ec"`` (eventual, fire-and-forget).
+                Defaults to ``"sc"``.  Use ``"ec"`` for low-latency writes
+                where immediate durability is not required.
             ttl: TTL in seconds for ephemeral content (Issue #3405).
                 Routes to TTL-bucketed volume; None = permanent.
 
@@ -2531,7 +2528,7 @@ class NexusFS(  # type: ignore[misc]
             buf = buf[:count]
 
         path = self._validate_path(path)
-        _consistency = consistency if consistency is not None else self._default_write_consistency
+        _consistency = consistency or "sc"
 
         # PRE-DISPATCH: virtual path resolvers
         _handled, _result = self._dispatch.resolve_write(path, buf)

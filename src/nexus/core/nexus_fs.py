@@ -798,7 +798,11 @@ class NexusFS(  # type: ignore[misc]
                 raise ValueError(
                     f"sys_setattr(/__sys__/services/{name}) requires 'service' attribute"
                 )
-            await self._service_registry.enlist(name, service)
+            exports = attrs.get("exports", ())
+            allow_overwrite = attrs.get("allow_overwrite", False)
+            await self._service_registry.enlist(
+                name, service, exports=exports, allow_overwrite=allow_overwrite
+            )
             return {"path": path, "registered": True, "service": name}
 
         if path.startswith("/__sys__/hooks/"):

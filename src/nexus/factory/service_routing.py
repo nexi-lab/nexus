@@ -112,16 +112,18 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
-async def enlist_services(coordinator: Any, services: Any) -> int:
-    """Enlist services via coordinator.enlist() (#1708).
+async def enlist_services(nx_or_coordinator: Any, services: Any) -> int:
+    """Enlist services via sys_setattr("/__sys__/services/X") (#1708).
 
+    Factory is the first user — uses syscalls like everyone else.
+    Accepts NexusFS (preferred, uses syscall) or ServiceRegistry (legacy compat).
     Accepts both dicts and dataclass instances. For each non-None service,
-    resolves canonical name (via ``_CANONICAL_NAMES``) and exports
-    (via ``_CANONICAL_EXPORTS``), then calls ``coordinator.enlist()``.
+    resolves canonical name and exports, then registers.
 
     Returns the number of services enlisted.
     """
     count = 0
+    _use_syscall = hasattr(nx_or_coordinator, "sys_setattr")
 
     pairs: list[tuple[str, Any]]
     if isinstance(services, dict):
@@ -135,12 +137,20 @@ async def enlist_services(coordinator: Any, services: Any) -> int:
             continue
         canonical: str = _CANONICAL_NAMES.get(src_key, src_key)
         exports = _CANONICAL_EXPORTS.get(canonical, ())
-        await coordinator.enlist(
-            canonical,
-            val,
-            exports=exports,
-            allow_overwrite=True,
-        )
+        if _use_syscall:
+            await nx_or_coordinator.sys_setattr(
+                f"/__sys__/services/{canonical}",
+                service=val,
+                exports=exports,
+                allow_overwrite=True,
+            )
+        else:
+            await nx_or_coordinator.enlist(
+                canonical,
+                val,
+                exports=exports,
+                allow_overwrite=True,
+            )
         count += 1
 
     return count

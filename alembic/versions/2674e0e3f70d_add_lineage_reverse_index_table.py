@@ -1,7 +1,7 @@
 """add_lineage_reverse_index_table
 
 Revision ID: 2674e0e3f70d
-Revises: 928a619dabf4
+Revises: add_grant_tuple_ids
 Create Date: 2026-03-28
 
 Issue #3417: Agent lineage tracking — reverse lookup table for impact analysis.
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "2674e0e3f70d"
-down_revision: Union[str, Sequence[str], None] = "928a619dabf4"
+down_revision: Union[str, Sequence[str], None] = "add_grant_tuple_ids"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

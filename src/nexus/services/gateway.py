@@ -43,7 +43,7 @@ class NexusFSGateway:
     - No protocol hunting required
 
     Dependencies exposed:
-    - File ops: mkdir(), sys_write(), sys_read(), sys_readdir(), sys_access()
+    - File ops: mkdir(), sys_write(), sys_read(), sys_readdir(), access()
     - Metadata: metadata_get/put/list/delete
     - Permissions: rebac_create/check/delete_object_tuples
     - Hierarchy: ensure_parent_tuples_batch, hierarchy_enabled
@@ -159,7 +159,7 @@ class NexusFSGateway:
         # Convert to list of strings
         return [str(item) for item in items]
 
-    async def sys_access(
+    async def access(
         self,
         path: str,
         *,
@@ -174,7 +174,7 @@ class NexusFSGateway:
         Returns:
             True if path exists, False otherwise
         """
-        return await self._fs.sys_access(path, context=context)
+        return await self._fs.access(path, context=context)
 
     # =========================================================================
     # Metadata Operations

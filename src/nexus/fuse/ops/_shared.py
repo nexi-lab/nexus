@@ -269,7 +269,7 @@ async def check_namespace_visible(ctx: FUSESharedContext, path: str) -> None:
 
     parent = path.rsplit("/", 1)[0] or "/"
     try:
-        await ctx.nexus_fs.sys_is_directory(parent, context=ctx.context)
+        await ctx.nexus_fs.is_directory(parent, context=ctx.context)
     except NexusFileNotFoundError:
         raise FuseOSError(errno.ENOENT) from None
 
@@ -283,7 +283,7 @@ def parse_virtual_path_for_fuse(ctx: FUSESharedContext, path: str) -> tuple[str,
     from nexus.lib.sync_bridge import run_sync as _run_sync
 
     def _sync_access(p: str) -> bool:
-        return _run_sync(ctx.nexus_fs.sys_access(p))
+        return _run_sync(ctx.nexus_fs.access(p))
 
     original_path, view_type, _ = parse_virtual_path(path, _sync_access)
     return original_path, view_type

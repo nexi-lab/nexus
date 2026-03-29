@@ -97,7 +97,7 @@ class TestKernelVFSAdapter:
             "count_dir",
             "rename",
             "mkdir",
-            "sys_access",
+            "access",
         ):
             assert hasattr(adapter, method), f"Missing method: {method}"
         # Runtime checkable protocol

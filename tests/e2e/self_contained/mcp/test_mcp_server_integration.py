@@ -172,9 +172,9 @@ class TestFileOperationsIntegration:
         assert "Successfully deleted" in delete_result
 
         # Verify file is gone
-        assert not await nexus_fs.sys_access("/workflow/file2.txt")
-        assert await nexus_fs.sys_access("/workflow/file1.txt")
-        assert await nexus_fs.sys_access("/workflow/file3.txt")
+        assert not await nexus_fs.access("/workflow/file2.txt")
+        assert await nexus_fs.access("/workflow/file1.txt")
+        assert await nexus_fs.access("/workflow/file3.txt")
 
     @pytest.mark.asyncio
     async def test_directory_operations(self, mcp_server, nexus_fs):
@@ -186,19 +186,19 @@ class TestFileOperationsIntegration:
         # Create directory
         mkdir_result = await mkdir_tool.fn(path="/testdir")
         assert "Successfully created" in mkdir_result
-        assert await nexus_fs.sys_is_directory("/testdir")
+        assert await nexus_fs.is_directory("/testdir")
 
         # Write file in directory
         await write_tool.fn(path="/testdir/file.txt", content="test")
 
         # Try to remove non-empty directory without recursive (should fail)
         rmdir_result = await rmdir_tool.fn(path="/testdir", recursive=False)
-        assert "Error" in rmdir_result or await nexus_fs.sys_access("/testdir")
+        assert "Error" in rmdir_result or await nexus_fs.access("/testdir")
 
         # Remove with recursive
         rmdir_result_recursive = await rmdir_tool.fn(path="/testdir", recursive=True)
         assert "Successfully removed" in rmdir_result_recursive
-        assert not await nexus_fs.sys_access("/testdir")
+        assert not await nexus_fs.access("/testdir")
 
     @pytest.mark.asyncio
     async def test_file_info_integration(self, mcp_server, test_files):
@@ -727,7 +727,7 @@ class TestComprehensiveMCPToolsWorkflow:
         assert "Successfully removed" in rmdir_result
 
         # Verify directory was removed
-        assert not await nexus_fs.sys_access("/mcp_integration_test")
+        assert not await nexus_fs.access("/mcp_integration_test")
 
 
 class TestPerformanceCharacteristics:

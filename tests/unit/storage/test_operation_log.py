@@ -295,11 +295,11 @@ async def test_undo_write_new_file(nx: NexusFS) -> None:
 
     # Write file
     await nx.write(path, content)
-    assert await nx.sys_access(path)
+    assert await nx.access(path)
 
     # Undo by deleting the file
     await nx.sys_unlink(path)
-    assert not await nx.sys_access(path)
+    assert not await nx.access(path)
 
 
 @pytest.mark.asyncio
@@ -351,7 +351,7 @@ async def test_undo_delete(
     local_backend.write_content(content)  # Hold extra CAS reference so blob survives unlink
     await nx.sys_unlink(path)
     await _flush(nx)
-    assert not await nx.sys_access(path)
+    assert not await nx.access(path)
 
     # Get delete operation
     with record_store.session_factory() as session:
@@ -366,7 +366,7 @@ async def test_undo_delete(
         await nx.write(path, restored_content)
 
         # Verify restoration
-        assert await nx.sys_access(path)
+        assert await nx.access(path)
         assert await nx.sys_read(path) == content
 
 
@@ -386,8 +386,8 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
     await nx.write(old_path, content)
     await nx.sys_rename(old_path, new_path)
     await _flush(nx)
-    assert not await nx.sys_access(old_path)
-    assert await nx.sys_access(new_path)
+    assert not await nx.access(old_path)
+    assert await nx.access(new_path)
 
     # Get rename operations — two-row pattern
     with record_store.session_factory() as session:
@@ -405,5 +405,5 @@ async def test_undo_rename(nx: NexusFS, record_store: SQLAlchemyRecordStore) -> 
         await nx.sys_rename(new_path, old_path)
 
         # Verify undo
-        assert await nx.sys_access(old_path)
-        assert not await nx.sys_access(new_path)
+        assert await nx.access(old_path)
+        assert not await nx.access(new_path)

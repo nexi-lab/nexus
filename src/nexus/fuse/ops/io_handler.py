@@ -55,7 +55,7 @@ class IOHandler:
             )
         else:
             logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
-            if not await ctx.nexus_fs.sys_access(original_path):
+            if not await ctx.nexus_fs.access(original_path):
                 raise FuseOSError(errno.ENOENT)
 
         # Generate file descriptor (thread-safe)
@@ -177,7 +177,7 @@ class IOHandler:
         with lock:
             # Read existing content
             existing_content = b""
-            if await ctx.nexus_fs.sys_access(original_path):
+            if await ctx.nexus_fs.access(original_path):
                 raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
                 existing_content = raw_content

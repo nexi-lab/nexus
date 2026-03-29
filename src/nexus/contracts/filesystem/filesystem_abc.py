@@ -58,7 +58,7 @@ class NexusFilesystemABC(ABC):
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
     # Namespace — sys_unlink(2), sys_rename(2)
     # Directory — sys_rmdir(2), sys_readdir(3)  (mkdir is Tier 2)
-    # Query — sys_access(2), sys_is_directory
+    # Query — access(2), is_directory
     # System — get_top_level_mounts, close
 
     # ── Content I/O ────────────────────────────────────────────────
@@ -264,23 +264,28 @@ class NexusFilesystemABC(ABC):
 
     # ── Query ──────────────────────────────────────────────────────
 
-    @abstractmethod
-    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Check if a file exists and is accessible (POSIX access(2)).
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
+        """Tier 2: check if path exists and is accessible.
 
-        Combines existence with permission visibility — returns False
-        (not raises) when path doesn't exist or user lacks permission.
+        Default derives from sys_stat — returns True if stat succeeds.
+        Subclasses may override for optimized implementations.
         """
-        ...
+        try:
+            return (await self.sys_stat(path, context=context)) is not None
+        except Exception:
+            return False
 
-    @abstractmethod
-    async def sys_is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Check if path is a directory.
+    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
+        """Tier 2: check if path is a directory.
 
-        Linux uses stat(2) + S_ISDIR macro — we provide direct check
-        for convenience.
+        Default derives from sys_stat — returns is_directory field.
+        Subclasses may override for optimized implementations.
         """
-        ...
+        try:
+            stat = await self.sys_stat(path, context=context)
+            return stat is not None and stat.get("is_directory", False)
+        except Exception:
+            return False
 
     # ── Locking (POSIX flock equivalent) ────────────────────────────
 

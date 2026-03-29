@@ -29,8 +29,8 @@ SYSCALL_METHODS = {
     "mkdir",
     "sys_rmdir",
     "sys_readdir",
-    "sys_access",
-    "sys_is_directory",
+    "access",
+    "is_directory",
 }
 
 # Files to SKIP (definitions themselves, or non-Python)
@@ -180,7 +180,7 @@ def _add_await_to_line(line: str) -> str:
     # e.g., `result = self._fs.sys_read(path)` → `result = await self._fs.sys_read(path)`
     # e.g., `nx.sys_write(p, d)` → `await nx.sys_write(p, d)`
     # e.g., `return self.sys_stat(p)` → `return await self.sys_stat(p)`
-    # e.g., `if self.sys_access(p):` → `if await self.sys_access(p):`
+    # e.g., `if self.access(p):` → `if await self.access(p):`
 
     # Skip if already has await
     # Find all method call positions

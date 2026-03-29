@@ -200,11 +200,11 @@ async def main():
         print_section("6. File Operations")
 
         # Check if file exists
-        if await nx.sys_access(config_path):
+        if await nx.access(config_path):
             print(f"✓ Config file exists: {config_path}")
 
         # Check if directory exists
-        if await nx.sys_is_directory("/workspace/demo-project/data"):
+        if await nx.is_directory("/workspace/demo-project/data"):
             print("✓ Data directory exists")
 
         # Update the config file to create a new version

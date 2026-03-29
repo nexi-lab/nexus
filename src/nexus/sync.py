@@ -93,7 +93,7 @@ async def copy_file(
             content = f.read()
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.sys_access(dest):
+        if checksum and await nx.access(dest):
             try:
                 raw_existing = await nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes
@@ -141,7 +141,7 @@ async def copy_file(
         content = raw_content
 
         # Check if destination exists and has same content (if checksum enabled)
-        if checksum and await nx.sys_access(dest):
+        if checksum and await nx.access(dest):
             try:
                 raw_existing = await nx.sys_read(dest)
                 # Type narrowing: when return_metadata=False (default), result is bytes

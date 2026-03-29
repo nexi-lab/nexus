@@ -197,7 +197,7 @@ def get_nexus_tools(nx):
             await nx.sys_write(path, content_bytes)
 
             # Verify write was successful
-            if await nx.sys_access(path):
+            if await nx.access(path):
                 size = len(content_bytes)
                 return f"Successfully wrote {size} bytes to {path}"
             else:

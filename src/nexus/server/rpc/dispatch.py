@@ -95,7 +95,7 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "sys_write": DispatchEntry(
             handle_write, is_async=True, event_type="file_write", event_size_key="bytes_written"
         ),
-        "sys_access": DispatchEntry(handle_exists, is_async=True),
+        "access": DispatchEntry(handle_exists, is_async=True),
         "sys_readdir": DispatchEntry(handle_list, is_async=True),
         "sys_unlink": DispatchEntry(handle_delete, is_async=True, event_type="file_delete"),
         "sys_rename": DispatchEntry(
@@ -110,7 +110,6 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "sys_rmdir": DispatchEntry(handle_rmdir, is_async=True, event_type="dir_delete"),
         "sys_stat": DispatchEntry(handle_get_metadata, is_async=True),
         "sys_setattr": DispatchEntry(handle_set_metadata, is_async=True),
-        "sys_is_directory": DispatchEntry(handle_is_directory, is_async=True),
         # Short aliases for nexus-test / remote clients
         "read": DispatchEntry(handle_read_async, is_async=True),
         "write": DispatchEntry(

@@ -91,7 +91,7 @@ class NexusBackend:
 
     async def _exists(self, path: str) -> bool:
         """Check if a path exists in Nexus."""
-        return await self.nx.sys_access(path)
+        return await self.nx.access(path)
 
     async def ls_info(self, path: str) -> list[FileInfo]:
         """
@@ -119,7 +119,7 @@ class NexusBackend:
                 entry_path = f"{resolved_path}/{display_path}".replace("//", "/")
 
                 try:
-                    is_dir = await self.nx.sys_is_directory(entry_path)
+                    is_dir = await self.nx.is_directory(entry_path)
 
                     # Get file size by reading if it's a file
                     size = 0
@@ -316,7 +316,7 @@ class NexusBackend:
                     if match_path.startswith(resolved_path):
                         relative_path = match_path[len(resolved_path) :].lstrip("/")
 
-                    is_dir = await self.nx.sys_is_directory(match_path)
+                    is_dir = await self.nx.is_directory(match_path)
 
                     # Get file size if it's a file
                     size = 0

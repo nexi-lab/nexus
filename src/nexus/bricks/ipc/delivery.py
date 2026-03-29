@@ -145,7 +145,7 @@ class MessageSender:
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
         """Write message to inbox, copy to outbox, and notify via DT_PIPE + EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._storage.sys_access(recipient_inbox, self._zone_id):
+        if not await self._storage.access(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
 
         # Check backpressure (count_dir is more efficient than list_dir)
@@ -159,7 +159,7 @@ class MessageSender:
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
         try:
-            if await self._storage.sys_access(outbox_dir, self._zone_id):
+            if await self._storage.access(outbox_dir, self._zone_id):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )

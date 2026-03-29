@@ -169,7 +169,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def content_exists(self, content_id: str, context: OperationContext | None = None) -> bool:
         path = self._to_server_path(context)
-        result = self._call_rpc("sys_access", {"path": path})
+        result = self._call_rpc("access", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
         return bool(result)

@@ -158,7 +158,7 @@ class TestVFSServicerErrors:
 
     @pytest.mark.anyio
     async def test_permission_error(self, servicer) -> None:
-        request = _make_request("sys_access", {"path": "/protected"})
+        request = _make_request("access", {"path": "/protected"})
         context = MagicMock()
 
         with patch(

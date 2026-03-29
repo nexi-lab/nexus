@@ -56,7 +56,7 @@ class VFSOperations(Protocol):
         """
         ...
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:
+    async def access(self, path: str, zone_id: str) -> bool:
         """Check if a path exists."""
         ...
 

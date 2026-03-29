@@ -79,7 +79,7 @@ def test_remote_service_proxy_coverage():
     expected_categories = {
         "File I/O": ["sys_read", "sys_write", "sys_unlink"],
         "Directory": ["mkdir", "sys_rmdir"],
-        "Query": ["sys_access", "sys_stat"],
+        "Query": ["access", "sys_stat"],
         "Versioning": ["get_version", "list_versions"],
     }
 

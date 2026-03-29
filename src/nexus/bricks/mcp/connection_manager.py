@@ -146,7 +146,7 @@ class MCPConnectionManager:
     async def _load_connections(self) -> None:
         """Load existing connections from storage."""
         try:
-            if self.filesystem and await self.filesystem.sys_access(self.CONNECTIONS_PATH):
+            if self.filesystem and await self.filesystem.access(self.CONNECTIONS_PATH):
                 items = await self.filesystem.sys_readdir(self.CONNECTIONS_PATH)
                 for item in items:
                     # Item might be full path, just filename, or dict
@@ -197,7 +197,7 @@ class MCPConnectionManager:
             if self.filesystem:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
                 path = f"{self.CONNECTIONS_PATH}{filename}"
-                if await self.filesystem.sys_access(path):
+                if await self.filesystem.access(path):
                     await self.filesystem.sys_unlink(path)
         except Exception as e:
             logger.warning(f"Failed to delete connection file: {e}")

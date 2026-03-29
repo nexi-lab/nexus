@@ -207,7 +207,7 @@ class SlimNexusFS:
         Returns:
             True if the path exists (file or directory).
         """
-        return await self._kernel.sys_access(path, context=self._ctx)
+        return await self._kernel.access(path, context=self._ctx)
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         """Copy a file from src to dst.
@@ -232,7 +232,7 @@ class SlimNexusFS:
         """Get file/directory metadata with a single metadata lookup.
 
         Optimized for the slim package — avoids the kernel's double-lookup
-        pattern (sys_is_directory + metadata.get) by doing one read and
+        pattern (is_directory + metadata.get) by doing one read and
         deriving directory status from the result.
 
         Args:

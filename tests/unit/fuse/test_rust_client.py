@@ -205,11 +205,11 @@ class TestOtherOps:
 
     def test_exists_true(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
-        assert mock_client.sys_access("/here.txt") is True
+        assert mock_client.access("/here.txt") is True
 
     def test_exists_false(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": False})
-        assert mock_client.sys_access("/gone.txt") is False
+        assert mock_client.access("/gone.txt") is False
 
 
 # ── Error Handling ────────────────────────────────────────
@@ -267,7 +267,7 @@ class TestAutoRestart:
                 mock_client.daemon_process, "poll", MagicMock(return_value=None)
             )
             mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
-            mock_client.sys_access("/test.txt")
+            mock_client.access("/test.txt")
             mock_reconnect.assert_called_once()
 
     def test_reconnect_exceeds_max_attempts(self, mock_client: RustFUSEClient) -> None:
@@ -280,15 +280,15 @@ class TestAutoRestart:
         mock_client._restart_count = 2
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
 
-        mock_client.sys_access("/test.txt")
+        mock_client.access("/test.txt")
         assert mock_client._restart_count == 0
 
     def test_request_id_increments(self, mock_client: RustFUSEClient) -> None:
         mock_client.sock.recv.return_value = _mock_rpc_response({"exists": True})
 
         start_id = mock_client.request_id
-        mock_client.sys_access("/a.txt")
-        mock_client.sys_access("/b.txt")
+        mock_client.access("/a.txt")
+        mock_client.access("/b.txt")
         assert mock_client.request_id == start_id + 2
 
 

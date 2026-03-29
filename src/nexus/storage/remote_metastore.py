@@ -85,7 +85,7 @@ class RemoteMetastore(MetastoreABC):
 
     def _exists_raw(self, path: str) -> bool:
         """Check if metadata exists by proxying ``exists`` to the server."""
-        result = self._call_rpc("sys_access", {"path": path})
+        result = self._call_rpc("access", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("exists", False))
         return bool(result)
@@ -127,7 +127,7 @@ class RemoteMetastore(MetastoreABC):
 
     def is_implicit_directory(self, path: str) -> bool:
         """Check if path is an implicit directory (has children but no explicit metadata)."""
-        result = self._call_rpc("sys_is_directory", {"path": path})
+        result = self._call_rpc("is_directory", {"path": path})
         if isinstance(result, dict):
             return bool(result.get("is_directory", False))
         return bool(result)

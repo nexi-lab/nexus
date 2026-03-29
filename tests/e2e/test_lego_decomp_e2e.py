@@ -216,18 +216,18 @@ class TestKernelSanity:
     async def test_delete_file(self, nx):
         await nx.write("/del.txt", b"bye")
         await nx.sys_unlink("/del.txt")
-        assert not await nx.sys_access("/del.txt")
+        assert not await nx.access("/del.txt")
 
     @pytest.mark.asyncio
     async def test_exists(self, nx):
         await nx.write("/exists.txt", b"yes")
-        assert await nx.sys_access("/exists.txt")
-        assert not await nx.sys_access("/nope.txt")
+        assert await nx.access("/exists.txt")
+        assert not await nx.access("/nope.txt")
 
     @pytest.mark.asyncio
     async def test_is_directory(self, nx):
         await nx.mkdir("/somedir", parents=True, exist_ok=True)
-        assert await nx.sys_is_directory("/somedir")
+        assert await nx.is_directory("/somedir")
 
     @pytest.mark.asyncio
     async def test_get_metadata(self, nx):
@@ -370,7 +370,7 @@ class TestPermissionEnforcement:
         )
         dirname = f"/admin-dir-{uuid.uuid4().hex[:8]}"
         await nx_perms.mkdir(dirname, parents=True, exist_ok=True, context=ctx)
-        assert await nx_perms.sys_is_directory(dirname, context=ctx)
+        assert await nx_perms.is_directory(dirname, context=ctx)
 
     @pytest.mark.asyncio
     async def test_read_after_write_with_permissions(self, nx_perms):

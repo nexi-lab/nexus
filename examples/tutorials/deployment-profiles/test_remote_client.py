@@ -229,7 +229,7 @@ async def main() -> int:
     print("DELETE")
     try:
         await nx.sys_unlink("/hello.txt")
-        exists = await nx.sys_access("/hello.txt")
+        exists = await nx.access("/hello.txt")
         if not exists:
             print("  OK   /hello.txt deleted, verified gone")
         else:

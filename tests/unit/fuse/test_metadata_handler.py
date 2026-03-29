@@ -28,19 +28,19 @@ class TestGetattr:
         mock_cache.get_attr.assert_called_with("/file.txt")
 
     def test_root_returns_dir_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_is_directory.return_value = True
+        mock_nexus_fs.is_directory.return_value = True
         result = fuse_ops.getattr("/")
         assert result["st_mode"] & stat.S_IFDIR
 
     def test_directory_returns_dir_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_is_directory.return_value = True
+        mock_nexus_fs.is_directory.return_value = True
         mock_nexus_fs.sys_stat.return_value = None
         result = fuse_ops.getattr("/mydir")
         assert result["st_mode"] & stat.S_IFDIR
 
     def test_file_returns_file_attrs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_is_directory.return_value = False
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.is_directory.return_value = False
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_stat.return_value = {"size": 1024}
 
         result = fuse_ops.getattr("/data.bin")
@@ -48,8 +48,8 @@ class TestGetattr:
         assert result["st_size"] == 1024
 
     def test_missing_file_raises_enoent(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_is_directory.return_value = False
-        mock_nexus_fs.sys_access.return_value = False
+        mock_nexus_fs.is_directory.return_value = False
+        mock_nexus_fs.access.return_value = False
 
         with pytest.raises(FuseOSError) as exc_info:
             fuse_ops.getattr("/nope")

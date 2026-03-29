@@ -62,8 +62,8 @@ def mock_nx_basic():
     _service_map = {"search": _mock_search}
     nx.service = Mock(side_effect=lambda name: _service_map.get(name))
     nx._mock_search = _mock_search  # internal alias for assertion access
-    nx.sys_access = AsyncMock(return_value=True)
-    nx.sys_is_directory = AsyncMock(return_value=False)
+    nx.access = AsyncMock(return_value=True)
+    nx.is_directory = AsyncMock(return_value=False)
     nx.mkdir = AsyncMock()
     nx.sys_rmdir = AsyncMock()
     nx.edit = Mock(
@@ -173,8 +173,8 @@ def mock_nx_full():
     nx.sys_readdir = AsyncMock(return_value=["/file1.txt"])
     nx.glob = Mock(return_value=["test.py"])
     nx.grep = Mock(return_value=[{"file": "test.py", "line": 10, "content": "match"}])
-    nx.sys_access = AsyncMock(return_value=True)
-    nx.sys_is_directory = AsyncMock(return_value=False)
+    nx.access = AsyncMock(return_value=True)
+    nx.is_directory = AsyncMock(return_value=False)
     nx.mkdir = AsyncMock()
     nx.sys_rmdir = AsyncMock()
 
@@ -340,8 +340,8 @@ class TestFileOperationTools:
 
     async def test_file_info_exists(self, mock_nx_basic):
         """Test getting file info for existing file."""
-        mock_nx_basic.sys_access.return_value = True
-        mock_nx_basic.sys_is_directory.return_value = False
+        mock_nx_basic.access.return_value = True
+        mock_nx_basic.is_directory.return_value = False
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -354,7 +354,7 @@ class TestFileOperationTools:
 
     async def test_file_info_not_found(self, mock_nx_basic):
         """Test getting file info for non-existent file."""
-        mock_nx_basic.sys_access.return_value = False
+        mock_nx_basic.access.return_value = False
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")
@@ -365,8 +365,8 @@ class TestFileOperationTools:
 
     async def test_file_info_directory(self, mock_nx_basic):
         """Test getting file info for directory."""
-        mock_nx_basic.sys_access.return_value = True
-        mock_nx_basic.sys_is_directory.return_value = True
+        mock_nx_basic.access.return_value = True
+        mock_nx_basic.is_directory.return_value = True
         server = await create_mcp_server(nx=mock_nx_basic)
 
         info_tool = get_tool(server, "nexus_file_info")

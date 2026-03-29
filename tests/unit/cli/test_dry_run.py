@@ -96,7 +96,7 @@ def _make_mock_nx() -> MagicMock:
     """Create a mock NexusFilesystem that tracks calls."""
     nx = MagicMock()
     nx.close = MagicMock()
-    nx.sys_access = AsyncMock(return_value=True)
+    nx.access = AsyncMock(return_value=True)
     nx.sys_write = AsyncMock()
     nx.sys_read = AsyncMock()
     nx.sys_unlink = AsyncMock()

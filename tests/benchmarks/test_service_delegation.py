@@ -94,7 +94,7 @@ def mock_gateway():
     mock_fs.write = AsyncMock()
     mock_fs.mkdir = AsyncMock()
     mock_fs.sys_readdir = AsyncMock(return_value=["a.txt", "b.txt"])
-    mock_fs.sys_access = AsyncMock(return_value=True)
+    mock_fs.access = AsyncMock(return_value=True)
     mock_fs.metadata = MagicMock()
     mock_fs.metadata.get = MagicMock(return_value=MagicMock())
     mock_fs.metadata.list = MagicMock(return_value=[])
@@ -308,11 +308,11 @@ class TestGatewayDelegationOverhead:
         benchmark(run)
 
     def test_gateway_exists(self, benchmark, mock_gateway, context, delegation_loop):
-        """Benchmark gateway.sys_access() delegation."""
+        """Benchmark gateway.access() delegation."""
 
         def run():
             delegation_loop.run_until_complete(
-                mock_gateway.sys_access("/test/file.txt", context=context)
+                mock_gateway.access("/test/file.txt", context=context)
             )
 
         benchmark(run)

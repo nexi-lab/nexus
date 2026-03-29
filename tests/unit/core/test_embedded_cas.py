@@ -86,8 +86,8 @@ async def test_cas_automatic_deduplication(
     await embedded_cas.write("/file2.txt", content)
 
     # Check both files exist
-    assert await embedded_cas.sys_access("/file1.txt")
-    assert await embedded_cas.sys_access("/file2.txt")
+    assert await embedded_cas.access("/file1.txt")
+    assert await embedded_cas.access("/file2.txt")
 
     # Get metadata - should have same content hash (etag)
     meta1 = embedded_cas.metadata.get("/file1.txt")
@@ -171,7 +171,7 @@ async def test_cas_storage_efficiency(
 
     # All files should exist
     for i in range(10):
-        assert await embedded_cas.sys_access(f"/file{i}.txt")
+        assert await embedded_cas.access(f"/file{i}.txt")
 
     # Get content hash
     meta = embedded_cas.metadata.get("/file0.txt")
@@ -270,7 +270,7 @@ async def test_cas_concurrent_deduplication(
 
     # All files should exist
     for path in paths:
-        assert await embedded_cas.sys_access(path)
+        assert await embedded_cas.access(path)
 
     # Get content hash
     meta = embedded_cas.metadata.get(paths[0])

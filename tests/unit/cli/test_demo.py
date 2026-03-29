@@ -109,7 +109,7 @@ class TestIdempotency:
         mock_nx.write = AsyncMock()
         mock_nx.mkdir = AsyncMock()
         mock_nx.sys_readdir = AsyncMock(return_value=[])
-        mock_nx.sys_access = AsyncMock(side_effect=[True] * total_files)
+        mock_nx.access = AsyncMock(side_effect=[True] * total_files)
         manifest: dict = {"files": []}
 
         # First seed — includes both DEMO_FILES and HERB_CORPUS
@@ -133,7 +133,7 @@ class TestIdempotency:
         mock_nx.write = AsyncMock()
         mock_nx.mkdir = AsyncMock()
         mock_nx.sys_readdir = AsyncMock(return_value=[])
-        mock_nx.sys_access = AsyncMock(side_effect=[False] * total_files)
+        mock_nx.access = AsyncMock(side_effect=[False] * total_files)
         manifest: dict = {"files": list(seeded_paths)}
 
         recreated = await _seed_files(mock_nx, manifest)

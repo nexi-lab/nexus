@@ -170,7 +170,7 @@ class TestProxyWithRealFastAPIPermissions:
             assert resp.status_code == 200
 
             # Now call exists() through the proxy's _forward() path
-            result = await proxy.sys_access("/e2e-check.txt", "root")
+            result = await proxy.access("/e2e-check.txt", "root")
             # Result type varies — could be bool or truthy value
             assert result, "exists() should return truthy for existing file"
         finally:
@@ -209,7 +209,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_access("/file.txt", "root")
+                await proxy.access("/file.txt", "root")
 
             # Real server returns 401 for missing auth
             assert exc_info.value.status_code == 401
@@ -244,7 +244,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.sys_access("/file.txt", "root")
+                await proxy.access("/file.txt", "root")
 
             assert exc_info.value.status_code == 401
             assert await proxy.pending_count() == 0
@@ -396,12 +396,12 @@ class TestProxyOfflineQueueReplayE2E:
             try:
                 for _ in range(2):
                     with pytest.raises(OfflineQueuedError):
-                        await proxy.sys_access("/f", "z1")
+                        await proxy.access("/f", "z1")
 
                 assert proxy.circuit_state is CircuitState.OPEN
 
                 with pytest.raises((CircuitOpenError, OfflineQueuedError)):
-                    await proxy.sys_access("/f", "z1")
+                    await proxy.access("/f", "z1")
 
                 assert any("Circuit open" in r.message for r in caplog.records)
             finally:
@@ -463,7 +463,7 @@ class TestProxyOfflineQueueReplayE2E:
         try:
             for _ in range(3):
                 with pytest.raises(OfflineQueuedError):
-                    await proxy.sys_access("/f", "z1")
+                    await proxy.access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
@@ -501,11 +501,11 @@ class TestProxyPerformance:
         await proxy.start()
 
         try:
-            await proxy.sys_access("/f", "z1")  # warm up
+            await proxy.access("/f", "z1")  # warm up
 
             start = time.monotonic()
             for _ in range(100):
-                await proxy.sys_access("/f", "z1")
+                await proxy.access("/f", "z1")
             elapsed = time.monotonic() - start
 
             avg_ms = (elapsed / 100) * 1000

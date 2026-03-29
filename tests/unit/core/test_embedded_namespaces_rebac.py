@@ -60,7 +60,7 @@ async def test_workspace_namespace_operations():
         assert content == b"print('hello')"
 
         # Check existence
-        assert await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        assert await nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         # List files
         files = await nx.sys_readdir("/workspace/acme/agent1", context=ctx)
@@ -68,7 +68,7 @@ async def test_workspace_namespace_operations():
 
         # Delete
         await nx.sys_unlink("/workspace/acme/agent1/code.py", context=ctx)
-        assert not await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
+        assert not await nx.access("/workspace/acme/agent1/code.py", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -108,7 +108,7 @@ async def test_shared_namespace_operations():
 
         # Delete
         await nx.sys_unlink("/shared/acme/models/model.pkl", context=ctx)
-        assert not await nx.sys_access("/shared/acme/models/model.pkl", context=ctx)
+        assert not await nx.access("/shared/acme/models/model.pkl", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -147,7 +147,7 @@ async def test_external_namespace_operations():
 
         # Delete
         await nx.sys_unlink("/external/s3/bucket/file.txt", context=ctx)
-        assert not await nx.sys_access("/external/s3/bucket/file.txt", context=ctx)
+        assert not await nx.access("/external/s3/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()
@@ -180,9 +180,9 @@ async def test_multi_namespace_operations_single_zone():
         await nx.write("/external/gcs/bucket/file.txt", b"external", context=ctx)
 
         # Verify all namespaces work
-        assert await nx.sys_access("/workspace/acme/agent1/code.py", context=ctx)
-        assert await nx.sys_access("/shared/acme/data.txt", context=ctx)
-        assert await nx.sys_access("/external/gcs/bucket/file.txt", context=ctx)
+        assert await nx.access("/workspace/acme/agent1/code.py", context=ctx)
+        assert await nx.access("/shared/acme/data.txt", context=ctx)
+        assert await nx.access("/external/gcs/bucket/file.txt", context=ctx)
 
         nx.close()
         cleanup_windows_db()

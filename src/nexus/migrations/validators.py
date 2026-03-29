@@ -293,7 +293,7 @@ class IntegrityValidator:
                         continue
 
                     # Try to read file
-                    if not await self.nx.sys_access(path):
+                    if not await self.nx.access(path):
                         result.missing_content += 1
                         result.errors.append(f"Missing content for: {path}")
                         result.valid = False

@@ -18,8 +18,8 @@ def mock_nexus_fs() -> MagicMock:
     """Mock NexusFilesystem with standard methods."""
     fs = MagicMock()
     # Syscalls are now async — use AsyncMock so await works in FUSE handlers
-    fs.sys_access = AsyncMock(return_value=True)
-    fs.sys_is_directory = AsyncMock(return_value=False)
+    fs.access = AsyncMock(return_value=True)
+    fs.is_directory = AsyncMock(return_value=False)
     fs.sys_read = AsyncMock(return_value=b"hello world")
     fs.sys_write = AsyncMock(return_value=None)
     fs.write = AsyncMock(return_value=None)

@@ -145,7 +145,7 @@ async def main() -> None:
         existing_resources = []
         for resource_type in resource_types:
             resource_path = f"{user_base}/{resource_type}"
-            if await nx.sys_access(resource_path, context=admin_context):
+            if await nx.access(resource_path, context=admin_context):
                 existing_resources.append(resource_type)
                 print(f"  ✓ {resource_type}: exists")
 

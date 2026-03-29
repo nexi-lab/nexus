@@ -55,7 +55,7 @@ class TestUnlink:
 
     def test_unlink_rejects_virtual_view(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         # Patch _parse_virtual_path to simulate a virtual view
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         # _parsed views: these are handled by parse_virtual_path returning a view_type
         # For simplicity, patch _parse_virtual_path
         with patch.object(fuse_ops, "_parse_virtual_path", return_value=("/file.xlsx", "md")):
@@ -96,22 +96,22 @@ class TestRename:
     """rename: file/directory rename with cache invalidation."""
 
     def test_rename_file(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = False  # dest doesn't exist
-        mock_nexus_fs.sys_is_directory.return_value = False
+        mock_nexus_fs.access.return_value = False  # dest doesn't exist
+        mock_nexus_fs.is_directory.return_value = False
 
         fuse_ops.rename("/old.txt", "/new.txt")
         mock_nexus_fs.sys_rename.assert_called_once_with("/old.txt", "/new.txt", context=None)
 
     def test_rename_rejects_existing_dest(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
 
         with pytest.raises(FuseOSError) as exc_info:
             fuse_ops.rename("/old.txt", "/existing.txt")
         assert exc_info.value.errno == errno.EEXIST
 
     def test_rename_directory(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = False
-        mock_nexus_fs.sys_is_directory.return_value = True
+        mock_nexus_fs.access.return_value = False
+        mock_nexus_fs.is_directory.return_value = True
         mock_nexus_fs.sys_readdir.return_value = [
             {"path": "/olddir/a.txt", "is_directory": False},
         ]

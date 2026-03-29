@@ -150,17 +150,17 @@ class TestSlimFileOperations:
     @pytest.mark.asyncio
     async def test_exists_true(self, minimal_nx: "NexusFS") -> None:
         await minimal_nx.write("/exists_check.txt", b"data")
-        assert await minimal_nx.sys_access("/exists_check.txt") is True
+        assert await minimal_nx.access("/exists_check.txt") is True
 
     @pytest.mark.asyncio
     async def test_exists_false(self, minimal_nx: "NexusFS") -> None:
-        assert await minimal_nx.sys_access("/nonexistent.txt") is False
+        assert await minimal_nx.access("/nonexistent.txt") is False
 
     @pytest.mark.asyncio
     async def test_delete(self, minimal_nx: "NexusFS") -> None:
         await minimal_nx.write("/to_delete.txt", b"bye")
         await minimal_nx.sys_unlink("/to_delete.txt")
-        assert await minimal_nx.sys_access("/to_delete.txt") is False
+        assert await minimal_nx.access("/to_delete.txt") is False
 
     @pytest.mark.asyncio
     async def test_list_directory(self, minimal_nx: "NexusFS") -> None:
@@ -361,9 +361,9 @@ class TestSlimIntegrationViaConnect:
         # File operations should work
         await nx.write("/hello.txt", b"slim mode")
         assert await nx.sys_read("/hello.txt") == b"slim mode"
-        assert await nx.sys_access("/hello.txt") is True
+        assert await nx.access("/hello.txt") is True
         await nx.sys_unlink("/hello.txt")
-        assert await nx.sys_access("/hello.txt") is False
+        assert await nx.access("/hello.txt") is False
 
     @pytest.mark.asyncio
     async def test_slim_factory_enabled_bricks_logged(

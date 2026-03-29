@@ -38,6 +38,8 @@ from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = object()  # default for _meta param in _check_is_directory
+
 
 class _WriteContentResult(NamedTuple):
     """Result of content-only write phase."""
@@ -638,31 +640,30 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-    @rpc_expose(description="Check if path is a directory")
-    async def sys_is_directory(
+    async def _check_is_directory(
         self,
         path: str,
         *,
         context: OperationContext | None = None,
+        _meta: Any = _SENTINEL,
     ) -> bool:
-        """Check if path is a directory (explicit or implicit).
+        """Internal: check if path is a directory (explicit or implicit).
 
-        A path is considered a directory if any of the following hold:
-        - It is an implicit directory (has children in metastore)
-        - Its metastore entry has ``entry_type`` DT_DIR or DT_MOUNT
-        - The backend reports it as a directory
+        Used by sys_stat. is_directory is a Tier 2 wrapper over sys_stat.
+
+        Args:
+            _meta: Pre-fetched FileMetadata from caller (avoids duplicate
+                metadata.get). Pass ``None`` to indicate "already looked up,
+                not found". Omit to let this method fetch it.
         """
         try:
             path = self._validate_path(path)
-
-            # Use provided context or default
             ctx = self._resolve_cred(context)
 
             # Check if it's an implicit directory first (for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
 
             # Permission check via KernelDispatch INTERCEPT hook.
-            # No hook registered = no check = zero overhead (~20ns set lookup).
             from nexus.contracts.exceptions import PermissionDeniedError
             from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
@@ -678,9 +679,8 @@ class NexusFS(  # type: ignore[misc]
             except PermissionDeniedError:
                 return False
 
-            # Check metastore entry_type: DT_DIR and DT_MOUNT are directories.
-            # This is a fast ~5 us redb read that avoids calling into the backend.
-            meta = self.metadata.get(path)
+            # Use pre-fetched meta if provided, otherwise fetch
+            meta = self.metadata.get(path) if _meta is _SENTINEL else _meta
             if meta is not None and (meta.is_dir or meta.is_mount):
                 return True
 
@@ -690,12 +690,27 @@ class NexusFS(  # type: ignore[misc]
                 is_admin=ctx.is_admin,
                 check_write=False,
             )
-            # Check if it's an explicit directory in the backend
             if route.backend.is_directory(route.backend_path):
                 return True
-            # Return cached implicit directory status
             return is_implicit_dir
         except (InvalidPathError, Exception):
+            return False
+
+    @rpc_expose(description="Check if path is a directory")
+    async def is_directory(
+        self,
+        path: str,
+        *,
+        context: OperationContext | None = None,
+    ) -> bool:
+        """Tier 2: convenience wrapper — derives from sys_stat.
+
+        Equivalent to ``(await sys_stat(path)).get("is_directory", False)``.
+        """
+        try:
+            stat = await self.sys_stat(path, context=context)
+            return stat is not None and stat.get("is_directory", False)
+        except Exception:
             return False
 
     # ── Locking (POSIX flock equivalent) ──────────────────────────
@@ -867,11 +882,11 @@ class NexusFS(  # type: ignore[misc]
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
-        # Check if it's a directory first
-        is_dir = await self.sys_is_directory(normalized, context=ctx)
-
-        # Try to get explicit metadata from metastore first (preserves custom attrs)
+        # Fetch metadata once, share with _check_is_directory to avoid duplicate lookup
         file_meta = self.metadata.get(normalized)
+
+        # Check if it's a directory (pass pre-fetched meta to avoid second metadata.get)
+        is_dir = await self._check_is_directory(normalized, context=ctx, _meta=file_meta)
 
         if is_dir:
             if file_meta is not None:
@@ -4157,45 +4172,25 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Check if a file or directory exists and is accessible (POSIX access(2)).
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
+        """Tier 2: check if path explicitly exists and is accessible.
 
-        Tier 1 — combines existence check with permission visibility.
-        Returns False (not raises) when permission denied, hiding the
-        distinction between "not found" and "no access".
-
-        Args:
-            path: Virtual path to check.
-            context: Operation context for permission checks (uses default if None).
-
-        Returns:
-            True if path exists (explicit metadata or implicit directory) AND
-            user has read permission (or TRAVERSE for implicit dirs), False otherwise.
-
-        Note:
-            With permissions enabled, directories are visible if user has access to ANY
-            descendant, even if they don't have direct access to the directory itself.
-            This enables hierarchical navigation (e.g., /workspace visible if user has
-            access to /workspace/joe/file.txt).
-
-        Performance:
-            For implicit directories (directories without explicit files, like /zones),
-            uses TRAVERSE permission check (O(1)) instead of descendant access check (O(n)).
+        Returns True if path has explicit metadata or is an implicit directory,
+        False otherwise. Unlike sys_stat, does NOT synthesize directory entries.
         """
         try:
             path = self._validate_path(path)
+            ctx = self._resolve_cred(context)
 
-            # Check if it's an implicit directory first (before permission check for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
 
-            # Issue #1815: permission check via KernelDispatch INTERCEPT hook.
+            # Permission check via stat hook (same as _check_is_directory)
             from nexus.contracts.exceptions import PermissionDeniedError
-            from nexus.contracts.vfs_hooks import AccessHookContext as _AHC
+            from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
-            ctx = self._resolve_cred(context)
             try:
-                self._dispatch.intercept_pre_access(
-                    _AHC(
+                self._dispatch.intercept_pre_stat(
+                    _SHC(
                         path=path,
                         context=ctx,
                         permission="TRAVERSE" if is_implicit_dir else "READ",
@@ -4205,12 +4200,10 @@ class NexusFS(  # type: ignore[misc]
             except PermissionDeniedError:
                 return False
 
-            # Check if file exists explicitly
             if self.metadata.exists(path):
                 return True
-            # Return implicit directory status (already computed above)
             return is_implicit_dir
-        except Exception:  # InvalidPathError
+        except Exception:
             return False
 
     @rpc_expose(description="Check existence of multiple paths in single call")
@@ -4243,7 +4236,7 @@ class NexusFS(  # type: ignore[misc]
         results: dict[str, bool] = {}
         for path in paths:
             try:
-                results[path] = await self.sys_access(path, context=context)
+                results[path] = await self.access(path, context=context)
             except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
                 logger.debug("Exists check failed for %s: %s", path, exc)
@@ -4323,7 +4316,7 @@ class NexusFS(  # type: ignore[misc]
                     continue
 
                 # Check if it's a directory
-                is_dir = await self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
+                is_dir = await self.is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
 
                 results[path] = {
                     "path": meta.path,

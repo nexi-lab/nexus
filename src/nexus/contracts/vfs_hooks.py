@@ -148,7 +148,7 @@ class StatHookContext:
 
 @dataclass
 class AccessHookContext:
-    """Context for sys_access permission check (Issue #1815).
+    """Context for access permission check (Issue #1815).
 
     Hooks raise ``PermissionDeniedError`` to deny access.
     """
@@ -267,7 +267,7 @@ class VFSStatHook(Protocol):
 
 @runtime_checkable
 class VFSAccessHook(Protocol):
-    """INTERCEPT hook for sys_access permission check (Issue #1815).
+    """INTERCEPT hook for access permission check (Issue #1815).
 
     ``on_pre_access`` is called before access checks.  Raise
     ``PermissionDeniedError`` to deny access.

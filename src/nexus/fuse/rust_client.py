@@ -408,7 +408,7 @@ class RustFUSEClient:
         """
         self._send_request("rename", {"old_path": old_path, "new_path": new_path})
 
-    def sys_access(self, path: str) -> bool:
+    def access(self, path: str) -> bool:
         """Check if path exists.
 
         Args:

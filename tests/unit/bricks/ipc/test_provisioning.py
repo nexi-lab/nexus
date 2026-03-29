@@ -29,9 +29,9 @@ class TestAgentProvisioner:
         provisioner = AgentProvisioner(vfs, zone_id=ZONE)
         await provisioner.provision("analyst")
 
-        assert await vfs.sys_access(agent_dir("analyst"), ZONE)
+        assert await vfs.access(agent_dir("analyst"), ZONE)
         for subdir in AGENT_SUBDIRS:
-            assert await vfs.sys_access(f"{agent_dir('analyst')}/{subdir}", ZONE)
+            assert await vfs.access(f"{agent_dir('analyst')}/{subdir}", ZONE)
 
     @pytest.mark.asyncio
     async def test_provision_creates_agent_card(self, vfs: InMemoryVFS) -> None:
@@ -57,7 +57,7 @@ class TestAgentProvisioner:
         await provisioner.provision("analyst")
         await provisioner.provision("analyst")  # Should not raise
 
-        assert await vfs.sys_access(inbox_path("analyst"), ZONE)
+        assert await vfs.access(inbox_path("analyst"), ZONE)
 
     @pytest.mark.asyncio
     async def test_is_provisioned(self, vfs: InMemoryVFS) -> None:
@@ -106,7 +106,7 @@ class TestAgentProvisioner:
         provisioner = AgentProvisioner(vfs, zone_id=ZONE)
         await provisioner.provision("agent:bob")
 
-        assert await vfs.sys_access(inbox_path("agent:bob"), ZONE)
+        assert await vfs.access(inbox_path("agent:bob"), ZONE)
 
     @pytest.mark.asyncio
     async def test_provision_pipe_factory_failure_non_fatal(self, vfs: InMemoryVFS) -> None:
@@ -116,4 +116,4 @@ class TestAgentProvisioner:
         await provisioner.provision("agent:bob")
 
         # Provisioning should still succeed even though pipe creation failed
-        assert await vfs.sys_access(inbox_path("agent:bob"), ZONE)
+        assert await vfs.access(inbox_path("agent:bob"), ZONE)

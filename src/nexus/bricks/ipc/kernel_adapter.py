@@ -112,7 +112,7 @@ class KernelVFSAdapter:
         ctx = self._ctx(zone_id)
         await self._nx.mkdir(path, parents=True, exist_ok=True, context=ctx)
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
+    async def access(self, path: str, zone_id: str) -> bool:  # noqa: ARG002
         self._require_bound()
         import asyncio
 
@@ -123,4 +123,4 @@ class KernelVFSAdapter:
             return False
 
     # Alias for backward compatibility
-    exists = sys_access
+    exists = access

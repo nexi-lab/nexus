@@ -102,10 +102,12 @@ refcount drain → unhook old → replace → rehook new.
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
 |---------|-------------------|---------------------|---------|
 | **Kernel owns** | Creates instance | — | VFSLockManager, LockManager (advisory), KernelDispatch, PipeManager, StreamManager, FileWatcher, ServiceRegistry, DriverLifecycleCoordinator |
-| **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_agent_registry` |
+| **Kernel knows** (sentinel) | `self._x = None` | Injects real value; `None` = graceful degrade | `_token_manager`, `_sandbox_manager`, `_coordination_client`, `_event_client` |
 
 "Kernel knows" follows the Linux LSM pattern: kernel declares a default (None),
 factory overrides at link-time. The kernel never imports service-layer modules.
+`AgentRegistry` is accessed via `ServiceRegistry` (`register_factory`), not as
+a kernel sentinel — no-agent profiles (REMOTE) never construct it.
 
 Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
 (PermissionCheckHook). No hook registered = no check = zero overhead.

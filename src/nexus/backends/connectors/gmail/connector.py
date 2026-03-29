@@ -13,10 +13,16 @@ path security, and content operations.
 Storage structure (2-level hierarchy):
     /
     ├── SENT/                          # Sent emails
-    │   └── {thread_id}-{msg_id}.yaml  # Email metadata + content
+    │   ├── {thread_id}-{msg_id}.yaml  # Email metadata + content
+    │   ├── _new.yaml                  # Write here to send new email
+    │   ├── _reply.yaml                # Write here to reply to thread
+    │   └── _forward.yaml              # Write here to forward message
     ├── STARRED/                       # Starred emails in INBOX
     ├── IMPORTANT/                     # Important emails in INBOX
-    └── INBOX/                         # Remaining inbox emails
+    ├── INBOX/                         # Remaining inbox emails
+    ├── DRAFTS/                        # Email drafts
+    │   └── _new.yaml                  # Write here to create draft
+    └── TRASH/                         # Trashed emails
 """
 
 from __future__ import annotations
@@ -36,11 +42,17 @@ from nexus.backends.connectors.base import (
     ValidatedMixin,
 )
 from nexus.backends.connectors.gmail.errors import ERROR_REGISTRY
+from nexus.backends.connectors.gmail.schemas import (
+    DraftEmailSchema,
+    ForwardEmailSchema,
+    ReplyEmailSchema,
+    SendEmailSchema,
+)
 from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.exceptions import BackendError
+from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
@@ -52,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 @register_connector(
     "gmail_connector",
-    description="Gmail with OAuth 2.0 authentication (read-only)",
+    description="Gmail with OAuth 2.0 authentication (send, reply, forward, draft, trash)",
     category="oauth",
     requires=["google-api-python-client", "google-auth-oauthlib"],
     service_name="gmail",
@@ -80,6 +92,8 @@ class PathGmailBackend(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,
+            BackendFeature.WRITE_BACK,
+            BackendFeature.SKILL_DOC,
         }
     )
 
@@ -88,6 +102,22 @@ class PathGmailBackend(
 
     # Skill documentation settings
     SKILL_NAME = "gmail"
+
+    # ValidatedMixin config — maps operation name → Pydantic schema
+    SCHEMAS = {
+        "send_email": SendEmailSchema,
+        "reply_email": ReplyEmailSchema,
+        "forward_email": ForwardEmailSchema,
+        "create_draft": DraftEmailSchema,
+    }
+
+    # Maps (label, sentinel) → operation name for path-based dispatch
+    _OPERATION_MAP: ClassVar[dict[tuple[str, str], str]] = {
+        ("SENT", "_new"): "send_email",
+        ("SENT", "_reply"): "reply_email",
+        ("SENT", "_forward"): "forward_email",
+        ("DRAFTS", "_new"): "create_draft",
+    }
 
     # Operation traits for trait-based validation
     OPERATION_TRAITS = {
@@ -289,6 +319,30 @@ class PathGmailBackend(
         """Bind the transport to the current request context (OAuth token)."""
         self._transport = self._gmail_transport.with_context(context)
 
+    def _resolve_operation(self, path: str) -> tuple[str, str, str]:
+        """Resolve a backend path to ``(operation_name, label, sentinel)``.
+
+        Raises BackendError if the path does not match any write operation.
+        """
+        label, _thread_id, sentinel = GmailTransport._parse_key(path)
+        if not label or not sentinel or not sentinel.startswith("_"):
+            raise BackendError(
+                f"Invalid write path: {path}. "
+                "Expected: SENT/_new.yaml, SENT/_reply.yaml, SENT/_forward.yaml, "
+                "or DRAFTS/_new.yaml",
+                backend="gmail",
+            )
+
+        operation = self._OPERATION_MAP.get((label, sentinel))
+        if operation is None:
+            raise BackendError(
+                f"No operation for path: {path}. "
+                "Supported write paths: SENT/_new.yaml, SENT/_reply.yaml, "
+                "SENT/_forward.yaml, DRAFTS/_new.yaml",
+                backend="gmail",
+            )
+        return operation, label, sentinel
+
     def write_content(
         self,
         content: bytes,
@@ -297,10 +351,59 @@ class PathGmailBackend(
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        raise BackendError(
-            "Gmail connector is read-only. Cannot write emails back to Gmail.",
-            backend="gmail",
-        )
+        """Handle send/reply/forward/draft with validation + checkpoints.
+
+        The write path is determined by ``context.backend_path``:
+        - ``SENT/_new.yaml``     → send_email
+        - ``SENT/_reply.yaml``   → reply_email
+        - ``SENT/_forward.yaml`` → forward_email
+        - ``DRAFTS/_new.yaml``   → create_draft
+        """
+        if not context or not context.backend_path:
+            raise BackendError(
+                "Gmail connector requires backend_path in OperationContext.",
+                backend="gmail",
+            )
+
+        self._bind_transport(context)
+
+        path = context.backend_path.strip("/")
+        operation, label, sentinel = self._resolve_operation(path)
+
+        # Parse YAML content for validation
+        data = GmailTransport._parse_yaml_content(content)
+
+        # Trait-based validation (intent, confirm)
+        warnings = self.validate_traits(operation, data)
+        for w in warnings:
+            logger.warning("Gmail %s warning: %s", operation, w)
+
+        # Schema validation
+        self.validate_schema(operation, data)
+
+        # Create checkpoint
+        checkpoint = self.create_checkpoint(operation, metadata={"path": path})
+
+        try:
+            blob_path = self._get_key_path(f"{label}/{sentinel}.yaml")
+            result_id = self._transport.store(blob_path, content) or ""
+
+            if checkpoint:
+                self.complete_checkpoint(
+                    checkpoint.checkpoint_id,
+                    {"message_id": result_id, "operation": operation},
+                )
+            logger.info("Gmail %s completed: %s", operation, result_id)
+            return WriteResult(content_id=result_id, version=result_id, size=len(content))
+        except Exception as e:
+            if checkpoint:
+                self.clear_checkpoint(checkpoint.checkpoint_id)
+            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+                raise
+            raise BackendError(
+                f"Failed to execute {operation}: {e}",
+                backend="gmail",
+            ) from e
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
@@ -338,10 +441,38 @@ class PathGmailBackend(
         return content
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
-        raise BackendError(
-            "Gmail connector is read-only. Cannot delete emails from Gmail.",
-            backend="gmail",
-        )
+        """Trash a Gmail message (recoverable — not permanent delete).
+
+        The message is moved to Gmail Trash and auto-deleted after 30 days.
+        """
+        if not context or not context.backend_path:
+            raise BackendError(
+                "Gmail connector requires backend_path in OperationContext.",
+                backend="gmail",
+            )
+
+        self._bind_transport(context)
+
+        path = context.backend_path.strip("/")
+        _label, _thread_id, message_id = GmailTransport._parse_key(path)
+
+        if not message_id or (message_id and message_id.startswith("_")):
+            raise BackendError(
+                f"Invalid path for trash: {path}. Expected LABEL/threadId-msgId.yaml",
+                backend="gmail",
+            )
+
+        blob_path = self._get_key_path(path)
+        try:
+            self._transport.remove(blob_path)
+            logger.info("Trashed Gmail message via connector: %s", message_id)
+        except Exception as e:
+            if isinstance(e, (BackendError, NexusFileNotFoundError)):
+                raise
+            raise BackendError(
+                f"Failed to trash message: {e}",
+                backend="gmail",
+            ) from e
 
     def content_exists(self, content_id: str, context: "OperationContext | None" = None) -> bool:
         if not context or not context.backend_path:

@@ -197,11 +197,9 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-**Consistency** applies to metadata operations (metastore put): ``"sc"`` (strong
-consistency, default) or ``"ec"`` (eventually consistent, local-first with
-async replication). Content writes (CAS/backend) are always local. The kernel
-ABC defines the contract; drivers implement SC vs EC. Tier 2 `write()` composes
-content write + metadata update with consistency.
+**Consistency** applies to metadata operations only (not content writes).
+`sys_write` is content-only (SRP); `write(consistency=)` composes content write +
+metadata update. ``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first).
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 

@@ -2152,13 +2152,12 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        consistency: str = "sc",
         ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Tier 1 kernel primitive — file must exist. Use write() (Tier 2)
-        for create-on-write semantics.
+        Tier 1 kernel primitive — content-only (SRP). Metadata consistency
+        is controlled by Tier 2 write(consistency=). File must exist.
 
         Args:
             path: Virtual path to write.
@@ -2166,8 +2165,6 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Optional operation context for permission checks.
-            consistency: Metastore consistency — ``"sc"`` (strong, default)
-                or ``"ec"`` (eventual, local-first). Issue #1828.
             ttl: TTL in seconds for ephemeral content (Issue #3405).
                 Routes to TTL-bucketed volume; None = permanent.
 
@@ -2234,9 +2231,7 @@ class NexusFS(  # type: ignore[misc]
         # Thread TTL into context (Issue #3405)
         if ttl is not None and ttl > 0:
             context = self._ensure_context_ttl(context, ttl)
-        await self._write_internal(
-            path=path, content=buf, offset=offset, context=context, consistency=consistency
-        )
+        await self._write_internal(path=path, content=buf, offset=offset, context=context)
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────

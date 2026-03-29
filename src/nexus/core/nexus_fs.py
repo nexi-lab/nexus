@@ -38,6 +38,8 @@ from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = object()  # default for _meta param in _check_is_directory
+
 
 class _WriteContentResult(NamedTuple):
     """Result of content-only write phase."""
@@ -643,27 +645,25 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         *,
         context: OperationContext | None = None,
+        _meta: Any = _SENTINEL,
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
         Used by sys_stat. sys_is_directory is a Tier 2 wrapper over sys_stat.
 
-        A path is considered a directory if any of the following hold:
-        - It is an implicit directory (has children in metastore)
-        - Its metastore entry has ``entry_type`` DT_DIR or DT_MOUNT
-        - The backend reports it as a directory
+        Args:
+            _meta: Pre-fetched FileMetadata from caller (avoids duplicate
+                metadata.get). Pass ``None`` to indicate "already looked up,
+                not found". Omit to let this method fetch it.
         """
         try:
             path = self._validate_path(path)
-
-            # Use provided context or default
             ctx = self._resolve_cred(context)
 
             # Check if it's an implicit directory first (for optimization)
             is_implicit_dir = self.metadata.is_implicit_directory(path)
 
             # Permission check via KernelDispatch INTERCEPT hook.
-            # No hook registered = no check = zero overhead (~20ns set lookup).
             from nexus.contracts.exceptions import PermissionDeniedError
             from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
@@ -679,9 +679,8 @@ class NexusFS(  # type: ignore[misc]
             except PermissionDeniedError:
                 return False
 
-            # Check metastore entry_type: DT_DIR and DT_MOUNT are directories.
-            # This is a fast ~5 us redb read that avoids calling into the backend.
-            meta = self.metadata.get(path)
+            # Use pre-fetched meta if provided, otherwise fetch
+            meta = self.metadata.get(path) if _meta is _SENTINEL else _meta
             if meta is not None and (meta.is_dir or meta.is_mount):
                 return True
 
@@ -691,10 +690,8 @@ class NexusFS(  # type: ignore[misc]
                 is_admin=ctx.is_admin,
                 check_write=False,
             )
-            # Check if it's an explicit directory in the backend
             if route.backend.is_directory(route.backend_path):
                 return True
-            # Return cached implicit directory status
             return is_implicit_dir
         except (InvalidPathError, Exception):
             return False
@@ -885,11 +882,11 @@ class NexusFS(  # type: ignore[misc]
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
-        # Check if it's a directory first (private helper — avoids Tier 2 circular call)
-        is_dir = await self._check_is_directory(normalized, context=ctx)
-
-        # Try to get explicit metadata from metastore first (preserves custom attrs)
+        # Fetch metadata once, share with _check_is_directory to avoid duplicate lookup
         file_meta = self.metadata.get(normalized)
+
+        # Check if it's a directory (pass pre-fetched meta to avoid second metadata.get)
+        is_dir = await self._check_is_directory(normalized, context=ctx, _meta=file_meta)
 
         if is_dir:
             if file_meta is not None:

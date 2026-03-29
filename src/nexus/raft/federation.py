@@ -224,6 +224,8 @@ class NexusFederation:
 
         assert zone_mgr is not None  # guaranteed by loop above
         metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
+        # Wire dcache invalidation: mount/unmount evicts stale proxy entries
+        zone_mgr._dcache_proxy = metadata_store
         federation = cls(zone_manager=zone_mgr)
         return federation, metadata_store
 

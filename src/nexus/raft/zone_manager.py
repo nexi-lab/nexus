@@ -181,6 +181,10 @@ class ZoneManager:
         self._tls_ca_path = tls_ca_path
         self._pending_mounts: dict[str, str] | None = None
         self._topology_initialized = False
+        # Set by FederatedMetadataProxy after creation to receive dcache
+        # invalidation on mount/unmount (dcache entries under a changed
+        # mount point become stale).
+        self._dcache_proxy: Any | None = None
 
     @property
     def tls_config(self) -> "ZoneTlsConfig | None":
@@ -469,6 +473,14 @@ class ZoneManager:
                 f"'{parent_zone_id}'. Create the directory first (mkdir -p)."
             )
         if existing.is_mount:
+            if existing.target_zone_id == target_zone_id:
+                # Idempotent: already mounted to the same target — no-op
+                logger.debug(
+                    "Mount '%s' → '%s' already exists, skipping",
+                    mount_path,
+                    target_zone_id,
+                )
+                return
             raise ValueError(
                 f"Mount point '{mount_path}' is already a DT_MOUNT in zone "
                 f"'{parent_zone_id}'. Unmount first."
@@ -493,8 +505,25 @@ class ZoneManager:
         parent_store.put(mount_entry)
 
         # Increment target zone's i_links_count (POSIX: link() → nlink++)
+        # Best-effort: each zone has independent Raft leadership.
+        # If this node isn't leader for the target zone, the leader
+        # will eventually apply it via ensure_topology().
         if increment_links:
-            self._increment_links(target_store)
+            try:
+                self._increment_links(target_store)
+            except RuntimeError as e:
+                logger.warning(
+                    "Links increment deferred for zone '%s' (not leader): %s",
+                    target_zone_id,
+                    e,
+                )
+
+        # Invalidate proxy dcache — entries resolved through this mount point
+        # are now stale (the path prefix routes to a different zone).
+        # Clear entire dcache because mount_path is zone-relative but dcache
+        # keys are global paths; mounts are rare so full clear is fine.
+        if self._dcache_proxy is not None:
+            self._dcache_proxy._dcache.clear()
 
         logger.info(
             "Mounted zone '%s' at '%s' in zone '%s'",
@@ -546,6 +575,13 @@ class ZoneManager:
             target_store = self.get_store(target_zone_id)
             if target_store is not None:
                 self._decrement_links(target_store)
+
+        # Invalidate proxy dcache — entries cached through this mount point
+        # would still resolve into the now-unmounted zone.
+        # Clear entire dcache because mount_path is zone-relative but dcache
+        # keys are global paths; unmounts are rare so full clear is fine.
+        if self._dcache_proxy is not None:
+            self._dcache_proxy._dcache.clear()
 
         logger.info(
             "Unmounted '%s' from zone '%s' (target=%s)",

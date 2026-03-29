@@ -191,7 +191,7 @@ impl PeerAddress {
         }
     }
 
-    /// Parse from "host:port" format, deriving node_id from hostname.
+    /// Parse from "host:port" or "id@host:port" format, deriving node_id from hostname.
     #[cfg(feature = "grpc")]
     #[allow(clippy::result_large_err)]
     pub fn parse(s: &str, use_tls: bool) -> Result<Self> {
@@ -201,6 +201,12 @@ impl PeerAddress {
             .strip_prefix("http://")
             .or_else(|| s.strip_prefix("https://"))
             .unwrap_or(s);
+
+        // Strip "id@" prefix if present (e.g. "14044926161142285152@nexus-1:2126")
+        let addr = match addr.find('@') {
+            Some(pos) => &addr[pos + 1..],
+            None => addr,
+        };
 
         let parts: Vec<&str> = addr.rsplitn(2, ':').collect();
         if parts.len() != 2 {
@@ -282,6 +288,17 @@ mod tests {
     #[test]
     fn test_peer_address_parse() {
         let addr = PeerAddress::parse("nexus-1:2126", false).unwrap();
+        assert_eq!(addr.hostname, "nexus-1");
+        assert_eq!(addr.port, 2126);
+        assert_eq!(addr.id, hostname_to_node_id("nexus-1"));
+        assert_eq!(addr.endpoint, "http://nexus-1:2126");
+    }
+
+    #[cfg(feature = "grpc")]
+    #[test]
+    fn test_peer_address_parse_with_id_prefix() {
+        // "id@host:port" format — id prefix must be stripped, hostname used for node_id
+        let addr = PeerAddress::parse("14044926161142285152@nexus-1:2126", false).unwrap();
         assert_eq!(addr.hostname, "nexus-1");
         assert_eq!(addr.port, 2126);
         assert_eq!(addr.id, hostname_to_node_id("nexus-1"));

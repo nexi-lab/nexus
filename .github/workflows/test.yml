@@ -5,6 +5,7 @@ on:
     branches: [main, develop, SETUP]
   pull_request:
     branches: [main, develop]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -612,3 +613,80 @@ jobs:
       - name: Run migration tests (PostgreSQL)
         run: |
           uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="
+
+  # ---------------------------------------------------------------------------
+  # Skip-pass jobs: satisfy required checks on doc-only PRs where
+  # detect-changes sets code_changed=false. Each job uses the same `name:`
+  # as its real counterpart so GitHub matches the required check.
+  # ---------------------------------------------------------------------------
+
+  rpc-parity-skip:
+    name: RPC Parity Check
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping RPC parity check"
+
+  build-rust-skip:
+    name: Build Rust Extensions (${{ matrix.os }})
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - run: echo "No code changes — skipping Rust build"
+
+  test-skip:
+    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.13"]
+    steps:
+      - run: echo "No code changes — skipping tests"
+
+  e2e-self-contained-skip:
+    name: E2E Tests (Self-Contained)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping E2E tests"
+
+  e2e-pg-skip:
+    name: E2E Tests (PostgreSQL)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping E2E PostgreSQL tests"
+
+  e2e-redis-skip:
+    name: E2E Tests (Redis)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping E2E Redis tests"
+
+  e2e-docker-skip:
+    name: E2E Tests (Docker)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping E2E Docker tests"
+
+  e2e-nats-skip:
+    name: E2E Tests (NATS)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping E2E NATS tests"

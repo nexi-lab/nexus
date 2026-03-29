@@ -200,18 +200,15 @@ class RaftMetadataStore(MetastoreABC):
 
         Args:
             metadata: File metadata to store
-            consistency: "sc", "ec", or "wb" (wb treated as "ec" fallback —
-                buffering is handled by BufferedMetadataStore wrapper).
+            consistency: "sc" (wait for Raft commit) or "ec" (fire-and-forget).
 
         Returns:
-            EC/WB mode: write token (int) for polling via is_committed().
+            EC mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed).
         """
-        # WB fallback: non-buffered stores treat write-back as eventual consistency
-        engine_consistency = "ec" if consistency == "wb" else consistency
         data = _serialize_metadata(metadata)
         try:
-            return self._engine.set_metadata(metadata.path, data, consistency=engine_consistency)
+            return self._engine.set_metadata(metadata.path, data, consistency=consistency)
         except TypeError:
             # Compiled PyO3 binary may not yet support the consistency parameter
             return self._engine.set_metadata(metadata.path, data)

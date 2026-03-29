@@ -173,6 +173,7 @@ _SLIM_BRICKS: frozenset[str] = frozenset(
 _CLUSTER_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
     {
         BRICK_IPC,
+        BRICK_FEDERATION,
     }
 )
 

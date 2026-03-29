@@ -578,7 +578,8 @@ class TestServerConfiguration:
 
             assert server is not None
             assert server.name == "integration-test-server"
-            assert len(await server.list_tools()) >= 14
+            _list_fn = getattr(server, "list_tools", None) or server.get_tools
+            assert len(await _list_fn()) >= 14
 
             # Verify all core tools are present
             assert await tool_exists(server, "nexus_read_file")

@@ -16,7 +16,9 @@ import time
 
 import pytest
 
-# Skip entirely if FUSE kernel support is not available
+# Skip entire module if fusepy is not installed or FUSE kernel support missing
+pytest.importorskip("fuse", reason="fusepy not installed")
+
 _FUSE_AVAILABLE = False
 if platform.system() == "Darwin":
     _FUSE_AVAILABLE = os.path.exists("/Library/Filesystems/macfuse.fs")

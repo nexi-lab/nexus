@@ -26,7 +26,7 @@ def mock_fs():
     )
     fs.sys_read = AsyncMock(return_value=b"file content")
     fs.sys_readdir = AsyncMock(return_value=["file1.txt", "file2.txt"])
-    fs.sys_access = AsyncMock(return_value=True)
+    fs.access = AsyncMock(return_value=True)
     fs.metadata = MagicMock()
     fs.metadata.get = MagicMock(return_value=MagicMock(path="/test"))
     fs.metadata.put = MagicMock()
@@ -165,9 +165,9 @@ class TestFileOperations:
 
     @pytest.mark.asyncio
     async def test_exists_delegates(self, gateway, mock_fs, context):
-        """sys_access delegates to NexusFS.sys_access."""
-        assert await gateway.sys_access("/test/file.txt", context=context) is True
-        mock_fs.sys_access.assert_called_once()
+        """access delegates to NexusFS.access."""
+        assert await gateway.access("/test/file.txt", context=context) is True
+        mock_fs.access.assert_called_once()
 
 
 # =============================================================================

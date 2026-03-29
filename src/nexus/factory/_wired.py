@@ -484,7 +484,7 @@ async def _boot_post_kernel_services(
                 write_fn=nx.sys_write,
                 delete_fn=nx.sys_unlink,
                 rename_fn=nx.sys_rename,
-                exists_fn=nx.sys_access,
+                exists_fn=nx.access,
                 fallback_backend=getattr(nx, "backend", None),
             )
             operations_service = OperationsService(

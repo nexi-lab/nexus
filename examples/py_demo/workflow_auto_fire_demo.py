@@ -188,7 +188,7 @@ actions:
 
     for path in cleanup_paths:
         try:
-            if await nx.sys_access(path):
+            if await nx.access(path):
                 await nx.sys_unlink(path)
                 print(f"   🗑️  Deleted: {path}")
         except Exception:

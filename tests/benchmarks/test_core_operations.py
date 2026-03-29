@@ -129,7 +129,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def check_exists():
-            return benchmark_loop.run_until_complete(nx.sys_access("/test_small.bin"))
+            return benchmark_loop.run_until_complete(nx.access("/test_small.bin"))
 
         result = benchmark(check_exists)
         assert result is True
@@ -139,7 +139,7 @@ class TestFileOperationBenchmarks:
         nx = populated_nexus
 
         def check_exists():
-            return benchmark_loop.run_until_complete(nx.sys_access("/nonexistent_file.txt"))
+            return benchmark_loop.run_until_complete(nx.access("/nonexistent_file.txt"))
 
         result = benchmark(check_exists)
         assert result is False
@@ -481,7 +481,7 @@ class TestPermissionBenchmarks:
 
         def check_perm():
             # This will go through permission checking
-            return benchmark_loop.run_until_complete(nx.sys_access("/test_permission.txt"))
+            return benchmark_loop.run_until_complete(nx.access("/test_permission.txt"))
 
         benchmark(check_perm)
 

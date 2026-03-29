@@ -306,7 +306,7 @@ class WorkspaceRPCService:
         if context is None and hasattr(self, "_operation_context"):
             context = self._operation_context
 
-        if not await self._vfs.sys_access(path, context=context):
+        if not await self._vfs.access(path, context=context):
             await self._vfs.mkdir(path, parents=True, exist_ok=True, context=context)
 
         config = self._wr.register_workspace(

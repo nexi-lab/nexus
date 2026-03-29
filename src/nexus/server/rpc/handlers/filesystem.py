@@ -223,7 +223,7 @@ async def handle_write(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
 
 async def handle_exists(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    return {"exists": await nexus_fs.sys_access(params.path, context=context)}
+    return {"exists": await nexus_fs.access(params.path, context=context)}
 
 
 async def handle_list(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
@@ -551,4 +551,4 @@ async def handle_semantic_search(nexus_fs: "NexusFS", params: Any, _context: Any
 
 async def handle_is_directory(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    return {"is_directory": await nexus_fs.sys_is_directory(params.path, context=context)}
+    return {"is_directory": await nexus_fs.is_directory(params.path, context=context)}

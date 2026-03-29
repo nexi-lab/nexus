@@ -35,7 +35,7 @@ class TestChown:
     """chown: uid/gid mapping."""
 
     def test_chown_maps_uid(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         # Patch pwd to control mapping
         with patch("nexus.fuse.operations.NexusFUSEOperations.chown") as mock_chown:
             # Just verify it doesn't crash — uid/gid mapping is platform-specific
@@ -53,14 +53,14 @@ class TestTruncate:
     """truncate: file size modification."""
 
     def test_truncate_trims(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b"hello world"
 
         fuse_ops.truncate("/file.txt", 5)
         mock_nexus_fs.write.assert_called_once_with("/file.txt", b"hello", context=None)
 
     def test_truncate_pads(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b"hi"
 
         fuse_ops.truncate("/file.txt", 5)
@@ -71,7 +71,7 @@ class TestTruncate:
         self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
     ) -> None:
         fuse_ops.cache = mock_cache
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b"data"
 
         fuse_ops.truncate("/file.txt", 2)

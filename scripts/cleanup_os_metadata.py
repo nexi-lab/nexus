@@ -74,7 +74,7 @@ async def scan_and_remove(
                     except Exception as e:
                         logger.error(f"Error deleting {file_path}: {e}")
             # Recurse into directories
-            elif await nexus_fs.sys_is_directory(file_path):
+            elif await nexus_fs.is_directory(file_path):
                 scan_and_remove(nexus_fs, file_path, dry_run, deleted_count)
 
     except Exception as e:

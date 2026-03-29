@@ -91,7 +91,7 @@ async def test_write_creates_metadata(embedded: NexusFS) -> None:
     await embedded.write(path, content)
 
     # Check metadata exists
-    assert await embedded.sys_access(path)
+    assert await embedded.access(path)
 
     # Check metadata content
     meta = embedded.metadata.get(path)
@@ -150,13 +150,13 @@ async def test_delete(embedded: NexusFS) -> None:
 
     # Create file
     await embedded.write(path, content)
-    assert await embedded.sys_access(path)
+    assert await embedded.access(path)
 
     # Delete file
     await embedded.sys_unlink(path)
 
     # File should not exist
-    assert not await embedded.sys_access(path)
+    assert not await embedded.access(path)
 
     # Reading should raise error
     with pytest.raises(NexusFileNotFoundError):
@@ -193,15 +193,15 @@ async def test_exists(embedded: NexusFS) -> None:
     path = "/test.txt"
 
     # Doesn't exist initially
-    assert not await embedded.sys_access(path)
+    assert not await embedded.access(path)
 
     # Create file
     await embedded.write(path, b"Content")
-    assert await embedded.sys_access(path)
+    assert await embedded.access(path)
 
     # Delete file
     await embedded.sys_unlink(path)
-    assert not await embedded.sys_access(path)
+    assert not await embedded.access(path)
 
 
 @pytest.mark.asyncio
@@ -285,8 +285,8 @@ async def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     assert result == content
 
     # Both should be the same file
-    assert await embedded.sys_access("test.txt")
-    assert await embedded.sys_access("/test.txt")
+    assert await embedded.access("test.txt")
+    assert await embedded.access("/test.txt")
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_unicode_paths(embedded: NexusFS) -> None:
 
     result = await embedded.sys_read(path)
     assert result == content
-    assert await embedded.sys_access(path)
+    assert await embedded.access(path)
 
 
 @pytest.mark.asyncio
@@ -462,7 +462,7 @@ async def test_multiple_operations(embedded: NexusFS) -> None:
 
     # Verify all exist
     for i in range(10):
-        assert await embedded.sys_access(f"/file{i}.txt")
+        assert await embedded.access(f"/file{i}.txt")
 
     # Read all
     for i in range(10):
@@ -476,9 +476,9 @@ async def test_multiple_operations(embedded: NexusFS) -> None:
     # Verify correct files remain
     for i in range(10):
         if i % 2 == 0:
-            assert not await embedded.sys_access(f"/file{i}.txt")
+            assert not await embedded.access(f"/file{i}.txt")
         else:
-            assert await embedded.sys_access(f"/file{i}.txt")
+            assert await embedded.access(f"/file{i}.txt")
 
 
 @pytest.mark.asyncio
@@ -493,7 +493,7 @@ async def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     await embedded.write(path, b"Content 2")
 
     # Should be accessible at same path
-    assert await embedded.sys_access(path)
+    assert await embedded.access(path)
     assert await embedded.sys_read(path) == b"Content 2"
 
     # Should be accessible in listing

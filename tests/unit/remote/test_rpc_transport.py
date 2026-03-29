@@ -172,7 +172,7 @@ class TestRPCTransportCallRPC:
         mock_response.payload = encode_rpc_message({})
         transport._mock_stub.Call.return_value = mock_response
 
-        transport.call_rpc("sys_access")
+        transport.call_rpc("access")
 
         # Verify the Call was made (params encoded as {})
         transport._mock_stub.Call.assert_called_once()

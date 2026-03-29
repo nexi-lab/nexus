@@ -185,7 +185,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.sys_access(full_target):
+            if not options.overwrite and await self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -276,7 +276,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.sys_access(full_target):
+            if not options.overwrite and await self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 
@@ -349,7 +349,7 @@ class DataMigrator:
             full_target = f"{target_path.rstrip('/')}/{relative_path}"
 
             # Check if exists
-            if not options.overwrite and await self.nx.sys_access(full_target):
+            if not options.overwrite and await self.nx.access(full_target):
                 result.files_skipped += 1
                 continue
 

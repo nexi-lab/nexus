@@ -111,9 +111,9 @@ class TestZoneImportService:
         assert result.files_failed == 0
 
         # Verify files exist
-        assert await target_nexus_fs.sys_access("/workspace/readme.md")
-        assert await target_nexus_fs.sys_access("/workspace/src/main.py")
-        assert await target_nexus_fs.sys_access("/docs/guide.txt")
+        assert await target_nexus_fs.access("/workspace/readme.md")
+        assert await target_nexus_fs.access("/workspace/src/main.py")
+        assert await target_nexus_fs.access("/docs/guide.txt")
 
         # Verify content is correct
         content = await target_nexus_fs.sys_read("/workspace/readme.md")
@@ -148,8 +148,8 @@ class TestZoneImportService:
         assert result.files_created == 4
 
         # But files should not actually exist
-        assert not await target_nexus_fs.sys_access("/workspace/readme.md")
-        assert not await target_nexus_fs.sys_access("/docs/guide.txt")
+        assert not await target_nexus_fs.access("/workspace/readme.md")
+        assert not await target_nexus_fs.access("/docs/guide.txt")
 
 
 class TestConflictResolution:
@@ -236,11 +236,11 @@ class TestPathRemapping:
         assert result.paths_remapped >= 3  # workspace files remapped
 
         # Files should be at new paths
-        assert await target_nexus_fs.sys_access("/projects/readme.md")
-        assert await target_nexus_fs.sys_access("/projects/src/main.py")
+        assert await target_nexus_fs.access("/projects/readme.md")
+        assert await target_nexus_fs.access("/projects/src/main.py")
 
         # Original paths should not exist
-        assert not await target_nexus_fs.sys_access("/workspace/readme.md")
+        assert not await target_nexus_fs.access("/workspace/readme.md")
 
     @pytest.mark.asyncio
     async def test_multiple_path_remaps(self, exported_bundle, target_nexus_fs):
@@ -259,8 +259,8 @@ class TestPathRemapping:
         assert result.success is True
 
         # Both remappings applied
-        assert await target_nexus_fs.sys_access("/projects/readme.md")
-        assert await target_nexus_fs.sys_access("/documentation/guide.txt")
+        assert await target_nexus_fs.access("/projects/readme.md")
+        assert await target_nexus_fs.access("/documentation/guide.txt")
 
 
 class TestImportConvenienceFunction:
@@ -276,7 +276,7 @@ class TestImportConvenienceFunction:
 
         assert result.success is True
         assert result.files_created == 4
-        assert await target_nexus_fs.sys_access("/workspace/readme.md")
+        assert await target_nexus_fs.access("/workspace/readme.md")
 
     def test_import_with_progress_callback(self, exported_bundle, target_nexus_fs):
         """Test import with progress callback."""

@@ -649,7 +649,7 @@ class NexusFS(  # type: ignore[misc]
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
-        Used by sys_stat. sys_is_directory is a Tier 2 wrapper over sys_stat.
+        Used by sys_stat. is_directory is a Tier 2 wrapper over sys_stat.
 
         Args:
             _meta: Pre-fetched FileMetadata from caller (avoids duplicate
@@ -697,7 +697,7 @@ class NexusFS(  # type: ignore[misc]
             return False
 
     @rpc_expose(description="Check if path is a directory")
-    async def sys_is_directory(
+    async def is_directory(
         self,
         path: str,
         *,
@@ -4172,7 +4172,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Check if file exists")
-    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path explicitly exists and is accessible.
 
         Returns True if path has explicit metadata or is an implicit directory,
@@ -4236,7 +4236,7 @@ class NexusFS(  # type: ignore[misc]
         results: dict[str, bool] = {}
         for path in paths:
             try:
-                results[path] = await self.sys_access(path, context=context)
+                results[path] = await self.access(path, context=context)
             except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
                 logger.debug("Exists check failed for %s: %s", path, exc)
@@ -4316,7 +4316,7 @@ class NexusFS(  # type: ignore[misc]
                     continue
 
                 # Check if it's a directory
-                is_dir = await self.sys_is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
+                is_dir = await self.is_directory(path, context=context)  # type: ignore[attr-defined]  # allowed
 
                 results[path] = {
                     "path": meta.path,

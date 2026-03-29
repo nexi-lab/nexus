@@ -61,7 +61,7 @@ async def test_basic_operations():
 
         # Test exists
         print("\n4. Testing exists operation...")
-        assert await nx.sys_access(test_path), f"{test_path} should exist"
+        assert await nx.access(test_path), f"{test_path} should exist"
         print(f"   ✓ File exists: {test_path}")
 
         # Test versioning (edit simulation)

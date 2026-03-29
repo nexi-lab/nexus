@@ -105,7 +105,7 @@ class ContextualNexusFS:
         await self._kernel.sys_rename(old_path, new_path, context=self._ctx)
 
     async def exists(self, path: str) -> bool:
-        return cast(bool, await self._kernel.sys_access(path, context=self._ctx))
+        return cast(bool, await self._kernel.access(path, context=self._ctx))
 
     async def copy(self, src: str, dst: str) -> dict[str, Any]:
         result: dict[str, Any] = await self._kernel.sys_copy(src, dst, context=self._ctx)

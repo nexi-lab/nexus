@@ -47,7 +47,7 @@ CORE_DELETE_METHODS = {
 
 CORE_METADATA_METHODS = {
     "stat": {"params": ["path", "context"], "async": False},
-    "sys_access": {"params": ["path", "context"], "async": True},
+    "access": {"params": ["path", "context"], "async": True},
 }
 
 ALL_CORE_METHODS = {

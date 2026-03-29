@@ -151,4 +151,4 @@ class AgentProvisioner:
         Returns:
             True if the agent's inbox directory exists.
         """
-        return await self._storage.sys_access(inbox_path(agent_id), self._zone_id)
+        return await self._storage.access(inbox_path(agent_id), self._zone_id)

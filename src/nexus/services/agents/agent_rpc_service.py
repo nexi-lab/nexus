@@ -624,7 +624,7 @@ class AgentRPCService:
                 if self._rmdir_fn:
                     try:
                         ctx = parse_operation_context(_context)
-                        if await self._vfs.sys_access(agent_dir, context=ctx):
+                        if await self._vfs.access(agent_dir, context=ctx):
                             self._rmdir_fn(agent_dir, recursive=True, context=ctx, is_admin=True)
                     except Exception as e:
                         logger.warning("Failed to delete agent directory %s: %s", agent_dir, e)

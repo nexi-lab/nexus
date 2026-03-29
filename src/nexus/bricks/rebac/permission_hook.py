@@ -279,7 +279,7 @@ class PermissionCheckHook:
                 )
 
     def on_pre_access(self, ctx: "AccessHookContext") -> None:
-        """Permission check for sys_access (Issue #1815).
+        """Permission check for access (Issue #1815).
 
         For implicit directories: TRAVERSE first, descendant fallback.
         For files: direct permission check.

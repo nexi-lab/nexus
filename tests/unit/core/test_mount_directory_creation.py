@@ -61,14 +61,14 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     assert nx.metadata.exists("/mnt/test")
 
     # Verify /mnt is recognized as a directory by the kernel
-    assert await nx.sys_is_directory("/mnt")
+    assert await nx.is_directory("/mnt")
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
 
     # PathRouter.add_mount() is pure in-memory (no metastore.put); DT_MOUNT
     # persistence is the mount subsystem's job.  mkdir creates a DT_DIR
     # entry, which the kernel still treats as directory-like.
-    assert await nx.sys_is_directory("/mnt/test")
+    assert await nx.is_directory("/mnt/test")
     test_meta = nx.metadata.get("/mnt/test")
     assert test_meta is not None
     # mkdir creates a DT_DIR entry (entry_type=1), not DT_MOUNT.
@@ -128,7 +128,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert "size" in personal_entry
     assert "etag" in personal_entry
     # Confirm the kernel recognises /personal as a directory
-    assert await nx.sys_is_directory("/personal")
+    assert await nx.is_directory("/personal")
 
     # List /personal with details
     personal_list = await nx.sys_readdir("/personal", recursive=False, details=True)
@@ -139,7 +139,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert "size" in alice_entry
     assert "etag" in alice_entry
     # Confirm the kernel recognises /personal/alice as a directory
-    assert await nx.sys_is_directory("/personal/alice")
+    assert await nx.is_directory("/personal/alice")
 
 
 @pytest.mark.asyncio
@@ -164,9 +164,9 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     # Verify all paths are recognized as directories by the kernel.
     # Parent directories are created by mkdir, while the mount point
     # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
-    # treated as directory-like by sys_is_directory.
+    # treated as directory-like by is_directory.
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
-        assert await nx.sys_is_directory(p), f"Expected {p} to be a directory"
+        assert await nx.is_directory(p), f"Expected {p} to be a directory"
 
     # PathRouter.add_mount() is pure in-memory; mkdir creates DT_DIR.
     mount_meta = nx.metadata.get("/a/b/c/mount")

@@ -32,7 +32,7 @@ class TestRenameHappyPath:
         result = await nx.sys_rename("/files/old.txt", "/files/new.txt")
         assert result == {}
         assert await nx.sys_read("/files/new.txt") == b"hello"
-        assert not await nx.sys_access("/files/old.txt")
+        assert not await nx.access("/files/old.txt")
 
     @pytest.mark.asyncio
     async def test_rename_preserves_content(self, nx):
@@ -55,7 +55,7 @@ class TestRenameHappyPath:
         await nx.write("/files/dir-a/file.txt", b"moved")
         await nx.sys_rename("/files/dir-a/file.txt", "/files/dir-b/file.txt")
         assert await nx.sys_read("/files/dir-b/file.txt") == b"moved"
-        assert not await nx.sys_access("/files/dir-a/file.txt")
+        assert not await nx.access("/files/dir-a/file.txt")
 
 
 class TestRenameDirectoryWithChildren:
@@ -74,10 +74,10 @@ class TestRenameDirectoryWithChildren:
         await nx.sys_rename("/files/folder", "/files/renamed")
 
         # Children should now be at the new path
-        assert not await nx.sys_access("/files/folder/a.txt")
-        assert not await nx.sys_access("/files/folder/b.txt")
-        assert await nx.sys_access("/files/renamed/a.txt")
-        assert await nx.sys_access("/files/renamed/b.txt")
+        assert not await nx.access("/files/folder/a.txt")
+        assert not await nx.access("/files/folder/b.txt")
+        assert await nx.access("/files/renamed/a.txt")
+        assert await nx.access("/files/renamed/b.txt")
         assert await nx.sys_read("/files/renamed/a.txt") == b"a"
         assert await nx.sys_read("/files/renamed/b.txt") == b"b"
 

@@ -250,7 +250,7 @@ class UserProvisioningService:
             workspace_id = f"ws_personal_{uuid_suffix}"
             workspace_path = f"/zone/{zone_id}/user/{user_id}/workspace/{workspace_id}"
 
-            if not await self._vfs.sys_access(workspace_path, context=admin_context):
+            if not await self._vfs.access(workspace_path, context=admin_context):
                 await self._vfs.mkdir(
                     workspace_path, parents=True, exist_ok=True, context=admin_context
                 )
@@ -533,7 +533,7 @@ class UserProvisioningService:
 
         directory_exists = False
         with suppress(Exception):
-            directory_exists = await self._vfs.sys_access(dir_path, context=context)
+            directory_exists = await self._vfs.access(dir_path, context=context)
 
         if not directory_exists:
             return False

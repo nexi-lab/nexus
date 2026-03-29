@@ -59,7 +59,7 @@ class AttrHandler:
 
         await check_namespace_visible(ctx, original_path)
 
-        if not await ctx.nexus_fs.sys_access(original_path):
+        if not await ctx.nexus_fs.access(original_path):
             raise FuseOSError(errno.ENOENT)
 
         attrs: dict[str, str] = {}
@@ -100,7 +100,7 @@ class AttrHandler:
         if view_type:
             raise FuseOSError(errno.EROFS)
 
-        if await ctx.nexus_fs.sys_access(original_path):
+        if await ctx.nexus_fs.access(original_path):
             raw_content = await ctx.nexus_fs.sys_read(original_path, context=ctx.context)
             assert isinstance(raw_content, bytes), "Expected bytes from read()"
             content = raw_content

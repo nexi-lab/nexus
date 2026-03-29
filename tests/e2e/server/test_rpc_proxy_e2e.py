@@ -310,8 +310,8 @@ class TestProxyFileOperations:
     @pytest.mark.asyncio
     async def test_exists(self, admin_client: NexusFilesystemABC) -> None:
         """Exists via proxy (hand-written override)."""
-        assert await admin_client.sys_access("/workspace/proxy-test.txt") is True
-        assert await admin_client.sys_access("/workspace/nonexistent-xyz.txt") is False
+        assert await admin_client.access("/workspace/proxy-test.txt") is True
+        assert await admin_client.access("/workspace/nonexistent-xyz.txt") is False
 
     @pytest.mark.asyncio
     async def test_list_auto_dispatched(self, admin_client: NexusFilesystemABC) -> None:
@@ -338,17 +338,17 @@ class TestProxyFileOperations:
     async def test_delete(self, admin_client: NexusFilesystemABC) -> None:
         """Delete file via proxy (hand-written override)."""
         await admin_client.write("/workspace/to-delete.txt", b"delete me")
-        assert await admin_client.sys_access("/workspace/to-delete.txt") is True
+        assert await admin_client.access("/workspace/to-delete.txt") is True
         admin_client.delete("/workspace/to-delete.txt")
-        assert await admin_client.sys_access("/workspace/to-delete.txt") is False
+        assert await admin_client.access("/workspace/to-delete.txt") is False
 
     @pytest.mark.asyncio
     async def test_rename(self, admin_client: NexusFilesystemABC) -> None:
         """Rename file via proxy (hand-written override)."""
         await admin_client.write("/workspace/old-name.txt", b"rename me")
         await admin_client.sys_rename("/workspace/old-name.txt", "/workspace/new-name.txt")
-        assert await admin_client.sys_access("/workspace/new-name.txt") is True
-        assert await admin_client.sys_access("/workspace/old-name.txt") is False
+        assert await admin_client.access("/workspace/new-name.txt") is True
+        assert await admin_client.access("/workspace/old-name.txt") is False
         # Cleanup
         admin_client.delete("/workspace/new-name.txt")
 
@@ -379,7 +379,7 @@ class TestAutoDispatchedMethods:
     async def test_mkdir_and_rmdir(self, admin_client: NexusFilesystemABC) -> None:
         """mkdir and rmdir via auto-dispatch."""
         await admin_client.mkdir("/workspace/proxy-dir")
-        assert await admin_client.sys_is_directory("/workspace/proxy-dir") is True
+        assert await admin_client.is_directory("/workspace/proxy-dir") is True
         await admin_client.sys_rmdir("/workspace/proxy-dir")
 
     def test_rebac_check(self, admin_client: NexusFilesystemABC) -> None:
@@ -458,7 +458,7 @@ class TestPerformance:
     async def test_exists_latency(self, admin_client: NexusFilesystemABC) -> None:
         """Exists should be under 200ms (hand-written with negative cache)."""
         start = time.monotonic()
-        await admin_client.sys_access("/workspace/proxy-test.txt")
+        await admin_client.access("/workspace/proxy-test.txt")
         elapsed = time.monotonic() - start
         assert elapsed < 0.2, f"Exists took {elapsed:.3f}s, expected < 0.2s"
 

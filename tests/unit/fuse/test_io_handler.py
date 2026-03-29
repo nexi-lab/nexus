@@ -13,7 +13,7 @@ class TestOpen:
     """open: file descriptor allocation and validation."""
 
     def test_open_returns_fd(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         fd = fuse_ops.open("/file.txt", os.O_RDONLY)
         assert isinstance(fd, int)
         assert fd > 0
@@ -27,13 +27,13 @@ class TestOpen:
 
         fd = fuse_ops.open("/cached.txt", os.O_RDONLY)
         assert fd > 0
-        mock_nexus_fs.sys_access.assert_not_called()
+        mock_nexus_fs.access.assert_not_called()
 
     def test_open_missing_file_raises_enoent(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
     ) -> None:
         fuse_ops.cache = mock_cache
-        mock_nexus_fs.sys_access.return_value = False
+        mock_nexus_fs.access.return_value = False
         mock_cache.get_content.return_value = None
         mock_cache.get_attr.return_value = None
 
@@ -42,7 +42,7 @@ class TestOpen:
         assert exc_info.value.errno == errno.ENOENT
 
     def test_open_increments_fd(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         fd1 = fuse_ops.open("/a", os.O_RDONLY)
         fd2 = fuse_ops.open("/b", os.O_RDONLY)
         assert fd2 > fd1
@@ -52,7 +52,7 @@ class TestRead:
     """read: content retrieval with offset slicing."""
 
     def test_read_from_handle(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b"hello world"
         fd = fuse_ops.open("/file.txt", os.O_RDONLY)
 
@@ -60,7 +60,7 @@ class TestRead:
         assert data == b"hello"
 
     def test_read_with_offset(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b"hello world"
         fd = fuse_ops.open("/file.txt", os.O_RDONLY)
 
@@ -77,7 +77,7 @@ class TestWrite:
     """write: content modification with cache invalidation."""
 
     def test_write_returns_length(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         mock_nexus_fs.sys_read.return_value = b""
         fd = fuse_ops.open("/file.txt", os.O_RDWR)
 
@@ -87,7 +87,7 @@ class TestWrite:
     def test_write_invalidates_cache(
         self, fuse_ops: Any, mock_nexus_fs: MagicMock, mock_cache: MagicMock
     ) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         fd = fuse_ops.open("/file.txt", os.O_RDWR)
         # Replace cache after open (which uses real cache)
         fuse_ops.cache = mock_cache
@@ -120,7 +120,7 @@ class TestRelease:
     """release: cleanup of file descriptors."""
 
     def test_release_removes_fd(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
-        mock_nexus_fs.sys_access.return_value = True
+        mock_nexus_fs.access.return_value = True
         fd = fuse_ops.open("/file.txt", os.O_RDONLY)
         assert fd in fuse_ops.open_files
 

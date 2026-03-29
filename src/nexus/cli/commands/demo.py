@@ -215,7 +215,7 @@ async def _seed_files(
     for path, content, _description in all_files:
         if path in seeded:
             try:
-                if await nx.sys_access(path):
+                if await nx.access(path):
                     continue
             except Exception:
                 # Stale manifest entry; fall through and recreate the file.
@@ -241,7 +241,7 @@ async def _seed_versions(nx: Any, manifest: dict[str, Any]) -> int:
     plan_path = "/workspace/demo/plan.md"
     if manifest.get("versions_seeded"):
         try:
-            if await nx.sys_access(plan_path):
+            if await nx.access(plan_path):
                 return 0
         except Exception:
             pass

@@ -177,9 +177,9 @@ class ScopedFilesystem(ScopedPathMixin):
     # Query (path-scoped)
     # ============================================================
 
-    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if a file exists."""
-        return await self._fs.sys_access(self._scope_path(path), context=context)
+        return await self._fs.access(self._scope_path(path), context=context)
 
     # ============================================================
     # File Discovery Operations (path-scoped)
@@ -265,9 +265,9 @@ class ScopedFilesystem(ScopedPathMixin):
         """Remove a directory."""
         await self._fs.sys_rmdir(self._scope_path(path), recursive, context=context)
 
-    async def sys_is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
+    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""
-        return await self._fs.sys_is_directory(self._scope_path(path), context=context)
+        return await self._fs.is_directory(self._scope_path(path), context=context)
 
     # ============================================================
     # Convenience methods (path-scoped)

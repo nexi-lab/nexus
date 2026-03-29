@@ -162,7 +162,7 @@ class TestCircuitBreakerIntegration:
             # calls raise CircuitOpenError instead of OfflineQueuedError.
             for _ in range(3):
                 with pytest.raises((OfflineQueuedError, CircuitOpenError)):
-                    await proxy.sys_access("/f", "z1")
+                    await proxy.access("/f", "z1")
 
             assert proxy.circuit_state is CircuitState.OPEN
 
@@ -237,7 +237,7 @@ class TestAuthHeaderForwarded:
         proxy = ProxyVFSBrick(config, transport=http_transport)
         await proxy.start()
         try:
-            await proxy.sys_access("/f", "z1")
+            await proxy.access("/f", "z1")
             assert captured_headers.get("authorization") == "Bearer my-secret-key"
         finally:
             await proxy.stop()

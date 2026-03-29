@@ -164,7 +164,7 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if base path exists
-                if not await self._filesystem.sys_access(self.MCP_TOOLS_PATH):
+                if not await self._filesystem.access(self.MCP_TOOLS_PATH):
                     return False
 
                 # List directories in MCP_TOOLS_PATH
@@ -175,7 +175,7 @@ class MCPMountManager:
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.sys_access(mount_json_path):
+                        if await self._filesystem.access(mount_json_path):
                             raw_content = await self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")
@@ -1034,7 +1034,7 @@ class MCPMountManager:
         try:
             if self._filesystem:
                 # Check if path exists
-                if not await self._filesystem.sys_access(tier_path):
+                if not await self._filesystem.access(tier_path):
                     logger.debug("MCP tier path does not exist: %s", tier_path)
                     return 0
 
@@ -1045,7 +1045,7 @@ class MCPMountManager:
                     mount_json_path = f"{item_path}/mount.json"
 
                     try:
-                        if await self._filesystem.sys_access(mount_json_path):
+                        if await self._filesystem.access(mount_json_path):
                             raw_content = await self._filesystem.sys_read(mount_json_path)
                             content_str = (
                                 raw_content.decode("utf-8")

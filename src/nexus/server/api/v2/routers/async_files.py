@@ -18,7 +18,7 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /grep            - Regex pattern search within files
 
 Async NexusFS methods (read, write, sys_stat, sys_readdir, sys_unlink,
-sys_access, mkdir) are awaited directly. Sync methods (read_bulk,
+access, mkdir) are awaited directly. Sync methods (read_bulk,
 stream, write_stream) use asyncio.to_thread() for thread offloading.
 All operations pass user context for permission enforcement.
 """
@@ -745,7 +745,7 @@ def create_async_files_router(
         """Check if a file or directory exists."""
         try:
             fs = await _get_fs()
-            exists = await fs.sys_access(path, context=context)
+            exists = await fs.access(path, context=context)
             return ExistsResponse(exists=exists)
 
         except NexusPermissionError as e:

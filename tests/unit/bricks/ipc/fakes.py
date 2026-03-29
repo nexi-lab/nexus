@@ -73,11 +73,11 @@ class InMemoryStorageDriver:
             parent = "/" + "/".join(parts[:i])
             self._dirs.add((parent, zone_id))
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:
+    async def access(self, path: str, zone_id: str) -> bool:
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
     # Alias for backward compatibility
-    exists = sys_access
+    exists = access
 
 
 # Alias for backward compatibility — tests that imported InMemoryVFS

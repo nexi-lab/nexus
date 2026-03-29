@@ -261,7 +261,7 @@ class ProxyVFSBrick(ProxyBrick):
     async def mkdir(self, path: str, zone_id: str) -> None:
         await self._forward("mkdir", path=path, zone_id=zone_id)
 
-    async def sys_access(self, path: str, zone_id: str) -> bool:
+    async def access(self, path: str, zone_id: str) -> bool:
         return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
     async def count_dir(self, path: str, zone_id: str) -> int:

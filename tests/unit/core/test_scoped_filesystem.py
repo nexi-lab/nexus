@@ -27,8 +27,8 @@ def mock_fs() -> MagicMock:
     fs.mkdir = AsyncMock()
     fs.sys_rmdir = AsyncMock()
     fs.sys_readdir = AsyncMock()
-    fs.sys_access = AsyncMock()
-    fs.sys_is_directory = AsyncMock()
+    fs.access = AsyncMock()
+    fs.is_directory = AsyncMock()
     fs.read = AsyncMock()
     fs.write = AsyncMock()
     fs.append = AsyncMock()
@@ -236,9 +236,9 @@ class TestCoreFileOperations:
     @pytest.mark.asyncio
     async def test_exists(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test exists with path scoping."""
-        mock_fs.sys_access.return_value = True
-        result = await scoped_fs.sys_access("/workspace/file.txt")
-        mock_fs.sys_access.assert_called_once_with(
+        mock_fs.access.return_value = True
+        result = await scoped_fs.access("/workspace/file.txt")
+        mock_fs.access.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", context=None
         )
         assert result is True
@@ -316,9 +316,9 @@ class TestDirectoryOperations:
     @pytest.mark.asyncio
     async def test_is_directory(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test is_directory with path scoping."""
-        mock_fs.sys_is_directory.return_value = True
-        result = await scoped_fs.sys_is_directory("/workspace/dir")
-        mock_fs.sys_is_directory.assert_called_once_with(
+        mock_fs.is_directory.return_value = True
+        result = await scoped_fs.is_directory("/workspace/dir")
+        mock_fs.is_directory.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/dir", context=None
         )
         assert result is True

@@ -932,14 +932,14 @@ class SyncMountAsyncParams:
 
 @dataclass
 class SysAccessParams:
-    """Parameters for sys_access(): Check if a file or directory exists."""
+    """Parameters for access(): Check if a file or directory exists."""
 
     path: str
 
 
 @dataclass
 class SysIsDirectoryParams:
-    """Parameters for sys_is_directory(): Check if path is a directory (explicit or implicit)."""
+    """Parameters for is_directory(): Check if path is a directory (explicit or implicit)."""
 
     path: str
 
@@ -1182,8 +1182,8 @@ METHOD_PARAMS: dict[str, type] = {
     "stat_bulk": StatBulkParams,
     "sync_mount": SyncMountParams,
     "sync_mount_async": SyncMountAsyncParams,
-    "sys_access": SysAccessParams,
-    "sys_is_directory": SysIsDirectoryParams,
+    "access": SysAccessParams,
+    "is_directory": SysIsDirectoryParams,
     "mkdir": SysMkdirParams,
     "sys_readdir": SysReaddirParams,
     "sys_rename": SysRenameParams,

@@ -34,7 +34,7 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "sys_write",
         "sys_read",
         "sys_readdir",
-        "sys_access",
+        "access",
         "metadata_get",
         "metadata_put",
         "metadata_list",

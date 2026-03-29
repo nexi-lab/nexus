@@ -155,8 +155,8 @@ async def main():
         ]
 
         for path in test_paths:
-            exists = await nx.sys_access(path)
-            is_dir = await nx.sys_is_directory(path) if exists else False
+            exists = await nx.access(path)
+            is_dir = await nx.is_directory(path) if exists else False
             if exists:
                 path_type = "directory" if is_dir else "file"
                 print(f"✓ {path} - exists ({path_type})")
@@ -170,7 +170,7 @@ async def main():
         print(f"📂 Contents of {base_path}:")
         contents = await nx.sys_readdir(base_path, recursive=False)
         for item in sorted(contents):
-            is_dir = await nx.sys_is_directory(item)
+            is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
             print(f"   {icon} {item}")
 
@@ -178,7 +178,7 @@ async def main():
         print(f"\n📂 All items in {base_path} (recursive):")
         all_items = await nx.sys_readdir(base_path, recursive=True)
         for item in sorted(all_items):
-            is_dir = await nx.sys_is_directory(item)
+            is_dir = await nx.is_directory(item)
             icon = "📁" if is_dir else "📄"
             depth = item.count("/") - base_path.count("/")
             indent = "   " + "  " * depth
@@ -207,7 +207,7 @@ async def main():
         ]
 
         for path in check_paths:
-            is_dir = await nx.sys_is_directory(path)
+            is_dir = await nx.is_directory(path)
             path_type = "directory" if is_dir else "file"
             icon = "📁" if is_dir else "📄"
             print(f"   {icon} {path} → {path_type}")
@@ -244,7 +244,7 @@ async def main():
         print(f"✓ Removed empty directory: {temp_dir}")
 
         # Verify it's gone
-        if not await nx.sys_is_directory(temp_dir):
+        if not await nx.is_directory(temp_dir):
             print(f"✓ Verified: {temp_dir} no longer exists")
 
         # Recursive directory removal

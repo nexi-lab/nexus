@@ -58,7 +58,7 @@ class NexusFilesystemABC(ABC):
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
     # Namespace — sys_unlink(2), sys_rename(2)
     # Directory — sys_rmdir(2), sys_readdir(3)  (mkdir is Tier 2)
-    # Query — sys_access(2), sys_is_directory
+    # Query — access(2), is_directory
     # System — get_top_level_mounts, close
 
     # ── Content I/O ────────────────────────────────────────────────
@@ -264,7 +264,7 @@ class NexusFilesystemABC(ABC):
 
     # ── Query ──────────────────────────────────────────────────────
 
-    async def sys_access(self, path: str, *, context: OperationContext | None = None) -> bool:
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path exists and is accessible.
 
         Default derives from sys_stat — returns True if stat succeeds.
@@ -275,7 +275,7 @@ class NexusFilesystemABC(ABC):
         except Exception:
             return False
 
-    async def sys_is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
+    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Tier 2: check if path is a directory.
 
         Default derives from sys_stat — returns is_directory field.

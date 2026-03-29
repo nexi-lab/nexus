@@ -111,7 +111,7 @@ class TestRemoteBackendRPC:
             ctx = self._make_ctx("/file.txt", "file.txt")
             result = backend.content_exists("hash", context=ctx)
 
-            mock_rpc.assert_called_once_with("sys_access", {"path": "/file.txt"})
+            mock_rpc.assert_called_once_with("access", {"path": "/file.txt"})
             assert result is True
 
     def test_get_content_size_calls_rpc(self, backend: RemoteBackend) -> None:

@@ -37,9 +37,9 @@ async def test_directory_rename_path_local(tmp_path: Path):
     await nx.sys_rename("/old_dir", "/new_dir")
 
     # Check metadata — virtual paths should be updated
-    assert await nx.sys_access("/new_dir")
-    assert await nx.sys_access("/new_dir/test.txt")
-    assert not await nx.sys_access("/old_dir")
+    assert await nx.access("/new_dir")
+    assert await nx.access("/new_dir/test.txt")
+    assert not await nx.access("/old_dir")
 
 
 if __name__ == "__main__":

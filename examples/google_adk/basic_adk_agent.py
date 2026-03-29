@@ -225,7 +225,7 @@ def create_nexus_tools(nx):
             content_bytes = content.encode("utf-8") if isinstance(content, str) else content
             await nx.sys_write(path, content_bytes)
 
-            if await nx.sys_access(path):
+            if await nx.access(path):
                 return f"Successfully wrote {len(content_bytes)} bytes to {path}"
             else:
                 return f"Error: Failed to write file {path}"

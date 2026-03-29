@@ -321,7 +321,7 @@ Make it useful for new developers!""",
         print(f"\nFinal Result:\n{result}")
 
         # Show what was written
-        if await nx.sys_access("/reports/multi-agent-analysis.md"):
+        if await nx.access("/reports/multi-agent-analysis.md"):
             print("\n" + "=" * 70)
             print("Generated Report Preview:")
             print("=" * 70)

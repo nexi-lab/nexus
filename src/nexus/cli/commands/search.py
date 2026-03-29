@@ -88,8 +88,8 @@ def glob(
                     filtered = []
                     for match in matches:
                         is_dir = (
-                            await nx.sys_is_directory(match)
-                            if hasattr(nx, "sys_is_directory")
+                            await nx.is_directory(match)
+                            if hasattr(nx, "is_directory")
                             else match.endswith("/")
                         )
                         if (type == "d" and is_dir) or (type == "f" and not is_dir):

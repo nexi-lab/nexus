@@ -1014,7 +1014,7 @@ def rm(
             nx = await get_filesystem(remote_url, remote_api_key, allow_local_default=True)
 
             # Check if file exists
-            if not await nx.sys_access(path):
+            if not await nx.access(path):
                 console.print(f"[nexus.warning]File does not exist:[/nexus.warning] {path}")
                 nx.close()
                 return

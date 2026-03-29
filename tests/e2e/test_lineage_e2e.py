@@ -93,7 +93,9 @@ class TestLineageE2EFlow:
         output_urn = str(NexusURN.for_file(zone_id, output_path))
 
         # --- Step 1: Simulate agent reads (accumulator recording) ---
+        # Agent must begin a scope first — no default capture.
         acc = get_accumulator()
+        acc.begin_scope(agent_id, agent_gen, "main-task")
         for i, path in enumerate(input_paths):
             acc.record_read(
                 agent_id,

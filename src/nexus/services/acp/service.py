@@ -93,6 +93,9 @@ class AcpService:
         self._nexus_fs: VFSOperations | None = None
         self._pipe_manager: Any | None = None
         self._connections: dict[str, _ActiveAgent] = {}
+        # Agent termination callbacks — invoked with agent_id on kill/disconnect
+        # (Issue #3398 decision 2A: permission lease revocation on agent death)
+        self._on_terminate_callbacks: list[tuple[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Public properties (used by AcpRPCService — no private access)
@@ -114,6 +117,21 @@ class AcpService:
         """
         self._nexus_fs = nexus_fs
         logger.debug("AcpService: NexusFS bound for VFS-backed file I/O")
+
+    def register_on_terminate(self, callback_id: str, callback: Any) -> None:
+        """Register a callback invoked with ``agent_id`` when an agent terminates.
+
+        Used by permission lease table to revoke stale leases on agent
+        death (Issue #3398 decision 2A).
+
+        Args:
+            callback_id: Unique identifier (for dedup / unregister).
+            callback: ``Callable[[str], None]`` — receives the agent_id (pid).
+        """
+        for cid, _ in self._on_terminate_callbacks:
+            if cid == callback_id:
+                return
+        self._on_terminate_callbacks.append((callback_id, callback))
 
     def bind_pipe_manager(self, pipe_manager: Any) -> None:
         """Bind PipeManager for DT_PIPE registration of agent stdio.
@@ -364,6 +382,19 @@ class AcpService:
             self._teardown_agent(active)
 
         desc: AgentDescriptor = self._agent_registry.kill(pid, exit_code=-9)
+
+        # Notify termination callbacks (Issue #3398: lease revocation on agent death)
+        for callback_id, callback in self._on_terminate_callbacks:
+            try:
+                callback(pid)
+            except Exception:
+                logger.warning(
+                    "AcpService: on_terminate callback %s failed for pid=%s",
+                    callback_id,
+                    pid,
+                    exc_info=True,
+                )
+
         return desc
 
     def list_agents(

@@ -1,13 +1,16 @@
-"""Unit tests for PermissionLeaseTable (Issue #3394).
+"""Unit tests for PermissionLeaseTable (Issue #3394, #3398).
 
 Tests the TTL-based permission lease cache: stamp, check, invalidation,
-edge cases, and metrics.  Uses ManualClock for deterministic time control.
+edge cases, metrics, secondary indexes, and lazy eviction.
+Uses ManualClock for deterministic time control.
 
 Decision record:
     - #5C: Simple TTL dict (not LeaseManager)
     - #10A: Reuse ManualClock from lib/lease.py
     - #11B: Individual test per edge case
     - #12A: Skip Hypothesis (data structure too simple)
+    - #13A: Secondary indexes for O(1) targeted invalidation
+    - #15A: Lazy eviction at 90% capacity
 """
 
 from __future__ import annotations
@@ -180,14 +183,14 @@ class TestPermissionLeaseEdgeCases:
         table.stamp("/", "agent-A")
         assert table.check("/", "agent-A") is True
 
-    def test_size_cap_clears_table(self, clock: ManualClock) -> None:
-        """Table clears when max_entries is exceeded (Decision #13D)."""
+    def test_size_cap_clears_table_after_eviction(self, clock: ManualClock) -> None:
+        """Table clears when max_entries is exceeded even after eviction."""
         table = PermissionLeaseTable(clock=clock, max_entries=5)
         for i in range(5):
             table.stamp(f"/file{i}", "agent-A")
         assert table.active_count == 5
 
-        # 6th stamp triggers clear, then inserts
+        # 6th stamp triggers eviction (none expired) then full clear
         table.stamp("/file_new", "agent-A")
         assert table.active_count == 1
         assert table.check("/file_new", "agent-A") is True
@@ -291,6 +294,121 @@ class TestPermissionLeaseInheritance:
 
 
 # ---------------------------------------------------------------------------
+# Secondary indexes (Issue #3398 decision 13A)
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionLeaseSecondaryIndexes:
+    """Verify secondary indexes are maintained correctly."""
+
+    def test_invalidate_path_uses_index(self, table: PermissionLeaseTable) -> None:
+        """Path invalidation should be O(k) via _by_path index."""
+        # Stamp many agents on many paths
+        for i in range(100):
+            table.stamp(f"/file{i}", f"agent-{i}")
+        table.stamp("/target", "agent-A")
+        table.stamp("/target", "agent-B")
+        assert table.active_count == 102
+
+        # Invalidate only /target — should be fast (O(2) not O(102))
+        table.invalidate_path("/target")
+        assert table.check("/target", "agent-A") is False
+        assert table.check("/target", "agent-B") is False
+        # Others untouched
+        assert table.check("/file0", "agent-0") is True
+        assert table.active_count == 100
+
+    def test_invalidate_agent_uses_index(self, table: PermissionLeaseTable) -> None:
+        """Agent invalidation should be O(k) via _by_agent index."""
+        for i in range(100):
+            table.stamp(f"/file{i}", "agent-A")
+        table.stamp("/other", "agent-B")
+        assert table.active_count == 101
+
+        table.invalidate_agent("agent-A")
+        assert table.active_count == 1
+        assert table.check("/other", "agent-B") is True
+
+    def test_index_consistency_after_overwrite(
+        self, table: PermissionLeaseTable, clock: ManualClock
+    ) -> None:
+        """Overwriting a lease doesn't duplicate index entries."""
+        table.stamp("/file.txt", "agent-A")
+        table.stamp("/file.txt", "agent-A")  # overwrite
+        assert table.active_count == 1
+        table.invalidate_agent("agent-A")
+        assert table.active_count == 0
+
+    def test_index_consistency_after_invalidate_all(self, table: PermissionLeaseTable) -> None:
+        """invalidate_all clears indexes too."""
+        table.stamp("/a", "agent-A")
+        table.stamp("/b", "agent-B")
+        table.invalidate_all()
+        # After clear, stamping and invalidating should work correctly
+        table.stamp("/c", "agent-C")
+        table.invalidate_agent("agent-C")
+        assert table.active_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Lazy eviction (Issue #3398 decisions 8A, 15A)
+# ---------------------------------------------------------------------------
+
+
+class TestPermissionLeaseLazyEviction:
+    """Lazy eviction at 90% capacity preserving valid leases."""
+
+    def test_eviction_preserves_valid_leases(self, clock: ManualClock) -> None:
+        """At 90% cap, expired entries are evicted but valid ones survive."""
+        table = PermissionLeaseTable(clock=clock, max_entries=10, ttl=30.0)
+        # Fill to 50% with short-lived entries
+        for i in range(5):
+            table.stamp(f"/old{i}", "agent-A", ttl=5.0)
+        # Fill another 40% with long-lived entries
+        for i in range(4):
+            table.stamp(f"/new{i}", "agent-A", ttl=60.0)
+        assert table.active_count == 9
+
+        # Expire the short-lived ones
+        clock.advance(10.0)
+
+        # This stamp triggers eviction at 90% (9/10 = 90%)
+        table.stamp("/trigger", "agent-A", ttl=60.0)
+
+        # Short-lived entries evicted, long-lived preserved
+        for i in range(5):
+            assert table.check(f"/old{i}", "agent-A") is False
+        for i in range(4):
+            assert table.check(f"/new{i}", "agent-A") is True
+        assert table.check("/trigger", "agent-A") is True
+
+    def test_eviction_metric_tracked(self, clock: ManualClock) -> None:
+        """Eviction count is tracked in stats."""
+        table = PermissionLeaseTable(clock=clock, max_entries=10, ttl=5.0)
+        for i in range(9):
+            table.stamp(f"/file{i}", "agent-A")
+        clock.advance(10.0)  # all expired
+
+        # Trigger eviction
+        table.stamp("/new", "agent-A")
+        assert table.stats()["lease_evictions"] == 9
+
+    def test_full_clear_when_eviction_insufficient(self, clock: ManualClock) -> None:
+        """If still over cap after evicting expired, full clear happens."""
+        table = PermissionLeaseTable(clock=clock, max_entries=10, ttl=60.0)
+        # Fill to capacity with valid (non-expired) entries
+        for i in range(10):
+            table.stamp(f"/file{i}", "agent-A")
+        assert table.active_count == 10
+
+        # 11th stamp: len=10 >= 9 (90%), evict nothing (all valid),
+        # len still 10 >= 10 (cap) → full clear, then stamp new
+        table.stamp("/new", "agent-A")
+        assert table.active_count == 1
+        assert table.check("/new", "agent-A") is True
+
+
+# ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
 
@@ -339,7 +457,7 @@ class TestPermissionLeaseMetrics:
         """Expired entries stay in the table until evicted (lazy eviction).
 
         active_leases counts table entries, not valid leases. This is
-        expected — cleanup happens via invalidate_all() or size cap.
+        expected — cleanup happens via eviction or invalidation.
         """
         table.stamp("/file.txt", "agent-A")
         clock.advance(60.0)  # well past TTL

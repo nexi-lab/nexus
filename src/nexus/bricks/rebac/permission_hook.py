@@ -10,6 +10,7 @@ the existing hook lists and calls ``on_pre_*`` via getattr.
 
 Issue #899: Extracted from NexusFS kernel (was ``self._permission_checker``).
 Issue #3394: Permission write leases — check once, write many.
+Issue #3398: Extended leases to read, delete, rmdir hooks.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.types import Permission
+from nexus.lib.path_utils import parent_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
@@ -88,18 +90,55 @@ class PermissionCheckHook:
         self._lease_table = lease_table
 
     # ------------------------------------------------------------------
+    # Lease helpers — shared by on_pre_write, on_pre_read, on_pre_delete,
+    # on_pre_rmdir (Issue #3398 decisions 5A, 16A).
+    # ------------------------------------------------------------------
+
+    def _lease_check(self, path: str, agent_id: str | None) -> bool:
+        """Return True if a valid lease exists for (path, agent_id)."""
+        return bool(
+            agent_id and self._lease_table is not None and self._lease_table.check(path, agent_id)
+        )
+
+    def _lease_stamp(self, path: str, agent_id: str | None) -> None:
+        """Stamp a lease after a successful permission check."""
+        if agent_id and self._lease_table is not None:
+            self._lease_table.stamp(path, agent_id)
+
+    @staticmethod
+    def _extract_agent_id(context: Any) -> str | None:
+        """Extract agent_id from context, or None if unavailable."""
+        return getattr(context, "agent_id", None) if context else None
+
+    # ------------------------------------------------------------------
     # PRE hooks — permission gating (raise PermissionError to abort)
     # ------------------------------------------------------------------
 
     def on_pre_read(self, ctx: ReadHookContext) -> None:
-        """Check READ permission before read/stream/stat operations."""
+        """Check READ permission before read/stream/stat operations.
+
+        Fast path (Issue #3398): if a permission lease exists for the
+        (path, agent_id) pair, skip the full ReBAC check.
+        """
         if not self._enforce_permissions:
             return
         # stat() for implicit directories uses TRAVERSE — signalled via extra
         if ctx.extra.get("is_implicit_directory"):
             self._check_traverse(ctx)
             return
-        self._checker.check(ctx.path, Permission.READ, ctx.context)
+
+        context = ctx.context or self._default_context
+        agent_id = self._extract_agent_id(context)
+
+        # Fast path: check permission lease
+        if self._lease_check(ctx.path, agent_id):
+            return
+
+        # Slow path: full ReBAC check
+        self._checker.check(ctx.path, Permission.READ, context)
+
+        # Stamp lease on successful check
+        self._lease_stamp(ctx.path, agent_id)
 
     def on_pre_write(self, ctx: WriteHookContext) -> None:
         """Check WRITE permission before write operations.
@@ -120,21 +159,15 @@ class PermissionCheckHook:
         if ctx.old_metadata is not None:
             checked_path = ctx.path
         else:
-            parent = self._get_parent_path(ctx.path)
-            if parent is None:
+            checked_parent = parent_path(ctx.path)
+            if checked_parent is None:
                 return  # root path — no parent to check
-            checked_path = parent
+            checked_path = checked_parent
 
-        # Extract agent_id from context (Decision #7A).
-        # If unavailable, skip lease — falls through to full check every time.
-        agent_id = getattr(context, "agent_id", None) if context else None
+        agent_id = self._extract_agent_id(context)
 
         # Fast path: check permission lease (~100-200ns)
-        if (
-            agent_id
-            and self._lease_table is not None
-            and self._lease_table.check(checked_path, agent_id)
-        ):
+        if self._lease_check(checked_path, agent_id):
             return  # lease valid — skip full ReBAC check
 
         # Slow path: full ReBAC check (raises PermissionError on denial)
@@ -144,12 +177,24 @@ class PermissionCheckHook:
             self._checker.check(checked_path, Permission.WRITE, context)
 
         # Stamp lease on successful check (Decision #6A)
-        if agent_id and self._lease_table is not None:
-            self._lease_table.stamp(checked_path, agent_id)
+        self._lease_stamp(checked_path, agent_id)
 
     def on_pre_delete(self, ctx: DeleteHookContext) -> None:
-        """Check WRITE permission before delete."""
-        self._checker.check(ctx.path, Permission.WRITE, ctx.context)
+        """Check WRITE permission before delete.
+
+        Fast path (Issue #3398 decision 5A): lease check before full
+        ReBAC check, same pattern as on_pre_write.
+        """
+        if not self._enforce_permissions:
+            return
+        context = ctx.context or self._default_context
+        agent_id = self._extract_agent_id(context)
+
+        if self._lease_check(ctx.path, agent_id):
+            return
+
+        self._checker.check(ctx.path, Permission.WRITE, context)
+        self._lease_stamp(ctx.path, agent_id)
 
     def on_pre_rename(self, ctx: RenameHookContext) -> None:
         """Check WRITE permission on both source and destination."""
@@ -170,14 +215,27 @@ class PermissionCheckHook:
             # Fallback: resolve ancestor ourselves
             check_path = ctx.path
             while check_path and check_path != "/" and not self._metadata_store.exists(check_path):
-                check_path = self._get_parent_path(check_path)
+                check_path = parent_path(check_path)
         if check_path and self._metadata_store.exists(check_path):
             context = ctx.context or self._default_context
             self._checker.check(check_path, Permission.WRITE, context)
 
     def on_pre_rmdir(self, ctx: RmdirHookContext) -> None:
-        """Check WRITE permission before rmdir."""
-        self._checker.check(ctx.path, Permission.WRITE, ctx.context)
+        """Check WRITE permission before rmdir.
+
+        Fast path (Issue #3398 decision 5A): lease check before full
+        ReBAC check, same pattern as on_pre_write.
+        """
+        if not self._enforce_permissions:
+            return
+        context = ctx.context or self._default_context
+        agent_id = self._extract_agent_id(context)
+
+        if self._lease_check(ctx.path, agent_id):
+            return
+
+        self._checker.check(ctx.path, Permission.WRITE, context)
+        self._lease_stamp(ctx.path, agent_id)
 
     def on_pre_stat(self, ctx: "StatHookContext") -> None:
         """Permission check for stat/is_directory (Issue #1815).
@@ -310,14 +368,3 @@ class PermissionCheckHook:
                 f"Access denied: User '{getattr(context, 'user_id', '?')}' does not have "
                 f"TRAVERSE permission for '{ctx.path}'"
             )
-
-    @staticmethod
-    def _get_parent_path(path: str) -> str | None:
-        """Get parent directory path, or None if root."""
-        if path == "/":
-            return None
-        path = path.rstrip("/")
-        last_slash = path.rfind("/")
-        if last_slash == 0:
-            return "/"
-        return path[:last_slash] if last_slash > 0 else None

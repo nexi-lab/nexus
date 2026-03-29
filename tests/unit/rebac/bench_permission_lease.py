@@ -1,6 +1,6 @@
-"""Benchmark: permission write lease performance gain (Issue #3394).
+"""Benchmark: permission lease performance gain (Issue #3394, #3398).
 
-Measures the on_pre_write() hook latency with and without the
+Measures the on_pre_write/read/delete() hook latency with and without the
 PermissionLeaseTable to quantify the optimization.
 
 Run:
@@ -22,7 +22,7 @@ pytest.importorskip("pyroaring")
 
 from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
 from nexus.bricks.rebac.permission_hook import PermissionCheckHook
-from nexus.contracts.vfs_hooks import WriteHookContext
+from nexus.contracts.vfs_hooks import DeleteHookContext, ReadHookContext, WriteHookContext
 
 
 def _make_context(agent_id: str = "agent-A") -> MagicMock:
@@ -42,36 +42,53 @@ def _make_write_ctx(path: str, old_metadata: MagicMock | None = None) -> WriteHo
     )
 
 
+def _make_read_ctx(path: str) -> ReadHookContext:
+    return ReadHookContext(path=path, context=_make_context())
+
+
+def _make_delete_ctx(path: str) -> DeleteHookContext:
+    return DeleteHookContext(path=path, context=_make_context())
+
+
 class TestPermissionLeaseBenchmark:
     """Benchmark: quantify the lease fast-path speedup."""
 
     def _run_benchmark(
         self,
-        hook: PermissionCheckHook,
-        ctx: WriteHookContext,
+        fn,
+        ctx,
         iterations: int = 1000,
         warmup: int = 100,
     ) -> list[float]:
-        """Run on_pre_write iterations and return per-call latencies in microseconds."""
-        # Warmup
+        """Run hook iterations and return per-call latencies in microseconds."""
         for _ in range(warmup):
-            hook.on_pre_write(ctx)
+            fn(ctx)
 
         latencies: list[float] = []
         for _ in range(iterations):
             t0 = time.perf_counter()
-            hook.on_pre_write(ctx)
+            fn(ctx)
             t1 = time.perf_counter()
-            latencies.append((t1 - t0) * 1_000_000)  # microseconds
+            latencies.append((t1 - t0) * 1_000_000)
         return latencies
 
-    def test_benchmark_with_vs_without_lease(self) -> None:
-        """Compare on_pre_write latency with and without lease table.
+    def _report(self, label: str, latencies_no: list[float], latencies_with: list[float]) -> None:
+        med_no = statistics.median(latencies_no)
+        med_with = statistics.median(latencies_with)
+        p95_no = sorted(latencies_no)[int(0.95 * len(latencies_no))]
+        p95_with = sorted(latencies_with)[int(0.95 * len(latencies_with))]
+        speedup = med_no / med_with if med_with > 0 else float("inf")
 
-        Without lease: every call does checker.check() (mocked but still
-        has Python call overhead).
-        With lease: second+ calls hit the lease and skip checker entirely.
-        """
+        print("\n  ┌─────────────────────────────────────────────────────┐")
+        print(f"  │  {label:<51} │")
+        print("  ├─────────────────────────────────────────────────────┤")
+        print(f"  │  WITHOUT lease:  median={med_no:8.2f}μs  p95={p95_no:8.2f}μs │")
+        print(f"  │  WITH lease:     median={med_with:8.2f}μs  p95={p95_with:8.2f}μs │")
+        print(f"  │  Speedup:        {speedup:5.1f}x                            │")
+        print("  └─────────────────────────────────────────────────────┘\n")
+
+    def test_benchmark_write_with_vs_without_lease(self) -> None:
+        """Compare on_pre_write latency with and without lease table."""
         checker = MagicMock()
         metadata_store = MagicMock()
         default_ctx = _make_context()
@@ -86,8 +103,7 @@ class TestPermissionLeaseBenchmark:
             lease_table=None,
         )
         ctx = _make_write_ctx("/workspace/src/file.py", old_metadata=old_meta)
-
-        latencies_no_lease = self._run_benchmark(hook_no_lease, ctx)
+        latencies_no = self._run_benchmark(hook_no_lease.on_pre_write, ctx)
         checker.check.reset_mock()
 
         # --- WITH lease table ---
@@ -99,50 +115,88 @@ class TestPermissionLeaseBenchmark:
             enforce_permissions=True,
             lease_table=lease_table,
         )
+        hook_with_lease.on_pre_write(ctx)  # prime the lease
+        checker.check.reset_mock()
+        latencies_with = self._run_benchmark(hook_with_lease.on_pre_write, ctx)
 
-        # First call primes the lease
-        hook_with_lease.on_pre_write(ctx)
+        self._report("Write Lease Benchmark (Issue #3394)", latencies_no, latencies_with)
+
+        med_with = statistics.median(latencies_with)
+        med_no = statistics.median(latencies_no)
+        assert med_with < med_no
+        checker.check.assert_not_called()
+        assert lease_table.stats()["lease_hits"] >= 1000
+
+    def test_benchmark_read_with_vs_without_lease(self) -> None:
+        """Compare on_pre_read latency with and without lease table."""
+        checker = MagicMock()
+        metadata_store = MagicMock()
+        default_ctx = _make_context()
+
+        hook_no_lease = PermissionCheckHook(
+            checker=checker,
+            metadata_store=metadata_store,
+            default_context=default_ctx,
+            enforce_permissions=True,
+            lease_table=None,
+        )
+        ctx = _make_read_ctx("/workspace/src/file.py")
+        latencies_no = self._run_benchmark(hook_no_lease.on_pre_read, ctx)
         checker.check.reset_mock()
 
-        latencies_with_lease = self._run_benchmark(hook_with_lease, ctx)
-
-        # --- Results ---
-        med_no = statistics.median(latencies_no_lease)
-        med_with = statistics.median(latencies_with_lease)
-        p95_no = sorted(latencies_no_lease)[int(0.95 * len(latencies_no_lease))]
-        p95_with = sorted(latencies_with_lease)[int(0.95 * len(latencies_with_lease))]
-        speedup = med_no / med_with if med_with > 0 else float("inf")
-
-        print("\n")
-        print("  ┌─────────────────────────────────────────────────────┐")
-        print("  │  Permission Write Lease Benchmark (Issue #3394)     │")
-        print("  ├─────────────────────────────────────────────────────┤")
-        print(f"  │  WITHOUT lease:  median={med_no:8.2f}μs  p95={p95_no:8.2f}μs │")
-        print(f"  │  WITH lease:     median={med_with:8.2f}μs  p95={p95_with:8.2f}μs │")
-        print(f"  │  Speedup:        {speedup:5.1f}x                            │")
-        print("  └─────────────────────────────────────────────────────┘")
-        print()
-
-        # The lease path should be meaningfully faster
-        assert med_with < med_no, (
-            f"Lease path ({med_with:.2f}μs) should be faster than no-lease path ({med_no:.2f}μs)"
+        lease_table = PermissionLeaseTable()
+        hook_with_lease = PermissionCheckHook(
+            checker=checker,
+            metadata_store=metadata_store,
+            default_context=default_ctx,
+            enforce_permissions=True,
+            lease_table=lease_table,
         )
+        hook_with_lease.on_pre_read(ctx)
+        checker.check.reset_mock()
+        latencies_with = self._run_benchmark(hook_with_lease.on_pre_read, ctx)
 
-        # Verify checker was NOT called during the lease benchmark
-        # (all calls hit the lease fast path)
+        self._report("Read Lease Benchmark (Issue #3398)", latencies_no, latencies_with)
+
+        assert statistics.median(latencies_with) < statistics.median(latencies_no)
         checker.check.assert_not_called()
 
-        # Report lease stats
-        stats = lease_table.stats()
-        print(f"  Lease stats: {stats}")
-        assert stats["lease_hits"] >= 1000  # All benchmark iterations hit
+    def test_benchmark_delete_with_vs_without_lease(self) -> None:
+        """Compare on_pre_delete latency with and without lease table."""
+        checker = MagicMock()
+        metadata_store = MagicMock()
+        default_ctx = _make_context()
+
+        hook_no_lease = PermissionCheckHook(
+            checker=checker,
+            metadata_store=metadata_store,
+            default_context=default_ctx,
+            enforce_permissions=True,
+            lease_table=None,
+        )
+        ctx = _make_delete_ctx("/workspace/src/file.py")
+        latencies_no = self._run_benchmark(hook_no_lease.on_pre_delete, ctx)
+        checker.check.reset_mock()
+
+        lease_table = PermissionLeaseTable()
+        hook_with_lease = PermissionCheckHook(
+            checker=checker,
+            metadata_store=metadata_store,
+            default_context=default_ctx,
+            enforce_permissions=True,
+            lease_table=lease_table,
+        )
+        hook_with_lease.on_pre_delete(ctx)
+        checker.check.reset_mock()
+        latencies_with = self._run_benchmark(hook_with_lease.on_pre_delete, ctx)
+
+        self._report("Delete Lease Benchmark (Issue #3398)", latencies_no, latencies_with)
+
+        assert statistics.median(latencies_with) < statistics.median(latencies_no)
+        checker.check.assert_not_called()
 
     def test_benchmark_new_files_same_directory(self) -> None:
-        """Benchmark: many new files in the same directory (ancestor walk).
-
-        Without lease: each new file checks WRITE on parent dir.
-        With lease: first file stamps parent, rest hit via ancestor walk.
-        """
+        """Benchmark: many new files in the same directory (ancestor walk)."""
         checker = MagicMock()
         metadata_store = MagicMock()
         default_ctx = _make_context()
@@ -185,7 +239,6 @@ class TestPermissionLeaseBenchmark:
         print("  └─────────────────────────────────────────────────────┘")
         print()
 
-        # All 500 should have hit the lease (parent dir stamp)
         checker.check.assert_not_called()
         assert lease_table.stats()["lease_hits"] >= iterations
 
@@ -201,19 +254,15 @@ class TestPermissionLeaseBenchmark:
             lease_table=lease_table,
         )
 
-        # Write succeeds, lease stamped
         ctx = _make_write_ctx("/workspace/file.py", old_metadata=MagicMock())
         hook.on_pre_write(ctx)
         checker.check.reset_mock()
 
-        # Second write: lease hit (no check)
         hook.on_pre_write(ctx)
         checker.check.assert_not_called()
 
-        # Invalidate (simulates permission revocation)
         lease_table.invalidate_all()
 
-        # Third write: must do full check
         checker.check.side_effect = PermissionError("revoked")
         with pytest.raises(PermissionError, match="revoked"):
             hook.on_pre_write(ctx)

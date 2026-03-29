@@ -55,8 +55,8 @@ class TestDurableStreamUnavailableAtStartup:
             object=("file", "/doc.txt"),
         )
 
-        # Pub/Sub still fires as fallback
-        mock_pubsub.publish_invalidation.assert_called_once()
+        # Pub/Sub fires for both "all" and "lease" layers (Issue #3398 decision 4A)
+        assert mock_pubsub.publish_invalidation.call_count == 2
         # L1 still invalidated
         l1.invalidate_subject.assert_called()
 

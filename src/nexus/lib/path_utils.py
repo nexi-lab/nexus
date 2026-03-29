@@ -157,6 +157,31 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
     return bool(compiled.match(path))
 
 
+def parent_path(path: str) -> str | None:
+    """Return the parent directory of *path*, or ``None`` for root.
+
+    Strips trailing slashes before computing the parent so that
+    ``parent_path("/a/b/")`` and ``parent_path("/a/b")`` both return
+    ``"/a"``.
+
+    Examples::
+
+        >>> parent_path("/workspace/src/file.py")
+        '/workspace/src'
+        >>> parent_path("/workspace")
+        '/'
+        >>> parent_path("/")
+        None
+    """
+    if path == "/":
+        return None
+    path = path.rstrip("/")
+    last_slash = path.rfind("/")
+    if last_slash == 0:
+        return "/"
+    return path[:last_slash] if last_slash > 0 else None
+
+
 def unscope_internal_path(path: str) -> str:
     """Strip internal zone/tenant/user prefix from a storage path.
 

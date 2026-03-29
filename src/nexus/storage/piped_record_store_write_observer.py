@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # Pipe path and capacity (parallel to WorkflowDispatchService constants)
 _AUDIT_PIPE_PATH = "/nexus/pipes/audit-events"
-_AUDIT_PIPE_CAPACITY = 65_536  # 64KB
+_AUDIT_PIPE_CAPACITY = 262_144  # 256KB — headroom for batch writes (Issue #3399)
 
 # Consumer batch processing
 _MAX_BATCH_DRAIN = 100  # Max events to drain per batch

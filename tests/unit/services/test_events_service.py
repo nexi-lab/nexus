@@ -66,24 +66,21 @@ def _make_event(path: str = "/inbox/test.txt", event_type: str = "file_write") -
 class TestEventsServiceInit:
     """Tests for EventsService construction."""
 
-    def test_init_stores_file_watcher(self, file_watcher):
-        """Service stores file watcher dependency."""
+    def test_init_stores_file_watcher(self, file_watcher, mock_lock_manager):
+        """Service stores file watcher and lock manager dependencies."""
         svc = EventsService(
             file_watcher=file_watcher,
+            lock_manager=mock_lock_manager,
             zone_id="z1",
         )
         assert svc._file_watcher is file_watcher
-        assert svc._lock_manager is not None  # LocalLockManager auto-created
+        assert svc._lock_manager is mock_lock_manager
         assert svc._zone_id == "z1"
 
-    def test_upgrade_lock_manager(self, file_watcher, mock_lock_manager):
-        """upgrade_lock_manager() replaces the default LocalLockManager."""
+    def test_init_without_lock_manager(self, file_watcher):
+        """Lock manager is optional — None means locking disabled."""
         svc = EventsService(file_watcher=file_watcher)
-        original = svc._lock_manager
-        assert original is not None
-        svc.upgrade_lock_manager(mock_lock_manager)
-        assert svc._lock_manager is mock_lock_manager
-        assert svc._lock_manager is not original
+        assert svc._lock_manager is None
 
 
 # =============================================================================
@@ -94,16 +91,15 @@ class TestEventsServiceInit:
 class TestInfrastructureDetection:
     """Tests for layer detection methods."""
 
-    def test_has_lock_manager_true_after_upgrade(self, file_watcher, mock_lock_manager):
-        """Lock manager present after upgrade."""
-        svc = EventsService(file_watcher=file_watcher)
-        svc.upgrade_lock_manager(mock_lock_manager)
+    def test_has_lock_manager_true_when_passed(self, file_watcher, mock_lock_manager):
+        """Lock manager present when passed via constructor."""
+        svc = EventsService(file_watcher=file_watcher, lock_manager=mock_lock_manager)
         assert svc._has_lock_manager() is True
 
-    def test_has_lock_manager_always_true(self, file_watcher):
-        """EventsService auto-creates local fallback — always has lock manager."""
+    def test_has_lock_manager_false_without_lock_manager(self, file_watcher):
+        """No lock manager when none passed to constructor."""
         svc = EventsService(file_watcher=file_watcher)
-        assert svc._has_lock_manager() is True
+        assert svc._has_lock_manager() is False
 
 
 # =============================================================================
@@ -176,10 +172,8 @@ class TestDistributedLocking:
     """Tests for locking via upgraded (distributed) lock manager."""
 
     def _make_svc(self, file_watcher, mock_lock_manager):
-        """Create EventsService and upgrade to distributed lock manager."""
-        svc = EventsService(file_watcher=file_watcher)
-        svc.upgrade_lock_manager(mock_lock_manager)
-        return svc
+        """Create EventsService with distributed lock manager."""
+        return EventsService(file_watcher=file_watcher, lock_manager=mock_lock_manager)
 
     def test_lock_acquires_distributed(self, file_watcher, mock_lock_manager):
         """Lock uses distributed lock manager when available."""

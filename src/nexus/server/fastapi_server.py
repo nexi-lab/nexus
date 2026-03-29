@@ -350,9 +350,8 @@ def create_app(
 
             _rpc_sources.append(FederationRPCService(_fed))
         # --- Locks (Issue #1133) ---
-        # Lock manager lives on EventsService (moved in PR #3379).
-        _events_svc = nexus_fs.service("events") if hasattr(nexus_fs, "service") else None
-        _lock_mgr = getattr(_events_svc, "_lock_manager", None) if _events_svc else None
+        # Lock manager is kernel-owned (NexusFS._lock_manager).
+        _lock_mgr = getattr(nexus_fs, "_lock_manager", None)
         if _lock_mgr is not None:
             from nexus.server.rpc.services.locks_rpc import LocksRPCService
 

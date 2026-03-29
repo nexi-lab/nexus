@@ -260,8 +260,11 @@ async def _boot_post_kernel_services(
 
             events_service = EventsService(
                 file_watcher=nx._file_watcher,
+                lock_manager=nx._lock_manager,
             )
-            logger.debug("[BOOT:WIRED] EventsService created (delegates to kernel FileWatcher)")
+            logger.debug(
+                "[BOOT:WIRED] EventsService created (delegates to kernel FileWatcher + LockManager)"
+            )
         except Exception as exc:
             logger.debug("[BOOT:WIRED] EventsService unavailable: %s", exc)
     else:

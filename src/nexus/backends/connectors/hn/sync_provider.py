@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.connectors.cli.protocol import FetchResult, RemoteItem, SyncPage
 
 if TYPE_CHECKING:
-    from nexus.backends.connectors.hn.connector import HNConnectorBackend
+    from nexus.backends.connectors.hn.connector import PathHNBackend
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class HNSyncProvider:
     State token is the max item ID seen.
     """
 
-    def __init__(self, connector: "HNConnectorBackend | None" = None) -> None:
+    def __init__(self, connector: "PathHNBackend | None" = None) -> None:
         self._connector = connector
 
     async def list_remote_items(
@@ -51,8 +51,8 @@ class HNSyncProvider:
         if self._connector is None:
             return SyncPage(items=[], state_token=since)
 
-        # Fetch story IDs from HN API (async method)
-        story_ids = await self._connector._fetch_story_ids(feed)
+        # Fetch story IDs from HN API via the transport (async method)
+        story_ids = await self._connector._hn_transport._fetch_story_ids(feed)
         stories_limit = getattr(self._connector, "stories_per_feed", page_size)
         ids_to_fetch = story_ids[: min(page_size, stories_limit)]
 
@@ -84,6 +84,6 @@ class HNSyncProvider:
         if self._connector is None:
             return FetchResult(relative_path=f"{item_id}.json", content=b"{}")
 
-        story: dict[str, Any] | None = await self._connector._fetch_item(int(item_id))
+        story: dict[str, Any] | None = await self._connector._hn_transport._fetch_item(int(item_id))
         content = json.dumps(story or {}, indent=2, ensure_ascii=False).encode("utf-8")
         return FetchResult(relative_path=f"{item_id}.json", content=content)

@@ -1,53 +1,33 @@
-"""X (Twitter) connector backend with OAuth 2.0 PKCE authentication.
+"""X (Twitter) connector backend -- PathAddressingEngine + XTransport composition.
 
-This connector maps X (Twitter) API to a virtual filesystem, allowing
-AI agents and applications to interact with X using familiar file operations.
+Architecture (Transport x Addressing):
+    PathXBackend(PathAddressingEngine)
+        +-- XTransport(Transport)
+              +-- X API v2 calls (I/O)
+              +-- OAuth PKCE token from OperationContext
+
+This follows the same pattern as PathGmailBackend, PathCalendarBackend:
+Transport handles raw I/O; PathAddressingEngine handles addressing,
+path security, and content operations.
 
 Virtual filesystem structure:
-    /x/timeline/         - Home timeline tweets
-    /x/mentions/         - Mentions
-    /x/posts/           - User's tweets
-    /x/bookmarks/       - Saved tweets
-    /x/search/          - Search results
-    /x/users/           - User profiles
-
-Features:
-- OAuth 2.0 PKCE authentication (per-user credentials)
-- Virtual path mapping (tweets → JSON files)
-- Multi-tier caching with TTL
-- Rate limit handling
-- Read-optimized with smart cache invalidation
-
-Example:
-    >>> from nexus import NexusFS
-    >>> from nexus.backends import XConnectorBackend
-    >>>
-    >>> nx = NexusFS(backend=XConnectorBackend(
-    ...     token_manager_db="~/.nexus/nexus.db",
-    ...     cache_ttl=300,
-    ... ))
-    >>>
-    >>> # Read timeline
-    >>> timeline = await nx.sys_read("/x/timeline/recent.json")
-    >>>
-    >>> # Post tweet
-    >>> await nx.sys_write("/x/posts/new.json", json.dumps({"text": "Hello!")).encode())
+    /timeline/         - Home timeline tweets
+    /mentions/         - Mentions
+    /posts/            - User's tweets
+    /bookmarks/        - Saved tweets
+    /search/           - Search results
+    /users/            - User profiles
 """
 
-import hashlib
+from __future__ import annotations
+
 import importlib as _il
-import json
 import logging
-import os
 import re
-import time
-from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from cachetools import LRUCache
-
-from nexus.backends.base.backend import Backend
+from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import (
     ConfirmLevel,
@@ -61,36 +41,18 @@ from nexus.backends.connectors.base import (
 from nexus.backends.connectors.base_errors import TRAIT_ERRORS
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.backends.connectors.x.schemas import CreateTweetSchema, DeleteTweetSchema
+from nexus.backends.connectors.x.transport import VIRTUAL_DIRS, XTransport
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
-# Brick import via importlib to avoid non-layer→bricks tier violation
+# Brick import via importlib to avoid non-layer tier violation
 glob_fast = _il.import_module("nexus.bricks.search.primitives").glob_fast
 
 logger = logging.getLogger(__name__)
-
-
-# Cache TTL configuration (in seconds)
-CACHE_TTL = {
-    # Frequently changing data (short TTL)
-    "timeline": 300,  # 5 minutes
-    "mentions": 300,  # 5 minutes
-    "search": 1800,  # 30 minutes
-    # Semi-static data (medium TTL)
-    "user_tweets": 3600,  # 1 hour
-    "bookmarks": 3600,  # 1 hour
-    "user_profile": 3600,  # 1 hour
-    # Static data (long TTL)
-    "single_tweet": 86400,  # 24 hours
-    # No caching
-    "create_tweet": 0,  # Write operation
-    "delete_tweet": 0,  # Write operation
-}
 
 
 @register_connector(
@@ -100,34 +62,24 @@ CACHE_TTL = {
     requires=["requests-oauthlib"],
     service_name="x",
 )
-class XConnectorBackend(
-    Backend, OAuthConnectorMixin, SkillDocMixin, ValidatedMixin, TraitBasedMixin
+class PathXBackend(
+    PathAddressingEngine,
+    OAuthConnectorMixin,
+    SkillDocMixin,
+    ValidatedMixin,
+    TraitBasedMixin,
 ):
-    """
-    X (Twitter) connector backend with OAuth 2.0 PKCE authentication.
-
-    Maps X API to virtual filesystem:
-    - /x/timeline/ → Home timeline tweets
-    - /x/posts/ → User's tweets
-    - /x/mentions/ → Mentions
-    - /x/bookmarks/ → Saved tweets
-    - /x/search/ → Search results
+    """X (Twitter) connector: PathAddressingEngine + XTransport composition.
 
     Features:
     - OAuth 2.0 PKCE authentication (per-user credentials)
-    - Virtual path mapping (tweets → JSON files)
-    - Multi-tier caching with TTL
+    - Virtual path mapping (tweets -> JSON files)
+    - Multi-tier caching with TTL (in-memory + disk)
     - Rate limit handling
-    - Read-optimized
-
-    Limitations:
-    - No true file storage (virtual filesystem only)
-    - API rate limits apply
-    - Read-only for most paths
-    - Fixed virtual directory structure
+    - Read + write (tweet creation and deletion)
     """
 
-    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.SKILL_DOC,
         }
@@ -198,8 +150,7 @@ class XConnectorBackend(
         memory_cache_maxsize: int = 1024,
         user_id_cache_maxsize: int = 256,
     ):
-        """
-        Initialize X connector backend.
+        """Initialize X connector backend.
 
         Args:
             token_manager_db: Path to TokenManager database or database URL
@@ -210,493 +161,54 @@ class XConnectorBackend(
             memory_cache_maxsize: Max entries in the in-memory content LRU cache
             user_id_cache_maxsize: Max entries in the user ID LRU cache
         """
+        # 1. Initialize OAuth
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
-        self.cache_ttl = cache_ttl or CACHE_TTL
-        self.cache_dir = cache_dir or "/tmp/nexus-x-cache"
 
-        # Create cache directory
-        os.makedirs(self.cache_dir, exist_ok=True)
+        # 2. Create XTransport with the token manager
+        x_transport = XTransport(
+            token_manager=self.token_manager,
+            provider=provider,
+            user_email=user_email,
+            cache_ttl=cache_ttl,
+            cache_dir=cache_dir,
+            memory_cache_maxsize=memory_cache_maxsize,
+            user_id_cache_maxsize=user_id_cache_maxsize,
+        )
+        self._x_transport = x_transport
 
-        # In-memory cache: (cache_key, user_id) -> (content, timestamp)
-        self._memory_cache: LRUCache[tuple[str, str], tuple[bytes, float]] = LRUCache(
-            maxsize=memory_cache_maxsize
+        # 3. Initialize PathAddressingEngine
+        PathAddressingEngine.__init__(
+            self,
+            transport=x_transport,
+            backend_name="x",
         )
 
-        # User ID cache: user_email -> x_user_id
-        self._user_id_cache: LRUCache[str, str] = LRUCache(maxsize=user_id_cache_maxsize)
+        # Store cache_dir for glob/grep access
+        self._cache_dir = cache_dir or "/tmp/nexus-x-cache"
 
-    @property
-    def name(self) -> str:
-        """Backend identifier name."""
-        return "x"
-
-    # --- Capability flags ---
+    # -- Properties --
 
     @property
     def has_token_manager(self) -> bool:
         """X connector manages OAuth tokens."""
         return True
 
-    async def _get_api_client_async(
-        self, context: "OperationContext | None"
-    ) -> Any:  # Returns XAPIClient but avoid circular import
-        """Get authenticated X API client (async version).
-
-        Args:
-            context: Operation context with user_id
-
-        Returns:
-            XAPIClient instance
-
-        Raises:
-            BackendError: If authentication fails
-        """
-        from nexus.backends.connectors.x.api_client import XAPIClient
-
-        # Determine user email
-        user_email = self.user_email or (context.user_id if context else None)
-
-        if not user_email:
-            raise BackendError(
-                "X connector requires user_email or context.user_id",
-                backend="x",
-            )
-
-        # Get OAuth token
-        zone_id: str = (
-            context.zone_id if context and hasattr(context, "zone_id") else ROOT_ZONE_ID
-        ) or ROOT_ZONE_ID
-
-        try:
-            access_token = await self.token_manager.get_valid_token(
-                provider=self.provider,
-                user_email=user_email,
-                zone_id=zone_id,
-            )
-        except Exception as e:
-            raise BackendError(
-                f"Failed to get OAuth token for {user_email}: {e}",
-                backend="x",
-            ) from e
-
-        # Create API client
-        return XAPIClient(access_token=access_token)
-
-    def _get_api_client(
-        self, context: "OperationContext | None"
-    ) -> Any:  # Returns XAPIClient but avoid circular import
-        """Get authenticated X API client (sync wrapper).
-
-        Args:
-            context: Operation context with user_id
-
-        Returns:
-            XAPIClient instance
-
-        Raises:
-            BackendError: If authentication fails
-        """
-        from nexus.lib.sync_bridge import run_sync
-
-        return run_sync(self._get_api_client_async(context))
-
-    async def _get_user_id(self, context: "OperationContext | None") -> str:
-        """Get X user ID for authenticated user.
-
-        Args:
-            context: Operation context
-
-        Returns:
-            X user ID
-
-        Raises:
-            BackendError: If user ID cannot be determined
-        """
-        user_email = self.user_email or (context.user_id if context else None)
-
-        if not user_email:
-            raise BackendError("Cannot determine user email", backend="x")
-
-        # Check cache
-        if user_email in self._user_id_cache:
-            cached_id: str = self._user_id_cache[user_email]
-            return cached_id
-
-        # Fetch from API
-        client = await self._get_api_client_async(context)
-        try:
-            user_data = await client.get_me()
-            user_id: str = user_data["data"]["id"]
-
-            # Cache it
-            self._user_id_cache[user_email] = user_id
-
-            return user_id
-        finally:
-            await client.close()
-
-    def _generate_cache_key(
-        self,
-        endpoint: str,
-        params: dict[str, Any],
-        user_id: str,
-    ) -> str:
-        """
-        Generate deterministic cache key for API request.
-
-        Args:
-            endpoint: API endpoint type (e.g., "timeline", "mentions")
-            params: Request parameters
-            user_id: User identifier
-
-        Returns:
-            Cache key string
-
-        Example:
-            x:user123:timeline:a1b2c3d4
-        """
-        # Sort params for deterministic hash
-        param_str = json.dumps(params, sort_keys=True)
-        param_hash = hashlib.md5(param_str.encode()).hexdigest()[:8]
-
-        return f"x:{user_id}:{endpoint}:{param_hash}"
-
-    def _get_cached(
-        self,
-        cache_key: str,
-        user_id: str,
-        max_age: float,
-    ) -> bytes | None:
-        """
-        Get cached content if available and not expired.
-
-        Args:
-            cache_key: Cache key
-            user_id: User identifier
-            max_age: Maximum age in seconds
-
-        Returns:
-            Cached content bytes or None if cache miss/expired
-        """
-        # Check memory cache
-        mem_key = (cache_key, user_id)
-        if mem_key in self._memory_cache:
-            content, timestamp = self._memory_cache[mem_key]
-            if time.time() - timestamp < max_age:
-                logger.debug(f"[X-CACHE] Memory hit: {cache_key}")
-                cached_content: bytes | None = content
-                return cached_content
-
-        # Check disk cache
-        cache_file = Path(self.cache_dir) / f"{cache_key}.json"
-        if cache_file.exists():
-            stat = cache_file.stat()
-            if time.time() - stat.st_mtime < max_age:
-                content = cache_file.read_bytes()
-                logger.debug(f"[X-CACHE] Disk hit: {cache_key}")
-
-                # Promote to memory cache
-                self._memory_cache[mem_key] = (content, stat.st_mtime)
-
-                return content
-
-        logger.debug(f"[X-CACHE] Miss: {cache_key}")
-        return None
-
-    def _set_cached(
-        self,
-        cache_key: str,
-        user_id: str,
-        content: bytes,
-    ) -> None:
-        """
-        Store content in cache.
-
-        Args:
-            cache_key: Cache key
-            user_id: User identifier
-            content: Content to cache
-        """
-        timestamp = time.time()
-
-        # Store in memory cache
-        mem_key = (cache_key, user_id)
-        self._memory_cache[mem_key] = (content, timestamp)
-
-        # Store in disk cache
-        cache_file = Path(self.cache_dir) / f"{cache_key}.json"
-        cache_file.write_bytes(content)
-
-        logger.debug(f"[X-CACHE] Cached: {cache_key} ({len(content)} bytes)")
-
-    def _invalidate_caches(
-        self,
-        user_id: str,
-        endpoint_types: list[str],
-    ) -> None:
-        """
-        Invalidate caches for specific endpoint types.
-
-        Args:
-            user_id: User identifier
-            endpoint_types: List of endpoint types to invalidate
-        """
-        # Invalidate memory cache
-        keys_to_delete = []
-        for cache_key, cached_user_id in self._memory_cache:
-            if cached_user_id == user_id:
-                for endpoint_type in endpoint_types:
-                    if f":{endpoint_type}:" in cache_key:
-                        keys_to_delete.append((cache_key, cached_user_id))
-                        break
-
-        for key in keys_to_delete:
-            del self._memory_cache[key]
-            logger.debug(f"[X-CACHE] Invalidated: {key[0]}")
-
-        # Invalidate disk cache
-        cache_dir = Path(self.cache_dir)
-        for cache_file in cache_dir.glob(f"x:{user_id}:*.json"):
-            for endpoint_type in endpoint_types:
-                if f":{endpoint_type}:" in cache_file.name:
-                    cache_file.unlink()
-                    logger.debug(f"[X-CACHE] Deleted: {cache_file.name}")
-                    break
-
-    def _resolve_path(
-        self,
-        backend_path: str,
-    ) -> tuple[str, dict[str, Any]]:
-        """
-        Resolve virtual path to X API endpoint.
-
-        Args:
-            backend_path: Virtual backend path (e.g., "timeline/recent.json" or "/x/timeline/recent.json")
-
-        Returns:
-            Tuple of (endpoint_type, params)
-
-        Raises:
-            BackendError: If path is invalid
-        """
-        parts = backend_path.strip("/").split("/")
-
-        # Handle paths both with and without /x/ prefix
-        # When mounted at /mnt/x, backend_path will be "timeline/recent.json"
-        # When used directly, backend_path might be "/x/timeline/recent.json"
-        if parts and parts[0] == "x":
-            # Remove the "x" prefix to normalize
-            parts = parts[1:]
-
-        if not parts:
-            raise BackendError(f"Invalid X path: {backend_path}", backend="x")
-
-        # Now parts[0] is the namespace (timeline, mentions, posts, etc.)
-        namespace = parts[0]
-
-        # Timeline paths: timeline/ or timeline/recent.json
-        if namespace == "timeline":
-            if len(parts) == 1 or (len(parts) == 2 and parts[1] == "recent.json"):
-                return ("timeline", {"max_results": 100})
-            elif len(parts) == 2 and parts[1].endswith(".json"):
-                # Daily archive format: 2025-01-22.json
-                date_str = parts[1].replace(".json", "")
-                return (
-                    "timeline",
-                    {
-                        "start_time": f"{date_str}T00:00:00Z",
-                        "end_time": f"{date_str}T23:59:59Z",
-                        "max_results": 100,
-                    },
-                )
-
-        # Mentions paths: mentions/ or mentions/recent.json
-        elif namespace == "mentions":
-            if len(parts) == 1 or (len(parts) == 2 and parts[1] == "recent.json"):
-                return ("mentions", {"max_results": 100})
-
-        # Posts paths: posts/ or posts/all.json or posts/<id>.json
-        elif namespace == "posts":
-            if len(parts) == 1 or (len(parts) == 2 and parts[1] == "all.json"):
-                return ("user_tweets", {"max_results": 100})
-            elif (
-                len(parts) == 2
-                and parts[1].endswith(".json")
-                and parts[1] not in ("all.json", "new.json")
-            ):
-                # Individual tweet: posts/1234567890.json
-                tweet_id = parts[1].replace(".json", "")
-                return ("single_tweet", {"id": tweet_id})
-            elif len(parts) == 2 and parts[1] == "new.json":
-                # This is for writing - handled separately
-                return ("new_tweet", {})
-
-        # Bookmarks paths: bookmarks/ or bookmarks/all.json
-        elif namespace == "bookmarks":
-            if len(parts) == 1 or (len(parts) == 2 and parts[1] == "all.json"):
-                return ("bookmarks", {"max_results": 100})
-
-        # Search paths: search/<query>.json
-        elif namespace == "search":
-            if len(parts) == 2:
-                query = parts[1].replace(".json", "").replace("_", " ")
-                return ("search", {"query": query, "max_results": 100})
-
-        # User paths: users/<username>/ or users/<username>/profile.json
-        elif namespace == "users":
-            if len(parts) < 2:
-                raise BackendError("User path requires username", backend="x")
-
-            username = parts[1]
-
-            if len(parts) == 2 or (len(parts) == 3 and parts[2] == "profile.json"):
-                return ("user_profile", {"username": username})
-            elif len(parts) == 3 and parts[2] == "tweets.json":
-                return ("user_tweets_by_username", {"username": username})
-
-        raise BackendError(f"Unknown virtual path: {backend_path}", backend="x")
-
-    def _is_writable(self, path: str) -> bool:
-        """Check if virtual path is writable."""
-        # Normalize path - remove leading /x/ if present
-        normalized = path.strip("/")
-        if normalized.startswith("x/"):
-            normalized = normalized[2:]
-
-        WRITABLE_PATHS = [
-            "posts/new.json",
-            "posts/drafts/",
-        ]
-
-        for writable in WRITABLE_PATHS:
-            if normalized.startswith(writable) or normalized == writable:
-                return True
-
-        return False
-
-    async def _fetch_from_api(
-        self,
-        client: Any,  # XAPIClient
-        endpoint_type: str,
-        params: dict[str, Any],
-        user_id: str,
-    ) -> dict[str, Any]:
-        """
-        Fetch data from X API.
-
-        Args:
-            client: X API client
-            endpoint_type: Endpoint type (e.g., "timeline", "mentions")
-            params: Request parameters
-            user_id: X user ID
-
-        Returns:
-            API response data
-        """
-        # All client methods return dict[str, Any] from the X API
-        result: dict[str, Any]
-        if endpoint_type == "timeline":
-            result = await client.get_user_timeline(user_id, **params)
-        elif endpoint_type == "mentions":
-            result = await client.get_mentions(user_id, **params)
-        elif endpoint_type == "user_tweets":
-            result = await client.get_user_tweets(user_id, **params)
-        elif endpoint_type == "single_tweet":
-            result = await client.get_tweet(params["id"])
-        elif endpoint_type == "bookmarks":
-            result = await client.get_bookmarks(user_id, **params)
-        elif endpoint_type == "search":
-            result = await client.search_recent_tweets(**params)
-        elif endpoint_type == "user_profile":
-            result = await client.get_user_by_username(params["username"])
-        elif endpoint_type == "user_tweets_by_username":
-            # First get user ID from username
-            user_data = await client.get_user_by_username(params["username"])
-            target_user_id: str = user_data["data"]["id"]
-            result = await client.get_user_tweets(target_user_id, max_results=100)
-        else:
-            raise BackendError(f"Unknown endpoint type: {endpoint_type}", backend="x")
-        return result
-
-    def _transform_response(
-        self,
-        endpoint_type: str,
-        data: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Transform X API response to simplified format.
-
-        Args:
-            endpoint_type: Endpoint type
-            data: Raw API response
-
-        Returns:
-            Transformed response
-        """
-        # For now, return as-is with metadata
-        # In the future, can flatten/simplify structure
-        result = dict(data)
-
-        # Add metadata
-        result["_meta"] = {
-            "endpoint": endpoint_type,
-            "cached_at": datetime.now().isoformat(),
-            "cache_ttl": self.cache_ttl.get(endpoint_type, 300),
-        }
-
-        return result
-
-    # === Backend Interface Implementation ===
-
-    async def _read_content_async(
-        self,
-        context: "OperationContext",
-        endpoint_type: str,
-        params: dict[str, Any],
-    ) -> bytes:
-        """Async implementation of read_content."""
-        user_email_for_cache: str = self.user_email or context.user_id or "anonymous"
-
-        # Fetch from API
-        client = await self._get_api_client_async(context)
-        try:
-            # Get user ID
-            user_id = await self._get_user_id(context)
-
-            # Fetch data
-            data = await self._fetch_from_api(client, endpoint_type, params, user_id)
-
-            # Transform response
-            transformed = self._transform_response(endpoint_type, data)
-
-            # Serialize to JSON
-            content = json.dumps(transformed, indent=2).encode("utf-8")
-
-            # Cache response
-            cache_key = self._generate_cache_key(endpoint_type, params, user_email_for_cache)
-            self._set_cached(cache_key, user_email_for_cache, content)
-
-            return content
-
-        finally:
-            await client.close()
+    # =================================================================
+    # Content operations -- override PathAddressingEngine for X
+    # =================================================================
+
+    def _bind_transport(self, context: "OperationContext | None") -> None:
+        """Bind the transport to the current request context (OAuth token)."""
+        self._transport = self._x_transport.with_context(context)
 
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
-        """
-        Read content from X API via virtual path.
+        """Read content from X API via virtual path.
 
-        For X connector, content_hash is ignored - we use backend_path from context.
-
-        Args:
-            content_hash: Ignored for X connector
-            context: Operation context with backend_path
-
-        Returns:
-            JSON content as bytes
+        For X connector, content_hash is ignored -- we use backend_path from context.
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
             raise BackendError(
@@ -704,26 +216,8 @@ class XConnectorBackend(
                 backend="x",
             )
 
-        path = context.backend_path
-        user_email_for_cache: str = self.user_email or context.user_id or "anonymous"
-
-        # Resolve virtual path to API endpoint
-        endpoint_type, params = self._resolve_path(path)
-
-        # Generate cache key
-        cache_key = self._generate_cache_key(endpoint_type, params, user_email_for_cache)
-
-        # Check cache
-        ttl = self.cache_ttl.get(endpoint_type, 300)
-        cached = self._get_cached(cache_key, user_email_for_cache, ttl)
-        if cached:
-            return cached
-
-        # Fetch from API
-        from nexus.lib.sync_bridge import run_sync
-
-        content = run_sync(self._read_content_async(context, endpoint_type, params))
-        return content
+        self._bind_transport(context)
+        return super().read_content(content_hash, context)
 
     def write_content(
         self,
@@ -733,15 +227,13 @@ class XConnectorBackend(
         offset: int = 0,
         context: "OperationContext | None" = None,
     ) -> WriteResult:
-        """
-        Write content (post tweet or save draft).
+        """Write content (post tweet or save draft).
 
         Args:
             content: File content as bytes (JSON)
+            content_id: Ignored
+            offset: Ignored
             context: Operation context with backend_path
-
-        Returns:
-            Content hash (tweet ID for posted tweets)
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
             raise BackendError(
@@ -749,184 +241,54 @@ class XConnectorBackend(
                 backend="x",
             )
 
-        path = context.backend_path
+        self._bind_transport(context)
 
-        # Check if path is writable
-        if not self._is_writable(path):
-            raise BackendError(
-                f"Path '{path}' is read-only. "
-                f"Writable paths: /x/posts/new.json, /x/posts/drafts/*.json",
-                backend="x",
-            )
-
-        # Parse content
         try:
-            data = json.loads(content.decode("utf-8"))
-        except json.JSONDecodeError:
-            # Treat as plain text tweet
-            data = {"text": content.decode("utf-8")}
-
-        # Handle drafts (store locally)
-        if path.startswith("/x/posts/drafts/"):
-            draft_id = hashlib.sha256(content).hexdigest()[:16]
-            draft_file = Path(self.cache_dir) / "drafts" / f"{draft_id}.json"
-            draft_file.parent.mkdir(exist_ok=True)
-            draft_file.write_bytes(content)
-            return WriteResult(content_id=draft_id, version=draft_id, size=len(content))
-
-        # Post tweet
-        async def _post_tweet() -> str:
-            client = await self._get_api_client_async(context)
-            try:
-                response = await client.create_tweet(
-                    text=data.get("text", ""),
-                    reply_to=data.get("reply_to"),
-                    quote_tweet_id=data.get("quote_tweet_id"),
-                    media_ids=data.get("media_ids"),
-                    poll_options=data.get("poll_options"),
-                    poll_duration_minutes=data.get("poll_duration_minutes"),
-                )
-
-                # Invalidate caches
-                post_user_email = self.user_email or (context.user_id if context else None)
-                if post_user_email:
-                    self._invalidate_caches(post_user_email, ["timeline", "user_tweets"])
-
-                # Return tweet ID
-                tweet_id: str = response["data"]["id"]
-                return tweet_id
-            finally:
-                await client.close()
-
-        from nexus.lib.sync_bridge import run_sync
-
-        tweet_id = run_sync(_post_tweet())
-        return WriteResult(content_id=tweet_id, version=tweet_id, size=len(content))
+            result_id = self._transport.store(context.backend_path, content)
+            return WriteResult(
+                content_id=result_id or "",
+                version=result_id or "",
+                size=len(content),
+            )
+        except Exception as e:
+            raise BackendError(f"Failed to write content: {e}", backend="x") from e
 
     def delete_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> None:
-        """
-        Delete content (delete tweet or draft).
-
-        Args:
-            content_hash: Ignored for X connector
-            context: Operation context with backend_path
-
-        Raises:
-            BackendError: If deletion fails or path cannot be deleted
-        """
+        """Delete content (delete tweet or draft)."""
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
             raise BackendError(
                 "X connector requires context with backend_path",
                 backend="x",
             )
 
-        path = context.backend_path
-
-        # Normalize path - handle both /x/posts/... and posts/...
-        normalized_path = path.strip("/")
-        if normalized_path.startswith("x/"):
-            normalized_path = normalized_path[2:]
-
-        # Delete own tweet: posts/1234567890.json
-        if normalized_path.startswith("posts/") and normalized_path.endswith(".json"):
-            tweet_id = normalized_path.replace("posts/", "").replace(".json", "")
-
-            # Skip special files
-            if tweet_id in ("new", "all"):
-                raise BackendError(
-                    f"Cannot delete special file: {path}",
-                    backend="x",
-                )
-
-            # Check if it's a draft
-            if "drafts/" in normalized_path:
-                draft_file = Path(self.cache_dir) / "drafts" / f"{tweet_id}.json"
-                if draft_file.exists():
-                    draft_file.unlink()
-                return
-
-            # Delete tweet via API
-            async def _delete_tweet() -> None:
-                client = await self._get_api_client_async(context)
-                try:
-                    await client.delete_tweet(tweet_id)
-
-                    # Invalidate caches
-                    del_user_email = self.user_email or (context.user_id if context else None)
-                    if del_user_email:
-                        self._invalidate_caches(del_user_email, ["timeline", "user_tweets"])
-                finally:
-                    await client.close()
-
-            try:
-                from nexus.lib.sync_bridge import run_sync
-
-                run_sync(_delete_tweet())
-            except BackendError as e:
-                if "403" in str(e) or "Forbidden" in str(e):
-                    raise BackendError(
-                        f"Cannot delete tweet {tweet_id}: Not owned by user",
-                        backend="x",
-                    ) from e
-                raise
-            return
-
-        # Cannot delete other paths
-        raise BackendError(
-            f"Path '{path}' cannot be deleted",
-            backend="x",
-        )
+        self._bind_transport(context)
+        self._transport.remove(context.backend_path)
 
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bool:
-        """
-        Check if content exists.
-
-        For X connector, checks if virtual path exists.
-
-        Args:
-            content_hash: Ignored for X connector
-            context: Operation context with backend_path
-
-        Returns:
-            True if path exists, False otherwise
-        """
         if not context or not hasattr(context, "backend_path"):
             return False
-
-        try:
-            # Try to resolve path
-            self._resolve_path(context.backend_path or "")
-            return True
-        except BackendError:
-            return False
+        self._bind_transport(context)
+        return super().content_exists(content_hash, context)
 
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> int:
-        """
-        Get content size.
-
-        For X connector, returns estimated JSON size.
-
-        Args:
-            content_hash: Ignored for X connector
-            context: Operation context
-
-        Returns:
-            Content size in bytes (estimated)
-        """
-        # Return approximate size (tweets are usually small)
+        """Return approximate content size (tweets are small)."""
         return 1024
+
+    # =================================================================
+    # Directory operations -- override for X virtual directories
+    # =================================================================
 
     def mkdir(
         self,
@@ -935,11 +297,10 @@ class XConnectorBackend(
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Create directory (not supported - fixed structure)."""
         raise BackendError(
             "X connector has a fixed virtual structure. "
             "mkdir() is not supported. "
-            "Available paths: /x/timeline/, /x/posts/, /x/mentions/, etc.",
+            "Available paths: /timeline/, /posts/, /mentions/, etc.",
             backend="x",
         )
 
@@ -949,7 +310,6 @@ class XConnectorBackend(
         recursive: bool = False,
         context: "OperationContext | None" = None,
     ) -> None:
-        """Remove directory (not supported - fixed structure)."""
         raise BackendError(
             "X connector has a fixed virtual structure. rmdir() is not supported.",
             backend="x",
@@ -960,30 +320,9 @@ class XConnectorBackend(
         path: str,
         context: "OperationContext | None" = None,
     ) -> bool:
-        """
-        Check if path is a directory.
-
-        Args:
-            path: Path to check
-            context: Operation context (unused)
-
-        Returns:
-            True if path is a virtual directory
-        """
         path = path.strip("/")
-
-        VIRTUAL_DIRS = {
-            "x",
-            "x/timeline",
-            "x/mentions",
-            "x/posts",
-            "x/posts/drafts",
-            "x/bookmarks",
-            "x/lists",
-            "x/search",
-            "x/users",
-        }
-
+        if path.startswith("x/"):
+            path = path[2:]
         return path in VIRTUAL_DIRS
 
     def list_dir(
@@ -991,85 +330,45 @@ class XConnectorBackend(
         path: str,
         context: "OperationContext | None" = None,
     ) -> list[str]:
-        """
-        List virtual directory contents.
-
-        Args:
-            path: Directory path to list
-            context: Operation context
-
-        Returns:
-            List of entry names (directories have trailing '/')
-
-        Raises:
-            FileNotFoundError: If directory doesn't exist
-        """
+        """List virtual directory contents via XTransport.list_keys()."""
         path = path.strip("/")
 
-        # Normalize - handle both /x/... and just namespace paths
+        # Normalize -- handle both /x/... and just namespace paths
         if path.startswith("x/"):
             path = path[2:]
 
-        # Root
-        if not path:
-            return [
-                "timeline/",
-                "mentions/",
-                "posts/",
-                "bookmarks/",
-                "lists/",
-                "search/",
-                "users/",
-            ]
+        self._bind_transport(context)
 
-        # Timeline
-        if path == "timeline":
-            entries = ["recent.json", "media/"]
+        keys, prefixes = self._transport.list_keys(prefix=path, delimiter="/")
 
-            # Add cached daily archives
-            cache_path = Path(self.cache_dir) / "timeline"
-            if cache_path.exists():
-                for file in cache_path.glob("*.json"):
-                    if file.name != "recent.json":
-                        entries.append(file.name)
+        # Strip prefix from keys to return just filenames
+        entries: list[str] = []
+        folder_prefix = f"{path}/" if path else ""
+        for key in keys:
+            name = (
+                key[len(folder_prefix) :]
+                if folder_prefix and key.startswith(folder_prefix)
+                else key
+            )
+            if name:
+                entries.append(name)
+        for prefix_entry in prefixes:
+            name = (
+                prefix_entry[len(folder_prefix) :]
+                if folder_prefix and prefix_entry.startswith(folder_prefix)
+                else prefix_entry
+            )
+            if name:
+                entries.append(name)
 
-            return sorted(entries)
+        if not entries and path not in VIRTUAL_DIRS:
+            raise FileNotFoundError(f"Directory not found: {path}")
 
-        # Posts
-        if path == "posts":
-            entries = ["all.json", "new.json", "drafts/"]
+        return sorted(entries)
 
-            # Add cached tweets (from user_tweets endpoint)
-            # Note: This would require an API call to list all tweets
-            # For now, return static entries
-
-            return sorted(entries)
-
-        # Mentions
-        if path == "mentions":
-            return ["recent.json"]
-
-        # Bookmarks
-        if path == "bookmarks":
-            return ["all.json"]
-
-        # Search
-        if path == "search":
-            # Return cached search results
-            cache_path = Path(self.cache_dir)
-            entries = []
-            for file in cache_path.glob("x:*:search:*.json"):
-                # Extract query from filename (simplified)
-                entries.append(file.name.replace("x:", "").split(":")[2] + ".json")
-
-            return sorted(set(entries))  # Remove duplicates
-
-        # Users
-        if path == "users":
-            # Cannot list all users, return empty
-            return []
-
-        raise FileNotFoundError(f"Directory not found: {path}")
+    # =================================================================
+    # Glob and grep -- X-specific search
+    # =================================================================
 
     def glob(
         self,
@@ -1077,27 +376,7 @@ class XConnectorBackend(
         path: str = "/",
         context: "OperationContext | None" = None,
     ) -> list[str]:
-        """
-        Match paths using glob patterns.
-
-        For X connector, glob works on:
-        1. Virtual directory structure (fixed paths)
-        2. Dynamic tweet IDs (via API calls)
-        3. Cached files (local storage)
-
-        Args:
-            pattern: Glob pattern
-            path: Base path (default: "/")
-            context: Operation context
-
-        Returns:
-            List of matching paths
-
-        Examples:
-            >>> nx.glob("/x/*")  # List top-level directories
-            >>> nx.glob("/x/posts/*.json")  # List user's tweets
-            >>> nx.glob("/x/timeline/*.json")  # List cached timeline files
-        """
+        """Match paths using glob patterns against virtual structure."""
         # Handle root-level globs
         if pattern == "/x/*" or pattern == "/x/*/":
             return [
@@ -1113,40 +392,28 @@ class XConnectorBackend(
         # Handle timeline glob
         if pattern.startswith("/x/timeline/"):
             available = ["/x/timeline/recent.json", "/x/timeline/media/"]
-
-            # Add cached daily archives
-            cache_path = Path(self.cache_dir) / "timeline"
+            cache_path = Path(self._cache_dir) / "timeline"
             if cache_path.exists():
                 for file in cache_path.glob("*.json"):
                     if file.name != "recent.json":
                         available.append(f"/x/timeline/{file.name}")
-
-            # Filter by pattern using Rust-accelerated glob matching
             filtered: list[str] = glob_fast.glob_filter(available, include_patterns=[pattern])
             return filtered
 
-        # Handle posts glob (requires API call)
+        # Handle posts glob
         if pattern.startswith("/x/posts/") and "*.json" in pattern:
-            # Would need API call to list all tweets
-            # For now, return static entries
-            return [
-                "/x/posts/all.json",
-                "/x/posts/new.json",
-            ]
+            return ["/x/posts/all.json", "/x/posts/new.json"]
 
         # Handle search glob
         if pattern.startswith("/x/search/"):
-            cache_path = Path(self.cache_dir)
+            cache_path = Path(self._cache_dir)
             matches = []
             for file in cache_path.glob("x:*:search:*.json"):
-                # Extract query from filename
                 virtual_path = f"/x/search/{file.stem.split(':')[-1]}.json"
                 matches.append(virtual_path)
-            # Filter by pattern using Rust-accelerated glob matching
             filtered = glob_fast.glob_filter(matches, include_patterns=[pattern])
             return sorted(set(filtered))
 
-        # Default: return empty
         return []
 
     def grep(
@@ -1161,33 +428,9 @@ class XConnectorBackend(
         after_context: int = 0,  # noqa: ARG002
         invert_match: bool = False,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
-        """
-        Search content using pattern.
-
-        For X connector, grep is implemented as:
-        1. Cached files: Search locally in cached JSON
-        2. Timeline/posts: Use X API search within context
-        3. Global search: Use X API search
-
-        Args:
-            pattern: Regex pattern to search for
-            path: Base path to search (default: "/")
-            file_pattern: Optional glob pattern to filter files
-            ignore_case: Case-insensitive search
-            max_results: Maximum number of results
-            context: Operation context
-
-        Returns:
-            List of match dicts (file, line, content, match)
-
-        Examples:
-            >>> nx.grep("python", path="/x/timeline/")
-            >>> nx.grep("error", path="/x/posts/")
-            >>> nx.grep("nexus ai", path="/x/search/")
-        """
+        """Search content using pattern (API-backed and cache-backed)."""
         path = path.strip("/")
 
-        # Compile regex pattern
         flags = re.IGNORECASE if ignore_case else 0
         try:
             regex = re.compile(pattern, flags)
@@ -1216,27 +459,24 @@ class XConnectorBackend(
         max_results: int,
     ) -> list[dict[str, Any]]:
         """Search cached JSON files."""
-        results: list[dict[str, Any]] = []
-        cache_path = Path(self.cache_dir)
+        import json
 
-        # Find relevant cache files
+        results: list[dict[str, Any]] = []
+        cache_path = Path(self._cache_dir)
+
         pattern_map = {
             "x/timeline": "x:*:timeline:*.json",
             "x/bookmarks": "x:*:bookmarks:*.json",
             "x/mentions": "x:*:mentions:*.json",
         }
-
         glob_pattern = pattern_map.get(path, "*.json")
 
         for file in cache_path.glob(glob_pattern):
             if len(results) >= max_results:
                 break
-
             try:
                 content = file.read_text()
                 data = json.loads(content)
-
-                # Search in JSON content
                 json_str = json.dumps(data, indent=2)
                 for line_num, line in enumerate(json_str.splitlines(), start=1):
                     match = regex.search(line)
@@ -1250,10 +490,8 @@ class XConnectorBackend(
                                 "source": "cache",
                             }
                         )
-
                         if len(results) >= max_results:
                             break
-
             except Exception as e:
                 logger.debug("Failed to search cached tweet file %s: %s", file, e)
                 continue
@@ -1270,21 +508,16 @@ class XConnectorBackend(
 
         async def _search_user_tweets() -> list[dict[str, Any]]:
             results: list[dict[str, Any]] = []
-            client = await self._get_api_client_async(context)
+            transport = self._x_transport.with_context(context)
+            client = await transport._get_api_client_async()
             try:
-                user_id = await self._get_user_id(context)
-
-                # Fetch user's tweets
+                user_id = await transport._get_user_id()
                 response = await client.get_user_tweets(user_id, max_results=100)
-
-                # Search through tweets
                 for tweet in response.get("data", []):
                     if len(results) >= max_results:
                         break
-
                     text = tweet.get("text", "")
                     lines = text.split("\n")
-
                     for line_num, line in enumerate(lines, start=1):
                         match = regex.search(line)
                         if match:
@@ -1297,12 +530,10 @@ class XConnectorBackend(
                                     "source": "x_api",
                                 }
                             )
-
                             if len(results) >= max_results:
                                 break
             finally:
                 await client.close()
-
             return results
 
         try:
@@ -1310,7 +541,7 @@ class XConnectorBackend(
 
             return run_sync(_search_user_tweets())
         except Exception as e:
-            logger.warning(f"grep_user_tweets failed: {e}")
+            logger.warning("grep_user_tweets failed: %s", e)
             return []
 
     def _grep_global(
@@ -1323,19 +554,15 @@ class XConnectorBackend(
 
         async def _search_global() -> list[dict[str, Any]]:
             results: list[dict[str, Any]] = []
-            client = await self._get_api_client_async(context)
+            transport = self._x_transport.with_context(context)
+            client = await transport._get_api_client_async()
             try:
-                # Use X search API
                 response = await client.search_recent_tweets(pattern, max_results=max_results)
-
-                # Transform to grep result format
                 for tweet in response.get("data", []):
                     if len(results) >= max_results:
                         break
-
                     text = tweet.get("text", "")
                     lines = text.split("\n")
-
                     for line_num, line in enumerate(lines, start=1):
                         if pattern.lower() in line.lower():
                             results.append(
@@ -1347,12 +574,10 @@ class XConnectorBackend(
                                     "source": "x_api",
                                 }
                             )
-
                             if len(results) >= max_results:
                                 break
             finally:
                 await client.close()
-
             return results
 
         try:
@@ -1360,5 +585,5 @@ class XConnectorBackend(
 
             return run_sync(_search_global())
         except Exception as e:
-            logger.warning(f"grep_global failed: {e}")
+            logger.warning("grep_global failed: %s", e)
             return []

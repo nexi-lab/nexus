@@ -205,62 +205,62 @@ class TestUpdateMessageSchema:
 
 
 # ---------------------------------------------------------------------------
-# SlackConnectorBackend class attributes
+# PathSlackBackend class attributes
 # ---------------------------------------------------------------------------
 
 
 class TestSlackConnectorCapabilities:
-    """Tests that SlackConnectorBackend has the expected class attributes."""
+    """Tests that PathSlackBackend has the expected class attributes."""
 
     def test_has_schemas(self):
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert "send_message" in SlackConnectorBackend.SCHEMAS
-        assert "delete_message" in SlackConnectorBackend.SCHEMAS
-        assert "update_message" in SlackConnectorBackend.SCHEMAS
-        assert SlackConnectorBackend.SCHEMAS["send_message"] is SendMessageSchema
-        assert SlackConnectorBackend.SCHEMAS["delete_message"] is DeleteMessageSchema
-        assert SlackConnectorBackend.SCHEMAS["update_message"] is UpdateMessageSchema
+        assert "send_message" in PathSlackBackend.SCHEMAS
+        assert "delete_message" in PathSlackBackend.SCHEMAS
+        assert "update_message" in PathSlackBackend.SCHEMAS
+        assert PathSlackBackend.SCHEMAS["send_message"] is SendMessageSchema
+        assert PathSlackBackend.SCHEMAS["delete_message"] is DeleteMessageSchema
+        assert PathSlackBackend.SCHEMAS["update_message"] is UpdateMessageSchema
 
     def test_has_operation_traits(self):
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert "send_message" in SlackConnectorBackend.OPERATION_TRAITS
-        assert "delete_message" in SlackConnectorBackend.OPERATION_TRAITS
-        assert "update_message" in SlackConnectorBackend.OPERATION_TRAITS
+        assert "send_message" in PathSlackBackend.OPERATION_TRAITS
+        assert "delete_message" in PathSlackBackend.OPERATION_TRAITS
+        assert "update_message" in PathSlackBackend.OPERATION_TRAITS
 
-        send_traits = SlackConnectorBackend.OPERATION_TRAITS["send_message"]
+        send_traits = PathSlackBackend.OPERATION_TRAITS["send_message"]
         assert send_traits.reversibility == Reversibility.NONE
         assert send_traits.confirm == ConfirmLevel.USER
 
-        delete_traits = SlackConnectorBackend.OPERATION_TRAITS["delete_message"]
+        delete_traits = PathSlackBackend.OPERATION_TRAITS["delete_message"]
         assert delete_traits.reversibility == Reversibility.NONE
         assert delete_traits.confirm == ConfirmLevel.USER
 
-        update_traits = SlackConnectorBackend.OPERATION_TRAITS["update_message"]
+        update_traits = PathSlackBackend.OPERATION_TRAITS["update_message"]
         assert update_traits.reversibility == Reversibility.FULL
         assert update_traits.confirm == ConfirmLevel.EXPLICIT
 
     def test_has_error_registry(self):
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert "MISSING_AGENT_INTENT" in SlackConnectorBackend.ERROR_REGISTRY
-        assert "CHANNEL_NOT_FOUND" in SlackConnectorBackend.ERROR_REGISTRY
-        assert "MESSAGE_NOT_FOUND" in SlackConnectorBackend.ERROR_REGISTRY
+        assert "MISSING_AGENT_INTENT" in PathSlackBackend.ERROR_REGISTRY
+        assert "CHANNEL_NOT_FOUND" in PathSlackBackend.ERROR_REGISTRY
+        assert "MESSAGE_NOT_FOUND" in PathSlackBackend.ERROR_REGISTRY
 
     def test_has_skill_doc_capability(self):
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert BackendFeature.SKILL_DOC in SlackConnectorBackend._BACKEND_FEATURES
+        assert BackendFeature.SKILL_DOC in PathSlackBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert SlackConnectorBackend.SKILL_NAME == "slack"
+        assert PathSlackBackend.SKILL_NAME == "slack"
 
     def test_inherits_validated_mixin(self):
         from nexus.backends.connectors.base import TraitBasedMixin, ValidatedMixin
-        from nexus.backends.connectors.slack.connector import SlackConnectorBackend
+        from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert issubclass(SlackConnectorBackend, ValidatedMixin)
-        assert issubclass(SlackConnectorBackend, TraitBasedMixin)
+        assert issubclass(PathSlackBackend, ValidatedMixin)
+        assert issubclass(PathSlackBackend, TraitBasedMixin)

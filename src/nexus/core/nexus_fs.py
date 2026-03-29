@@ -2585,32 +2585,33 @@ class NexusFS(  # type: ignore[misc]
 
         _is_remote = hasattr(route.backend, "_rpc_client") or "remote" in route.backend.name
         _is_external = isinstance(route, ExternalRouteResult)
-        if _is_external:
-            wr = route.backend.write_content(
-                content,
-                content_id=meta.physical_path if (offset > 0 and meta) else "",
-                offset=offset,
-                context=context,
-            )
-            content_hash = wr.content_id
-            metadata = self._build_write_metadata(
-                path=path,
-                backend_name=route.backend.name,
-                content_hash=content_hash,
-                size=wr.size if offset > 0 else len(content),
-                existing_meta=meta,
-                now=now,
-                zone_id=zone_id,
-                context=context,
-            )
-            new_version = metadata.version
-            # Local external backends need metadata persisted locally
-            if not _is_remote:
-                self.metadata.put(metadata, consistency=consistency)
-        else:
-            # VFS I/O Lock: exclusive write lock around backend write + metadata put.
-            # Like Linux i_rwsem: held for I/O duration only, released before observers.
-            with self._vfs_locked(path, "write"):
+        # VFS I/O Lock: exclusive write lock around backend write + metadata put.
+        # Like Linux i_rwsem: held for I/O duration only, released before observers.
+        # Applies to ALL backends (external and CAS) to prevent concurrent write interleave.
+        with self._vfs_locked(path, "write"):
+            if _is_external:
+                wr = route.backend.write_content(
+                    content,
+                    content_id=meta.physical_path if (offset > 0 and meta) else "",
+                    offset=offset,
+                    context=context,
+                )
+                content_hash = wr.content_id
+                metadata = self._build_write_metadata(
+                    path=path,
+                    backend_name=route.backend.name,
+                    content_hash=content_hash,
+                    size=wr.size if offset > 0 else len(content),
+                    existing_meta=meta,
+                    now=now,
+                    zone_id=zone_id,
+                    context=context,
+                )
+                new_version = metadata.version
+                # Local external backends need metadata persisted locally
+                if not _is_remote:
+                    self.metadata.put(metadata, consistency=consistency)
+            else:
                 _wr = route.backend.write_content(
                     content,
                     content_id=meta.physical_path if (offset > 0 and meta) else "",

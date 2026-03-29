@@ -189,6 +189,21 @@ def _boot_pre_kernel_services(
         except Exception as exc:
             logger.warning("[BOOT:SYSTEM] Extraction hook unavailable: %s", exc)
 
+    # --- Agent lineage hook (Issue #3417) ---
+    # Records which files an agent read to produce each output file.
+    # Degradable: lineage is best-effort; failures do not block writes.
+    if hasattr(write_observer, "register_post_flush_hook"):
+        try:
+            from nexus.factory._lineage_hook import make_lineage_hook
+
+            lineage_hook = make_lineage_hook(
+                session_factory=ctx.record_store.session_factory,
+            )
+            write_observer.register_post_flush_hook(lineage_hook)
+            logger.debug("[BOOT:SYSTEM] Agent lineage hook registered")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] Lineage hook unavailable: %s", exc)
+
     # =====================================================================
     # DEGRADABLE FORMER-KERNEL SECTION (WARNING + None) — Issue #2193
     # =====================================================================

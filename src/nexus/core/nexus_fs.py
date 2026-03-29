@@ -1585,6 +1585,25 @@ class NexusFS(  # type: ignore[misc]
             await self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
 
+        # --- Agent lineage: record read into session accumulator (Issue #3417) ---
+        # Non-blocking, in-memory only. Records path + version + etag so the
+        # lineage hook can attribute this read to the agent's next write.
+        if agent_id and meta is not None:
+            try:
+                from nexus.storage.session_read_accumulator import get_accumulator
+
+                _gen = getattr(context, "agent_generation", None) if context else None
+                get_accumulator().record_read(
+                    agent_id,
+                    _gen,
+                    path,
+                    version=getattr(meta, "version", 0) or 0,
+                    etag=getattr(meta, "etag", "") or "",
+                    access_type="content",
+                )
+            except Exception:
+                pass  # Best-effort; never block reads
+
         # Apply count/offset slicing (POSIX pread semantics)
         if offset or count is not None:
             content = content[offset : offset + count] if count is not None else content[offset:]

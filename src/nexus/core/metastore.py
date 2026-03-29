@@ -80,12 +80,18 @@ class MetastoreABC(ABC):
             consistency: Consistency mode for the write:
                 - ``"sc"`` — blocks until Raft commit. Returns None.
                 - ``"ec"`` — fire-and-forget. Returns write token (int).
-                - ``"wb"`` — buffers for batched flush. Returns None.
-                  Stores without buffering SHOULD treat ``"wb"`` as ``"ec"``.
+                  Use for low-latency writes where immediate durability
+                  is not required.  Raft replicates in background.
 
         Returns:
             EC mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed when this returns).
+
+        Note:
+            Raft natively batches consecutive proposals into a single
+            AppendEntries RPC (tikv/raft-rs), so application-level
+            batching is unnecessary.  Use ``"ec"`` for throughput,
+            ``"sc"`` for durability.
         """
         self._dcache[metadata.path] = metadata
         return self._put_raw(metadata, consistency=consistency)

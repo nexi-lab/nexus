@@ -1,7 +1,7 @@
 """Generic deferred buffer with background batch flushing.
 
 Provides thread-safe queue + background flush thread infrastructure
-shared by DeferredPermissionBuffer and DeferredMetadataBuffer.
+used by DeferredPermissionBuffer.
 
 Subclasses implement:
     - _drain_items() -> list[T]  — atomically drain pending items from the queue

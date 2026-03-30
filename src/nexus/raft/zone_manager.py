@@ -505,18 +505,10 @@ class ZoneManager:
         parent_store.put(mount_entry)
 
         # Increment target zone's i_links_count (POSIX: link() → nlink++)
-        # Best-effort: each zone has independent Raft leadership.
-        # If this node isn't leader for the target zone, the leader
-        # will eventually apply it via ensure_topology().
+        # Raft propose() transparently forwards to leader if this node
+        # is a follower for the target zone.
         if increment_links:
-            try:
-                self._increment_links(target_store)
-            except RuntimeError as e:
-                logger.warning(
-                    "Links increment deferred for zone '%s' (not leader): %s",
-                    target_zone_id,
-                    e,
-                )
+            self._increment_links(target_store)
 
         # Invalidate proxy dcache — entries resolved through this mount point
         # are now stale (the path prefix routes to a different zone).

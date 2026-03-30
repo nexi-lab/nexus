@@ -80,12 +80,18 @@ class MetastoreABC(ABC):
             consistency: Consistency mode for the write:
                 - ``"sc"`` — blocks until Raft commit. Returns None.
                 - ``"ec"`` — fire-and-forget. Returns write token (int).
-                - ``"wb"`` — buffers for batched flush. Returns None.
-                  Stores without buffering SHOULD treat ``"wb"`` as ``"ec"``.
+                  Use for low-latency writes where immediate durability
+                  is not required.  Raft replicates in background.
 
         Returns:
             EC mode: write token (int) for polling via is_committed().
             SC mode: None (write is already committed when this returns).
+
+        Note:
+            Raft natively batches consecutive proposals into a single
+            AppendEntries RPC (tikv/raft-rs), so application-level
+            batching is unnecessary.  Use ``"ec"`` for throughput,
+            ``"sc"`` for durability.
         """
         self._dcache[metadata.path] = metadata
         return self._put_raw(metadata, consistency=consistency)
@@ -117,10 +123,17 @@ class MetastoreABC(ABC):
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
     ) -> builtins.list[FileMetadata]:
-        """List all files with given path prefix (populates dcache)."""
+        """List all files with given path prefix (populates dcache).
+
+        DT_MOUNT entries are excluded from dcache — they are internal
+        pointers that the FederatedMetadataProxy resolves transparently.
+        Caching raw DT_MOUNT would make PathRouter see a mount with no
+        local backend, causing PathNotMountedError.
+        """
         results = self._list_raw(prefix, recursive, **kwargs)
         for meta in results:
-            self._dcache[meta.path] = meta
+            if not getattr(meta, "is_mount", False):
+                self._dcache[meta.path] = meta
         return results
 
     def list_iter(
@@ -135,7 +148,8 @@ class MetastoreABC(ABC):
         Subclasses may override ``_list_raw`` for true streaming.
         """
         for meta in self._list_raw(prefix, recursive, **kwargs):
-            self._dcache[meta.path] = meta
+            if not getattr(meta, "is_mount", False):
+                self._dcache[meta.path] = meta
             yield meta
 
     # ── Batch operations (dcache-aware) ───────────────────────────────

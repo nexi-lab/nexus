@@ -202,7 +202,7 @@ class TestRPCTransportCallRPC:
 
 
 class TestRPCTransportTypedMethods:
-    """Typed RPC methods: read_file, write_file, delete_file, stream_read, ping."""
+    """Typed RPC methods: read_file, write_file, delete_file, ping."""
 
     def test_read_file_success(self, transport) -> None:
         """read_file returns raw bytes from ReadResponse.content."""
@@ -284,28 +284,6 @@ class TestRPCTransportTypedMethods:
 
         request = transport._mock_stub.Delete.call_args[0][0]
         assert request.recursive is True
-
-    def test_stream_read_assembles_chunks(self, transport) -> None:
-        """stream_read assembles multiple ReadChunks into bytes."""
-        chunk1 = MagicMock(data=b"aaa", is_error=False)
-        chunk2 = MagicMock(data=b"bbb", is_error=False)
-        chunk3 = MagicMock(data=b"ccc", is_error=False, is_last=True)
-        transport._mock_stub.StreamRead.return_value = iter([chunk1, chunk2, chunk3])
-
-        result = transport.stream_read("/big-file.bin", chunk_size=3)
-
-        assert result == b"aaabbbccc"
-
-    def test_stream_read_error_chunk(self, transport) -> None:
-        """stream_read raises on error chunk."""
-        error_chunk = MagicMock(
-            is_error=True,
-            error_payload=encode_rpc_message({"code": -32000, "message": "File not found"}),
-        )
-        transport._mock_stub.StreamRead.return_value = iter([error_chunk])
-
-        with pytest.raises(NexusFileNotFoundError):
-            transport.stream_read("/missing.bin")
 
     def test_ping_success(self, transport) -> None:
         """ping returns version/zone_id/uptime dict."""

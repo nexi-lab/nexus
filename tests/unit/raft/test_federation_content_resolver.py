@@ -131,33 +131,19 @@ class TestTryReadRemoteContent:
         assert result["version"] == 3
         assert result["size"] == 4
 
-    @patch.object(FederationContentResolver, "_fetch_from_peer_streaming")
-    def test_large_file_uses_streaming(self, mock_stream):
-        """Files > _STREAMING_THRESHOLD use StreamRead instead of unary Read."""
-        mock_stream.return_value = b"streamed content"
-        meta = _make_meta(f"local@{REMOTE_ADDR}", size=2_000_000)  # 2MB > 1MB threshold
+    @patch.object(FederationContentResolver, "_fetch_from_peer")
+    def test_large_file_uses_unary_read(self, mock_fetch):
+        """All files use unary Read RPC regardless of size."""
+        mock_fetch.return_value = b"large content"
+        meta = _make_meta(f"local@{REMOTE_ADDR}", size=2_000_000)  # 2MB
         metastore = MagicMock()
         metastore.get.return_value = meta
 
         resolver = _make_resolver(metastore=metastore)
         result = resolver.try_read("/test/large.bin")
 
-        assert result == b"streamed content"
-        mock_stream.assert_called_once_with(REMOTE_ADDR, "/test/large.bin")
-
-    @patch.object(FederationContentResolver, "_fetch_from_peer")
-    def test_small_file_uses_unary_read(self, mock_fetch):
-        """Files <= _STREAMING_THRESHOLD use unary Read RPC."""
-        mock_fetch.return_value = b"small"
-        meta = _make_meta(f"local@{REMOTE_ADDR}", size=500_000)  # 500KB < 1MB threshold
-        metastore = MagicMock()
-        metastore.get.return_value = meta
-
-        resolver = _make_resolver(metastore=metastore)
-        result = resolver.try_read("/test/small.txt")
-
-        assert result == b"small"
-        mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/small.txt")
+        assert result == b"large content"
+        mock_fetch.assert_called_once_with(REMOTE_ADDR, "/test/large.bin")
 
     def test_fetcher_receives_all_origins(self):
         """When RemoteContentFetcher is injected, it receives all origins at once."""

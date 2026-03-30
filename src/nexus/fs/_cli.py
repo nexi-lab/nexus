@@ -2,7 +2,9 @@
 
 Provides the `nexus-fs` console command with subcommands:
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
-- nexus-fs playground   — interactive TUI file browser
+- nexus-fs playground  — interactive TUI file browser
+- nexus-fs cp          — copy files between mounted backends
+- nexus-fs auth        — credential management
 
 This module is referenced by pyproject.toml [project.scripts].
 It stays thin: imports are deferred to keep startup fast and to avoid
@@ -197,8 +199,8 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
         all_uris = list(dict.fromkeys(persisted + list(mount_uris)))
         if not all_uris:
             raise click.UsageError(
-                "No mounts found. Either run 'nexus-fs mount' first or "
-                "pass backend URIs: nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
+                "No mounts found. Pass backend URIs as trailing arguments:\n"
+                "  nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
             )
         fs = await mount(*all_uris)
 

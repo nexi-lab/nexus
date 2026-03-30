@@ -17,7 +17,7 @@ from nexus.cli.theme import console
 from nexus.cli.utils import add_backend_options, get_filesystem, handle_error
 
 
-def _parse_skill_md(path: str) -> dict:
+def _parse_readme_md(path: str) -> dict:
     """Read a skill .md file and extract name, description from YAML frontmatter."""
     path = os.path.expanduser(path)
     if not os.path.isfile(path):
@@ -451,7 +451,7 @@ async def _async_config_agent(
         if skills is not None:
             paths = [s.strip() for s in skills.split(",") if s.strip()]
             if paths:
-                skill_list = [_parse_skill_md(p) for p in paths]
+                skill_list = [_parse_readme_md(p) for p in paths]
                 svc.acp_set_enabled_skills(agent_id=agent_id, skills=skill_list)
                 names = [sk["name"] for sk in skill_list]
                 console.print(

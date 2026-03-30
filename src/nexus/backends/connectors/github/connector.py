@@ -58,8 +58,8 @@ class GitHubConnector(PathCLIBackend):
     {number}_{title}.yaml          # PR as YAML (title, body, state, reviews)
     _new.yaml                      # ✏ Write here to CREATE a pull request
     _merge.yaml                    # ✏ Write here to MERGE a PR (⚠ irreversible)
-  .skill/
-    SKILL.md"""
+  .readme/
+    README.md"""
 
     SCHEMAS: dict[str, type] = {
         "create_issue": CreateIssueSchema,
@@ -83,12 +83,12 @@ class GitHubConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "ISSUE_NOT_FOUND": ErrorDef(
             message="Issue or PR not found",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="number: <valid issue or PR number>",
         ),
         "PR_NOT_MERGEABLE": ErrorDef(
             message="PR cannot be merged (conflicts or checks failing)",
-            skill_section="operations",
+            readme_section="operations",
         ),
     }
 

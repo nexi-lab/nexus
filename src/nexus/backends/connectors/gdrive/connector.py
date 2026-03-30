@@ -34,8 +34,8 @@ from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -68,7 +68,7 @@ logger = logging.getLogger(__name__)
 class PathGDriveBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
 ):
@@ -85,7 +85,7 @@ class PathGDriveBackend(
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
             BackendFeature.WRITE_BACK,
         }
     )
@@ -94,7 +94,7 @@ class PathGDriveBackend(
     # Mixin Configuration
     # =========================================================================
 
-    # SkillDocMixin config
+    # ReadmeDocMixin config
     SKILL_NAME = "gdrive"
 
     # ValidatedMixin config
@@ -131,7 +131,7 @@ class PathGDriveBackend(
         **TRAIT_ERRORS,
         "MISSING_FILE_ID": ErrorDef(
             message="Update and delete operations require a file_id",
-            skill_section="update-file",
+            readme_section="update-file",
             fix_example="file_id: 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms",
         ),
     }

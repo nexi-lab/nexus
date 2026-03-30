@@ -18,8 +18,8 @@ from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -47,7 +47,7 @@ class CreateIssueSchema(BaseModel):
     confirm: bool = Field(default=False, description="Explicit confirmation")
 
 
-class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
+class FakeGHConnector(ReadmeDocMixin, ValidatedMixin, TraitBasedMixin):
     """Fake GitHub CLI connector for E2E testing."""
 
     SKILL_NAME = "github"
@@ -61,7 +61,7 @@ class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
     ERROR_REGISTRY = {
         "MISSING_AGENT_INTENT": ErrorDef(
             message="Operations require agent_intent",
-            skill_section="required-format",
+            readme_section="required-format",
             fix_example="# agent_intent: User requested a new issue for bug tracking",
         ),
     }
@@ -80,7 +80,7 @@ class FakeGHConnector(SkillDocMixin, ValidatedMixin, TraitBasedMixin):
 
     _BACKEND_FEATURES = frozenset(
         {
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
             BackendFeature.WRITE_BACK,
             BackendFeature.CLI_BACKED,
         }
@@ -132,28 +132,28 @@ class FakeGHSyncProvider:
 class TestConnectorLifecycleE2E:
     """Golden path: mount → hooks → skill docs → sync → write → validate."""
 
-    def test_step1_skill_doc_generation(self) -> None:
+    def test_step1_readme_doc_generation(self) -> None:
         """Step 1: Connector generates skill docs on mount."""
         connector = FakeGHConnector()
         connector.set_mount_path("/mnt/github")
 
         # Generate skill doc
-        skill_doc = connector.generate_skill_doc("/mnt/github")
-        assert "# Github Connector" in skill_doc or "# GitHub Connector" in skill_doc.title()
-        assert "create_issue" in skill_doc.lower() or "Create Issue" in skill_doc
+        readme_doc = connector.generate_readme("/mnt/github")
+        assert "# Github Connector" in readme_doc or "# GitHub Connector" in readme_doc.title()
+        assert "create_issue" in readme_doc.lower() or "Create Issue" in readme_doc
 
     @pytest.mark.asyncio
-    async def test_step2_skill_doc_writes_to_filesystem(self) -> None:
-        """Step 2: Skill docs written to .skill/ directory with schema files."""
+    async def test_step2_readme_doc_writes_to_filesystem(self) -> None:
+        """Step 2: Readme docs written to .readme/ directory with schema files."""
         connector = FakeGHConnector()
         fs = MagicMock()
         fs.mkdir = AsyncMock()
         fs.write = AsyncMock()
 
-        result = await connector.write_skill_docs("/mnt/github", fs)
+        result = await connector.write_readme("/mnt/github", fs)
 
-        # SKILL.md should be written
-        assert result["skill_md"] == "/mnt/github/.skill/SKILL.md"
+        # README.md should be written
+        assert result["readme_md"] == "/mnt/github/.readme/README.md"
 
         # Schema files should be written (Issue #3148)
         assert len(result.get("schemas", [])) > 0
@@ -246,7 +246,7 @@ class TestConnectorLifecycleE2E:
     def test_step8_capability_declaration(self) -> None:
         """Step 8: Connector declares correct capabilities."""
         connector = FakeGHConnector()
-        assert connector.has_feature(BackendFeature.SKILL_DOC)
+        assert connector.has_feature(BackendFeature.README_DOC)
         assert connector.has_feature(BackendFeature.WRITE_BACK)
         assert connector.has_feature(BackendFeature.CLI_BACKED)
 

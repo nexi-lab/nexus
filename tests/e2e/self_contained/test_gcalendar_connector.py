@@ -3,8 +3,8 @@
 Tests the Calendar connector end-to-end including:
 - Schema validation
 - Trait-based validation
-- Error formatting with SKILL.md references
-- SKILL.md auto-generation
+- Error formatting with README.md references
+- README.md auto-generation
 - YAML parsing
 
 Note: These tests mock the Google Calendar API since we can't
@@ -220,7 +220,7 @@ class TestTraitValidation:
             calendar_backend.validate_traits("create_event", data)
 
         assert exc_info.value.code == "MISSING_AGENT_INTENT"
-        assert "SKILL.md" in str(exc_info.value)
+        assert "README.md" in str(exc_info.value)
 
     def test_delete_requires_explicit_confirm(self, calendar_backend):
         """Test that delete_event requires confirm=true."""
@@ -259,12 +259,12 @@ class TestTraitValidation:
 # ============================================================================
 
 
-class TestSkillDocGeneration:
-    """Test SKILL.md auto-generation."""
+class TestReadmeDocGeneration:
+    """Test README.md auto-generation."""
 
-    def test_generate_skill_doc(self, calendar_backend):
-        """Test that SKILL.md is generated correctly."""
-        doc = calendar_backend.generate_skill_doc("/mnt/calendar/")
+    def test_generate_readme(self, calendar_backend):
+        """Test that README.md is generated correctly."""
+        doc = calendar_backend.generate_readme("/mnt/calendar/")
 
         # Check header
         assert "# Gcalendar Connector" in doc
@@ -285,17 +285,17 @@ class TestSkillDocGeneration:
         assert "## Error Codes" in doc
         assert "MISSING_AGENT_INTENT" in doc
 
-    def test_skill_doc_includes_examples(self, calendar_backend):
-        """Test that SKILL.md includes YAML examples."""
-        doc = calendar_backend.generate_skill_doc("/mnt/calendar/")
+    def test_readme_doc_includes_examples(self, calendar_backend):
+        """Test that README.md includes YAML examples."""
+        doc = calendar_backend.generate_readme("/mnt/calendar/")
 
         # Should include YAML code blocks
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
     @pytest.mark.asyncio
-    async def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
-        """Test writing SKILL.md to filesystem."""
+    async def test_write_readme(self, calendar_backend, isolated_db, tmp_path):
+        """Test writing README.md to filesystem."""
         # Create a real NexusFS for writing
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
         nx = await create_nexus_fs(
@@ -306,14 +306,14 @@ class TestSkillDocGeneration:
         )
 
         try:
-            # Write SKILL.md
-            result = await calendar_backend.write_skill_docs("/mnt/calendar/", filesystem=nx)
+            # Write README.md
+            result = await calendar_backend.write_readme("/mnt/calendar/", filesystem=nx)
             assert isinstance(result, dict)
-            skill_path = result.get("skill_md")
+            readme_path = result.get("readme_md")
 
-            if skill_path:
+            if readme_path:
                 # Read back and verify
-                content = await nx.sys_read(skill_path)
+                content = await nx.sys_read(readme_path)
                 assert b"Gcalendar Connector" in content
                 assert b"agent_intent" in content
         finally:
@@ -367,11 +367,11 @@ start:
 
 
 class TestErrorFormatting:
-    """Test error message formatting with SKILL.md references."""
+    """Test error message formatting with README.md references."""
 
-    def test_error_includes_skill_path(self, calendar_backend):
-        """Test that errors include SKILL.md path."""
-        # Set mount path so skill_md_path is computed correctly
+    def test_error_includes_readme_path(self, calendar_backend):
+        """Test that errors include README.md path."""
+        # Set mount path so readme_md_path is computed correctly
         calendar_backend.set_mount_path("/mnt/calendar")
 
         error = calendar_backend.format_error_with_skill_ref(
@@ -379,7 +379,7 @@ class TestErrorFormatting:
             message="Missing required field",
         )
 
-        assert "/mnt/calendar/.skill/SKILL.md" in str(error)
+        assert "/mnt/calendar/.readme/README.md" in str(error)
 
     def test_error_includes_section_anchor(self, calendar_backend):
         """Test that errors include section anchor."""

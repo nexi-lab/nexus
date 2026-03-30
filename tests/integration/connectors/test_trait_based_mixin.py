@@ -42,21 +42,21 @@ class FakeConnector(TraitBasedMixin):
     ERROR_REGISTRY: dict[str, ErrorDef] = {
         "MISSING_AGENT_INTENT": ErrorDef(
             message="Operations require agent_intent",
-            skill_section="required-format",
+            readme_section="required-format",
             fix_example="# agent_intent: reason",
         ),
         "AGENT_INTENT_TOO_SHORT": ErrorDef(
             message="agent_intent must be at least 10 characters",
-            skill_section="required-format",
+            readme_section="required-format",
         ),
         "MISSING_CONFIRM": ErrorDef(
             message="Requires explicit confirmation",
-            skill_section="delete-operation",
+            readme_section="delete-operation",
             fix_example="# confirm: true",
         ),
         "MISSING_USER_CONFIRMATION": ErrorDef(
             message="Requires user confirmation",
-            skill_section="irreversible-operations",
+            readme_section="irreversible-operations",
         ),
     }
     SKILL_NAME = "test_connector"

@@ -58,6 +58,56 @@ pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessZoneReg
 #[cfg(all(feature = "grpc", has_protos))]
 pub use transport_loop::TransportLoop;
 
+/// Forward a Raft proposal to a leader node via gRPC Propose RPC.
+///
+/// Used by `ZoneConsensus::propose()` when the local node is a follower.
+/// Serializes the command with bincode and sends as `raw_command` bytes
+/// in `ProposeRequest` — avoids double serialization (bincode→proto→bincode).
+#[cfg(all(feature = "grpc", has_protos))]
+pub(crate) async fn forward_propose(
+    client_pool: &RaftClientPool,
+    leader_addr: &NodeAddress,
+    command: crate::raft::Command,
+    zone_id: &str,
+) -> crate::raft::Result<crate::raft::CommandResult> {
+    use crate::raft::{CommandResult, RaftError};
+
+    let raw_bytes =
+        bincode::serialize(&command).map_err(|e| RaftError::Serialization(e.to_string()))?;
+
+    let mut api_client =
+        RaftApiClient::connect(&leader_addr.endpoint, client_pool.config().clone())
+            .await
+            .map_err(|e| RaftError::Transport(e.to_string()))?;
+
+    let request = tonic::Request::new(proto::nexus::raft::ProposeRequest {
+        command: None,
+        request_id: String::new(),
+        zone_id: zone_id.to_string(),
+        raw_command: raw_bytes,
+        forwarded: true,
+    });
+
+    let response = api_client
+        .inner_mut()
+        .propose(request)
+        .await
+        .map_err(|e| RaftError::Transport(e.to_string()))?;
+
+    let resp = response.into_inner();
+    if resp.success {
+        Ok(CommandResult::Success)
+    } else if let Some(ref err) = resp.error {
+        if err.contains("Not the leader") || err.contains("not leader") {
+            Err(RaftError::NotLeader { leader_hint: None })
+        } else {
+            Err(RaftError::Raft(err.clone()))
+        }
+    } else {
+        Ok(CommandResult::Success)
+    }
+}
+
 /// TLS configuration for gRPC transport (mTLS).
 ///
 /// All fields are PEM-encoded bytes (read from files by the caller).

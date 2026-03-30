@@ -489,38 +489,75 @@ impl ZoneApiService for ZoneApiServiceImpl {
         let peers = self.registry.get_peers(&req.zone_id).unwrap_or_default();
 
         tracing::debug!(
-            "Received propose request: zone={}, id={:?}",
+            "Received propose request: zone={}, id={:?}, forwarded={}",
             req.zone_id,
-            req.request_id
+            req.request_id,
+            req.forwarded,
         );
 
-        let proto_cmd = match req.command {
-            Some(cmd) => cmd,
-            None => {
-                return Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some("No command provided".to_string()),
-                    leader_address: None,
-                    result: None,
-                    applied_index: 0,
-                }));
+        // Deserialize command: prefer raw_command (bincode, from internal forwarding)
+        // over proto command (from external clients).
+        let cmd = if !req.raw_command.is_empty() {
+            match bincode::deserialize::<Command>(&req.raw_command) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Ok(Response::new(ProposeResponse {
+                        success: false,
+                        error: Some(format!("Failed to deserialize raw command: {}", e)),
+                        leader_address: None,
+                        result: None,
+                        applied_index: 0,
+                    }));
+                }
+            }
+        } else {
+            let proto_cmd = match req.command {
+                Some(cmd) => cmd,
+                None => {
+                    return Ok(Response::new(ProposeResponse {
+                        success: false,
+                        error: Some("No command provided".to_string()),
+                        leader_address: None,
+                        result: None,
+                        applied_index: 0,
+                    }));
+                }
+            };
+
+            match proto_command_to_internal(proto_cmd) {
+                Some(c) => c,
+                None => {
+                    return Ok(Response::new(ProposeResponse {
+                        success: false,
+                        error: Some("Unsupported command type".to_string()),
+                        leader_address: None,
+                        result: None,
+                        applied_index: 0,
+                    }));
+                }
             }
         };
 
-        let cmd = match proto_command_to_internal(proto_cmd) {
-            Some(c) => c,
-            None => {
-                return Ok(Response::new(ProposeResponse {
-                    success: false,
-                    error: Some("Unsupported command type".to_string()),
-                    leader_address: None,
-                    result: None,
-                    applied_index: 0,
-                }));
+        // Use submit_to_channel (leader-only, no forwarding) for forwarded
+        // requests to prevent infinite loops. For direct requests, use
+        // propose() which may forward to leader transparently.
+        let result = if req.forwarded {
+            // Forwarded request: must be handled locally (no re-forwarding)
+            match node.submit_to_channel(cmd) {
+                Ok(rx) => {
+                    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(_)) => Err(RaftError::ProposalDropped),
+                        Err(_) => Err(RaftError::Timeout(10)),
+                    }
+                }
+                Err(e) => Err(e),
             }
+        } else {
+            node.propose(cmd).await
         };
 
-        match node.propose(cmd).await {
+        match result {
             Ok(result) => {
                 let proto_result = command_result_to_proto(&result);
                 Ok(Response::new(ProposeResponse {

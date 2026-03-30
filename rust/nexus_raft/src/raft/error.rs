@@ -51,6 +51,10 @@ pub enum RaftError {
     /// The actor channel is full — backpressure.
     #[error("raft actor channel full (capacity {0}), driver overloaded")]
     ChannelFull(usize),
+
+    /// Transport error (gRPC forwarding failed).
+    #[error("transport error: {0}")]
+    Transport(String),
 }
 
 impl From<crate::storage::StorageError> for RaftError {

@@ -83,7 +83,7 @@ fn channel_try_send_err<T>(e: mpsc::error::TrySendError<T>) -> RaftError {
 }
 
 #[cfg(all(feature = "grpc", has_protos))]
-use crate::transport::{NodeAddress, SharedPeerMap};
+use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap};
 
 /// Configuration for a Raft node.
 #[derive(Debug, Clone)]
@@ -247,6 +247,21 @@ pub enum RaftMsg {
 ///
 /// This type is `Clone + Send + Sync` and can be freely shared across
 /// gRPC handlers, PyO3, and other contexts.
+/// Transport context for transparent leader forwarding.
+///
+/// When a follower receives a propose(), instead of returning NotLeader,
+/// it forwards the command to the leader via gRPC. This makes propose()
+/// work correctly regardless of which node the caller is connected to.
+///
+/// Optional: embedded/single-node mode sets this to None (no forwarding).
+#[cfg(all(feature = "grpc", has_protos))]
+#[derive(Clone)]
+struct ForwardContext {
+    client_pool: RaftClientPool,
+    peers: SharedPeerMap,
+    zone_id: String,
+}
+
 pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// Bounded channel sender to the driver actor.
     /// Capacity: [`DRIVER_CHANNEL_CAPACITY`]. Provides backpressure when
@@ -264,6 +279,10 @@ pub struct ZoneConsensus<S: StateMachine + 'static> {
     cached_term: Arc<AtomicU64>,
     /// EC replication WAL (None for witness nodes that don't store data).
     replication_log: Option<Arc<ReplicationLog>>,
+    /// Transport context for forwarding proposals to the leader.
+    /// None in embedded/single-node mode.
+    #[cfg(all(feature = "grpc", has_protos))]
+    forward_ctx: Option<ForwardContext>,
 }
 
 impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
@@ -276,6 +295,8 @@ impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
             replication_log: self.replication_log.clone(),
+            #[cfg(all(feature = "grpc", has_protos))]
+            forward_ctx: self.forward_ctx.clone(),
         }
     }
 }
@@ -451,6 +472,8 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
             replication_log,
+            #[cfg(all(feature = "grpc", has_protos))]
+            forward_ctx: None,
         };
 
         let driver = ZoneConsensusDriver {
@@ -471,6 +494,25 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         };
 
         Ok((handle, driver))
+    }
+
+    /// Set the forwarding context for transparent leader forwarding.
+    ///
+    /// Called by `setup_zone()` after creating the transport loop.
+    /// Once set, `propose()` on a follower will forward to the leader
+    /// via gRPC instead of returning `NotLeader`.
+    #[cfg(all(feature = "grpc", has_protos))]
+    pub fn set_forward_ctx(
+        &mut self,
+        client_pool: RaftClientPool,
+        peers: SharedPeerMap,
+        zone_id: String,
+    ) {
+        self.forward_ctx = Some(ForwardContext {
+            client_pool,
+            peers,
+            zone_id,
+        });
     }
 
     /// Get the node ID.
@@ -540,7 +582,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
     ///
     /// Returns the oneshot receiver for callers that want to wait for commit
     /// (SC path). EC callers simply drop the receiver.
-    fn submit_to_channel(
+    pub(crate) fn submit_to_channel(
         &self,
         command: Command,
     ) -> Result<oneshot::Receiver<Result<CommandResult>>> {
@@ -578,21 +620,67 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
 
     /// Propose a command for replication (Strong Consistency).
     ///
-    /// Sends the command through the channel to the driver, which will call
-    /// `raw_node.propose()` sequentially. The caller awaits a oneshot for
-    /// the commit result.
+    /// If this node is the leader, proposes locally and waits for commit.
+    /// If this node is a follower with a forwarding context, transparently
+    /// forwards the proposal to the leader via gRPC Propose RPC.
+    /// If no forwarding context (embedded mode), returns `NotLeader`.
     ///
     /// # Timeout
     /// Proposals time out after 10 seconds.
     pub async fn propose(&self, command: Command) -> Result<CommandResult> {
-        let rx = self.submit_to_channel(command)?;
-
-        // Wait for commit with timeout
-        match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(RaftError::ProposalDropped),
-            Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
+        match self.submit_to_channel(command.clone()) {
+            Ok(rx) => {
+                // Leader path: wait for commit
+                match tokio::time::timeout(Duration::from_secs(PROPOSAL_TIMEOUT_SECS), rx).await {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(_)) => Err(RaftError::ProposalDropped),
+                    Err(_) => Err(RaftError::Timeout(PROPOSAL_TIMEOUT_SECS)),
+                }
+            }
+            Err(RaftError::NotLeader { .. }) => {
+                // Follower: forward to leader if transport is available
+                self.forward_to_leader(command).await
+            }
+            Err(e) => Err(e),
         }
+    }
+
+    /// Forward a proposal to the current leader via gRPC.
+    ///
+    /// Returns `NotLeader` if no forwarding context or no known leader.
+    async fn forward_to_leader(&self, command: Command) -> Result<CommandResult> {
+        #[cfg(all(feature = "grpc", has_protos))]
+        if let Some(ctx) = &self.forward_ctx {
+            let leader_id = self
+                .leader_id()
+                .ok_or(RaftError::NotLeader { leader_hint: None })?;
+
+            let leader_addr = {
+                let peers = ctx.peers.read().unwrap();
+                peers.get(&leader_id).cloned().ok_or(RaftError::NotLeader {
+                    leader_hint: Some(leader_id),
+                })?
+            };
+
+            tracing::debug!(
+                leader = leader_id,
+                addr = %leader_addr.endpoint,
+                zone = %ctx.zone_id,
+                "Forwarding propose to leader"
+            );
+
+            return crate::transport::forward_propose(
+                &ctx.client_pool,
+                &leader_addr,
+                command,
+                &ctx.zone_id,
+            )
+            .await;
+        }
+
+        Err(RaftError::NotLeader {
+            leader_hint: self.leader_id(),
+        })
     }
 
     /// True Local-First EC write — bypasses Raft entirely.

@@ -94,6 +94,13 @@ message ProposeRequest {
   string request_id = 2;
   // Zone ID for multi-zone routing. Required in multi-zone mode.
   string zone_id = 3;
+  // Internal forwarding: bincode-serialized Command bytes.
+  // When set, the server deserializes directly (skipping proto→internal conversion).
+  // Used by ZoneConsensus::propose() leader forwarding — avoids double serialization.
+  bytes raw_command = 4;
+  // Set by follower when forwarding. Prevents infinite forwarding loops
+  // (if leader_hint is stale and target is also a follower).
+  bool forwarded = 5;
 }
 
 // ProposeResponse is the response to a Propose RPC.

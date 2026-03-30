@@ -82,6 +82,11 @@ impl RaftClientPool {
         }
     }
 
+    /// Get the client configuration.
+    pub fn config(&self) -> &ClientConfig {
+        &self.config
+    }
+
     /// Create a new client pool with custom configuration and TTL.
     pub fn with_config_and_ttl(config: ClientConfig, ttl: Duration) -> Self {
         Self {
@@ -326,6 +331,11 @@ impl RaftApiClient {
         &self.endpoint
     }
 
+    /// Get mutable access to the inner gRPC client (for raw requests).
+    pub(crate) fn inner_mut(&mut self) -> &mut ZoneApiServiceClient<Channel> {
+        &mut self.inner
+    }
+
     // === Propose Methods (Writes) ===
 
     /// Put metadata for a file path.
@@ -407,8 +417,8 @@ impl RaftApiClient {
         self.propose(cmd, None).await
     }
 
-    /// Generic propose method.
-    async fn propose(
+    /// Generic propose method — sends a RaftCommand via gRPC Propose RPC.
+    pub(crate) async fn propose(
         &mut self,
         command: RaftCommand,
         request_id: Option<String>,
@@ -417,6 +427,8 @@ impl RaftApiClient {
             command: Some(command),
             request_id: request_id.unwrap_or_default(),
             zone_id: self.zone_id.clone(),
+            raw_command: Vec::new(),
+            forwarded: false,
         });
 
         let response = self.inner.propose(request).await?;

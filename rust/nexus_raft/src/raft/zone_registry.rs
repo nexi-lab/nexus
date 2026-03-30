@@ -211,7 +211,7 @@ impl ZoneRaftRegistry {
         };
 
         // Create ZoneConsensus handle + driver
-        let (handle, mut driver) =
+        let (mut handle, mut driver) =
             ZoneConsensus::new(config, raft_storage, state_machine, replication_log).map_err(
                 |e| TransportError::Connection(format!("Failed to create ZoneConsensus: {}", e)),
             )?;
@@ -226,6 +226,16 @@ impl ZoneRaftRegistry {
             tls: self.tls.clone(),
             ..Default::default()
         };
+
+        // Set up transparent leader forwarding on the handle.
+        // When propose() is called on a follower, it forwards to the leader
+        // via gRPC instead of returning NotLeader.
+        handle.set_forward_ctx(
+            RaftClientPool::with_config(client_config.clone()),
+            shared_peers.clone(),
+            zone_id.to_string(),
+        );
+
         let transport_loop = TransportLoop::new(
             driver,
             shared_peers.clone(),

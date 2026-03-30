@@ -370,6 +370,42 @@ class TestDeriveProjectEnv:
         assert env["NEXUS_TXTAI_MODEL"] == "openai/text-embedding-3-small"
         assert env["NEXUS_TXTAI_USE_API_EMBEDDINGS"] == "true"
 
+    def test_search_profile_enables_zoekt(self, tmp_path: Path) -> None:
+        """ZOEKT_ENABLED=true when search compose profile is active."""
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {},
+            "compose_profiles": ["core", "cache", "search"],
+        }
+        env = _derive_project_env(config)
+        assert env["ZOEKT_ENABLED"] == "true"
+
+    def test_no_search_profile_omits_zoekt_enabled(self, tmp_path: Path) -> None:
+        """ZOEKT_ENABLED not set when search profile is absent."""
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {},
+            "compose_profiles": ["core", "cache"],
+        }
+        env = _derive_project_env(config)
+        assert "ZOEKT_ENABLED" not in env
+
+    def test_validated_profiles_override_config(self, tmp_path: Path) -> None:
+        """Explicit profiles param wins over config compose_profiles.
+
+        When a custom compose file strips the search profile during
+        validation, ZOEKT_ENABLED must not be set even though the
+        raw config still lists search.
+        """
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {},
+            "compose_profiles": ["core", "cache", "search"],
+        }
+        # Simulate compose-file validation stripping search
+        env = _derive_project_env(config, profiles=["core", "cache"])
+        assert "ZOEKT_ENABLED" not in env
+
 
 class TestDockerBuildArgs:
     def test_api_embeddings_enabled_sets_build_arg(self) -> None:

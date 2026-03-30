@@ -89,6 +89,7 @@ def _resolve_image_ref_from_config(config: dict[str, Any]) -> str:
 def _derive_project_env(
     config: dict[str, Any],
     resolved_ports: dict[str, int] | None = None,
+    profiles: list[str] | None = None,
 ) -> dict[str, str]:
     """Build the compose environment from nexus.yaml config.
 
@@ -98,6 +99,10 @@ def _derive_project_env(
 
     When *resolved_ports* is provided (e.g. after conflict resolution),
     those values are used instead of config["ports"].
+
+    When *profiles* is provided (e.g. after compose-file validation),
+    those are used to decide profile-gated env vars like ZOEKT_ENABLED
+    instead of the raw config["compose_profiles"].
     """
     data_dir = str(Path(config.get("data_dir", "./nexus-data")).resolve())
     project_hash = hashlib.md5(data_dir.encode()).hexdigest()[:8]
@@ -151,6 +156,16 @@ def _derive_project_env(
         # Standalone demo/shared stacks expose gRPC through a published Docker
         # port, so the server must not stay bound to container loopback.
         env["NEXUS_GRPC_BIND_ALL"] = "true"
+
+    # Enable zoekt integration when the search compose profile is active.
+    # The compose template defaults ZOEKT_ENABLED to false; override here
+    # so the nexus container connects to the zoekt sidecar container.
+    # Use validated profiles when available so a custom compose file that
+    # lacks the search profile doesn't leave ZOEKT_ENABLED=true with no
+    # zoekt container to talk to.
+    active_profiles = profiles if profiles is not None else config.get("compose_profiles", [])
+    if "search" in active_profiles:
+        env["ZOEKT_ENABLED"] = "true"
 
     return env
 
@@ -770,8 +785,10 @@ def up(
     # NOTE: resolved ports are NOT written back to nexus.yaml.
     # They go into .state.json (written after health check).
 
-    # Build environment from config (project name, ports, data dir, auth, image, TLS)
-    compose_env = _derive_project_env(config, resolved_ports=resolved_ports)
+    # Build environment from config (project name, ports, data dir, auth, image, TLS).
+    # Pass validated profiles so profile-gated env vars (e.g. ZOEKT_ENABLED)
+    # reflect what the compose file actually supports.
+    compose_env = _derive_project_env(config, resolved_ports=resolved_ports, profiles=profiles)
     pgvector_init_sql = _resolve_pgvector_init_sql(cf)
     if pgvector_init_sql:
         compose_env["NEXUS_PGVECTOR_INIT_SQL"] = pgvector_init_sql

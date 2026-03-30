@@ -14,6 +14,7 @@ name: Conda Pack
 #   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v*"

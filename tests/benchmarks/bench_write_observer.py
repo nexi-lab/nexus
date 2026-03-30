@@ -112,9 +112,21 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
 
     observer = PipedRecordStoreWriteObserver(record_store, strict_mode=False)
 
-    # Bind a minimal NexusFS-like object that exposes _pipe_manager.
-    # The observer uses getattr(nx, "_pipe_manager", None) in start().
-    fake_nx: Any = type("_FakeNx", (), {"_pipe_manager": pipe_manager})()
+    # Bind a minimal NexusFS-like object that satisfies the observer's
+    # runtime contract: _pipe_manager for start(), sys_read() for the
+    # background consumer, and sys_unlink() for stop().
+    class _BenchNx:
+        def __init__(self, pm: PipeManager) -> None:
+            self._pipe_manager = pm
+
+        async def sys_read(self, path: str, **kwargs: Any) -> bytes:
+            return await self._pipe_manager.pipe_read(path)
+
+        async def sys_unlink(self, path: str, **kwargs: Any) -> dict:
+            self._pipe_manager.destroy(path)
+            return {"path": path}
+
+    fake_nx: Any = _BenchNx(pipe_manager)
     observer.bind_fs(fake_nx)
 
     # Suppress observer warnings during benchmark

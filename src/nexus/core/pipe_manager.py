@@ -155,6 +155,13 @@ class PipeManager:
         Raises:
             PipeExistsError: Pipe already exists at this path.
         """
+        # Validate before allocating buffer — avoids unnecessary RingBuffer
+        # construction on duplicate paths, and prevents ValueError from
+        # RingBuffer(capacity=0) masking PipeExistsError in ensure().
+        if path in self._buffers:
+            raise PipeExistsError(f"pipe already exists: {path}")
+        if self._metastore.get(path) is not None:
+            raise PipeExistsError(f"path already exists: {path}")
         buf = RingBuffer(capacity=capacity)
         self._register_pipe(path, buf, size=capacity, owner_id=owner_id, zone_id=zone_id)
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)

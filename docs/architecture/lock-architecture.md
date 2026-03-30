@@ -1,8 +1,6 @@
 # Unified Kernel Lock Architecture
 
-**Issues**: #909, #906, #908, #910, #805
-**Prerequisite**: #1323 (OCC + lock extraction from kernel write path)
-**Status**: Implemented (PR #2732, #2733, #2734).
+**Status:** Active — lock architecture SSOT
 
 ---
 
@@ -15,14 +13,7 @@
 | **AdvisoryLockManager** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
 | **LocalLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
-| ~~LockStoreProtocol~~ | deleted (Phase 2) | — | Was low-level store interface — only one implementer (RaftMetadataStore) |
 | ~12 `asyncio.Semaphore` | scattered | — | Ad-hoc concurrency bounding |
-
-**Resolved** (by PR #2732, #2733, #2734):
-1. ~~VFSLockManager not wired into syscalls~~ → wired into sys_read/sys_write/sys_rename/sys_unlink
-2. ~~PassthroughBackend.lock() duplicates kernel logic~~ → deleted, replaced by LocalLockManager
-3. ~~No local advisory lock manager~~ → LocalLockManager wraps MetastoreABC
-4. ~~No local kernel semaphore~~ → VFSSemaphore (Rust + Python)
 
 ### 1.1 POSIX Mapping
 
@@ -86,8 +77,7 @@ class VFSSemaphore:
 
 ## 3. Two-Lock Architecture
 
-Through architecture review, the original LockRouter plan was rejected.
-Key insight: advisory locks and I/O locks are **fundamentally different concerns**.
+Advisory locks and I/O locks are **fundamentally different concerns**.
 
 ### 3.1 Why No Router
 
@@ -175,8 +165,7 @@ Federation upgrades to RaftLockManager via `_upgrade_lock_manager()` at link tim
 Same pattern as FileWatcher (kernel-owned local + kernel-knows remote).
 Exposed via kernel syscalls: `sys_lock`/`sys_unlock` (Tier 1), `lock()`/`locked()` (Tier 2).
 
-**D4: PassthroughBackend.lock() deleted** — duplicated kernel lock logic.
-`_StripeLock` also deleted — CAS metadata RMW now uses `VFSSemaphore` directly.
+**D4: No backend-level locking** — CAS metadata RMW uses `VFSSemaphore` directly.
 
 **D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not advisory
 locks). No names, TTL, or cross-node semantics needed.

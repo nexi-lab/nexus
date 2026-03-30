@@ -284,6 +284,69 @@ class ObjectStoreABC(ABC):
                 result[content_id] = None
         return result
 
+    def batch_write_content(
+        self,
+        items: list[tuple[str, bytes]],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, WriteResult | None]:
+        """Write multiple content items in a single batch.
+
+        Default implementation calls ``write_content()`` for each item.
+        Backends should override for better performance (e.g. batch RPCs).
+
+        Args:
+            items: List of ``(content_id, data)`` tuples. For CAS backends
+                content_id is ignored; for PAS backends it is the blob path.
+            context: Shared operation context (fallback).
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
+
+        Returns:
+            Dict mapping ``content_id -> WriteResult | None``.
+            ``None`` indicates a failed write for that item.
+        """
+        result: dict[str, WriteResult | None] = {}
+        for content_id, data in items:
+            ctx = contexts.get(content_id, context) if contexts else context
+            try:
+                result[content_id] = self.write_content(data, content_id, context=ctx)
+            except Exception:
+                result[content_id] = None
+        return result
+
+    def batch_delete_content(
+        self,
+        content_ids: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bool]:
+        """Delete multiple content items in a single batch.
+
+        Default implementation calls ``delete_content()`` for each id.
+        Backends should override for better performance (e.g. batch RPCs).
+
+        Args:
+            content_ids: List of opaque content identifiers.
+            context: Shared operation context (fallback).
+            contexts: Per-id operation contexts mapping
+                ``content_id -> OperationContext``.
+
+        Returns:
+            Dict mapping ``content_id -> bool`` (True = deleted, False = failed).
+        """
+        result: dict[str, bool] = {}
+        for content_id in content_ids:
+            ctx = contexts.get(content_id, context) if contexts else context
+            try:
+                self.delete_content(content_id, context=ctx)
+                result[content_id] = True
+            except Exception:
+                result[content_id] = False
+        return result
+
     # === Lifecycle ===
 
     def close(self) -> None:  # noqa: B027

@@ -364,6 +364,79 @@ class PathAddressingEngine(Backend):
                 results[path] = None
         return results
 
+    def batch_write_content(
+        self,
+        items: list[tuple[str, bytes]],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, "WriteResult | None"]:
+        if not items:
+            return {}
+
+        if len(items) == 1:
+            cid, data = items[0]
+            try:
+                return {cid: self.write_content(data, cid, context=context)}
+            except Exception:
+                return {cid: None}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _write_one(cid: str, data: bytes) -> tuple[str, "WriteResult | None"]:
+            try:
+                ctx = contexts.get(cid, context) if contexts else context
+                return (cid, self.write_content(data, cid, context=ctx))
+            except Exception:
+                return (cid, None)
+
+        max_workers = min(8, len(items))
+        result: dict[str, WriteResult | None] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_write_one, cid, data): cid for cid, data in items}
+            for future in as_completed(futures):
+                cid, wr = future.result()
+                result[cid] = wr
+
+        return result
+
+    def batch_delete_content(
+        self,
+        content_ids: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bool]:
+        if not content_ids:
+            return {}
+
+        if len(content_ids) == 1:
+            try:
+                self.delete_content(content_ids[0], context=context)
+                return {content_ids[0]: True}
+            except Exception:
+                return {content_ids[0]: False}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _delete_one(cid: str) -> tuple[str, bool]:
+            try:
+                ctx = contexts.get(cid, context) if contexts else context
+                self.delete_content(cid, context=ctx)
+                return (cid, True)
+            except Exception:
+                return (cid, False)
+
+        max_workers = min(8, len(content_ids))
+        result: dict[str, bool] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_delete_one, cid): cid for cid in content_ids}
+            for future in as_completed(futures):
+                cid, ok = future.result()
+                result[cid] = ok
+
+        return result
+
     # === Directory Operations ===
 
     def mkdir(

@@ -1,4 +1,4 @@
-"""AgentRegistry — kernel agent lifecycle manager (Issue #1509, #1800).
+"""AgentRegistry — kernel agent lifecycle manager.
 
 Pure in-memory agent registry, analogous to Linux task_struct array.
 No metastore persistence — agent state is ephemeral (tied to OS

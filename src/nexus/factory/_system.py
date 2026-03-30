@@ -533,10 +533,9 @@ def _boot_pre_kernel_services(
         "context_branch_service": context_branch_service,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
-        # Infrastructure: event_bus no longer in services dict.
-        # Stored on NexusFS as _event_bus (infra, not a service).
+        # Kernel-knows: event_bus stored on NexusFS._event_bus (not a service).
         # Wired into FileWatcher (remote_watcher) + EventBusObserver by orchestrator.
-        "_event_bus_infra": event_bus,
+        "_event_bus": event_bus,
     }
 
     elapsed = time.perf_counter() - t0

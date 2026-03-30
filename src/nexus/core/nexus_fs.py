@@ -161,39 +161,14 @@ class NexusFS(  # type: ignore[misc]
         # operations. External callers should pass explicit context= to syscalls.
         self._init_cred: OperationContext | None = init_cred
 
-        # Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks.
-        # PermissionCheckHook (bricks/rebac) registers via enlist() → hook_spec().
-        # No hook registered = no check = zero overhead (like Linux without LSM modules).
-        # _permission_enforcer and _descendant_checker removed in Phase 4 PR 2.
-        # overlay_resolver removed (Issue #2034) — always None, re-add when #1264 is implemented
-        self._overlay_resolver = None
-        # Issue #1788: Advisory lock manager — kernel owned (like FileWatcher).
-        # Local: LocalLockManager (VFSSemaphore). Remote: RaftLockManager (kernel knows,
-        # federation inject via upgrade_lock_manager()). Constructed after _vfs_lock_manager.
-        # Issue #1792: AgentRegistry accessed via ServiceRegistry (register_factory).
-        # No kernel sentinel — no-agent profiles (REMOTE) never construct it.
-        # Issue #1801: _flush_write_observer_fn and _overlay_config_fn closures removed —
-        # kernel now reads services directly from service registry.
-        # Non-hot-path service attrs wired by factory._do_link() (Issue #1570)
+        # ── Kernel-owned primitives (always present, created here) ──────
+        # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
 
-        # Lazy-init sentinels
-        self._token_manager = None
-        self._sandbox_manager: Any = None
-        self._coordination_client: Any = None
-        self._event_client: Any = None
-
-        # VFS lock manager — kernel-internal, NOT injected via DI.
-        # Analogous to Linux i_rwsem: always present, created by kernel at init.
-        # Protects same-process coroutine concurrency on sys_write/sys_read.
         from nexus.core.lock_fast import create_vfs_lock_manager
 
         self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        # Advisory lock manager — kernel owned (POSIX flock equivalent).
-        # Like FileWatcher: kernel-owned local + kernel-knows remote.
-        # Exclusive/shared use lock_fast RW lock (~200ns) when available.
-        # Counting (max_holders>1) falls back to VFSSemaphore.
         from nexus.lib.distributed_lock import LocalLockManager
         from nexus.lib.semaphore import create_vfs_semaphore
 
@@ -203,16 +178,10 @@ class NexusFS(  # type: ignore[misc]
             vfs_lock_manager=self._vfs_lock_manager,
         )
 
-        # Kernel notification dispatch (INTERCEPT + OBSERVE).
-        # Kernel owns dispatch infrastructure — creates empty callback lists.
-        # Factory registers hooks at boot (KERNEL-ARCHITECTURE §3).
         from nexus.core.kernel_dispatch import KernelDispatch
 
         self._dispatch: KernelDispatch = KernelDispatch()
 
-        # IPC primitives — kernel-internal, NOT injected via DI.
-        # Like VFSLockManager: always present, created by kernel at init.
-        # Both use ROOT_ZONE_ID (zone_id is a kernel namespace partition concept).
         import os as _os_ipc
 
         from nexus.core.pipe_manager import PipeManager
@@ -220,9 +189,6 @@ class NexusFS(  # type: ignore[misc]
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
 
-        # PeerChannelPool for remote pipe/stream fast-path (persistent gRPC channels).
-        # Created when NEXUS_ADVERTISE_ADDR is set (federation mode); TLS config is
-        # deferred via set_tls_config() after federation bootstrap.
         from nexus.grpc.channel_pool import PeerChannelPool as _PeerChannelPool
 
         self._channel_pool: _PeerChannelPool | None = None
@@ -239,8 +205,7 @@ class NexusFS(  # type: ignore[misc]
             self_address=_ipc_self_addr,
             channel_pool=self._channel_pool,
         )
-        # FileWatcher — kernel file change notification (inotify equivalent, §4.3).
-        # Kernel-owned local OBSERVE waiters + optional kernel-knows remote watcher.
+
         from nexus.core.file_watcher import FileWatcher
 
         self._file_watcher = FileWatcher()
@@ -250,21 +215,26 @@ class NexusFS(  # type: ignore[misc]
             _ipc_self_addr or "none/single-node",
         )
 
-        # Service registry — /proc/modules of Nexus (Issue #1452).
-        # Populated by factory via enlist_wired_services() at link().
         from nexus.core.service_registry import ServiceRegistry
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
-        # Driver lifecycle coordinator — /proc/mounts of Nexus (Issue #1811).
-        # Manages mount lifecycle: routing table + hook_spec registration +
-        # KernelDispatch mount/unmount notification. Kernel-owned, like
-        # ServiceRegistry. MountService and factory delegate to this.
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
             self.router, self._dispatch, metastore=metadata_store
         )
+
+        # ── Kernel-knows (sentinel None, injected by factory) ───────────
+        # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
+        # None = graceful degrade (like Linux LSM: no module loaded = no check).
+
+        self._event_bus: Any = None
+        self._overlay_resolver = None
+        self._token_manager = None
+        self._sandbox_manager: Any = None
+        self._coordination_client: Any = None
+        self._event_client: Any = None
 
         # Wire metastore into pre-existing mounts (added to router before __init__)
         for _mp in self.router.get_mount_points():

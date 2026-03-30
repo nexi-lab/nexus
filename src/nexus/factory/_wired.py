@@ -328,6 +328,10 @@ async def _boot_post_kernel_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] AgentRegistry unavailable: %s", exc)
 
+    # Late-bind AgentRegistry → AgentRPCService (Issue #3524)
+    if _agent_reg is not None and agent_rpc_service is not None:
+        agent_rpc_service._agent_registry = _agent_reg
+
     # EvictionManager (QoS-aware agent eviction)
     if _agent_reg is not None:
         try:

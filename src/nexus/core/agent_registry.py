@@ -332,6 +332,7 @@ class AgentRegistry:
             owner_id,
             zone_id,
             kind=AgentKind.UNMANAGED,
+            pid=connection_id,
             parent_pid=parent_pid,
             external_info=ext_info,
             labels=labels,

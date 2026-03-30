@@ -950,8 +950,8 @@ class MountService:
 
         # Step 4: Delete mount point directory
         rmdir_fn = self._rmdir_fn
-        if rmdir_fn is None and self.nexus_fs and hasattr(self.nexus_fs, "sys_rmdir"):
-            rmdir_fn = self.nexus_fs.sys_rmdir
+        if rmdir_fn is None and self.nexus_fs and hasattr(self.nexus_fs, "rmdir"):
+            rmdir_fn = self.nexus_fs.rmdir
         if rmdir_fn is not None:
             try:
                 rmdir_fn(mount_point, recursive=True, context=context)

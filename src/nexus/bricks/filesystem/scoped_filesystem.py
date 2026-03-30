@@ -259,11 +259,11 @@ class ScopedFilesystem(ScopedPathMixin):
         """Create a directory."""
         await self._fs.mkdir(self._scope_path(path), parents, exist_ok, context=context)
 
-    async def sys_rmdir(
-        self, path: str, recursive: bool = False, *, context: OperationContext | None = None
+    async def rmdir(
+        self, path: str, recursive: bool = True, *, context: OperationContext | None = None
     ) -> None:
         """Remove a directory."""
-        await self._fs.sys_rmdir(self._scope_path(path), recursive, context=context)
+        await self._fs.rmdir(self._scope_path(path), recursive=recursive, context=context)
 
     async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
         """Check if path is a directory."""

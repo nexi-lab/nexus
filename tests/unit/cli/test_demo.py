@@ -231,7 +231,7 @@ class TestDeleteDemoFiles:
         """Should call sys_unlink (not sys_rm) for each file."""
         mock_nx = MagicMock()
         mock_nx.sys_unlink = AsyncMock()
-        mock_nx.sys_rmdir = AsyncMock()
+        mock_nx.rmdir = AsyncMock()
         manifest = {"files": ["/workspace/demo/a.txt", "/workspace/demo/b.py"]}
 
         removed = await _delete_demo_files(mock_nx, manifest)
@@ -240,13 +240,13 @@ class TestDeleteDemoFiles:
         # Verify sys_unlink was called (not sys_rm)
         assert mock_nx.sys_unlink.call_count == 2
         # Should also try to remove directories
-        assert mock_nx.sys_rmdir.call_count == len(DEMO_DIRS)
+        assert mock_nx.rmdir.call_count == len(DEMO_DIRS)
 
     @pytest.mark.asyncio
     async def test_delete_empty_manifest(self) -> None:
         mock_nx = MagicMock()
         mock_nx.sys_unlink = AsyncMock()
-        mock_nx.sys_rmdir = AsyncMock()
+        mock_nx.rmdir = AsyncMock()
         removed = await _delete_demo_files(mock_nx, {"files": []})
         assert removed == 0
 
@@ -255,7 +255,7 @@ class TestDeleteDemoFiles:
         """Errors during deletion should not propagate."""
         mock_nx = MagicMock()
         mock_nx.sys_unlink = AsyncMock(side_effect=Exception("not found"))
-        mock_nx.sys_rmdir = AsyncMock(side_effect=Exception("not empty"))
+        mock_nx.rmdir = AsyncMock(side_effect=Exception("not empty"))
         manifest = {"files": ["/workspace/demo/a.txt"]}
 
         removed = await _delete_demo_files(mock_nx, manifest)

@@ -25,7 +25,7 @@ def mock_fs() -> MagicMock:
     fs.sys_unlink = AsyncMock()
     fs.sys_rename = AsyncMock()
     fs.mkdir = AsyncMock()
-    fs.sys_rmdir = AsyncMock()
+    fs.rmdir = AsyncMock()
     fs.sys_readdir = AsyncMock()
     fs.access = AsyncMock()
     fs.is_directory = AsyncMock()
@@ -308,9 +308,9 @@ class TestDirectoryOperations:
     @pytest.mark.asyncio
     async def test_rmdir(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test rmdir with path scoping."""
-        await scoped_fs.sys_rmdir("/workspace/old_dir", recursive=True)
-        mock_fs.sys_rmdir.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace/old_dir", True, context=None
+        await scoped_fs.rmdir("/workspace/old_dir", recursive=True)
+        mock_fs.rmdir.assert_called_once_with(
+            "/zones/team_12/users/user_1/workspace/old_dir", recursive=True, context=None
         )
 
     @pytest.mark.asyncio

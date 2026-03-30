@@ -84,7 +84,7 @@ class TestRmdir:
 
     def test_rmdir_calls_fs(self, fuse_ops: Any, mock_nexus_fs: MagicMock) -> None:
         fuse_ops.rmdir("/emptydir")
-        mock_nexus_fs.sys_rmdir.assert_called_once_with("/emptydir", recursive=False, context=None)
+        mock_nexus_fs.rmdir.assert_called_once_with("/emptydir", recursive=False, context=None)
 
     def test_rmdir_rejects_raw_root(self, fuse_ops: Any) -> None:
         with pytest.raises(FuseOSError) as exc_info:
@@ -120,7 +120,7 @@ class TestRename:
         mock_nexus_fs.sys_rename.assert_called_once_with(
             "/olddir/a.txt", "/newdir/a.txt", context=None
         )
-        mock_nexus_fs.sys_rmdir.assert_called_once_with("/olddir", recursive=True, context=None)
+        mock_nexus_fs.rmdir.assert_called_once_with("/olddir", recursive=True, context=None)
 
     def test_rename_rejects_raw_paths(self, fuse_ops: Any) -> None:
         with pytest.raises(FuseOSError) as exc_info:

@@ -283,7 +283,7 @@ async def _boot_post_kernel_services(
             wallet_provisioner=services.get("wallet_provisioner"),
             api_key_creator=services.get("api_key_creator"),
             key_service=getattr(nx, "_key_service", None),
-            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
@@ -384,7 +384,7 @@ async def _boot_post_kernel_services(
             api_key_creator=services.get("api_key_creator"),
             backend=_root_backend,
             rebac_manager=services.get("rebac_manager"),
-            rmdir_fn=nx.sys_rmdir if hasattr(nx, "sys_rmdir") else None,
+            rmdir_fn=nx.rmdir if hasattr(nx, "rmdir") else None,
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
             register_workspace_fn=(

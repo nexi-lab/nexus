@@ -126,7 +126,7 @@ class MutationHandler:
 
         await check_namespace_visible(ctx, path)
 
-        await ctx.nexus_fs.sys_rmdir(path, recursive=False, context=ctx.context)
+        await ctx.nexus_fs.rmdir(path, recursive=False, context=ctx.context)
 
         invalidate_dir_cache(ctx, path)
 
@@ -230,4 +230,4 @@ class MutationHandler:
                 await ctx.nexus_fs.sys_rename(src_file, dest_file, context=ctx.context)
 
         logger.debug(f"Removing source directory {old_path}")
-        await ctx.nexus_fs.sys_rmdir(old_path, recursive=True, context=ctx.context)
+        await ctx.nexus_fs.rmdir(old_path, recursive=True, context=ctx.context)

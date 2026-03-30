@@ -174,7 +174,7 @@ class SlimNexusFS:
             path: Directory path to remove.
             recursive: If True, remove contents recursively (rm -rf).
         """
-        await self._kernel.sys_rmdir(path, recursive=recursive, context=self._ctx)
+        await self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     # -- File operations --
 

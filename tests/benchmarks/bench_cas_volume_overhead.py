@@ -158,6 +158,112 @@ def main():
         print(f"    File-per-blob overhead: {file_result['overhead_per_blob']:.1f} bytes/blob")
         print("    This demonstrates the problem volumes solve.")
 
+    # Compaction benchmark (Issue #3408)
+    if vol_result:
+        print(f"\n{'=' * 60}")
+        print("Compaction Benchmark (Issue #3408)")
+        print(f"{'=' * 60}\n")
+        bench_compaction(count)
+
+
+def bench_compaction(count: int = 10_000) -> dict | None:
+    """Benchmark compaction throughput.
+
+    Acceptance criterion from Issue #3408:
+        'compaction of 1GB volume with 50% dead < 10s'
+
+    This benchmark creates a volume with the given number of entries,
+    deletes 50%, and measures compaction time.
+    """
+    try:
+        from nexus_fast import VolumeEngine
+    except ImportError:
+        print("[!] nexus_fast.VolumeEngine not available — compaction benchmark skipped")
+        return None
+
+    blob_size = 100  # bytes per blob
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        vol_dir = Path(tmpdir) / "compact_bench"
+        engine = VolumeEngine(
+            str(vol_dir),
+            target_volume_size=64 * 1024 * 1024,
+            compaction_bytes_per_cycle=0,  # Unlimited
+            compaction_sparsity_threshold=0.3,
+        )
+
+        # Write all entries
+        t0 = time.perf_counter()
+        for i in range(count):
+            h = f"{i:064x}"
+            engine.put(h, b"x" * blob_size)
+        engine.seal_active()
+        write_time = time.perf_counter() - t0
+
+        # Delete 50%
+        delete_count = count // 2
+        t0 = time.perf_counter()
+        for i in range(delete_count):
+            h = f"{i:064x}"
+            engine.delete(h)
+        delete_time = time.perf_counter() - t0
+
+        # Measure disk before compaction
+        disk_before = sum(f.stat().st_blocks * 512 for f in vol_dir.rglob("*") if f.is_file())
+
+        # Run compaction
+        t0 = time.perf_counter()
+        compacted, moved, reclaimed = engine.compact()
+        compact_time = time.perf_counter() - t0
+
+        # Measure disk after compaction
+        disk_after = sum(f.stat().st_blocks * 512 for f in vol_dir.rglob("*") if f.is_file())
+
+        engine.close()
+
+    live_count = count - delete_count
+    throughput_mb = (live_count * blob_size / 1024 / 1024) / max(compact_time, 0.001)
+
+    result = {
+        "count": count,
+        "blob_size": blob_size,
+        "delete_pct": 50,
+        "write_time_s": write_time,
+        "delete_time_s": delete_time,
+        "compact_time_s": compact_time,
+        "volumes_compacted": compacted,
+        "blobs_moved": moved,
+        "bytes_reclaimed": reclaimed,
+        "disk_before": disk_before,
+        "disk_after": disk_after,
+        "throughput_mb_s": throughput_mb,
+    }
+
+    print(f"{'Entries':<30} {count:>15,}")
+    print(f"{'Blob size (bytes)':<30} {blob_size:>15}")
+    print(f"{'Deleted':<30} {delete_count:>15,} (50%)")
+    print(f"{'Write time (s)':<30} {write_time:>15.3f}")
+    print(f"{'Delete time (s)':<30} {delete_time:>15.3f}")
+    print(f"{'Compaction time (s)':<30} {compact_time:>15.3f}")
+    print(f"{'Volumes compacted':<30} {compacted:>15}")
+    print(f"{'Blobs moved':<30} {moved:>15,}")
+    print(f"{'Bytes reclaimed':<30} {reclaimed:>15,}")
+    print(f"{'Disk before (bytes)':<30} {disk_before:>15,}")
+    print(f"{'Disk after (bytes)':<30} {disk_after:>15,}")
+    print(f"{'Throughput (MB/s)':<30} {throughput_mb:>15.1f}")
+
+    # Validate acceptance criterion (scaled to blob_size)
+    # Original criterion: 1GB with 50% dead < 10s
+    # At 100B blobs, 1GB = 10M entries — scale linearly
+    projected_1gb_time = compact_time * (10_000_000 / max(count, 1))
+    print(f"\n{'Projected 1GB time (s)':<30} {projected_1gb_time:>15.1f}", end="")
+    if projected_1gb_time < 10.0:
+        print(" PASS (< 10s)")
+    else:
+        print(" FAIL (> 10s)")
+
+    return result
+
 
 if __name__ == "__main__":
     main()

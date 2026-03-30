@@ -159,11 +159,10 @@ class TestMountPersistence:
         mounts_data = json.loads((tmp_path / "mounts.json").read_text())
         assert len(mounts_data) == 1
 
-    def test_at_restored_by_cp(self, tmp_path, monkeypatch) -> None:
-        """cp should restore --at from persisted mounts.json."""
+    def test_at_restored_by_cp_single_mount(self, tmp_path, monkeypatch) -> None:
+        """cp should restore --at from persisted mounts.json (single mount)."""
         monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
 
-        # Persist a single mount with at
         (tmp_path / "mounts.json").write_text(
             json.dumps([{"uri": "s3://my-bucket", "at": "/data"}])
         )
@@ -175,14 +174,40 @@ class TestMountPersistence:
             runner = CliRunner(env=_env_no_auto_json())
             runner.invoke(main, ["cp", "/data/a.txt", "/data/b.txt"])
 
-        # mount() should be called with at="/data"
-        mock_mount.assert_awaited_once_with("s3://my-bucket", at="/data")
+        mock_mount.assert_awaited_once_with(
+            "s3://my-bucket", mount_overrides={"s3://my-bucket": "/data"}
+        )
+
+    def test_at_restored_by_cp_multiple_mounts(self, tmp_path, monkeypatch) -> None:
+        """cp should restore --at even when there are multiple persisted mounts."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        (tmp_path / "mounts.json").write_text(
+            json.dumps(
+                [
+                    {"uri": "s3://my-bucket", "at": "/data"},
+                    {"uri": "local:///tmp/b", "at": None},
+                ]
+            )
+        )
+
+        mock_mount = _make_mock_mount(["/data", "/local/b"])
+        mock_mount.return_value.copy = AsyncMock(return_value={"size": 10})
+
+        with patch("nexus.fs.mount", mock_mount):
+            runner = CliRunner(env=_env_no_auto_json())
+            runner.invoke(main, ["cp", "/data/a.txt", "/local/b/a.txt"])
+
+        mock_mount.assert_awaited_once_with(
+            "s3://my-bucket",
+            "local:///tmp/b",
+            mount_overrides={"s3://my-bucket": "/data"},
+        )
 
     def test_backward_compat_legacy_format(self, tmp_path, monkeypatch) -> None:
         """Legacy mounts.json with plain URI strings should still work."""
         monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
 
-        # Legacy format: flat list of strings
         (tmp_path / "mounts.json").write_text(json.dumps(["s3://old-bucket"]))
 
         mock_mount = _make_mock_mount(["/s3/old-bucket"])
@@ -192,4 +217,4 @@ class TestMountPersistence:
             runner = CliRunner(env=_env_no_auto_json())
             runner.invoke(main, ["cp", "/s3/old-bucket/a", "/s3/old-bucket/b"])
 
-        mock_mount.assert_awaited_once_with("s3://old-bucket", at=None)
+        mock_mount.assert_awaited_once_with("s3://old-bucket", mount_overrides=None)

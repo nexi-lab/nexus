@@ -706,7 +706,7 @@ class TestAutoDiscovery:
 
         mock_facade = AsyncMock()
 
-        async def mock_mount(*uris, at=None):
+        async def mock_mount(*uris, at=None, mount_overrides=None):
             return mock_facade
 
         with patch("nexus.fs.mount", side_effect=mock_mount):

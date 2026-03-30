@@ -95,6 +95,23 @@ def load_persisted_mounts() -> list[dict]:
     return [_normalize_mount_entry(e) for e in raw]
 
 
+def build_mount_args(entries: list[dict]) -> tuple[list[str], dict[str, str]]:
+    """Convert persisted entries to ``mount()`` arguments.
+
+    Returns:
+        ``(uris, mount_overrides)`` ready to pass to ``mount(*uris, mount_overrides=...)``.
+    """
+    uris: list[str] = []
+    overrides: dict[str, str] = {}
+    for entry in entries:
+        uri = entry["uri"]
+        if uri not in uris:
+            uris.append(uri)
+        if entry.get("at"):
+            overrides[uri] = entry["at"]
+    return uris, overrides
+
+
 def save_persisted_mounts(entries: list[dict], *, merge: bool = True) -> None:
     """Persist mount entries to ``mounts.json``, merging by default.
 

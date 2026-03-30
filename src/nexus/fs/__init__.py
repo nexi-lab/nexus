@@ -52,12 +52,19 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus.fs' has no attribute {name!r}")
 
 
-async def mount(*uris: str, at: str | None = None) -> Any:
+async def mount(
+    *uris: str,
+    at: str | None = None,
+    mount_overrides: dict[str, str] | None = None,
+) -> Any:
     """Mount one or more backends and return a SlimNexusFS facade.
 
     Args:
         *uris: One or more backend URIs (e.g., "s3://bucket", "local://./data").
         at: Optional mount point override (only valid with a single URI).
+        mount_overrides: Optional mapping of URI → custom mount point.
+            Allows per-URI mount points when mounting multiple backends.
+            Takes precedence over ``at``.
 
     Returns:
         SlimNexusFS facade with all backends mounted.
@@ -77,6 +84,12 @@ async def mount(*uris: str, at: str | None = None) -> Any:
         # Custom mount point
         fs = await nexus.fs.mount("s3://my-bucket", at="/data")
 
+        # Per-URI mount points
+        fs = await nexus.fs.mount(
+            "s3://my-bucket", "local://./data",
+            mount_overrides={"s3://my-bucket": "/data"},
+        )
+
         # Context manager (recommended for resource cleanup)
         async with await nexus.fs.mount("s3://my-bucket") as fs:
             content = await fs.read("/s3/my-bucket/file.txt")
@@ -88,6 +101,8 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     if at is not None and len(uris) > 1:
         raise ValueError("'at' override is only valid with a single URI")
 
+    overrides = mount_overrides or {}
+
     # Parse all URIs first (fail fast on invalid input)
     specs = [parse_uri(uri) for uri in uris]
 
@@ -95,7 +110,10 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     mount_points: set[str] = set()
     resolved_mounts = []
     for i, spec in enumerate(specs):
-        mp = derive_mount_point(spec, at=at if i == 0 else None)
+        # Per-URI override from mount_overrides takes precedence,
+        # then at= for single-URI case, then default derivation.
+        uri_at = overrides.get(spec.uri) or (at if i == 0 else None)
+        mp = derive_mount_point(spec, at=uri_at)
         validate_mount_collision(mp, mount_points)
         mount_points.add(mp)
         resolved_mounts.append((spec, mp))
@@ -171,7 +189,11 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     return SlimNexusFS(kernel)
 
 
-def mount_sync(*uris: str, at: str | None = None) -> Any:
+def mount_sync(
+    *uris: str,
+    at: str | None = None,
+    mount_overrides: dict[str, str] | None = None,
+) -> Any:
     """Synchronous version of mount().
 
     Returns a SyncNexusFS wrapper. See mount() for full documentation.
@@ -182,7 +204,7 @@ def mount_sync(*uris: str, at: str | None = None) -> Any:
     """
     from nexus.fs._sync import SyncNexusFS, run_sync
 
-    async_fs = run_sync(mount(*uris, at=at))
+    async_fs = run_sync(mount(*uris, at=at, mount_overrides=mount_overrides))
     return SyncNexusFS(async_fs)
 
 

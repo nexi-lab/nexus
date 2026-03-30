@@ -120,7 +120,7 @@ class NexusFileSystem(AbstractFileSystem):
             FileNotFoundError: If no ``mounts.json`` exists.
             ValueError: If ``mounts.json`` is empty or invalid.
         """
-        from nexus.fs._paths import load_persisted_mounts, mounts_file
+        from nexus.fs._paths import build_mount_args, load_persisted_mounts, mounts_file
 
         mf = mounts_file()
 
@@ -141,9 +141,8 @@ class NexusFileSystem(AbstractFileSystem):
         from nexus.fs import mount
         from nexus.fs._sync import run_sync
 
-        uris = [e["uri"] for e in entries]
-        at = entries[0]["at"] if len(entries) == 1 and entries[0]["at"] else None
-        return cast("SlimNexusFS", run_sync(mount(*uris, at=at)))
+        uris, overrides = build_mount_args(entries)
+        return cast("SlimNexusFS", run_sync(mount(*uris, mount_overrides=overrides or None)))
 
     # -- Protocol handling -----------------------------------------------------
 

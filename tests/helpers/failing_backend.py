@@ -57,11 +57,6 @@ class FailingBackend(Backend):
         self._fail_permanently = fail_permanently
         self._call_count = 0
 
-    def set_metastore(self, metastore: "Any") -> None:
-        """Forward metastore injection to inner backend."""
-        if hasattr(self._inner, "set_metastore"):
-            self._inner.set_metastore(metastore)
-
     @property
     def name(self) -> str:
         return f"failing({self._inner.name})"

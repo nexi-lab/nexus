@@ -120,7 +120,6 @@ class OperationContext:
     # Backend path for path-based connectors (GCS, S3, etc.)
     backend_path: str | None = None
     virtual_path: str | None = None  # Full virtual path with mount prefix (for cache keys)
-    existing_metadata: Any = None  # Pre-write FileMetadata, kernel→driver
 
     # Read Set Tracking for Query Dependencies (Issue #1166)
     read_set: "ReadSet | None" = None

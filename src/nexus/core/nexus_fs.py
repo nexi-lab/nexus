@@ -226,7 +226,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
-            self.router, self._dispatch, metastore=metadata_store
+            self.router, self._dispatch
         )
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
@@ -239,14 +239,6 @@ class NexusFS(  # type: ignore[misc]
         self._sandbox_manager: Any = None
         self._coordination_client: Any = None
         self._event_client: Any = None
-
-        # Wire metastore into pre-existing mounts (added to router before __init__)
-        for _mp in self.router.get_mount_points():
-            _mi = self.router.get_mount(_mp)
-            if _mi is not None and hasattr(_mi.backend, "set_metastore"):
-                _mi.backend.set_metastore(metadata_store)
-            elif _mi is not None and hasattr(_mi.backend, "_metastore"):
-                _mi.backend._metastore = metadata_store
 
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
@@ -2388,7 +2380,6 @@ class NexusFS(  # type: ignore[misc]
             context = OperationContext(
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
-        context = replace(context, existing_metadata=meta)
 
         # DT_EXTERNAL_STORAGE: backend manages own content storage.
         # Remote backends (RPC-based) also persist metadata on the remote server,
@@ -2438,16 +2429,21 @@ class NexusFS(  # type: ignore[misc]
                 # HDFS/GFS pattern: content cleanup is async via background GC.
                 # See: docs/architecture/federation-memo.md §7f Caveat 4.
 
-                # Driver persists metadata inside write_content() (metastore
-                # injected at mount time via DLC).
-                _post_meta = self.metadata.get(path)
-                if _post_meta is None:
-                    raise BackendError(
-                        f"write_content() completed but metadata not found for {path}. "
-                        "Driver must persist metadata during write_content()."
-                    )
-                metadata = _post_meta
+                # Kernel-managed metadata (POSIX generic_write_end pattern):
+                # kernel updates mtime, size, version, etag in VFS lock
+                # after backend.write_content(). Drivers only manage content.
+                metadata = self._build_write_metadata(
+                    path=path,
+                    backend_name=route.backend.name,
+                    content_hash=content_hash,
+                    size=_wr.size if offset > 0 else len(content),
+                    existing_meta=meta,
+                    now=now,
+                    zone_id=zone_id,
+                    context=context,
+                )
                 new_version = metadata.version
+                self.metadata.put(metadata, consistency=consistency)
 
         return _WriteContentResult(
             content_hash=content_hash,

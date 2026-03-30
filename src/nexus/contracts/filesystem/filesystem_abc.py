@@ -97,10 +97,9 @@ class NexusFilesystemABC(ABC):
         offset: int = 0,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Write content to a file (POSIX write(2)).
-
-        Tier 1 kernel primitive — content-only (SRP). Metadata updates
-        are handled by sys_setattr or Tier 2 write(). File must exist.
+        """Writes content with implicit metadata side effects (mtime, size, version, etag) —
+        like POSIX write(2) updating st_mtime/st_size. Metadata updates are kernel-managed
+        in VFS lock.
 
         Args:
             path: Virtual file path.

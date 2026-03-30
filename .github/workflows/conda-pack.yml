@@ -96,6 +96,7 @@ jobs:
         shell: pwsh
         run: |
           choco install protoc --version=3.20.3 -y
+          echo "NEXUS_PROTOC=$(Get-Command protoc | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
           protoc --version
 
       - name: Install protoc (macOS)
@@ -114,6 +115,7 @@ jobs:
             "exec \"${REAL_PROTOC}\" \"\$@\"" \
             > "${RUNNER_TEMP}/bin/protoc"
           chmod +x "${RUNNER_TEMP}/bin/protoc"
+          echo "NEXUS_PROTOC=${RUNNER_TEMP}/bin/protoc" >> "${GITHUB_ENV}"
           echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
           protoc --version
 
@@ -137,6 +139,8 @@ jobs:
 
       - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
         shell: bash -el {0}
+        env:
+          PROTOC: ${{ env.NEXUS_PROTOC }}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \

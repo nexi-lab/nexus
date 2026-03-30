@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
@@ -110,6 +110,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         record_store: "RecordStoreABC | None" = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
+        metastore: "Any | None" = None,
     ):
         try:
             from nexus.backends.transports.gcs_transport import GCSTransport
@@ -131,6 +132,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 bucket_name=bucket_name,
                 prefix=prefix,
                 versioning_enabled=versioning_enabled,
+                metastore=metastore,
             )
             self._gcs_transport = transport
             self._operation_timeout = operation_timeout
@@ -351,6 +353,15 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         content_hash = new_version if new_version else self._compute_hash(content)
+
+        # PAS metadata persistence (driver-owned, like ext4 inode update).
+        # Must happen here because this override bypasses
+        # PathAddressingEngine.write_content which normally calls _commit_metadata.
+        if self._metastore is not None and context is not None:
+            vpath = getattr(context, "virtual_path", None)
+            if vpath:
+                self._commit_metadata(vpath, content_hash, len(content), context)
+
         return WriteResult(content_id=content_hash, size=len(content))
 
     def write_content_with_version_check(

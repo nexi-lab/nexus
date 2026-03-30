@@ -36,7 +36,7 @@ def lock() -> None:
 @REMOTE_API_KEY_OPTION
 @REMOTE_URL_OPTION
 def lock_list(
-    zone_id: str | None,
+    zone_id: str | None,  # noqa: ARG001 — zone filtering via __sys__ TBD
     output_opts: OutputOptions,
     remote_url: str | None,
     remote_api_key: str | None,
@@ -51,7 +51,9 @@ def lock_list(
     timing = CommandTiming()
     try:
         with timing.phase("server"):
-            data = rpc_call(remote_url, remote_api_key, "lock_list", zone_id=zone_id)
+            data = rpc_call(
+                remote_url, remote_api_key, "sys_readdir", path="/__sys__/locks/", details=True
+            )
 
         def _render(d: dict) -> None:
             from rich.table import Table
@@ -108,7 +110,7 @@ def lock_info(
     timing = CommandTiming()
     try:
         with timing.phase("server"):
-            data = rpc_call(remote_url, remote_api_key, "lock_info", path=path)
+            data = rpc_call(remote_url, remote_api_key, "sys_stat", path=path, include_lock=True)
 
         def _render(d: dict) -> None:
             console.print(f"[bold nexus.value]Lock Status: {path}[/bold nexus.value]")
@@ -156,7 +158,7 @@ def lock_release(
     """
     try:
         if force:
-            rpc_call(remote_url, remote_api_key, "lock_force_release", path=path)
+            rpc_call(remote_url, remote_api_key, "sys_unlock", path=path, force=True)
         else:
             if not lock_id:
                 console.print(

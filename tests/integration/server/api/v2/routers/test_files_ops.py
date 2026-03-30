@@ -1,4 +1,4 @@
-"""Tests for rename, copy, rename-bulk, and copy-bulk file operation endpoints."""
+"""Tests for rename, copy, rename-batch, and copy-batch file operation endpoints."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -29,8 +29,8 @@ def mock_fs() -> MagicMock:
     # sys_rename is async
     fs.sys_rename = AsyncMock(return_value={})
 
-    # rename_bulk is async
-    fs.rename_bulk = AsyncMock(return_value={})
+    # rename_batch is async
+    fs.rename_batch = AsyncMock(return_value={})
 
     # sys_stat is async, returns a dict
     fs.sys_stat = AsyncMock(
@@ -364,16 +364,16 @@ class TestCopy:
 
 
 # =============================================================================
-# POST /rename-bulk
+# POST /rename-batch
 # =============================================================================
 
 
-class TestRenameBulk:
-    """Tests for POST /rename-bulk endpoint."""
+class TestRenameBatch:
+    """Tests for POST /rename-batch endpoint."""
 
-    def test_rename_bulk_all_success(self, client: TestClient, mock_fs: MagicMock) -> None:
+    def test_rename_batch_all_success(self, client: TestClient, mock_fs: MagicMock) -> None:
         """All renames succeed."""
-        mock_fs.rename_bulk = AsyncMock(
+        mock_fs.rename_batch = AsyncMock(
             return_value={
                 "/a.txt": {"success": True, "new_path": "/b.txt"},
                 "/c.txt": {"success": True, "new_path": "/d.txt"},
@@ -381,7 +381,7 @@ class TestRenameBulk:
         )
 
         resp = client.post(
-            "/rename-bulk",
+            "/rename-batch",
             json={
                 "operations": [
                     {"source": "/a.txt", "destination": "/b.txt"},
@@ -396,9 +396,9 @@ class TestRenameBulk:
         assert body["results"][0]["source"] == "/a.txt"
         assert body["results"][0]["destination"] == "/b.txt"
 
-    def test_rename_bulk_partial_failure(self, client: TestClient, mock_fs: MagicMock) -> None:
+    def test_rename_batch_partial_failure(self, client: TestClient, mock_fs: MagicMock) -> None:
         """One rename fails, others succeed."""
-        mock_fs.rename_bulk = AsyncMock(
+        mock_fs.rename_batch = AsyncMock(
             return_value={
                 "/a.txt": {"success": True, "new_path": "/b.txt"},
                 "/missing.txt": {"success": False, "error": "Source not found"},
@@ -406,7 +406,7 @@ class TestRenameBulk:
         )
 
         resp = client.post(
-            "/rename-bulk",
+            "/rename-batch",
             json={
                 "operations": [
                     {"source": "/a.txt", "destination": "/b.txt"},
@@ -421,25 +421,25 @@ class TestRenameBulk:
         assert results[1]["success"] is False
         assert results[1]["error"] == "Source not found"
 
-    def test_rename_bulk_empty_operations(self, client: TestClient, mock_fs: MagicMock) -> None:
+    def test_rename_batch_empty_operations(self, client: TestClient, mock_fs: MagicMock) -> None:
         """Empty operations list returns empty results."""
-        mock_fs.rename_bulk = AsyncMock(return_value={})
+        mock_fs.rename_batch = AsyncMock(return_value={})
 
-        resp = client.post("/rename-bulk", json={"operations": []})
+        resp = client.post("/rename-batch", json={"operations": []})
         assert resp.status_code == 200
         assert resp.json()["results"] == []
 
-    def test_rename_bulk_exceeds_max(self, client: TestClient) -> None:
+    def test_rename_batch_exceeds_max(self, client: TestClient) -> None:
         """More than 50 operations returns 422 validation error."""
         ops = [{"source": f"/s{i}.txt", "destination": f"/d{i}.txt"} for i in range(51)]
-        resp = client.post("/rename-bulk", json={"operations": ops})
+        resp = client.post("/rename-batch", json={"operations": ops})
         assert resp.status_code == 422
 
-    def test_rename_bulk_permission_denied(self, client: TestClient, mock_fs: MagicMock) -> None:
+    def test_rename_batch_permission_denied(self, client: TestClient, mock_fs: MagicMock) -> None:
         """403 when entire bulk operation is denied."""
-        mock_fs.rename_bulk = AsyncMock(side_effect=NexusPermissionError("Access denied"))
+        mock_fs.rename_batch = AsyncMock(side_effect=NexusPermissionError("Access denied"))
         resp = client.post(
-            "/rename-bulk",
+            "/rename-batch",
             json={
                 "operations": [{"source": "/a.txt", "destination": "/b.txt"}],
             },

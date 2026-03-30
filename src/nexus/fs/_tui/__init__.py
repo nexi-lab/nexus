@@ -1388,6 +1388,17 @@ class PlaygroundApp(App[None]):
         """Toggle command input."""
         self.command_visible = not self.command_visible
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:  # noqa: ARG002
+        """Disable non-command actions when command mode is active."""
+        if self.command_visible:
+            return action in {
+                "toggle_command",
+                "submit_command",
+                "command_backspace",
+                "cancel_command",
+            }
+        return True
+
     async def action_show_connector_picker(self) -> None:
         """Open the interactive connector picker."""
         await self._show_connector_picker("Mount another connector")

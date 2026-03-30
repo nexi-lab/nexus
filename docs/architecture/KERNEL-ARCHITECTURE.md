@@ -98,6 +98,10 @@ the appropriate methods during `NexusFS.bootstrap()` / `NexusFS.close()`.
 `swap_service()` supports **all services** (#1452). Unified path:
 refcount drain → unhook old → replace → rehook new.
 
+**AgentRegistry** (`core.agent_registry`): In-memory agent process table
+(`task_struct` analogue). Not a kernel primitive — accessed via
+`nx.service("agent_registry")`. See `core/agent_registry.py`.
+
 **Kernel DI patterns** (two mechanisms, never reads service containers directly):
 
 | Pattern | Kernel `__init__` | Factory `_do_link()` | Example |
@@ -149,7 +153,7 @@ The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesy
 
 | Tier | Content | Caller responsibility |
 |------|---------|----------------------|
-| **Tier 1 (abstract)** | 10 `sys_*` kernel syscalls | Implementors MUST override |
+| **Tier 1 (abstract)** | `sys_*` kernel syscalls | Implementors MUST override |
 | **Tier 2 (concrete)** | Convenience methods composing Tier 1 (`mkdir`, `rmdir`, `read`, `write`, …) | Inherit — no override needed |
 
 Relationship: POSIX spec (contract) vs Linux kernel (implementation) — clients
@@ -161,14 +165,14 @@ program against the contract, kernel implements it.
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
-**13 kernel syscalls**, all POSIX-aligned, all path-addressed:
+Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 | Plane | Syscalls |
 |-------|----------|
-| **Metadata** (8) | `sys_stat`, `sys_setattr`, `sys_rmdir`, `sys_readdir`, `sys_access`, `sys_rename`, `sys_unlink`, `sys_is_directory` |
-| **Content** (2) | `sys_read` (pread), `sys_write` (pwrite) |
-| **Locking** (2) | `sys_lock` (flock), `sys_unlock` |
-| **Watch** (1) | `sys_watch` (inotify) |
+| **Metadata** | `sys_stat`, `sys_setattr`, `sys_rename`, `sys_unlink`, `sys_readdir` |
+| **Content** | `sys_read` (pread), `sys_write` (pwrite), `sys_copy` |
+| **Locking** | `sys_lock` (flock), `sys_unlock` |
+| **Watch** | `sys_watch` (inotify) |
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
@@ -194,7 +198,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `locked()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `lock()`, `locked()`, `glob()`, `grep()`, `service()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
@@ -208,7 +212,7 @@ under lock, then reads back metadata for event dispatch. Metastore is injected
 into drivers at mount time via ``DriverLifecycleCoordinator``.
 ``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first) consistency.
 
-### 2.4 Syscall Extension Model (VFS Dispatch)
+### 2.4 VFS Dispatch (KernelDispatch)
 
 The kernel provides callback-based dispatch at 6 VFS operation points (read,
 write, delete, rename, mkdir, rmdir) plus driver lifecycle events (mount,
@@ -366,7 +370,6 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). One-dimension model: PersistentService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
-| **AgentRegistry** | `core.agent_registry` | `task_struct` list | In-memory agent process table. Sentinel — `None` in `__init__`, injected by factory. Details in §4.4 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | Kernel file change notification + immutable mutation records. FileWatcher: kernel-owned local OBSERVE waiters + kernel-knows `RemoteWatchProtocol`. FileEvent: frozen dataclass. Details in §4.3 |
 | **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory lock manager. Kernel-owned local (LocalLockManager via VFSSemaphore) + kernel-knows remote (RaftLockManager via federation `_upgrade_lock_manager()`). Exposed via `sys_lock`/`sys_unlock` syscalls. Details in §4.5 |
 
@@ -430,19 +433,7 @@ See `federation-memo.md` §7j for design rationale.
 | FileWatcher (kernel-knows) | Optional `RemoteWatchProtocol` for distributed watch, set via `set_remote_watcher()` |
 | Emission point | Always AFTER lock release |
 
-### 4.4 AgentRegistry — Kernel Process Table
-
-| Property | Value |
-|----------|-------|
-| Linux analogue | `task_struct` list (`for_each_process()`) |
-| Package | `core.agent_registry` |
-| Storage | In-memory dict (process heap) — no persistence |
-| Lifecycle | Sentinel (`None` in `__init__`), factory injects at link-time; `None` = graceful degrade |
-
-In-memory registry of all active agent descriptors (spawn, status, close).
-Profiles without agents (e.g. REMOTE) operate without it.
-
-### 4.5 LockManager — Kernel Advisory Lock
+### 4.4 LockManager — Kernel Advisory Lock
 
 | Property | Value |
 |----------|-------|
@@ -579,7 +570,7 @@ which bricks to enable and which drivers to inject.
 | Profile | Target | Metastore | Linux Analogue |
 |---------|--------|-----------|----------------|
 | **slim** | Bare minimum runnable | redb (embedded) | initramfs |
-| **cluster** | Minimal multi-node (Raft + federation, no auth) | redb (Raft) | CoreOS |
+| **cluster** | Minimal multi-node (IPC + federation, no auth) | redb (Raft) | CoreOS |
 | **embedded** | MCU, WASM (<1 MB) | redb (embedded) | BusyBox |
 | **lite** | Pi, Jetson, mobile | redb (embedded) | Alpine |
 | **full** | Desktop, laptop | redb (embedded) | Ubuntu Desktop |

@@ -229,20 +229,15 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
 
     async def _run() -> dict:
         import json as json_mod
-        import os
-        import tempfile
 
         from nexus.fs import mount
+        from nexus.fs._paths import mounts_file
 
         # Load previously persisted mount URIs from mounts.json
         # (written by mount() on every invocation).
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            tempfile.gettempdir(), "nexus-fs"
-        )
         persisted: list[str] = []
-        mounts_file = os.path.join(state_dir, "mounts.json")
         try:
-            with open(mounts_file) as f:
+            with open(mounts_file()) as f:
                 persisted = json_mod.load(f)
         except (OSError, json_mod.JSONDecodeError):
             pass

@@ -450,61 +450,9 @@ def _boot_pre_kernel_services(
     # AgentRegistry is lazy-constructed via register_factory().
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 
-    # =====================================================================
-    # Infrastructure: event bus (moved from _bricks.py)
-    # Lock manager is kernel-owned (LocalLockManager by default,
-    # upgraded to RaftLockManager at link time if federation is available).
-    # =====================================================================
-    event_bus: Any = None
-    if not _on("ipc"):
-        logger.debug("[BOOT:SYSTEM] IPC/EventBus disabled by profile")
-    elif ctx.dist.enable_events:
-        # Inline event bus creation (previously in _create_distributed_infra)
-        _settings_store = None
-        try:
-            from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
-
-            _settings_store = MetastoreSettingsStore(ctx.metadata_store)
-        except Exception:
-            logger.debug(
-                "MetastoreSettingsStore unavailable; event bus checkpoints will not persist"
-            )
-
-        try:
-            if ctx.dist.event_bus_backend == "nats" and ctx.dist.enable_events:
-                from nexus.services.event_bus.factory import create_event_bus
-
-                event_bus = create_event_bus(
-                    backend="nats",
-                    nats_url=ctx.dist.nats_url,
-                    record_store=ctx.record_store,
-                    settings_store=_settings_store,
-                )
-                logger.info(
-                    "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
-                    ctx.dist.nats_url,
-                )
-            elif ctx.dist.enable_events:
-                from nexus.lib.env import get_dragonfly_url, get_redis_url
-
-                _coord_url = ctx.dist.coordination_url or get_redis_url()
-                _event_url = _coord_url or get_dragonfly_url()
-                if _event_url:
-                    from nexus.cache.dragonfly import DragonflyClient
-                    from nexus.services.event_bus import RedisEventBus
-
-                    _event_client = DragonflyClient(url=_event_url)
-                    event_bus = RedisEventBus(
-                        _event_client,
-                        record_store=ctx.record_store,
-                        settings_store=_settings_store,
-                    )
-                    logger.info(
-                        "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
-                        _event_url,
-                    )
-        except ImportError as e:
-            logger.warning("Could not initialize distributed event system: %s", e)
+    # EventBus removed from system boot — it's a self-contained lib.
+    # Created on demand by orchestrator when DistributedConfig.enable_events is set.
+    # See services/event_bus/factory.py.
 
     # =====================================================================
     # Assemble result
@@ -518,8 +466,6 @@ def _boot_pre_kernel_services(
         "permission_enforcer": permission_enforcer,
         "write_observer": write_observer,
         # Former-kernel degradable
-        # dir_visibility_cache, hierarchy_manager, namespace_manager
-        # now internalized into ReBACManager — not in result dict.
         "deferred_permission_buffer": deferred_permission_buffer,
         "workspace_registry": workspace_registry,
         "mount_manager": mount_manager,
@@ -533,9 +479,6 @@ def _boot_pre_kernel_services(
         "context_branch_service": context_branch_service,
         "zone_lifecycle": zone_lifecycle,
         "scheduler_service": scheduler_service,
-        # Kernel-knows: event_bus stored on NexusFS._event_bus (not a service).
-        # Wired into FileWatcher (remote_watcher) + EventBusObserver by orchestrator.
-        "_event_bus": event_bus,
     }
 
     elapsed = time.perf_counter() - t0

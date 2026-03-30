@@ -600,12 +600,19 @@ async def _register_vfs_hooks(
     # Remote watcher (EventBus) wired later by federation or other services.
     await _enlist("file_watcher", nx._file_watcher)
 
-    # EventBus: kernel-knows (not a service). Stored on NexusFS._event_bus,
-    # wired into FileWatcher (remote_watcher) + EventBusObserver (publish side).
-    _event_bus = _ss.pop("_event_bus", None)
-    if _event_bus is not None:
-        nx._event_bus = _event_bus
-        nx._file_watcher.set_remote_watcher(_event_bus)
+    # EventBus: self-contained lib, created on demand.
+    # Kernel-knows: stored on NexusFS._event_bus, wired into FileWatcher + EventBusObserver.
+    _event_bus = None
+    _dist_cfg = getattr(nx, "_distributed_config", None)
+    if _dist_cfg and getattr(_dist_cfg, "enable_events", False):
+        try:
+            from nexus.services.event_bus.factory import create_event_bus
+
+            _event_bus = create_event_bus()
+            nx._event_bus = _event_bus
+            nx._file_watcher.set_remote_watcher(_event_bus)
+        except Exception as exc:
+            logger.warning("EventBus creation skipped: %s", exc)
 
     # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
     # When event_bus is None (no distributed infra), the observer is a no-op.

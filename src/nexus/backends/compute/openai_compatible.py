@@ -141,6 +141,15 @@ class OpenAICompatibleBackend(CASAddressingEngine):
 
         super().__init__(transport, backend_name="openai_compatible")
 
+        # Wire message-boundary CDC for LLM conversation dedup (Issue #1826).
+        # Must be after super().__init__ since MessageBoundaryStrategy needs
+        # self as CASAddressingEngine.
+        from nexus.backends.compute.message_chunking import MessageBoundaryStrategy
+        from nexus.backends.engines.cdc import ChunkingStrategy
+
+        cdc: ChunkingStrategy = MessageBoundaryStrategy(self)
+        self._cdc = cdc
+
     @property
     def name(self) -> str:
         return "openai_compatible"

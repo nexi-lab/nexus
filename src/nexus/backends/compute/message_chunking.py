@@ -194,6 +194,23 @@ class MessageBoundaryStrategy:
         manifest = ChunkedReference.from_json(data)
         return manifest.total_size
 
+    def write_chunked_partial(
+        self,
+        old_manifest_hash: str,
+        buf: bytes,
+        offset: int,
+        context: "OperationContext | None" = None,
+    ) -> str:
+        """Partial write — not supported for message-boundary chunking.
+
+        LLM conversations are always written as complete message arrays.
+        Partial byte-offset writes don't map to message boundaries.
+        """
+        raise NotImplementedError(
+            "MessageBoundaryStrategy does not support partial writes. "
+            "LLM conversations must be written as complete message arrays."
+        )
+
     def delete_chunked(self, content_hash: str, context: "OperationContext | None" = None) -> None:
         """Delete manifest + all chunks unconditionally."""
         import contextlib

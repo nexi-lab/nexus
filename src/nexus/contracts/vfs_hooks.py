@@ -354,9 +354,23 @@ class VFSPathResolver(Protocol):
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
 
     # Metadata routing (Linux inode_operations.setattr analogue).
-    # Optional — resolvers that handle metadata implement try_get/try_put/try_list.
-    # KernelDispatch uses getattr() with lambda fallback, so missing = no-op.
-    # NOT declared here to avoid mypy treating them as abstract.
+    # Default returns None = "not handled, pass to next resolver".
+    def try_get(self, path: str) -> Any | None:  # noqa: ARG002
+        """Route metadata read to correct store. Returns FileMetadata or None."""
+        return None
+
+    def try_put(self, path: str, metadata: Any) -> int | None:  # noqa: ARG002
+        """Route metadata write to correct store. Returns write token or None."""
+        return None
+
+    def try_list(
+        self,
+        prefix: str,  # noqa: ARG002
+        recursive: bool = True,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> list[Any] | None:
+        """Route metadata list to correct store(s). Returns list or None."""
+        return None
 
 
 # ---------------------------------------------------------------------------

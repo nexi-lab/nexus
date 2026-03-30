@@ -19,7 +19,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.types import Permission
-from nexus.lib.path_utils import parent_path
+from nexus.core.path_utils import parent_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable

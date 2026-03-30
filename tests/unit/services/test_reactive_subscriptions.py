@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from nexus.lib.path_utils import path_matches_pattern
+from nexus.core.path_utils import path_matches_pattern
 from nexus.services.event_bus.subscriptions import (
     ReactiveSubscriptionManager,
     Subscription,

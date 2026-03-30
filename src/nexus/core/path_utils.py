@@ -7,6 +7,7 @@ and security validation to eliminate DRY violations across the codebase
 All functions are pure and return immutable results (tuples).
 """
 
+import functools
 import re
 
 from nexus.contracts.exceptions import InvalidPathError
@@ -201,3 +202,73 @@ def normalize_path(path: str) -> str:
     if path != "/" and path.endswith("/"):
         path = path.rstrip("/")
     return path
+
+
+# ── Glob matching + helpers ──────────────────────────────────────────────
+
+
+@functools.lru_cache(maxsize=256)
+def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
+    """Compile a glob pattern with ** into a cached regex."""
+    regex_pattern = ""
+    i = 0
+    while i < len(pattern):
+        if pattern[i : i + 2] == "**":
+            regex_pattern += ".*"
+            i += 2
+            if i < len(pattern) and pattern[i] == "/":
+                regex_pattern += "/?"
+                i += 1
+        elif pattern[i] == "*":
+            regex_pattern += "[^/]*"
+            i += 1
+        elif pattern[i] == "?":
+            regex_pattern += "."
+            i += 1
+        elif pattern[i] in r"\.[]{}()+^$|":
+            regex_pattern += "\\" + pattern[i]
+            i += 1
+        else:
+            regex_pattern += pattern[i]
+            i += 1
+    try:
+        return re.compile("^" + regex_pattern + "$")
+    except re.error:
+        return None
+
+
+def path_matches_pattern(path: str, pattern: str) -> bool:
+    """Check if *path* matches a glob pattern (``*``, ``**``, ``?``)."""
+    compiled = _compile_glob_pattern(pattern)
+    if compiled is None:
+        return False
+    return bool(compiled.match(path))
+
+
+def parent_path(path: str) -> str | None:
+    """Return the parent directory of *path*, or ``None`` for root."""
+    if path == "/":
+        return None
+    path = path.rstrip("/")
+    last_slash = path.rfind("/")
+    if last_slash == 0:
+        return "/"
+    return path[:last_slash] if last_slash > 0 else None
+
+
+def unscope_internal_path(path: str) -> str:
+    """Strip internal zone/tenant/user prefix from a storage path."""
+    parts = path.lstrip("/").split("/")
+    skip = 0
+    if parts and parts[0].startswith("tenant:"):
+        skip = 1
+        if len(parts) > 1 and parts[1].startswith("user:"):
+            skip = 2
+    elif parts and parts[0] == "zone" and len(parts) >= 2:
+        skip = 2
+        if len(parts) > 2 and parts[2].startswith("user:"):
+            skip = 3
+    if skip == 0:
+        return path if path else "/"
+    remaining = "/".join(parts[skip:])
+    return f"/{remaining}" if remaining else "/"

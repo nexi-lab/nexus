@@ -42,7 +42,7 @@ from nexus.contracts.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
 )
-from nexus.lib.path_utils import validate_path as _normalize_path
+from nexus.core.path_utils import validate_path as _normalize_path
 
 logger = logging.getLogger(__name__)
 

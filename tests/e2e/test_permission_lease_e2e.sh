@@ -185,7 +185,7 @@ info "Running in-container verification of lease table with new code"
 CONTAINER="nexus-39db7244-nexus-1"
 VERIFY=$(docker exec "$CONTAINER" python3 -c "
 from nexus.bricks.rebac.cache.permission_lease import PermissionLeaseTable
-from nexus.lib.path_utils import parent_path
+from nexus.core.path_utils import parent_path
 from nexus.lib.lease import ManualClock
 
 # Basic stamp/check

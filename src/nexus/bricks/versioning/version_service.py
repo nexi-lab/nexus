@@ -577,7 +577,7 @@ class VersionService:
         Raises:
             InvalidPathError: If path is invalid
         """
-        from nexus.lib.path_utils import validate_path
+        from nexus.core.path_utils import validate_path
 
         return validate_path(path, allow_root=True)
 

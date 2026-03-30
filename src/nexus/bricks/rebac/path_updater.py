@@ -64,7 +64,7 @@ class PathUpdater:
         # unscoped and others preserve /zone/{id}/..., so the rewrite logic
         # below updates whichever representation each tuple currently uses.
         try:
-            from nexus.lib.path_utils import unscope_internal_path
+            from nexus.core.path_utils import unscope_internal_path
 
             old_path = unscope_internal_path(old_path)
             new_path = unscope_internal_path(new_path)

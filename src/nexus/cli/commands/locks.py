@@ -155,14 +155,15 @@ def lock_release(
         nexus lock release /data/shared.db --force
     """
     try:
-        rpc_call(
-            remote_url,
-            remote_api_key,
-            "lock_release",
-            path=path,
-            lock_id=lock_id,
-            force=force,
-        )
+        if force:
+            rpc_call(remote_url, remote_api_key, "lock_force_release", path=path)
+        else:
+            if not lock_id:
+                console.print(
+                    "[nexus.error]--lock-id required (use --force for admin release)[/nexus.error]"
+                )
+                raise SystemExit(1)
+            rpc_call(remote_url, remote_api_key, "sys_unlock", path=path, lock_id=lock_id)
         console.print(f"[nexus.success]Lock released:[/nexus.success] {path}")
     except Exception as e:
         console.print(f"[nexus.error]Error:[/nexus.error] {e}")

@@ -1,7 +1,7 @@
 """LockMixin — Advisory locking syscalls (POSIX flock equivalent).
 
 Tier 1: sys_lock, sys_unlock (single try-acquire / release)
-Tier 2: lock_info, lock_list, lock_extend, lock_force_release, lock_release
+Tier 2: lock_acquire, lock_info, lock_list, lock_extend, lock_force_release
 
 Delegates to kernel AdvisoryLockManager (local or Raft-backed).
 """
@@ -128,6 +128,26 @@ class LockMixin:
             "lock_info": (await self.lock_info(path)) if result.lock_info else None,
         }
 
+    @rpc_expose(description="Acquire advisory lock (Tier 2: dict result for RPC)")
+    async def lock_acquire(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Tier 2 wrapper over sys_lock — returns structured dict for RPC.
+
+        sys_lock returns raw str|None which gRPC Call can't serialize.
+        This wraps it in {"acquired": bool, "lock_id": str|None}.
+        """
+        lock_id = await self.sys_lock(
+            path, mode=mode, ttl=ttl, max_holders=max_holders, context=context
+        )
+        return {"acquired": lock_id is not None, "lock_id": lock_id}
+
     @rpc_expose(description="Force-release all holders of a lock (admin)")
     async def lock_force_release(
         self,
@@ -138,26 +158,6 @@ class LockMixin:
         """Force-release all holders (Tier 2 admin operation)."""
         path = self._validate_path(path)
         released = await self._lock_manager.force_release(path)
-        return {"released": released}
-
-    @rpc_expose(description="Release a lock (normal or force)")
-    async def lock_release(
-        self,
-        path: str,
-        lock_id: str | None = None,
-        force: bool = False,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Release a lock — dispatches to sys_unlock or lock_force_release.
-
-        CLI-friendly: single method handles both normal and force release.
-        """
-        if force:
-            return await self.lock_force_release(path)
-        if not lock_id:
-            raise ValueError("lock_id is required for non-force release")
-        released = await self.sys_unlock(path, lock_id)
         return {"released": released}
 
     # ── Distributed lock helpers (sync bridge for write(lock=True)) ──

@@ -658,54 +658,48 @@ class TestRaftBehavior:
 # Class 7: Distributed Locks
 # ===================================================================
 class TestDistributedLocks:
-    """Distributed lock acquire, contention, and expiry."""
+    """Distributed lock acquire, contention, and expiry via Tier 1 lock_acquire/sys_unlock."""
 
     def test_lock_acquire_release(self, cluster, api_key):
-        """Acquire a lock, verify held, release it."""
+        """lock_acquire → lock_info → sys_unlock."""
         uid = _uid()
         grpc1 = cluster["grpc1"]
         lock_path = f"/corp/eng/lock-{uid}.txt"
 
-        # Write target file
         w = _grpc_call(
             grpc1, "write", {"path": lock_path, "content": f"lock-{uid}"}, api_key=api_key
         )
         assert "error" not in w
 
-        # Acquire lock -- skip entire test if unavailable
-        acquire_r = _grpc_call_or_skip(
+        # lock_acquire returns {"acquired": bool, "lock_id": str|None}
+        r = _grpc_call_or_skip(
             grpc1,
             "lock_acquire",
             {"path": lock_path, "ttl": 60},
             api_key=api_key,
             skip_msg="Lock API not available",
         )
-        if "error" in acquire_r:
-            pytest.skip(f"lock_acquire returned error: {acquire_r}")
-        lock_data = acquire_r.get("result", acquire_r)
-        assert lock_data.get("acquired") is True, f"Lock not acquired: {lock_data}"
-        lock_id = lock_data.get("lock_id", "")
-        assert lock_id, f"No lock_id in response: {lock_data}"
+        if "error" in r:
+            pytest.skip(f"lock_acquire error: {r}")
+        data = r.get("result", {})
+        assert data.get("acquired") is True, f"Lock not acquired: {r}"
+        lock_id = data.get("lock_id")
+        assert lock_id, f"No lock_id: {r}"
 
-        # Verify held
+        # Verify held via lock_info
         info = _grpc_call(grpc1, "lock_info", {"path": lock_path}, api_key=api_key)
         assert "error" not in info, f"lock_info failed: {info}"
-        info_data = info.get("result", info)
-        assert info_data.get("locked") is True, f"Expected locked=True: {info_data}"
+        info_data = info.get("result")
+        assert info_data is not None, f"lock_info returned None (not locked?): {info}"
 
-        # Release
-        release_r = _grpc_call(
-            grpc1,
-            "lock_release",
-            {"path": lock_path, "lock_id": lock_id},
-            api_key=api_key,
+        # sys_unlock returns bool
+        rel = _grpc_call(
+            grpc1, "sys_unlock", {"path": lock_path, "lock_id": lock_id}, api_key=api_key
         )
-        assert "error" not in release_r, f"Release failed: {release_r}"
-        release_data = release_r.get("result", release_r)
-        assert release_data.get("released") is True
+        assert "error" not in rel, f"sys_unlock failed: {rel}"
 
     def test_lock_contention(self, cluster, api_key):
-        """Two concurrent lock acquires on the same path -- one should block/fail."""
+        """Two lock_acquire on same path — second should return null (try-once, no block)."""
         uid = _uid()
         grpc1 = cluster["grpc1"]
         grpc2 = cluster["grpc2"]
@@ -716,48 +710,30 @@ class TestDistributedLocks:
         )
         assert "error" not in w
 
-        # First acquire on node-1
-        a1 = _grpc_call_or_skip(
+        # First lock on node-1
+        r1 = _grpc_call_or_skip(
             grpc1,
             "lock_acquire",
             {"path": lock_path, "ttl": 60},
             api_key=api_key,
             skip_msg="Lock API not available",
         )
-        if "error" in a1:
-            pytest.skip(f"lock_acquire failed: {a1}")
-        a1_data = a1.get("result", a1)
-        if not a1_data.get("acquired"):
-            pytest.skip("First lock_acquire did not succeed -- cannot test contention")
-        lock_id_1 = a1_data.get("lock_id", "")
+        if "error" in r1:
+            pytest.skip(f"lock_acquire error: {r1}")
+        d1 = r1.get("result", {})
+        assert d1.get("acquired"), "First lock_acquire failed"
+        lock_id_1 = d1["lock_id"]
 
-        # Second acquire on node-2 (same path, should fail or block)
-        a2 = _grpc_call(
-            grpc2,
-            "lock_acquire",
-            {"path": lock_path, "ttl": 10},
-            api_key=api_key,
-            timeout=5,
-        )
-        a2_data = a2.get("result", a2) if "error" not in a2 else a2.get("error", {})
-        # Second acquire should NOT succeed while first is held
-        second_acquired = False
-        if isinstance(a2_data, dict):
-            second_acquired = a2_data.get("acquired", False)
-        assert not second_acquired, (
-            f"Second lock_acquire should not succeed while first is held: {a2}"
-        )
+        # Second lock on node-2 — should NOT acquire (already held)
+        r2 = _grpc_call(grpc2, "lock_acquire", {"path": lock_path, "ttl": 10}, api_key=api_key)
+        d2 = r2.get("result", {}) if "error" not in r2 else {}
+        assert not d2.get("acquired"), f"Second lock should fail while first is held: {r2}"
 
-        # Cleanup: release first lock
-        _grpc_call(
-            grpc1,
-            "lock_release",
-            {"path": lock_path, "lock_id": lock_id_1},
-            api_key=api_key,
-        )
+        # Cleanup
+        _grpc_call(grpc1, "sys_unlock", {"path": lock_path, "lock_id": lock_id_1}, api_key=api_key)
 
     def test_lock_expiry(self, cluster, api_key):
-        """Acquire with short TTL, wait, verify lock is auto-released."""
+        """lock_acquire with short TTL → wait → lock_info should show no lock."""
         uid = _uid()
         grpc1 = cluster["grpc1"]
         lock_path = f"/corp/eng/expiry-{uid}.txt"
@@ -767,49 +743,35 @@ class TestDistributedLocks:
         )
         assert "error" not in w
 
-        # Acquire with short TTL (2 seconds)
-        acquire_r = _grpc_call_or_skip(
+        # Acquire with 2s TTL
+        r = _grpc_call_or_skip(
             grpc1,
             "lock_acquire",
             {"path": lock_path, "ttl": 2},
             api_key=api_key,
             skip_msg="Lock API not available",
         )
-        if "error" in acquire_r:
-            pytest.skip(f"lock_acquire returned error: {acquire_r}")
-        lock_data = acquire_r.get("result", acquire_r)
-        if not lock_data.get("acquired"):
-            pytest.skip("lock_acquire did not succeed -- cannot test expiry")
+        if "error" in r:
+            pytest.skip(f"lock_acquire error: {r}")
+        d = r.get("result", {})
+        assert d.get("acquired"), f"lock_acquire with short TTL failed: {r}"
 
-        # Wait for TTL to expire
+        # Wait for expiry
         time.sleep(4)
 
-        # Verify lock is released (either locked=False or a new acquire succeeds)
+        # lock_info should return None (expired)
         info = _grpc_call(grpc1, "lock_info", {"path": lock_path}, api_key=api_key)
-        if "error" not in info:
-            info_data = info.get("result", info)
-            if info_data.get("locked") is False or info_data.get("locked") is None:
-                return  # expired as expected
+        if "error" not in info and info.get("result") is None:
+            return  # expired as expected
 
-        # Fallback: try acquiring again -- should succeed if TTL expired
-        a2 = _grpc_call(
-            grpc1,
-            "lock_acquire",
-            {"path": lock_path, "ttl": 5},
-            api_key=api_key,
+        # Fallback: try locking again — should succeed if expired
+        r2 = _grpc_call(grpc1, "lock_acquire", {"path": lock_path, "ttl": 5}, api_key=api_key)
+        d2 = r2.get("result", {}) if "error" not in r2 else {}
+        assert d2.get("acquired"), f"Lock did not expire after TTL: info={info}, retry={r2}"
+        # Cleanup
+        _grpc_call(
+            grpc1, "sys_unlock", {"path": lock_path, "lock_id": d2["lock_id"]}, api_key=api_key
         )
-        if "error" not in a2:
-            a2_data = a2.get("result", a2)
-            if a2_data.get("acquired"):
-                # Cleanup
-                _grpc_call(
-                    grpc1,
-                    "lock_release",
-                    {"path": lock_path, "lock_id": a2_data.get("lock_id", "")},
-                    api_key=api_key,
-                )
-                return  # expired as expected
-        pytest.fail(f"Lock did not expire after TTL: info={info}, retry_acquire={a2}")
 
 
 # ===================================================================

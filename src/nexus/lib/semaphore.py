@@ -1,4 +1,4 @@
-"""VFS Counting Semaphore with Rust acceleration (Issue #908).
+"""VFS Counting Semaphore with Rust acceleration.
 
 Provides name-addressed counting semaphore with holder tracking, SSOT
 max_holders enforcement, TTL expiry, and UUID holder IDs.  This is the

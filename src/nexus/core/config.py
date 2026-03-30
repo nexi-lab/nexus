@@ -173,7 +173,6 @@ class WiredServices:
     oauth_service: Any = None
     search_service: Any = None
     share_link_service: Any = None
-    events_service: Any = None
     # Versioning services (Issue #882: session-managed facades)
     time_travel_service: Any = None
     operations_service: Any = None

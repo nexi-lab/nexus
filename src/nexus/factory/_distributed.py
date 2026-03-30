@@ -1,7 +1,7 @@
 """Distributed infrastructure — workflow engine.
 
 Event bus creation is inlined in _system.py._boot_services().
-Lock manager is owned by EventsService (LocalLockManager by default,
+Lock manager is kernel-owned (LocalLockManager by default,
 upgraded to RaftLockManager at link time via _lifecycle.py).
 """
 

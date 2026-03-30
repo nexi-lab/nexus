@@ -452,7 +452,7 @@ def _boot_pre_kernel_services(
 
     # =====================================================================
     # Infrastructure: event bus (moved from _bricks.py)
-    # Lock manager is now owned by EventsService (LocalLockManager by default,
+    # Lock manager is kernel-owned (LocalLockManager by default,
     # upgraded to RaftLockManager at link time if federation is available).
     # =====================================================================
     event_bus: Any = None

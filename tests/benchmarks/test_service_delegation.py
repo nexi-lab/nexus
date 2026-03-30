@@ -361,12 +361,6 @@ class TestServiceInstantiation:
         mock_gw = MagicMock()
         benchmark(ShareLinkService, gateway=mock_gw, enforce_permissions=True)
 
-    def test_events_service_construction(self, benchmark):
-        """Benchmark EventsService construction."""
-        from nexus.services.lifecycle.events_service import EventsService
-
-        benchmark(EventsService)
-
     def test_version_service_construction(self, benchmark):
         """Benchmark VersionService construction."""
         from nexus.bricks.versioning.version_service import VersionService

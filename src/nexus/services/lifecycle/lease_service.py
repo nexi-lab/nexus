@@ -4,9 +4,9 @@ Owns the ``LocalLeaseManager`` lifecycle: construction, zone-scoped wiring,
 and shutdown.  Acts as the single entry point for lease operations in the
 service layer.
 
-Placement follows the same pattern as ``ZoneLifecycleService`` and
-``EventsService`` — dependency-injected, zone_id keyword-only at
-construction, async lifecycle management.
+Placement follows the same pattern as ``ZoneLifecycleService`` —
+dependency-injected, zone_id keyword-only at construction,
+async lifecycle management.
 
 References:
     - Issue #3407: Common LeaseManager utility

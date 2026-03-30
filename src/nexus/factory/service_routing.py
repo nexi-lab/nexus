@@ -27,7 +27,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "federation_unmount",
     ),
     "rebac": ("rebac_check", "rebac_create", "rebac_list_tuples", "rebac_expand"),
-    "events": ("wait_for_changes",),
     "mount": ("add_mount", "remove_mount", "list_mounts"),
     "gateway": (
         "mkdir",
@@ -98,7 +97,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "oauth_service": "oauth",
     "search_service": "search",
     "share_link_service": "share_link",
-    "events_service": "events",
     "time_travel_service": "time_travel",
     "operations_service": "operations",
     "workspace_rpc_service": "workspace_rpc",

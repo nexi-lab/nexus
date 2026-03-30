@@ -36,17 +36,11 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
     """Replace the current process with the TUI.
 
     Order of preference:
-      1. ``nexus-tui`` already on PATH
-      2. repo-local ``packages/nexus-tui/src/index.tsx`` via ``bun run``
+      1. repo-local ``packages/nexus-tui/src/index.tsx`` via ``bun run``
+      2. ``nexus-tui`` already on PATH
       3. published ``@nexus/tui`` via ``bunx``
     """
     args = extra_args or []
-
-    # Fast path: nexus-tui already on PATH
-    nexus_tui = shutil.which("nexus-tui")
-    if nexus_tui is not None:
-        os.execvp(nexus_tui, ["nexus-tui", *args])
-        # execvp does not return
 
     # Repo-local dev path: walk up from CWD looking for packages/nexus-tui
     # so `nexus` works directly from a source checkout.
@@ -58,6 +52,12 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
             if local_entry.exists():
                 os.execvp(bun, ["bun", "run", str(local_entry), *args])
                 # execvp does not return
+
+    # Fast path outside a checkout: use installed nexus-tui on PATH.
+    nexus_tui = shutil.which("nexus-tui")
+    if nexus_tui is not None:
+        os.execvp(nexus_tui, ["nexus-tui", *args])
+        # execvp does not return
 
     # Fallback: use bunx (Bun's npx equivalent) against the scoped package.
     bunx = shutil.which("bunx")

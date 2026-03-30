@@ -250,23 +250,6 @@ async def _boot_post_kernel_services(
     else:
         logger.debug("[BOOT:WIRED] ShareLinkService disabled by profile")
 
-    # --- EventsService: File watching RPC wrapper + advisory locking ---
-    # Delegates watch to kernel FileWatcher primitive (§4.5).
-    # Advisory locking is service-tier (flock-style).
-    events_service: Any = None
-    if _on("ipc"):
-        try:
-            from nexus.services.lifecycle.events_service import EventsService
-
-            events_service = EventsService(
-                file_watcher=nx._file_watcher,
-            )
-            logger.debug("[BOOT:WIRED] EventsService created (delegates to kernel FileWatcher)")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] EventsService unavailable: %s", exc)
-    else:
-        logger.debug("[BOOT:WIRED] EventsService disabled by profile")
-
     # --- RPC / helper services (Issue #2133) ---
     # Pre-extract optional NexusFS attrs to avoid mypy getattr+None inference issues
     _nx_init_cred: Any = nx._init_cred
@@ -507,7 +490,6 @@ async def _boot_post_kernel_services(
         oauth_service=oauth_service,
         search_service=search_service,
         share_link_service=share_link_service,
-        events_service=events_service,
         time_travel_service=time_travel_service,
         operations_service=operations_service,
         workspace_rpc_service=workspace_rpc_service,

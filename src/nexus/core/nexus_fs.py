@@ -1246,19 +1246,12 @@ class NexusFS(  # type: ignore[misc]
         timeout: float,
         context: OperationContext | None,
     ) -> str | None:
-        """Acquire advisory lock synchronously via EventsService.
+        """Acquire advisory lock synchronously via kernel _lock_manager.
 
         This method bridges sync write() with async lock operations.
         For async contexts, use `async with nx.locked()` instead.
         """
         import asyncio
-
-        _events_ref = self.service("events_service") if hasattr(self, "service") else None
-        if _events_ref is None:
-            raise RuntimeError(
-                "write(lock=True) called but EventsService not available. "
-                "Ensure NexusFS is initialized with services."
-            )
 
         from nexus.contracts.exceptions import LockTimeout
 
@@ -1273,7 +1266,7 @@ class NexusFS(  # type: ignore[misc]
                 raise
 
         async def acquire_lock() -> str | None:
-            return await _events_ref.lock(path=path, timeout=timeout)
+            return await self._lock_manager.acquire(path=path, timeout=timeout)
 
         from nexus.lib.sync_bridge import run_sync
 
@@ -1290,16 +1283,12 @@ class NexusFS(  # type: ignore[misc]
         path: str,
         context: OperationContext | None,
     ) -> None:
-        """Release advisory lock synchronously via EventsService."""
+        """Release advisory lock synchronously via kernel _lock_manager."""
         if not lock_id:
             return
 
-        _events_ref = self.service("events_service") if hasattr(self, "service") else None
-        if _events_ref is None:
-            return
-
         async def release_lock() -> None:
-            await _events_ref.unlock(lock_id, path)
+            await self._lock_manager.release(lock_id, path)
 
         from nexus.lib.sync_bridge import run_sync
 

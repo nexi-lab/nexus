@@ -10,8 +10,8 @@ Architecture:
 - LocalLockManager: Standalone mode — wraps VFSSemaphore (this file)
 - RaftLockManager: Federation mode — wraps RaftMetadataStore (raft/)
 
-EventsService auto-creates LocalLockManager (standalone) or receives
-RaftLockManager (federation) via upgrade_lock_manager().
+NexusFS kernel auto-creates LocalLockManager (standalone) or receives
+RaftLockManager (federation) via _upgrade_lock_manager().
 Callers see only AdvisoryLockManager.
 
 References:

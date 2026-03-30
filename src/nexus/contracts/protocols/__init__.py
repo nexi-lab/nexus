@@ -45,7 +45,6 @@ from nexus.contracts.protocols.sync import SyncContext, SyncResult, SyncServiceP
 from nexus.contracts.protocols.sync_job import SyncJobProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.version import VersionProtocol
-from nexus.contracts.protocols.watch import WatchProtocol
 from nexus.contracts.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
 from nexus.contracts.protocols.write_back import WriteBackProtocol
@@ -83,7 +82,6 @@ __all__ = [
     "SyncServiceProtocol",
     "TimeTravelProtocol",
     "VersionProtocol",
-    "WatchProtocol",
     "WorkflowDispatchProtocol",
     "WorkspaceManagerProtocol",
     "WriteBackProtocol",

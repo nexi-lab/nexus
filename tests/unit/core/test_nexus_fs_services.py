@@ -60,7 +60,6 @@ class TestNexusFSServiceComposition:
         assert fs.service("oauth") is not None, "OAuthService not instantiated"
         assert fs.service("search") is not None, "SearchService not instantiated"
         assert fs.service("share_link") is not None, "ShareLinkService not instantiated"
-        assert fs.service("events") is not None, "EventsService not instantiated"
 
         # Verify services are not None
         assert fs.service("version_service") is not None
@@ -70,7 +69,6 @@ class TestNexusFSServiceComposition:
         assert fs.service("oauth") is not None
         assert fs.service("search") is not None
         assert fs.service("share_link") is not None
-        assert fs.service("events") is not None
 
     @pytest.mark.asyncio
     async def test_service_dependencies_correct(self, tmp_path: Path):
@@ -100,9 +98,6 @@ class TestNexusFSServiceComposition:
 
         # ShareLinkService should have gateway
         assert fs.service("share_link")._gw is not None
-
-        # EventsService should exist
-        assert fs.service("events") is not None
 
     @pytest.mark.asyncio
     async def test_version_service_delegation(self, tmp_path: Path):

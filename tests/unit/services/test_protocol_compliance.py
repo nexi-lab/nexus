@@ -174,14 +174,8 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.bricks.share_link.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
-    (
-        "WatchProtocol",
-        "nexus.contracts.protocols.watch",
-        "nexus.services.lifecycle.events_service.EventsService",
-        True,  # wait_for_changes method match
-    ),
+    # WatchProtocol removed — watch is now kernel syscall (sys_watch).
     # LockProtocol removed — consolidated into LockManagerBase (lib/distributed_lock.py).
-    # EventsService.lock/unlock/extend_lock methods call LockManagerBase directly.
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────
     (
         "SnapshotServiceProtocol",

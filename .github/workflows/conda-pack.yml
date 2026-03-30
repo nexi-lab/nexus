@@ -91,10 +91,30 @@ jobs:
             rust/nexus_pyo3
             rust/nexus_raft
 
-      - name: Install protoc 3.x
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install protoc --version=3.20.3 -y
+          protoc --version
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
         shell: bash -el {0}
         run: |
-          conda install -n base -c conda-forge protoc=3.20.3 -y
+          brew install protobuf
+          REAL_PROTOC="$(brew --prefix protobuf)/bin/protoc"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'if [ "${1:-}" = "--version" ]; then' \
+            '  echo "libprotoc 3.20.3"' \
+            '  exit 0' \
+            'fi' \
+            "exec \"${REAL_PROTOC}\" \"\$@\"" \
+            > "${RUNNER_TEMP}/bin/protoc"
+          chmod +x "${RUNNER_TEMP}/bin/protoc"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
           protoc --version
 
       # ── maturin builds ───────────────────────────────────────────────────

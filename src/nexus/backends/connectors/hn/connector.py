@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.connectors.base import SkillDocMixin
+from nexus.backends.connectors.base import ReadmeDocMixin
 from nexus.backends.connectors.hn.transport import VALID_FEEDS, HNTransport
 from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.contracts.backend_features import BackendFeature
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 class PathHNBackend(
     PathAddressingEngine,
     CacheConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
 ):
     """HackerNews connector: PathAddressingEngine + HNTransport composition.
 
@@ -66,7 +66,7 @@ class PathHNBackend(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
             BackendFeature.SYNC,
         }
     )
@@ -135,20 +135,20 @@ class PathHNBackend(
 
     # -- Skill docs --
 
-    def generate_skill_doc(self, mount_path: str) -> str:
-        """Load SKILL.md from static file."""
+    def generate_readme(self, mount_path: str) -> str:
+        """Load README.md from static file."""
         import importlib.resources as resources
 
         try:
             content = (
                 resources.files("nexus.backends.connectors.hn")
-                .joinpath("SKILL.md")
+                .joinpath("README.md")
                 .read_text(encoding="utf-8")
             )
             content = content.replace("/mnt/hn/", mount_path)
             return content
         except Exception:
-            return super().generate_skill_doc(mount_path)
+            return super().generate_readme(mount_path)
 
     # =================================================================
     # Content operations -- override PathAddressingEngine for HN

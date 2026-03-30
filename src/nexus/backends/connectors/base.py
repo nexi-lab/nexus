@@ -1,7 +1,7 @@
 """Base mixins for connector validation framework.
 
 This module provides opt-in mixins that connectors can use to add:
-- SKILL.md documentation (auto-generated)
+- README.md documentation (auto-generated)
 - Pydantic schema validation
 - Operation traits (reversibility, confirmation levels)
 - Checkpoint/rollback support
@@ -23,8 +23,8 @@ from nexus.contracts.exceptions import ValidationError as CoreValidationError
 if TYPE_CHECKING:
     from typing import Protocol as _Protocol
 
-    from nexus.backends.connectors.error_formatter import SkillErrorFormatter
-    from nexus.backends.connectors.schema_generator import SkillDocGenerator
+    from nexus.backends.connectors.error_formatter import ReadmeErrorFormatter
+    from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
 
     class SkillRegistryProtocol(_Protocol):
         """Stub protocol (skills brick removed)."""
@@ -114,20 +114,20 @@ class ErrorDef:
     """Error definition with self-correcting information.
 
     Used in ERROR_REGISTRY to provide agent-friendly error messages
-    that include fix examples and SKILL.md references.
+    that include fix examples and README.md references.
 
     Example:
         >>> ERROR_REGISTRY = {
         ...     "MISSING_AGENT_INTENT": ErrorDef(
         ...         message="Operations require agent_intent",
-        ...         skill_section="required-format",
+        ...         readme_section="required-format",
         ...         fix_example="# agent_intent: User requested meeting",
         ...     ),
         ... }
     """
 
     message: str
-    skill_section: str  # SKILL.md section anchor
+    readme_section: str  # README.md section anchor
     fix_example: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
 
@@ -146,15 +146,15 @@ class ValidationError(CoreValidationError):
         self,
         code: str,
         message: str,
-        skill_path: str | None = None,
-        skill_section: str | None = None,
+        readme_path: str | None = None,
+        readme_section: str | None = None,
         fix_example: str | None = None,
         field_errors: dict[str, str] | None = None,
     ):
         self.code = code
         self.message = message
-        self.skill_path = skill_path
-        self.skill_section = skill_section
+        self.readme_path = readme_path
+        self.readme_section = readme_section
         self.fix_example = fix_example
         self.field_errors = field_errors or {}
         super().__init__(self.format_message())
@@ -168,10 +168,10 @@ class ValidationError(CoreValidationError):
             for field_name, error in self.field_errors.items():
                 lines.append(f"  - {field_name}: {error}")
 
-        if self.skill_path:
-            ref = self.skill_path
-            if self.skill_section:
-                ref += f"#{self.skill_section}"
+        if self.readme_path:
+            ref = self.readme_path
+            if self.readme_section:
+                ref += f"#{self.readme_section}"
             lines.append(f"\nSee: {ref}")
 
         if self.fix_example:
@@ -181,47 +181,47 @@ class ValidationError(CoreValidationError):
 
 
 # =============================================================================
-# SkillDocMixin - SKILL.md Integration
+# ReadmeDocMixin - README.md Integration
 # =============================================================================
 
 
-class SkillDocMixin:
-    """Mixin for SKILL.md integration with auto-generation.
+class ReadmeDocMixin:
+    """Mixin for README.md integration with auto-generation.
 
     Connectors configure:
         SKILL_NAME: str - Skill identifier (e.g., "gcalendar")
-        SKILL_DIR: str - Directory name for skill docs (default: ".skill")
+        README_DIR: str - Directory name for skill docs (default: ".readme")
 
     Features:
-        - Auto-generates .skill/ directory with SKILL.md and examples
+        - Auto-generates .readme/ directory with README.md and examples
         - Integrates with SkillRegistry for discovery
-        - Formats errors with skill references
+        - Formats errors with readme references
 
-    Delegates heavy lifting to ``SkillDocGenerator`` and ``SkillErrorFormatter``.
+    Delegates heavy lifting to ``ReadmeDocGenerator`` and ``ReadmeErrorFormatter``.
     """
 
     SKILL_NAME: str = ""
-    SKILL_DIR: str = ".skill"  # Directory at mount path
+    README_DIR: str = ".readme"  # Directory at mount path
 
     # Subclasses provide these (used for auto-generation)
     SCHEMAS: dict[str, type[BaseModel]] = {}
     OPERATION_TRAITS: dict[str, OpTraits] = {}
     ERROR_REGISTRY: dict[str, ErrorDef] = {}
     EXAMPLES: dict[str, str] = {}  # Example files: {"create_meeting.yaml": "content..."}
-    NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for SKILL.md
-    FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for SKILL.md
+    NESTED_EXAMPLES: dict[str, list[str]] = {}  # Nested field examples for README.md
+    FIELD_EXAMPLES: dict[str, str] = {}  # Field-specific examples for README.md
 
     _skill_registry: "SkillRegistryProtocol | None" = None
     _mount_path: str | None = None  # Set during mount
-    _cached_doc_generator: "SkillDocGenerator | None" = None
-    _cached_error_formatter: "SkillErrorFormatter | None" = None
+    _cached_doc_generator: "ReadmeDocGenerator | None" = None
+    _cached_error_formatter: "ReadmeErrorFormatter | None" = None
 
     @property
-    def skill_md_path(self) -> str:
-        """Get path to SKILL.md (for error messages)."""
+    def readme_md_path(self) -> str:
+        """Get path to README.md (for error messages)."""
         if self._mount_path:
-            return posixpath.join(self._mount_path.rstrip("/"), self.SKILL_DIR, "SKILL.md")
-        return "/.skill/SKILL.md"  # Default fallback
+            return posixpath.join(self._mount_path.rstrip("/"), self.README_DIR, "README.md")
+        return "/.readme/README.md"  # Default fallback
 
     def set_skill_registry(self, registry: "SkillRegistryProtocol") -> None:
         """Set the skill registry for this connector."""
@@ -236,10 +236,10 @@ class SkillDocMixin:
         self._cached_doc_generator = None
         self._cached_error_formatter = None
 
-    def _get_doc_generator(self) -> "SkillDocGenerator":
-        """Get or create the cached SkillDocGenerator."""
+    def _get_doc_generator(self) -> "ReadmeDocGenerator":
+        """Get or create the cached ReadmeDocGenerator."""
         if self._cached_doc_generator is None:
-            from nexus.backends.connectors.schema_generator import SkillDocGenerator
+            from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
 
             # Extract write paths from CLIConnectorConfig if available
             write_paths: dict[str, str] = {}
@@ -248,13 +248,13 @@ class SkillDocMixin:
                 for wp in _config.write:
                     write_paths[wp.operation] = wp.path
 
-            self._cached_doc_generator = SkillDocGenerator(
+            self._cached_doc_generator = ReadmeDocGenerator(
                 skill_name=self.SKILL_NAME,
                 schemas=self.SCHEMAS,
                 operation_traits=self.OPERATION_TRAITS,
                 error_registry=self.ERROR_REGISTRY,
                 examples=self.EXAMPLES,
-                skill_dir=self.SKILL_DIR,
+                readme_dir=self.README_DIR,
                 nested_examples=self.NESTED_EXAMPLES or None,
                 field_examples=self.FIELD_EXAMPLES or None,
                 write_paths=write_paths or None,
@@ -265,29 +265,29 @@ class SkillDocMixin:
                 self._cached_doc_generator._directory_structure = dir_structure
         return self._cached_doc_generator
 
-    def _get_error_formatter(self) -> "SkillErrorFormatter":
-        """Get or create the cached SkillErrorFormatter."""
+    def _get_error_formatter(self) -> "ReadmeErrorFormatter":
+        """Get or create the cached ReadmeErrorFormatter."""
         if self._cached_error_formatter is None:
-            from nexus.backends.connectors.error_formatter import SkillErrorFormatter
+            from nexus.backends.connectors.error_formatter import ReadmeErrorFormatter
 
-            self._cached_error_formatter = SkillErrorFormatter(
+            self._cached_error_formatter = ReadmeErrorFormatter(
                 skill_name=self.SKILL_NAME,
                 mount_path=self._mount_path or "",
             )
         return self._cached_error_formatter
 
-    def generate_skill_doc(self, mount_path: str) -> str:
-        """Auto-generate SKILL.md from connector metadata."""
-        return self._get_doc_generator().generate_skill_doc(mount_path)
+    def generate_readme(self, mount_path: str) -> str:
+        """Auto-generate README.md from connector metadata."""
+        return self._get_doc_generator().generate_readme(mount_path)
 
-    def get_skill_path(self, mount_path: str) -> str:
-        """Get the full path to the .skill directory."""
-        return self._get_doc_generator().get_skill_path(mount_path)
+    def get_readme_path(self, mount_path: str) -> str:
+        """Get the full path to the .readme directory."""
+        return self._get_doc_generator().get_readme_path(mount_path)
 
-    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
-        """Generate and write .skill/ directory to the filesystem."""
+    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
+        """Generate and write .readme/ directory to the filesystem."""
         self._mount_path = mount_path
-        return await self._get_doc_generator().write_skill_docs(mount_path, filesystem)
+        return await self._get_doc_generator().write_readme(mount_path, filesystem)
 
     def format_error_with_skill_ref(
         self,
@@ -353,16 +353,16 @@ class ValidatedMixin:
                 loc = ".".join(str(x) for x in error["loc"])
                 field_errors[loc] = error["msg"]
 
-            # Reuse cached formatter from SkillDocMixin if available
+            # Reuse cached formatter from ReadmeDocMixin if available
             formatter_fn = getattr(self, "_get_error_formatter", None)
             if formatter_fn is not None:
                 formatter = formatter_fn()
             else:
-                from nexus.backends.connectors.error_formatter import SkillErrorFormatter
+                from nexus.backends.connectors.error_formatter import ReadmeErrorFormatter
 
                 skill_name = getattr(self, "SKILL_NAME", "")
                 mount_path = getattr(self, "_mount_path", "") or ""
-                formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
+                formatter = ReadmeErrorFormatter(skill_name=skill_name, mount_path=mount_path)
             raise formatter.format_validation_error(operation, field_errors) from e
 
 
@@ -450,11 +450,11 @@ class TraitBasedMixin:
 
     def _trait_error(self, code: str, message: str, section: str, fix: str) -> ValidationError:
         """Create ValidationError for trait validation failure."""
-        from nexus.backends.connectors.error_formatter import SkillErrorFormatter
+        from nexus.backends.connectors.error_formatter import ReadmeErrorFormatter
 
         skill_name = getattr(self, "SKILL_NAME", "")
         mount_path = getattr(self, "_mount_path", "") or ""
-        formatter = SkillErrorFormatter(skill_name=skill_name, mount_path=mount_path)
+        formatter = ReadmeErrorFormatter(skill_name=skill_name, mount_path=mount_path)
         return formatter.format_trait_error(
             code=code,
             message=message,

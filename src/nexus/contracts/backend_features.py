@@ -90,8 +90,8 @@ class BackendFeature(StrEnum):
 
     # --- Connector protocol capabilities (Issue #3148) ---
 
-    SKILL_DOC = "skill_doc"
-    """Backend supports SkillDocMixin (auto-generated .skill/ documentation)."""
+    README_DOC = "readme_doc"
+    """Backend supports ReadmeDocMixin (auto-generated .readme/ documentation)."""
 
     SYNC = "sync"
     """Backend implements ConnectorSyncProvider for delta sync."""
@@ -141,7 +141,7 @@ CLI_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
         BackendFeature.CLI_BACKED,
         BackendFeature.WRITE_BACK,
-        BackendFeature.SKILL_DOC,
+        BackendFeature.README_DOC,
         BackendFeature.SYNC,
         BackendFeature.SYNC_ELIGIBLE,
     }

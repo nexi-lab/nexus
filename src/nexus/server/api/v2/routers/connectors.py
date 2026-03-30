@@ -1,6 +1,6 @@
 """Connector management REST API (Issue #2069, #3148, #3182).
 
-Endpoints for connector discovery, mounting, sync, skill docs, and writes.
+Endpoints for connector discovery, mounting, sync, readme docs, and writes.
 Used by the TUI Connectors tab and CLI.
 
 Endpoints:
@@ -10,7 +10,7 @@ Endpoints:
     POST  /api/v2/connectors/mount                  — Mount a connector
     GET   /api/v2/connectors/mounts                 — List mounted connectors
     POST  /api/v2/connectors/sync                   — Trigger sync for a mount
-    GET   /api/v2/connectors/{mount_path:path}/skill — Get SKILL.md
+    GET   /api/v2/connectors/{mount_path:path}/skill — Get README.md
     GET   /api/v2/connectors/{mount_path:path}/schema/{operation} — Get schema
     POST  /api/v2/connectors/{mount_path:path}/write — Validated write
     POST  /api/v2/connectors/unmount                — Unmount a connector
@@ -122,8 +122,8 @@ class WriteResponse(BaseModel):
     error: str | None = None
 
 
-class SkillDocResponse(BaseModel):
-    """SKILL.md content for a mount."""
+class ReadmeDocResponse(BaseModel):
+    """README.md content for a mount."""
 
     mount_point: str
     content: str
@@ -580,14 +580,14 @@ async def mount_connector(
     mount_svc = _get_mount_service(request)
     nx = _get_nx(request)
 
-    # Write skill docs BEFORE mounting — after mount, the path routes to the
-    # connector backend instead of Raft. Writing first puts SKILL.md + schemas
+    # Write readme docs BEFORE mounting — after mount, the path routes to the
+    # connector backend instead of Raft. Writing first puts README.md + schemas
     # in the Raft metastore where the TUI file explorer can browse them.
     try:
         from nexus.backends import BackendFactory
 
         temp_backend = BackendFactory.create(req.connector_type, req.config or {})
-        if hasattr(temp_backend, "generate_skill_doc"):
+        if hasattr(temp_backend, "generate_readme"):
             mp = req.mount_point.rstrip("/")
             # Extract connector name from mount path (e.g., /mnt/gmail → gmail)
             connector_name = mp.rsplit("/", 1)[-1]
@@ -626,15 +626,15 @@ async def mount_connector(
             except Exception:
                 pass
 
-            # Write skill docs OUTSIDE the mount path so they're not shadowed
+            # Write readme docs OUTSIDE the mount path so they're not shadowed
             # by the connector backend. /skills/{name}/ stays in the Raft
             # metastore and is always readable by agents and the TUI.
-            skill_base = f"/skills/{connector_name}"
-            skill_content = temp_backend.generate_skill_doc(mp)
-            if skill_content:
+            readme_base = f"/skills/{connector_name}"
+            readme_content = temp_backend.generate_readme(mp)
+            if readme_content:
                 await nx.write(
-                    f"{skill_base}/SKILL.md",
-                    skill_content.encode("utf-8"),
+                    f"{readme_base}/README.md",
+                    readme_content.encode("utf-8"),
                     context=mount_context,
                 )
                 # Write individual schema files
@@ -645,14 +645,14 @@ async def mount_connector(
                         try:
                             schema_yaml = doc_gen._generate_annotated_schema(op_name, schema_cls)
                             await nx.write(
-                                f"{skill_base}/schemas/{op_name}.yaml",
+                                f"{readme_base}/schemas/{op_name}.yaml",
                                 schema_yaml.encode("utf-8"),
                                 context=mount_context,
                             )
                         except Exception:
                             pass
 
-                # Index skill doc into semantic search
+                # Index readme doc into semantic search
                 search_svc = getattr(mount_svc, "_search_service", None)
                 if search_svc:
                     search_daemon = getattr(search_svc, "_search_daemon", None)
@@ -663,9 +663,9 @@ async def mount_connector(
                             await search_daemon.index_documents(
                                 [
                                     {
-                                        "id": f"{skill_base}/SKILL.md",
-                                        "text": skill_content,
-                                        "path": f"{skill_base}/SKILL.md",
+                                        "id": f"{readme_base}/README.md",
+                                        "text": readme_content,
+                                        "path": f"{readme_base}/README.md",
                                     }
                                 ],
                                 zone_id=mount_context.zone_id or "default",
@@ -865,13 +865,13 @@ async def sync_mount(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/skill/{mount_path:path}", response_model=SkillDocResponse)
-async def get_skill_doc(
+@router.get("/skill/{mount_path:path}", response_model=ReadmeDocResponse)
+async def get_readme_doc(
     mount_path: str,
     request: Request,
     _: dict = Depends(require_auth),
-) -> SkillDocResponse:
-    """Get SKILL.md and schema list for a mounted connector."""
+) -> ReadmeDocResponse:
+    """Get README.md and schema list for a mounted connector."""
     if not mount_path.startswith("/"):
         mount_path = f"/{mount_path}"
 
@@ -889,16 +889,16 @@ async def get_skill_doc(
 
     # Generate skill doc from backend (preferred — always fresh)
     content = ""
-    if backend and hasattr(backend, "generate_skill_doc"):
+    if backend and hasattr(backend, "generate_readme"):
         import contextlib
 
         with contextlib.suppress(Exception):
-            content = backend.generate_skill_doc(mp)
+            content = backend.generate_readme(mp)
 
     # Fall back to reading from VFS if backend generation failed
     if not content:
         try:
-            raw = await nx.sys_read(f"{mp}/.skill/SKILL.md")
+            raw = await nx.sys_read(f"{mp}/.readme/README.md")
             content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
         except Exception:
             pass
@@ -914,12 +914,12 @@ async def get_skill_doc(
         schemas = list(s.keys()) if s else list(t.keys())
     if not schemas:
         try:
-            entries = await nx.sys_readdir(f"{mp}/.skill/schemas")
+            entries = await nx.sys_readdir(f"{mp}/.readme/schemas")
             schemas = [str(e).replace(".yaml", "") for e in entries if str(e).endswith(".yaml")]
         except Exception:
             pass
 
-    return SkillDocResponse(mount_point=mount_path, content=content, schemas=schemas)
+    return ReadmeDocResponse(mount_point=mount_path, content=content, schemas=schemas)
 
 
 @router.get("/schema/{mount_path:path}/{operation}")
@@ -965,7 +965,7 @@ async def get_schema(
         traits = getattr(backend, "OPERATION_TRAITS", {})
         if operation in traits:
             try:
-                full_doc = backend.generate_skill_doc(mp)
+                full_doc = backend.generate_readme(mp)
                 # Find the operation section in the doc
                 op_display = operation.replace("_", " ").title()
                 idx = full_doc.lower().find(op_display.lower())
@@ -979,7 +979,7 @@ async def get_schema(
 
     # Try reading from VFS
     try:
-        raw = await nx.sys_read(f"{mp}/.skill/schemas/{operation}.yaml")
+        raw = await nx.sys_read(f"{mp}/.readme/schemas/{operation}.yaml")
         content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
         return SchemaResponse(mount_point=mount_path, operation=operation, content=content)
     except Exception:

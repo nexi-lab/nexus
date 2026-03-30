@@ -260,6 +260,11 @@ struct ForwardContext {
     client_pool: RaftClientPool,
     peers: SharedPeerMap,
     zone_id: String,
+    /// Cached API-level client for leader forwarding.
+    /// Lazily connected on first use, evicted and reconnected on error.
+    /// `Arc<tokio::sync::Mutex<..>>` so `ForwardContext` stays Clone + Send.
+    cached_api_client:
+        std::sync::Arc<tokio::sync::Mutex<Option<(String, crate::transport::RaftApiClient)>>>,
 }
 
 pub struct ZoneConsensus<S: StateMachine + 'static> {
@@ -512,6 +517,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             client_pool,
             peers,
             zone_id,
+            cached_api_client: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         });
     }
 
@@ -669,13 +675,29 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
                 "Forwarding propose to leader"
             );
 
-            return crate::transport::forward_propose(
+            // If forwarding fails (leader unreachable), return NotLeader
+            // so the caller can retry after election completes.
+            return match crate::transport::forward_propose(
                 &ctx.client_pool,
                 &leader_addr,
                 command,
                 &ctx.zone_id,
+                &ctx.cached_api_client,
             )
-            .await;
+            .await
+            {
+                Ok(result) => Ok(result),
+                Err(RaftError::Transport(e)) => {
+                    tracing::warn!(
+                        leader = leader_id,
+                        zone = %ctx.zone_id,
+                        "Forward to leader failed (unreachable?): {}",
+                        e,
+                    );
+                    Err(RaftError::NotLeader { leader_hint: None })
+                }
+                Err(e) => Err(e),
+            };
         }
 
         Err(RaftError::NotLeader {

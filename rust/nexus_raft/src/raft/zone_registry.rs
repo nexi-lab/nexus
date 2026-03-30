@@ -88,6 +88,11 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
+    /// Per-zone creation guard: tracks zone_ids currently being set up.
+    /// Prevents two threads from concurrently opening the same RedbStore
+    /// ("Database already open") without a global mutex that would serialize
+    /// creation of *different* zones.
+    creating: DashMap<String, ()>,
 }
 
 impl ZoneRaftRegistry {
@@ -103,6 +108,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
+            creating: DashMap::new(),
         }
     }
 
@@ -114,6 +120,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
+            creating: DashMap::new(),
         }
     }
 
@@ -182,11 +189,59 @@ impl ZoneRaftRegistry {
         campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        if self.zones.contains_key(zone_id) {
-            return Err(TransportError::Connection(format!(
-                "Zone '{}' already exists",
-                zone_id
-            )));
+        // Fast path: zone already exists — no work needed.
+        if let Some(entry) = self.zones.get(zone_id) {
+            return Ok(entry.node.clone());
+        }
+
+        // Per-zone creation guard using DashMap::entry for atomic check-and-insert.
+        // Prevents two threads from concurrently opening the same RedbStore
+        // ("Database already open") without a global mutex that would serialize
+        // creation of *different* zones. No PoisonError — DashMap is lock-free.
+        // If another thread is already creating this zone, wait and return its result.
+        {
+            use dashmap::mapref::entry::Entry;
+            match self.creating.entry(zone_id.to_string()) {
+                Entry::Occupied(_occupied) => {
+                    // Drop the entry ref before sleeping so we don't hold the shard lock.
+                    drop(_occupied);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    return self
+                        .zones
+                        .get(zone_id)
+                        .map(|e| e.node.clone())
+                        .ok_or_else(|| {
+                            TransportError::Connection(format!(
+                                "Zone '{}' creation in progress by another thread",
+                                zone_id,
+                            ))
+                        });
+                }
+                Entry::Vacant(v) => {
+                    v.insert(());
+                }
+            }
+        }
+
+        // Ensure the per-zone guard is removed when we're done (success or failure).
+        struct CreatingGuard<'a> {
+            creating: &'a DashMap<String, ()>,
+            zone_id: String,
+        }
+        impl<'a> Drop for CreatingGuard<'a> {
+            fn drop(&mut self) {
+                self.creating.remove(&self.zone_id);
+            }
+        }
+        let _guard = CreatingGuard {
+            creating: &self.creating,
+            zone_id: zone_id.to_string(),
+        };
+
+        // Re-check: zone may have been created between the fast-path check
+        // and acquiring the per-zone guard.
+        if let Some(entry) = self.zones.get(zone_id) {
+            return Ok(entry.node.clone());
         }
 
         // Open zone-specific redb + state machine
@@ -285,10 +340,27 @@ impl ZoneRaftRegistry {
     }
 
     /// Get a snapshot of the peers map for a zone.
+    /// Get the base path for zone storage directories.
+    pub fn base_path(&self) -> &PathBuf {
+        &self.base_path
+    }
+
     pub fn get_peers(&self, zone_id: &str) -> Option<HashMap<u64, NodeAddress>> {
         self.zones
             .get(zone_id)
             .map(|e| e.peers.read().unwrap().clone())
+    }
+
+    /// Get cluster peer addresses from any existing zone (all zones share the same peers).
+    /// Used by auto-join for new zones that don't have their own peer map yet.
+    pub fn get_all_peers(&self) -> Vec<NodeAddress> {
+        for entry in self.zones.iter() {
+            let peers = entry.peers.read().unwrap();
+            if !peers.is_empty() {
+                return peers.values().cloned().collect();
+            }
+        }
+        Vec::new()
     }
 
     /// Add a peer to a zone's peer map at runtime (called after ConfChange commit).

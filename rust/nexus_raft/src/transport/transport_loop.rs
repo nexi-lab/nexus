@@ -177,7 +177,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             match self.driver.advance().await {
                 Ok(messages) => {
                     if !messages.is_empty() {
-                        self.send_messages_parallel(messages).await;
+                        self.send_messages_fire_and_forget(messages);
                     }
                 }
                 Err(e) => {
@@ -190,22 +190,35 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         }
     }
 
+    /// Take a point-in-time snapshot of the peer map (read lock, released immediately).
+    ///
+    /// Used by both `send_messages_fire_and_forget` and `replicate_ec_entries` to
+    /// get a consistent view of peers without holding the read lock across async work.
+    fn snapshot_peers(&self) -> HashMap<u64, NodeAddress> {
+        self.peers
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(id, addr)| (*id, addr.clone()))
+            .collect()
+    }
+
     /// Send Raft messages to peers concurrently using JoinSet.
     ///
     /// Each peer send gets its own task with an independent timeout.
     /// Slow peers don't block fast peers. If a send fails or times out,
     /// the error is logged and the client is evicted from the pool.
-    async fn send_messages_parallel(&self, messages: Vec<raft::eraftpb::Message>) {
-        // Snapshot peer addresses under the read lock (released immediately)
-        let peers_snapshot: std::collections::HashMap<u64, NodeAddress> = self
-            .peers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(id, addr)| (*id, addr.clone()))
-            .collect();
-
-        let mut join_set: JoinSet<(u64, std::result::Result<(), String>)> = JoinSet::new();
+    /// Send Raft messages to peers — fire and forget.
+    ///
+    /// Each message is spawned as an independent task with its own timeout.
+    /// The transport loop does NOT await results — this ensures tick() is
+    /// never blocked by slow/unreachable peers.  Raft handles retransmission
+    /// via its own heartbeat/election timeout mechanism.
+    ///
+    /// Failed sends log a warning and evict the client from the pool
+    /// (reconnected on next attempt).
+    fn send_messages_fire_and_forget(&self, messages: Vec<raft::eraftpb::Message>) {
+        let peers_snapshot = self.snapshot_peers();
 
         for msg in messages {
             let target_id = msg.to;
@@ -220,7 +233,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
             let client_pool = self.client_pool.clone();
             let zone_id = self.zone_id.clone();
 
-            join_set.spawn(async move {
+            tokio::spawn(async move {
                 let result = tokio::time::timeout(
                     RAFT_SEND_TIMEOUT,
                     send_raft_message(&client_pool, target_id, &addr, msg, zone_id),
@@ -228,28 +241,21 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 .await;
 
                 match result {
-                    Ok(Ok(())) => (target_id, Ok(())),
-                    Ok(Err(e)) => (target_id, Err(e)),
-                    Err(_elapsed) => (
-                        target_id,
-                        Err(format!("timeout after {:?}", RAFT_SEND_TIMEOUT)),
-                    ),
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
+                        client_pool.remove(target_id).await;
+                    }
+                    Err(_elapsed) => {
+                        tracing::warn!(
+                            peer = target_id,
+                            "Raft message send timeout after {:?}",
+                            RAFT_SEND_TIMEOUT,
+                        );
+                        client_pool.remove(target_id).await;
+                    }
                 }
             });
-        }
-
-        // Collect results — don't block indefinitely
-        while let Some(result) = join_set.join_next().await {
-            match result {
-                Ok((target_id, Err(e))) => {
-                    tracing::warn!(peer = target_id, "Raft message send failed: {}", e);
-                    self.client_pool.remove(target_id).await;
-                }
-                Err(join_err) => {
-                    tracing::error!("Raft send task panicked: {}", join_err);
-                }
-                _ => {} // Success — nothing to do
-            }
         }
     }
 
@@ -280,13 +286,8 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         };
 
         // Get current peer snapshot (read lock, released immediately)
-        let peer_snapshot: Vec<(u64, NodeAddress)> = self
-            .peers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(id, addr)| (*id, addr.clone()))
-            .collect();
+        let peer_map = self.snapshot_peers();
+        let peer_snapshot: Vec<(u64, NodeAddress)> = peer_map.into_iter().collect();
 
         let total_voters = peer_snapshot.len() + 1; // peers + self
 

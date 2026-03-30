@@ -25,7 +25,6 @@ import base64
 import hashlib
 import re
 import struct
-import subprocess
 import time
 import uuid
 
@@ -212,6 +211,37 @@ def _wait_replicated(
         if time.time() >= deadline:
             pytest.fail(f"{msg}: {expected_path} not in {parent} on {target}")
         time.sleep(0.5)
+
+
+def _wait_leader_elected(
+    target: str,
+    zone_id: str,
+    api_key: str,
+    *,
+    timeout: float = 15,
+) -> None:
+    """Poll ``federation_cluster_info`` until this node is leader for the zone."""
+    deadline = time.time() + timeout
+    last: dict = {}
+    while True:
+        try:
+            r = _grpc_call(
+                target,
+                "federation_cluster_info",
+                {"zone_id": zone_id},
+                api_key=api_key,
+                timeout=5,
+            )
+            last = r
+            if "error" not in r and r.get("result", {}).get("is_leader"):
+                return
+        except Exception:
+            pass
+        if time.time() >= deadline:
+            pytest.fail(
+                f"Zone '{zone_id}' has no leader on {target} within {timeout}s (last: {last})"
+            )
+        time.sleep(0.2)
 
 
 def _wait_zone_ready(
@@ -826,10 +856,13 @@ class TestLeaderFailover:
 
     def test_failover_and_recovery(self, cluster, api_key):
         """Stop node-1, verify node-2 serves data, restart, verify catch-up."""
-        import shutil
+        try:
+            import docker as docker_sdk
 
-        if shutil.which("docker") is None:
-            pytest.skip("Docker CLI not available in test container")
+            docker_client = docker_sdk.from_env()
+            docker_client.ping()
+        except Exception as exc:
+            pytest.skip(f"Docker SDK not available: {exc}")
 
         uid = _uid()
         grpc1 = cluster["grpc1"]
@@ -850,8 +883,12 @@ class TestLeaderFailover:
             assert "error" not in w, f"Write to {zone} failed: {w}"
             zone_files[zone] = (path, parent, content)
 
-        # Wait for replication to node-2
-        for zone, (path, parent, _content) in zone_files.items():
+        # Wait for replication to node-2 AND pre-fetch content.
+        # Metadata replicates via Raft, but blob content lives on each
+        # node's local CAS. Reading on node-2 triggers remote fetch from
+        # node-1 (scatter-gather), ensuring blobs are cached locally
+        # BEFORE we stop node-1.
+        for zone, (path, parent, content) in zone_files.items():
             _wait_replicated(
                 grpc2,
                 parent,
@@ -860,21 +897,32 @@ class TestLeaderFailover:
                 msg=f"{zone} file not replicated before failover",
                 timeout=15,
             )
+            # Pre-fetch: read on node-2 to pull blob from node-1
+            r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=15)
+            assert "error" not in r, f"Pre-fetch read ({zone}) on node-2 failed: {r}"
+            assert _decode_content(r) == content
 
-        # Stop node-1 (container name from docker-compose.dynamic-federation-test.yml)
-        subprocess.run(["docker", "stop", "nexus-dyn-node-1"], timeout=30, check=True)
+        # Stop node-1 via Docker SDK (more portable than CLI)
+        node1_container = docker_client.containers.get("nexus-dyn-node-1")
+        node1_container.stop(timeout=10)
 
         try:
             # Wait for node-2 healthy
             _wait_healthy([cluster["node2"]], timeout=30)
 
-            # Read all files from surviving node-2
+            # Read all files from surviving node-2 (pre-fetched before stop)
             for zone, (path, _parent, content) in zone_files.items():
                 r = _grpc_call(grpc2, "read", {"path": path}, api_key=api_key, timeout=15)
                 assert "error" not in r, f"Failover read ({zone}) failed: {r}"
                 assert _decode_content(r) == content
 
-            # Write new files on node-2 (new leader)
+            # Wait for leader election to complete.
+            # After node-1 stops, node-2 + witness form majority and elect
+            # node-2 as leader. Witness auto-joins dynamic zones on first
+            # Raft message. Poll federation_cluster_info for is_leader=true.
+            _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=15)
+
+            # Write new files on node-2 (now leader)
             new_files = []
             for i in range(2):
                 path = f"/corp/eng/post-failover-{uid}-{i}.txt"
@@ -885,10 +933,12 @@ class TestLeaderFailover:
 
         finally:
             # Restart node-1
-            subprocess.run(["docker", "start", "nexus-dyn-node-1"], timeout=30, check=True)
-            _wait_healthy([cluster["node1"]], timeout=60)
+            node1_container.start()
+            _wait_healthy([cluster["node1"]], timeout=30)
 
-        # Node-1 catches up: new files readable
+        # Node-1 catches up via Raft log replay from node-2 leader.
+        # 20s is generous — Raft catch-up should complete in < 5s.
+        # If this times out, it's a real Raft bug, not a timing issue.
         for path, _content in new_files:
             _wait_replicated(
                 grpc1,

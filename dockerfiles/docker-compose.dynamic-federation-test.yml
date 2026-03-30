@@ -186,13 +186,14 @@ services:
     entrypoint: []
     volumes:
       - ..:/app
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       PYTHONUNBUFFERED: "1"
       PYTHONPATH: /app/src
     command: >
       bash -c '
         echo "Installing test dependencies..."
-        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf
+        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf docker
         echo "Running dynamic federation E2E tests..."
         python -m pytest tests/e2e/docker/test_federation_e2e.py -v --no-header -o "addopts=" -x --timeout=180
       '

@@ -63,22 +63,41 @@ pub use transport_loop::TransportLoop;
 /// Used by `ZoneConsensus::propose()` when the local node is a follower.
 /// Serializes the command with bincode and sends as `raw_command` bytes
 /// in `ProposeRequest` — avoids double serialization (bincode→proto→bincode).
+///
+/// `cached_client` provides a reusable `RaftApiClient` across calls.
+/// On first use (or after eviction), a new connection is established and
+/// cached. On transport error, the cached client is evicted so the next
+/// call reconnects.
 #[cfg(all(feature = "grpc", has_protos))]
 pub(crate) async fn forward_propose(
     client_pool: &RaftClientPool,
     leader_addr: &NodeAddress,
     command: crate::raft::Command,
     zone_id: &str,
+    cached_client: &tokio::sync::Mutex<Option<(String, RaftApiClient)>>,
 ) -> crate::raft::Result<crate::raft::CommandResult> {
     use crate::raft::{CommandResult, RaftError};
 
     let raw_bytes =
         bincode::serialize(&command).map_err(|e| RaftError::Serialization(e.to_string()))?;
 
-    let mut api_client =
-        RaftApiClient::connect(&leader_addr.endpoint, client_pool.config().clone())
-            .await
-            .map_err(|e| RaftError::Transport(e.to_string()))?;
+    // Get or create a cached API client. Evict if the leader endpoint changed.
+    let mut api_client = {
+        let mut guard = cached_client.lock().await;
+        match guard.take() {
+            Some((endpoint, client)) if endpoint == leader_addr.endpoint => client,
+            _ => {
+                // Connect with short timeouts — fail fast on unreachable leader.
+                let mut forward_config = client_pool.config().clone();
+                forward_config.connect_timeout = std::time::Duration::from_secs(2);
+                forward_config.request_timeout = std::time::Duration::from_secs(5);
+
+                RaftApiClient::connect(&leader_addr.endpoint, forward_config)
+                    .await
+                    .map_err(|e| RaftError::Transport(e.to_string()))?
+            }
+        }
+    };
 
     let request = tonic::Request::new(proto::nexus::raft::ProposeRequest {
         command: None,
@@ -88,23 +107,36 @@ pub(crate) async fn forward_propose(
         forwarded: true,
     });
 
-    let response = api_client
+    let result = api_client
         .inner_mut()
         .propose(request)
         .await
-        .map_err(|e| RaftError::Transport(e.to_string()))?;
+        .map_err(|e| RaftError::Transport(e.to_string()));
 
-    let resp = response.into_inner();
-    if resp.success {
-        Ok(CommandResult::Success)
-    } else if let Some(ref err) = resp.error {
-        if err.contains("Not the leader") || err.contains("not leader") {
-            Err(RaftError::NotLeader { leader_hint: None })
-        } else {
-            Err(RaftError::Raft(err.clone()))
+    match result {
+        Ok(response) => {
+            // Success — cache the client for reuse.
+            let mut guard = cached_client.lock().await;
+            *guard = Some((leader_addr.endpoint.clone(), api_client));
+
+            let resp = response.into_inner();
+            if resp.success {
+                Ok(CommandResult::Success)
+            } else if let Some(ref err) = resp.error {
+                if err.contains("Not the leader") || err.contains("not leader") {
+                    Err(RaftError::NotLeader { leader_hint: None })
+                } else {
+                    Err(RaftError::Raft(err.clone()))
+                }
+            } else {
+                Ok(CommandResult::Success)
+            }
         }
-    } else {
-        Ok(CommandResult::Success)
+        Err(e) => {
+            // Transport error — evict cached client (already taken above).
+            // Next call will reconnect.
+            Err(e)
+        }
     }
 }
 

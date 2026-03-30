@@ -46,11 +46,11 @@ Tier 1 is the only user-facing interface. Tier 3 is for trusted kernel modules
 
 Follows Linux's monolithic kernel model, not microkernel:
 
-| Tier | Swap time | Nexus | Linux analogue |
-|------|-----------|-------|----------------|
-| Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Init-time DI + runtime hot-swap | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
+| Tier | Swap time | Nexus | Syscall | Linux analogue |
+|------|-----------|-------|---------|----------------|
+| Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | — | vmlinuz core (scheduler, mm, VFS) |
+| Drivers | Runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `sys_setattr(DT_MOUNT)` / `sys_rmdir` | `mount`/`umount` |
+| Services | Runtime register/swap/unregister | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | `sys_setattr("/__sys__/services/X")` / `sys_unlink` | `insmod`/`rmmod` |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
 The kernel operates with zero services loaded. Kernel code (`core/nexus_fs.py`)
@@ -59,8 +59,9 @@ has zero reads of service containers — all service wiring flows through
 (`functools.partial`), or KernelDispatch hooks. Services flow through `sys_setattr("/__sys__/services/X")` — factory
 uses the same syscall API as runtime callers (factory = first user).
 
-**Drivers** use constructor DI at startup — same binary, different config
-(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
+**Drivers** are mounted at runtime via `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
+unmounted via `sys_rmdir`. MetastoreABC is the only startup-time driver (sole
+kernel init param). Other drivers are mounted post-init by factory or at runtime.
 
 ### Service Lifecycle
 
@@ -70,10 +71,10 @@ and injects them via DI. `DeploymentProfile` gates which bricks are constructed
 
 Factory boot sequence:
 
-1. **`create_nexus_services()`** — Build unified services dict (core infra + features)
+1. **`create_nexus_services()`** — `_boot_pre_kernel_services()` + `_boot_independent_bricks()` + `_boot_dependent_bricks()`
 2. **`NexusFS()` constructor** — Instantiate kernel primitives (no I/O, `router` passed directly)
-3. **`link()`** — Wire service topology via DI closures (memory only)
-4. **`initialize()`** — Register VFS hooks, IPC adapter bind
+3. **`_wire_services()`** — Wire topology, boot post-kernel services, enlist into ServiceRegistry
+4. **`_initialize_services()`** — Register VFS hooks, IPC adapter bind
 
 See `factory/orchestrator.py` for implementation.
 

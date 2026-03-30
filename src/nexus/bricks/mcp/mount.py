@@ -46,12 +46,12 @@ class MCPMountManager:
         /skills/system/mcp-tools/
         ├── github/
         │   ├── mount.json              # Connection info for this mount
-        │   ├── SKILL.md                # Human-readable docs
+        │   ├── README.md                # Human-readable docs
         │   ├── search_repositories.json
         │   └── create_issue.json
         └── slack/
             ├── mount.json
-            ├── SKILL.md
+            ├── README.md
             └── send_message.json
 
     Example:
@@ -471,9 +471,9 @@ class MCPMountManager:
             except Exception as e:
                 logger.warning("Failed to store tool %s: %s", tool.get("name"), e)
 
-        # Store single SKILL.md for the mount
+        # Store single README.md for the mount
         if tool_defs:
-            await self._store_mount_skill_md(mount, tool_defs)
+            await self._store_mount_readme_md(mount, tool_defs)
 
         # Update mount state
         mount.last_sync = datetime.now(UTC)
@@ -834,20 +834,20 @@ class MCPMountManager:
         logger.debug("Stored tool definition: %s", tool_def.name)
         return tool_json_path
 
-    async def _store_mount_skill_md(
+    async def _store_mount_readme_md(
         self, mount: MCPMount, tool_defs: list[MCPToolDefinition]
     ) -> str:
-        """Store a single SKILL.md for the mount describing all tools.
+        """Store a single README.md for the mount describing all tools.
 
         Args:
             mount: Mount configuration
             tool_defs: List of tool definitions
 
         Returns:
-            Path to SKILL.md
+            Path to README.md
         """
-        skill_md_path = f"{mount.tools_path}SKILL.md"
-        skill_md = self._generate_mount_skill_md(mount, tool_defs)
+        readme_md_path = f"{mount.tools_path}README.md"
+        readme_md = self._generate_mount_readme_md(mount, tool_defs)
 
         if self._filesystem:
             if mount.tools_path:
@@ -857,25 +857,25 @@ class MCPMountManager:
                     pass
                 except OSError as e:
                     logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
-            await self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
+            await self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             if mount.tools_path:
                 tools_dir = Path(mount.tools_path.lstrip("/"))
                 tools_dir.mkdir(parents=True, exist_ok=True)
-                (tools_dir / "SKILL.md").write_text(skill_md)
+                (tools_dir / "README.md").write_text(readme_md)
 
-        logger.debug("Stored mount SKILL.md: %s", mount.name)
-        return skill_md_path
+        logger.debug("Stored mount README.md: %s", mount.name)
+        return readme_md_path
 
-    def _generate_mount_skill_md(self, mount: MCPMount, tool_defs: list[MCPToolDefinition]) -> str:
-        """Generate SKILL.md content for a mount with all its tools.
+    def _generate_mount_readme_md(self, mount: MCPMount, tool_defs: list[MCPToolDefinition]) -> str:
+        """Generate README.md content for a mount with all its tools.
 
         Args:
             mount: Mount configuration
             tool_defs: List of tool definitions
 
         Returns:
-            SKILL.md content
+            README.md content
         """
         import yaml
 

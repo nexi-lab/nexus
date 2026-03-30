@@ -19,8 +19,8 @@ The Gmail connector provides file-based access to Gmail emails. Emails are organ
     {thread_id}-{msg_id}.yaml
   DRAFTS/                         # Draft emails
     _new.yaml                     # Write here to create a draft
-  .skill/                         # Skill documentation
-    SKILL.md
+  .readme/                        # Connector documentation
+    README.md
     examples/
 ```
 

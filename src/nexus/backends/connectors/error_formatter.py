@@ -1,6 +1,6 @@
-"""Skill error formatter — extracted from SkillDocMixin, ValidatedMixin, TraitBasedMixin.
+"""Readme error formatter — extracted from ReadmeDocMixin, ValidatedMixin, TraitBasedMixin.
 
-Centralizes all error-with-skill-reference formatting (DRY #5-A).
+Centralizes all error-with-readme-reference formatting (DRY #5-A).
 ``format_trait_error`` merged into ``format_error`` (Issue #2086, 6A).
 """
 
@@ -9,15 +9,15 @@ import posixpath
 from nexus.backends.connectors.base import ErrorDef, ValidationError
 
 
-class SkillErrorFormatter:
-    """Format connector errors with SKILL.md references.
+class ReadmeErrorFormatter:
+    """Format connector errors with README.md references.
 
     Parameters
     ----------
     skill_name:
         Skill identifier (e.g., ``"gcalendar"``).
     mount_path:
-        Mount path for building skill_md_path references.
+        Mount path for building readme_md_path references.
     """
 
     def __init__(self, skill_name: str, mount_path: str = "") -> None:
@@ -25,11 +25,11 @@ class SkillErrorFormatter:
         self._mount_path = mount_path
 
     @property
-    def skill_md_path(self) -> str:
-        """Get path to SKILL.md (for error messages)."""
+    def readme_md_path(self) -> str:
+        """Get path to README.md (for error messages)."""
         if self._mount_path:
-            return posixpath.join(self._mount_path.rstrip("/"), ".skill", "SKILL.md")
-        return "/.skill/SKILL.md"
+            return posixpath.join(self._mount_path.rstrip("/"), ".readme", "README.md")
+        return "/.readme/README.md"
 
     def format_error(
         self,
@@ -49,7 +49,7 @@ class SkillErrorFormatter:
             code: Error code (e.g., ``"MISSING_AGENT_INTENT"``).
             message: Error message (empty string falls back to registry).
             error_registry: Registry to look up error definitions.
-            section: SKILL.md section anchor (optional, overridden by registry).
+            section: README.md section anchor (optional, overridden by registry).
             fix_example: Example fix (optional, overridden by registry).
 
         Returns:
@@ -58,15 +58,15 @@ class SkillErrorFormatter:
         registry = error_registry or {}
         error_def = registry.get(code)
         if error_def:
-            section = section or error_def.skill_section
+            section = section or error_def.readme_section
             fix_example = fix_example or error_def.fix_example
             message = message or error_def.message
 
         return ValidationError(
             code=code,
             message=message,
-            skill_path=self.skill_md_path,
-            skill_section=section,
+            readme_path=self.readme_md_path,
+            readme_section=section,
             fix_example=fix_example,
         )
 
@@ -105,7 +105,7 @@ class SkillErrorFormatter:
         """
         registry = error_registry or {}
         error_def = registry.get(code)
-        resolved_section = (error_def.skill_section if error_def else None) or section
+        resolved_section = (error_def.readme_section if error_def else None) or section
         resolved_fix = (error_def.fix_example if error_def else None) or fix
         resolved_message = message or (error_def.message if error_def else message)
         return self.format_error(
@@ -132,7 +132,7 @@ class SkillErrorFormatter:
         return ValidationError(
             code="SCHEMA_VALIDATION_ERROR",
             message=f"Invalid {operation} data",
-            skill_path=self.skill_md_path,
-            skill_section=operation.replace("_", "-"),
+            readme_path=self.readme_md_path,
+            readme_section=operation.replace("_", "-"),
             field_errors=field_errors,
         )

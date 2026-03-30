@@ -33,8 +33,8 @@ from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 class PathXBackend(
     PathAddressingEngine,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
 ):
@@ -81,7 +81,7 @@ class PathXBackend(
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
         }
     )
 
@@ -102,7 +102,7 @@ class PathXBackend(
         **TRAIT_ERRORS,
         "TWEET_TOO_LONG": ErrorDef(
             message="Tweet exceeds 280 characters",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="text: <max 280 chars>",
         ),
     }

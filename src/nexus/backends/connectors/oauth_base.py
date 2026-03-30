@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.base.backend import Backend
 from nexus.backends.connectors.base import (
     CheckpointMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -33,7 +33,7 @@ class OAuthConnectorBase(
     Backend,
     CacheConnectorMixin,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,

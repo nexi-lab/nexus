@@ -36,7 +36,7 @@ import yaml
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.connectors.base import (
     CheckpointMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 class PathCLIBackend(
     PathAddressingEngine,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,
@@ -75,7 +75,7 @@ class PathCLIBackend(
     - ``check_connection()``: Verify CLI is installed and accessible
     - ``list_dir()``: Delegate to CLI list command
     - ``read_content()``: Delegate to CLI get command via transport
-    - Skill doc generation (via SkillDocMixin)
+    - Skill doc generation (via ReadmeDocMixin)
     - Error mapping (via CLIErrorMapper)
     - Token resolution (via TokenManager + OperationContext)
 

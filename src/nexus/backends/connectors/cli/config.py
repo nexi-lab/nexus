@@ -124,7 +124,7 @@ class SkillsConfig(BaseModel):
 
     import_from_cli: bool = Field(
         default=False,
-        description="Import skill definitions from CLI's own SKILL.md files",
+        description="Import skill definitions from CLI's own README.md files",
     )
     schema_docs: bool = Field(
         default=True,

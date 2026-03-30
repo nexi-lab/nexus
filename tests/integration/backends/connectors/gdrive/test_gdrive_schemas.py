@@ -2,13 +2,13 @@
 
 Covers:
 - PathGDriveBackend has SCHEMAS, OPERATION_TRAITS, SKILL_NAME
-- SKILL_DOC and WRITE_BACK capabilities are declared
+- README_DOC and WRITE_BACK capabilities are declared
 - Mixin class hierarchy is correct
 """
 
 from nexus.backends.connectors.base import (
     OpTraits,
-    SkillDocMixin,
+    ReadmeDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -67,16 +67,16 @@ class TestPathGDriveBackendMixins:
         assert "MISSING_FILE_ID" in registry
         assert "MISSING_CONFIRM" in registry
 
-    def test_skill_doc_capability(self) -> None:
+    def test_readme_doc_capability(self) -> None:
         caps = PathGDriveBackend._BACKEND_FEATURES
-        assert BackendFeature.SKILL_DOC in caps
+        assert BackendFeature.README_DOC in caps
 
     def test_write_back_capability(self) -> None:
         caps = PathGDriveBackend._BACKEND_FEATURES
         assert BackendFeature.WRITE_BACK in caps
 
-    def test_inherits_skill_doc_mixin(self) -> None:
-        assert issubclass(PathGDriveBackend, SkillDocMixin)
+    def test_inherits_readme_doc_mixin(self) -> None:
+        assert issubclass(PathGDriveBackend, ReadmeDocMixin)
 
     def test_inherits_validated_mixin(self) -> None:
         assert issubclass(PathGDriveBackend, ValidatedMixin)

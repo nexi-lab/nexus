@@ -194,7 +194,7 @@ Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFil
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
-| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `stat()`, `append()`, `edit()`, `read_bulk()`, `write_batch()` | Path-addressed, delegates to `sys_*` |
+| **VFS half** (POSIX-aligned) | `mkdir()`, `rmdir()`, `read()`, `write(consistency=)`, `append()`, `edit()`, `write_batch()`, `access()`, `is_directory()`, `locked()` | Path-addressed, delegates to `sys_*` |
 | **HDFS half** (driver-level) | `read_content()`, `write_content()`, `stream()`, `stream_range()`, `write_stream()` | Hash-addressed (etag/CAS), direct to ObjectStoreABC |
 
 The HDFS half bypasses path resolution and metadata lookup — CAS is a driver
@@ -411,7 +411,9 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   under that mount (like Linux filesystem type determines pipe implementation).
   Implementations: ``StreamBuffer`` (in-memory, default),
   ``RemoteStreamBackend`` (federation gRPC proxy),
-  ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once).
+  ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once),
+  ``SHMStreamBackend`` (mmap shared memory, cross-process, ~1-5μs),
+  ``StdioStream`` (OS subprocess pipe adapter for agent I/O).
 - **Mount-determined backend** — ``_MountEntry.stream_backend_factory`` is baked
   at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
   mount's factory; if set, creates a custom backend instead of default memory.

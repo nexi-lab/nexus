@@ -91,25 +91,10 @@ jobs:
             rust/nexus_pyo3
             rust/nexus_raft
 
-      - name: Install protoc (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install protoc --version=3.20.3 -y
-          protoc --version
-
-      - name: Install protoc (macOS)
-        if: runner.os == 'macOS'
+      - name: Install protoc 3.x
         shell: bash -el {0}
         run: |
-          PROTOC_VERSION="3.20.3"
-          PROTOC_ARCH="osx-x86_64"
-          if [ "${{ matrix.os }}" = "macos-14" ]; then
-            PROTOC_ARCH="osx-aarch_64"
-          fi
-          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
-          unzip -o /tmp/protoc.zip -d /tmp/protoc bin/protoc
-          install /tmp/protoc/bin/protoc /usr/local/bin/protoc
+          conda install -n base -c conda-forge protobuf=3.20.3 -y
           protoc --version
 
       # ── maturin builds ───────────────────────────────────────────────────

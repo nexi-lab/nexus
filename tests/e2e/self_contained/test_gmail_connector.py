@@ -830,6 +830,76 @@ class TestMimeBuilding:
         parsed = message_from_bytes(decoded)
         assert parsed["Subject"] == "Encoding Test"
 
+    def test_build_mime_with_inline_attachment(self, transport):
+        """Test MIME message with inline base64 attachment."""
+        file_content = b"Hello, this is a test file."
+        data = {
+            "to": ["test@example.com"],
+            "subject": "With Attachment",
+            "body": "See attached.",
+            "attachments": [
+                {
+                    "data": base64.b64encode(file_content).decode(),
+                    "filename": "test.txt",
+                    "content_type": "text/plain",
+                },
+            ],
+        }
+
+        msg = transport._build_mime_message(data)
+        raw_bytes = msg.as_bytes()
+        parsed = message_from_bytes(raw_bytes)
+
+        # Should be multipart/mixed (body + attachment)
+        assert parsed.is_multipart()
+        parts = list(parsed.walk())
+        # Find the attachment part
+        attachment_parts = [p for p in parts if p.get_filename() == "test.txt"]
+        assert len(attachment_parts) == 1
+        assert attachment_parts[0].get_payload(decode=True) == file_content
+
+    def test_build_mime_with_multiple_attachments(self, transport):
+        """Test MIME message with multiple attachments."""
+        data = {
+            "to": ["test@example.com"],
+            "subject": "Multi Attach",
+            "body": "Two files.",
+            "attachments": [
+                {
+                    "data": base64.b64encode(b"file1").decode(),
+                    "filename": "a.txt",
+                },
+                {
+                    "data": base64.b64encode(b"file2").decode(),
+                    "filename": "b.pdf",
+                    "content_type": "application/pdf",
+                },
+            ],
+        }
+
+        msg = transport._build_mime_message(data)
+        parts = list(msg.walk())
+        filenames = [p.get_filename() for p in parts if p.get_filename()]
+        assert "a.txt" in filenames
+        assert "b.pdf" in filenames
+
+    def test_build_mime_skips_path_only_attachment(self, transport):
+        """Test that path-only attachments (no data) are skipped gracefully."""
+        data = {
+            "to": ["test@example.com"],
+            "subject": "Path Only",
+            "body": "No inline data.",
+            "attachments": [
+                {"path": "/mnt/storage/file.pdf", "filename": "file.pdf"},
+            ],
+        }
+
+        msg = transport._build_mime_message(data)
+        # Should not crash, attachment skipped (path-based not yet supported)
+        parts = list(msg.walk())
+        filenames = [p.get_filename() for p in parts if p.get_filename()]
+        assert len(filenames) == 0
+
 
 # ============================================================================
 # LIST DIR WITH DRAFTS / TRASH TESTS
@@ -969,6 +1039,44 @@ class TestYamlParsing:
 
         assert result["agent_intent"] == "Inline intent field"
         assert result["to"] == ["bob@example.com"]
+
+
+# ============================================================================
+# ATTACHMENT SCHEMA TESTS
+# ============================================================================
+
+
+class TestAttachmentSchema:
+    """Test Attachment model validation."""
+
+    def test_inline_attachment_valid(self):
+        """Test valid inline attachment with data + filename."""
+        from nexus.backends.connectors.gmail.schemas import Attachment
+
+        att = Attachment(data="SGVsbG8=", filename="test.txt")
+        assert att.data == "SGVsbG8="
+        assert att.filename == "test.txt"
+
+    def test_inline_attachment_requires_filename(self):
+        """Test that inline data without filename raises."""
+        from nexus.backends.connectors.gmail.schemas import Attachment
+
+        with pytest.raises(PydanticValidationError):
+            Attachment(data="SGVsbG8=")
+
+    def test_path_attachment_valid(self):
+        """Test valid path-based attachment."""
+        from nexus.backends.connectors.gmail.schemas import Attachment
+
+        att = Attachment(path="/mnt/storage/file.pdf")
+        assert att.path == "/mnt/storage/file.pdf"
+
+    def test_no_source_raises(self):
+        """Test that attachment with neither data nor path raises."""
+        from nexus.backends.connectors.gmail.schemas import Attachment
+
+        with pytest.raises(PydanticValidationError):
+            Attachment(filename="orphan.txt")
 
 
 # ============================================================================

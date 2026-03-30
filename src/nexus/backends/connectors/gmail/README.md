@@ -151,7 +151,7 @@ thread_id: "18c1234567890abc"  # Optional: for reply drafts
 
 Note: Drafts don't require `confirm: true` since they're not sent.
 
-### With Attachments
+### With Attachments (Inline Base64)
 
 ```yaml
 # agent_intent: User requested to send email with report attachment
@@ -165,11 +165,15 @@ body: |
 
   Best regards
 attachments:
-  - path: /mnt/storage/reports/q4-report.pdf
-    filename: Q4-Report-2024.pdf  # Optional: override filename
-    content_type: application/pdf  # Optional: auto-detected if not set
+  - data: JVBERi0xLjQK...  # base64-encoded file content
+    filename: Q4-Report-2024.pdf  # Required for inline attachments
+    content_type: application/pdf  # Optional: auto-detected from filename
 confirm: true
 ```
+
+Note: Attachments use inline base64 encoding. To attach a file, first read it
+and base64-encode the content into the `data` field. The `filename` field is
+required for inline attachments.
 
 ## Required Format
 

@@ -31,6 +31,7 @@ from nexus.core.config import (
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
+from nexus.core.nexus_fs_watch import WatchMixin
 from nexus.core.router import PathRouter
 from nexus.lib.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
@@ -59,6 +60,7 @@ class _WriteContentResult(NamedTuple):
 
 
 class NexusFS(  # type: ignore[misc]
+    WatchMixin,
     NexusFilesystemABC,
 ):
     """
@@ -635,29 +637,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
         return await self._lock_manager.release(lock_id, path)
 
-    # ── Watch (inotify equivalent) ────────────────────────────────
-
-    @rpc_expose(description="Wait for file changes on a path")
-    async def sys_watch(
-        self,
-        path: str,
-        timeout: float = 30.0,
-        *,
-        recursive: bool = False,  # noqa: ARG002
-        context: OperationContext | None = None,
-    ) -> dict[str, Any] | None:
-        """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout.
-
-        Delegates to kernel FileWatcher which races local OBSERVE + optional
-        remote watcher (federation) via FIRST_COMPLETED.
-        """
-        path = validate_path(path, allow_root=True)
-        ctx = self._resolve_cred(context)
-        zone_id = getattr(ctx, "zone_id", None) or ROOT_ZONE_ID
-        event = await self._file_watcher.wait(path, timeout=timeout, zone_id=zone_id)
-        if event is None:
-            return None
-        return event.to_dict()
+    # sys_watch is in nexus_fs_watch.py (WatchMixin)
 
     @rpc_expose(description="Get advisory lock info for a path")
     async def lock_info(

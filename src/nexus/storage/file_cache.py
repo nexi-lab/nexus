@@ -274,11 +274,6 @@ class FileContentCache:
         Returns:
             Path to the cached binary file
         """
-        # Fresh content being written — clear any staleness marker
-        key = self._lease_key(zone_id, virtual_path)
-        with self._lease_lock:
-            self._stale_paths.discard(key)
-
         # Write binary content
         cache_path = self._get_cache_path(zone_id, virtual_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -289,6 +284,12 @@ class FileContentCache:
         except Exception as e:
             logger.error(f"Failed to write cache file {cache_path}: {e}")
             raise
+
+        # Clear staleness AFTER successful write — if write_bytes() failed
+        # the stale marker must survive so reads don't serve old data.
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._stale_paths.discard(key)
 
         # Write text content if provided
         if text_content:
@@ -596,12 +597,6 @@ class FileContentCache:
         Returns:
             True if content was deleted
         """
-        # Clear staleness / lease state — the entry is being removed entirely
-        key = self._lease_key(zone_id, virtual_path)
-        with self._lease_lock:
-            self._stale_paths.discard(key)
-            self._leased_paths.discard(key)
-
         deleted = False
 
         # Delete binary cache
@@ -628,6 +623,15 @@ class FileContentCache:
                 meta_path.unlink()
             except Exception as e:
                 logger.warning(f"Failed to delete meta cache {meta_path}: {e}")
+
+        # Clear staleness / lease state only AFTER files are deleted.
+        # If deletion failed, preserve stale markers so reads don't
+        # silently serve the old on-disk content.
+        if deleted:
+            key = self._lease_key(zone_id, virtual_path)
+            with self._lease_lock:
+                self._stale_paths.discard(key)
+                self._leased_paths.discard(key)
 
         return deleted
 

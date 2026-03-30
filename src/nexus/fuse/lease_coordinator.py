@@ -356,6 +356,10 @@ class FUSELeaseCoordinator:
         Local invalidation is immediate (Decision 4A). Cross-mount revocation
         is asynchronous (Decision 15A).
 
+        Also marks the FileContentCache (shared disk cache) as stale for the
+        mutating mount, since the revocation callback only fires for OTHER
+        mounts (Issue #3400, Codex review P2 fix).
+
         Args:
             paths: List of file paths to invalidate
         """
@@ -363,6 +367,10 @@ class FUSELeaseCoordinator:
             # Immediate local invalidation
             self._cache.invalidate_path(path)
             self._clear_validity(path)
+            # Mark shared disk cache stale for this mount too —
+            # the revocation callback only covers other mounts
+            if self._file_cache is not None and self._zone_id is not None:
+                self._file_cache.mark_lease_revoked(self._zone_id, path)
             # Fire-and-forget cross-mount revocation
             self._revoke_lease_async(path)
 

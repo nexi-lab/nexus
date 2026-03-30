@@ -94,7 +94,7 @@ jobs:
       - name: Install protoc 3.x
         shell: bash -el {0}
         run: |
-          conda install -n base -c conda-forge protobuf=3.20.3 -y
+          conda install -n base -c conda-forge protoc=3.20.3 -y
           protoc --version
 
       # ── maturin builds ───────────────────────────────────────────────────

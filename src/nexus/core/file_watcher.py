@@ -92,11 +92,10 @@ class FileWatcher:
 
     event_mask: int = ALL_FILE_EVENTS  # ObserverRegistry bitmask
 
-    def __init__(self, local_zone_id: str | None = None) -> None:
+    def __init__(self) -> None:
         self._waiters: list[_Waiter] = []
         self._waiters_lock = threading.Lock()
         self._remote_watcher: RemoteWatchProtocol | None = None
-        self._local_zone_id = local_zone_id
 
     # ------------------------------------------------------------------
     # Kernel-knows: remote watcher setter
@@ -193,12 +192,6 @@ class FileWatcher:
     # Unified wait — races local + remote
     # ------------------------------------------------------------------
 
-    def _is_remote_zone(self, zone_id: str) -> bool:
-        """Check if zone_id refers to a remote zone (not this node's zone)."""
-        if self._local_zone_id is None:
-            return False  # single-node mode — everything is local
-        return zone_id != self._local_zone_id
-
     async def wait(
         self,
         path: str,
@@ -207,18 +200,15 @@ class FileWatcher:
     ) -> "FileEvent | None":
         """Wait for file changes — races local OBSERVE + remote watcher.
 
-        Zone-aware routing:
-        - Remote zone (zone_id != local): skip local wait (guaranteed miss),
-          go straight to remote watcher.
-        - Local zone: race local OBSERVE + remote (if available).
-        - No remote watcher: local-only.
+        Local OBSERVE covers same-node mutations (~0µs). Remote watcher
+        covers intra-zone inter-node mutations (e.g. Raft follower apply
+        gap via WALStreamBackend). When both available, races them.
+
+        Cross-zone watch is NOT handled here — zones are visibility
+        boundaries. Cross-zone access goes through DT_MOUNT at the
+        routing layer (FederationContentResolver / FederationIPCResolver).
         """
         has_remote = self._remote_watcher is not None
-
-        # Cross-zone: skip local wait — remote zone mutations never trigger
-        # local dispatch.notify(), so wait_local() would always timeout.
-        if has_remote and self._is_remote_zone(zone_id):
-            return await self._wait_remote(zone_id, path, timeout)
 
         if has_remote:
             task_local = asyncio.create_task(self.wait_local(path, timeout))

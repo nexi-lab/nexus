@@ -142,7 +142,7 @@ class TaskDispatchPipeConsumer:
         if self._pipe_manager is None:
             return
 
-        from nexus.core.pipe import PipeError
+        from nexus.core.pipe import PipeExistsError
 
         try:
             self._pipe_manager.create(
@@ -150,7 +150,7 @@ class TaskDispatchPipeConsumer:
                 capacity=_TASK_DISPATCH_PIPE_CAPACITY,
                 owner_id="kernel",
             )
-        except PipeError:
+        except PipeExistsError:
             self._pipe_manager.open(_TASK_DISPATCH_PIPE_PATH, capacity=_TASK_DISPATCH_PIPE_CAPACITY)
 
         self._pipe_ready = True

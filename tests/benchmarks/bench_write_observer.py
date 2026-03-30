@@ -19,6 +19,7 @@ import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.core.pipe_manager import PipeManager
@@ -110,7 +111,11 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     pipe_manager.create(_AUDIT_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")
 
     observer = PipedRecordStoreWriteObserver(record_store, strict_mode=False)
-    observer.set_pipe_manager(pipe_manager)
+
+    # Bind a minimal NexusFS-like object that exposes _pipe_manager.
+    # The observer uses getattr(nx, "_pipe_manager", None) in start().
+    fake_nx: Any = type("_FakeNx", (), {"_pipe_manager": pipe_manager})()
+    observer.bind_fs(fake_nx)
 
     # Suppress observer warnings during benchmark
     obs_logger = logging.getLogger("nexus.storage.piped_record_store_write_observer")

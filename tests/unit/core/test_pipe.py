@@ -2,11 +2,12 @@
 
 Tests RingBuffer (kfifo equivalent, kernel tier) and PipeManager
 (mkfifo equivalent, system service tier).
-See: src/nexus/core/pipe.py, src/nexus/system_services/pipe_manager.py,
+See: src/nexus/core/pipe.py, src/nexus/core/pipe_manager.py,
      KERNEL-ARCHITECTURE.md §6.
 """
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -15,6 +16,7 @@ from nexus.core.pipe import (
     PipeClosedError,
     PipeEmptyError,
     PipeError,
+    PipeExistsError,
     PipeFullError,
     PipeNotFoundError,
     RingBuffer,
@@ -329,7 +331,7 @@ class TestPipeManager:
     def test_create_duplicate_raises(self) -> None:
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/dup")
-        with pytest.raises(PipeError, match="pipe already exists"):
+        with pytest.raises(PipeExistsError, match="pipe already exists"):
             mgr.create("/nexus/pipes/dup")
 
     def test_create_at_existing_path_raises(self) -> None:
@@ -344,7 +346,7 @@ class TestPipeManager:
                 entry_type=DT_REG,
             )
         )
-        with pytest.raises(PipeError, match="path already exists"):
+        with pytest.raises(PipeExistsError, match="path already exists"):
             mgr.create("/existing/file")
 
     def test_open_existing_buffer(self) -> None:
@@ -1080,3 +1082,392 @@ class TestSysSetAttrIdempotentOpen:
         mgr = PipeManager(ms)
         with pytest.raises(PipeNotFoundError):
             mgr.open("/nexus/files/regular")
+
+
+# ======================================================================
+# PipeManager — signal_close lifecycle (Issue #3198 review, Issue 9)
+# ======================================================================
+
+
+class TestPipeManagerSignalClose:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    @pytest.mark.asyncio
+    async def test_signal_close_wakes_blocked_reader(self) -> None:
+        """signal_close() should wake a reader blocked on an empty pipe."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/sc", capacity=1024)
+
+        woke = False
+
+        async def reader() -> None:
+            nonlocal woke
+            with pytest.raises(PipeClosedError):
+                await mgr.pipe_read("/nexus/pipes/sc")
+            woke = True
+
+        async def closer() -> None:
+            await asyncio.sleep(0.01)
+            mgr.signal_close("/nexus/pipes/sc")
+
+        await asyncio.gather(reader(), closer())
+        assert woke is True
+
+    @pytest.mark.asyncio
+    async def test_drain_after_signal_close(self) -> None:
+        """Readers can drain remaining messages after signal_close."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/drain", capacity=1024)
+        await mgr.pipe_write("/nexus/pipes/drain", b"msg-1")
+        await mgr.pipe_write("/nexus/pipes/drain", b"msg-2")
+
+        mgr.signal_close("/nexus/pipes/drain")
+
+        # Drain should succeed
+        assert await mgr.pipe_read("/nexus/pipes/drain") == b"msg-1"
+        assert await mgr.pipe_read("/nexus/pipes/drain") == b"msg-2"
+        # After drain, PipeClosedError
+        with pytest.raises(PipeClosedError):
+            await mgr.pipe_read("/nexus/pipes/drain")
+
+    def test_signal_close_keeps_lock(self) -> None:
+        """signal_close() should NOT remove the lock (unlike close/destroy)."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/sc-lock", capacity=1024)
+        mgr._get_lock("/nexus/pipes/sc-lock")
+        assert "/nexus/pipes/sc-lock" in mgr._locks
+
+        mgr.signal_close("/nexus/pipes/sc-lock")
+        assert "/nexus/pipes/sc-lock" in mgr._locks  # Lock stays for drain
+
+    def test_signal_close_keeps_buffer_in_registry(self) -> None:
+        """signal_close() keeps the buffer in _buffers for drain access."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/sc-buf", capacity=1024)
+
+        mgr.signal_close("/nexus/pipes/sc-buf")
+        assert "/nexus/pipes/sc-buf" in mgr._buffers
+
+    def test_close_after_signal_close(self) -> None:
+        """close() after signal_close() should clean up everything."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/sc-then-close", capacity=1024)
+        mgr._get_lock("/nexus/pipes/sc-then-close")
+
+        mgr.signal_close("/nexus/pipes/sc-then-close")
+        mgr.close("/nexus/pipes/sc-then-close")
+
+        assert "/nexus/pipes/sc-then-close" not in mgr._buffers
+        assert "/nexus/pipes/sc-then-close" not in mgr._locks
+
+    def test_signal_close_nonexistent_raises(self) -> None:
+        mgr, _ = self._make_manager()
+        with pytest.raises(PipeNotFoundError):
+            mgr.signal_close("/nexus/pipes/nope")
+
+
+# ======================================================================
+# PipeManager — create_from_backend (Issue #3198 review, Issue 10)
+# ======================================================================
+
+
+class TestPipeManagerCreateFromBackend:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    def test_create_from_backend_happy_path(self) -> None:
+        """create_from_backend registers the given backend and creates inode."""
+        mgr, ms = self._make_manager()
+        custom_buf = RingBuffer(capacity=2048)
+
+        result = mgr.create_from_backend("/nexus/pipes/custom", custom_buf, owner_id="agent-x")
+
+        assert result is custom_buf
+        assert "/nexus/pipes/custom" in mgr._buffers
+        meta = ms.get("/nexus/pipes/custom")
+        assert meta is not None
+        assert meta.entry_type == DT_PIPE
+        assert meta.owner_id == "agent-x"
+
+    @pytest.mark.asyncio
+    async def test_create_from_backend_read_write(self) -> None:
+        """Data flows through a custom-backend pipe via PipeManager."""
+        mgr, _ = self._make_manager()
+        buf = RingBuffer(capacity=1024)
+        mgr.create_from_backend("/nexus/pipes/rw", buf)
+
+        mgr.pipe_write_nowait("/nexus/pipes/rw", b"hello")
+        assert await mgr.pipe_read("/nexus/pipes/rw") == b"hello"
+
+    def test_create_from_backend_duplicate_buffer_raises(self) -> None:
+        mgr, _ = self._make_manager()
+        mgr.create_from_backend("/nexus/pipes/dup", RingBuffer(capacity=1024))
+        with pytest.raises(PipeExistsError, match="pipe already exists"):
+            mgr.create_from_backend("/nexus/pipes/dup", RingBuffer(capacity=1024))
+
+    def test_create_from_backend_existing_path_raises(self) -> None:
+        mgr, ms = self._make_manager()
+        ms.put(
+            FileMetadata(
+                path="/nexus/pipes/taken",
+                backend_name="local",
+                physical_path="/tmp/x",
+                size=0,
+                entry_type=DT_REG,
+            )
+        )
+        with pytest.raises(PipeExistsError, match="path already exists"):
+            mgr.create_from_backend("/nexus/pipes/taken", RingBuffer(capacity=1024))
+
+    def test_destroy_custom_backend(self) -> None:
+        """destroy() works on custom-backend pipes."""
+        mgr, ms = self._make_manager()
+        mgr.create_from_backend("/nexus/pipes/cust-destroy", RingBuffer(capacity=1024))
+
+        mgr.destroy("/nexus/pipes/cust-destroy")
+        assert "/nexus/pipes/cust-destroy" not in mgr._buffers
+        assert ms.get("/nexus/pipes/cust-destroy") is None
+
+
+# ======================================================================
+# PipeManager — MPMC concurrent readers + mixed (Issue #3198 review, Issue 11)
+# ======================================================================
+
+
+class TestPipeManagerMPMCExtended:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    @pytest.mark.asyncio
+    async def test_concurrent_readers_no_duplicates(self) -> None:
+        """Multiple async readers should not receive duplicate messages."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/cr", capacity=65_536)
+        n_msgs = 50
+
+        # Pre-fill pipe
+        for i in range(n_msgs):
+            mgr.pipe_write_nowait("/nexus/pipes/cr", f"msg-{i}".encode())
+
+        received: list[bytes] = []
+        lock = asyncio.Lock()
+
+        async def reader() -> None:
+            while True:
+                try:
+                    msg = await mgr.pipe_read("/nexus/pipes/cr", blocking=False)
+                except PipeEmptyError:
+                    break
+                async with lock:
+                    received.append(msg)
+
+        await asyncio.gather(*(reader() for _ in range(5)))
+
+        assert len(received) == n_msgs
+        # No duplicates
+        assert len(set(received)) == n_msgs
+
+    @pytest.mark.asyncio
+    async def test_mixed_concurrent_readers_and_writers(self) -> None:
+        """Simultaneous readers and writers should not lose or duplicate messages."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/mixed-rw", capacity=65_536)
+        n_writers = 3
+        msgs_per_writer = 20
+        total = n_writers * msgs_per_writer
+
+        received: list[bytes] = []
+        done = asyncio.Event()
+
+        async def writer(wid: int) -> None:
+            for i in range(msgs_per_writer):
+                await mgr.pipe_write("/nexus/pipes/mixed-rw", f"w{wid}-{i}".encode())
+
+        async def reader() -> None:
+            while not done.is_set():
+                try:
+                    msg = await asyncio.wait_for(
+                        mgr.pipe_read("/nexus/pipes/mixed-rw"), timeout=0.1
+                    )
+                    received.append(msg)
+                    if len(received) >= total:
+                        done.set()
+                except TimeoutError:
+                    continue
+
+        writers = [writer(w) for w in range(n_writers)]
+        reader_tasks = [asyncio.create_task(reader()) for _ in range(2)]
+
+        await asyncio.gather(*writers)
+        await asyncio.wait_for(done.wait(), timeout=2.0)
+        for t in reader_tasks:
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        assert len(received) == total
+        assert len(set(received)) == total
+
+    @pytest.mark.asyncio
+    async def test_thundering_herd_single_message(self) -> None:
+        """Many blocked readers, one write: exactly one reader gets the message."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/herd", capacity=1024)
+        n_readers = 5
+
+        results: list[bytes] = []
+        lock = asyncio.Lock()
+
+        async def reader(rid: int) -> None:
+            try:
+                msg = await asyncio.wait_for(mgr.pipe_read("/nexus/pipes/herd"), timeout=0.5)
+                async with lock:
+                    results.append(msg)
+            except TimeoutError:
+                pass  # Expected for losers
+
+        tasks = [asyncio.create_task(reader(r)) for r in range(n_readers)]
+        await asyncio.sleep(0.02)  # Let all readers block
+
+        await mgr.pipe_write("/nexus/pipes/herd", b"prize")
+        await asyncio.gather(*tasks)
+
+        # Exactly one reader should have received the message
+        assert results == [b"prize"]
+
+
+# ======================================================================
+# PipeManager — pipe closure during blocking wait (Issue #3198 review, Issue 12)
+# ======================================================================
+
+
+class TestPipeManagerClosureDuringWait:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    @pytest.mark.asyncio
+    async def test_close_during_blocked_read(self) -> None:
+        """Closing a pipe while pipe_read() is blocked should raise PipeClosedError."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/close-read", capacity=1024)
+
+        async def reader() -> None:
+            with pytest.raises(PipeClosedError):
+                await mgr.pipe_read("/nexus/pipes/close-read")
+
+        async def closer() -> None:
+            await asyncio.sleep(0.01)
+            mgr.signal_close("/nexus/pipes/close-read")
+
+        await asyncio.gather(reader(), closer())
+
+    @pytest.mark.asyncio
+    async def test_close_during_blocked_write(self) -> None:
+        """Closing a pipe while pipe_write() is blocked should raise PipeClosedError."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/close-write", capacity=10)
+        # Fill the pipe
+        await mgr.pipe_write("/nexus/pipes/close-write", b"x" * 10)
+
+        async def writer() -> None:
+            with pytest.raises(PipeClosedError):
+                await mgr.pipe_write("/nexus/pipes/close-write", b"more")
+
+        async def closer() -> None:
+            await asyncio.sleep(0.01)
+            mgr.signal_close("/nexus/pipes/close-write")
+
+        await asyncio.gather(writer(), closer())
+
+
+# ======================================================================
+# PipeManager — backpressure stats (Issue #3198 review, Issue 16)
+# ======================================================================
+
+
+class TestPipeManagerBackpressureStats:
+    def _make_manager(self) -> tuple[PipeManager, MockMetastore]:
+        ms = MockMetastore()
+        return PipeManager(ms), ms
+
+    def test_initial_stats_zero(self) -> None:
+        mgr, _ = self._make_manager()
+        stats = mgr.backpressure_stats
+        assert stats["write_blocks"] == 0
+        assert stats["read_blocks"] == 0
+        assert stats["total_write_wait_ns"] == 0
+        assert stats["total_read_wait_ns"] == 0
+
+    @pytest.mark.asyncio
+    async def test_read_block_increments_counter(self) -> None:
+        """Blocking pipe_read should increment read_blocks."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/bp-read", capacity=1024)
+
+        async def reader() -> None:
+            await mgr.pipe_read("/nexus/pipes/bp-read")
+
+        async def writer() -> None:
+            await asyncio.sleep(0.01)
+            await mgr.pipe_write("/nexus/pipes/bp-read", b"data")
+
+        await asyncio.gather(reader(), writer())
+
+        assert mgr.backpressure_stats["read_blocks"] >= 1
+        assert mgr.backpressure_stats["total_read_wait_ns"] > 0
+
+    @pytest.mark.asyncio
+    async def test_write_block_increments_counter(self) -> None:
+        """Blocking pipe_write on full pipe should increment write_blocks."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/bp-write", capacity=10)
+        await mgr.pipe_write("/nexus/pipes/bp-write", b"x" * 10)
+
+        async def writer() -> None:
+            await mgr.pipe_write("/nexus/pipes/bp-write", b"y")
+
+        async def reader() -> None:
+            await asyncio.sleep(0.01)
+            await mgr.pipe_read("/nexus/pipes/bp-write")
+
+        await asyncio.gather(writer(), reader())
+
+        assert mgr.backpressure_stats["write_blocks"] >= 1
+        assert mgr.backpressure_stats["total_write_wait_ns"] > 0
+
+    @pytest.mark.asyncio
+    async def test_nowait_does_not_increment(self) -> None:
+        """pipe_write_nowait should NOT affect backpressure counters."""
+        mgr, _ = self._make_manager()
+        mgr.create("/nexus/pipes/bp-nowait", capacity=1024)
+        mgr.pipe_write_nowait("/nexus/pipes/bp-nowait", b"data")
+
+        stats = mgr.backpressure_stats
+        assert stats["write_blocks"] == 0
+        assert stats["read_blocks"] == 0
+
+
+# ======================================================================
+# PipeExistsError (Issue #3198 review, Issue 8)
+# ======================================================================
+
+
+class TestPipeExistsError:
+    def test_is_subclass_of_pipe_error(self) -> None:
+        assert issubclass(PipeExistsError, PipeError)
+
+    def test_ensure_does_not_catch_other_pipe_errors(self) -> None:
+        """ensure() should only catch PipeExistsError, not other PipeErrors."""
+        ms = MockMetastore()
+        mgr = PipeManager(ms)
+
+        # Create a pipe so ensure() will try create() → PipeExistsError → open()
+        mgr.create("/nexus/pipes/ensure-test")
+        # ensure() should succeed (falls through to open)
+        result = mgr.ensure("/nexus/pipes/ensure-test")
+        assert result is not None

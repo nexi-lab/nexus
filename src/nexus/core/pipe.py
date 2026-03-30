@@ -130,6 +130,10 @@ class PipeNotFoundError(PipeError):
     """No pipe registered at the given path."""
 
 
+class PipeExistsError(PipeError):
+    """A pipe already exists at the given path."""
+
+
 # ---------------------------------------------------------------------------
 # PipeBackend protocol — pluggable transport tier
 # ---------------------------------------------------------------------------
@@ -310,7 +314,11 @@ class RingBuffer:
         return int(n)
 
     def read_nowait(self) -> bytes:
-        """Synchronous non-blocking read. Raises PipeEmptyError if empty."""
+        """Synchronous non-blocking read. Raises PipeEmptyError if empty.
+
+        Thread-safe: uses ``call_soon_threadsafe`` to wake blocked writers,
+        matching the pattern in ``write_nowait()``.
+        """
         try:
             msg: bytes = self._core.pop()  # PyO3 returns bytes natively
         except RuntimeError as exc:
@@ -319,8 +327,14 @@ class RingBuffer:
 
         # Wake blocked writer only if one is actually waiting.
         # Skipping Event.set() when no writer is blocked saves ~55ns/op.
+        # Use call_soon_threadsafe for thread-safety (same pattern as
+        # write_nowait) — future-proofs for free-threaded Python and
+        # guards against callers from RPC worker threads.
         if self._writers_waiting:
-            self._not_full.set()
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._not_full.set)
+            else:
+                self._not_full.set()
         return msg
 
     # -- u64 fast path (L2 — zero PyBytes allocation) ----------------------
@@ -350,7 +364,10 @@ class RingBuffer:
             raise  # unreachable
 
         if self._writers_waiting:
-            self._not_full.set()
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._not_full.set)
+            else:
+                self._not_full.set()
         return val
 
     async def write_u64(self, val: int, *, blocking: bool = True) -> None:

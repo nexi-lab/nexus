@@ -145,7 +145,7 @@ class WorkflowDispatchService:
         if self._pipe_manager is None:
             return  # CLI mode — no pipe manager
 
-        from nexus.core.pipe import PipeError
+        from nexus.core.pipe import PipeExistsError
 
         try:
             self._pipe_manager.create(
@@ -153,7 +153,7 @@ class WorkflowDispatchService:
                 capacity=_WORKFLOW_PIPE_CAPACITY,
                 owner_id="kernel",
             )
-        except PipeError:
+        except PipeExistsError:
             # Pipe already exists (e.g., restart recovery) — open it
             self._pipe_manager.open(_WORKFLOW_PIPE_PATH, capacity=_WORKFLOW_PIPE_CAPACITY)
 

@@ -1449,11 +1449,12 @@ class NexusFS(  # type: ignore[misc]
         # DT_PIPE fast-path: skip validate/resolve/intercept/route (~400ns vs ~20+μs)
         # Hot path: try sync read_nowait (no Lock, no await) — matches sys_write perf.
         # Cold path (empty pipe): fall through to async _pipe_read for blocking wait.
-        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+        _pbuf = self._pipe_manager._buffers.get(path) if self._pipe_manager is not None else None
+        if _pbuf is not None:
             from nexus.core.pipe import PipeClosedError, PipeEmptyError
 
             try:
-                data = self._pipe_manager._get_buffer(path).read_nowait()
+                data = _pbuf.read_nowait()
             except PipeEmptyError:
                 return await self._pipe_read(path, count=count, offset=offset)
             except PipeClosedError:

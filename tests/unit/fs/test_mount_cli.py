@@ -159,6 +159,28 @@ class TestMountPersistence:
         mounts_data = json.loads((tmp_path / "mounts.json").read_text())
         assert len(mounts_data) == 1
 
+    def test_mount_overrides_persisted_via_python_api(self, tmp_path, monkeypatch) -> None:
+        """mount(mount_overrides=...) must persist per-URI at values."""
+        import asyncio
+
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        with _mock_create_backend():
+            from nexus.fs import mount
+
+            asyncio.run(
+                mount(
+                    "local:///tmp/a",
+                    "local:///tmp/b",
+                    mount_overrides={"local:///tmp/a": "/data"},
+                )
+            )
+
+        mounts_data = json.loads((tmp_path / "mounts.json").read_text())
+        by_uri = {e["uri"]: e["at"] for e in mounts_data}
+        assert by_uri["local:///tmp/a"] == "/data"
+        assert by_uri["local:///tmp/b"] is None
+
     def test_at_restored_by_cp_single_mount(self, tmp_path, monkeypatch) -> None:
         """cp should restore --at from persisted mounts.json (single mount)."""
         monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))

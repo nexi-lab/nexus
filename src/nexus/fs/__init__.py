@@ -168,7 +168,10 @@ async def mount(
         try:
             from nexus.fs._paths import save_persisted_mounts
 
-            new_entries = [{"uri": uri, "at": at if i == 0 else None} for i, uri in enumerate(uris)]
+            new_entries = [
+                {"uri": uri, "at": overrides.get(uri) or (at if i == 0 else None)}
+                for i, uri in enumerate(uris)
+            ]
             save_persisted_mounts(new_entries)
         except OSError as exc:
             logger.warning(

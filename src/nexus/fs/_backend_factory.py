@@ -17,11 +17,16 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def create_backend(spec: Any) -> Any:
+def create_backend(spec: Any, *, metastore: Any | None = None) -> Any:
     """Create a storage backend from a parsed MountSpec.
 
     Discovers credentials automatically and instantiates the
     appropriate backend class.
+
+    Args:
+        spec: Parsed MountSpec from parse_uri().
+        metastore: Optional metastore for path-based backends (S3) that
+            need to persist metadata during write_content().
 
     Raises:
         CloudCredentialError: If required credentials are missing.
@@ -43,6 +48,7 @@ def create_backend(spec: Any) -> Any:
         return PathS3Backend(
             bucket_name=spec.authority,
             prefix=spec.path.lstrip("/") if spec.path else "",
+            metastore=metastore,
         )
 
     elif spec.scheme == "gcs":

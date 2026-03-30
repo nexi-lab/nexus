@@ -112,7 +112,7 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     backends: list[tuple[str, Any]] = []
     try:
         for spec, mp in resolved_mounts:
-            backend = create_backend(spec)
+            backend = create_backend(spec, metastore=metastore)
             backends.append((mp, backend))
     except Exception:
         # Clean up any already-created backends and the metastore

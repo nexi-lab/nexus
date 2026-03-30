@@ -16,10 +16,18 @@ import React from "react";
 import { testRender } from "@opentui/react/test-utils";
 import { SideNav } from "../../src/shared/components/side-nav.js";
 import { NAV_ITEMS } from "../../src/shared/nav-items.js";
-import { useVersionsStore } from "../../src/stores/versions-store.js";
-import { useZonesStore } from "../../src/stores/zones-store.js";
 import { useFilesStore } from "../../src/stores/files-store.js";
+import { useVersionsStore } from "../../src/stores/versions-store.js";
 import { useAgentsStore } from "../../src/stores/agents-store.js";
+import { useZonesStore } from "../../src/stores/zones-store.js";
+import { useAccessStore } from "../../src/stores/access-store.js";
+import { usePaymentsStore } from "../../src/stores/payments-store.js";
+import { useSearchStore } from "../../src/stores/search-store.js";
+import { useWorkflowsStore } from "../../src/stores/workflows-store.js";
+import { useInfraStore } from "../../src/stores/infra-store.js";
+import { useApiConsoleStore } from "../../src/stores/api-console-store.js";
+import { useConnectorsStore } from "../../src/stores/connectors-store.js";
+import { useStackStore } from "../../src/stores/stack-store.js";
 
 // =============================================================================
 // Helpers
@@ -45,11 +53,20 @@ async function renderSideNav(
 }
 
 function resetStores(): void {
-  // Reset stores that SideNav reads from
-  useVersionsStore.setState({ isLoading: false, error: null });
-  useZonesStore.setState({ isLoading: false, error: null });
+  // Reset ALL stores that SideNav reads loading/error from.
+  // Must be exhaustive — other test suites may leave stale error state.
   useFilesStore.setState({ error: null });
+  useVersionsStore.setState({ isLoading: false, error: null });
   useAgentsStore.setState({ error: null });
+  useZonesStore.setState({ isLoading: false, error: null });
+  useAccessStore.setState({ error: null });
+  usePaymentsStore.setState({ error: null });
+  useSearchStore.setState({ error: null });
+  useWorkflowsStore.setState({ error: null });
+  useInfraStore.setState({ error: null });
+  useApiConsoleStore.setState({ isLoading: false });
+  useConnectorsStore.setState({ error: null });
+  useStackStore.setState({ error: null });
 }
 
 // =============================================================================

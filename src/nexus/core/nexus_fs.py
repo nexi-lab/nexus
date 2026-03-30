@@ -31,6 +31,7 @@ from nexus.core.config import (
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
+from nexus.core.nexus_fs_ipc import IPCMixin
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
 from nexus.core.router import PathRouter
@@ -62,6 +63,7 @@ class _WriteContentResult(NamedTuple):
 
 class NexusFS(  # type: ignore[misc]
     LockMixin,
+    IPCMixin,
     WatchMixin,
     NexusFilesystemABC,
 ):
@@ -4683,119 +4685,7 @@ class NexusFS(  # type: ignore[misc]
         flushed: int = run_sync(_wo.flush())
         return {"flushed": flushed}
 
-    # ------------------------------------------------------------------
-    # DT_PIPE kernel primitives (§4.2)
-    # ------------------------------------------------------------------
-
-    async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — async blocking, waits until data is available.
-
-        Only handles local pipes. Remote pipes are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
-
-        if self._pipe_manager is None:
-            raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        try:
-            data = await self._pipe_manager.pipe_read(path, blocking=True)
-        except PipeNotFoundError:
-            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
-        except PipeClosedError:
-            raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
-        if offset or count is not None:
-            data = data[offset : offset + count] if count is not None else data[offset:]
-        return data
-
-    def _pipe_write(self, path: str, data: bytes) -> int:
-        """Write to DT_PIPE — non-blocking, PipeFullError propagates.
-
-        Only handles local pipes. Remote pipes are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
-
-        if self._pipe_manager is None:
-            raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        try:
-            return self._pipe_manager.pipe_write_nowait(path, data)
-        except PipeNotFoundError:
-            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
-        except PipeClosedError:
-            raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
-
-    def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close buffer + delete inode.
-
-        Only handles local pipes. Remote pipes are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.pipe import PipeNotFoundError
-
-        if self._pipe_manager is None:
-            raise NexusFileNotFoundError(path, "PipeManager not available")
-
-        try:
-            self._pipe_manager.destroy(path)
-        except PipeNotFoundError:
-            raise NexusFileNotFoundError(path, f"Pipe not found: {path}") from None
-        return {}
-
-    # ------------------------------------------------------------------
-    # DT_STREAM kernel primitives (§4.2)
-    # ------------------------------------------------------------------
-
-    async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — async blocking, waits until data at offset is available.
-
-        Only handles local streams. Remote streams are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.stream import StreamClosedError, StreamNotFoundError
-
-        try:
-            if count is not None and count > 1:
-                items, _ = await self._stream_manager.stream_read_batch_blocking(
-                    path, offset, count, blocking=True
-                )
-                return b"".join(items)
-            data, _ = await self._stream_manager.stream_read(path, offset, blocking=True)
-            return data
-        except StreamNotFoundError:
-            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
-        except StreamClosedError:
-            raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
-
-    def _stream_write(self, path: str, data: bytes) -> int:
-        """Write to DT_STREAM — non-blocking append, returns byte offset.
-
-        Only handles local streams. Remote streams are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.stream import StreamClosedError, StreamNotFoundError
-
-        try:
-            return self._stream_manager.stream_write_nowait(path, data)
-        except StreamNotFoundError:
-            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
-        except StreamClosedError:
-            raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
-
-    def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close buffer + delete inode.
-
-        Only handles local streams. Remote streams are intercepted by
-        FederationIPCResolver in the PRE-DISPATCH phase.
-        """
-        from nexus.core.stream import StreamNotFoundError
-
-        try:
-            self._stream_manager.destroy(path)
-        except StreamNotFoundError:
-            raise NexusFileNotFoundError(path, f"Stream not found: {path}") from None
-        return {}
+    # Pipe/stream methods in nexus_fs_ipc.py (IPCMixin)
 
     async def aclose(self) -> None:
         """Async shutdown: stop PersistentService + unregister hooks, then close.

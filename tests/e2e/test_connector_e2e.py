@@ -216,7 +216,7 @@ def main() -> None:
         has_content = len(skill.get("content", "")) > 0
         track(
             check(
-                f"/{mount} SKILL.md",
+                f"/{mount} README.md",
                 has_content,
                 f"{len(skill.get('content', ''))} chars, schemas={skill.get('schemas', [])}",
             )

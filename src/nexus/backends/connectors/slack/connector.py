@@ -32,8 +32,8 @@ from nexus.backends.connectors.base import (
     ConfirmLevel,
     ErrorDef,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -68,7 +68,7 @@ class PathSlackBackend(
     PathAddressingEngine,
     CacheConnectorMixin,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
 ):
@@ -85,7 +85,7 @@ class PathSlackBackend(
         {
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
         }
     )
 
@@ -108,12 +108,12 @@ class PathSlackBackend(
         **TRAIT_ERRORS,
         "CHANNEL_NOT_FOUND": ErrorDef(
             message="Channel not found or bot not a member",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="channel: C01234ABCDE  # Use channel ID, not name",
         ),
         "MESSAGE_NOT_FOUND": ErrorDef(
             message="Message not found (invalid timestamp)",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="ts: 1234567890.123456",
         ),
     }

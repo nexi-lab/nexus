@@ -1030,7 +1030,7 @@ def list_skills(
     """List available skills for a mounted connector.
 
     Shows operations, write paths, and traits for a connector.
-    Reads from the .skill/ directory at the mount point.
+    Reads from the .readme/ directory at the mount point.
 
     MOUNT_POINT: Path of the mount (e.g., /mnt/gmail)
 
@@ -1053,17 +1053,17 @@ async def _async_list_skills(
     try:
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         mp = mount_point.rstrip("/")
-        skill_md_path = f"{mp}/.skill/SKILL.md"
-        schemas_dir = f"{mp}/.skill/schemas"
+        readme_md_path = f"{mp}/.readme/README.md"
+        schemas_dir = f"{mp}/.readme/schemas"
 
         with timing.phase("server"):
-            # Read SKILL.md
+            # Read README.md
             try:
-                raw = await nx.sys_read(skill_md_path)
+                raw = await nx.sys_read(readme_md_path)
                 content = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             except Exception:
                 console.print(
-                    f"[nexus.warning]No skill documentation found at {skill_md_path}[/nexus.warning]"
+                    f"[nexus.warning]No skill documentation found at {readme_md_path}[/nexus.warning]"
                 )
                 console.print(
                     "[nexus.muted]This mount may not be a connector with skill docs.[/nexus.muted]"
@@ -1145,7 +1145,7 @@ async def _async_show_schema(
     try:
         nx: Any = await get_filesystem(remote_url, remote_api_key)
         mp = mount_point.rstrip("/")
-        schema_path = f"{mp}/.skill/schemas/{operation}.yaml"
+        schema_path = f"{mp}/.readme/schemas/{operation}.yaml"
 
         with timing.phase("server"):
             try:
@@ -1156,7 +1156,7 @@ async def _async_show_schema(
                 console.print()
                 console.print("[nexus.muted]Available operations:[/nexus.muted]")
                 try:
-                    entries = await nx.sys_readdir(f"{mp}/.skill/schemas")
+                    entries = await nx.sys_readdir(f"{mp}/.readme/schemas")
                     for e in entries:
                         if str(e).endswith(".yaml"):
                             console.print(

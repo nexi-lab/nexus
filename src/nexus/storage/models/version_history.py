@@ -24,7 +24,7 @@ class VersionHistoryModel(Base):
     """Version history tracking for files and memories.
 
     Unified version tracking system that works for:
-    - File versions (SKILL.md, documents, etc.)
+    - File versions (README.md, documents, etc.)
     - Memory versions (agent memories, facts, etc.)
 
     CAS-backed: Each version points to immutable content via content_hash.

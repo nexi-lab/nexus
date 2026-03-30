@@ -36,8 +36,8 @@ from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
 )
@@ -73,7 +73,7 @@ class PathGmailBackend(
     PathAddressingEngine,
     CacheConnectorMixin,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,
@@ -93,7 +93,7 @@ class PathGmailBackend(
             BackendFeature.CACHE_BULK_READ,
             BackendFeature.CACHE_SYNC,
             BackendFeature.WRITE_BACK,
-            BackendFeature.SKILL_DOC,
+            BackendFeature.README_DOC,
         }
     )
 
@@ -276,39 +276,41 @@ class PathGmailBackend(
 
     # -- Skill docs --
 
-    def generate_skill_doc(self, mount_path: str) -> str:
+    def generate_readme(self, mount_path: str) -> str:
         import importlib.resources as resources
 
         try:
-            skill_md_content = (
+            readme_md_content = (
                 resources.files("nexus.backends.connectors.gmail")
-                .joinpath("SKILL.md")
+                .joinpath("README.md")
                 .read_text(encoding="utf-8")
             )
-            skill_md_content = skill_md_content.replace("`/mnt/gmail/`", f"`{mount_path}`")
-            skill_md_content = skill_md_content.replace("/mnt/gmail/", mount_path.rstrip("/") + "/")
-            return skill_md_content
+            readme_md_content = readme_md_content.replace("`/mnt/gmail/`", f"`{mount_path}`")
+            readme_md_content = readme_md_content.replace(
+                "/mnt/gmail/", mount_path.rstrip("/") + "/"
+            )
+            return readme_md_content
         except Exception as e:
-            logger.warning(f"Failed to load static SKILL.md: {e}, using auto-generated")
-            return super().generate_skill_doc(mount_path)
+            logger.warning(f"Failed to load static README.md: {e}, using auto-generated")
+            return super().generate_readme(mount_path)
 
-    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
         import posixpath
 
-        result: dict[str, Any] = {"skill_md": None, "examples": []}
+        result: dict[str, Any] = {"readme_md": None, "examples": []}
         if filesystem is None:
             return result
 
-        skill_dir = posixpath.join(mount_path.rstrip("/"), self.SKILL_DIR)
+        readme_dir = posixpath.join(mount_path.rstrip("/"), self.README_DIR)
         try:
-            await filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
-            skill_md_path = posixpath.join(skill_dir, "SKILL.md")
-            content = self.generate_skill_doc(mount_path)
-            await filesystem.write(skill_md_path, content.encode("utf-8"))
-            result["skill_md"] = skill_md_path
+            await filesystem.mkdir(readme_dir, parents=True, exist_ok=True)
+            readme_md_path = posixpath.join(readme_dir, "README.md")
+            content = self.generate_readme(mount_path)
+            await filesystem.write(readme_md_path, content.encode("utf-8"))
+            result["readme_md"] = readme_md_path
             return result
         except Exception as e:
-            logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
+            logger.warning("Failed to write readme docs to %s: %s", readme_dir, e)
             return result
 
     # =================================================================

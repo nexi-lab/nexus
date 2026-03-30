@@ -173,10 +173,10 @@ class TestXConnectorCapabilities:
         assert "MISSING_AGENT_INTENT" in PathXBackend.ERROR_REGISTRY
         assert "TWEET_TOO_LONG" in PathXBackend.ERROR_REGISTRY
 
-    def test_has_skill_doc_capability(self):
+    def test_has_readme_doc_capability(self):
         from nexus.backends.connectors.x.connector import PathXBackend
 
-        assert BackendFeature.SKILL_DOC in PathXBackend._BACKEND_FEATURES
+        assert BackendFeature.README_DOC in PathXBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
         from nexus.backends.connectors.x.connector import PathXBackend

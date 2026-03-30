@@ -281,9 +281,9 @@ class TestCapabilities:
         connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.CLI_BACKED)
 
-    def test_has_skill_doc(self) -> None:
+    def test_has_readme_doc(self) -> None:
         connector = FakeCLIBackend()
-        assert connector.has_feature(BackendFeature.SKILL_DOC)
+        assert connector.has_feature(BackendFeature.README_DOC)
 
     def test_has_write_back(self) -> None:
         connector = FakeCLIBackend()

@@ -7,7 +7,7 @@ This module provides a centralized mapping between:
 
 The unified service name is used for:
 - Skill folder paths: /skills/{tier}/{service_name}/
-- SKILL.md generation
+- README.md generation
 - OAuth token mapping
 
 Connector fields are auto-derived from ConnectorRegistry via the

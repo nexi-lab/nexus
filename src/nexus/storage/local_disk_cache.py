@@ -27,7 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-import contextlib
 import logging
 import os
 import shutil
@@ -416,23 +415,29 @@ class LocalDiskCache:
             return self._remove_entry(cache_key)
 
     def _remove_entry(self, content_hash: str) -> bool:
-        """Internal: Remove entry from cache (must hold lock)."""
-        entry = self._entries.pop(content_hash, None)
+        """Internal: Remove entry from cache (must hold lock).
+
+        Deletion order: files first, then metadata.  If file deletion
+        fails the metadata is preserved so the entry can be retried on
+        the next eviction pass — this prevents size-tracking drift.
+
+        The entry is NOT removed from ``_clock_order`` here; orphaned
+        entries are lazily cleaned up during CLOCK scans (O(1) skip
+        vs O(n) ``list.remove``).
+        """
+        entry = self._entries.get(content_hash)
         if entry is None:
             return False
 
-        # Remove from clock order
-        with contextlib.suppress(ValueError):
-            self._clock_order.remove(content_hash)
-
-        # Delete files
+        # Delete content file FIRST — only update metadata on success
         content_path = self._get_content_path(content_hash)
         try:
             content_path.unlink(missing_ok=True)
         except Exception as e:
             logger.warning(f"Failed to delete cached content {content_hash}: {e}")
+            return False
 
-        # Delete blocks if they exist
+        # Delete blocks (best-effort — content file is already gone)
         for block_idx in range(0, 1000):  # Max 1000 blocks
             block_path = self._get_block_path(content_hash, block_idx)
             if not block_path.exists():
@@ -442,6 +447,10 @@ class LocalDiskCache:
             except Exception as e:
                 logger.debug("Failed to delete cache block %s: %s", block_path, e)
 
+        # Safe to update metadata now that files are deleted.
+        # _clock_order is NOT touched — orphans are lazily cleaned
+        # during the next CLOCK scan (see _evict_clock).
+        self._entries.pop(content_hash, None)
         self._current_size_bytes -= entry.size_bytes
         self._stats.evictions += 1
         self._stats.bytes_evicted += entry.size_bytes
@@ -497,9 +506,12 @@ class LocalDiskCache:
             else:
                 # Evict this entry
                 size = entry.size_bytes
-                self._remove_entry(content_hash)
-                bytes_freed += size
-                logger.debug(f"Evicted {content_hash[:16]}... ({size} bytes)")
+                if self._remove_entry(content_hash):
+                    bytes_freed += size
+                    logger.debug(f"Evicted {content_hash[:16]}... ({size} bytes)")
+                else:
+                    # File deletion failed; skip for now, retry next scan
+                    self._clock_hand += 1
 
         if bytes_freed > 0:
             logger.info(

@@ -32,6 +32,7 @@ Usage:
 import json as _json
 import logging
 import shutil
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -84,6 +85,15 @@ class FileContentCache:
         self._bloom = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
+
+        # Lease-aware staleness tracking (Issue #3400).
+        # _leased_paths: paths with active leases (content is known-fresh).
+        # _stale_paths:  paths whose leases were revoked (content may be stale).
+        # Both are keyed by "zone_id:path_hash" for O(1) lookup.
+        self._lease_lock = threading.Lock()
+        self._leased_paths: set[str] = set()
+        self._stale_paths: set[str] = set()
+
         self._ensure_cache_dir()
         self._init_bloom_filter()
 
@@ -137,6 +147,48 @@ class FileContentCache:
                 logger.info(f"Bloom filter populated with {len(keys)} entries from disk")
         except Exception as e:
             logger.warning(f"Failed to populate Bloom filter from disk: {e}")
+
+    # =================================================================
+    # Lease-aware staleness (Issue #3400)
+    # =================================================================
+
+    def _lease_key(self, zone_id: str, virtual_path: str) -> str:
+        """Compose a lease-tracking key from zone + path hash."""
+        return f"{zone_id}:{self._path_hash(virtual_path)}"
+
+    def mark_lease_acquired(self, zone_id: str, virtual_path: str) -> None:
+        """Record that a lease has been acquired for a path.
+
+        The cached content for this path is now known-fresh.  Clears any
+        prior staleness marker so subsequent reads return cached data.
+        """
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._leased_paths.add(key)
+            self._stale_paths.discard(key)
+
+    def mark_lease_revoked(self, zone_id: str, virtual_path: str) -> None:
+        """Record that a lease has been revoked for a path.
+
+        The cached content may now be stale — subsequent reads for this
+        path will return ``None`` until fresh content is written.
+        """
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._leased_paths.discard(key)
+            self._stale_paths.add(key)
+
+    def is_stale(self, zone_id: str, virtual_path: str) -> bool:
+        """Check whether cached content for a path is marked stale."""
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            return key in self._stale_paths
+
+    def has_active_lease(self, zone_id: str, virtual_path: str) -> bool:
+        """Check whether a path has an active lease (content is fresh)."""
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            return key in self._leased_paths
 
     def _bloom_key(self, zone_id: str, virtual_path: str) -> str:
         """Generate Bloom filter key for a cache entry.
@@ -222,6 +274,11 @@ class FileContentCache:
         Returns:
             Path to the cached binary file
         """
+        # Fresh content being written — clear any staleness marker
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._stale_paths.discard(key)
+
         # Write binary content
         cache_path = self._get_cache_path(zone_id, virtual_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -278,9 +335,12 @@ class FileContentCache:
             virtual_path: Virtual file path
 
         Returns:
-            Metadata dict, or None if not cached
+            Metadata dict, or None if not cached or stale
         """
         if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        if self.is_stale(zone_id, virtual_path):
             return None
 
         meta_path = self._get_meta_cache_path(zone_id, virtual_path)
@@ -325,15 +385,23 @@ class FileContentCache:
         - Leverages OS page cache efficiently
         - 20-70% faster for medium to large files
 
+        Returns ``None`` (forcing a re-fetch from the backend) when:
+        - The entry doesn't exist (Bloom filter negative)
+        - The entry has been marked stale by lease revocation (Issue #3400)
+
         Args:
             zone_id: Zone ID
             virtual_path: Virtual file path
 
         Returns:
-            Cached content bytes, or None if not cached
+            Cached content bytes, or None if not cached or stale
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
         if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        # Staleness check: lease was revoked → content may be stale
+        if self.is_stale(zone_id, virtual_path):
             return None
 
         cache_path = self._get_cache_path(zone_id, virtual_path)
@@ -367,11 +435,15 @@ class FileContentCache:
             virtual_path: Virtual file path
 
         Returns:
-            Cached text content, or None if not cached
+            Cached text content, or None if not cached or stale
         """
         # Fast path: Bloom filter says entry definitely doesn't exist
         # (text file uses same path hash as binary file)
         if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        # Staleness check
+        if self.is_stale(zone_id, virtual_path):
             return None
 
         text_path = self._get_text_cache_path(zone_id, virtual_path)
@@ -403,7 +475,12 @@ class FileContentCache:
             Dict mapping virtual_path to content (only for cached files)
         """
         # Filter out paths that definitely don't exist (via Bloom filter)
-        paths_to_check = [p for p in virtual_paths if self._bloom_check(zone_id, p)]
+        # and paths that are marked stale (lease revoked)
+        paths_to_check = [
+            p
+            for p in virtual_paths
+            if self._bloom_check(zone_id, p) and not self.is_stale(zone_id, p)
+        ]
 
         if not paths_to_check:
             return {}
@@ -519,6 +596,12 @@ class FileContentCache:
         Returns:
             True if content was deleted
         """
+        # Clear staleness / lease state — the entry is being removed entirely
+        key = self._lease_key(zone_id, virtual_path)
+        with self._lease_lock:
+            self._stale_paths.discard(key)
+            self._leased_paths.discard(key)
+
         deleted = False
 
         # Delete binary cache

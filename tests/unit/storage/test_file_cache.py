@@ -223,3 +223,242 @@ class TestFileContentCache:
 
         # Content should be the newer one
         assert cache.read("zone1", "/file.txt") == b"content2"
+
+
+class TestFileContentCacheStaleness:
+    """Test suite for lease-aware staleness tracking (Issue #3400)."""
+
+    def test_basic_staleness_read_returns_none(self, tmp_path: Path):
+        """Write file, mark stale, read returns None."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"hello")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+
+        assert cache.read("zone1", "/file.txt") is None
+
+    def test_staleness_cleared_on_write(self, tmp_path: Path):
+        """Mark stale, write new content, read succeeds."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"original")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") is None
+
+        cache.write("zone1", "/file.txt", b"refreshed")
+        assert cache.read("zone1", "/file.txt") == b"refreshed"
+
+    def test_lease_acquired_clears_staleness(self, tmp_path: Path):
+        """Mark stale, then mark lease acquired, read succeeds."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") is None
+
+        cache.mark_lease_acquired("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") == b"content"
+
+    def test_is_stale_basic(self, tmp_path: Path):
+        """is_stale() returns correct values across lifecycle."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        assert not cache.is_stale("zone1", "/file.txt")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.is_stale("zone1", "/file.txt")
+
+        cache.mark_lease_acquired("zone1", "/file.txt")
+        assert not cache.is_stale("zone1", "/file.txt")
+
+    def test_has_active_lease_basic(self, tmp_path: Path):
+        """has_active_lease() returns correct values across lifecycle."""
+        cache = FileContentCache(tmp_path)
+
+        assert not cache.has_active_lease("zone1", "/file.txt")
+
+        cache.mark_lease_acquired("zone1", "/file.txt")
+        assert cache.has_active_lease("zone1", "/file.txt")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert not cache.has_active_lease("zone1", "/file.txt")
+
+    def test_read_text_returns_none_when_stale(self, tmp_path: Path):
+        """read_text() returns None for stale paths."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"binary", text_content="text content")
+
+        assert cache.read_text("zone1", "/file.txt") == "text content"
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.read_text("zone1", "/file.txt") is None
+
+    def test_read_meta_returns_none_when_stale(self, tmp_path: Path):
+        """read_meta() returns None for stale paths."""
+        cache = FileContentCache(tmp_path)
+        meta = {"content_hash": "abc123", "content_type": "full"}
+        cache.write("zone1", "/file.txt", b"data", meta=meta)
+
+        assert cache.read_meta("zone1", "/file.txt") is not None
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.read_meta("zone1", "/file.txt") is None
+
+    def test_staleness_is_per_path(self, tmp_path: Path):
+        """Stale path A does not affect path B in the same zone."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/a.txt", b"content a")
+        cache.write("zone1", "/b.txt", b"content b")
+
+        cache.mark_lease_revoked("zone1", "/a.txt")
+
+        assert cache.read("zone1", "/a.txt") is None
+        assert cache.read("zone1", "/b.txt") == b"content b"
+
+    def test_staleness_is_per_zone(self, tmp_path: Path):
+        """Stale zone1/path does not affect zone2/path."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"zone1 data")
+        cache.write("zone2", "/file.txt", b"zone2 data")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+
+        assert cache.read("zone1", "/file.txt") is None
+        assert cache.read("zone2", "/file.txt") == b"zone2 data"
+
+    def test_mark_revoked_without_prior_acquire(self, tmp_path: Path):
+        """Revoking a lease that was never acquired should work fine."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        # No prior mark_lease_acquired — should not raise
+        cache.mark_lease_revoked("zone1", "/file.txt")
+
+        assert cache.is_stale("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") is None
+
+    def test_multiple_revocations_idempotent(self, tmp_path: Path):
+        """Multiple mark_lease_revoked calls are idempotent."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        cache.mark_lease_revoked("zone1", "/file.txt")
+
+        assert cache.is_stale("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") is None
+
+    def test_full_lease_lifecycle(self, tmp_path: Path):
+        """Lease acquired, then revoked, then acquired again."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        # Acquire
+        cache.mark_lease_acquired("zone1", "/file.txt")
+        assert cache.has_active_lease("zone1", "/file.txt")
+        assert not cache.is_stale("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") == b"content"
+
+        # Revoke
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert not cache.has_active_lease("zone1", "/file.txt")
+        assert cache.is_stale("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") is None
+
+        # Re-acquire
+        cache.mark_lease_acquired("zone1", "/file.txt")
+        assert cache.has_active_lease("zone1", "/file.txt")
+        assert not cache.is_stale("zone1", "/file.txt")
+        assert cache.read("zone1", "/file.txt") == b"content"
+
+    def test_bulk_read_with_stale_and_fresh(self, tmp_path: Path):
+        """Bulk read returns only fresh paths, skipping stale ones."""
+        cache = FileContentCache(tmp_path)
+        for i in range(5):
+            cache.write("zone1", f"/file{i}.txt", f"content{i}".encode())
+
+        # Mark files 1 and 3 as stale
+        cache.mark_lease_revoked("zone1", "/file1.txt")
+        cache.mark_lease_revoked("zone1", "/file3.txt")
+
+        paths = [f"/file{i}.txt" for i in range(5)]
+        results = cache.read_bulk("zone1", paths)
+
+        assert "/file0.txt" in results
+        assert "/file1.txt" not in results
+        assert "/file2.txt" in results
+        assert "/file3.txt" not in results
+        assert "/file4.txt" in results
+        assert len(results) == 3
+
+    def test_exists_returns_true_for_stale_paths(self, tmp_path: Path):
+        """exists() still returns True for stale paths (file is on disk)."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+
+        # File is on disk, exists() should still be True
+        assert cache.exists("zone1", "/file.txt")
+        # But read should return None due to staleness
+        assert cache.read("zone1", "/file.txt") is None
+
+    def test_delete_clears_staleness(self, tmp_path: Path):
+        """delete() clears staleness so the path is no longer marked stale."""
+        cache = FileContentCache(tmp_path)
+        cache.write("zone1", "/file.txt", b"content")
+
+        cache.mark_lease_revoked("zone1", "/file.txt")
+        assert cache.is_stale("zone1", "/file.txt")
+
+        cache.delete("zone1", "/file.txt")
+        assert not cache.is_stale("zone1", "/file.txt")
+
+    def test_thread_safety_concurrent_revoke_and_read(self, tmp_path: Path):
+        """Concurrent mark_lease_revoked and read operations do not crash."""
+        import threading
+
+        cache = FileContentCache(tmp_path)
+        errors: list[Exception] = []
+
+        # Write files
+        for i in range(20):
+            cache.write("zone1", f"/file{i}.txt", f"content{i}".encode())
+
+        def revoke_loop():
+            try:
+                for _ in range(100):
+                    for i in range(20):
+                        cache.mark_lease_revoked("zone1", f"/file{i}.txt")
+            except Exception as e:
+                errors.append(e)
+
+        def read_loop():
+            try:
+                for _ in range(100):
+                    for i in range(20):
+                        cache.read("zone1", f"/file{i}.txt")
+            except Exception as e:
+                errors.append(e)
+
+        def acquire_loop():
+            try:
+                for _ in range(100):
+                    for i in range(20):
+                        cache.mark_lease_acquired("zone1", f"/file{i}.txt")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=revoke_loop),
+            threading.Thread(target=read_loop),
+            threading.Thread(target=acquire_loop),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"Thread errors: {errors}"

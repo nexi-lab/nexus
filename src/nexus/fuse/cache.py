@@ -310,3 +310,19 @@ class FUSECacheManager:
         with self._metrics_lock:
             for key in self._metrics:
                 self._metrics[key] = 0
+
+    # ============================================================
+    # Lease revocation integration (Issue #3400, Decision 7A)
+    # ============================================================
+
+    def on_lease_revoked(self, path: str) -> None:
+        """Handle lease revocation by invalidating caches for the path.
+
+        This is the sync entry point called by the lease revocation
+        callback bridge.  It delegates to ``invalidate_path()`` which
+        clears attribute, content, and parsed caches for the path.
+
+        Args:
+            path: Virtual file path whose lease was revoked.
+        """
+        self.invalidate_path(path)

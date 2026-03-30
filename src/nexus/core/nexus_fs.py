@@ -1585,6 +1585,35 @@ class NexusFS(  # type: ignore[misc]
             await self._dispatch.intercept_post_read(_read_ctx)
             content = _read_ctx.content or content  # hooks may have filtered content
 
+        # --- Agent lineage: record read into session accumulator (Issue #3417) ---
+        # Non-blocking, in-memory only. Records path + version + etag so the
+        # lineage hook can attribute this read to the agent's next write.
+        # Gates:
+        #   1. Registered agent only (subject_type="agent", via agent API key)
+        #   2. Explicit scope must be active (agent called POST /scope/begin)
+        #      No default capture — if no scope is active, reads are not tracked.
+        _is_registered_agent = (
+            agent_id and context is not None and getattr(context, "subject_type", "user") == "agent"
+        )
+        if _is_registered_agent and meta is not None:
+            try:
+                from nexus.storage.session_read_accumulator import DEFAULT_SCOPE, get_accumulator
+
+                _acc = get_accumulator()
+                _gen = getattr(context, "agent_generation", None) if context else None
+                # Only record if agent has an explicit scope active (not default)
+                if _acc.get_active_scope(agent_id, _gen) != DEFAULT_SCOPE:
+                    _acc.record_read(
+                        agent_id,
+                        _gen,
+                        path,
+                        version=getattr(meta, "version", 0) or 0,
+                        etag=getattr(meta, "etag", "") or "",
+                        access_type="content",
+                    )
+            except Exception:
+                logger.debug("Lineage read tracking failed (non-critical)", exc_info=True)
+
         # Apply count/offset slicing (POSIX pread semantics)
         if offset or count is not None:
             content = content[offset : offset + count] if count is not None else content[offset:]

@@ -59,6 +59,8 @@ _REGISTER_COMMANDS: dict[str, tuple[str, ...]] = {
     # Issue #2930: Catalog and aspects commands
     "catalog": ("catalog",),
     "aspects": ("aspects",),
+    # Issue #3417: Lineage tracking commands
+    "lineage": ("lineage",),
 }
 
 # Modules that expose a single Click command/group to add via cli.add_command

@@ -149,7 +149,7 @@ class RecordStoreWriteObserver:
                 VersionRecorder(session).record_write(metadata, is_new=is_new)
                 session.commit()
 
-            # Post-flush hooks: extraction, etc. (Issue #2978)
+            # Post-flush hooks: extraction, lineage, etc. (Issue #2978, #3417)
             self._run_post_flush_hooks(
                 [
                     {
@@ -158,6 +158,7 @@ class RecordStoreWriteObserver:
                         "is_new": is_new,
                         "zone_id": zone_id,
                         "agent_id": agent_id,
+                        "agent_generation": getattr(metadata, "agent_generation", None),
                         "metadata": metadata.to_dict(),
                     }
                 ]
@@ -204,7 +205,7 @@ class RecordStoreWriteObserver:
 
                 session.commit()
 
-            # Post-flush hooks: extraction, etc. (Issue #2978)
+            # Post-flush hooks: extraction, lineage, etc. (Issue #2978, #3417)
             self._run_post_flush_hooks(
                 [
                     {
@@ -213,6 +214,7 @@ class RecordStoreWriteObserver:
                         "is_new": new,
                         "zone_id": zone_id,
                         "agent_id": agent_id,
+                        "agent_generation": getattr(md, "agent_generation", None),
                         "metadata": md.to_dict(),
                     }
                     for md, new in items

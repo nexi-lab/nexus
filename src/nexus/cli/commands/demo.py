@@ -33,6 +33,7 @@ from nexus.cli.commands.demo_data import (
     DEMO_IPC_DEAD_LETTER,
     DEMO_IPC_MESSAGES,
     DEMO_IPC_PROCESSED,
+    DEMO_LINEAGE,
     DEMO_PERMISSION_TUPLES,
     DEMO_USERS,
     DEMO_ZONES,
@@ -1163,6 +1164,54 @@ def _seed_aspects(nx: Any, config: dict[str, Any], manifest: dict[str, Any]) -> 
     return created
 
 
+def _seed_lineage(
+    nx: Any,  # noqa: ARG001
+    config: dict[str, Any],
+    manifest: dict[str, Any],
+) -> int:
+    """Seed agent lineage data for demo files (Issue #3417).
+
+    Calls the lineage REST API to declare upstream dependencies for
+    demo output files, demonstrating the agent lineage tracking feature.
+    Returns count of lineage entries created.
+    """
+    if manifest.get("lineage_created"):
+        return 0
+
+    from nexus.cli.api_client import NexusApiClient
+    from nexus.contracts.urn import NexusURN
+
+    rt = _resolve_runtime_connection(config)
+    client = NexusApiClient(url=rt["base_url"], api_key=rt["api_key"])
+
+    created = 0
+    for output_path, upstream_inputs, agent_id in DEMO_LINEAGE:
+        try:
+            urn = str(NexusURN.for_file("root", output_path))
+            encoded_urn = urn.replace(":", "%3A")
+            client.put(
+                f"/api/v2/lineage/{encoded_urn}",
+                json_body={
+                    "upstream": [
+                        {
+                            "path": u["path"],
+                            "version": u.get("version", 1),
+                            "etag": u.get("etag", ""),
+                        }
+                        for u in upstream_inputs
+                    ],
+                    "agent_id": agent_id,
+                },
+            )
+            created += 1
+        except Exception as e:
+            logger.debug("Could not seed lineage for %s: %s", output_path, e)
+
+    manifest["lineage_created"] = created > 0
+    manifest["lineage_count"] = created
+    return created
+
+
 # ---------------------------------------------------------------------------
 # Semantic search initialization
 # ---------------------------------------------------------------------------
@@ -1518,7 +1567,14 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
     except Exception as e:
         logger.debug("Aspect seeding failed: %s", e)
 
-    # 9. Record seed metadata
+    # 9. Seed lineage (best-effort, Issue #3417)
+    lineage_created = 0
+    try:
+        lineage_created = _seed_lineage(nx, config, manifest)
+    except Exception as e:
+        logger.debug("Lineage seeding failed: %s", e)
+
+    # 10. Record seed metadata
     manifest["seeded_at"] = datetime.now(tz=UTC).isoformat()
     manifest["preset"] = config.get("preset", "unknown")
     manifest["skip_semantic"] = skip_semantic
@@ -1573,6 +1629,10 @@ async def _async_demo_init(reset: bool, skip_semantic: bool) -> None:
         console.print(f"  Aspects:      {aspects_created} aspects seeded")
     else:
         console.print("  Aspects:      skipped (server unavailable)")
+    if lineage_created > 0:
+        console.print(f"  Lineage:      {lineage_created} lineage entries seeded")
+    else:
+        console.print("  Lineage:      skipped (server unavailable)")
 
     # Print suggested commands — for shared/demo presets, tell the user to
     # export env vars so all CLI commands authenticate against the running stack.

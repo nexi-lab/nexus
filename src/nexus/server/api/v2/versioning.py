@@ -246,6 +246,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Aspects routes: %s", e)
 
+    # ---- Lineage router (Issue #3417) ----
+    try:
+        from nexus.server.api.v2.routers.lineage import router as lineage_router
+
+        registry.add(RouterEntry(router=lineage_router, name="lineage", endpoint_count=8))
+    except ImportError as e:
+        logger.warning("Failed to import Lineage routes: %s", e)
+
     # ---- Catalog router (Issue #2930) ----
     try:
         from nexus.server.api.v2.routers.catalog import router as catalog_router

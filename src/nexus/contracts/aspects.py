@@ -319,6 +319,123 @@ class GovernanceClassificationAspect(AspectBase):
         self.review_date = review_date
 
 
+@register_aspect("lineage", max_versions=5)
+class LineageAspect(AspectBase):
+    """Agent lineage tracking — records which files an agent read to produce an output.
+
+    Enables impact analysis ("if I change X, what outputs are stale?"),
+    provenance auditing, and staleness detection. Inspired by DataHub's
+    UpstreamLineage aspect, adapted for agent-native workflows.
+
+    Issue #3417.
+
+    Attributes:
+        upstream: List of upstream dependencies with version info.
+        agent_id: Which agent produced this output.
+        agent_generation: Session generation counter (optional).
+        operation: Type of write operation (write, write_batch, copy).
+        duration_ms: How long the agent worked on this (optional).
+    """
+
+    # Maximum upstream entries per lineage aspect to prevent unbounded growth
+    MAX_UPSTREAM_ENTRIES: int = 500
+
+    def __init__(
+        self,
+        upstream: list[dict[str, Any]] | None = None,
+        agent_id: str = "",
+        agent_generation: int | None = None,
+        operation: str = "write",
+        duration_ms: int | None = None,
+        truncated: bool = False,
+    ) -> None:
+        self.upstream = upstream or []
+        self.agent_id = agent_id
+        self.agent_generation = agent_generation
+        self.operation = operation
+        self.duration_ms = duration_ms
+        self.truncated = truncated
+
+    @classmethod
+    def from_session_reads(
+        cls,
+        reads: list[dict[str, Any]],
+        agent_id: str,
+        agent_generation: int | None = None,
+        operation: str = "write",
+        duration_ms: int | None = None,
+    ) -> "LineageAspect":
+        """Build a LineageAspect from accumulated session reads.
+
+        Each read entry should have: path, version, etag, access_type.
+        Caps at MAX_UPSTREAM_ENTRIES with a warning.
+
+        Args:
+            reads: List of read dicts from the session accumulator.
+            agent_id: Agent that produced this output.
+            agent_generation: Session generation counter.
+            operation: Write operation type.
+            duration_ms: Processing duration.
+
+        Returns:
+            LineageAspect with upstream entries populated.
+        """
+        truncated = len(reads) > cls.MAX_UPSTREAM_ENTRIES
+        if truncated:
+            logger.warning(
+                "Lineage truncated: %d reads exceed max %d for agent %s",
+                len(reads),
+                cls.MAX_UPSTREAM_ENTRIES,
+                agent_id,
+            )
+        upstream = [
+            {
+                "path": r["path"],
+                "version": r.get("version", 0),
+                "etag": r.get("etag", ""),
+                "access_type": r.get("access_type", "content"),
+            }
+            for r in reads[: cls.MAX_UPSTREAM_ENTRIES]
+        ]
+        return cls(
+            upstream=upstream,
+            agent_id=agent_id,
+            agent_generation=agent_generation,
+            operation=operation,
+            duration_ms=duration_ms,
+            truncated=truncated,
+        )
+
+    @classmethod
+    def from_explicit_declaration(
+        cls,
+        upstream: list[dict[str, Any]],
+        agent_id: str,
+        agent_generation: int | None = None,
+    ) -> "LineageAspect":
+        """Build a LineageAspect from an explicit upstream declaration.
+
+        Used when agents declare their inputs via the REST API.
+
+        Args:
+            upstream: List of upstream dicts (path, version, etag required).
+            agent_id: Agent declaring the lineage.
+            agent_generation: Session generation counter.
+
+        Returns:
+            LineageAspect with upstream entries populated.
+        """
+        truncated = len(upstream) > cls.MAX_UPSTREAM_ENTRIES
+        capped = upstream[: cls.MAX_UPSTREAM_ENTRIES]
+        return cls(
+            upstream=capped,
+            agent_id=agent_id,
+            agent_generation=agent_generation,
+            operation="explicit",
+            truncated=truncated,
+        )
+
+
 @register_aspect("document_structure", max_versions=10)
 class DocumentStructureAspect(AspectBase):
     """Structure metadata for non-tabular documents (Markdown, PDF, etc.).

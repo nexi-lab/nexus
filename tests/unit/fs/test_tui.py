@@ -1059,7 +1059,7 @@ class TestHelpOverlay:
     def test_render_help_text_contains_dismiss_hint(self):
         """The rendered help text includes a dismiss instruction."""
         text = _render_help_text()
-        assert "Press any key to dismiss" in text
+        assert "Dismiss" in text
 
 
 class TestHelpOverlayDrift:

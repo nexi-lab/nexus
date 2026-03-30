@@ -67,7 +67,7 @@ def _render_help_text() -> str:
         for key, action in bindings:
             lines.append(f"  [bold cyan]{key:<12}[/bold cyan] {action}")
         lines.append("")
-    lines.append("[dim]Press any key to dismiss[/dim]")
+    lines.append("[dim]Scroll: \u2191\u2193 PgUp/PgDn  Dismiss: any other key[/dim]")
     return "\n".join(lines)
 
 
@@ -97,7 +97,23 @@ class HelpOverlay(ModalScreen[None]):
         with VerticalScroll(id="help-container"):
             yield Static(_render_help_text(), id="help-text")
 
+    # Keys that scroll the VerticalScroll container instead of dismissing.
+    _SCROLL_KEYS = frozenset(
+        {
+            "up",
+            "down",
+            "pageup",
+            "pagedown",
+            "home",
+            "end",
+            "scroll_up",
+            "scroll_down",
+        }
+    )
+
     def on_key(self, event: Key) -> None:
-        """Dismiss on any keypress."""
+        """Dismiss on most keys; let scroll keys pass through."""
+        if event.key in self._SCROLL_KEYS:
+            return  # let VerticalScroll handle it
         event.stop()
         self.dismiss()

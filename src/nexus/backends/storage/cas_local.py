@@ -193,6 +193,9 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
 
         Issue #3406: Volume-level cold tiering.
         """
+        # NOTE: Layering violation — backend importing from services.
+        # VolumeTieringService creation should be lifted to the factory/orchestrator.
+        # Kept as lazy import to avoid circular dependency at module load time.
         from nexus.services.volume_tiering import VolumeTieringService
 
         cloud_transport: Any

@@ -206,10 +206,9 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-**Driver-managed metadata** (ext4 pattern): drivers persist metadata inside
-``write_content()`` while kernel holds VFS lock. Kernel calls ``write_content()``
-under lock, then reads back metadata for event dispatch. Metastore is injected
-into drivers at mount time via ``DriverLifecycleCoordinator``.
+**Kernel-managed metadata side effects** (POSIX ``generic_write_end`` pattern):
+kernel updates mtime, size, version, etag in VFS lock after
+``backend.write_content()``. Drivers only manage content.
 ``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first) consistency.
 
 ### 2.4 VFS Dispatch (KernelDispatch)

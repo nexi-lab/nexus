@@ -116,7 +116,6 @@ class CASAddressingEngine(Backend):
         meta_cache: Any | None = None,
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
-        metastore: Any | None = None,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
@@ -128,7 +127,6 @@ class CASAddressingEngine(Backend):
         self._meta_cache_misses = 0
         self._on_write_callback = on_write_callback
         self._cdc: ChunkingStrategy | None = cdc_engine
-        self._metastore = metastore
 
     @property
     def name(self) -> str:
@@ -244,12 +242,6 @@ class CASAddressingEngine(Backend):
             if self._cache is not None:
                 self._cache.put(content_hash, content)
 
-            # CAS metadata persistence (driver-owned, like ext4 inode update)
-            if self._metastore is not None and context is not None:
-                vpath = getattr(context, "virtual_path", None)
-                if vpath:
-                    self._commit_metadata(vpath, content_hash, len(content), context)
-
             return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
         content_hash = hash_content(content)
@@ -282,12 +274,6 @@ class CASAddressingEngine(Backend):
             # Feature DI: Write callback (e.g. Zoekt reindex)
             if is_new and self._on_write_callback is not None:
                 self._on_write_callback(key)
-
-            # CAS metadata persistence (driver-owned, like ext4 inode update)
-            if self._metastore is not None and context is not None:
-                vpath = getattr(context, "virtual_path", None)
-                if vpath:
-                    self._commit_metadata(vpath, content_hash, len(content), context)
 
             return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
@@ -343,40 +329,6 @@ class CASAddressingEngine(Backend):
 
         new_data = old_data[:offset] + buf + old_data[offset + len(buf) :]
         return self.write_content(new_data, context=context)
-
-    def _commit_metadata(
-        self, path: str, content_hash: str, size: int, context: "OperationContext"
-    ) -> None:
-        """Build and persist file metadata (CAS inode update, like ext4 write_iter)."""
-        from datetime import UTC, datetime
-
-        from nexus.contracts.metadata import FileMetadata
-
-        existing = getattr(context, "existing_metadata", None)
-        now = datetime.now(UTC)
-        zone_id = getattr(context, "zone_id", None) or "root"
-        owner_id = (
-            existing.owner_id
-            if existing and existing.owner_id
-            else getattr(context, "subject_id", None) or getattr(context, "user_id", None)
-        )
-
-        metadata = FileMetadata(
-            path=path,
-            backend_name=self.name,
-            physical_path=content_hash,
-            size=size,
-            etag=content_hash,
-            created_at=existing.created_at if existing else now,
-            modified_at=now,
-            version=(existing.version + 1) if existing else 1,
-            zone_id=zone_id,
-            owner_id=owner_id,
-        )
-
-        consistency = getattr(context, "consistency", "sc") if context else "sc"
-        if self._metastore is not None:
-            self._metastore.put(metadata, consistency=consistency)
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash

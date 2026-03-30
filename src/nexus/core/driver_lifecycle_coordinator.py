@@ -45,15 +45,12 @@ class DriverLifecycleCoordinator:
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
-    __slots__ = ("_router", "_dispatch", "_mount_specs", "_metastore")
+    __slots__ = ("_router", "_dispatch", "_mount_specs")
 
-    def __init__(
-        self, router: "PathRouter", dispatch: "KernelDispatch", metastore: Any = None
-    ) -> None:
+    def __init__(self, router: "PathRouter", dispatch: "KernelDispatch") -> None:
         self._router = router
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
-        self._metastore = metastore
 
     def mount(
         self,
@@ -70,13 +67,6 @@ class DriverLifecycleCoordinator:
         2. Register VFS hooks from hook_spec (fixes CAS wiring bug #1320)
         3. Broadcast mount event via KernelDispatch
         """
-        # Wire metastore into backend (like Linux VFS setting sb->s_op at mount)
-        if self._metastore is not None:
-            if hasattr(backend, "set_metastore"):
-                backend.set_metastore(self._metastore)
-            elif hasattr(backend, "_metastore"):
-                backend._metastore = self._metastore
-
         # 1. Add to routing table
         self._router.add_mount(
             mount_point,

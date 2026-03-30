@@ -15,7 +15,7 @@
 | **AdvisoryLockManager** | `lib/distributed_lock.py` | — | ABC: async advisory lock API (zone_id bound at construction) |
 | **LocalLockManager** | `lib/distributed_lock.py` | ~500ns–1μs | Standalone advisory locks via VFSSemaphore |
 | **RaftLockManager** | `raft/lock_manager.py` | ~5-10ms | Distributed advisory locks, zone-scoped |
-| **LockStoreProtocol** | `lib/distributed_lock.py` | — | Low-level store interface (MetastoreABC lock methods) |
+| ~~LockStoreProtocol~~ | deleted (Phase 2) | — | Was low-level store interface — only one implementer (RaftMetadataStore) |
 | ~12 `asyncio.Semaphore` | scattered | — | Ad-hoc concurrency bounding |
 
 **Resolved** (by PR #2732, #2733, #2734):
@@ -121,23 +121,23 @@ I/O locks have no TTL (kernel manages lifecycle in try/finally).
 **Restart behavior**: Advisory locks survive in redb. Dead holders stop renewing →
 TTL expires → auto-released. No orphans.
 
-### 3.3 DI Model
+### 3.3 Kernel Ownership Model
 
 ```python
-# EventsService.__init__ always creates LocalLockManager
+# NexusFS.__init__ creates LocalLockManager (kernel owns)
 from nexus.lib.distributed_lock import LocalLockManager
 from nexus.lib.semaphore import create_vfs_semaphore
 
-self._lock_manager = LocalLockManager(create_vfs_semaphore(), zone_id=zone_id)
+self._lock_manager = LocalLockManager(create_vfs_semaphore(), zone_id=ROOT_ZONE_ID)
 
-# Federation: RaftLockManager upgrade at link time
-if isinstance(nx.metadata, LockStoreProtocol):
-    raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id)
-    events_service.upgrade_lock_manager(raft_lm)
+# Federation: RaftLockManager upgrade at link time (kernel knows)
+_raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id)
+nx._upgrade_lock_manager(_raft_lm)
 ```
 
-Two paths only: EventsService always starts with `LocalLockManager`.
-Federation upgrades to `RaftLockManager` at link time via `upgrade_lock_manager()`.
+Same pattern as FileWatcher: kernel-owned local + kernel-knows remote.
+Exposed via kernel syscalls: `sys_lock`, `sys_unlock`, `lock()` (Tier 2 blocking wait),
+`locked()` (Tier 2 async context manager).
 
 | Profile | Metastore | lock_manager → |
 |---------|-----------|----------------|
@@ -164,20 +164,19 @@ Callers see only `AdvisoryLockManager`. Same async API regardless of backend.
 ## 5. Design Decisions
 
 **D1: Two locks, not one** — I/O lock (VFSLockManager, kernel-internal, ~200ns) and
-advisory lock (`LockStoreProtocol`, user-facing, TTL-based) are fundamentally different.
+advisory lock (user-facing, TTL-based) are fundamentally different.
 Like Linux `i_rwsem` vs `flock(2)`.
 
-**D2: Advisory locks are metadata** — stored via `LockStoreProtocol` (redb `TREE_LOCKS`),
-queryable, Raft-replicated in federation. Like HDFS leases in NameNode FSImage+EditLog.
-`LockStoreProtocol` is a capability protocol — MetastoreABC does NOT own lock methods.
+**D2: Advisory locks are metadata** — stored in redb `sm_locks` table (separate from
+FileMetadata), queryable, Raft-replicated in federation. Like HDFS leases in NameNode.
 
-**D3: Two paths, not runtime routing** — EventsService always starts with
-`LocalLockManager`. Federation upgrades to `RaftLockManager` at link time.
-No `_LockRouter`, no runtime auto-detect. Simpler, testable.
+**D3: Kernel-owned, not service-owned** — NexusFS.__init__ constructs LocalLockManager.
+Federation upgrades to RaftLockManager via `_upgrade_lock_manager()` at link time.
+Same pattern as FileWatcher (kernel-owned local + kernel-knows remote).
+Exposed via kernel syscalls: `sys_lock`/`sys_unlock` (Tier 1), `lock()`/`locked()` (Tier 2).
 
 **D4: PassthroughBackend.lock() deleted** — duplicated kernel lock logic.
 `_StripeLock` also deleted — CAS metadata RMW now uses `VFSSemaphore` directly.
-EventsService owns lock manager lifecycle (`LocalLockManager` → `RaftLockManager` upgrade).
 
 **D5: asyncio.Semaphore stays as-is** — internal concurrency limiters (not advisory
 locks). No names, TTL, or cross-node semantics needed.

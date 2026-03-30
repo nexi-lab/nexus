@@ -1,7 +1,6 @@
 """Unit tests for EventsService.
 
-Tests file watching (delegated to kernel FileWatcher), advisory locking,
-zone ID resolution, and infrastructure detection.
+Tests file watching (delegated to kernel FileWatcher) and zone ID resolution.
 
 Architecture: EventsService is a thin RPC wrapper around kernel FileWatcher.
 Local OBSERVE + remote watch logic lives in FileWatcher (tested separately
@@ -9,7 +8,6 @@ in tests/unit/core/test_file_watcher.py).
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,18 +25,6 @@ from nexus.services.lifecycle.events_service import EventsService
 def file_watcher():
     """Create a kernel FileWatcher instance."""
     return FileWatcher()
-
-
-@pytest.fixture
-def mock_lock_manager():
-    """Create a mock distributed lock manager."""
-    mgr = AsyncMock()
-    mgr.acquire = AsyncMock(return_value="dist-lock-456")
-    mgr.release = AsyncMock(return_value=True)
-    extend_result = MagicMock()
-    extend_result.success = True
-    mgr.extend = AsyncMock(return_value=extend_result)
-    return mgr
 
 
 @pytest.fixture
@@ -66,40 +52,14 @@ def _make_event(path: str = "/inbox/test.txt", event_type: str = "file_write") -
 class TestEventsServiceInit:
     """Tests for EventsService construction."""
 
-    def test_init_stores_file_watcher(self, file_watcher, mock_lock_manager):
-        """Service stores file watcher and lock manager dependencies."""
+    def test_init_stores_file_watcher(self, file_watcher):
+        """Service stores file watcher dependency."""
         svc = EventsService(
             file_watcher=file_watcher,
-            lock_manager=mock_lock_manager,
             zone_id="z1",
         )
         assert svc._file_watcher is file_watcher
-        assert svc._lock_manager is mock_lock_manager
         assert svc._zone_id == "z1"
-
-    def test_init_without_lock_manager(self, file_watcher):
-        """Lock manager is optional — None means locking disabled."""
-        svc = EventsService(file_watcher=file_watcher)
-        assert svc._lock_manager is None
-
-
-# =============================================================================
-# Infrastructure detection
-# =============================================================================
-
-
-class TestInfrastructureDetection:
-    """Tests for layer detection methods."""
-
-    def test_has_lock_manager_true_when_passed(self, file_watcher, mock_lock_manager):
-        """Lock manager present when passed via constructor."""
-        svc = EventsService(file_watcher=file_watcher, lock_manager=mock_lock_manager)
-        assert svc._has_lock_manager() is True
-
-    def test_has_lock_manager_false_without_lock_manager(self, file_watcher):
-        """No lock manager when none passed to constructor."""
-        svc = EventsService(file_watcher=file_watcher)
-        assert svc._has_lock_manager() is False
 
 
 # =============================================================================
@@ -161,50 +121,3 @@ class TestWaitForChanges:
         # Just verify it doesn't crash with context — zone routing tested in FileWatcher tests
         result = asyncio.run(svc.wait_for_changes("/data", timeout=0.05, _context=context))
         assert result is None
-
-
-# =============================================================================
-# Advisory Locking — Distributed
-# =============================================================================
-
-
-class TestDistributedLocking:
-    """Tests for locking via upgraded (distributed) lock manager."""
-
-    def _make_svc(self, file_watcher, mock_lock_manager):
-        """Create EventsService with distributed lock manager."""
-        return EventsService(file_watcher=file_watcher, lock_manager=mock_lock_manager)
-
-    def test_lock_acquires_distributed(self, file_watcher, mock_lock_manager):
-        """Lock uses distributed lock manager when available."""
-        svc = self._make_svc(file_watcher, mock_lock_manager)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=5.0, ttl=10.0))
-        assert lock_id == "dist-lock-456"
-        mock_lock_manager.acquire.assert_called_once()
-
-    def test_lock_returns_none_on_timeout(self, file_watcher, mock_lock_manager):
-        """Lock returns None when distributed lock times out."""
-        mock_lock_manager.acquire = AsyncMock(return_value=None)
-        svc = self._make_svc(file_watcher, mock_lock_manager)
-        lock_id = asyncio.run(svc.lock("/data/file.txt", timeout=1.0))
-        assert lock_id is None
-
-    def test_unlock_releases_distributed(self, file_watcher, mock_lock_manager):
-        """Unlock releases distributed lock."""
-        svc = self._make_svc(file_watcher, mock_lock_manager)
-        result = asyncio.run(svc.unlock("dist-lock-456", path="/data/file.txt"))
-        assert result is True
-        mock_lock_manager.release.assert_called_once()
-
-    def test_unlock_requires_path_for_distributed(self, file_watcher, mock_lock_manager):
-        """Distributed unlock requires path parameter."""
-        svc = self._make_svc(file_watcher, mock_lock_manager)
-        with pytest.raises(ValueError, match="path is required"):
-            asyncio.run(svc.unlock("dist-lock-456", path=None))
-
-    def test_extend_lock_distributed(self, file_watcher, mock_lock_manager):
-        """Extend lock uses distributed lock manager."""
-        svc = self._make_svc(file_watcher, mock_lock_manager)
-        result = asyncio.run(svc.extend_lock("dist-lock-456", path="/data/file.txt", ttl=60.0))
-        assert result is True
-        mock_lock_manager.extend.assert_called_once()

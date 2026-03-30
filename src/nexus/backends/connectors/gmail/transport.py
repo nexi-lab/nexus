@@ -354,8 +354,11 @@ class GmailTransport:
     def _build_mime_message(self, data: dict[str, Any]) -> EmailMessage:
         """Build a new MIME message from parsed YAML data.
 
-        Handles To, Cc, Bcc, Subject, plain-text body, and optional HTML alternative.
+        Handles To, Cc, Bcc, Subject, plain-text body, optional HTML
+        alternative, and inline base64 attachments.
         """
+        import mimetypes as _mt
+
         msg = EmailMessage()
         msg["From"] = data.get("from", self._resolve_from_address())
 
@@ -389,6 +392,27 @@ class GmailTransport:
             msg.add_alternative(html_body, subtype="html")
         else:
             msg.set_content(body_text)
+
+        # Attachments (inline base64 data)
+        attachments = data.get("attachments") or []
+        for att in attachments:
+            if isinstance(att, dict):
+                att_data_b64 = att.get("data")
+                if not att_data_b64:
+                    continue  # path-based attachments not yet supported
+                file_bytes = base64.b64decode(att_data_b64)
+                filename = att.get("filename") or "attachment"
+                content_type = att.get("content_type")
+                if not content_type:
+                    content_type, _ = _mt.guess_type(filename)
+                    content_type = content_type or "application/octet-stream"
+                maintype, _, subtype = content_type.partition("/")
+                msg.add_attachment(
+                    file_bytes,
+                    maintype=maintype,
+                    subtype=subtype or "octet-stream",
+                    filename=filename,
+                )
 
         return msg
 

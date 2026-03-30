@@ -115,6 +115,7 @@ def test_fs_auth_test_gws_prints_target_breakdown(monkeypatch) -> None:
             }
 
     monkeypatch.setattr("nexus.fs._auth_cli._build_auth_service", lambda: _Service())
+    monkeypatch.setenv("NEXUS_NO_AUTO_JSON", "1")
 
     runner = CliRunner()
     result = runner.invoke(auth, ["test", "gws"])

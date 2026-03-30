@@ -14,6 +14,7 @@ from rich.table import Table
 
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 from nexus.fs._oauth_support import get_token_manager, run_google_oauth_setup, run_x_oauth_setup
+from nexus.fs._output import OutputOptions, add_output_options, render_output
 
 console = Console()
 
@@ -230,26 +231,46 @@ def auth() -> None:
 
 
 @auth.command("list")
-def list_auth() -> None:
+@add_output_options
+def list_auth(output_opts: OutputOptions) -> None:
     """List configured auth across services."""
     service = _build_auth_service()
     summaries = asyncio.run(service.list_summaries())
-    table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
-    table.add_column("Service", style="green")
-    table.add_column("Kind", style="cyan")
-    table.add_column("Status", style="yellow")
-    table.add_column("Source", style="blue")
-    table.add_column("Message")
-    for summary in summaries:
-        table.add_row(
-            summary.service,
-            summary.kind.value,
-            summary.status.value,
-            summary.source,
-            summary.message,
-        )
-    console.print(table)
-    console.print(f"[dim]Secret store: {service.secret_store_path}[/dim]")
+
+    data = [
+        {
+            "service": s.service,
+            "kind": s.kind.value,
+            "status": s.status.value,
+            "source": s.source,
+            "message": s.message,
+        }
+        for s in summaries
+    ]
+
+    def _human_display(_data: object) -> None:
+        table = Table(title="Unified Auth", show_header=True, header_style="bold cyan")
+        table.add_column("Service", style="green")
+        table.add_column("Kind", style="cyan")
+        table.add_column("Status", style="yellow")
+        table.add_column("Source", style="blue")
+        table.add_column("Message")
+        for summary in summaries:
+            table.add_row(
+                summary.service,
+                summary.kind.value,
+                summary.status.value,
+                summary.source,
+                summary.message,
+            )
+        console.print(table)
+        console.print(f"[dim]Secret store: {service.secret_store_path}[/dim]")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
 
 
 @auth.command("test")
@@ -263,7 +284,13 @@ def list_auth() -> None:
     default=None,
     help="Google Workspace target readiness check.",
 )
-def test_auth(service_name: str, user_email: str | None, target: str | None) -> None:
+@add_output_options
+def test_auth(
+    service_name: str,
+    user_email: str | None,
+    target: str | None,
+    output_opts: OutputOptions,
+) -> None:
     """Validate auth for a service."""
     service = _build_auth_service()
     try:
@@ -273,32 +300,46 @@ def test_auth(service_name: str, user_email: str | None, target: str | None) -> 
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
-    checks = result.get("checks")
-    if isinstance(checks, list) and checks:
-        table = Table(
-            title=f"{service_name} target readiness", show_header=True, header_style="bold cyan"
-        )
-        table.add_column("Target", style="green")
-        table.add_column("Status", style="yellow")
-        table.add_column("Source", style="blue")
-        table.add_column("Message")
-        for check in checks:
-            table.add_row(
-                str(check.get("target", "")),
-                "ok" if check.get("success") else "error",
-                str(check.get("source", result.get("source", ""))),
-                str(check.get("message", "")),
-            )
-        console.print(table)
-        _print_target_readiness_summary(service_name, checks, user_email=user_email)
-        if result.get("success"):
-            return
-        raise SystemExit(1)
+    data = {"service": service_name, **result}
 
-    if result.get("success"):
-        console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")
-        return
-    raise click.ClickException(f"{service_name}: {result.get('message')}")
+    def _human_display(_data: object) -> None:
+        checks = result.get("checks")
+        if isinstance(checks, list) and checks:
+            table = Table(
+                title=f"{service_name} target readiness",
+                show_header=True,
+                header_style="bold cyan",
+            )
+            table.add_column("Target", style="green")
+            table.add_column("Status", style="yellow")
+            table.add_column("Source", style="blue")
+            table.add_column("Message")
+            for check in checks:
+                table.add_row(
+                    str(check.get("target", "")),
+                    "ok" if check.get("success") else "error",
+                    str(check.get("source", result.get("source", ""))),
+                    str(check.get("message", "")),
+                )
+            console.print(table)
+            _print_target_readiness_summary(service_name, checks, user_email=user_email)
+            if not result.get("success"):
+                raise SystemExit(1)
+            return
+
+        if result.get("success"):
+            console.print(f"[green]ok[/green] {service_name}: {result.get('message')}")
+            return
+        raise click.ClickException(f"{service_name}: {result.get('message')}")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
+
+    if output_opts.json_output and not result.get("success"):
+        raise SystemExit(1)
 
 
 @auth.command("connect")

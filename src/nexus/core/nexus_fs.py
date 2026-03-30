@@ -3532,21 +3532,10 @@ class NexusFS(  # type: ignore[misc]
                     )
                     # Get the destination blob's actual size/version
                     # (NOT the source's — versioned backends assign new IDs).
-                    dst_size = src_route.backend._transport.get_size(
-                        src_route.backend._get_key_path(dst_route.backend_path.strip("/")),
-                    )
+                    dst_size = src_route.backend.get_size_by_path(dst_route.backend_path)
                     dst_version: str | None = None
-                    if (
-                        hasattr(src_route.backend, "versioning_enabled")
-                        and src_route.backend.versioning_enabled
-                    ):
-                        _get_ver = getattr(
-                            src_route.backend._transport, "get_version_id", None
-                        ) or getattr(src_route.backend._transport, "get_generation", None)
-                        if _get_ver:
-                            dst_version = _get_ver(
-                                src_route.backend._get_key_path(dst_route.backend_path.strip("/"))
-                            )
+                    if hasattr(src_route.backend, "get_version_by_path"):
+                        dst_version = src_route.backend.get_version_by_path(dst_route.backend_path)
 
                     from dataclasses import replace as _replace
 
@@ -3594,19 +3583,10 @@ class NexusFS(  # type: ignore[misc]
                         # Use source size (streaming doesn't return size);
                         # get destination version if the backend is versioned.
                         dst_version_id: str | None = None
-                        if (
-                            hasattr(dst_route.backend, "versioning_enabled")
-                            and dst_route.backend.versioning_enabled
-                        ):
-                            _get_ver = getattr(
-                                dst_route.backend._transport, "get_version_id", None
-                            ) or getattr(dst_route.backend._transport, "get_generation", None)
-                            if _get_ver:
-                                dst_version_id = _get_ver(
-                                    dst_route.backend._get_key_path(
-                                        dst_route.backend_path.strip("/")
-                                    )
-                                )
+                        if hasattr(dst_route.backend, "get_version_by_path"):
+                            dst_version_id = dst_route.backend.get_version_by_path(
+                                dst_route.backend_path
+                            )
 
                         from dataclasses import replace as _replace
 

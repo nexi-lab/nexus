@@ -116,14 +116,31 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     # runtime contract: _pipe_manager for start(), sys_read() for the
     # background consumer, and sys_unlink() for stop().
     class _BenchNx:
+        """Minimal NexusFS fake matching the observer's runtime contract.
+
+        Translates PipeClosedError → NexusFileNotFoundError so the
+        consumer's shutdown path works (it only catches the latter).
+        """
+
         def __init__(self, pm: PipeManager) -> None:
             self._pipe_manager = pm
 
         async def sys_read(self, path: str, **kwargs: Any) -> bytes:
-            return await self._pipe_manager.pipe_read(path)
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+            from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+
+            try:
+                return await self._pipe_manager.pipe_read(path)
+            except (PipeClosedError, PipeNotFoundError):
+                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
 
         async def sys_unlink(self, path: str, **kwargs: Any) -> dict:
-            self._pipe_manager.destroy(path)
+            from nexus.core.pipe import PipeNotFoundError
+
+            try:
+                self._pipe_manager.destroy(path)
+            except PipeNotFoundError:
+                pass  # Already cleaned up
             return {"path": path}
 
     fake_nx: Any = _BenchNx(pipe_manager)

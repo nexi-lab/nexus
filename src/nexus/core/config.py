@@ -149,45 +149,6 @@ class IPCConfig:
 
 
 # ---------------------------------------------------------------------------
-# WiredServices — Tier 2b: services needing NexusFS reference
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class WiredServices:
-    """Tier 2b (WIRED) — services requiring NexusFS reference.
-
-    Created by ``nexus.factory._wired._boot_wired_services()`` and registered
-    into ServiceRegistry via ``enlist_wired_services()``.
-
-    Issue #2133: Replaces ``dict[str, Any]`` return type in wiring layer.
-    """
-
-    rebac_service: Any = None
-    mount_service: Any = None
-    gateway: Any = None
-    sync_service: Any = None
-    sync_job_service: Any = None
-    mount_persist_service: Any = None
-    mcp_service: Any = None
-    oauth_service: Any = None
-    search_service: Any = None
-    share_link_service: Any = None
-    # Versioning services (Issue #882: session-managed facades)
-    time_travel_service: Any = None
-    operations_service: Any = None
-
-    # RPC services (Issue #2133: migrated from service_wiring.py)
-    workspace_rpc_service: Any = None
-    agent_rpc_service: Any = None
-    user_provisioning_service: Any = None
-    sandbox_rpc_service: Any = None
-    acp_rpc_service: Any = None
-    metadata_export_service: Any = None
-    descendant_checker: Any = None
-
-
-# ---------------------------------------------------------------------------
 # Observability (unchanged from before)
 # ---------------------------------------------------------------------------
 

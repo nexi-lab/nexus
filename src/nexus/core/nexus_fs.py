@@ -237,10 +237,6 @@ class NexusFS(  # type: ignore[misc]
 
         self._event_bus: Any = None
         self._overlay_resolver = None
-        self._token_manager = None
-        self._sandbox_manager: Any = None
-        self._coordination_client: Any = None
-        self._event_client: Any = None
 
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
@@ -4733,10 +4729,6 @@ class NexusFS(  # type: ignore[misc]
         # Close record store (Services layer SQL connections)
         if self._record_store is not None:
             self._record_store.close()
-
-        # Close TokenManager to release database connection
-        if hasattr(self, "_token_manager") and self._token_manager is not None:
-            self._token_manager.close()
 
         # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
         if hasattr(self, "router"):

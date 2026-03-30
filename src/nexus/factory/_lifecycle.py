@@ -217,7 +217,7 @@ async def _wire_services(
 
     # Issue #1792: AgentRegistry, EvictionManager, AcpService are now
     # constructed in _boot_post_kernel_services (_wired.py) by the services
-    # that need them. No factory lazy pattern or register_factory() needed.
+    # that need them. No factory lazy pattern needed.
 
     return _InitContext(
         services=_svc,

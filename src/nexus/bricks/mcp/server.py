@@ -1021,8 +1021,7 @@ async def create_mcp_server(
             sandbox_available = True
         elif hasattr(_default_nx, "_ensure_sandbox_manager"):
             _default_nx._ensure_sandbox_manager()
-            mgr = getattr(_default_nx, "_sandbox_manager", None)
-            if mgr is not None and getattr(mgr, "providers", None):
+            if getattr(_default_nx, "sandbox_available", False):
                 sandbox_available = True
     except Exception:
         sandbox_available = False

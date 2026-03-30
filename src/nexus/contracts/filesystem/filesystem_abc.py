@@ -20,7 +20,9 @@ Two tiers:
 """
 
 import builtins
+import contextlib
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from typing import Any
 
 from nexus.contracts.types import OperationContext
@@ -363,6 +365,45 @@ class NexusFilesystemABC(ABC):
     ) -> bool:
         """Release lock (Tier 2 alias for sys_unlock)."""
         return await self.sys_unlock(path, lock_id, context=context)
+
+    @contextlib.asynccontextmanager
+    async def locked(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> "AsyncIterator[str]":
+        """Async context manager for advisory lock (Tier 2).
+
+        Acquires lock via lock() (blocking wait), yields lock_id,
+        releases on exit. Raises LockTimeout on failure.
+
+        Usage::
+
+            async with nx.locked("/shared/config.json", timeout=5.0) as lock_id:
+                content = await nx.sys_read("/shared/config.json")
+                await nx.write("/shared/config.json", new_content)
+        """
+        from nexus.contracts.exceptions import LockTimeout
+
+        lock_id = await self.lock(
+            path,
+            mode=mode,
+            timeout=timeout,
+            ttl=ttl,
+            max_holders=max_holders,
+            context=context,
+        )
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+        try:
+            yield lock_id
+        finally:
+            await self.unlock(lock_id, path, context=context)
 
     # ── System Info + Lifecycle ────────────────────────────────────
 

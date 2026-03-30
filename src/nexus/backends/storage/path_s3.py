@@ -322,7 +322,9 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
             except Exception as e:
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
+        content_hash = new_version if new_version else self._compute_hash(content)
+
         return WriteResult(
-            content_id=new_version if new_version else self._compute_hash(content),
+            content_id=content_hash,
             size=len(content),
         )

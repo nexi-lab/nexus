@@ -351,6 +351,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         content_hash = new_version if new_version else self._compute_hash(content)
+
         return WriteResult(content_id=content_hash, size=len(content))
 
     def write_content_with_version_check(

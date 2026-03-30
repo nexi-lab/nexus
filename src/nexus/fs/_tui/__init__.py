@@ -395,18 +395,17 @@ class PlaygroundApp(App[None]):
                 return None
 
         # No URIs — auto-discover from mounts.json in state dir
-        import json
+        from nexus.fs._paths import build_mount_args, load_persisted_mounts
 
-        from nexus.fs._paths import mounts_file as _mounts_file_fn
-
-        mf = _mounts_file_fn()
-        if mf.exists():
+        entries = load_persisted_mounts()
+        if entries:
             try:
-                with open(mf) as f:
-                    saved_uris = json.load(f)
-                if saved_uris:
-                    self._restored_mounts = True
-                    return await self._build_filesystem(tuple(saved_uris))
+                saved_uris, overrides = build_mount_args(entries)
+                self._restored_mounts = True
+                self._persisted_entries = entries  # preserve for _persist_mounts
+                return await self._build_filesystem(
+                    tuple(saved_uris), mount_overrides=overrides or None
+                )
             except Exception:
                 pass  # Fall through to empty state
 
@@ -445,11 +444,16 @@ class PlaygroundApp(App[None]):
             return backends[0]
         return MultiDirectFS(backends)
 
-    async def _build_filesystem(self, uris: tuple[str, ...]) -> Any:
+    async def _build_filesystem(
+        self,
+        uris: tuple[str, ...],
+        mount_overrides: dict[str, str] | None = None,
+    ) -> Any:
         """Build a hybrid filesystem for playground mounts."""
         from nexus.fs import mount as mount_fs
         from nexus.fs._tui.direct_fs import MultiDirectFS
 
+        overrides = mount_overrides or {}
         direct_uris = tuple(uri for uri in uris if uri.startswith(("local://", "s3://")))
         generic_uris = tuple(uri for uri in uris if uri not in direct_uris)
         backends: list[Any] = []
@@ -458,7 +462,8 @@ class PlaygroundApp(App[None]):
             backends.append(self._build_direct_fs(direct_uris))
 
         for uri in generic_uris:
-            facade = await mount_fs(uri)
+            at = overrides.get(uri)
+            facade = await mount_fs(uri, at=at)
             backends.append(
                 ContextualNexusFS(
                     facade.kernel,
@@ -1071,12 +1076,19 @@ class PlaygroundApp(App[None]):
         await self._build_browser_ui()
 
     def _persist_mounts(self) -> None:
-        """Persist current mount URIs for the next playground launch."""
-        from nexus.fs._paths import mounts_file as _mounts_file_fn
+        """Persist current mount URIs for the next playground launch.
 
-        mf = _mounts_file_fn()
-        with open(mf, "w") as f:
-            json.dump(list(self._uris), f)
+        Preserves ``at`` metadata from previously persisted entries so that
+        custom mount points set via ``nexus-fs mount --at`` survive.
+        """
+        from nexus.fs._paths import save_persisted_mounts
+
+        # Build an index of at-values from restored entries
+        prev = getattr(self, "_persisted_entries", None) or []
+        at_by_uri = {e["uri"]: e.get("at") for e in prev}
+
+        entries = [{"uri": uri, "at": at_by_uri.get(uri)} for uri in self._uris]
+        save_persisted_mounts(entries, merge=False)
 
     def _selected_mount_point(self) -> str | None:
         """Return the currently selected mount point from the mount panel."""

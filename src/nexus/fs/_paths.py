@@ -59,6 +59,91 @@ def mounts_file() -> Path:
     return state_dir() / "mounts.json"
 
 
+# ── Mount persistence helpers ─────────────────────────────────────────────
+
+
+def _normalize_mount_entry(entry: "str | dict") -> dict:
+    """Normalize a mount entry to ``{"uri": ..., "at": ...}`` form.
+
+    Handles both the legacy format (plain URI string) and the new
+    format (dict with ``uri`` and optional ``at``).
+    """
+    if isinstance(entry, str):
+        return {"uri": entry, "at": None}
+    return {"uri": entry["uri"], "at": entry.get("at")}
+
+
+def load_persisted_mounts() -> list[dict]:
+    """Load persisted mount entries from ``mounts.json``.
+
+    Returns a list of ``{"uri": str, "at": str | None}`` dicts.
+    Backward-compatible with the legacy ``["uri", ...]`` format.
+    Returns an empty list if the file doesn't exist or is invalid.
+    """
+    import json
+
+    mf = mounts_file()
+    try:
+        with open(mf) as f:
+            raw = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    if not isinstance(raw, list):
+        return []
+
+    return [_normalize_mount_entry(e) for e in raw]
+
+
+def build_mount_args(entries: list[dict]) -> tuple[list[str], dict[str, str]]:
+    """Convert persisted entries to ``mount()`` arguments.
+
+    Returns:
+        ``(uris, mount_overrides)`` ready to pass to ``mount(*uris, mount_overrides=...)``.
+    """
+    uris: list[str] = []
+    overrides: dict[str, str] = {}
+    for entry in entries:
+        uri = entry["uri"]
+        if uri not in uris:
+            uris.append(uri)
+        if entry.get("at"):
+            overrides[uri] = entry["at"]
+    return uris, overrides
+
+
+def save_persisted_mounts(entries: list[dict], *, merge: bool = True) -> None:
+    """Persist mount entries to ``mounts.json``, merging by default.
+
+    Args:
+        entries: List of ``{"uri": str, "at": str | None}`` dicts to save.
+        merge: If True (default), merge with existing entries. Entries
+            with the same URI are updated; new entries are appended.
+    """
+    import json
+    import tempfile
+
+    if merge:
+        existing = load_persisted_mounts()
+        # Index existing by URI for dedup
+        by_uri = {e["uri"]: e for e in existing}
+        for entry in entries:
+            by_uri[entry["uri"]] = entry
+        entries = list(by_uri.values())
+
+    mf = mounts_file()
+    fd, tmp = tempfile.mkstemp(dir=mf.parent, suffix=".tmp")
+    try:
+        with open(fd, "w") as f:
+            json.dump(entries, f)
+            f.flush()
+        os.replace(tmp, mf)
+    except BaseException:
+        with __import__("contextlib").suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 # ── Persistent directory (OAuth tokens, encryption keys) ───────────────────
 
 

@@ -112,7 +112,7 @@ class NexusFileSystem(AbstractFileSystem):
     def _auto_discover() -> SlimNexusFS:
         """Auto-discover mounts from ``mounts.json``.
 
-        Reads the mount URIs persisted by ``mount()`` and boots a
+        Reads the mount entries persisted by ``mount()`` and boots a
         SlimNexusFS facade.  This enables ``fsspec.filesystem("nexus")``
         and ``pd.read_csv("nexus:///...")`` without explicit construction.
 
@@ -120,9 +120,7 @@ class NexusFileSystem(AbstractFileSystem):
             FileNotFoundError: If no ``mounts.json`` exists.
             ValueError: If ``mounts.json`` is empty or invalid.
         """
-        import json
-
-        from nexus.fs._paths import mounts_file
+        from nexus.fs._paths import build_mount_args, load_persisted_mounts, mounts_file
 
         mf = mounts_file()
 
@@ -133,10 +131,9 @@ class NexusFileSystem(AbstractFileSystem):
                 "then use fsspec.open('nexus:///...')."
             )
 
-        with open(mf) as f:
-            uris = json.load(f)
+        entries = load_persisted_mounts()
 
-        if not uris or not isinstance(uris, list):
+        if not entries:
             raise ValueError(
                 f"Invalid mounts.json at {mf}. Run nexus.fs.mount() to re-register backends."
             )
@@ -144,7 +141,8 @@ class NexusFileSystem(AbstractFileSystem):
         from nexus.fs import mount
         from nexus.fs._sync import run_sync
 
-        return cast("SlimNexusFS", run_sync(mount(*uris)))
+        uris, overrides = build_mount_args(entries)
+        return cast("SlimNexusFS", run_sync(mount(*uris, mount_overrides=overrides or None)))
 
     # -- Protocol handling -----------------------------------------------------
 

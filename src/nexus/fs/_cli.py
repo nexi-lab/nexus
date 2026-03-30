@@ -1,8 +1,11 @@
 """CLI entry point for nexus-fs.
 
 Provides the `nexus-fs` console command with subcommands:
+- nexus-fs mount       — register backends for later use
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
-- nexus-fs playground   — interactive TUI file browser
+- nexus-fs playground  — interactive TUI file browser
+- nexus-fs cp          — copy files between mounted backends
+- nexus-fs auth        — credential management
 
 This module is referenced by pyproject.toml [project.scripts].
 It stays thin: imports are deferred to keep startup fast and to avoid
@@ -28,6 +31,57 @@ def main(ctx: click.Context) -> None:
     """nexus-fs: unified filesystem for cloud storage."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
+
+
+@main.command("mount")
+@click.argument("uris", nargs=-1, required=True)
+@click.option(
+    "--at",
+    default=None,
+    help="Custom mount point (only valid with a single URI).",
+)
+@add_output_options
+def mount_cmd(uris: tuple[str, ...], at: str | None, output_opts: OutputOptions) -> None:
+    """Register backends for later use by other commands.
+
+    Mounts the given backend URIs and persists them so that subsequent
+    commands (cp, playground) can auto-discover them without needing
+    URIs again.
+
+    \b
+    Examples:
+
+    \b
+      nexus-fs mount s3://my-bucket
+      nexus-fs mount s3://my-bucket gcs://project/bucket local://./data
+      nexus-fs mount s3://my-bucket --at /custom/path
+      nexus-fs mount s3://my-bucket --json
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        from nexus.fs import mount
+
+        fs = await mount(*uris, at=at)
+        mounts = fs.list_mounts()
+        return {"mounts": mounts, "uris": list(uris)}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        for mp in d["mounts"]:
+            click.echo(f"  {mp}")
+        click.echo(f"Mounted {len(d['mounts'])} backend(s).")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
 
 
 @main.command()
@@ -174,33 +228,26 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        import json as json_mod
-        import os
-        import tempfile
-
         from nexus.fs import mount
+        from nexus.fs._paths import build_mount_args, load_persisted_mounts
 
-        # Load previously persisted mount URIs from mounts.json
-        # (written by mount() on every invocation).
-        state_dir = os.environ.get("NEXUS_FS_STATE_DIR") or os.path.join(
-            tempfile.gettempdir(), "nexus-fs"
-        )
-        persisted: list[str] = []
-        mounts_file = os.path.join(state_dir, "mounts.json")
-        try:
-            with open(mounts_file) as f:
-                persisted = json_mod.load(f)
-        except (OSError, json_mod.JSONDecodeError):
-            pass
+        # Load previously persisted mount entries from mounts.json.
+        persisted = load_persisted_mounts()
+        uris, overrides = build_mount_args(persisted)
 
-        # Merge persisted + any extra URIs the user passed explicitly.
-        all_uris = list(dict.fromkeys(persisted + list(mount_uris)))
-        if not all_uris:
+        # Append extra URIs from the command line.
+        for uri in mount_uris:
+            if uri not in uris:
+                uris.append(uri)
+
+        if not uris:
             raise click.UsageError(
-                "No mounts found. Either run 'nexus-fs mount' first or "
-                "pass backend URIs: nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
+                "No mounts found. Run 'nexus-fs mount <uri>' first or "
+                "pass backend URIs as trailing arguments:\n"
+                "  nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
             )
-        fs = await mount(*all_uris)
+
+        fs = await mount(*uris, mount_overrides=overrides or None)
 
         result = await fs.copy(source, dest)
         return {"source": source, "dest": dest, **result}

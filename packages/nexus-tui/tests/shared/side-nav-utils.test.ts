@@ -99,8 +99,8 @@ describe("widths", () => {
     expect(SIDE_NAV_FULL_WIDTH).toBe(18);
   });
 
-  it("collapsed width is 5", () => {
-    expect(SIDE_NAV_COLLAPSED_WIDTH).toBe(5);
+  it("collapsed width is 6", () => {
+    expect(SIDE_NAV_COLLAPSED_WIDTH).toBe(6);
   });
 
   it("full width is greater than collapsed width", () => {

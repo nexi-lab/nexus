@@ -36,9 +36,10 @@ export const SIDE_NAV_FULL_WIDTH = 18;
 /**
  * Character width of the sidebar in collapsed mode.
  *
- * Layout: " ◎2 " — 1 (pad) + 1 (icon) + 1 (shortcut) + 1 (indicator) + 1 (pad) = 5.
+ * Box border consumes 2 chars (left + right), leaving 4 inner chars.
+ * Layout: " ◎2◂" — 1 (pad) + 1 (icon) + 1 (shortcut) + 1 (indicator) = 4.
  */
-export const SIDE_NAV_COLLAPSED_WIDTH = 5;
+export const SIDE_NAV_COLLAPSED_WIDTH = 6;
 
 // =============================================================================
 // Functions

@@ -135,7 +135,7 @@ export function SideNav({ activePanel, visible }: SideNavProps): React.ReactNode
   return (
     <box
       flexDirection="column"
-      width={mode === "full" ? 18 : 5}
+      width={mode === "full" ? 18 : 6}
       height="100%"
       borderRight
       borderColor={palette.faint}

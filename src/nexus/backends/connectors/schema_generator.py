@@ -1,7 +1,7 @@
-"""Skill documentation generator — extracted from SkillDocMixin.
+"""Readme documentation generator — extracted from ReadmeDocMixin.
 
 Converts connector metadata (Pydantic schemas, operation traits, error
-registries) into SKILL.md markdown and writes skill directories.
+registries) into README.md markdown and writes readme directories.
 """
 
 import logging
@@ -15,8 +15,8 @@ from nexus.backends.connectors.base import ConfirmLevel, ErrorDef, OpTraits
 logger = logging.getLogger(__name__)
 
 
-class SkillDocGenerator:
-    """Generate SKILL.md documentation from connector metadata.
+class ReadmeDocGenerator:
+    """Generate README.md documentation from connector metadata.
 
     Parameters
     ----------
@@ -30,8 +30,8 @@ class SkillDocGenerator:
         Error code → ErrorDef mapping.
     examples:
         Example files: ``{"create_meeting.yaml": "content..."}``.
-    skill_dir:
-        Directory name for skill docs (default: ``".skill"``).
+    readme_dir:
+        Directory name for readme docs (default: ``".readme"``).
     nested_examples:
         Configurable nested-field examples (overrides defaults).
     """
@@ -43,7 +43,7 @@ class SkillDocGenerator:
         operation_traits: dict[str, OpTraits],
         error_registry: dict[str, ErrorDef],
         examples: dict[str, str],
-        skill_dir: str = ".skill",
+        readme_dir: str = ".readme",
         nested_examples: dict[str, list[str]] | None = None,
         field_examples: dict[str, str] | None = None,
         write_paths: dict[str, str] | None = None,
@@ -53,7 +53,7 @@ class SkillDocGenerator:
         self._operation_traits = operation_traits
         self._error_registry = error_registry
         self._examples = examples
-        self._skill_dir = skill_dir
+        self._readme_dir = readme_dir
         self._nested_examples = nested_examples or {}
         self._field_examples = field_examples or {}
         # operation_name -> write path (e.g., "send_email" -> "SENT/_new.yaml")
@@ -65,14 +65,14 @@ class SkillDocGenerator:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_skill_doc(self, mount_path: str) -> str:
-        """Auto-generate SKILL.md from connector metadata.
+    def generate_readme(self, mount_path: str) -> str:
+        """Auto-generate README.md from connector metadata.
 
         Args:
             mount_path: The mount path for this connector.
 
         Returns:
-            Generated SKILL.md content as string.
+            Generated README.md content as string.
         """
         lines = [
             f"# {self._format_display_name()} Connector",
@@ -99,16 +99,16 @@ class SkillDocGenerator:
 
         return "\n".join(lines)
 
-    def get_skill_path(self, mount_path: str) -> str:
-        """Get the full path to the .skill directory."""
-        return posixpath.join(mount_path.rstrip("/"), self._skill_dir)
+    def get_readme_path(self, mount_path: str) -> str:
+        """Get the full path to the .readme directory."""
+        return posixpath.join(mount_path.rstrip("/"), self._readme_dir)
 
-    async def write_skill_docs(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
-        """Generate and write .skill/ directory to the filesystem.
+    async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, Any]:
+        """Generate and write .readme/ directory to the filesystem.
 
         Creates:
-            <mount_path>/.skill/
-                SKILL.md           # Main documentation
+            <mount_path>/.readme/
+                README.md           # Main documentation
                 schemas/           # Individual schema YAML files (Issue #3148)
                     <operation>.yaml
                 examples/          # Example YAML files
@@ -119,33 +119,33 @@ class SkillDocGenerator:
             filesystem: NexusFS instance to write to (optional).
 
         Returns:
-            Dict of written paths: {"skill_md": path, "schemas": [...], "examples": [...]}.
+            Dict of written paths: {"readme_md": path, "schemas": [...], "examples": [...]}.
         """
-        result: dict[str, Any] = {"skill_md": None, "schemas": [], "examples": []}
+        result: dict[str, Any] = {"readme_md": None, "schemas": [], "examples": []}
 
         if not self._skill_name:
-            logger.warning("Cannot write skill docs: skill_name not configured")
+            logger.warning("Cannot write readme docs: skill_name not configured")
             return result
 
-        skill_dir = self.get_skill_path(mount_path)
+        readme_dir = self.get_readme_path(mount_path)
 
         if filesystem is None:
             logger.debug("No filesystem provided for %s", self._skill_name)
             return result
 
         try:
-            await filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            await filesystem.mkdir(readme_dir, parents=True, exist_ok=True)
 
-            # Write SKILL.md
-            skill_md_path = posixpath.join(skill_dir, "SKILL.md")
-            content = self.generate_skill_doc(mount_path)
-            await filesystem.write(skill_md_path, content.encode("utf-8"))
-            result["skill_md"] = skill_md_path
-            logger.info("Generated SKILL.md at %s", skill_md_path)
+            # Write README.md
+            readme_md_path = posixpath.join(readme_dir, "README.md")
+            content = self.generate_readme(mount_path)
+            await filesystem.write(readme_md_path, content.encode("utf-8"))
+            result["readme_md"] = readme_md_path
+            logger.info("Generated README.md at %s", readme_md_path)
 
             # Write example files
             if self._examples:
-                examples_dir = posixpath.join(skill_dir, "examples")
+                examples_dir = posixpath.join(readme_dir, "examples")
                 await filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
 
                 for filename, file_content in self._examples.items():
@@ -156,7 +156,7 @@ class SkillDocGenerator:
 
             # Write individual schema files (Issue #3148, Decision #7B)
             if self._schemas:
-                schemas_dir = posixpath.join(skill_dir, "schemas")
+                schemas_dir = posixpath.join(readme_dir, "schemas")
                 await filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
 
                 for op_name, schema in self._schemas.items():
@@ -169,7 +169,7 @@ class SkillDocGenerator:
             return result
 
         except Exception as e:
-            logger.warning("Failed to write skill docs to %s: %s", skill_dir, e)
+            logger.warning("Failed to write readme docs to %s: %s", readme_dir, e)
             return result
 
     def _generate_read_patterns_section(self, mount_path: str) -> list[str]:

@@ -131,7 +131,7 @@ class MountService:
         fail the mount operation (Decision #12).
 
         Runs:
-        - Skill doc generation for SkillDocMixin backends
+        - Readme doc generation for ReadmeDocMixin backends
         - Search indexing via search_service (Issue #3148 Gap 1)
         """
         try:
@@ -141,11 +141,11 @@ class MountService:
             if backend is None:
                 return
 
-            # Skill doc generation (via mount_hooks if available)
+            # Readme doc generation (via mount_hooks if available)
             from nexus.contracts.backend_features import BackendFeature
 
-            if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.SKILL_DOC):
-                await self._generate_skill_docs(mount_point, backend)
+            if hasattr(backend, "has_feature") and backend.has_feature(BackendFeature.README_DOC):
+                await self._generate_readmes(mount_point, backend)
 
             # Search indexing — index the mount point so content is discoverable.
             # Uses search_service DI (Issue #3148 Phase 1).
@@ -173,14 +173,14 @@ class MountService:
                 "Post-mount hooks failed for %s (mount still active)", mount_point, exc_info=True
             )
 
-    async def _generate_skill_docs(self, mount_point: str, backend: Any) -> None:
-        """Generate .skill/ directory for a connector backend (async).
+    async def _generate_readmes(self, mount_point: str, backend: Any) -> None:
+        """Generate .readme/ directory for a connector backend (async).
 
         Called from post-mount hooks and sync completion.
         """
-        from nexus.backends.connectors.base import SkillDocMixin
+        from nexus.backends.connectors.base import ReadmeDocMixin
 
-        if not isinstance(backend, SkillDocMixin):
+        if not isinstance(backend, ReadmeDocMixin):
             return
         if not backend.SKILL_NAME:
             return
@@ -196,13 +196,13 @@ class MountService:
 
         if fs is not None:
             try:
-                result = await backend.write_skill_docs(mount_point, fs)
-                if result.get("skill_md"):
+                result = await backend.write_readme(mount_point, fs)
+                if result.get("readme_md"):
                     logger.info(
-                        "Generated skill docs for %s at %s", mount_point, result["skill_md"]
+                        "Generated readme docs for %s at %s", mount_point, result["readme_md"]
                     )
             except Exception:
-                logger.warning("Failed to generate skill docs for %s", mount_point, exc_info=True)
+                logger.warning("Failed to generate readme docs for %s", mount_point, exc_info=True)
 
     async def _index_mount_content(self, mount_point: str, *, zone_id: str | None = None) -> None:
         """Index mounted connector content for semantic search.
@@ -535,7 +535,7 @@ class MountService:
 
         .. deprecated::
             Use ``await add_mount(...)`` instead. This sync entry point
-            skips async post-mount hooks (skill doc regeneration, search
+            skips async post-mount hooks (readme doc regeneration, search
             indexing). Retained for internal use by MountPersistService
             and NexusFS facade during startup. Will be made private in
             a future release.
@@ -1013,7 +1013,7 @@ class MountService:
 
         # --- Post-mount hooks (Issue #3148, Decision #1A) ---
         # These run only through the async path. Sync callers (startup,
-        # persist service) skip hooks — a separate generate_all_skill_docs
+        # persist service) skip hooks — a separate generate_all_readme_docs
         # pass handles startup.
         await self._run_post_mount_hooks(mount_point)
 
@@ -1590,16 +1590,16 @@ class MountService:
 
         sync_result = await asyncio.to_thread(_sync_mount_sync)
 
-        # Post-sync: regenerate .skill/ directory (Issue #3148, Decision #7B).
+        # Post-sync: regenerate .readme/ directory (Issue #3148, Decision #7B).
         # Schema files are re-generated on every sync so they stay fresh.
         if mount_point and not dry_run:
             try:
                 route = self.router.route(mount_point)
                 if route:
-                    await self._generate_skill_docs(mount_point, route.backend)
+                    await self._generate_readmes(mount_point, route.backend)
             except Exception:
                 logger.warning(
-                    "Post-sync skill doc regeneration failed for %s",
+                    "Post-sync readme doc regeneration failed for %s",
                     mount_point,
                     exc_info=True,
                 )

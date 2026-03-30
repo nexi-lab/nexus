@@ -27,8 +27,8 @@ from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
     OpTraits,
+    ReadmeDocMixin,
     Reversibility,
-    SkillDocMixin,
     TraitBasedMixin,
     ValidatedMixin,
     ValidationError,
@@ -64,7 +64,7 @@ class PathCalendarBackend(
     PathAddressingEngine,
     CacheConnectorMixin,
     OAuthConnectorMixin,
-    SkillDocMixin,
+    ReadmeDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
     CheckpointMixin,
@@ -86,9 +86,9 @@ class PathCalendarBackend(
         }
     )
 
-    # SkillDocMixin config
+    # ReadmeDocMixin config
     SKILL_NAME = "gcalendar"
-    SKILL_DIR = ".skill"
+    README_DIR = ".readme"
 
     NESTED_EXAMPLES: dict[str, list[str]] = {
         "start": ['dateTime: "2024-01-15T09:00:00-08:00"', "timeZone: America/Los_Angeles"],
@@ -434,8 +434,8 @@ send_notifications: true
             raise ValidationError(
                 code="EVENT_NOT_FOUND",
                 message=f"Event {event_id} not found in calendar {calendar_id}",
-                skill_path=self.skill_md_path,
-                skill_section="operations",
+                readme_path=self.readme_md_path,
+                readme_section="operations",
             ) from e
 
         import yaml as _yaml
@@ -488,7 +488,7 @@ send_notifications: true
             raise ValidationError(
                 code="EVENT_NOT_FOUND",
                 message=f"Event {event_id} not found",
-                skill_path=self.skill_md_path,
+                readme_path=self.readme_md_path,
             ) from e
 
         import yaml as _yaml

@@ -106,7 +106,7 @@ class SheetsConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "SPREADSHEET_NOT_FOUND": ErrorDef(
             message="Spreadsheet not found",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="spreadsheet_id: <valid spreadsheet ID or URL>",
         ),
     }
@@ -191,7 +191,7 @@ class DocsConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "DOCUMENT_NOT_FOUND": ErrorDef(
             message="Document not found",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="document_id: <valid document ID>",
         ),
     }
@@ -372,7 +372,7 @@ class ChatConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "SPACE_NOT_FOUND": ErrorDef(
             message="Chat space not found",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="space: <valid space name or ID>",
         ),
     }
@@ -462,7 +462,7 @@ class DriveConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "FILE_NOT_FOUND": ErrorDef(
             message="File not found in Drive",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="file_id: <valid Drive file ID>",
         ),
     }
@@ -586,7 +586,7 @@ class GmailConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "MISSING_RECIPIENTS": ErrorDef(
             message="Email requires at least one recipient",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="to:\n  - user@example.com",
         ),
     }
@@ -609,7 +609,7 @@ class GmailConnector(PathCLIBackend):
     _new.yaml                      # ✏ Write here to CREATE a draft (reversible)
 
 /skills/gmail/                     # Skill docs (this file + schemas)
-  SKILL.md                         # This document
+  README.md                         # This document
   schemas/
     send_email.yaml                # Schema for sending email
     reply_email.yaml               # Schema for replying
@@ -1149,8 +1149,8 @@ class CalendarConnector(PathCLIBackend):
     _update.yaml                   # ✏ Write here to UPDATE an event
     _delete.yaml                   # ✏ Write here to DELETE an event (irreversible)
   {calendarId}/                    # Other calendars (shared, holidays, etc.)
-  .skill/
-    SKILL.md"""
+  .readme/
+    README.md"""
 
     SCHEMAS: dict[str, type] = {
         "create_event": CreateEventSchema,
@@ -1166,7 +1166,7 @@ class CalendarConnector(PathCLIBackend):
         **TRAIT_ERRORS,
         "EVENT_NOT_FOUND": ErrorDef(
             message="Calendar event not found",
-            skill_section="operations",
+            readme_section="operations",
             fix_example="event_id: <valid event ID>",
         ),
     }

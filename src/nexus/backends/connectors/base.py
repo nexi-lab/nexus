@@ -236,7 +236,7 @@ class ReadmeDocMixin:
         self._cached_doc_generator = None
         self._cached_error_formatter = None
 
-    def _get_doc_generator(self) -> "ReadmeDocGenerator":
+    def get_doc_generator(self) -> "ReadmeDocGenerator":
         """Get or create the cached ReadmeDocGenerator."""
         if self._cached_doc_generator is None:
             from nexus.backends.connectors.schema_generator import ReadmeDocGenerator
@@ -278,16 +278,16 @@ class ReadmeDocMixin:
 
     def generate_readme(self, mount_path: str) -> str:
         """Auto-generate README.md from connector metadata."""
-        return self._get_doc_generator().generate_readme(mount_path)
+        return self.get_doc_generator().generate_readme(mount_path)
 
     def get_readme_path(self, mount_path: str) -> str:
         """Get the full path to the .readme directory."""
-        return self._get_doc_generator().get_readme_path(mount_path)
+        return self.get_doc_generator().get_readme_path(mount_path)
 
     async def write_readme(self, mount_path: str, filesystem: Any = None) -> dict[str, str]:
         """Generate and write .readme/ directory to the filesystem."""
         self._mount_path = mount_path
-        return await self._get_doc_generator().write_readme(mount_path, filesystem)
+        return await self.get_doc_generator().write_readme(mount_path, filesystem)
 
     def format_error_with_skill_ref(
         self,

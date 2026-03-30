@@ -639,11 +639,11 @@ async def mount_connector(
                 )
                 # Write individual schema files
                 schemas = getattr(temp_backend, "SCHEMAS", {})
-                if schemas and hasattr(temp_backend, "_get_doc_generator"):
-                    doc_gen = temp_backend._get_doc_generator()
+                if schemas and hasattr(temp_backend, "get_doc_generator"):
+                    doc_gen = temp_backend.get_doc_generator()
                     for op_name, schema_cls in schemas.items():
                         try:
-                            schema_yaml = doc_gen._generate_annotated_schema(op_name, schema_cls)
+                            schema_yaml = doc_gen.generate_schema_yaml(op_name, schema_cls)
                             await nx.write(
                                 f"{readme_base}/schemas/{op_name}.yaml",
                                 schema_yaml.encode("utf-8"),
@@ -948,12 +948,12 @@ async def get_schema(
     # Try generating from backend's schema generator
     if backend:
         try:
-            generator = getattr(backend, "_get_doc_generator", None)
+            generator = getattr(backend, "get_doc_generator", None)
             if generator:
                 doc_gen = generator()
                 schemas = getattr(backend, "SCHEMAS", {})
                 if operation in schemas:
-                    content = doc_gen._generate_annotated_schema(operation, schemas[operation])
+                    content = doc_gen.generate_schema_yaml(operation, schemas[operation])
                     return SchemaResponse(
                         mount_point=mount_path, operation=operation, content=content
                     )

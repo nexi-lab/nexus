@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import asdict
 
 import click
 
 from nexus.fs._auth_cli import auth as auth_group
+from nexus.fs._output import OutputOptions, add_output_options, render_output
 
 
 @click.group(invoke_without_command=True)
@@ -36,7 +38,8 @@ def main(ctx: click.Context) -> None:
     multiple=True,
     help="URI to mount for connectivity checks (e.g., s3://bucket).",
 )
-def doctor(mount_uris: tuple[str, ...]) -> None:
+@add_output_options
+def doctor(mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
     """Check environment, backends, and connectivity.
 
     Runs diagnostic checks across three sections:
@@ -50,9 +53,10 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
 
     \b
       nexus-fs doctor
+      nexus-fs doctor --json
       nexus-fs doctor --mount s3://my-bucket --mount gcs://project/bucket
     """
-    from nexus.fs._doctor import render_doctor, run_all_checks
+    from nexus.fs._doctor import DoctorStatus, render_doctor, run_all_checks
 
     async def _run() -> dict:
         fs = None
@@ -81,15 +85,28 @@ def doctor(mount_uris: tuple[str, ...]) -> None:
         executor.shutdown(wait=False, cancel_futures=True)
         loop.close()
 
-    render_doctor(results)
-
-    # Exit with error code if any checks failed
-    from nexus.fs._doctor import DoctorStatus
+    # Serialize DoctorCheckResult dataclasses for JSON output
+    serializable = {
+        section: [{**asdict(r), "status": r.status.value} for r in checks]
+        for section, checks in results.items()
+    }
 
     has_failure = any(
         r.status == DoctorStatus.FAIL for section in results.values() for r in section
     )
-    if has_failure:
+
+    def _human_display(_data: object) -> None:
+        render_doctor(results)
+        if has_failure:
+            sys.exit(1)
+
+    render_output(
+        data=serializable,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
+
+    if output_opts.json_output and has_failure:
         sys.exit(1)
 
 
@@ -134,7 +151,8 @@ def playground(uris: tuple[str, ...]) -> None:
 @click.argument("source", type=str)
 @click.argument("dest", type=str)
 @click.argument("mount_uris", nargs=-1)
-def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
+@add_output_options
+def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
     """Copy a file between any mounted backends.
 
     Uses backend-native server-side copy when source and destination are
@@ -149,13 +167,14 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
 
     \b
       nexus-fs cp /s3/bucket/data.csv /s3/bucket/backup.csv
+      nexus-fs cp /s3/bucket/data.csv /s3/bucket/backup.csv --json
       nexus-fs cp /s3/bucket/file.parquet /gcs/bucket/file.parquet
       nexus-fs cp /local/data/report.pdf /s3/archive/report.pdf s3://archive
     """
     from nexus.fs._sync import run_sync
 
-    async def _run() -> None:
-        import json
+    async def _run() -> dict:
+        import json as json_mod
         import os
         import tempfile
 
@@ -170,8 +189,8 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
         mounts_file = os.path.join(state_dir, "mounts.json")
         try:
             with open(mounts_file) as f:
-                persisted = json.load(f)
-        except (OSError, json.JSONDecodeError):
+                persisted = json_mod.load(f)
+        except (OSError, json_mod.JSONDecodeError):
             pass
 
         # Merge persisted + any extra URIs the user passed explicitly.
@@ -184,20 +203,29 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...]) -> None:
         fs = await mount(*all_uris)
 
         result = await fs.copy(source, dest)
-        size = result.get("size", 0)
+        return {"source": source, "dest": dest, **result}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        size = d.get("size", 0)
         if size >= 1024 * 1024:
             size_str = f"{size / (1024 * 1024):.1f} MB"
         elif size >= 1024:
             size_str = f"{size / 1024:.1f} KB"
         else:
             size_str = f"{size} B"
-        click.echo(f"Copied {source} → {dest} ({size_str})")
+        click.echo(f"Copied {d['source']} → {d['dest']} ({size_str})")
 
-    try:
-        run_sync(_run())
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
 
 
 main.add_command(auth_group)

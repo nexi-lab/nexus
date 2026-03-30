@@ -554,8 +554,12 @@ class FileContentCache:
         Returns:
             Dict mapping virtual_path to disk_path (only for existing cached files)
         """
-        # Filter out paths that definitely don't exist (via Bloom filter)
-        paths_to_check = [p for p in virtual_paths if self._bloom_check(zone_id, p)]
+        # Filter out paths that don't exist (Bloom) and stale paths (lease revoked)
+        paths_to_check = [
+            p
+            for p in virtual_paths
+            if self._bloom_check(zone_id, p) and not self.is_stale(zone_id, p)
+        ]
 
         if not paths_to_check:
             return {}

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import logging
 import threading
 import time
@@ -105,6 +106,7 @@ class FUSELeaseCoordinator:
         acquire_timeout: float = _LEASE_ACQUIRE_TIMEOUT,
         file_cache: "FileContentCache | None" = None,
         zone_id: str | None = None,
+        l1_cache: Any | None = None,
     ) -> None:
         self._cache = cache
         self._lease_manager: LeaseManagerProtocol | None = lease_manager
@@ -113,6 +115,7 @@ class FUSELeaseCoordinator:
         self._acquire_timeout = acquire_timeout
         self._file_cache = file_cache
         self._zone_id = zone_id
+        self._l1_cache = l1_cache  # Connector L1 Rust metadata cache
 
         # Local validity cache (Decision 13A)
         # {path: expires_at_monotonic} — avoids async thread switch on hot path
@@ -171,6 +174,12 @@ class FUSELeaseCoordinator:
             # Mark FileContentCache content stale (Issue #3400, Decision 3A)
             if self._file_cache is not None and self._zone_id is not None:
                 self._file_cache.mark_lease_revoked(self._zone_id, path)
+
+            # Invalidate connector L1 Rust metadata cache (Codex challenge fix)
+            # Without this, the 300s L1 TTL can serve stale data after revocation.
+            if self._l1_cache is not None and hasattr(self._l1_cache, "remove"):
+                with contextlib.suppress(Exception):
+                    self._l1_cache.remove(path)
 
             logger.debug(
                 "[FUSE-LEASE] Revocation callback: path=%s reason=%s holder=%s",
@@ -371,6 +380,10 @@ class FUSELeaseCoordinator:
             # the revocation callback only covers other mounts
             if self._file_cache is not None and self._zone_id is not None:
                 self._file_cache.mark_lease_revoked(self._zone_id, path)
+            # Invalidate connector L1 cache for the local mount
+            if self._l1_cache is not None and hasattr(self._l1_cache, "remove"):
+                with contextlib.suppress(Exception):
+                    self._l1_cache.remove(path)
             # Fire-and-forget cross-mount revocation
             self._revoke_lease_async(path)
 

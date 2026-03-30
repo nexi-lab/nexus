@@ -139,12 +139,22 @@ class NexusFUSEOperations(Operations):
         # Wrap in lease coordinator for cross-mount cache coherence
         holder_id = mount_id or "default-mount"
         _zone_id = getattr(nexus_fs, "zone_id", None)
+        # Try to get L1 connector cache for cross-layer invalidation
+        _l1_cache = None
+        try:
+            _backend = getattr(nexus_fs, "router", None)
+            if _backend is not None:
+                _root = _backend.route("/")
+                _l1_cache = getattr(type(_root.backend), "_l1_cache", None)
+        except Exception:
+            pass
         cache = FUSELeaseCoordinator(
             cache=bare_cache,
             lease_manager=lease_manager,
             holder_id=holder_id,
             file_cache=file_cache,
             zone_id=_zone_id,
+            l1_cache=_l1_cache,
         )
 
         # Initialize L2 local disk cache (Issue #1072)

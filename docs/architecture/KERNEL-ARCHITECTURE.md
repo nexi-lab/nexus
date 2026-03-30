@@ -202,9 +202,11 @@ detail. Like HDFS separates ClientProtocol (NameNode, path-based) from
 DataTransferProtocol (DataNode, block-based). The metadata layer above ensures
 etag ownership and zone isolation.
 
-**Consistency** applies to metadata operations only (not content writes).
-`sys_write` is content-only (SRP); `write(consistency=)` composes content write +
-metadata update. ``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first).
+**Driver-managed metadata** (ext4 pattern): drivers persist metadata inside
+``write_content()`` while kernel holds VFS lock. Kernel calls ``write_content()``
+under lock, then reads back metadata for event dispatch. Metastore is injected
+into drivers at mount time via ``DriverLifecycleCoordinator``.
+``"sc"`` (strong, default) or ``"ec"`` (eventual, local-first) consistency.
 
 ### 2.4 Syscall Extension Model (VFS Dispatch)
 
@@ -407,9 +409,9 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 - **StreamBackend protocol** — pluggable backing store for DT_STREAM data.
   Mount configuration determines which backend is used when creating a stream
   under that mount (like Linux filesystem type determines pipe implementation).
-  Current implementations: ``StreamBuffer`` (in-memory, default),
-  ``RemoteStreamBackend`` (federation gRPC proxy).
-  Future: CAS-backed (durable), WAL-backed (replicated).
+  Implementations: ``StreamBuffer`` (in-memory, default),
+  ``RemoteStreamBackend`` (federation gRPC proxy),
+  ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once).
 - **Mount-determined backend** — ``_MountEntry.stream_backend_factory`` is baked
   at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
   mount's factory; if set, creates a custom backend instead of default memory.

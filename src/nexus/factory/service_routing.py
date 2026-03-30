@@ -81,12 +81,11 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
 # ---------------------------------------------------------------------------
 # Canonical name mapping: source key → short registry key
 #
-# Unified map for both dict-keyed services (pre-kernel + brick tier)
-# and WiredServices dataclass fields (post-kernel tier).
+# Unified map for dict-keyed services across all boot tiers.
 # ---------------------------------------------------------------------------
 
 _CANONICAL_NAMES: dict[str, str] = {
-    # WiredServices dataclass fields
+    # Post-kernel (Tier 2b) service keys
     "rebac_service": "rebac",
     "mount_service": "mount",
     "gateway": "gateway",
@@ -123,12 +122,7 @@ async def enlist_services(nx_or_coordinator: Any, services: Any) -> int:
     count = 0
     _use_syscall = hasattr(nx_or_coordinator, "sys_setattr")
 
-    pairs: list[tuple[str, Any]]
-    if isinstance(services, dict):
-        pairs = list(services.items())
-    else:
-        # WiredServices dataclass — iterate declared fields
-        pairs = [(f, getattr(services, f, None)) for f in services.__dataclass_fields__]
+    pairs: list[tuple[str, Any]] = list(services.items())
 
     for src_key, val in pairs:
         if val is None:

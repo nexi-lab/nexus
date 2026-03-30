@@ -28,6 +28,9 @@ import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
 import { ManifestList } from "./manifest-list.js";
@@ -51,14 +54,6 @@ const ALL_TABS: readonly TabDef<AccessTab>[] = [
   { id: "fraud", label: "Fraud", brick: "governance" },
   { id: "delegations", label: "Delegations", brick: "delegation" },
 ];
-const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
-  manifests: "Manifests",
-  alerts: "Alerts",
-  credentials: "Credentials",
-  fraud: "Fraud",
-  delegations: "Delegations",
-};
-
 type OverlayMode =
   | "none"
   | "permissionChecker"
@@ -147,13 +142,7 @@ export default function AccessPanel(): React.ReactNode {
   // Delegation status filter
   const [delegationFilter, setDelegationFilter] = useState<string | null>(null);
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Refresh current view based on active tab
   const refreshCurrentView = useCallback((): void => {
@@ -268,23 +257,9 @@ export default function AccessPanel(): React.ReactNode {
         setFraudFocus((f) => f === "scores" ? "constraints" : "scores");
         return;
       }
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
+      subTabForward(visibleTabs, activeTab, setActiveTab);
     },
-    "shift+tab": () => {
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
+    "shift+tab": () => subTabBackward(visibleTabs, activeTab, setActiveTab),
     return: () => {
       // Manifests: fetch detail to load tuple entries
       if (activeTab === "manifests" && client) {
@@ -519,13 +494,7 @@ export default function AccessPanel(): React.ReactNode {
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Permission evaluation result */}
       {lastPermissionCheck && (

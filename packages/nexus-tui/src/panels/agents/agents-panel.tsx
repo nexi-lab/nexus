@@ -24,6 +24,9 @@ import { useCommandRunnerStore, executeLocalCommand } from "../../services/comma
 import { useUiStore } from "../../stores/ui-store.js";
 import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
   { id: "status", label: "Status", brick: "agent_runtime" },
@@ -31,12 +34,6 @@ const ALL_TABS: readonly TabDef<AgentTab>[] = [
   { id: "inbox", label: "Inbox", brick: "ipc" },
   { id: "trajectories", label: "Trajectories", brick: "agent_runtime" },
 ];
-const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
-  status: "Status",
-  delegations: "Delegations",
-  inbox: "Inbox",
-  trajectories: "Trajectories",
-};
 
 export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
@@ -119,13 +116,7 @@ export default function AgentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, effectiveZoneId]);
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -215,15 +206,7 @@ export default function AgentsPanel(): React.ReactNode {
         if (agentId) setSelectedAgentId(agentId);
       }
     },
-    tab: () => {
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
+    tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
     "shift+tab": () => toggleFocus("agents"),
     r: () => refreshCurrentView(),
     d: async () => {
@@ -371,13 +354,7 @@ export default function AgentsPanel(): React.ReactNode {
         {/* Right pane: detail views (70%) */}
         <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           {/* Tab bar */}
-          <box height={1} width="100%">
-            <text>
-              {visibleTabs.map((tab) => {
-                return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-              }).join(" ")}
-            </text>
-          </box>
+          <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
           {/* Operation in-progress feedback */}
           {operationLoading && (

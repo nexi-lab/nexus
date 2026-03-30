@@ -32,6 +32,9 @@ import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter" | "replay_filter";
 
@@ -49,17 +52,6 @@ const ALL_TABS: readonly TabDef<PanelTab>[] = [
   { id: "audit", label: "Audit", brick: "auth" },
 ];
 
-const TAB_LABELS: Readonly<Record<PanelTab, string>> = {
-  events: "Events",
-  mcl: "MCL",
-  replay: "Replay",
-  operations: "Operations",
-  connectors: "Connectors",
-  subscriptions: "Subscriptions",
-  locks: "Locks",
-  secrets: "Secrets",
-  audit: "Audit",
-};
 
 export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
@@ -155,13 +147,7 @@ export default function EventsPanel(): React.ReactNode {
   // Track the combined active tab locally
   const [activeTab, setActiveTab] = React.useState<PanelTab>("events");
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Reset expanded event when events change (index may become stale after SSE adds/evicts)
   const eventsLength = events.length;
@@ -368,12 +354,7 @@ export default function EventsPanel(): React.ReactNode {
               setConnectorDetailView(false);
             }
           },
-          tab: () => {
-            const ids = visibleTabs.map((t) => t.id);
-            const idx = ids.indexOf(activeTab);
-            const next = ids[(idx + 1) % ids.length];
-            if (next) setActiveTab(next);
-          },
+          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
           c: () => clearEvents(),
           r: () => refresh(),
           f: () => {
@@ -468,13 +449,7 @@ export default function EventsPanel(): React.ReactNode {
     <box height="100%" width="100%" flexDirection="column">
       <Tooltip tooltipKey="events-panel" message="Tip: Press ? for keybinding help" />
       {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Filter bar (events tab) */}
       {activeTab === "events" && (

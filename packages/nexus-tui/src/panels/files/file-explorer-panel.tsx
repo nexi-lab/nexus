@@ -47,6 +47,9 @@ import {
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
@@ -187,12 +190,7 @@ function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
 /** Tab cycling (shared across all modes). */
 function getTabCycleBindings(ctx: BindingContext): Record<string, () => void> {
   return {
-    tab: () => {
-      const ids = ctx.visibleTabs.map((t) => t.id);
-      const idx = ids.indexOf(ctx.activeTab);
-      const next = ids[(idx + 1) % ids.length];
-      if (next) ctx.setActiveTab(next);
-    },
+    tab: () => subTabForward(ctx.visibleTabs, ctx.activeTab, ctx.setActiveTab),
     "shift+tab": () => ctx.toggleFocus("files"),
   };
 }
@@ -520,13 +518,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Panel-level active tab
   const [activeTab, setActiveTab] = useState<FilesTab>("explorer");
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Files store
   const currentPath = useFilesStore((s) => s.currentPath);
@@ -794,13 +786,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       ) : <>
 
       {/* Panel-level tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Input bar for text modes */}
       {inputMode !== "none" && (

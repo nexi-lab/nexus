@@ -14,6 +14,9 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { ZoneList } from "./zone-list.js";
 import { BrickList } from "./brick-list.js";
 import { BrickDetail } from "./brick-detail.js";
@@ -37,16 +40,6 @@ const ALL_TABS: readonly TabDef<ZoneTab>[] = [
   { id: "mcp", label: "MCP", brick: "mcp" },
   { id: "cache", label: "Cache", brick: "cache" },
 ];
-const TAB_LABELS: Readonly<Record<ZoneTab, string>> = {
-  zones: "Zones",
-  bricks: "Bricks",
-  drift: "Drift",
-  reindex: "Reindex",
-  workspaces: "Workspaces",
-  mcp: "MCP",
-  cache: "Cache",
-};
-
 export default function ZonesPanel(): React.ReactNode {
   const client = useApi();
   const visibleTabs = useVisibleTabs(ALL_TABS);
@@ -108,13 +101,7 @@ export default function ZonesPanel(): React.ReactNode {
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
   const overlayActive = useUiStore((s) => s.overlayActive);
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight brick operations (mount, unmount, reset, etc.)
   const [operationInProgress, setOperationInProgress] = useState(false);
@@ -341,15 +328,7 @@ export default function ZonesPanel(): React.ReactNode {
             up: () => {
               setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
             },
-            tab: () => {
-              const ids = visibleTabs.map((t) => t.id);
-              const currentIdx = ids.indexOf(activeTab);
-              const nextIdx = (currentIdx + 1) % ids.length;
-              const nextTab = ids[nextIdx];
-              if (nextTab) {
-                setActiveTab(nextTab);
-              }
-            },
+            tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
             "shift+tab": () => toggleFocus("zones"),
             // n: Register workspace or mount MCP server
             n: () => {
@@ -448,14 +427,7 @@ export default function ZonesPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Multi-field input form for register/mount */}
       {inputMode !== "none" && (

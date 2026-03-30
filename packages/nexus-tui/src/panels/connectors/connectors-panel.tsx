@@ -18,24 +18,21 @@ import { MountedTab } from "./mounted-tab.js";
 import { SkillsTab } from "./skills-tab.js";
 import { WriteTab } from "./write-tab.js";
 import { statusColor } from "../../shared/theme.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 // =============================================================================
 // Tab configuration
 // =============================================================================
 
-const TAB_ORDER: readonly ConnectorsTab[] = [
-  "available",
-  "mounted",
-  "skills",
-  "write",
+const ALL_TABS: readonly TabDef<ConnectorsTab>[] = [
+  { id: "available", label: "Available", brick: null },
+  { id: "mounted", label: "Mounted", brick: null },
+  { id: "skills", label: "Skills", brick: null },
+  { id: "write", label: "Write", brick: null },
 ];
-
-const TAB_LABELS: Readonly<Record<ConnectorsTab, string>> = {
-  available: "Available",
-  mounted: "Mounted",
-  skills: "Skills",
-  write: "Write",
-};
 
 // =============================================================================
 // Panel component
@@ -47,28 +44,17 @@ export default function ConnectorsPanel(): React.ReactNode {
   const activeTab = useConnectorsStore((s) => s.activeTab);
   const setActiveTab = useConnectorsStore((s) => s.setActiveTab);
 
+  const visibleTabs = useVisibleTabs(ALL_TABS);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
+
   // Only the panel root handles Tab key for sub-tab cycling.
   // All other keys are delegated to the active sub-tab component.
   useKeyboard(
     overlayActive
       ? {}
       : {
-          tab: () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-            const nextTab = TAB_ORDER[nextIdx];
-            if (nextTab) {
-              setActiveTab(nextTab);
-            }
-          },
-          "shift+tab": () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const prevIdx = (currentIdx - 1 + TAB_ORDER.length) % TAB_ORDER.length;
-            const prevTab = TAB_ORDER[prevIdx];
-            if (prevTab) {
-              setActiveTab(prevTab);
-            }
-          },
+          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+          "shift+tab": () => subTabBackward(visibleTabs, activeTab, setActiveTab),
         },
   );
 
@@ -80,14 +66,7 @@ export default function ConnectorsPanel(): React.ReactNode {
     <BrickGate brick="storage">
       <box height="100%" width="100%" flexDirection="column">
         {/* Sub-tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Active tab content */}
         <box flexGrow={1}>

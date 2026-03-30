@@ -557,7 +557,7 @@ class VolumeLocalTransport:
             # Use batch_put for optimal single-call bulk write.
             # All I/O happens in Rust with GIL released — no per-entry
             # Python overhead, single index flush at the end.
-            return self._engine.batch_put(hash_data)
+            return int(self._engine.batch_put(hash_data))
 
         except BackendError:
             raise

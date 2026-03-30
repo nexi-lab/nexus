@@ -90,6 +90,27 @@ jobs:
             rust/nexus_pyo3
             rust/nexus_raft
 
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install protoc --version=3.20.3 -y
+          protoc --version
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        shell: bash -el {0}
+        run: |
+          PROTOC_VERSION="3.20.3"
+          PROTOC_ARCH="osx-x86_64"
+          if [ "${{ matrix.os }}" = "macos-14" ]; then
+            PROTOC_ARCH="osx-aarch_64"
+          fi
+          curl -fsSL "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-${PROTOC_ARCH}.zip" -o /tmp/protoc.zip
+          unzip -o /tmp/protoc.zip -d /tmp/protoc bin/protoc
+          install /tmp/protoc/bin/protoc /usr/local/bin/protoc
+          protoc --version
+
       # ── maturin builds ───────────────────────────────────────────────────
       # Install maturin inside the nexus env so it automatically uses the
       # correct Python interpreter when building the extension modules.
@@ -108,15 +129,12 @@ jobs:
             --out build/dist \
             -m rust/nexus_pyo3/Cargo.toml
 
-      # Use --features python only: consensus + grpc are EXPERIMENTAL and
-      # "not used in production" (see Cargo.toml). Skipping them avoids
-      # the protobuf-build protoc version-check bug entirely.
-      - name: Build nexus_raft wheel  (rust/nexus_raft --features python)
+      - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
-            --no-default-features --features python \
+            --features full \
             --out build/dist \
             -m rust/nexus_raft/Cargo.toml
 
@@ -127,6 +145,11 @@ jobs:
           echo "=== Built wheels ==="
           ls -lh build/dist/
           conda run -n nexus pip install build/dist/*.whl
+
+      - name: Verify full nexus_raft extension in nexus environment
+        shell: bash -el {0}
+        run: |
+          conda run -n nexus python -c "from _nexus_raft import Metastore, ZoneManager; print('nexus_raft full OK')"
 
       # ── conda-pack ───────────────────────────────────────────────────────
       - name: Install conda-pack into base environment

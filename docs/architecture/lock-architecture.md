@@ -190,8 +190,63 @@ VFSSemaphore instances per path (one for shared, one for exclusive). Matches
 
 ---
 
-## 6. Lock Ordering
+## 6. Lock Ordering (Issue #3392)
 
-See [LOCK-ORDERING.md](LOCK-ORDERING.md) for the global lock hierarchy,
-permitted/forbidden acquisition orders, and debug-mode ordering assertions
-(Issue #3392, inspired by DFUSE arXiv:2503.18191).
+**Motivation:** DFUSE (arXiv:2503.18191) §4.2 — deadlock from reversed lock
+ordering in distributed filesystem I/O. Document and enforce Nexus's lock
+hierarchy before a similar bug manifests.
+
+### 6.1 Global Ordering Rule
+
+Nexus has four lock layers. **A task that holds a higher-numbered lock must
+NEVER acquire a lower-numbered lock.**
+
+```
+L1 (VFS I/O)  →  L2 (Advisory/Raft)  →  L3 (asyncio)  →  L4 (threading)
+```
+
+| Layer | Lock | Location | Typical Latency |
+|-------|------|----------|-----------------|
+| L1 | VFS I/O locks | `core/lock_fast.py` | ~200ns (Rust) / ~500ns (Python) |
+| L2 | Advisory/Raft locks | `lib/distributed_lock.py`, `raft/lock_manager.py` | ~5μs (local) / ~5-10ms (Raft) |
+| L3 | asyncio primitives | pipes, streams, asyncio.Semaphore | ~1μs |
+| L4 | threading locks | `file_watcher.py` `_waiters_lock`, `semaphore.py` `_mu` | ~1μs |
+
+### 6.2 Permitted Acquisition Orders
+
+- **VFS → Metadata (L1 → metastore):** Standard write path — VFS lock protects
+  both backend write and metadata put.
+- **VFS → VFS (L1 → L1):** Rename acquires two VFS locks in **sorted path order**
+  to prevent circular wait.
+- **Observer → threading.Lock (L3 → L4):** Observer dispatch runs after VFS lock
+  release. Safe to acquire threading locks.
+
+### 6.3 Forbidden Patterns
+
+- **Advisory Lock → VFS Lock (L2 → L1) ❌** — Exact DFUSE deadlock pattern.
+- **Observer → VFS/Advisory Lock (L3/L4 → L1) ❌** — Observers run post-release; re-acquiring creates cycle.
+- **Threading Lock → VFS Lock (L4 → L1) ❌** — Short-lived internal locks must not block on I/O.
+
+### 6.4 Safety Mechanism: Phase Separation
+
+VFS lock is **always** released before event dispatch (same pattern as Linux
+`i_rwsem` release before `fsnotify()`). This prevents DFUSE-style deadlocks
+without runtime ordering checks.
+
+### 6.5 Debug Assertions
+
+`NEXUS_DEBUG_LOCK_ORDER=1` enables per-task lock acquisition tracking at runtime:
+- Acquiring L1 while holding L2 raises `LockOrderError`
+- Acquiring L1/L2 from observer context raises `LockOrderError`
+
+See `lib/lock_order.py` for implementation.
+
+### 6.6 DFUSE Lesson
+
+DFUSE found that normal I/O acquires `inode lock → lease lock`, but lease
+revocations acquire `lease lock → inode lock`. Nexus equivalent:
+`inode lock` ≈ VFSLockManager (L1), `lease lock` ≈ RaftLockManager (L2).
+
+**References:** `core/lock_fast.py`, `core/nexus_fs.py` (write path lock scope),
+`core/kernel_dispatch.py` (observer dispatch), `lib/lock_order.py` (assertions),
+DFUSE paper: https://arxiv.org/abs/2503.18191

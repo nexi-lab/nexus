@@ -129,7 +129,7 @@ class VersionManager:
 
         Example:
             >>> with store.session_factory() as session:
-            ...     versions = VersionManager.list_versions(session, "/workspace/SKILL.md")
+            ...     versions = VersionManager.list_versions(session, "/workspace/README.md")
             ...     for v in versions:
             ...         print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
         """

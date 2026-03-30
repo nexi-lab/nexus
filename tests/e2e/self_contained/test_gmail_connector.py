@@ -3,8 +3,8 @@
 Tests the Gmail connector end-to-end including:
 - Schema validation
 - Trait-based validation
-- Error formatting with SKILL.md references
-- SKILL.md auto-generation from static file
+- Error formatting with README.md references
+- README.md auto-generation from static file
 - YAML parsing
 - Write operations (send, reply, forward, draft)
 - Delete operations (trash)
@@ -264,7 +264,7 @@ class TestTraitValidation:
             gmail_backend.validate_traits("send_email", data)
 
         assert exc_info.value.code == "MISSING_AGENT_INTENT"
-        assert "SKILL.md" in str(exc_info.value)
+        assert "README.md" in str(exc_info.value)
 
     def test_send_requires_explicit_confirm(self, gmail_backend):
         """Test that send_email requires confirm=true."""
@@ -304,14 +304,14 @@ class TestTraitValidation:
 # ============================================================================
 
 
-class TestSkillDocGeneration:
-    """Test SKILL.md loading from static file."""
+class TestReadmeDocGeneration:
+    """Test README.md loading from static file."""
 
-    def test_generate_skill_doc(self, gmail_backend):
-        """Test that SKILL.md is loaded correctly from static file."""
-        doc = gmail_backend.generate_skill_doc("/mnt/gmail/")
+    def test_generate_readme(self, gmail_backend):
+        """Test that README.md is loaded correctly from static file."""
+        doc = gmail_backend.generate_readme("/mnt/gmail/")
 
-        # Check header - static SKILL.md
+        # Check header - static README.md
         assert "# Gmail Connector" in doc
 
         # Check mount path is replaced
@@ -333,25 +333,25 @@ class TestSkillDocGeneration:
         assert "MISSING_AGENT_INTENT" in doc
         assert "MISSING_CONFIRM" in doc
 
-    def test_skill_doc_includes_examples(self, gmail_backend):
-        """Test that SKILL.md includes YAML examples."""
-        doc = gmail_backend.generate_skill_doc("/mnt/gmail/")
+    def test_readme_doc_includes_examples(self, gmail_backend):
+        """Test that README.md includes YAML examples."""
+        doc = gmail_backend.generate_readme("/mnt/gmail/")
 
         # Should include YAML code blocks
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
-    def test_skill_doc_mount_path_replacement(self, gmail_backend):
+    def test_readme_doc_mount_path_replacement(self, gmail_backend):
         """Test that mount path is correctly replaced."""
-        doc = gmail_backend.generate_skill_doc("/custom/mount/path/")
+        doc = gmail_backend.generate_readme("/custom/mount/path/")
 
         # Default path should be replaced
         assert "/mnt/gmail/" not in doc
         assert "/custom/mount/path/" in doc
 
     @pytest.mark.asyncio
-    async def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
-        """Test writing SKILL.md to filesystem."""
+    async def test_write_readme(self, gmail_backend, isolated_db, tmp_path):
+        """Test writing README.md to filesystem."""
         # Create a real NexusFS for writing
         backend = CASLocalBackend(root_path=str(tmp_path / "storage"))
         nx = await create_nexus_fs(
@@ -362,14 +362,14 @@ class TestSkillDocGeneration:
         )
 
         try:
-            # Write SKILL.md
-            result = await gmail_backend.write_skill_docs("/mnt/gmail/", filesystem=nx)
+            # Write README.md
+            result = await gmail_backend.write_readme("/mnt/gmail/", filesystem=nx)
             assert isinstance(result, dict)
-            skill_path = result.get("skill_md")
+            readme_path = result.get("readme_md")
 
-            if skill_path:
+            if readme_path:
                 # Read back and verify
-                content = await nx.sys_read(skill_path)
+                content = await nx.sys_read(readme_path)
                 assert b"Gmail Connector" in content
                 assert b"agent_intent" in content
                 assert b"Send Email" in content
@@ -383,11 +383,11 @@ class TestSkillDocGeneration:
 
 
 class TestErrorFormatting:
-    """Test error message formatting with SKILL.md references."""
+    """Test error message formatting with README.md references."""
 
-    def test_error_includes_skill_path(self, gmail_backend):
-        """Test that errors include SKILL.md path."""
-        # Set mount path so skill_md_path is computed correctly
+    def test_error_includes_readme_path(self, gmail_backend):
+        """Test that errors include README.md path."""
+        # Set mount path so readme_md_path is computed correctly
         gmail_backend.set_mount_path("/mnt/gmail")
 
         error = gmail_backend.format_error_with_skill_ref(
@@ -395,7 +395,7 @@ class TestErrorFormatting:
             message="Missing required field",
         )
 
-        assert "/mnt/gmail/.skill/SKILL.md" in str(error)
+        assert "/mnt/gmail/.readme/README.md" in str(error)
 
     def test_error_includes_section_anchor(self, gmail_backend):
         """Test that errors include section anchor."""
@@ -985,11 +985,11 @@ class TestBackendFeatures:
 
         assert gmail_backend.has_feature(BackendFeature.WRITE_BACK)
 
-    def test_skill_doc_feature(self, gmail_backend):
-        """Test that Gmail connector has SKILL_DOC feature."""
+    def test_readme_doc_feature(self, gmail_backend):
+        """Test that Gmail connector has README_DOC feature."""
         from nexus.contracts.backend_features import BackendFeature
 
-        assert gmail_backend.has_feature(BackendFeature.SKILL_DOC)
+        assert gmail_backend.has_feature(BackendFeature.README_DOC)
 
     def test_oauth_features(self, gmail_backend):
         """Test that Gmail connector has OAuth features."""

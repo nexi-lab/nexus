@@ -710,15 +710,15 @@ class MCPService:
                     tools_resp.text,
                 )
 
-            # Step 6: Generate SKILL.md, mount.json, and tool files
+            # Step 6: Generate README.md, mount.json, and tool files
             service_name = ServiceMap.get_service_name(mcp=provider) or provider
-            skill_base_path = f"/skills/users/{user_id}/"
-            skill_path = f"{skill_base_path}{service_name}/"
-            skill_file = f"{skill_path}SKILL.md"
-            mount_file = f"{skill_path}mount.json"
+            readme_base_path = f"/skills/users/{user_id}/"
+            readme_path = f"{readme_base_path}{service_name}/"
+            readme_file = f"{readme_path}README.md"
+            mount_file = f"{readme_path}mount.json"
 
             service_info = ServiceMap.get_service_info(service_name)
-            data_mount_path = skill_path
+            data_mount_path = readme_path
             if service_info and service_info.connector and self._mount_lister is not None:
                 mount_entries = self._mount_lister()
                 connector_variants = [
@@ -732,24 +732,24 @@ class MCPService:
                         if variant in backend_type_lower:
                             data_mount_path = mount_point_str
                             break
-                    if data_mount_path != skill_path:
+                    if data_mount_path != readme_path:
                         break
 
-            # Build simple SKILL.md content inline (skill_doc module was removed)
+            # Build simple README.md content inline (readme_doc module was removed)
             tool_lines = "\n".join(
                 f"- **{t.get('name', '?')}**: {t.get('description', '')}" for t in tools
             )
-            skill_md = (
+            readme_md = (
                 f"# {service_name}\n\nMount path: `{data_mount_path}`\n\n## Tools\n\n{tool_lines}\n"
             )
 
             try:
                 if self._filesystem is not None:
-                    await self._filesystem.mkdir(skill_path, parents=True, exist_ok=True)
+                    await self._filesystem.mkdir(readme_path, parents=True, exist_ok=True)
                     await self._filesystem.write(
-                        skill_file, skill_md.encode("utf-8"), context=context
+                        readme_file, readme_md.encode("utf-8"), context=context
                     )
-                    logger.info("Generated MCP skill: %s", skill_file)
+                    logger.info("Generated MCP readme: %s", readme_file)
 
                     now = datetime.now(UTC)
                     mount_config = MCPMount(
@@ -764,7 +764,7 @@ class MCPService:
                         klavis_strata_id=instance_id,
                         auth_type="oauth",
                         auth_config={"klavis_user_id": klavis_user_id},
-                        tools_path=skill_path,
+                        tools_path=readme_path,
                         mounted=True,
                         mounted_at=now,
                         last_sync=now,
@@ -798,7 +798,7 @@ class MCPService:
                             created_at=now,
                             modified_at=now,
                         )
-                        tool_file = f"{skill_path}{tool_name}.json"
+                        tool_file = f"{readme_path}{tool_name}.json"
                         tool_json = json_module.dumps(tool_def.to_dict(), indent=2)
                         await self._filesystem.write(
                             tool_file,
@@ -806,10 +806,10 @@ class MCPService:
                             context=context,
                         )
 
-                    logger.info("Generated %d tool definitions in %s", len(tools), skill_path)
+                    logger.info("Generated %d tool definitions in %s", len(tools), readme_path)
 
             except Exception as e:
-                logger.warning("Failed to write skill files: %s", e)
+                logger.warning("Failed to write readme files: %s", e)
 
             return {
                 "provider": provider,
@@ -818,9 +818,9 @@ class MCPService:
                 "is_authenticated": True,
                 "tools": tools,
                 "tool_count": len(tools),
-                "skill_path": skill_file,
+                "readme_path": readme_file,
                 "mount_path": mount_file,
-                "tools_path": skill_path,
+                "tools_path": readme_path,
                 "user_id": klavis_user_id,
             }
 

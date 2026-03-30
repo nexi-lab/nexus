@@ -501,7 +501,7 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
 class MCPToolExporter:
     """Export Nexus MCP tools to Skills format.
 
-    This exporter creates SKILL.md and tool.json files for each
+    This exporter creates README.md and tool.json files for each
     built-in Nexus MCP tool, making them discoverable through
     the skills system.
 
@@ -607,7 +607,7 @@ class MCPToolExporter:
     async def _export_tool(self, tool_def: MCPToolDefinition, output_path: str) -> str:
         """Export a single tool to the filesystem.
 
-        Creates both tool.json and SKILL.md files.
+        Creates both tool.json and README.md files.
 
         Args:
             tool_def: Tool definition
@@ -618,13 +618,13 @@ class MCPToolExporter:
         """
         tool_dir = f"{output_path}{tool_def.name}/"
         tool_json_path = f"{tool_dir}tool.json"
-        skill_md_path = f"{tool_dir}SKILL.md"
+        readme_md_path = f"{tool_dir}README.md"
 
         # Create tool.json
         tool_json = json.dumps(tool_def.to_dict(), indent=2)
 
-        # Create SKILL.md
-        skill_md = self._generate_skill_md(tool_def)
+        # Create README.md
+        readme_md = self._generate_readme_md(tool_def)
 
         if self._filesystem:
             # Create directory
@@ -637,24 +637,24 @@ class MCPToolExporter:
 
             # Write files
             await self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
-            await self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
+            await self._filesystem.write(readme_md_path, readme_md.encode("utf-8"))
         else:
             # Local filesystem
             tool_dir_path = Path(tool_dir.lstrip("/"))
             tool_dir_path.mkdir(parents=True, exist_ok=True)
             (tool_dir_path / "tool.json").write_text(tool_json)
-            (tool_dir_path / "SKILL.md").write_text(skill_md)
+            (tool_dir_path / "README.md").write_text(readme_md)
 
         return tool_dir
 
-    def _generate_skill_md(self, tool_def: MCPToolDefinition) -> str:
-        """Generate SKILL.md content for a tool.
+    def _generate_readme_md(self, tool_def: MCPToolDefinition) -> str:
+        """Generate README.md content for a tool.
 
         Args:
             tool_def: Tool definition
 
         Returns:
-            SKILL.md content
+            README.md content
         """
         import yaml
 

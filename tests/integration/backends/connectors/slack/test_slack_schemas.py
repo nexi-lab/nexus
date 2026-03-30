@@ -248,10 +248,10 @@ class TestSlackConnectorCapabilities:
         assert "CHANNEL_NOT_FOUND" in PathSlackBackend.ERROR_REGISTRY
         assert "MESSAGE_NOT_FOUND" in PathSlackBackend.ERROR_REGISTRY
 
-    def test_has_skill_doc_capability(self):
+    def test_has_readme_doc_capability(self):
         from nexus.backends.connectors.slack.connector import PathSlackBackend
 
-        assert BackendFeature.SKILL_DOC in PathSlackBackend._BACKEND_FEATURES
+        assert BackendFeature.README_DOC in PathSlackBackend._BACKEND_FEATURES
 
     def test_skill_name(self):
         from nexus.backends.connectors.slack.connector import PathSlackBackend

@@ -35,7 +35,7 @@ def version_group() -> None:
     Every file write creates a new version, preserving all previous versions.
 
     Examples:
-        nexus versions history /workspace/SKILL.md
+        nexus versions history /workspace/README.md
         nexus versions diff /workspace/data.txt --v1 1 --v2 3
         nexus versions get /workspace/file.txt --version 2
         nexus versions rollback /workspace/file.txt --version 1
@@ -55,7 +55,7 @@ def version_history(
     Displays all versions of a file with metadata.
 
     Example:
-        nexus version history /workspace/SKILL.md
+        nexus version history /workspace/README.md
         nexus version history /workspace/data.txt --limit 10
     """
     import asyncio

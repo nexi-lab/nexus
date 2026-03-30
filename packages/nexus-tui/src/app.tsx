@@ -8,7 +8,7 @@
 import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
-import { TabBar, type Tab } from "./shared/components/tab-bar.js";
+import { SideNav } from "./shared/components/side-nav.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
@@ -37,20 +37,7 @@ const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-pane
 const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.js"));
 const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
 
-const TABS: readonly Tab[] = [
-  { id: "files", label: "Files", fullLabel: "Files", shortcut: "1" },
-  { id: "versions", label: "Ver", fullLabel: "Versions", shortcut: "2" },
-  { id: "agents", label: "Agent", fullLabel: "Agents", shortcut: "3" },
-  { id: "zones", label: "Zone", fullLabel: "Zones", shortcut: "4" },
-  { id: "access", label: "ACL", fullLabel: "Access", shortcut: "5" },
-  { id: "payments", label: "Pay", fullLabel: "Payments", shortcut: "6" },
-  { id: "search", label: "Find", fullLabel: "Search", shortcut: "7" },
-  { id: "workflows", label: "Flow", fullLabel: "Workflows", shortcut: "8" },
-  { id: "infrastructure", label: "Event", fullLabel: "Events", shortcut: "9" },
-  { id: "console", label: "CLI", fullLabel: "Console", shortcut: "0" },
-  { id: "connectors", label: "Conn", fullLabel: "Connectors", shortcut: "C" },
-  { id: "stack", label: "Stack", fullLabel: "Stack", shortcut: "S" },
-];
+// Panel definitions are in shared/nav-items.ts (single source of truth).
 
 function PanelRouter(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
@@ -129,6 +116,8 @@ export function App(): React.ReactNode {
   const config = useGlobalStore((s) => s.config);
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
+  const sideNavVisible = useUiStore((s) => s.sideNavVisible);
+  const toggleSideNav = useUiStore((s) => s.toggleSideNav);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const { isFresh } = useFreshServer();
@@ -180,6 +169,7 @@ export function App(): React.ReactNode {
           "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
           "shift+c": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("connectors"); },
           "shift+s": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("stack"); },
+          "ctrl+b": () => { if (!useUiStore.getState().fileEditorOpen) toggleSideNav(); },
           "ctrl+i": toggleIdentitySwitcher,
           "ctrl+d": () => {
             // Disconnect and go back to setup menu
@@ -203,22 +193,27 @@ export function App(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar (hidden when zoomed) */}
-      {!zoomedPanel && <TabBar tabs={TABS} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />}
+      {/* Main row: sidebar + content */}
+      <box flexGrow={1} flexDirection="row">
+        {/* Side navigation (hidden when zoomed or welcome screen active) */}
+        {!zoomedPanel && !showWelcome && (
+          <SideNav activePanel={activePanel} visible={sideNavVisible} />
+        )}
 
-      {/* Main content */}
-      <box flexGrow={1}>
-        <ErrorBoundary>
-          <Suspense
-            fallback={
-              <box height="100%" width="100%" justifyContent="center" alignItems="center">
-                <Spinner label="Loading panel..." />
-              </box>
-            }
-          >
-            <PanelRouter />
-          </Suspense>
-        </ErrorBoundary>
+        {/* Panel content */}
+        <box flexGrow={1}>
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <box height="100%" width="100%" justifyContent="center" alignItems="center">
+                  <Spinner label="Loading panel..." />
+                </box>
+              }
+            >
+              <PanelRouter />
+            </Suspense>
+          </ErrorBoundary>
+        </box>
       </box>
 
       {/* Overlays */}

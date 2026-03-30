@@ -29,6 +29,7 @@ export interface KeyBinding {
 
 const GLOBAL_BINDINGS: readonly KeyBinding[] = [
   { key: "1-9,0", action: "Switch panel" },
+  { key: "Ctrl+B", action: "Toggle sidebar" },
   { key: "Ctrl+I", action: "Identity switcher" },
   { key: "Ctrl+D", action: "Disconnect (back to setup)" },
   { key: "z", action: "Toggle zoom" },

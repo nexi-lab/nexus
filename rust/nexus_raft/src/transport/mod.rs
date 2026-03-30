@@ -75,10 +75,15 @@ pub(crate) async fn forward_propose(
     let raw_bytes =
         bincode::serialize(&command).map_err(|e| RaftError::Serialization(e.to_string()))?;
 
-    let mut api_client =
-        RaftApiClient::connect(&leader_addr.endpoint, client_pool.config().clone())
-            .await
-            .map_err(|e| RaftError::Transport(e.to_string()))?;
+    // Use short timeouts for forwarding — if leader is unreachable (failover),
+    // we want to fail fast so the caller can retry after election.
+    let mut forward_config = client_pool.config().clone();
+    forward_config.connect_timeout = std::time::Duration::from_secs(2);
+    forward_config.request_timeout = std::time::Duration::from_secs(5);
+
+    let mut api_client = RaftApiClient::connect(&leader_addr.endpoint, forward_config)
+        .await
+        .map_err(|e| RaftError::Transport(e.to_string()))?;
 
     let request = tonic::Request::new(proto::nexus::raft::ProposeRequest {
         command: None,

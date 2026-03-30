@@ -88,6 +88,8 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
+    /// Serializes zone creation to prevent concurrent RedbStore opens.
+    create_lock: std::sync::Mutex<()>,
 }
 
 impl ZoneRaftRegistry {
@@ -103,6 +105,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
+            create_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -114,6 +117,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
+            create_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -182,11 +186,15 @@ impl ZoneRaftRegistry {
         campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        if self.zones.contains_key(zone_id) {
-            return Err(TransportError::Connection(format!(
-                "Zone '{}' already exists",
-                zone_id
-            )));
+        // Serialize zone creation to prevent races between auto-join
+        // (step_message handler) and explicit create_zone (RPC handler).
+        // Without this, both could pass the zones.contains_key check,
+        // then one fails on RedbStore lock ("Database already open").
+        let _guard = self.create_lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Re-check under lock: zone may have been created by another thread
+        if let Some(entry) = self.zones.get(zone_id) {
+            return Ok(entry.node.clone());
         }
 
         // Open zone-specific redb + state machine
@@ -285,10 +293,27 @@ impl ZoneRaftRegistry {
     }
 
     /// Get a snapshot of the peers map for a zone.
+    /// Get the base path for zone storage directories.
+    pub fn base_path(&self) -> &PathBuf {
+        &self.base_path
+    }
+
     pub fn get_peers(&self, zone_id: &str) -> Option<HashMap<u64, NodeAddress>> {
         self.zones
             .get(zone_id)
             .map(|e| e.peers.read().unwrap().clone())
+    }
+
+    /// Get cluster peer addresses from any existing zone (all zones share the same peers).
+    /// Used by auto-join for new zones that don't have their own peer map yet.
+    pub fn get_all_peers(&self) -> Vec<NodeAddress> {
+        for entry in self.zones.iter() {
+            let peers = entry.peers.read().unwrap();
+            if !peers.is_empty() {
+                return peers.values().cloned().collect();
+            }
+        }
+        Vec::new()
     }
 
     /// Add a peer to a zone's peer map at runtime (called after ConfChange commit).

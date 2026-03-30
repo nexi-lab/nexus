@@ -118,11 +118,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Create registry + zones
-        let registry = Arc::new(WitnessZoneRegistry::new(
-            data_path.clone(),
-            node_id,
-            tls_config.clone(),
-        ));
+        let mut registry = WitnessZoneRegistry::new(data_path.clone(), node_id, tls_config.clone());
+        registry.set_peers(peers.clone());
+        let registry = Arc::new(registry);
         let runtime_handle = tokio::runtime::Handle::current();
 
         registry

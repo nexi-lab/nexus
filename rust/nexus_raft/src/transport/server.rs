@@ -365,12 +365,44 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
     ///
     /// Routes by zone_id to the correct Raft group's ZoneConsensus.
+    /// Auto-joins unknown zones (dynamic federation + node restart support).
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
-        let node = get_zone_node(&self.registry, &req.zone_id)?;
+        let node = match get_zone_node(&self.registry, &req.zone_id) {
+            Ok(n) => n,
+            Err(_) => {
+                // Zone not found in memory — only reopen if data exists on disk
+                // (node restart scenario). For new dynamic zones, return not_found
+                // and let federation_create_zone RPC handle proper creation.
+                let zone_path = self.registry.base_path().join(&req.zone_id);
+                if !zone_path.join("raft").exists() {
+                    // New zone — not our job to create. The test/RPC will
+                    // call create_zone explicitly.
+                    return Err(Status::not_found(format!(
+                        "zone '{}' not found on this node",
+                        req.zone_id
+                    )));
+                }
+                // Restart recovery: zone data on disk, reopen with existing ConfState
+                let handle = tokio::runtime::Handle::current();
+                let peers = self.registry.get_all_peers();
+                match self.registry.create_zone(&req.zone_id, peers, &handle) {
+                    Ok(n) => {
+                        tracing::info!("Fullnode auto-joined zone '{}'", req.zone_id);
+                        n
+                    }
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "Failed to auto-join zone '{}': {}",
+                            req.zone_id, e
+                        )));
+                    }
+                }
+            }
+        };
 
         let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
             Ok(m) => m,
@@ -1044,6 +1076,8 @@ pub struct WitnessZoneRegistry {
     base_path: PathBuf,
     node_id: u64,
     tls: Arc<RwLock<Option<super::TlsConfig>>>,
+    /// Cluster peer addresses — used by auto_join_zone() for transport routing.
+    peers: Vec<NodeAddress>,
 }
 
 impl WitnessZoneRegistry {
@@ -1054,7 +1088,13 @@ impl WitnessZoneRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
+            peers: Vec::new(),
         }
+    }
+
+    /// Set the cluster peer addresses (called after parsing NEXUS_PEERS).
+    pub fn set_peers(&mut self, peers: Vec<NodeAddress>) {
+        self.peers = peers;
     }
 
     /// Create a witness Raft group for a zone (static bootstrap).
@@ -1123,6 +1163,87 @@ impl WitnessZoneRegistry {
             zone_id,
             self.node_id,
         );
+
+        self.zones.insert(
+            zone_id.to_string(),
+            WitnessZoneEntry {
+                node: handle.clone(),
+                shutdown_tx,
+                _transport_handle: transport_handle,
+            },
+        );
+
+        Ok(handle)
+    }
+
+    /// Auto-join a zone when receiving Raft messages for an unknown zone.
+    ///
+    /// Creates a witness Raft group with `skip_bootstrap=true` (empty ConfState).
+    /// The leader will send a snapshot with the correct ConfState — this is the
+    /// standard raft-rs contract for late-joining nodes.
+    ///
+    /// Used by step_message() handler for dynamic zone support.
+    #[allow(clippy::result_large_err)]
+    pub fn auto_join_zone(
+        &self,
+        zone_id: &str,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
+        use crate::raft::{RaftConfig, RaftStorage};
+        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
+
+        if let Some(existing) = self.zones.get(zone_id) {
+            return Ok(existing.node.clone());
+        }
+
+        let zone_path = self.base_path.join(zone_id);
+        let store = RedbStore::open(zone_path.join("sm"))
+            .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
+        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
+            TransportError::Connection(format!("Failed to open raft storage: {}", e))
+        })?;
+        let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
+            TransportError::Connection(format!("Failed to create witness state machine: {}", e))
+        })?;
+
+        // skip_bootstrap=true: empty ConfState, leader sends snapshot
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            is_witness: true,
+            skip_bootstrap: true,
+            election_tick: 10_000_000, // witness never initiates election
+            ..Default::default()
+        };
+
+        let (handle, mut driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
+            .map_err(|e| {
+                TransportError::Connection(format!(
+                    "Failed to create witness ZoneConsensus for auto-join: {}",
+                    e
+                ))
+            })?;
+
+        let peer_map: HashMap<u64, NodeAddress> =
+            self.peers.iter().map(|p| (p.id, p.clone())).collect();
+        let shared_peers: super::SharedPeerMap = Arc::new(RwLock::new(peer_map));
+        driver.set_peer_map(shared_peers.clone());
+
+        let client_config = ClientConfig {
+            tls: self.tls.clone(),
+            ..Default::default()
+        };
+        let transport_loop = TransportLoop::new(
+            driver,
+            shared_peers,
+            RaftClientPool::with_config(client_config),
+        )
+        .with_zone_id(zone_id.to_string());
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
+
+        tracing::info!("Witness auto-joined zone '{}'", zone_id);
 
         self.zones.insert(
             zone_id.to_string(),
@@ -1231,23 +1352,31 @@ impl ZoneTransportService for WitnessServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
     ///
     /// Routes to the correct zone's ZoneConsensus by `req.zone_id`.
+    /// Auto-joins unknown zones (dynamic federation support).
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
 
-        // Route by zone_id — same pattern as ZoneTransportServiceImpl for full nodes
-        let node = self.registry.get_node(&req.zone_id).ok_or_else(|| {
-            Status::not_found(format!(
-                "zone '{}' not found on witness",
-                if req.zone_id.is_empty() {
-                    "<empty>"
-                } else {
-                    &req.zone_id
+        // Route by zone_id — auto-join if zone not found (dynamic federation)
+        let node = match self.registry.get_node(&req.zone_id) {
+            Some(n) => n,
+            None => {
+                // Auto-join: create witness zone with skip_bootstrap=true.
+                // Leader will send snapshot with correct ConfState.
+                let handle = tokio::runtime::Handle::current();
+                match self.registry.auto_join_zone(&req.zone_id, &handle) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        return Err(Status::internal(format!(
+                            "Failed to auto-join zone '{}': {}",
+                            req.zone_id, e
+                        )));
+                    }
                 }
-            ))
-        })?;
+            }
+        };
 
         let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
             Ok(m) => m,

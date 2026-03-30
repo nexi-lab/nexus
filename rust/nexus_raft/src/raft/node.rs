@@ -669,13 +669,28 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
                 "Forwarding propose to leader"
             );
 
-            return crate::transport::forward_propose(
+            // If forwarding fails (leader unreachable), return NotLeader
+            // so the caller can retry after election completes.
+            return match crate::transport::forward_propose(
                 &ctx.client_pool,
                 &leader_addr,
                 command,
                 &ctx.zone_id,
             )
-            .await;
+            .await
+            {
+                Ok(result) => Ok(result),
+                Err(RaftError::Transport(e)) => {
+                    tracing::warn!(
+                        leader = leader_id,
+                        zone = %ctx.zone_id,
+                        "Forward to leader failed (unreachable?): {}",
+                        e,
+                    );
+                    Err(RaftError::NotLeader { leader_hint: None })
+                }
+                Err(e) => Err(e),
+            };
         }
 
         Err(RaftError::NotLeader {

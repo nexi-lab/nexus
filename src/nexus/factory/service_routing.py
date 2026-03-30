@@ -82,11 +82,11 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
 # Canonical name mapping: source key → short registry key
 #
 # Unified map for both dict-keyed services (pre-kernel + brick tier)
-# and WiredServices dataclass fields (post-kernel tier).
+# and post-kernel tier dict fields.
 # ---------------------------------------------------------------------------
 
 _CANONICAL_NAMES: dict[str, str] = {
-    # WiredServices dataclass fields
+    # Post-kernel (wired) dict fields
     "rebac_service": "rebac",
     "mount_service": "mount",
     "gateway": "gateway",
@@ -110,27 +110,19 @@ _CANONICAL_NAMES: dict[str, str] = {
 }
 
 
-async def enlist_services(nx_or_coordinator: Any, services: Any) -> int:
+async def enlist_services(nx_or_coordinator: Any, services: dict[str, Any]) -> int:
     """Enlist services via sys_setattr("/__sys__/services/X") (#1708).
 
     Factory is the first user — uses syscalls like everyone else.
     Accepts NexusFS (preferred, uses syscall) or ServiceRegistry (legacy compat).
-    Accepts both dicts and dataclass instances. For each non-None service,
-    resolves canonical name and exports, then registers.
+    For each non-None service, resolves canonical name and exports, then registers.
 
     Returns the number of services enlisted.
     """
     count = 0
     _use_syscall = hasattr(nx_or_coordinator, "sys_setattr")
 
-    pairs: list[tuple[str, Any]]
-    if isinstance(services, dict):
-        pairs = list(services.items())
-    else:
-        # WiredServices dataclass — iterate declared fields
-        pairs = [(f, getattr(services, f, None)) for f in services.__dataclass_fields__]
-
-    for src_key, val in pairs:
+    for src_key, val in services.items():
         if val is None:
             continue
         canonical: str = _CANONICAL_NAMES.get(src_key, src_key)

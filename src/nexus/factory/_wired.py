@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
-    from nexus.core.config import WiredServices
     from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
@@ -19,7 +18,7 @@ async def _boot_post_kernel_services(
     router: "PathRouter",
     services: dict[str, Any],
     svc_on: Callable[[str], bool] | None = None,
-) -> "WiredServices":
+) -> dict[str, Any]:
     """Boot Tier 2b (WIRED) — services needing NexusFS reference.
 
     Two-phase init: called AFTER NexusFS construction in ``create_nexus_fs()``.
@@ -35,9 +34,8 @@ async def _boot_post_kernel_services(
         svc_on: Callable ``(name: str) -> bool`` for profile-based gating.
 
     Returns:
-        WiredServices frozen dataclass (some fields may be None).
+        Dict mapping service field names to instances (some may be None).
     """
-    from nexus.core.config import WiredServices as _WiredServices
     from nexus.factory._helpers import _make_gate
 
     t0 = time.perf_counter()
@@ -479,34 +477,34 @@ async def _boot_post_kernel_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
 
-    result = _WiredServices(
-        rebac_service=rebac_service,
-        mount_service=mount_service,
-        gateway=gateway,
-        sync_service=sync_service,
-        sync_job_service=sync_job_service,
-        mount_persist_service=mount_persist_service,
-        mcp_service=mcp_service,
-        oauth_service=oauth_service,
-        search_service=search_service,
-        share_link_service=share_link_service,
-        time_travel_service=time_travel_service,
-        operations_service=operations_service,
-        workspace_rpc_service=workspace_rpc_service,
-        agent_rpc_service=agent_rpc_service,
-        acp_rpc_service=acp_rpc_service,
-        user_provisioning_service=user_provisioning_service,
-        sandbox_rpc_service=sandbox_rpc_service,
-        metadata_export_service=metadata_export_service,
-        descendant_checker=descendant_checker,
-    )
+    result: dict[str, Any] = {
+        "rebac_service": rebac_service,
+        "mount_service": mount_service,
+        "gateway": gateway,
+        "sync_service": sync_service,
+        "sync_job_service": sync_job_service,
+        "mount_persist_service": mount_persist_service,
+        "mcp_service": mcp_service,
+        "oauth_service": oauth_service,
+        "search_service": search_service,
+        "share_link_service": share_link_service,
+        "time_travel_service": time_travel_service,
+        "operations_service": operations_service,
+        "workspace_rpc_service": workspace_rpc_service,
+        "agent_rpc_service": agent_rpc_service,
+        "acp_rpc_service": acp_rpc_service,
+        "user_provisioning_service": user_provisioning_service,
+        "sandbox_rpc_service": sandbox_rpc_service,
+        "metadata_export_service": metadata_export_service,
+        "descendant_checker": descendant_checker,
+    }
 
     elapsed = time.perf_counter() - t0
-    active = sum(1 for f in result.__dataclass_fields__ if getattr(result, f) is not None)
+    active = sum(1 for v in result.values() if v is not None)
     logger.info(
         "[BOOT:WIRED] %d/%d services ready (%.3fs)",
         active,
-        len(result.__dataclass_fields__),
+        len(result),
         elapsed,
     )
     return result

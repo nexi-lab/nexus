@@ -137,7 +137,7 @@ async def _wire_services(
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
     # mounts go through coordinator (hook_spec registration + KernelDispatch).
-    _mount_svc = getattr(_wired, "mount_service", None)
+    _mount_svc = _wired.get("mount_service")
     if _mount_svc is not None:
         _mount_svc._driver_coordinator = nx._driver_coordinator
 
@@ -217,7 +217,7 @@ async def _wire_services(
 
     # Issue #1792: AgentRegistry, EvictionManager, AcpService are now
     # constructed in _boot_post_kernel_services (_wired.py) by the services
-    # that need them. No factory lazy pattern or register_factory() needed.
+    # that need them. No factory lazy pattern needed.
 
     return _InitContext(
         services=_svc,

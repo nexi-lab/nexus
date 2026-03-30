@@ -1,9 +1,9 @@
 """gRPC servicer — async handlers for NexusVFSService.
 
 Phase 1 (PR #2667): Generic ``Call`` RPC — method name + JSON payload.
-Phase 2: Typed RPCs for content ops (Read/Write/Delete/StreamRead) with
-native ``bytes`` fields (no base64), server-side streaming for large reads,
-and a ``Ping`` health check with server metadata.
+Phase 2: Typed RPCs for content ops (Read/Write/Delete) with
+native ``bytes`` fields (no base64) and a ``Ping`` health check with
+server metadata.
 
 Mirrors the HTTP ``rpc_endpoint()`` in ``server/api/core/rpc.py`` but over
 gRPC.  Reuses the same dispatch infrastructure: ``parse_method_params()``,
@@ -26,7 +26,6 @@ import dataclasses
 import hmac
 import logging
 import time
-from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any
 
@@ -503,98 +502,6 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 is_error=True,
                 error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
             )
-
-    async def StreamRead(
-        self,
-        request: "vfs_pb2.StreamReadRequest",
-        context: grpc.aio.ServicerContext,
-    ) -> AsyncIterator["vfs_pb2.ReadChunk"]:
-        """Server-side streaming read — chunked delivery for large files.
-
-        Uses read_range() in a pread loop instead of loading the full file
-        into memory.  CAS backends with read_content_range() read only the
-        overlapping CDC chunks; other backends fall back to full-read + slice.
-        Memory usage: O(chunk_size) instead of O(file_size).  (Issue #1614)
-        """
-        _DEFAULT_CHUNK_SIZE = 1_048_576  # 1 MB
-        _LARGE_FILE_WARNING = 256 * 1_048_576  # 256 MB
-
-        try:
-            _, op_context = await self._auth_and_context(request.auth_token)
-            self._scope_path_for_zone(request, op_context.zone_id)
-
-            # Get file size via sys_stat — no content loaded.
-            stat = await self._nexus_fs.sys_stat(request.path, context=op_context)
-            if stat is None:
-                yield vfs_pb2.ReadChunk(
-                    is_error=True,
-                    error_payload=_error_payload(
-                        RPCErrorCode.FILE_NOT_FOUND, f"File not found: {request.path}"
-                    ),
-                )
-                return
-            file_size: int = stat.get("size", 0) or 0
-        except NexusPermissionError as e:
-            yield vfs_pb2.ReadChunk(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.PERMISSION_ERROR, str(e)),
-            )
-            return
-        except NexusFileNotFoundError as e:
-            yield vfs_pb2.ReadChunk(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, str(e)),
-            )
-            return
-        except (InvalidPathError, NexusError) as e:
-            code = (
-                RPCErrorCode.INVALID_PATH
-                if isinstance(e, InvalidPathError)
-                else RPCErrorCode.INTERNAL_ERROR
-            )
-            yield vfs_pb2.ReadChunk(is_error=True, error_payload=_error_payload(code, str(e)))
-            return
-        except Exception as e:
-            logger.exception("Error in gRPC StreamRead %s", request.path)
-            yield vfs_pb2.ReadChunk(
-                is_error=True,
-                error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}"),
-            )
-            return
-
-        # Empty file: yield a single empty chunk.
-        if file_size == 0:
-            yield vfs_pb2.ReadChunk(data=b"", offset=0, is_last=True)
-            return
-
-        chunk_size = request.chunk_size if request.chunk_size > 0 else _DEFAULT_CHUNK_SIZE
-        offset = 0
-
-        # Chunked pread loop — memory is O(chunk_size), not O(file_size).
-        # read_range() is sync; run each chunk in a thread to avoid blocking
-        # the gRPC event loop.
-        while offset < file_size:
-            if context.cancelled():
-                return
-            end = min(offset + chunk_size, file_size)
-            try:
-                chunk = await asyncio.to_thread(
-                    self._nexus_fs.read_range,
-                    request.path,
-                    offset,
-                    end,
-                    op_context,
-                )
-            except Exception as e:
-                logger.warning("StreamRead chunk error at offset %d: %s", offset, e)
-                yield vfs_pb2.ReadChunk(
-                    is_error=True,
-                    error_payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, str(e)),
-                )
-                return
-            is_last = end >= file_size
-            yield vfs_pb2.ReadChunk(data=chunk, offset=offset, is_last=is_last)
-            offset = end
 
     # ------------------------------------------------------------------
     # CAS-level blob read — driver-to-driver protocol (Issue #1744)

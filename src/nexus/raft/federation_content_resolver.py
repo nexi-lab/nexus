@@ -35,10 +35,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Files larger than this threshold use StreamRead instead of unary Read.
-# StreamRead keeps ~1MB in memory at a time; unary Read buffers entire file.
-_STREAMING_THRESHOLD = 1_048_576  # 1 MB
-
 
 class FederationContentResolver:
     """VFSPathResolver that dispatches reads and deletes to remote content owners.
@@ -169,17 +165,13 @@ class FederationContentResolver:
         raise NexusFileNotFoundError(path, f"All origins unreachable for {path}") from last_err
 
     def _read_from_origin_path(self, origin: str, path: str, file_size: int) -> bytes:
-        """Read content from a single origin via path-based gRPC (fallback)."""
-        use_streaming = file_size > _STREAMING_THRESHOLD
+        """Read content from a single origin via path-based unary Read RPC (fallback)."""
         logger.info(
-            "Federation read (path): %s -> %s (size=%d, streaming=%s)",
+            "Federation read (path): %s -> %s (size=%d)",
             path,
             origin,
             file_size,
-            use_streaming,
         )
-        if use_streaming:
-            return self._fetch_from_peer_streaming(origin, path)
         return self._fetch_from_peer(origin, path)
 
     def try_write(self, _path: str, _content: bytes) -> dict[str, Any] | None:
@@ -302,42 +294,6 @@ class FederationContentResolver:
             return bytes(response.content)
         except grpc.RpcError as exc:
             logger.warning("Federation Read RPC to %s failed: %s", address, exc)
-            raise NexusFileNotFoundError(
-                virtual_path,
-                f"Remote peer {address} unreachable: {exc}",
-            ) from exc
-        finally:
-            channel.close()
-
-    def _fetch_from_peer_streaming(self, address: str, virtual_path: str) -> bytes:
-        """Fetch via StreamRead RPC — backend-agnostic streaming.
-
-        The origin's StreamRead handler decides how to serve the file
-        (CAS chunk-aware streaming, PAS read-and-chunk, etc).
-        This method just collects the stream and returns assembled bytes.
-        """
-        import grpc
-
-        from nexus.grpc.channel_factory import build_peer_channel
-        from nexus.grpc.vfs import vfs_pb2, vfs_pb2_grpc
-
-        channel = build_peer_channel(address, self._tls_config)
-        try:
-            stub = vfs_pb2_grpc.NexusVFSServiceStub(channel)
-            request = vfs_pb2.StreamReadRequest(path=virtual_path, auth_token=self._auth_token)
-            chunks: list[bytes] = []
-            for chunk in stub.StreamRead(request, timeout=self._timeout):
-                if chunk.is_error:
-                    raise NexusFileNotFoundError(
-                        virtual_path,
-                        f"Remote peer {address} returned streaming error",
-                    )
-                chunks.append(bytes(chunk.data))
-                if chunk.is_last:
-                    break
-            return b"".join(chunks)
-        except grpc.RpcError as exc:
-            logger.warning("Federation StreamRead to %s failed: %s", address, exc)
             raise NexusFileNotFoundError(
                 virtual_path,
                 f"Remote peer {address} unreachable: {exc}",

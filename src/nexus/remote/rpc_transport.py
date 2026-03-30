@@ -6,7 +6,7 @@ with a single gRPC channel.
 
 Phase 1 (PR #2667): Generic ``call_rpc()`` — method name + JSON payload.
 Phase 2: Typed methods (``read_file``, ``write_file``, ``delete_file``,
-``stream_read``, ``ping``) with native ``bytes`` fields — no JSON/base64
+``ping``) with native ``bytes`` fields — no JSON/base64
 overhead for content operations.
 
 Generic ``call_rpc()`` stays for 25+ service proxy methods and metadata ops.
@@ -268,31 +268,6 @@ class RPCTransport:
         if response.is_error:
             self._handle_typed_error(response.error_payload)
         return bool(response.success)
-
-    def stream_read(
-        self,
-        path: str,
-        chunk_size: int = 1_048_576,
-        read_timeout: float | None = None,
-    ) -> bytes:
-        """Read large file via streaming RPC — assembles chunks client-side.
-
-        Returns:
-            Complete file content as bytes.
-        """
-        request = vfs_pb2.StreamReadRequest(
-            path=path, auth_token=self._auth_token, chunk_size=chunk_size
-        )
-        timeout = read_timeout if read_timeout is not None else self._timeout
-        chunks: list[bytes] = []
-        try:
-            for chunk in self._stub.StreamRead(request, timeout=timeout):
-                if chunk.is_error:
-                    self._handle_typed_error(chunk.error_payload)
-                chunks.append(chunk.data)
-        except grpc.RpcError as exc:
-            self._raise_transport_error(exc, timeout, "StreamRead")
-        return b"".join(chunks)
 
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""

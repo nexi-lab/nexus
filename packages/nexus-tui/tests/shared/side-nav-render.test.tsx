@@ -119,6 +119,33 @@ describe("SideNav render", () => {
   });
 
   // ===========================================================================
+  // Loading indicator
+  // ===========================================================================
+
+  describe("loading indicator", () => {
+    it("shows spinner frame for panel with loading state", async () => {
+      useVersionsStore.setState({ isLoading: true });
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+
+      // The versions line should have a braille spinner character instead of a space
+      const lines = frame.split("\n");
+      const versionsLine = lines.find((l) => l.includes("Versions"));
+      expect(versionsLine).toBeDefined();
+      // Spinner frames are braille chars: ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏
+      // The line should NOT end with a plain space before the border
+      // It should contain one of the spinner frames
+      const hasSpinner = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(versionsLine!);
+      expect(hasSpinner).toBe(true);
+    });
+
+    it("does not show spinner when not loading", async () => {
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+      const hasSpinner = /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/.test(frame);
+      expect(hasSpinner).toBe(false);
+    });
+  });
+
+  // ===========================================================================
   // Error indicator
   // ===========================================================================
 

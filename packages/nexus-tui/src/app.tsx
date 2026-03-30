@@ -195,8 +195,8 @@ export function App(): React.ReactNode {
     <box height="100%" width="100%" flexDirection="column">
       {/* Main row: sidebar + content */}
       <box flexGrow={1} flexDirection="row">
-        {/* Side navigation (hidden when zoomed) */}
-        {!zoomedPanel && (
+        {/* Side navigation (hidden when zoomed or welcome screen active) */}
+        {!zoomedPanel && !showWelcome && (
           <SideNav activePanel={activePanel} visible={sideNavVisible} />
         )}
 

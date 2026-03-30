@@ -345,7 +345,7 @@ class KernelDispatch:
         in federation mode. Non-federation = no resolvers = no-op.
         """
         for r in self._fallback_resolvers:
-            result = getattr(r, "try_get", lambda p: None)(path)
+            result = getattr(r, "try_get", lambda _p: None)(path)
             if result is not None:
                 return True, result
         return False, None
@@ -357,7 +357,7 @@ class KernelDispatch:
         (True, write_token) when handled, (False, None) otherwise.
         """
         for r in self._fallback_resolvers:
-            result = getattr(r, "try_put", lambda p, m: None)(path, metadata)
+            result = getattr(r, "try_put", lambda _p, _m: None)(path, metadata)
             if result is not None:
                 return True, result
         return False, None
@@ -370,7 +370,7 @@ class KernelDispatch:
         Routes metadata.list() across zone boundaries (BFS mount traversal).
         """
         for r in self._fallback_resolvers:
-            result = getattr(r, "try_list", lambda p, **kw: None)(
+            result = getattr(r, "try_list", lambda _p, **_kw: None)(
                 prefix, recursive=recursive, **kwargs
             )
             if result is not None:

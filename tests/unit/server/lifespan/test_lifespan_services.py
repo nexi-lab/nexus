@@ -32,7 +32,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
     defaults = {
         "SessionLocal": None,
         "_sql_engine": None,
-        "_coordination_client": None,
         "workflow_engine": None,
         "_snapshot_service": None,
         "config": None,
@@ -92,7 +91,6 @@ class TestFromAppExtraction:
         nx = _make_nexus_fs(
             SessionLocal="session_factory",
             _sql_engine="sql_engine",
-            _coordination_client="coord_client",
             workflow_engine="wf_engine",
             config="nexus_cfg",
             _event_bus="event_bus",
@@ -114,7 +112,7 @@ class TestFromAppExtraction:
         assert svc.permission_enforcer == "perm_enf"
         assert svc.rebac_manager == "rebac_mgr"
         assert svc.event_bus == "event_bus"
-        assert svc.coordination_client == "coord_client"
+        assert svc.coordination_client is None  # sentinel deleted from NexusFS
         assert svc.workflow_engine == "wf_engine"
         assert svc.snapshot_service == "snap_svc"
         assert svc.namespace_manager == "ns_mgr"

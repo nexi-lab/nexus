@@ -27,7 +27,7 @@ SYSCALL_METHODS = {
     "sys_unlink",
     "sys_rename",
     "mkdir",
-    "sys_rmdir",
+    "rmdir",
     "sys_readdir",
     "access",
     "is_directory",

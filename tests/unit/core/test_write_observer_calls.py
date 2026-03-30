@@ -237,7 +237,7 @@ class TestRmdirCallsDispatch:
         await nx.mkdir("/mydir")
         mock_notify.reset_mock()
 
-        await nx.sys_rmdir("/mydir")
+        await nx.rmdir("/mydir")
 
         mock_notify.assert_called_once()
         event = mock_notify.call_args.args[0]
@@ -270,7 +270,7 @@ class TestRmdirCallsDispatch:
         await cas_nx.write("/mydir/file.txt", b"content")
         mock_notify.reset_mock()
 
-        await cas_nx.sys_rmdir("/mydir", recursive=True)
+        await cas_nx.rmdir("/mydir", recursive=True)
 
         # rmdir notify is the last call; write_batch notify may precede it
         events = [call.args[0] for call in mock_notify.call_args_list]
@@ -359,7 +359,7 @@ class TestVFSObserverCoverage:
         await nx_with_hook.mkdir("/mydir")
 
         hook.reset_mock()
-        await nx_with_hook.sys_rmdir("/mydir")
+        await nx_with_hook.rmdir("/mydir")
 
         hook.on_mutation.assert_called_once()
         event = hook.on_mutation.call_args.args[0]

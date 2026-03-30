@@ -102,7 +102,7 @@ def _make_mock_nx() -> MagicMock:
     nx.sys_unlink = AsyncMock()
     nx.sys_rename = AsyncMock()
     nx.mkdir = AsyncMock()
-    nx.sys_rmdir = AsyncMock()
+    nx.rmdir = AsyncMock()
     nx.sys_readdir = AsyncMock()
     return nx
 
@@ -199,4 +199,4 @@ class TestRmdirDryRun:
             result = runner.invoke(rmdir, ["/test-dir", "--dry-run"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "DRY RUN" in result.output
-        nx.sys_rmdir.assert_not_called()
+        nx.rmdir.assert_not_called()

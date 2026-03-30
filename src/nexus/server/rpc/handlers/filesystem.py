@@ -344,7 +344,7 @@ async def handle_rmdir(nexus_fs: "NexusFS", params: Any, context: Any) -> dict[s
     if hasattr(params, "force") and params.force is not None:
         kwargs["force"] = params.force
 
-    await nexus_fs.sys_rmdir(params.path, **kwargs)
+    await nexus_fs.rmdir(params.path, **kwargs)
     return {"removed": True}
 
 

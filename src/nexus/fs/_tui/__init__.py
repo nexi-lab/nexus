@@ -96,7 +96,7 @@ class ContextualNexusFS:
         await self._kernel.mkdir(path, parents=parents, exist_ok=True, context=self._ctx)
 
     async def rmdir(self, path: str, recursive: bool = False) -> None:
-        await self._kernel.sys_rmdir(path, recursive=recursive, context=self._ctx)
+        await self._kernel.rmdir(path, recursive=recursive, context=self._ctx)
 
     async def delete(self, path: str) -> None:
         await self._kernel.sys_unlink(path, context=self._ctx)

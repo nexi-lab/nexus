@@ -48,7 +48,7 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 
 | Method | Tier | Composes | Notes |
 |--------|------|----------|-------|
-| `sys_rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
+| `rmdir` | 2 | `sys_unlink(recursive=)` | Thin delegation, overridable |
 | `access` | 2 | `sys_stat` | Returns `True` if stat succeeds |
 | `is_directory` | 2 | `sys_stat` | Checks `is_directory` field |
 
@@ -83,7 +83,7 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | `read(path, count, offset)` | `sys_stat` + `sys_read` | POSIX pread semantics |
 | `write(path, buf, consistency=)` | `sys_write` + `sys_setattr` | Write + metadata update, consistency param |
 | `mkdir(path, parents, exist_ok)` | `sys_setattr(entry_type=DT_DIR)` | Directory creation with hooks + events |
-| `rmdir(path, recursive)` | `sys_rmdir` | Lenient defaults (recursive=True) |
+| `rmdir(path, recursive)` | `rmdir` | Lenient defaults (recursive=True) |
 | `append(path, content)` | `read` + `write` | Shell `>>` semantics |
 | `edit(path, edits)` | `read` + transform + `write` | Apply diffs |
 | `write_batch(files)` | N × `write()` | Batch file writes |
@@ -125,7 +125,7 @@ Kernel does not know whether backend is CAS or path-addressed.
 ### 4.2 sys_unlink: Unified delete (files + directories)
 
 `sys_unlink` handles both files and directories (with `recursive=` param).
-`sys_rmdir` is Tier 2 convenience that delegates to `sys_unlink(recursive=)`.
+`rmdir` is Tier 2 convenience that delegates to `sys_unlink(recursive=)`.
 CAS content is freed when refcount reaches zero.
 
 ### 4.3 sys_setattr: Universal creation/management
@@ -188,7 +188,7 @@ between DataNodes — separate from NameNode API).
 Tier 2 demotions (no longer Tier 1):
 - `access` → Tier 2 (derives from `sys_stat`)
 - `is_directory` → Tier 2 (derives from `sys_stat`)
-- `sys_rmdir` → Tier 2 (delegates to `sys_unlink`)
+- `rmdir` → Tier 2 (delegates to `sys_unlink`)
 
 ---
 

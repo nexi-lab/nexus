@@ -504,20 +504,6 @@ class NexusFS(  # type: ignore[misc]
                 },
             )
 
-    @rpc_expose(description="Remove directory")
-    async def sys_rmdir(
-        self,
-        path: str,
-        recursive: bool = False,
-        *,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Tier 2: convenience wrapper — delegates to sys_unlink(recursive=).
-
-        Preserves None return type for backward compat (sys_unlink returns dict).
-        """
-        await self.sys_unlink(path, recursive=recursive, context=context)
-
     async def _check_is_directory(
         self,
         path: str,
@@ -571,7 +557,7 @@ class NexusFS(  # type: ignore[misc]
             if route.backend.is_directory(route.backend_path):
                 return True
             return is_implicit_dir
-        except (InvalidPathError, Exception):
+        except (InvalidPathError, NexusFileNotFoundError):
             return False
 
     @rpc_expose(description="Check if path is a directory")
@@ -588,7 +574,7 @@ class NexusFS(  # type: ignore[misc]
         try:
             stat = await self.sys_stat(path, context=context)
             return stat is not None and stat.get("is_directory", False)
-        except Exception:
+        except (InvalidPathError, NexusFileNotFoundError):
             return False
 
     # Lock methods in nexus_fs_lock.py (LockMixin)
@@ -2010,12 +1996,12 @@ class NexusFS(  # type: ignore[misc]
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-        ttl: float | None = None,
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Tier 1 kernel primitive — content-only (SRP). Metadata consistency
-        is controlled by Tier 2 write(consistency=). File must exist.
+        Tier 1 kernel primitive — POSIX write(2) with implicit metadata side
+        effects (mtime, size, version, etag). Kernel updates metadata in VFS
+        lock after backend.write_content(). File must exist.
 
         Args:
             path: Virtual path to write.
@@ -2023,8 +2009,6 @@ class NexusFS(  # type: ignore[misc]
             count: Max bytes to write (None = len(buf)).
             offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
             context: Optional operation context for permission checks.
-            ttl: TTL in seconds for ephemeral content (Issue #3405).
-                Routes to TTL-bucketed volume; None = permanent.
 
         Returns:
             Dict with path and bytes_written.
@@ -2086,10 +2070,9 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
-        # Thread TTL into context (Issue #3405)
-        if ttl is not None and ttl > 0:
-            context = self._ensure_context_ttl(context, ttl)
-        await self._write_internal(path=path, content=buf, offset=offset, context=context)
+        await self._write_internal(
+            path=path, content=buf, offset=offset, context=context, _meta=_meta
+        )
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────
@@ -2171,6 +2154,7 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
+    @rpc_expose(description="Remove directory")
     async def rmdir(
         self,
         path: str,
@@ -2179,10 +2163,10 @@ class NexusFS(  # type: ignore[misc]
     ) -> None:
         """Remove a directory with lenient defaults (Tier 2 convenience).
 
-        Unlike sys_rmdir (recursive=False), this defaults to recursive=True
-        — rm -rf semantics. Delegates to sys_rmdir.
+        Defaults to recursive=True (rm -rf semantics).
+        Delegates directly to sys_unlink.
         """
-        await self.sys_rmdir(path, recursive=recursive, context=context)
+        await self.sys_unlink(path, recursive=recursive, context=context)
 
     @rpc_expose(description="Read file with optional metadata")
     async def read(
@@ -2298,6 +2282,7 @@ class NexusFS(  # type: ignore[misc]
         force: bool = False,
         consistency: str = "sc",
         offset: int = 0,
+        _meta: Any = None,
     ) -> dict[str, Any]:
         """Kernel write implementation — OCC-free.
 
@@ -2312,7 +2297,9 @@ class NexusFS(  # type: ignore[misc]
         Issue #1323: OCC params removed from kernel write path.
         Issue #1829: Split into _write_content + _dispatch_write_events (SRP).
         """
-        wr = self._write_content(path, content, context, offset=offset, consistency=consistency)
+        wr = self._write_content(
+            path, content, context, offset=offset, consistency=consistency, _meta=_meta
+        )
         return await self._dispatch_write_events(path, wr, content)
 
     def _write_content(
@@ -2322,6 +2309,7 @@ class NexusFS(  # type: ignore[misc]
         context: OperationContext | None,
         offset: int = 0,
         consistency: str = "sc",
+        _meta: Any = None,
     ) -> _WriteContentResult:
         """Content write + metadata commit (locked, synchronous).
 
@@ -2352,7 +2340,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
-        meta = self.metadata.get(path)
+        meta = _meta if _meta is not None else self.metadata.get(path)
 
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
@@ -2434,6 +2422,7 @@ class NexusFS(  # type: ignore[misc]
                     path=path,
                     backend_name=route.backend.name,
                     content_hash=content_hash,
+                    # _wr.size is the total file size after splice (not bytes written)
                     size=_wr.size if offset > 0 else len(content),
                     existing_meta=meta,
                     now=now,
@@ -3252,7 +3241,7 @@ class NexusFS(  # type: ignore[misc]
             self.metadata.delete_batch(file_paths)
 
         # Remove directory in backend (suppress errors — CAS may not have physical dir)
-        with contextlib.suppress(NexusFileNotFoundError, BackendError):
+        with contextlib.suppress(NexusFileNotFoundError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
         # Delete directory's own metadata entry
@@ -3995,7 +3984,7 @@ class NexusFS(  # type: ignore[misc]
             if self.metadata.exists(path):
                 return True
             return is_implicit_dir
-        except Exception:
+        except (InvalidPathError, NexusFileNotFoundError, BackendError):
             return False
 
     @rpc_expose(description="Check existence of multiple paths in single call")

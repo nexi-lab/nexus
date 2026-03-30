@@ -49,7 +49,7 @@ Follows Linux's monolithic kernel model, not microkernel:
 | Tier | Swap time | Nexus | Syscall | Linux analogue |
 |------|-----------|-------|---------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, syscall dispatch | — | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `sys_setattr(DT_MOUNT)` / `sys_rmdir` | `mount`/`umount` |
+| Drivers | Runtime mount/unmount | redb, S3, PostgreSQL, Dragonfly, SearchBrick | `sys_setattr(DT_MOUNT)` / `rmdir` | `mount`/`umount` |
 | Services | Runtime register/swap/unregister | 40+ protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | `sys_setattr("/__sys__/services/X")` / `sys_unlink` | `insmod`/`rmmod` |
 
 **Invariant:** Services depend on kernel interfaces, never the reverse.
@@ -60,7 +60,7 @@ has zero reads of service containers — all service wiring flows through
 uses the same syscall API as runtime callers (factory = first user).
 
 **Drivers** are mounted at runtime via `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
-unmounted via `sys_rmdir`. MetastoreABC is the only startup-time driver (sole
+unmounted via `rmdir`. MetastoreABC is the only startup-time driver (sole
 kernel init param). Other drivers are mounted post-init by factory or at runtime.
 
 ### Service Lifecycle
@@ -176,7 +176,7 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
-`umount` = `sys_rmdir` on DT_MOUNT path.
+`umount` = `rmdir` on DT_MOUNT path.
 `/__sys__/` paths are kernel management operations (not filesystem metadata):
 `sys_setattr("/__sys__/services/X", service=inst)` registers,
 `sys_unlink("/__sys__/services/X")` unregisters.

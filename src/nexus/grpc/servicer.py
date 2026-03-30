@@ -451,18 +451,18 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.DeleteRequest",
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.DeleteResponse":
-        """Typed delete — sys_unlink or sys_rmdir."""
+        """Typed delete — sys_unlink or rmdir."""
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
 
-            # Determine entry type so directories always go through sys_rmdir
+            # Determine entry type so directories always go through rmdir
             # (sys_unlink skips backend directory cleanup).
             meta = await asyncio.to_thread(self._nexus_fs.metadata.get, request.path)
             is_dir = meta is not None and getattr(meta, "mime_type", "") == "inode/directory"
 
             if is_dir:
-                await self._nexus_fs.sys_rmdir(
+                await self._nexus_fs.rmdir(
                     request.path,
                     recursive=request.recursive,
                     context=op_context,

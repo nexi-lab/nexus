@@ -380,7 +380,7 @@ class TestAutoDispatchedMethods:
         """mkdir and rmdir via auto-dispatch."""
         await admin_client.mkdir("/workspace/proxy-dir")
         assert await admin_client.is_directory("/workspace/proxy-dir") is True
-        await admin_client.sys_rmdir("/workspace/proxy-dir")
+        await admin_client.rmdir("/workspace/proxy-dir")
 
     def test_rebac_check(self, admin_client: NexusFilesystemABC) -> None:
         """rebac_check via auto-dispatch."""

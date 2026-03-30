@@ -59,7 +59,7 @@ class NexusFilesystemABC(ABC):
     # Content I/O — sys_read(2), sys_write(2)
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
     # Namespace — sys_unlink(2), sys_rename(2)
-    # Directory — sys_rmdir(2), sys_readdir(3)  (mkdir is Tier 2)
+    # Directory — sys_readdir(3)  (mkdir, rmdir are Tier 2)
     # Query — access(2), is_directory
     # System — get_top_level_mounts, close
 
@@ -188,17 +188,6 @@ class NexusFilesystemABC(ABC):
         """
         ...
 
-    # ── Directory ──────────────────────────────────────────────────
-
-    async def sys_rmdir(
-        self, path: str, recursive: bool = False, *, context: OperationContext | None = None
-    ) -> None:
-        """Tier 2: remove directory — delegates to sys_unlink(recursive=).
-
-        Subclasses may override for optimized implementations.
-        """
-        await self.sys_unlink(path, recursive=recursive, context=context)
-
     # ── Directory (Tier 2 convenience) ───────────────────────────
 
     async def mkdir(
@@ -236,10 +225,10 @@ class NexusFilesystemABC(ABC):
     ) -> None:
         """Remove a directory with lenient defaults (Tier 2).
 
-        Delegates to sys_rmdir with caller-friendly defaults:
+        Delegates to sys_unlink with caller-friendly defaults:
         recursive=True (rm -rf semantics).
         """
-        await self.sys_rmdir(path, recursive=recursive, context=context)
+        await self.sys_unlink(path, recursive=recursive, context=context)
 
     @abstractmethod
     async def sys_readdir(

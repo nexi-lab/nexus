@@ -607,7 +607,7 @@ async def create_mcp_server(
         """
         nx_instance = _get_nexus_instance(ctx)
         try:
-            await nx_instance.sys_rmdir(path, recursive=recursive)
+            await nx_instance.rmdir(path, recursive=recursive)
         except OSError as e:
             if "not empty" in str(e).lower():
                 return tool_error(

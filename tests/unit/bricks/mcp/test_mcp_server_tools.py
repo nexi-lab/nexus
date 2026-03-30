@@ -65,7 +65,7 @@ def mock_nx_basic():
     nx.access = AsyncMock(return_value=True)
     nx.is_directory = AsyncMock(return_value=False)
     nx.mkdir = AsyncMock()
-    nx.sys_rmdir = AsyncMock()
+    nx.rmdir = AsyncMock()
     nx.edit = Mock(
         return_value={
             "success": True,
@@ -176,7 +176,7 @@ def mock_nx_full():
     nx.access = AsyncMock(return_value=True)
     nx.is_directory = AsyncMock(return_value=False)
     nx.mkdir = AsyncMock()
-    nx.sys_rmdir = AsyncMock()
+    nx.rmdir = AsyncMock()
 
     # Memory system via service("memory_provider") (get_memory_api() reads this)
     mock_memory = Mock()
@@ -553,7 +553,7 @@ class TestDirectoryOperationTools:
             ("nexus_mkdir", "mkdir", PermissionError, "Permission denied", {"path": "/new_dir"}),
             (
                 "nexus_rmdir",
-                "sys_rmdir",
+                "rmdir",
                 FileNotFoundError,
                 "Directory not found",
                 {"path": "/missing_dir"},
@@ -579,7 +579,7 @@ class TestDirectoryOperationTools:
 
         assert "Successfully removed directory" in result
         assert "/old_dir" in result
-        mock_nx_basic.sys_rmdir.assert_called_once_with("/old_dir", recursive=False)
+        mock_nx_basic.rmdir.assert_called_once_with("/old_dir", recursive=False)
 
     async def test_rmdir_recursive(self, mock_nx_basic):
         """Test removing a directory recursively."""
@@ -588,7 +588,7 @@ class TestDirectoryOperationTools:
         rmdir_tool = get_tool(server, "nexus_rmdir")
         await rmdir_tool.fn(path="/old_dir", recursive=True)
 
-        mock_nx_basic.sys_rmdir.assert_called_once_with("/old_dir", recursive=True)
+        mock_nx_basic.rmdir.assert_called_once_with("/old_dir", recursive=True)
 
 
 # ============================================================================

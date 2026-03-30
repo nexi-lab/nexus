@@ -33,7 +33,7 @@ def mock_nexus_fs() -> MagicMock:
     fs.write = AsyncMock(return_value={})
     fs.sys_stat = AsyncMock(return_value=None)
     fs.sys_unlink = AsyncMock(return_value=None)
-    fs.sys_rmdir = AsyncMock(return_value=None)
+    fs.rmdir = AsyncMock(return_value=None)
     return fs
 
 
@@ -404,18 +404,18 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_delete_recursive(self, servicer, mock_nexus_fs) -> None:
-        """Delete with recursive=True calls sys_rmdir for directories."""
+        """Delete with recursive=True calls rmdir for directories."""
         request = _make_typed_request("DeleteRequest", path="/dir", auth_token="", recursive=True)
         context = MagicMock()
 
         dir_meta = MagicMock(mime_type="inode/directory")
         mock_nexus_fs.metadata.get.return_value = dir_meta
-        mock_nexus_fs.sys_rmdir = AsyncMock(return_value=None)
+        mock_nexus_fs.rmdir = AsyncMock(return_value=None)
 
         response = await servicer.Delete(request, context)
 
         assert response.success is True
-        mock_nexus_fs.sys_rmdir.assert_called_once()
+        mock_nexus_fs.rmdir.assert_called_once()
 
     @pytest.mark.anyio
     async def test_ping_response(self, servicer) -> None:

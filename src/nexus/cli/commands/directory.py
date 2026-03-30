@@ -319,7 +319,7 @@ def rmdir(
                 if not force and not click.confirm(f"Remove directory {path}?"):
                     console.print("[nexus.warning]Cancelled[/nexus.warning]")
                     return
-                await nx.sys_rmdir(path, recursive=recursive)
+                await nx.rmdir(path, recursive=recursive)
             console.print(
                 f"[nexus.success]✓[/nexus.success] Removed directory [nexus.path]{path}[/nexus.path]"
             )

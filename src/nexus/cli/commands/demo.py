@@ -949,7 +949,7 @@ async def _delete_demo_files(nx: Any, manifest: dict[str, Any]) -> int:
     # Delete directories in reverse order (deepest first)
     for d in reversed(DEMO_DIRS):
         with contextlib.suppress(Exception):
-            await nx.sys_rmdir(d)
+            await nx.rmdir(d)
 
     return removed
 

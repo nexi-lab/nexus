@@ -613,24 +613,29 @@ class TestRedisEventBus:
 
 
 class TestEventBusFactory:
-    """Tests for event bus factory function."""
+    """Tests for self-resolving event bus factory."""
 
-    def test_create_redis_event_bus(self, mock_redis_client):
-        """Test creating Redis event bus via factory."""
-        bus = create_event_bus(backend="redis", redis_client=mock_redis_client)
-
+    def test_create_redis_event_bus_with_url(self):
+        """Test creating Redis event bus via factory with explicit URL."""
+        bus = create_event_bus(backend="redis", url="redis://localhost:6379")
         assert isinstance(bus, RedisEventBus)
         assert isinstance(bus, EventBusBase)
 
-    def test_create_redis_requires_client(self):
-        """Test that Redis backend requires redis_client."""
-        with pytest.raises(ValueError, match="redis_client is required"):
+    def test_create_redis_no_url_raises(self):
+        """Test that Redis backend raises when no URL available."""
+        from unittest.mock import patch
+
+        with (
+            patch("nexus.services.event_bus.factory.get_redis_url", return_value=None),
+            patch("nexus.services.event_bus.factory.get_dragonfly_url", return_value=None),
+            pytest.raises(ValueError, match="No event bus backend available"),
+        ):
             create_event_bus(backend="redis")
 
-    def test_unsupported_backend(self, mock_redis_client):
+    def test_unsupported_backend(self):
         """Test error for unsupported backend."""
-        with pytest.raises(ValueError, match="Unsupported event bus backend"):
-            create_event_bus(backend="unknown", redis_client=mock_redis_client)
+        with pytest.raises(ValueError, match="No event bus backend available"):
+            create_event_bus(backend="unknown")
 
 
 class TestEventBusProtocolCompliance:
@@ -962,17 +967,28 @@ class TestEventBusFactoryExtended:
             create_event_bus(backend="nats", nats_url="nats://test:4222")
             MockNats.assert_called_once_with(nats_url="nats://test:4222")
 
-    def test_create_nats_requires_url(self):
-        """Test that NATS backend requires nats_url."""
-        with pytest.raises(ValueError, match="nats_url is required"):
-            create_event_bus(backend="nats")
+    def test_create_nats_uses_default_url(self):
+        """Test that NATS backend uses DEFAULT_NATS_URL when no url override."""
+        from unittest.mock import patch
 
-    def test_create_redis_still_works(self, mock_redis_client):
-        """Test that Redis backend still works (regression test)."""
-        bus = create_event_bus(backend="redis", redis_client=mock_redis_client)
+        with patch("nexus.services.event_bus.nats.NatsEventBus") as MockNats:
+            MockNats.return_value = MagicMock()
+            create_event_bus(backend="nats")
+            # Should use DEFAULT_NATS_URL from constants
+            MockNats.assert_called_once()
+
+    def test_create_redis_with_url(self):
+        """Test that Redis backend works with explicit URL."""
+        bus = create_event_bus(backend="redis", url="redis://localhost:6379")
         assert isinstance(bus, RedisEventBus)
 
     def test_unsupported_backend_still_raises(self):
-        """Test error for unsupported backend."""
-        with pytest.raises(ValueError, match="Unsupported event bus backend"):
+        """Test error for unsupported backend raises ValueError."""
+        from unittest.mock import patch
+
+        with (
+            patch("nexus.services.event_bus.factory.get_redis_url", return_value=None),
+            patch("nexus.services.event_bus.factory.get_dragonfly_url", return_value=None),
+            pytest.raises(ValueError, match="No event bus backend available"),
+        ):
             create_event_bus(backend="unknown")

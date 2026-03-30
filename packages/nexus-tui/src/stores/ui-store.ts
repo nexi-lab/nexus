@@ -32,6 +32,9 @@ export interface UiState {
   /** True when a full-screen panel-level editor is open (suppresses global keybindings). */
   readonly fileEditorOpen: boolean;
 
+  /** Whether the side navigation bar is visible (toggled via Ctrl+B). */
+  readonly sideNavVisible: boolean;
+
   // Actions
   readonly setFocusPane: (panel: string, pane: FocusPane) => void;
   readonly toggleFocusPane: (panel: string) => void;
@@ -42,6 +45,8 @@ export interface UiState {
   readonly getScrollPosition: (key: string) => number;
   readonly setOverlayActive: (active: boolean) => void;
   readonly setFileEditorOpen: (open: boolean) => void;
+  readonly toggleSideNav: () => void;
+  readonly setSideNavVisible: (visible: boolean) => void;
 }
 
 // =============================================================================
@@ -54,6 +59,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   scrollPositions: {},
   overlayActive: false,
   fileEditorOpen: false,
+  sideNavVisible: true,
 
   setFocusPane: (panel, pane) => {
     set((state) => ({
@@ -99,5 +105,13 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setFileEditorOpen: (open) => {
     set({ fileEditorOpen: open });
+  },
+
+  toggleSideNav: () => {
+    set((state) => ({ sideNavVisible: !state.sideNavVisible }));
+  },
+
+  setSideNavVisible: (visible) => {
+    set({ sideNavVisible: visible });
   },
 }));

@@ -14,6 +14,7 @@ describe("UiStore", () => {
       focusPane: {},
       zoomedPanel: null,
       scrollPositions: {},
+      sideNavVisible: true,
     });
   });
 
@@ -98,6 +99,43 @@ describe("UiStore", () => {
     it("no-ops when not zoomed", () => {
       useUiStore.getState().clearZoom();
       expect(useUiStore.getState().zoomedPanel).toBeNull();
+    });
+  });
+
+  // ===========================================================================
+  // Side nav visibility
+  // ===========================================================================
+
+  describe("toggleSideNav", () => {
+    it("hides sidebar when visible", () => {
+      expect(useUiStore.getState().sideNavVisible).toBe(true);
+      useUiStore.getState().toggleSideNav();
+      expect(useUiStore.getState().sideNavVisible).toBe(false);
+    });
+
+    it("shows sidebar when hidden", () => {
+      useUiStore.getState().setSideNavVisible(false);
+      useUiStore.getState().toggleSideNav();
+      expect(useUiStore.getState().sideNavVisible).toBe(true);
+    });
+
+    it("round-trips correctly", () => {
+      useUiStore.getState().toggleSideNav();
+      useUiStore.getState().toggleSideNav();
+      expect(useUiStore.getState().sideNavVisible).toBe(true);
+    });
+  });
+
+  describe("setSideNavVisible", () => {
+    it("sets to false", () => {
+      useUiStore.getState().setSideNavVisible(false);
+      expect(useUiStore.getState().sideNavVisible).toBe(false);
+    });
+
+    it("sets to true", () => {
+      useUiStore.getState().setSideNavVisible(false);
+      useUiStore.getState().setSideNavVisible(true);
+      expect(useUiStore.getState().sideNavVisible).toBe(true);
     });
   });
 

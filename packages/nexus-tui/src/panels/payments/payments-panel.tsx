@@ -12,6 +12,10 @@ import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.j
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { BalanceCard } from "./balance-card.js";
@@ -22,20 +26,13 @@ import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
 import { ApprovalList } from "./approval-list.js";
 
-const TAB_ORDER: readonly PaymentsTab[] = [
-  "balance",
-  "reservations",
-  "transactions",
-  "policies",
-  "approvals",
+const ALL_TABS: readonly TabDef<PaymentsTab>[] = [
+  { id: "balance", label: "Balance", brick: null },
+  { id: "reservations", label: "Reservations", brick: null },
+  { id: "transactions", label: "Transactions", brick: null },
+  { id: "policies", label: "Policies", brick: null },
+  { id: "approvals", label: "Approvals", brick: null },
 ];
-const TAB_LABELS: Readonly<Record<PaymentsTab, string>> = {
-  balance: "Balance",
-  reservations: "Reservations",
-  transactions: "Transactions",
-  policies: "Policies",
-  approvals: "Approvals",
-};
 
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
@@ -93,6 +90,10 @@ export default function PaymentsPanel(): React.ReactNode {
   const rejectRequest = usePaymentsStore((s) => s.rejectRequest);
   const setSelectedApprovalIndex = usePaymentsStore((s) => s.setSelectedApprovalIndex);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
+
+  const visibleTabs = useVisibleTabs(ALL_TABS);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
+
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
   );
@@ -271,14 +272,7 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
             }
           },
-          tab: () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-            const nextTab = TAB_ORDER[nextIdx];
-            if (nextTab) {
-              setActiveTab(nextTab);
-            }
-          },
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           t: () => {
             setShowTransfer(true);
           },
@@ -412,14 +406,7 @@ export default function PaymentsPanel(): React.ReactNode {
     <BrickGate brick="pay">
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Afford check input */}
         {affordInputMode && (

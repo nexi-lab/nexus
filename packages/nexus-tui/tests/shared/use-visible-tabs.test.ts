@@ -84,6 +84,39 @@ const EVENT_TABS: readonly TabDef<EventTab>[] = [
   { id: "secrets", label: "Secrets", brick: "auth" },
 ];
 
+// Migrated panels: previously used TAB_ORDER, now use TabDef (#3498)
+
+type ConnectorsTab = "available" | "mounted" | "skills" | "write";
+const CONNECTORS_TABS: readonly TabDef<ConnectorsTab>[] = [
+  { id: "available", label: "Available", brick: null },
+  { id: "mounted", label: "Mounted", brick: null },
+  { id: "skills", label: "Skills", brick: null },
+  { id: "write", label: "Write", brick: null },
+];
+
+type PaymentsTab = "balance" | "reservations" | "transactions" | "policies" | "approvals";
+const PAYMENTS_TABS: readonly TabDef<PaymentsTab>[] = [
+  { id: "balance", label: "Balance", brick: null },
+  { id: "reservations", label: "Reservations", brick: null },
+  { id: "transactions", label: "Transactions", brick: null },
+  { id: "policies", label: "Policies", brick: null },
+  { id: "approvals", label: "Approvals", brick: null },
+];
+
+type WorkflowTab = "workflows" | "executions" | "scheduler";
+const WORKFLOW_TABS: readonly TabDef<WorkflowTab>[] = [
+  { id: "workflows", label: "Workflows", brick: null },
+  { id: "executions", label: "Executions", brick: null },
+  { id: "scheduler", label: "Scheduler", brick: null },
+];
+
+type FilesTab = "explorer" | "shareLinks" | "uploads";
+const FILES_TABS: readonly TabDef<FilesTab>[] = [
+  { id: "explorer", label: "Explorer", brick: null },
+  { id: "shareLinks", label: "Share Links", brick: "share_link" },
+  { id: "uploads", label: "Uploads", brick: "uploads" },
+];
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -390,5 +423,76 @@ describe("global store features integration", () => {
     const { enabledBricks, featuresLoaded } = useGlobalStore.getState();
     const result = filterTabs(ACCESS_TABS, enabledBricks, featuresLoaded);
     expect(result.map((t) => t.id)).toEqual(["credentials", "delegations"]);
+  });
+});
+
+// =============================================================================
+// Migrated panel regression tests (#3498)
+// =============================================================================
+
+describe("migrated TAB_ORDER panels", () => {
+  const bricks = PROFILE_BRICKS.full;
+  const minimalBricks = PROFILE_BRICKS.minimal;
+
+  describe("connectors (all brick: null)", () => {
+    it("shows all tabs regardless of enabled bricks", () => {
+      const result = filterTabs(CONNECTORS_TABS, [], true);
+      expect(result.map((t) => t.id)).toEqual(["available", "mounted", "skills", "write"]);
+    });
+
+    it("shows all tabs under minimal profile", () => {
+      const result = filterTabs(CONNECTORS_TABS, minimalBricks, true);
+      expect(result.map((t) => t.id)).toEqual(["available", "mounted", "skills", "write"]);
+    });
+  });
+
+  describe("payments (all brick: null)", () => {
+    it("shows all tabs regardless of enabled bricks", () => {
+      const result = filterTabs(PAYMENTS_TABS, [], true);
+      expect(result.map((t) => t.id)).toEqual([
+        "balance", "reservations", "transactions", "policies", "approvals",
+      ]);
+    });
+
+    it("shows all tabs under minimal profile", () => {
+      const result = filterTabs(PAYMENTS_TABS, minimalBricks, true);
+      expect(result.map((t) => t.id)).toEqual([
+        "balance", "reservations", "transactions", "policies", "approvals",
+      ]);
+    });
+  });
+
+  describe("workflows (all brick: null)", () => {
+    it("shows all tabs regardless of enabled bricks", () => {
+      const result = filterTabs(WORKFLOW_TABS, [], true);
+      expect(result.map((t) => t.id)).toEqual(["workflows", "executions", "scheduler"]);
+    });
+  });
+
+  describe("files (mixed: explorer always visible, shareLinks/uploads gated)", () => {
+    it("shows only explorer under full profile (share_link/uploads not in full)", () => {
+      const result = filterTabs(FILES_TABS, bricks, true);
+      expect(result.map((t) => t.id)).toEqual(["explorer"]);
+    });
+
+    it("shows all tabs when share_link and uploads bricks enabled", () => {
+      const result = filterTabs(FILES_TABS, [...bricks, "share_link", "uploads"], true);
+      expect(result.map((t) => t.id)).toEqual(["explorer", "shareLinks", "uploads"]);
+    });
+
+    it("shows only explorer under minimal profile", () => {
+      const result = filterTabs(FILES_TABS, minimalBricks, true);
+      expect(result.map((t) => t.id)).toEqual(["explorer"]);
+    });
+
+    it("shows explorer + shareLinks when share_link brick enabled", () => {
+      const result = filterTabs(FILES_TABS, ["share_link"], true);
+      expect(result.map((t) => t.id)).toEqual(["explorer", "shareLinks"]);
+    });
+
+    it("shows explorer + uploads when uploads brick enabled", () => {
+      const result = filterTabs(FILES_TABS, ["uploads"], true);
+      expect(result.map((t) => t.id)).toEqual(["explorer", "uploads"]);
+    });
   });
 });

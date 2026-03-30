@@ -5,7 +5,7 @@
  * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchTab, SearchMode } from "../../stores/search-store.js";
@@ -15,6 +15,9 @@ import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { SearchResults } from "./search-results.js";
 import { KnowledgeView } from "./knowledge-view.js";
 import { MemoryList } from "./memory-list.js";
@@ -32,14 +35,6 @@ const ALL_TABS: readonly TabDef<SearchTab>[] = [
   { id: "ask", label: "Ask", brick: "rlm" },
   { id: "columns", label: "Columns", brick: "catalog" },
 ];
-const TAB_LABELS: Readonly<Record<SearchTab, string>> = {
-  search: "Search",
-  knowledge: "Knowledge",
-  memories: "Memories",
-  playbooks: "Playbooks",
-  ask: "Ask",
-  columns: "Columns",
-};
 
 const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
   keyword: "KW",
@@ -116,13 +111,7 @@ export default function SearchPanel(): React.ReactNode {
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
   const setSearchQuery = useSearchStore((s) => s.setSearchQuery);
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   const submitSearch = useCallback(
     (query: string) => {
@@ -253,15 +242,7 @@ export default function SearchPanel(): React.ReactNode {
               setSelectedPlaybookIndex(Math.max(selectedPlaybookIndex - 1, 0));
             }
           },
-          tab: () => {
-            const ids = visibleTabs.map((t) => t.id);
-            const currentIdx = ids.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % ids.length;
-            const nextTab = ids[nextIdx];
-            if (nextTab) {
-              setActiveTab(nextTab);
-            }
-          },
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           r: () => refreshCurrentView(),
           m: () => cycleSearchMode(),
           "/": () => {
@@ -418,13 +399,7 @@ export default function SearchPanel(): React.ReactNode {
       </box>
 
       {/* Tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Error display */}
       {error && (

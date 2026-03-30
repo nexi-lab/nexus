@@ -10,6 +10,10 @@ import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
@@ -18,17 +22,11 @@ import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
 
-const TAB_ORDER: readonly WorkflowTab[] = [
-  "workflows",
-  "executions",
-  "scheduler",
+const ALL_TABS: readonly TabDef<WorkflowTab>[] = [
+  { id: "workflows", label: "Workflows", brick: null },
+  { id: "executions", label: "Executions", brick: null },
+  { id: "scheduler", label: "Scheduler", brick: null },
 ];
-
-const TAB_LABELS: Readonly<Record<WorkflowTab, string>> = {
-  workflows: "Workflows",
-  executions: "Executions",
-  scheduler: "Scheduler",
-};
 
 export default function WorkflowsPanel(): React.ReactNode {
   const client = useApi();
@@ -63,6 +61,9 @@ export default function WorkflowsPanel(): React.ReactNode {
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
 
   const overlayActive = useUiStore((s) => s.overlayActive);
+
+  const visibleTabs = useVisibleTabs(ALL_TABS);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight workflow execution
   const [executing, setExecuting] = useState(false);
@@ -150,14 +151,7 @@ export default function WorkflowsPanel(): React.ReactNode {
           up: () => {
             setCurrentIndex(Math.max(currentIndex() - 1, 0));
           },
-          tab: () => {
-            const currentIdx = TAB_ORDER.indexOf(activeTab);
-            const nextIdx = (currentIdx + 1) % TAB_ORDER.length;
-            const nextTab = TAB_ORDER[nextIdx];
-            if (nextTab) {
-              setActiveTab(nextTab);
-            }
-          },
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           r: () => refreshCurrentView(),
           e: () => {
             if (activeTab !== "workflows" || !client) return;
@@ -220,14 +214,7 @@ export default function WorkflowsPanel(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Error display */}
         {error && (

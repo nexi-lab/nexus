@@ -978,3 +978,105 @@ class TestAccessibility:
             # _update_status_bar should not crash
             app._update_status_bar(announce=True)
             app._update_status_bar(announce=False)
+
+
+# ---------------------------------------------------------------------------
+# Help overlay tests (Issue #3508)
+# ---------------------------------------------------------------------------
+
+
+from nexus.fs._tui.help_overlay import (  # noqa: E402
+    ALL_GROUPS,
+    ALL_HELP_KEYS,
+    HelpOverlay,
+    _render_help_text,
+)
+
+
+class TestHelpOverlay:
+    """Tests for the ? help overlay."""
+
+    @pytest.mark.asyncio
+    async def test_question_mark_opens_help_overlay(self):
+        """Pressing ? pushes the HelpOverlay modal screen."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            await pilot.press("question_mark")
+            await pilot.pause(delay=0.2)
+            assert isinstance(app.screen, HelpOverlay)
+
+    @pytest.mark.asyncio
+    async def test_any_key_dismisses_help_overlay(self):
+        """Pressing any key after opening the overlay should dismiss it."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            await pilot.press("question_mark")
+            await pilot.pause(delay=0.2)
+            assert isinstance(app.screen, HelpOverlay)
+            # Dismiss with Escape
+            await pilot.press("escape")
+            await pilot.pause(delay=0.2)
+            assert not isinstance(app.screen, HelpOverlay)
+
+    @pytest.mark.asyncio
+    async def test_help_not_opened_when_search_input_focused(self):
+        """Pressing ? while typing in search should not open the overlay."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            # Activate search
+            await pilot.press("/")
+            await pilot.pause(delay=0.1)
+            # Press ? while in search input
+            await pilot.press("question_mark")
+            await pilot.pause(delay=0.2)
+            assert not isinstance(app.screen, HelpOverlay)
+
+    @pytest.mark.asyncio
+    async def test_help_overlay_shows_all_groups(self):
+        """The overlay content includes all 4 binding group headers."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            await pilot.press("question_mark")
+            await pilot.pause(delay=0.2)
+            assert isinstance(app.screen, HelpOverlay)
+            text = str(app.screen.query_one("#help-text").render())
+            for group_name, _ in ALL_GROUPS:
+                assert group_name in text, f"Group '{group_name}' missing from help overlay"
+
+    def test_help_overlay_has_minimum_bindings(self):
+        """The overlay should contain at least 18 keybinding entries."""
+        total = sum(len(bindings) for _, bindings in ALL_GROUPS)
+        assert total >= 18, f"Expected >= 18 bindings, got {total}"
+
+    def test_render_help_text_contains_dismiss_hint(self):
+        """The rendered help text includes a dismiss instruction."""
+        text = _render_help_text()
+        assert "Press any key to dismiss" in text
+
+
+class TestHelpOverlayDrift:
+    """Drift detection: every shown BINDINGS entry must appear in the help overlay."""
+
+    def test_bindings_covered_by_help_overlay(self):
+        """Every visible PlaygroundApp binding key is present in the help overlay dict."""
+        # Map Textual internal key names to the display keys used in the overlay.
+        key_display_map: dict[str, str] = {
+            "question_mark": "?",
+        }
+        for binding in PlaygroundApp.BINDINGS:
+            if not binding.show:
+                continue
+            key = binding.key
+            display_key = key_display_map.get(key, binding.key_display or key)
+            assert display_key in ALL_HELP_KEYS, (
+                f"Binding '{key}' (display: '{display_key}') is in PlaygroundApp.BINDINGS "
+                f"but missing from help overlay. Add it to the appropriate group in help_overlay.py."
+            )

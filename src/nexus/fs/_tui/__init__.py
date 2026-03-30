@@ -22,6 +22,7 @@ from textual.widgets import DataTable, Footer, Header, Input, Static
 from nexus.fs._tui.auth_guidance import auth_guidance, format_runtime_error
 from nexus.fs._tui.file_browser import FileBrowser
 from nexus.fs._tui.file_preview import FilePreview
+from nexus.fs._tui.help_overlay import HelpOverlay
 from nexus.fs._tui.mount_panel import MountPanel
 
 MIN_WIDTH = 80
@@ -333,6 +334,7 @@ class PlaygroundApp(App[None]):
 
     BINDINGS = [
         Binding("q", "request_quit", "Quit", priority=True),
+        Binding("question_mark", "show_help", "Help", key_display="?"),
         Binding("b", "go_back", "Back"),
         Binding("/", "toggle_search", "Search", key_display="/"),
         Binding(":", "toggle_command", "Command", key_display=":", priority=True),
@@ -1331,6 +1333,12 @@ class PlaygroundApp(App[None]):
     def action_request_quit(self) -> None:
         """Quit immediately without confirmation dialog."""
         self.exit()
+
+    def action_show_help(self) -> None:
+        """Show the keybinding help overlay."""
+        if isinstance(self.focused, Input):
+            return
+        self.push_screen(HelpOverlay())
 
     def action_new_file(self) -> None:
         """Create a new empty file in the current directory."""

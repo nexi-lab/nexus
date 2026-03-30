@@ -96,6 +96,7 @@ class NexusFUSEOperations(Operations):
         subscription_manager: Any | None = None,
         lease_manager: Any | None = None,
         mount_id: str | None = None,
+        file_cache: Any | None = None,
     ) -> None:
         self._context = context
         cache_config = cache_config or {}
@@ -137,10 +138,13 @@ class NexusFUSEOperations(Operations):
 
         # Wrap in lease coordinator for cross-mount cache coherence
         holder_id = mount_id or "default-mount"
+        _zone_id = getattr(nexus_fs, "zone_id", None)
         cache = FUSELeaseCoordinator(
             cache=bare_cache,
             lease_manager=lease_manager,
             holder_id=holder_id,
+            file_cache=file_cache,
+            zone_id=_zone_id,
         )
 
         # Initialize L2 local disk cache (Issue #1072)

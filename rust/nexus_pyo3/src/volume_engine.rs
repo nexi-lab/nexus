@@ -186,6 +186,9 @@ struct ActiveVolume {
     write_offset: u64,
     entries: Vec<TocEntry>,
     target_size: u64,
+    /// Bytes reserved by batch preallocate (not in entries/TocEntries).
+    /// Prevents seal_volume from deleting volumes with batch-reserved space.
+    batch_reserved_bytes: u64,
 }
 
 impl ActiveVolume {
@@ -214,28 +217,25 @@ impl ActiveVolume {
             write_offset: HEADER_SIZE,
             entries: Vec::new(),
             target_size,
+            batch_reserved_bytes: 0,
         })
     }
 
-    /// Append a blob entry. Returns (offset, aligned_end) of the written data.
+    /// Append a blob entry. Returns the offset of the written data.
+    /// Uses a single write_all call to reduce syscalls (1 vs 5 per entry).
     fn append(&mut self, hash: &[u8; 32], data: &[u8]) -> io::Result<u64> {
         let offset = self.write_offset;
+        let aligned_total = compute_entry_aligned_size(data.len() as u32) as usize;
 
-        // Write entry header: hash(32) + size(4) + flags(1)
-        self.file.write_all(hash)?;
-        self.file.write_all(&(data.len() as u32).to_le_bytes())?;
-        self.file.write_all(&[FLAG_NONE])?;
+        // Build entry in a single buffer: hash(32) + size(4) + flags(1) + data + padding
+        let mut buf = vec![0u8; aligned_total];
+        buf[0..32].copy_from_slice(hash);
+        buf[32..36].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        buf[36] = FLAG_NONE;
+        buf[37..37 + data.len()].copy_from_slice(data);
+        // Padding bytes are already 0
 
-        // Write data
-        self.file.write_all(data)?;
-
-        // Align to 8 bytes
-        let end = offset + ENTRY_HEADER_SIZE + data.len() as u64;
-        let aligned_end = align_up(end, ALIGNMENT);
-        let padding = aligned_end - end;
-        if padding > 0 {
-            self.file.write_all(&vec![0u8; padding as usize])?;
-        }
+        self.file.write_all(&buf)?;
 
         self.entries.push(TocEntry {
             hash: *hash,
@@ -244,7 +244,7 @@ impl ActiveVolume {
             flags: FLAG_NONE,
         });
 
-        self.write_offset = aligned_end;
+        self.write_offset = offset + aligned_total as u64;
         Ok(offset)
     }
 
@@ -445,7 +445,8 @@ pub struct VolumeEngine {
     next_reservation_id: AtomicU64,
     /// Cached write file descriptors for batch pwrite.
     /// Opened in preallocate(), shared via RwLock read for concurrent write_slot(),
-    /// closed in commit_batch().
+    /// closed in commit_batch(). Uses pwrite (write_all_at) which takes &self,
+    /// so multiple threads can pwrite to the same fd concurrently.
     batch_write_fds: RwLock<HashMap<u32, fs::File>>,
 }
 
@@ -1197,6 +1198,7 @@ impl VolumeEngine {
             let vol = active_guard.as_mut().unwrap();
             let offset = vol.write_offset;
             vol.write_offset += aligned_total;
+            vol.batch_reserved_bytes += aligned_total;
 
             slots.push(SlotInfo {
                 volume_id: vol.volume_id,
@@ -1206,14 +1208,35 @@ impl VolumeEngine {
         }
 
         // Extend the active volume file to cover reserved space (Decision #2A)
-        if let Some(vol) = active_guard.as_ref() {
+        // and seek the file cursor to write_offset so that subsequent sequential
+        // append() calls (from put()) land after the reserved space.
+        if let Some(vol) = active_guard.as_mut() {
             let current_len = vol.file.metadata().map_err(io_err)?.len();
             if vol.write_offset > current_len {
                 vol.file.set_len(vol.write_offset).map_err(io_err)?;
             }
+            vol.file
+                .seek(SeekFrom::Start(vol.write_offset))
+                .map_err(io_err)?;
         }
 
         drop(active_guard);
+
+        // Open and cache write FDs for each volume used by the batch.
+        // Uses RwLock so write_slot can share the fd via read lock for pwrite.
+        {
+            let mut fds = self.batch_write_fds.write();
+            let paths = self.volume_paths.read();
+            for slot in &slots {
+                if let std::collections::hash_map::Entry::Vacant(e) = fds.entry(slot.volume_id) {
+                    if let Some(path) = paths.get(&slot.volume_id) {
+                        if let Ok(f) = fs::OpenOptions::new().write(true).open(path) {
+                            e.insert(f);
+                        }
+                    }
+                }
+            }
+        }
 
         // Store ephemeral reservation (Decision #1A)
         let count = slots.len();
@@ -1297,20 +1320,14 @@ impl VolumeEngine {
         buf[36] = FLAG_NONE;
         buf[37..37 + data.len()].copy_from_slice(data);
 
-        // Get volume path (brief lock)
-        let vol_path = {
-            let paths = self.volume_paths.read();
-            paths.get(&volume_id).cloned().ok_or_else(|| {
-                pyo3::exceptions::PyIOError::new_err(format!("Volume {} not found", volume_id))
-            })?
-        };
-
-        // pwrite with GIL released (Decision #16A)
+        // pwrite using cached write FD (shared read lock — no contention).
+        // write_all_at takes &self so multiple threads can pwrite concurrently.
+        // GIL released during I/O (Decision #16A).
         py.detach(|| {
-            let file = fs::OpenOptions::new()
-                .write(true)
-                .open(&vol_path)
-                .map_err(io_err)?;
+            let fds = self.batch_write_fds.read();
+            let file = fds.get(&volume_id).ok_or_else(|| {
+                pyo3::exceptions::PyIOError::new_err(format!("Volume {} not found", volume_id))
+            })?;
 
             #[cfg(unix)]
             {
@@ -1319,7 +1336,21 @@ impl VolumeEngine {
             }
             #[cfg(not(unix))]
             {
-                let mut f = file;
+                // Fallback: open a new fd for non-unix (no write_all_at)
+                drop(fds);
+                let vol_path = {
+                    let paths = self.volume_paths.read();
+                    paths.get(&volume_id).cloned().ok_or_else(|| {
+                        pyo3::exceptions::PyIOError::new_err(format!(
+                            "Volume {} not found",
+                            volume_id
+                        ))
+                    })?
+                };
+                let mut f = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&vol_path)
+                    .map_err(io_err)?;
                 f.seek(SeekFrom::Start(offset)).map_err(io_err)?;
                 f.write_all(&buf).map_err(io_err)?;
             }
@@ -1406,14 +1437,12 @@ impl VolumeEngine {
 
         // Heavy I/O with GIL released (Decision #16A)
         py.detach(move || -> PyResult<()> {
-            // fsync each volume file (Decision #15A: data before metadata)
+            // fsync each volume using cached write FDs (Decision #15A: data before metadata)
             {
-                let paths = self.volume_paths.read();
+                let fds = self.batch_write_fds.read();
                 for vol_id in &volume_ids {
-                    if let Some(path) = paths.get(vol_id) {
-                        if let Ok(file) = fs::OpenOptions::new().write(true).open(path) {
-                            let _ = file.sync_data();
-                        }
+                    if let Some(file) = fds.get(vol_id) {
+                        let _ = file.sync_data();
                     }
                 }
             }
@@ -1447,10 +1476,123 @@ impl VolumeEngine {
             self.total_bytes
                 .fetch_add(total_new_bytes, Ordering::Relaxed);
 
+            // Clean up cached write FDs only if no other reservation uses them
+            {
+                let still_in_use: std::collections::HashSet<u32> = {
+                    let reservations = self.reservations.lock();
+                    reservations
+                        .values()
+                        .flat_map(|r| r.slots.iter().map(|s| s.volume_id))
+                        .collect()
+                };
+                let mut fds = self.batch_write_fds.write();
+                for vol_id in &volume_ids {
+                    if !still_in_use.contains(vol_id) {
+                        fds.remove(vol_id);
+                    }
+                }
+            }
+
             Ok(())
         })?;
 
         Ok(())
+    }
+
+    /// Batch write: all data in a single Python→Rust call (Issue #3409).
+    ///
+    /// Optimized bulk import path that eliminates per-entry Python overhead:
+    /// - Single GIL release for all entries (not 10K detach/reattach cycles)
+    /// - Single index flush at the end (not one every 256 entries)
+    /// - Dedup check per entry via mem_index
+    ///
+    /// This is the recommended path for connector sync and migration.
+    /// The 3-step API (preallocate/write_slot/commit_batch) is available
+    /// for cases needing fine-grained control.
+    ///
+    /// Args:
+    ///     items: List of (hash_hex, data) tuples.
+    ///
+    /// Returns:
+    ///     Number of new blobs written (excludes duplicates).
+    fn batch_put(&self, py: Python<'_>, items: Vec<(String, Vec<u8>)>) -> PyResult<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        // Parse hashes while GIL is held (hex_to_hash needs &str from Python)
+        let mut parsed: Vec<([u8; 32], Vec<u8>)> = Vec::with_capacity(items.len());
+        for (hash_hex, data) in items {
+            let hash = hex_to_hash(&hash_hex)?;
+            parsed.push((hash, data));
+        }
+
+        // All I/O with GIL released (Decision #16A)
+        py.detach(move || -> PyResult<usize> {
+            let now = now_unix_secs();
+            // (hash, size, volume_id, offset)
+            let mut new_entries: Vec<([u8; 32], u32, u32, u64)> = Vec::with_capacity(parsed.len());
+            let mut total_new_bytes: u64 = 0;
+
+            // Phase 1: Bulk dedup check (single RwLock read for all entries)
+            let known: std::collections::HashSet<[u8; 32]> = {
+                let idx = self.mem_index.read();
+                parsed
+                    .iter()
+                    .filter(|(h, _)| idx.lookup_raw(h).is_some())
+                    .map(|(h, _)| *h)
+                    .collect()
+            };
+
+            // Phase 2: Append unknown entries to volumes (active Mutex per entry)
+            for (hash, data) in &parsed {
+                if known.contains(hash) {
+                    continue;
+                }
+
+                let (volume_id, offset) = self.append_to_active(hash, data)?;
+                new_entries.push((*hash, data.len() as u32, volume_id, offset));
+
+                // Collect for batch pending_index push
+                let entry = IndexEntry {
+                    volume_id,
+                    offset,
+                    size: data.len() as u32,
+                    timestamp: now,
+                    expiry: 0.0,
+                };
+                {
+                    let mut pending = self.pending_index.lock();
+                    pending.push((*hash, entry));
+                }
+
+                total_new_bytes += data.len() as u64;
+            }
+
+            // Phase 3: Single flush for all entries
+            self.flush_pending_index()?;
+
+            // Phase 4: Bulk mem_index update (single RwLock write for all entries)
+            {
+                let mut idx = self.mem_index.write();
+                for &(hash, size, volume_id, offset) in &new_entries {
+                    idx.insert(
+                        hash,
+                        MemIndexEntry {
+                            volume_id,
+                            offset,
+                            size,
+                            expiry: 0.0,
+                        },
+                    );
+                }
+            }
+
+            self.total_bytes
+                .fetch_add(total_new_bytes, Ordering::Relaxed);
+
+            Ok(new_entries.len())
+        })
     }
 
     /// Remove expired reservations. Returns the count removed.
@@ -1664,8 +1806,8 @@ impl VolumeEngine {
                 .retain(|entry| table.get(entry.hash.as_slice()).ok().flatten().is_some());
         }
 
-        if vol.entries.is_empty() {
-            // All entries were deleted — discard the volume
+        if vol.entries.is_empty() && vol.batch_reserved_bytes == 0 {
+            // All entries were deleted and no batch reservations — discard
             let _ = fs::remove_file(&vol.path);
             self.volume_paths.write().remove(&vol.volume_id);
             return Ok(());

@@ -554,57 +554,10 @@ class VolumeLocalTransport:
             return 0
 
         try:
-            # Pre-filter known hashes (Decision #14A)
-            all_hashes = [h for h, _ in hash_data]
-            unknown_hashes = set(self._engine.filter_known(all_hashes))
-
-            # Only write unknown entries
-            to_write = [(h, d) for h, d in hash_data if h in unknown_hashes]
-            if not to_write:
-                return 0
-
-            # Preallocate slots
-            sizes = [len(d) for _, d in to_write]
-            reservation_id = self._engine.preallocate(sizes)
-
-            # Parallel pwrite via ThreadPoolExecutor
-            import concurrent.futures
-            import os
-
-            max_workers = min(len(to_write), os.cpu_count() or 4)
-            errors: list[Exception] = []
-
-            def _write_one(args: tuple[int, str, bytes]) -> None:
-                idx, hash_hex, data = args
-                self._engine.write_slot(reservation_id, idx, hash_hex, data)
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                futures = {
-                    pool.submit(_write_one, (i, h, d)): i for i, (h, d) in enumerate(to_write)
-                }
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        errors.append(e)
-
-            if errors:
-                # If any writes failed, the batch is compromised — don't commit.
-                # The reservation expires and space is reclaimed.
-                logger.warning(
-                    "Batch write had %d errors, discarding reservation %d",
-                    len(errors),
-                    reservation_id,
-                )
-                raise BackendError(
-                    f"Batch write failed: {len(errors)} slot write errors",
-                    backend="volume_local",
-                    path="batch",
-                ) from errors[0]
-
-            # Commit batch — single redb transaction + mem_index update
-            self._engine.commit_batch(reservation_id)
-            return len(to_write)
+            # Use batch_put for optimal single-call bulk write.
+            # All I/O happens in Rust with GIL released — no per-entry
+            # Python overhead, single index flush at the end.
+            return self._engine.batch_put(hash_data)
 
         except BackendError:
             raise

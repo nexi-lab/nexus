@@ -626,8 +626,8 @@ class TestEventBusFactory:
         from unittest.mock import patch
 
         with (
-            patch("nexus.services.event_bus.factory.get_redis_url", return_value=None),
-            patch("nexus.services.event_bus.factory.get_dragonfly_url", return_value=None),
+            patch("nexus.lib.env.get_redis_url", return_value=None),
+            patch("nexus.lib.env.get_dragonfly_url", return_value=None),
             pytest.raises(ValueError, match="No event bus backend available"),
         ):
             create_event_bus(backend="redis")
@@ -987,8 +987,8 @@ class TestEventBusFactoryExtended:
         from unittest.mock import patch
 
         with (
-            patch("nexus.services.event_bus.factory.get_redis_url", return_value=None),
-            patch("nexus.services.event_bus.factory.get_dragonfly_url", return_value=None),
+            patch("nexus.lib.env.get_redis_url", return_value=None),
+            patch("nexus.lib.env.get_dragonfly_url", return_value=None),
             pytest.raises(ValueError, match="No event bus backend available"),
         ):
             create_event_bus(backend="unknown")

@@ -262,6 +262,26 @@ class PathAddressingEngine(Backend):
         blob_path = self._get_key_path(context.backend_path)
         return self._transport.get_size(blob_path)
 
+    # === Public path-based helpers (for kernel copy/rename) ===
+
+    def get_size_by_path(self, backend_path: str) -> int:
+        """Get blob size by backend-relative path (public API for kernel)."""
+        blob_path = self._get_key_path(backend_path.strip("/"))
+        return self._transport.get_size(blob_path)
+
+    def get_version_by_path(self, backend_path: str) -> str | None:
+        """Get blob version/generation by backend-relative path.
+
+        Returns None if the transport doesn't support versioning.
+        """
+        blob_path = self._get_key_path(backend_path.strip("/"))
+        get_ver = getattr(self._transport, "get_version_id", None) or getattr(
+            self._transport, "get_generation", None
+        )
+        if get_ver:
+            return str(get_ver(blob_path))
+        return None
+
     # === Internal I/O (used by BackendIOService via duck typing) ===
 
     def _download(self, blob_path: str, version_id: str | None = None) -> tuple[bytes, str | None]:

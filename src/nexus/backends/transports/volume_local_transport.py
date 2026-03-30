@@ -410,6 +410,15 @@ class VolumeLocalTransport:
             return
         yield from self._delegate.stream(key, chunk_size, version_id)
 
+    def store_chunked(
+        self,
+        key: str,
+        chunks: Iterator[bytes],
+        content_type: str = "",
+    ) -> str | None:
+        data = b"".join(chunks)
+        return self.store(key, data, content_type)
+
     # === Extended Methods (used by CASAddressingEngine via hasattr) ===
 
     def store_nosync(self, key: str, data: bytes) -> None:

@@ -160,7 +160,7 @@ class ReadmeDocGenerator:
                 await filesystem.mkdir(schemas_dir, parents=True, exist_ok=True)
 
                 for op_name, schema in self._schemas.items():
-                    schema_content = self._generate_annotated_schema(op_name, schema)
+                    schema_content = self.generate_schema_yaml(op_name, schema)
                     schema_path = posixpath.join(schemas_dir, f"{op_name}.yaml")
                     await filesystem.write(schema_path, schema_content.encode("utf-8"))
                     result["schemas"].append(schema_path)
@@ -264,7 +264,7 @@ class ReadmeDocGenerator:
 
         return lines
 
-    def _generate_annotated_schema(self, op_name: str, schema: type[BaseModel]) -> str:
+    def generate_schema_yaml(self, op_name: str, schema: type[BaseModel]) -> str:
         """Generate an annotated YAML schema file for a single operation.
 
         Each field includes type, required/optional, constraints, and description

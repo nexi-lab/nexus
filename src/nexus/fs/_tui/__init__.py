@@ -334,7 +334,7 @@ class PlaygroundApp(App[None]):
 
     BINDINGS = [
         Binding("q", "request_quit", "Quit", priority=True),
-        Binding("question_mark", "show_help", "Help", key_display="?"),
+        Binding("question_mark", "show_help", "Help", key_display="?", priority=True),
         Binding("b", "go_back", "Back"),
         Binding("/", "toggle_search", "Search", key_display="/"),
         Binding(":", "toggle_command", "Command", key_display=":", priority=True),

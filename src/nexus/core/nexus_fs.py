@@ -195,11 +195,16 @@ class NexusFS(  # type: ignore[misc]
 
         # Advisory lock manager — kernel owned (POSIX flock equivalent).
         # Like FileWatcher: kernel-owned local + kernel-knows remote.
-        # Local: LocalLockManager (VFSSemaphore). Federation: upgrade to RaftLockManager.
+        # Exclusive/shared use lock_fast RW lock (~200ns) when available.
+        # Counting (max_holders>1) falls back to VFSSemaphore.
         from nexus.lib.distributed_lock import LocalLockManager
         from nexus.lib.semaphore import create_vfs_semaphore
 
-        self._lock_manager: Any = LocalLockManager(create_vfs_semaphore(), zone_id=ROOT_ZONE_ID)
+        self._lock_manager: Any = LocalLockManager(
+            create_vfs_semaphore(),
+            zone_id=ROOT_ZONE_ID,
+            vfs_lock_manager=self._vfs_lock_manager,
+        )
 
         # Kernel notification dispatch (INTERCEPT + OBSERVE).
         # Kernel owns dispatch infrastructure — creates empty callback lists.

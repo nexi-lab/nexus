@@ -227,16 +227,22 @@ class LocalLockManager(AdvisoryLockManager):
 
     RETRY_INTERVAL = 0.05  # 50ms between retries
 
+    # Prefix for _active_locks entries to distinguish lock_fast vs semaphore
+    _VFS_LOCK = "vfs"
+    _SEM_LOCK = "sem"
+
     def __init__(
         self,
         semaphore: Any,
         *,
         zone_id: str = "root",
+        vfs_lock_manager: Any = None,
     ) -> None:
         super().__init__(zone_id=zone_id)
         self._sem = semaphore
-        # lock_id → (semaphore_name, holder_id) for release/extend
-        self._active_locks: dict[str, tuple[str, str]] = {}
+        self._vfs_lock = vfs_lock_manager  # lock_fast: ~200ns RW lock for exclusive/shared
+        # lock_id → (lock_type, handle_or_holder_id) for release
+        self._active_locks: dict[str, tuple[str, Any]] = {}
 
     # -- acquire modes --------------------------------------------------------
 
@@ -262,7 +268,7 @@ class LocalLockManager(AdvisoryLockManager):
             # Counting semaphore — async retry loop (VFSSemaphore.acquire blocks sync)
             holder = self._sem.acquire(key, max_holders=max_holders, timeout_ms=0, ttl_ms=ttl_ms)
             if holder is not None:
-                self._active_locks[lock_id] = (key, holder)
+                self._active_locks[lock_id] = (self._SEM_LOCK, (key, holder))
                 mark_acquired(L2_ADVISORY)
                 logger.debug(
                     "Counting lock acquired: %s -> %s (max_holders=%d)", key, lock_id, max_holders
@@ -277,15 +283,55 @@ class LocalLockManager(AdvisoryLockManager):
                     key, max_holders=max_holders, timeout_ms=0, ttl_ms=ttl_ms
                 )
                 if holder is not None:
-                    self._active_locks[lock_id] = (key, holder)
+                    self._active_locks[lock_id] = (self._SEM_LOCK, (key, holder))
                     mark_acquired(L2_ADVISORY)
                     return lock_id
             return None
 
+        # Exclusive/shared (max_holders=1): prefer lock_fast (~200ns) over gate pattern
+        if self._vfs_lock is not None:
+            return await self._acquire_via_vfs_lock(key, lock_id, mode, timeout)
+
+        # Fallback: VFSSemaphore gate pattern
         if mode == "exclusive":
             return await self._acquire_exclusive(key, lock_id, timeout, ttl_ms)
         else:  # shared
             return await self._acquire_shared(key, lock_id, timeout, ttl_ms)
+
+    async def _acquire_via_vfs_lock(
+        self,
+        key: str,
+        lock_id: str,
+        mode: str,
+        timeout: float,
+    ) -> str | None:
+        """Acquire exclusive/shared via lock_fast RW lock (~200ns).
+
+        Replaces the VFSSemaphore gate pattern (2+ semaphore calls, ~500ns+)
+        with a single lock_fast call. TTL/holder tracking stays in _active_locks.
+        """
+        from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
+
+        vfs_mode = "write" if mode == "exclusive" else "read"
+        handle: int = self._vfs_lock.acquire(key, vfs_mode, timeout_ms=0)
+        if handle:
+            self._active_locks[lock_id] = (self._VFS_LOCK, (key, handle))
+            mark_acquired(L2_ADVISORY)
+            logger.debug("%s lock acquired (lock_fast): %s -> %s", mode.title(), key, lock_id)
+            return lock_id
+        if timeout <= 0:
+            return None
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(self.RETRY_INTERVAL)
+            handle = self._vfs_lock.acquire(key, vfs_mode, timeout_ms=0)
+            if handle:
+                self._active_locks[lock_id] = (self._VFS_LOCK, (key, handle))
+                mark_acquired(L2_ADVISORY)
+                logger.debug("%s lock acquired (lock_fast): %s -> %s", mode.title(), key, lock_id)
+                return lock_id
+        logger.debug("%s lock timeout (lock_fast): %s", mode.title(), key)
+        return None
 
     async def _acquire_exclusive(
         self,
@@ -323,11 +369,11 @@ class LocalLockManager(AdvisoryLockManager):
                 return None
             await asyncio.sleep(self.RETRY_INTERVAL)
 
-        self._active_locks[lock_id] = (gate, gate_holder)
+        self._active_locks[lock_id] = (self._SEM_LOCK, (gate, gate_holder))
         from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
 
         mark_acquired(L2_ADVISORY)
-        logger.debug("Exclusive lock acquired: %s -> %s", key, lock_id)
+        logger.debug("Exclusive lock acquired (gate pattern): %s -> %s", key, lock_id)
         return lock_id
 
     async def _acquire_shared(
@@ -363,11 +409,11 @@ class LocalLockManager(AdvisoryLockManager):
             logger.debug("Shared lock failed (reader slot): %s", key)
             return None
 
-        self._active_locks[lock_id] = (readers, reader_holder)
+        self._active_locks[lock_id] = (self._SEM_LOCK, (readers, reader_holder))
         from nexus.lib.lock_order import L2_ADVISORY, mark_acquired
 
         mark_acquired(L2_ADVISORY)
-        logger.debug("Shared lock acquired: %s -> %s", key, lock_id)
+        logger.debug("Shared lock acquired (gate pattern): %s -> %s", key, lock_id)
         return lock_id
 
     # -- release / extend / info ----------------------------------------------
@@ -376,13 +422,18 @@ class LocalLockManager(AdvisoryLockManager):
         entry = self._active_locks.pop(lock_id, None)
         if entry is None:
             return False
-        sem_name, holder_id = entry
-        released: bool = self._sem.release(sem_name, holder_id)
+        lock_type, payload = entry
+        if lock_type == self._VFS_LOCK:
+            _key, handle = payload
+            released: bool = self._vfs_lock.release(handle)
+        else:
+            sem_name, holder_id = payload
+            released = self._sem.release(sem_name, holder_id)
         if released:
             from nexus.lib.lock_order import L2_ADVISORY, mark_released
 
             mark_released(L2_ADVISORY)
-            logger.debug("Lock released: %s (sem=%s)", lock_id, sem_name)
+            logger.debug("Lock released: %s (type=%s)", lock_id, lock_type)
         return released
 
     async def extend(
@@ -394,7 +445,12 @@ class LocalLockManager(AdvisoryLockManager):
         entry = self._active_locks.get(lock_id)
         if entry is None:
             return ExtendResult(success=False)
-        sem_name, holder_id = entry
+        lock_type, payload = entry
+        if lock_type == self._VFS_LOCK:
+            # lock_fast doesn't support TTL extension — treat as success (lock held in memory)
+            lock_info = await self.get_lock_info(path)
+            return ExtendResult(success=True, lock_info=lock_info)
+        sem_name, holder_id = payload
         ttl_ms = max(1000, int(ttl * 1000))
         success = self._sem.extend(sem_name, holder_id, ttl_ms=ttl_ms)
         if not success:
@@ -405,9 +461,16 @@ class LocalLockManager(AdvisoryLockManager):
     async def get_lock_info(self, path: str) -> LockInfo | None:
         key = self._lock_key(path)
         # Collect holders from _active_locks that belong to this path.
-        # A lock's semaphore name starts with key (plain key, key:gate, key:readers).
         holders: list[HolderInfo] = []
-        for lid, (sem_name, _hid) in self._active_locks.items():
+        for lid, (lock_type, payload) in self._active_locks.items():
+            if lock_type == self._VFS_LOCK:
+                vfs_key, _handle = payload
+                if vfs_key == key:
+                    holders.append(
+                        HolderInfo(lock_id=lid, holder_info="", acquired_at=0.0, expires_at=0.0)
+                    )
+                continue
+            sem_name, _hid = payload
             if sem_name == key or sem_name.startswith(f"{key}:"):
                 holders.append(
                     HolderInfo(lock_id=lid, holder_info="", acquired_at=0.0, expires_at=0.0)
@@ -425,7 +488,13 @@ class LocalLockManager(AdvisoryLockManager):
 
     async def is_locked(self, path: str) -> bool:
         key = self._lock_key(path)
-        for sem_name, _ in self._active_locks.values():
+        for lock_type, payload in self._active_locks.values():
+            if lock_type == self._VFS_LOCK:
+                vfs_key, _handle = payload
+                if vfs_key == key:
+                    return True
+                continue
+            sem_name, _ = payload
             if sem_name == key or sem_name.startswith(f"{key}:"):
                 return True
         return False
@@ -433,7 +502,22 @@ class LocalLockManager(AdvisoryLockManager):
     async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
         results: list[LockInfo] = []
         seen_paths: set[str] = set()
-        for _lid, (sem_name, _hid) in self._active_locks.items():
+        for _lid, (lock_type, payload) in self._active_locks.items():
+            if lock_type == self._VFS_LOCK:
+                vfs_key, _handle = payload
+                _, path = self._parse_lock_key(vfs_key)
+                if path in seen_paths:
+                    continue
+                if pattern and pattern not in path:
+                    continue
+                seen_paths.add(path)
+                info = await self.get_lock_info(path)
+                if info is not None:
+                    results.append(info)
+                    if len(results) >= limit:
+                        return results
+                continue
+            sem_name, _hid = payload
             # Strip suffixes (:gate, :readers) to get the base key
             base = sem_name
             for suffix in (":gate", ":readers"):
@@ -457,7 +541,15 @@ class LocalLockManager(AdvisoryLockManager):
         key = self._lock_key(path)
         released = False
         to_remove: list[str] = []
-        for lid, (sem_name, hid) in self._active_locks.items():
+        for lid, (lock_type, payload) in self._active_locks.items():
+            if lock_type == self._VFS_LOCK:
+                vfs_key, handle = payload
+                if vfs_key == key:
+                    self._vfs_lock.release(handle)
+                    to_remove.append(lid)
+                    released = True
+                continue
+            sem_name, hid = payload
             if sem_name == key or sem_name.startswith(f"{key}:"):
                 self._sem.release(sem_name, hid)
                 to_remove.append(lid)

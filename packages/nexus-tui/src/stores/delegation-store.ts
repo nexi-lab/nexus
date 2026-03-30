@@ -219,7 +219,7 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
       await client.delete(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}`);
       set((state) => ({
         delegations: state.delegations.map((d) =>
-          d.delegation_id === delegationId ? { ...d, status: "revoked" } : d,
+          d.delegation_id === delegationId ? { ...d, status: "revoked" as const } : d,
         ),
         delegationsLoading: false,
       }));
@@ -241,7 +241,7 @@ export const useDelegationStore = create<DelegationState>((set, get) => ({
       );
       set((state) => ({
         delegations: state.delegations.map((d) =>
-          d.delegation_id === delegationId ? { ...d, status: outcome } : d,
+          d.delegation_id === delegationId ? { ...d, status: "completed" as const } : d,
         ),
         delegationsLoading: false,
       }));

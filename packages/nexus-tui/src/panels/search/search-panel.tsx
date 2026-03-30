@@ -8,13 +8,13 @@
 import React, { useState, useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
-import type { SearchTab, SearchMode } from "../../stores/search-store.js";
+import type { SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
@@ -26,15 +26,7 @@ import { RlmAnswerView } from "./rlm-answer-view.js";
 import { ColumnSearch } from "./column-search.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
-
-const ALL_TABS: readonly TabDef<SearchTab>[] = [
-  { id: "search", label: "Search", brick: "search" },
-  { id: "knowledge", label: "Knowledge", brick: "catalog" },
-  { id: "memories", label: "Memories", brick: "memory" },
-  { id: "playbooks", label: "Playbooks", brick: null },
-  { id: "ask", label: "Ask", brick: "rlm" },
-  { id: "columns", label: "Columns", brick: "catalog" },
-];
+import { SEARCH_TABS } from "../../shared/navigation.js";
 
 const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
   keyword: "KW",
@@ -46,7 +38,7 @@ export default function SearchPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(SEARCH_TABS);
   // Effective zone: explicit config > server-discovered zone (matches status-bar fallback)
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);

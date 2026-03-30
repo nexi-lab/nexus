@@ -209,7 +209,7 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     },
     // Metadata tabs
     m: () => ctx.setMetadataTab("metadata"),
-    l: () => ctx.setMetadataTab("lineage"),
+    "shift+l": () => ctx.setMetadataTab("lineage"),
     ...(ctx.catalogAvailable ? {
       a: () => ctx.setMetadataTab("aspects"),
       s: () => ctx.setMetadataTab("schema"),

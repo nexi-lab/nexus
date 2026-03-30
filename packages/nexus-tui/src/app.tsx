@@ -38,7 +38,6 @@ const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.
 const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
 
 // Panel definitions are in shared/nav-items.ts (single source of truth).
-
 function PanelRouter(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
 

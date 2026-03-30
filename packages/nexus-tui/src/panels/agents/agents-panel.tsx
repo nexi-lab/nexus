@@ -4,14 +4,14 @@
 
 import React, { useEffect, useState } from "react";
 import { useAgentsStore } from "../../stores/agents-store.js";
-import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
+import type { DelegationItem } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { AgentStatusView } from "./agent-status-view.js";
 import { DelegationList } from "./delegation-list.js";
 import { InboxView } from "./inbox-view.js";
@@ -24,21 +24,15 @@ import { useCommandRunnerStore, executeLocalCommand } from "../../services/comma
 import { useUiStore } from "../../stores/ui-store.js";
 import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
+import { AGENT_TABS } from "../../shared/navigation.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
-const ALL_TABS: readonly TabDef<AgentTab>[] = [
-  { id: "status", label: "Status", brick: "agent_runtime" },
-  { id: "delegations", label: "Delegations", brick: "delegation" },
-  { id: "inbox", label: "Inbox", brick: "ipc" },
-  { id: "trajectories", label: "Trajectories", brick: "agent_runtime" },
-];
-
 export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(AGENT_TABS);
 
   // Reactive subscription to command runner status (Codex finding 2)
   const commandRunnerStatus = useCommandRunnerStore((s) => s.status);

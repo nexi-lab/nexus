@@ -12,7 +12,7 @@ import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.j
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
@@ -25,14 +25,7 @@ import { TransactionList } from "./transaction-list.js";
 import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
 import { ApprovalList } from "./approval-list.js";
-
-const ALL_TABS: readonly TabDef<PaymentsTab>[] = [
-  { id: "balance", label: "Balance", brick: null },
-  { id: "reservations", label: "Reservations", brick: null },
-  { id: "transactions", label: "Transactions", brick: null },
-  { id: "policies", label: "Policies", brick: null },
-  { id: "approvals", label: "Approvals", brick: null },
-];
+import { PAYMENTS_TABS } from "../../shared/navigation.js";
 
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
@@ -91,7 +84,7 @@ export default function PaymentsPanel(): React.ReactNode {
   const setSelectedApprovalIndex = usePaymentsStore((s) => s.setSelectedApprovalIndex);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
 
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(PAYMENTS_TABS);
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   const setSelectedReservationIndex = usePaymentsStore(

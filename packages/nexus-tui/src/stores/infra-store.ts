@@ -85,6 +85,7 @@ export interface AuditTransaction {
 }
 
 export type InfraTab = "connectors" | "subscriptions" | "locks" | "secrets";
+export type EventsPanelTab = "events" | "mcl" | "replay" | "operations" | "audit" | InfraTab;
 
 // =============================================================================
 // Store
@@ -127,6 +128,7 @@ export interface InfraState {
 
   // Navigation
   readonly activeTab: InfraTab;
+  readonly activePanelTab: EventsPanelTab;
 
   // Error
   readonly error: string | null;
@@ -150,6 +152,7 @@ export interface InfraState {
   readonly fetchConnectorCapabilities: (connectorName: string, client: FetchClient) => Promise<void>;
   readonly fetchAuditTransactions: (filters: { cursor?: string; limit?: number }, client: FetchClient) => Promise<void>;
   readonly setActiveTab: (tab: InfraTab) => void;
+  readonly setActivePanelTab: (tab: EventsPanelTab) => void;
   readonly setSelectedOperationIndex: (index: number) => void;
   readonly setSelectedConnectorIndex: (index: number) => void;
   readonly setSelectedSubscriptionIndex: (index: number) => void;
@@ -180,6 +183,7 @@ export const useInfraStore = create<InfraState>((set, get) => ({
   auditHasMore: false,
   auditNextCursor: null,
   activeTab: "connectors",
+  activePanelTab: "events",
   error: null,
 
   // =========================================================================
@@ -404,7 +408,17 @@ export const useInfraStore = create<InfraState>((set, get) => ({
   },
 
   setActiveTab: (tab) => {
-    set({ activeTab: tab, error: null });
+    set({ activeTab: tab, activePanelTab: tab, error: null });
+  },
+
+  setActivePanelTab: (tab) => {
+    set((state) => ({
+      activePanelTab: tab,
+      activeTab: tab === "events" || tab === "mcl" || tab === "replay" || tab === "operations" || tab === "audit"
+        ? state.activeTab
+        : tab,
+      error: null,
+    }));
   },
 
   setSelectedOperationIndex: (index) => {

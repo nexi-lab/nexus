@@ -38,7 +38,7 @@ export function formatTimestamp(input: number | string | Date, now?: number, utc
 
   // Future timestamps: show absolute
   if (delta < 0) {
-    return formatAbsolute(date);
+    return formatAbsolute(date, utc);
   }
 
   // < 1 minute

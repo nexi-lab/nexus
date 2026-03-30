@@ -1397,6 +1397,9 @@ impl VolumeEngine {
             Vec::with_capacity(reservation.slots.len());
         let mut total_new_bytes: u64 = 0;
         let mut volume_id_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        // TocEntry data for active volume update (fixes Codex bugs #1 and #2)
+        let mut toc_updates: Vec<([u8; 32], u32, u32, u64)> =
+            Vec::with_capacity(reservation.slots.len());
 
         for (i, slot) in reservation.slots.iter().enumerate() {
             let hash = reservation.hashes[i].unwrap(); // verified all written above
@@ -1427,6 +1430,7 @@ impl VolumeEngine {
             ));
             total_new_bytes += slot.data_size as u64;
             volume_id_set.insert(slot.volume_id);
+            toc_updates.push((hash, slot.data_size, slot.volume_id, slot.offset));
         }
 
         if index_entries.is_empty() {
@@ -1475,6 +1479,37 @@ impl VolumeEngine {
 
             self.total_bytes
                 .fetch_add(total_new_bytes, Ordering::Relaxed);
+
+            // Add TocEntries to active volume for committed batch slots.
+            // This fixes two bugs:
+            // 1. close()/Drop checks entry_count() > 0 to decide seal vs delete.
+            //    Without TocEntries, batch-only volumes are deleted → data loss.
+            // 2. seal() writes TOC records from vol.entries only. Without them,
+            //    batch entries are absent from sealed .vol TOC → breaks crash
+            //    recovery and parse_volume_toc() (used by tiering).
+            //
+            // For sealed volumes (from multi-volume spanning during preallocate),
+            // the TOC is already finalized. Those entries are preserved via redb;
+            // TOC reconciliation on crash recovery fills in any gaps.
+            {
+                let mut active_guard = self.active.lock();
+                if let Some(vol) = active_guard.as_mut() {
+                    for &(hash, size, volume_id, offset) in &toc_updates {
+                        if volume_id == vol.volume_id {
+                            vol.entries.push(TocEntry {
+                                hash,
+                                offset,
+                                size,
+                                flags: FLAG_NONE,
+                            });
+                            let aligned = compute_entry_aligned_size(size);
+                            if vol.batch_reserved_bytes >= aligned {
+                                vol.batch_reserved_bytes -= aligned;
+                            }
+                        }
+                    }
+                }
+            }
 
             // Clean up cached write FDs only if no other reservation uses them
             {

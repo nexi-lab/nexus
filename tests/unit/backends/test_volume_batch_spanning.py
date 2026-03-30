@@ -232,3 +232,124 @@ class TestReservationLifecycle:
             )
 
         engine.close()
+
+
+class TestCommitBatchSurvivesCloseAndRecovery:
+    """Regression tests for Codex-reported bugs: commit_batch data must
+    survive close() and be present in sealed volume TOC."""
+
+    def test_3step_api_survives_close_reopen(self, tmp_path):
+        """preallocate → write_slot → commit_batch → close → reopen: data survives.
+
+        Regression for Codex bug #1: close()/Drop deleted batch-only volumes
+        because entry_count() was 0 (commit_batch didn't add TocEntries).
+        """
+        import gc
+
+        volumes_dir = tmp_path / "volumes"
+        engine = VolumeEngine(str(volumes_dir), target_volume_size=TARGET_SIZE)
+
+        items = [make_data(i, 500) for i in range(10)]
+        sizes = [len(d) for _, d in items]
+        res_id = engine.preallocate(sizes)
+        for i, (h, d) in enumerate(items):
+            engine.write_slot(res_id, i, h, d)
+        engine.commit_batch(res_id)
+
+        # Verify readable before close
+        for h, _d in items:
+            assert engine.exists(h), f"{h[:16]}... should exist before close"
+
+        # Close and reopen
+        engine.close()
+        del engine
+        gc.collect()
+
+        engine2 = VolumeEngine(str(volumes_dir), target_volume_size=TARGET_SIZE)
+        assert engine2.stats()["sealed_volume_count"] >= 1, "Volume should be sealed, not deleted"
+
+        for h, d in items:
+            assert engine2.exists(h), f"{h[:16]}... must survive close/reopen"
+            assert bytes(engine2.read_content(h)) == d, f"Content mismatch for {h[:16]}..."
+        engine2.close()
+
+    def test_3step_api_entries_in_toc(self, tmp_path):
+        """commit_batch entries must appear in sealed volume TOC.
+
+        Regression for Codex bug #2: commit_batch only wrote redb/mem_index,
+        not TocEntries. Sealed .vol had empty TOC → broke crash recovery
+        and parse_volume_toc() used by tiering.
+        """
+        from nexus.services.volume_tiering import parse_volume_toc
+
+        volumes_dir = tmp_path / "volumes"
+        engine = VolumeEngine(str(volumes_dir), target_volume_size=TARGET_SIZE)
+
+        items = [make_data(i, 200) for i in range(5)]
+        sizes = [len(d) for _, d in items]
+        res_id = engine.preallocate(sizes)
+        for i, (h, d) in enumerate(items):
+            engine.write_slot(res_id, i, h, d)
+        engine.commit_batch(res_id)
+
+        # Seal the active volume
+        engine.seal_active()
+        engine.close()
+
+        # Parse TOC from sealed .vol — batch entries must be present
+        vol_files = list(volumes_dir.glob("*.vol"))
+        assert len(vol_files) >= 1, "Expected sealed .vol file"
+
+        all_toc_hashes: set[str] = set()
+        for vf in vol_files:
+            toc = parse_volume_toc(vf)
+            all_toc_hashes.update(toc.keys())
+
+        for h, _ in items:
+            assert h in all_toc_hashes, (
+                f"Hash {h[:16]}... missing from sealed volume TOC. "
+                "commit_batch must add TocEntries so tiering/recovery work."
+            )
+
+    def test_3step_api_crash_recovery_from_toc(self, tmp_path):
+        """commit_batch entries must be recoverable from TOC after index loss.
+
+        Simulates losing the redb index — recovery should rebuild from
+        sealed volume TOCs, which must include batch-written entries.
+        """
+        import gc
+        import os
+
+        volumes_dir = tmp_path / "volumes"
+        engine = VolumeEngine(str(volumes_dir), target_volume_size=TARGET_SIZE)
+
+        items = [make_data(i, 300) for i in range(8)]
+        sizes = [len(d) for _, d in items]
+        res_id = engine.preallocate(sizes)
+        for i, (h, d) in enumerate(items):
+            engine.write_slot(res_id, i, h, d)
+        engine.commit_batch(res_id)
+        engine.seal_active()
+        engine.close()
+        del engine
+        gc.collect()
+
+        # Delete redb index to force TOC-based recovery
+        redb_path = volumes_dir / "volume_index.redb"
+        if redb_path.exists():
+            os.remove(redb_path)
+        # Also delete snapshot
+        snap_path = volumes_dir / "mem_index.bin"
+        if snap_path.exists():
+            os.remove(snap_path)
+
+        # Reopen — should recover from .vol TOCs
+        engine2 = VolumeEngine(str(volumes_dir), target_volume_size=TARGET_SIZE)
+
+        for h, d in items:
+            assert engine2.exists(h), (
+                f"Hash {h[:16]}... not recovered from TOC after index loss. "
+                "commit_batch TocEntries must be in sealed volumes for recovery."
+            )
+            assert bytes(engine2.read_content(h)) == d
+        engine2.close()

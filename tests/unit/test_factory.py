@@ -180,8 +180,6 @@ class TestBootSystemServices:
             "scheduler_service",
             # Issue #3193: shared notification signal
             "event_signal",
-            # Kernel-knows (event_bus stored on NexusFS, not in services)
-            "_event_bus",
         }
         assert expected_keys == set(result.keys())
 

@@ -1,45 +1,87 @@
-"""EventBus factory — create event bus instances by backend name."""
+"""EventBus factory — self-contained lib that resolves its own dependencies.
+
+EventBus is a lib, not a service. Callers create it with ``create_event_bus()``
+which resolves backend type, connection URLs, and optional stores internally.
+No external dependency injection needed.
+"""
 
 import logging
 from typing import Any
 
 from nexus.services.event_bus.base import EventBusBase
-from nexus.services.event_bus.protocol import PubSubClientProtocol
-from nexus.services.event_bus.redis import RedisEventBus
 
 logger = logging.getLogger(__name__)
 
 
+def _resolve_optional_stores(**overrides: Any) -> dict[str, Any]:
+    """Try to resolve optional stores (record_store, settings_store).
+
+    These are nice-to-haves for SSOT sync and checkpoint persistence.
+    EventBus works without them.
+    """
+    kwargs: dict[str, Any] = {}
+
+    # record_store — for startup_sync (PG SSOT)
+    if "record_store" in overrides:
+        kwargs["record_store"] = overrides["record_store"]
+
+    # settings_store — for checkpoint persistence
+    if "settings_store" in overrides:
+        kwargs["settings_store"] = overrides["settings_store"]
+
+    # node_id override
+    if "node_id" in overrides:
+        kwargs["node_id"] = overrides["node_id"]
+
+    return kwargs
+
+
 def create_event_bus(
-    backend: str = "redis",
-    redis_client: PubSubClientProtocol | None = None,
-    nats_url: str | None = None,
-    **kwargs: Any,
+    backend: str | None = None,
+    **overrides: Any,
 ) -> EventBusBase:
-    """Factory function to create an event bus instance.
+    """Create an event bus instance. Resolves dependencies internally.
+
+    Backend auto-detected from DistributedConfig (default: "redis").
+    Connection URLs resolved from config defaults and env helpers.
+    Optional stores (record_store, settings_store) resolved if available.
 
     Args:
-        backend: Backend type ("redis" or "nats")
-        redis_client: DragonflyClient for Redis backend
-        nats_url: NATS server URL for NATS backend
-        **kwargs: Additional backend-specific arguments (record_store, node_id, etc.)
+        backend: Override backend type ("redis" or "nats"). Auto-detected if None.
+        **overrides: Optional overrides (nats_url, url, record_store, settings_store, node_id).
 
     Returns:
-        EventBusBase implementation
+        EventBusBase implementation.
 
     Raises:
-        ValueError: If backend is not supported or required arguments are missing
+        ValueError: If no backend URL is available.
     """
-    if backend == "nats":
-        if nats_url is None:
-            raise ValueError("nats_url is required for NATS backend")
+    from nexus.contracts.constants import DEFAULT_NATS_URL
+    from nexus.core.config import DistributedConfig
+
+    _backend = backend or DistributedConfig().event_bus_backend
+    _optional = _resolve_optional_stores(**overrides)
+
+    if _backend == "nats":
         from nexus.services.event_bus.nats import NatsEventBus
 
-        return NatsEventBus(nats_url=nats_url, **kwargs)
+        nats_url = overrides.get("nats_url") or DEFAULT_NATS_URL
+        logger.info("EventBus: creating NatsEventBus (url=%s)", nats_url)
+        return NatsEventBus(nats_url=nats_url, **_optional)
 
-    if backend == "redis":
-        if redis_client is None:
-            raise ValueError("redis_client is required for Redis backend")
-        return RedisEventBus(redis_client, **kwargs)
+    # Redis/Dragonfly
+    from nexus.lib.env import get_dragonfly_url, get_redis_url
 
-    raise ValueError(f"Unsupported event bus backend: {backend}")
+    url = overrides.get("url") or get_redis_url() or get_dragonfly_url()
+    if url:
+        from nexus.cache.dragonfly import DragonflyClient
+        from nexus.services.event_bus.redis import RedisEventBus
+
+        client = DragonflyClient(url=url)
+        logger.info("EventBus: creating RedisEventBus (url=%s)", url)
+        return RedisEventBus(client, **_optional)
+
+    raise ValueError(
+        "No event bus backend available. "
+        "Set NATS_URL or REDIS_URL/DRAGONFLY_URL, or configure event_bus_backend='nats'."
+    )

@@ -1681,6 +1681,12 @@ class PlaygroundApp(App[None]):
                 event.prevent_default()
                 return
 
+        if event.key in {"question_mark", "?"} and event.character == "?":
+            focused = self.focused
+            if not isinstance(focused, Input):
+                self.push_screen(HelpOverlay())
+                event.prevent_default()
+                return
         if event.key == ":":
             focused = self.focused
             if not isinstance(focused, Input):

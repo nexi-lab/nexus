@@ -362,15 +362,14 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
-| **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is `MountProtocol` (service) |
-| **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path read/write lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Callback mechanism implementing §2.4: three VFS phases (PRE-DISPATCH / INTERCEPT / OBSERVE) + driver lifecycle hooks (MOUNT / UNMOUNT). Rust `PathTrie` (O(depth) resolver routing) + Rust `HookRegistry` (cached sync/async classification). Per-op callback lists; empty = zero overhead |
-| **PipeManager + RingBuffer** | `core.pipe_manager` + `core.pipe` | `pipe(2)` + `fs/pipe.c` | VFS named pipes — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap ring buffer. Details in §4.2 |
-| **StreamManager + StreamBuffer** | `core.stream_manager` + `core.stream` | append-only log | VFS named streams — kernel-owned, created at `__init__`. Inode in MetastoreABC, data in heap linear buffer. Non-destructive offset-based reads, multi-reader fan-out. Details in §4.2 |
-| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). One-dimension model: PersistentService + duck-typed hook_spec() |
-| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification. Orthogonal to ServiceRegistry (drivers vs services) |
-| **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | Kernel file change notification + immutable mutation records. FileWatcher: kernel-owned local OBSERVE waiters + kernel-knows `RemoteWatchProtocol`. FileEvent: frozen dataclass. Details in §4.3 |
-| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory lock manager. Kernel-owned local (LocalLockManager via VFSSemaphore) + kernel-knows remote (RaftLockManager via federation `_upgrade_lock_manager()`). Exposed via `sys_lock`/`sys_unlock` syscalls. Details in §4.5 |
+| **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is service-layer |
+| **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
+| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock`. Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
+| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust PathTrie + HookRegistry. Empty = zero overhead |
+| **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (RingBuffer). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
+| **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
+| **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |
+| **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification |
 
 ### 4.1 VFSLockManager — Per-Path RW Lock
 

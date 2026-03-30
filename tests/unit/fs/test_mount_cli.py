@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
@@ -27,6 +27,14 @@ def _make_mock_mount(mounts: list[str]) -> AsyncMock:
 def _env_no_auto_json() -> dict[str, str]:
     """Disable auto-JSON so CliRunner (non-TTY) gets human output."""
     return {"NEXUS_NO_AUTO_JSON": "1"}
+
+
+def _mock_create_backend(**kwargs):
+    """Return a mock create_backend that produces a stub backend."""
+    backend = MagicMock()
+    backend.name = "test_backend"
+    backend.close = MagicMock()
+    return patch("nexus.fs._backend_factory.create_backend", return_value=backend, **kwargs)
 
 
 def test_mount_single_uri() -> None:
@@ -95,3 +103,93 @@ def test_mount_error_exits_nonzero() -> None:
 
     assert result.exit_code == 1
     assert "Invalid URI" in result.output
+
+
+# =========================================================================
+# Persistence: --at is persisted and repeated mounts merge
+# =========================================================================
+
+
+class TestMountPersistence:
+    """Verify mounts.json persists --at and merges across invocations.
+
+    These tests mock at the create_backend level so that mount() runs its
+    real persistence logic (save_persisted_mounts).
+    """
+
+    def test_at_persisted_to_mounts_json(self, tmp_path, monkeypatch) -> None:
+        """--at value must appear in mounts.json so later commands can restore it."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        with _mock_create_backend():
+            runner = CliRunner(env=_env_no_auto_json())
+            result = runner.invoke(main, ["mount", "local:///tmp/data", "--at", "/custom"])
+
+        assert result.exit_code == 0
+
+        mounts_data = json.loads((tmp_path / "mounts.json").read_text())
+        assert len(mounts_data) == 1
+        assert mounts_data[0]["uri"] == "local:///tmp/data"
+        assert mounts_data[0]["at"] == "/custom"
+
+    def test_repeated_mounts_merge(self, tmp_path, monkeypatch) -> None:
+        """Second mount invocation must add to existing entries, not overwrite."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        with _mock_create_backend():
+            runner = CliRunner(env=_env_no_auto_json())
+            runner.invoke(main, ["mount", "local:///tmp/a"])
+            runner.invoke(main, ["mount", "local:///tmp/b"])
+
+        mounts_data = json.loads((tmp_path / "mounts.json").read_text())
+        uris = [e["uri"] for e in mounts_data]
+        assert "local:///tmp/a" in uris
+        assert "local:///tmp/b" in uris
+        assert len(mounts_data) == 2
+
+    def test_repeated_mount_same_uri_deduplicates(self, tmp_path, monkeypatch) -> None:
+        """Mounting the same URI twice should not create a duplicate entry."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        with _mock_create_backend():
+            runner = CliRunner(env=_env_no_auto_json())
+            runner.invoke(main, ["mount", "local:///tmp/data"])
+            runner.invoke(main, ["mount", "local:///tmp/data"])
+
+        mounts_data = json.loads((tmp_path / "mounts.json").read_text())
+        assert len(mounts_data) == 1
+
+    def test_at_restored_by_cp(self, tmp_path, monkeypatch) -> None:
+        """cp should restore --at from persisted mounts.json."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        # Persist a single mount with at
+        (tmp_path / "mounts.json").write_text(
+            json.dumps([{"uri": "s3://my-bucket", "at": "/data"}])
+        )
+
+        mock_mount = _make_mock_mount(["/data"])
+        mock_mount.return_value.copy = AsyncMock(return_value={"size": 10})
+
+        with patch("nexus.fs.mount", mock_mount):
+            runner = CliRunner(env=_env_no_auto_json())
+            runner.invoke(main, ["cp", "/data/a.txt", "/data/b.txt"])
+
+        # mount() should be called with at="/data"
+        mock_mount.assert_awaited_once_with("s3://my-bucket", at="/data")
+
+    def test_backward_compat_legacy_format(self, tmp_path, monkeypatch) -> None:
+        """Legacy mounts.json with plain URI strings should still work."""
+        monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+        # Legacy format: flat list of strings
+        (tmp_path / "mounts.json").write_text(json.dumps(["s3://old-bucket"]))
+
+        mock_mount = _make_mock_mount(["/s3/old-bucket"])
+        mock_mount.return_value.copy = AsyncMock(return_value={"size": 5})
+
+        with patch("nexus.fs.mount", mock_mount):
+            runner = CliRunner(env=_env_no_auto_json())
+            runner.invoke(main, ["cp", "/s3/old-bucket/a", "/s3/old-bucket/b"])
+
+        mock_mount.assert_awaited_once_with("s3://old-bucket", at=None)

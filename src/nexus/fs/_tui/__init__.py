@@ -395,18 +395,14 @@ class PlaygroundApp(App[None]):
                 return None
 
         # No URIs — auto-discover from mounts.json in state dir
-        import json
+        from nexus.fs._paths import load_persisted_mounts
 
-        from nexus.fs._paths import mounts_file as _mounts_file_fn
-
-        mf = _mounts_file_fn()
-        if mf.exists():
+        entries = load_persisted_mounts()
+        if entries:
             try:
-                with open(mf) as f:
-                    saved_uris = json.load(f)
-                if saved_uris:
-                    self._restored_mounts = True
-                    return await self._build_filesystem(tuple(saved_uris))
+                saved_uris = tuple(e["uri"] for e in entries)
+                self._restored_mounts = True
+                return await self._build_filesystem(saved_uris)
             except Exception:
                 pass  # Fall through to empty state
 
@@ -1072,11 +1068,10 @@ class PlaygroundApp(App[None]):
 
     def _persist_mounts(self) -> None:
         """Persist current mount URIs for the next playground launch."""
-        from nexus.fs._paths import mounts_file as _mounts_file_fn
+        from nexus.fs._paths import save_persisted_mounts
 
-        mf = _mounts_file_fn()
-        with open(mf, "w") as f:
-            json.dump(list(self._uris), f)
+        entries = [{"uri": uri, "at": None} for uri in self._uris]
+        save_persisted_mounts(entries, merge=False)
 
     def _selected_mount_point(self) -> str | None:
         """Return the currently selected mount point from the mount panel."""

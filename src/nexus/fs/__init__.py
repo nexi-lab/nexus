@@ -103,7 +103,7 @@ async def mount(*uris: str, at: str | None = None) -> Any:
     # Create metastore
     from nexus.fs._backend_factory import create_backend
     from nexus.fs._facade import SlimNexusFS
-    from nexus.fs._paths import metadata_db, mounts_file
+    from nexus.fs._paths import metadata_db
     from nexus.fs._sqlite_meta import SQLiteMetastore
 
     metastore = SQLiteMetastore(str(metadata_db()))
@@ -145,23 +145,13 @@ async def mount(*uris: str, at: str | None = None) -> Any:
             ),
         )
 
-        # Persist mount URIs so playground/fsspec can auto-discover them.
-        # Atomic write (temp file + os.replace) to avoid partial JSON if
-        # the process crashes mid-write.
+        # Persist mount entries so playground/fsspec/cp can auto-discover them.
+        # Merges with existing entries so repeated `mount` calls accumulate.
         try:
-            import os
-            import tempfile
+            from nexus.fs._paths import save_persisted_mounts
 
-            mf = mounts_file()
-            fd, tmp = tempfile.mkstemp(dir=mf.parent, suffix=".tmp")
-            try:
-                with open(fd, "w") as f:
-                    json.dump(list(uris), f)
-                    f.flush()
-                os.replace(tmp, mf)
-            except BaseException:
-                os.unlink(tmp)
-                raise
+            new_entries = [{"uri": uri, "at": at if i == 0 else None} for i, uri in enumerate(uris)]
+            save_persisted_mounts(new_entries)
         except OSError as exc:
             logger.warning(
                 "Could not write mounts.json (%s). "

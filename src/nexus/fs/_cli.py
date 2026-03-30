@@ -228,29 +228,37 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        import json as json_mod
-
         from nexus.fs import mount
-        from nexus.fs._paths import mounts_file
+        from nexus.fs._paths import load_persisted_mounts
 
-        # Load previously persisted mount URIs from mounts.json
-        # (written by mount() on every invocation).
-        persisted: list[str] = []
-        try:
-            with open(mounts_file()) as f:
-                persisted = json_mod.load(f)
-        except (OSError, json_mod.JSONDecodeError):
-            pass
+        # Load previously persisted mount entries from mounts.json.
+        persisted = load_persisted_mounts()
 
-        # Merge persisted + any extra URIs the user passed explicitly.
-        all_uris = list(dict.fromkeys(persisted + list(mount_uris)))
-        if not all_uris:
+        # Build mount() args: persisted entries (with at) + extra CLI URIs.
+        # Put the entry with at= first since mount() only applies at to
+        # the first URI, and only when there is exactly one URI.
+        with_at = [e for e in persisted if e["at"]]
+        without_at = [e for e in persisted if not e["at"]]
+        ordered = with_at + without_at
+
+        mount_args: list[str] = []
+        for entry in ordered:
+            if entry["uri"] not in mount_args:
+                mount_args.append(entry["uri"])
+        for uri in mount_uris:
+            if uri not in mount_args:
+                mount_args.append(uri)
+
+        if not mount_args:
             raise click.UsageError(
                 "No mounts found. Run 'nexus-fs mount <uri>' first or "
                 "pass backend URIs as trailing arguments:\n"
                 "  nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
             )
-        fs = await mount(*all_uris)
+
+        # at= only valid with a single URI; honour it when possible.
+        mount_at = with_at[0]["at"] if len(with_at) == 1 and len(mount_args) == 1 else None
+        fs = await mount(*mount_args, at=mount_at)
 
         result = await fs.copy(source, dest)
         return {"source": source, "dest": dest, **result}

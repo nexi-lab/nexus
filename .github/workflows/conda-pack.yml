@@ -100,9 +100,11 @@ jobs:
           Invoke-WebRequest "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip" -OutFile $zipPath
           Expand-Archive -Path $zipPath -DestinationPath $protocDir -Force
           $protocExe = Join-Path $protocDir "bin/protoc.exe"
+          $protocBin = Split-Path $protocExe
           echo "NEXUS_PROTOC=$protocExe" >> $env:GITHUB_ENV
-          echo (Split-Path $protocExe) >> $env:GITHUB_PATH
-          protoc --version
+          echo $protocBin >> $env:GITHUB_PATH
+          $env:PATH = "$protocBin;$env:PATH"
+          & $protocExe --version
 
       - name: Install protoc (macOS)
         if: runner.os == 'macOS'

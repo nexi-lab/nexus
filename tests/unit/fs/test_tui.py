@@ -361,6 +361,36 @@ class TestPlaygroundApp:
             assert not app.command_visible
 
     @pytest.mark.asyncio
+    async def test_command_mode_blocks_other_bindings(self):
+        """Bound keys like 'b' should type into command buffer, not trigger actions."""
+        app = PlaygroundApp(uris=())
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.3)
+            # Enter command mode
+            app.action_toggle_command()
+            assert app.command_visible
+
+            # check_action should block non-command actions
+            assert app.check_action("go_back", ()) is False
+            assert app.check_action("request_quit", ()) is False
+            assert app.check_action("copy_path", ()) is False
+
+            # check_action should allow command actions
+            assert app.check_action("toggle_command", ()) is True
+            assert app.check_action("submit_command", ()) is True
+            assert app.check_action("command_backspace", ()) is True
+
+            # Press 'b' — should add to buffer, not navigate back
+            await pilot.press("b")
+            assert "b" in app.command_buffer
+
+            # Exit command mode — actions should be re-enabled
+            app.action_toggle_command()
+            assert not app.command_visible
+            assert app.check_action("go_back", ()) is True
+
+    @pytest.mark.asyncio
     async def test_mount_uri_adds_local_mount(self, tmp_path):
         """The command-path mount helper adds a local mount and rebuilds the UI."""
         app = PlaygroundApp(uris=())

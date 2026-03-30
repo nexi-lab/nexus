@@ -152,6 +152,12 @@ def _derive_project_env(
         # port, so the server must not stay bound to container loopback.
         env["NEXUS_GRPC_BIND_ALL"] = "true"
 
+    # Enable zoekt integration when the search compose profile is active.
+    # The compose template defaults ZOEKT_ENABLED to false; override here
+    # so the nexus container connects to the zoekt sidecar container.
+    if "search" in config.get("compose_profiles", []):
+        env["ZOEKT_ENABLED"] = "true"
+
     return env
 
 

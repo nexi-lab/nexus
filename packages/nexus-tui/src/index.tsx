@@ -108,6 +108,23 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // Restore terminal state in case OpenTUI already enabled raw mode / alternate screen.
+  // These sequences are no-ops if the terminal was never switched, so always safe to write.
+  if (process.stdin.setRawMode) {
+    process.stdin.setRawMode(false);
+  }
+  process.stdin.pause();
+
+  const fs = require("fs");
+  const reset = [
+    "\x1b[?1003l", // disable all-motion mouse tracking
+    "\x1b[?1006l", // disable SGR mouse mode
+    "\x1b[?1000l", // disable normal mouse tracking
+    "\x1b[?1049l", // switch back to main screen
+    "\x1b[?25h",   // show cursor
+  ].join("");
+  fs.writeSync(1, reset);
+
   console.error("Fatal error:", err);
   process.exit(1);
 });

@@ -390,6 +390,22 @@ class TestDeriveProjectEnv:
         env = _derive_project_env(config)
         assert "ZOEKT_ENABLED" not in env
 
+    def test_validated_profiles_override_config(self, tmp_path: Path) -> None:
+        """Explicit profiles param wins over config compose_profiles.
+
+        When a custom compose file strips the search profile during
+        validation, ZOEKT_ENABLED must not be set even though the
+        raw config still lists search.
+        """
+        config = {
+            "data_dir": str(tmp_path / "data"),
+            "ports": {},
+            "compose_profiles": ["core", "cache", "search"],
+        }
+        # Simulate compose-file validation stripping search
+        env = _derive_project_env(config, profiles=["core", "cache"])
+        assert "ZOEKT_ENABLED" not in env
+
 
 class TestDockerBuildArgs:
     def test_api_embeddings_enabled_sets_build_arg(self) -> None:

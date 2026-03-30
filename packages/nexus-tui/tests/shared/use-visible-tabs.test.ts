@@ -470,8 +470,13 @@ describe("migrated TAB_ORDER panels", () => {
   });
 
   describe("files (mixed: explorer always visible, shareLinks/uploads gated)", () => {
-    it("shows all tabs under full profile", () => {
+    it("shows only explorer under full profile (share_link/uploads not in full)", () => {
       const result = filterTabs(FILES_TABS, bricks, true);
+      expect(result.map((t) => t.id)).toEqual(["explorer"]);
+    });
+
+    it("shows all tabs when share_link and uploads bricks enabled", () => {
+      const result = filterTabs(FILES_TABS, [...bricks, "share_link", "uploads"], true);
       expect(result.map((t) => t.id)).toEqual(["explorer", "shareLinks", "uploads"]);
     });
 

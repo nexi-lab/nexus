@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.transport import Transport
@@ -62,12 +62,14 @@ class PathAddressingEngine(Backend):
         bucket_name: str = "",
         prefix: str = "",
         versioning_enabled: bool = False,
+        metastore: Any | None = None,
     ) -> None:
         self._transport = transport
         self._backend_name = backend_name or f"path-{transport.transport_name}"
         self.bucket_name = bucket_name
         self.prefix = prefix.rstrip("/")
         self.versioning_enabled = versioning_enabled
+        self._metastore = metastore
 
     @property
     def name(self) -> str:
@@ -136,6 +138,42 @@ class PathAddressingEngine(Backend):
                 pass
         return True  # Likely a version ID
 
+    # === Metadata Persistence (driver-owned, like ext4 inode update) ===
+
+    def _commit_metadata(
+        self, path: str, content_hash: str, size: int, context: "OperationContext"
+    ) -> None:
+        """Build and persist file metadata (PAS inode update, like ext4 write_iter)."""
+        from datetime import UTC, datetime
+
+        from nexus.contracts.metadata import FileMetadata
+
+        existing = getattr(context, "existing_metadata", None)
+        now = datetime.now(UTC)
+        zone_id = getattr(context, "zone_id", None) or "root"
+        owner_id = (
+            existing.owner_id
+            if existing and existing.owner_id
+            else getattr(context, "subject_id", None) or getattr(context, "user_id", None)
+        )
+
+        metadata = FileMetadata(
+            path=path,
+            backend_name=self.name,
+            physical_path=content_hash,
+            size=size,
+            etag=content_hash,
+            created_at=existing.created_at if existing else now,
+            modified_at=now,
+            version=(existing.version + 1) if existing else 1,
+            zone_id=zone_id,
+            owner_id=owner_id,
+        )
+
+        consistency = getattr(context, "consistency", "sc") if context else "sc"
+        if self._metastore is not None:
+            self._metastore.put(metadata, consistency=consistency)
+
     # === Content Operations (ObjectStoreABC) ===
 
     def write_content(
@@ -176,6 +214,12 @@ class PathAddressingEngine(Backend):
 
         # If versioning, store returns version_id; otherwise compute hash
         content_hash = result if result is not None else self._compute_hash(content)
+
+        # PAS metadata persistence (driver-owned, like ext4 inode update)
+        if self._metastore is not None and context is not None:
+            vpath = getattr(context, "virtual_path", None)
+            if vpath:
+                self._commit_metadata(vpath, content_hash, len(content), context)
 
         return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 

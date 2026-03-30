@@ -25,7 +25,7 @@ import { useUiStore } from "../../stores/ui-store.js";
 import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 const ALL_TABS: readonly TabDef<AgentTab>[] = [
@@ -206,7 +206,7 @@ export default function AgentsPanel(): React.ReactNode {
         if (agentId) setSelectedAgentId(agentId);
       }
     },
-    tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+    ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
     "shift+tab": () => toggleFocus("agents"),
     r: () => refreshCurrentView(),
     d: async () => {

@@ -29,7 +29,7 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings, subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
@@ -252,6 +252,7 @@ export default function AccessPanel(): React.ReactNode {
         setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
       }
     },
+    ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
     tab: () => {
       if (activeTab === "fraud") {
         setFraudFocus((f) => f === "scores" ? "constraints" : "scores");
@@ -259,7 +260,6 @@ export default function AccessPanel(): React.ReactNode {
       }
       subTabForward(visibleTabs, activeTab, setActiveTab);
     },
-    "shift+tab": () => subTabBackward(visibleTabs, activeTab, setActiveTab),
     return: () => {
       // Manifests: fetch detail to load tuple entries
       if (activeTab === "manifests" && client) {

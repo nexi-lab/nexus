@@ -12,7 +12,7 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
@@ -151,7 +151,7 @@ export default function WorkflowsPanel(): React.ReactNode {
           up: () => {
             setCurrentIndex(Math.max(currentIndex() - 1, 0));
           },
-          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           r: () => refreshCurrentView(),
           e: () => {
             if (activeTab !== "workflows" || !client) return;

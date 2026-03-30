@@ -59,6 +59,28 @@ export function subTabBackward<T extends string>(
 }
 
 // =============================================================================
+// Keyboard binding helper
+// =============================================================================
+
+/**
+ * Returns a keybinding object with `tab` (forward) and `shift+tab` (backward)
+ * entries that panels can spread into useKeyboard.
+ *
+ * Split-pane panels that need Shift+Tab for focus-toggle can override after
+ * spreading: `{ ...subTabCycleBindings(...), "shift+tab": () => toggleFocus("zones") }`
+ */
+export function subTabCycleBindings<T extends string>(
+  tabs: readonly { readonly id: T }[],
+  activeTab: T,
+  setActiveTab: (tab: T) => void,
+): Record<string, () => void> {
+  return {
+    tab: () => subTabForward(tabs, activeTab, setActiveTab),
+    "shift+tab": () => subTabBackward(tabs, activeTab, setActiveTab),
+  };
+}
+
+// =============================================================================
 // Tab fallback logic
 // =============================================================================
 

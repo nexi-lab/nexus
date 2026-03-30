@@ -48,7 +48,7 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
@@ -190,7 +190,7 @@ function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
 /** Tab cycling (shared across all modes). */
 function getTabCycleBindings(ctx: BindingContext): Record<string, () => void> {
   return {
-    tab: () => subTabForward(ctx.visibleTabs, ctx.activeTab, ctx.setActiveTab),
+    ...subTabCycleBindings(ctx.visibleTabs, ctx.activeTab, ctx.setActiveTab),
     "shift+tab": () => ctx.toggleFocus("files"),
   };
 }

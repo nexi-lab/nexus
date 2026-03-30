@@ -15,7 +15,7 @@ import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.j
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { ZoneList } from "./zone-list.js";
 import { BrickList } from "./brick-list.js";
@@ -328,7 +328,7 @@ export default function ZonesPanel(): React.ReactNode {
             up: () => {
               setCurrentNavIndex(Math.max(currentNavIndex() - 1, 0));
             },
-            tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+            ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
             "shift+tab": () => toggleFocus("zones"),
             // n: Register workspace or mount MCP server
             n: () => {

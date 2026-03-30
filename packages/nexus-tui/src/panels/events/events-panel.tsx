@@ -33,7 +33,7 @@ import { EmptyState } from "../../shared/components/empty-state.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter" | "replay_filter";
@@ -354,7 +354,7 @@ export default function EventsPanel(): React.ReactNode {
               setConnectorDetailView(false);
             }
           },
-          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           c: () => clearEvents(),
           r: () => refresh(),
           f: () => {

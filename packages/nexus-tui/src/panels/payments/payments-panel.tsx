@@ -14,7 +14,7 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
@@ -272,7 +272,7 @@ export default function PaymentsPanel(): React.ReactNode {
               setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
             }
           },
-          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           t: () => {
             setShowTransfer(true);
           },

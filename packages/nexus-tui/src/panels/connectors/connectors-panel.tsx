@@ -20,7 +20,7 @@ import { WriteTab } from "./write-tab.js";
 import { statusColor } from "../../shared/theme.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabForward, subTabBackward } from "../../shared/components/sub-tab-bar-utils.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 
 // =============================================================================
@@ -53,8 +53,7 @@ export default function ConnectorsPanel(): React.ReactNode {
     overlayActive
       ? {}
       : {
-          tab: () => subTabForward(visibleTabs, activeTab, setActiveTab),
-          "shift+tab": () => subTabBackward(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
         },
   );
 

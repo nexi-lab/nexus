@@ -11,6 +11,7 @@ import { describe, it, expect } from "bun:test";
 import {
   subTabForward,
   subTabBackward,
+  subTabCycleBindings,
   tabFallback,
 } from "../../src/shared/components/sub-tab-bar-utils.js";
 
@@ -108,6 +109,44 @@ describe("subTabBackward", () => {
     let active: TestTab = "gamma";
     subTabBackward(TABS, active, (t) => { active = t; });
     expect(active).toBe("beta");
+  });
+});
+
+// =============================================================================
+// subTabCycleBindings
+// =============================================================================
+
+describe("subTabCycleBindings", () => {
+  it("returns tab and shift+tab bindings", () => {
+    const bindings = subTabCycleBindings(TABS, "alpha", () => {});
+    expect(bindings["tab"]).toBeDefined();
+    expect(bindings["shift+tab"]).toBeDefined();
+  });
+
+  it("tab binding cycles forward", () => {
+    let active: TestTab = "alpha";
+    const bindings = subTabCycleBindings(TABS, active, (t) => { active = t; });
+    bindings["tab"]!();
+    expect(active).toBe("beta");
+  });
+
+  it("shift+tab binding cycles backward", () => {
+    let active: TestTab = "beta";
+    const bindings = subTabCycleBindings(TABS, active, (t) => { active = t; });
+    bindings["shift+tab"]!();
+    expect(active).toBe("alpha");
+  });
+
+  it("can be spread and overridden for split-pane panels", () => {
+    let active: TestTab = "alpha";
+    let focusToggled = false;
+    const bindings = {
+      ...subTabCycleBindings(TABS, active, (t) => { active = t; }),
+      "shift+tab": () => { focusToggled = true; },
+    };
+    bindings["shift+tab"]!();
+    expect(focusToggled).toBe(true);
+    expect(active).toBe("alpha"); // tab cycling was overridden
   });
 });
 

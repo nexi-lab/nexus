@@ -19,6 +19,7 @@ See: core/pipe.py for RingBuffer, federation-memo.md §7j
 
 import asyncio
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
@@ -27,6 +28,7 @@ from nexus.core.pipe import (
     PipeClosedError,
     PipeEmptyError,
     PipeError,
+    PipeExistsError,
     PipeFullError,
     PipeNotFoundError,
     RingBuffer,
@@ -43,6 +45,7 @@ __all__ = [
     "PipeManager",
     "PipeBackend",
     "PipeError",
+    "PipeExistsError",
     "PipeFullError",
     "PipeEmptyError",
     "PipeClosedError",
@@ -77,11 +80,57 @@ class PipeManager:
         self._channel_pool = channel_pool
         self._buffers: dict[str, PipeBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # Backpressure counters — track blocking events on the MPMC async path.
+        # Only incremented in pipe_write/pipe_read (not the lock-free nowait path).
+        self._write_blocks: int = 0
+        self._read_blocks: int = 0
+        self._total_write_wait_ns: int = 0
+        self._total_read_wait_ns: int = 0
 
     @property
     def self_address(self) -> str | None:
         """This node's advertise address, or None for single-node mode."""
         return self._self_address
+
+    def _register_pipe(
+        self,
+        path: str,
+        backend: PipeBackend,
+        *,
+        size: int = 0,
+        owner_id: str | None = None,
+        zone_id: str = ROOT_ZONE_ID,
+    ) -> None:
+        """Validate uniqueness, create DT_PIPE inode, and register buffer.
+
+        Shared by ``create()`` and ``create_from_backend()``.
+
+        Raises:
+            PipeExistsError: Pipe or path already exists.
+        """
+        from nexus.contracts.metadata import DT_PIPE, FileMetadata
+
+        if path in self._buffers:
+            raise PipeExistsError(f"pipe already exists: {path}")
+
+        existing = self._metastore.get(path)
+        if existing is not None:
+            raise PipeExistsError(f"path already exists: {path}")
+
+        # Embed origin address so remote nodes can proxy pipe I/O.
+        # "pipe" (no origin) = single-node mode, "pipe@host:port" = federated.
+        backend_name = f"pipe@{self._self_address}" if self._self_address else "pipe"
+        metadata = FileMetadata(
+            path=path,
+            backend_name=backend_name,
+            physical_path="mem://",
+            size=size,
+            entry_type=DT_PIPE,
+            zone_id=zone_id,
+            owner_id=owner_id,
+        )
+        self._metastore.put(metadata)
+        self._buffers[path] = backend
 
     def create(
         self,
@@ -104,37 +153,17 @@ class PipeManager:
             The created RingBuffer.
 
         Raises:
-            PipeError: Pipe already exists at this path.
+            PipeExistsError: Pipe already exists at this path.
         """
-        from nexus.contracts.metadata import DT_PIPE, FileMetadata
-
+        # Validate before allocating buffer — avoids unnecessary RingBuffer
+        # construction on duplicate paths, and prevents ValueError from
+        # RingBuffer(capacity=0) masking PipeExistsError in ensure().
         if path in self._buffers:
-            raise PipeError(f"pipe already exists: {path}")
-
-        # Check if inode already exists in metastore
-        existing = self._metastore.get(path)
-        if existing is not None:
-            raise PipeError(f"path already exists: {path}")
-
-        # Create DT_PIPE inode in MetastoreABC.
-        # Embed origin address so remote nodes can proxy pipe I/O.
-        # "pipe" (no origin) = single-node mode, "pipe@host:port" = federated.
-        pipe_backend = f"pipe@{self._self_address}" if self._self_address else "pipe"
-        metadata = FileMetadata(
-            path=path,
-            backend_name=pipe_backend,
-            physical_path="mem://",
-            size=capacity,
-            entry_type=DT_PIPE,
-            zone_id=zone_id,
-            owner_id=owner_id,
-        )
-        self._metastore.put(metadata)
-
-        # Create in-memory ring buffer
+            raise PipeExistsError(f"pipe already exists: {path}")
+        if self._metastore.get(path) is not None:
+            raise PipeExistsError(f"path already exists: {path}")
         buf = RingBuffer(capacity=capacity)
-        self._buffers[path] = buf
-
+        self._register_pipe(path, buf, size=capacity, owner_id=owner_id, zone_id=zone_id)
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
         return buf
 
@@ -165,7 +194,7 @@ class PipeManager:
                 owner_id=owner_id,
                 zone_id=zone_id,
             )
-        except PipeError:
+        except PipeExistsError:
             return self.open(path, capacity=capacity)
 
     def open(self, path: str, *, capacity: int = 65_536) -> PipeBackend:
@@ -249,30 +278,9 @@ class PipeManager:
             The registered PipeBackend (same object passed in).
 
         Raises:
-            PipeError: Pipe already exists at this path.
+            PipeExistsError: Pipe already exists at this path.
         """
-        from nexus.contracts.metadata import DT_PIPE, FileMetadata
-
-        if path in self._buffers:
-            raise PipeError(f"pipe already exists: {path}")
-
-        existing = self._metastore.get(path)
-        if existing is not None:
-            raise PipeError(f"path already exists: {path}")
-
-        pipe_backend_name = f"pipe@{self._self_address}" if self._self_address else "pipe"
-        metadata = FileMetadata(
-            path=path,
-            backend_name=pipe_backend_name,
-            physical_path="mem://",
-            size=0,
-            entry_type=DT_PIPE,
-            zone_id=zone_id,
-            owner_id=owner_id,
-        )
-        self._metastore.put(metadata)
-
-        self._buffers[path] = backend
+        self._register_pipe(path, backend, owner_id=owner_id, zone_id=zone_id)
         logger.debug("pipe created (custom backend): %s", path)
         return backend
 
@@ -363,7 +371,10 @@ class PipeManager:
                     if not blocking:
                         raise
             # Full and blocking: wait for space without holding lock
+            self._write_blocks += 1
+            t0 = time.perf_counter_ns()
             await buf.wait_writable()
+            self._total_write_wait_ns += time.perf_counter_ns() - t0
 
     async def pipe_read(self, path: str, *, blocking: bool = True) -> bytes:
         """Read from a named pipe. MPMC-safe (per-pipe asyncio.Lock).
@@ -381,7 +392,10 @@ class PipeManager:
                     if not blocking:
                         raise
             # Empty and blocking: wait for data without holding lock
+            self._read_blocks += 1
+            t0 = time.perf_counter_ns()
             await buf.wait_readable()
+            self._total_read_wait_ns += time.perf_counter_ns() - t0
 
     def pipe_write_nowait(self, path: str, data: bytes) -> int:
         """Synchronous non-blocking write to a named pipe.
@@ -418,6 +432,20 @@ class PipeManager:
     def list_pipes(self) -> dict[str, dict]:
         """List all active pipes with their stats."""
         return {path: buf.stats for path, buf in self._buffers.items()}
+
+    @property
+    def backpressure_stats(self) -> dict[str, int]:
+        """Aggregate backpressure metrics for the MPMC async path.
+
+        Tracks how often and how long pipe_write/pipe_read block waiting
+        for space or data. Not incremented by the lock-free nowait path.
+        """
+        return {
+            "write_blocks": self._write_blocks,
+            "read_blocks": self._read_blocks,
+            "total_write_wait_ns": self._total_write_wait_ns,
+            "total_read_wait_ns": self._total_read_wait_ns,
+        }
 
     # ------------------------------------------------------------------
     # Lifecycle

@@ -193,20 +193,6 @@ def _bench_resolve_write(nx, path: str, data: bytes) -> list[float]:
     return times
 
 
-def _bench_check_zone_writable(nx) -> list[float]:
-    """[3d] Isolated _check_zone_writable()."""
-    for _ in range(WARMUP):
-        nx._check_zone_writable(None)
-
-    times: list[float] = []
-    for _ in range(ITERATIONS):
-        t0 = time.perf_counter()
-        nx._check_zone_writable(None)
-        t1 = time.perf_counter()
-        times.append((t1 - t0) * 1_000_000)
-    return times
-
-
 def _bench_dict_in(pm, path: str) -> list[float]:
     """[3e] `path in pm._buffers` — proposed fast-path check."""
     buffers = pm._buffers
@@ -280,7 +266,6 @@ async def _run() -> dict:
         meta_get = _bench_metastore_get(metastore, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
-        zone_check = _bench_check_zone_writable(nx)
         dict_in = _bench_dict_in(pm, _BENCH_PIPE_PATH)
         fast_path = _bench_ideal_fast_path(pm, _BENCH_PIPE_PATH, payload)
         sys_write_opt = await _bench_sys_write(nx, payload)
@@ -295,7 +280,6 @@ async def _run() -> dict:
         "metastore_get": _stats(meta_get),
         "validate_path": _stats(validate),
         "resolve_write": _stats(resolve),
-        "check_zone_writable": _stats(zone_check),
         "dict_in": _stats(dict_in),
         "fast_path": _stats(fast_path),
         "sys_write_optimized": _stats(sys_write_opt),
@@ -326,13 +310,11 @@ def main() -> None:
     _print_stats("metastore.get(path)", "3a", results["metastore_get"])
     _print_stats("_validate_path()", "3b", results["validate_path"])
     _print_stats("_dispatch.resolve_write()", "3c", results["resolve_write"])
-    _print_stats("_check_zone_writable()", "3d", results["check_zone_writable"])
 
     component_sum = (
         results["metastore_get"]["mean_us"]
         + results["validate_path"]["mean_us"]
         + results["resolve_write"]["mean_us"]
-        + results["check_zone_writable"]["mean_us"]
     )
     print(f"\n  >>> Component sum: {_fmt(component_sum)}")
 

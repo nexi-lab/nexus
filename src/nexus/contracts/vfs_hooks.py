@@ -353,12 +353,10 @@ class VFSPathResolver(Protocol):
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None: ...
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
 
-    # Metadata routing (Linux inode_operations.setattr analogue)
-    # Optional — resolvers that don't handle metadata can omit these.
-    # KernelDispatch uses getattr() with fallback, so missing methods = no-op.
-    def try_get(self, path: str) -> Any | None: ...
-    def try_put(self, path: str, metadata: Any) -> int | None: ...
-    def try_list(self, prefix: str, recursive: bool = True, **kwargs: Any) -> list[Any] | None: ...
+    # Metadata routing (Linux inode_operations.setattr analogue).
+    # Optional — resolvers that handle metadata implement try_get/try_put/try_list.
+    # KernelDispatch uses getattr() with lambda fallback, so missing = no-op.
+    # NOT declared here to avoid mypy treating them as abstract.
 
 
 # ---------------------------------------------------------------------------

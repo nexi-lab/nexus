@@ -213,41 +213,35 @@ def _wait_replicated(
         time.sleep(0.5)
 
 
-def _wait_writable(
+def _wait_leader_elected(
     target: str,
-    path: str,
+    zone_id: str,
     api_key: str,
     *,
     timeout: float = 15,
 ) -> None:
-    """Poll until a write succeeds — indicates leader election is complete for that zone."""
+    """Poll ``federation_cluster_info`` until this node is leader for the zone."""
     deadline = time.time() + timeout
-    probe_path = f"{path}_probe_{uuid.uuid4().hex[:6]}.tmp"
-    last_err: str = ""
+    last: dict = {}
     while True:
         try:
-            w = _grpc_call(
+            r = _grpc_call(
                 target,
-                "write",
-                {"path": probe_path, "content": "probe"},
+                "federation_cluster_info",
+                {"zone_id": zone_id},
                 api_key=api_key,
                 timeout=5,
             )
-            if "error" not in w:
-                # Cleanup probe file (best-effort)
-                try:
-                    _grpc_call(target, "delete", {"path": probe_path}, api_key=api_key, timeout=2)
-                except Exception:
-                    pass
+            last = r
+            if "error" not in r and r.get("result", {}).get("is_leader"):
                 return
-            last_err = str(w)
-        except Exception as exc:
-            last_err = str(exc)
+        except Exception:
+            pass
         if time.time() >= deadline:
             pytest.fail(
-                f"Write to {path} not possible on {target} within {timeout}s (last: {last_err})"
+                f"Zone '{zone_id}' has no leader on {target} within {timeout}s (last: {last})"
             )
-        time.sleep(0.3)
+        time.sleep(0.2)
 
 
 def _wait_zone_ready(
@@ -922,10 +916,11 @@ class TestLeaderFailover:
                 assert "error" not in r, f"Failover read ({zone}) failed: {r}"
                 assert _decode_content(r) == content
 
-            # Wait for leader election to complete by probing writability.
-            # After node-1 stops, node-2 + witness form majority and elect node-2
-            # as leader. Witness auto-joins dynamic zones on first Raft message.
-            _wait_writable(grpc2, "/corp/eng/", api_key, timeout=15)
+            # Wait for leader election to complete.
+            # After node-1 stops, node-2 + witness form majority and elect
+            # node-2 as leader. Witness auto-joins dynamic zones on first
+            # Raft message. Poll federation_cluster_info for is_leader=true.
+            _wait_leader_elected(grpc2, "corp-eng", api_key, timeout=15)
 
             # Write new files on node-2 (now leader)
             new_files = []
@@ -939,11 +934,11 @@ class TestLeaderFailover:
         finally:
             # Restart node-1
             node1_container.start()
-            _wait_healthy([cluster["node1"]], timeout=60)
+            _wait_healthy([cluster["node1"]], timeout=30)
 
-        # Node-1 catches up: new files readable.
-        # Allow extra time — node-1 restarts from scratch, recreates zones,
-        # rejoins Raft, and receives log entries from node-2 leader.
+        # Node-1 catches up via Raft log replay from node-2 leader.
+        # 20s is generous — Raft catch-up should complete in < 5s.
+        # If this times out, it's a real Raft bug, not a timing issue.
         for path, _content in new_files:
             _wait_replicated(
                 grpc1,
@@ -951,7 +946,7 @@ class TestLeaderFailover:
                 path,
                 api_key,
                 msg=f"Post-failover file not caught up: {path}",
-                timeout=60,
+                timeout=20,
             )
 
         # Topology intact on both nodes

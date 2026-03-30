@@ -33,11 +33,13 @@ class FederationRPCService:
     @rpc_expose(admin_only=True, description="Get cluster info for a zone")
     def federation_cluster_info(self, zone_id: str) -> dict[str, Any]:
         store = self._zone_manager.get_store(zone_id)
+        is_leader = store.is_leader() if store is not None else False
         return {
             "zone_id": zone_id,
             "node_id": self._zone_manager.node_id,
             "links_count": self._zone_manager.get_links_count(zone_id),
             "has_store": store is not None,
+            "is_leader": is_leader,
         }
 
     @rpc_expose(admin_only=True, description="Create a new Raft zone")

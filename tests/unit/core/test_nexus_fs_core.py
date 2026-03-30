@@ -61,8 +61,8 @@ ALL_CORE_METHODS = {
 BULK_METHODS = {
     "read_bulk": {"params": ["paths", "context", "return_metadata", "skip_errors"], "async": False},
     "write_batch": {"params": ["files", "context"], "async": True},
-    "delete_bulk": {"params": ["paths", "recursive", "context"], "async": True},
-    "rename_bulk": {"params": ["renames", "context"], "async": True},
+    "delete_batch": {"params": ["paths", "recursive", "context"], "async": True},
+    "rename_batch": {"params": ["renames", "context"], "async": True},
     "stat_bulk": {"params": ["paths", "context", "skip_errors"], "async": False},
     "exists_batch": {"params": ["paths", "context"], "async": True},
     "metadata_batch": {"params": ["paths", "context"], "async": True},

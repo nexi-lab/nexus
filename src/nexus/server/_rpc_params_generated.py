@@ -23,7 +23,7 @@ __all__ = [
     "CancelSyncJobParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
-    "DeleteBulkParams",
+    "DeleteBatchParams",
     "DeleteConnectorParams",
     "DeleteSavedMountParams",
     "DeprovisionUserParams",
@@ -79,7 +79,7 @@ __all__ = [
     "RegisterAgentParams",
     "RegisterWorkspaceParams",
     "RemoveMountParams",
-    "RenameBulkParams",
+    "RenameBatchParams",
     "RevokeShareByIdParams",
     "RevokeShareLinkParams",
     "RevokeShareParams",
@@ -204,8 +204,8 @@ class DeleteAgentParams:
 
 
 @dataclass
-class DeleteBulkParams:
-    """Parameters for delete_bulk(): Delete multiple files or directories in a single operation."""
+class DeleteBatchParams:
+    """Parameters for delete_batch(): Delete multiple files or directories in a single operation."""
 
     paths: list[str]
     recursive: bool = False
@@ -762,8 +762,8 @@ class RemoveMountParams:
 
 
 @dataclass
-class RenameBulkParams:
-    """Parameters for rename_bulk(): Rename/move multiple files in a single operation."""
+class RenameBatchParams:
+    """Parameters for rename_batch(): Rename/move multiple files in a single operation."""
 
     renames: list[tuple[str, str]]
 
@@ -1110,7 +1110,7 @@ METHOD_PARAMS: dict[str, type] = {
     "cancel_sync_job": CancelSyncJobParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
-    "delete_bulk": DeleteBulkParams,
+    "delete_batch": DeleteBatchParams,
     "delete_connector": DeleteConnectorParams,
     "delete_saved_mount": DeleteSavedMountParams,
     "deprovision_user": DeprovisionUserParams,
@@ -1166,7 +1166,7 @@ METHOD_PARAMS: dict[str, type] = {
     "register_agent": RegisterAgentParams,
     "register_workspace": RegisterWorkspaceParams,
     "remove_mount": RemoveMountParams,
-    "rename_bulk": RenameBulkParams,
+    "rename_batch": RenameBatchParams,
     "revoke_share": RevokeShareParams,
     "revoke_share_by_id": RevokeShareByIdParams,
     "revoke_share_link": RevokeShareLinkParams,

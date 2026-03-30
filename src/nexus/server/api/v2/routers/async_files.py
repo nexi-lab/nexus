@@ -12,7 +12,7 @@ Provides file operations using NexusFS via asyncio.to_thread():
 - GET    /stream          - Stream file content
 - POST   /rename          - Rename/move file
 - POST   /copy            - Copy file
-- POST   /rename-bulk     - Bulk rename/move files
+- POST   /rename-batch     - Bulk rename/move files
 - POST   /copy-bulk       - Bulk copy files
 - GET    /glob            - Glob pattern search across files
 - GET    /grep            - Regex pattern search within files
@@ -303,7 +303,7 @@ class RenameOperation(BaseModel):
     destination: str = Field(..., description="Destination path to rename to")
 
 
-class RenameBulkRequest(BaseModel):
+class RenameBatchRequest(BaseModel):
     """Request model for bulk rename operations."""
 
     operations: list[RenameOperation] = Field(
@@ -320,7 +320,7 @@ class BulkRenameResult(BaseModel):
     error: str | None = None
 
 
-class RenameBulkResponse(BaseModel):
+class RenameBatchResponse(BaseModel):
     """Response model for bulk rename operations."""
 
     results: list[BulkRenameResult]
@@ -1241,11 +1241,11 @@ def create_async_files_router(
     # Bulk Rename Endpoint
     # =============================================================================
 
-    @router.post("/rename-bulk", response_model=RenameBulkResponse)
-    async def rename_bulk(
-        request: RenameBulkRequest,
+    @router.post("/rename-batch", response_model=RenameBatchResponse)
+    async def rename_batch(
+        request: RenameBatchRequest,
         context: Any = Depends(get_context),
-    ) -> RenameBulkResponse:
+    ) -> RenameBatchResponse:
         """
         Rename/move multiple files in a single request.
 
@@ -1255,7 +1255,7 @@ def create_async_files_router(
         try:
             fs = await _get_fs()
             renames = [(op.source, op.destination) for op in request.operations]
-            raw_results = await fs.rename_bulk(renames, context=context)
+            raw_results = await fs.rename_batch(renames, context=context)
 
             results: list[BulkRenameResult] = []
             for op in request.operations:
@@ -1269,7 +1269,7 @@ def create_async_files_router(
                     )
                 )
 
-            return RenameBulkResponse(results=results)
+            return RenameBatchResponse(results=results)
 
         except NexusPermissionError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e

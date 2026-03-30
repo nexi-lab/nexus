@@ -4384,7 +4384,7 @@ class NexusFS(  # type: ignore[misc]
         return results
 
     @rpc_expose(description="Delete multiple files/directories")
-    async def delete_bulk(
+    async def delete_batch(
         self,
         paths: list[str],
         recursive: bool = False,
@@ -4406,7 +4406,7 @@ class NexusFS(  # type: ignore[misc]
                 {"success": True} or {"success": False, "error": "error message"}
 
         Example:
-            >>> results = nx.delete_bulk(['/a.txt', '/b.txt', '/folder'])
+            >>> results = nx.delete_batch(['/a.txt', '/b.txt', '/folder'])
             >>> for path, result in results.items():
             ...     if result['success']:
             ...         print(f"Deleted {path}")
@@ -4515,7 +4515,7 @@ class NexusFS(  # type: ignore[misc]
             self.metadata.delete(path)
 
     @rpc_expose(description="Rename/move multiple files")
-    async def rename_bulk(
+    async def rename_batch(
         self,
         renames: list[tuple[str, str]],
         context: OperationContext | None = None,
@@ -4535,7 +4535,7 @@ class NexusFS(  # type: ignore[misc]
                 {"success": True, "new_path": "..."} or {"success": False, "error": "..."}
 
         Example:
-            >>> results = nx.rename_bulk([
+            >>> results = nx.rename_batch([
             ...     ('/old1.txt', '/new1.txt'),
             ...     ('/old2.txt', '/new2.txt'),
             ... ])

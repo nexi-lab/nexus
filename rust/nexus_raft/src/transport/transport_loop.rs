@@ -190,6 +190,19 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         }
     }
 
+    /// Take a point-in-time snapshot of the peer map (read lock, released immediately).
+    ///
+    /// Used by both `send_messages_fire_and_forget` and `replicate_ec_entries` to
+    /// get a consistent view of peers without holding the read lock across async work.
+    fn snapshot_peers(&self) -> HashMap<u64, NodeAddress> {
+        self.peers
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(id, addr)| (*id, addr.clone()))
+            .collect()
+    }
+
     /// Send Raft messages to peers concurrently using JoinSet.
     ///
     /// Each peer send gets its own task with an independent timeout.
@@ -205,13 +218,7 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     /// Failed sends log a warning and evict the client from the pool
     /// (reconnected on next attempt).
     fn send_messages_fire_and_forget(&self, messages: Vec<raft::eraftpb::Message>) {
-        let peers_snapshot: std::collections::HashMap<u64, NodeAddress> = self
-            .peers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(id, addr)| (*id, addr.clone()))
-            .collect();
+        let peers_snapshot = self.snapshot_peers();
 
         for msg in messages {
             let target_id = msg.to;
@@ -279,13 +286,8 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
         };
 
         // Get current peer snapshot (read lock, released immediately)
-        let peer_snapshot: Vec<(u64, NodeAddress)> = self
-            .peers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(id, addr)| (*id, addr.clone()))
-            .collect();
+        let peer_map = self.snapshot_peers();
+        let peer_snapshot: Vec<(u64, NodeAddress)> = peer_map.into_iter().collect();
 
         let total_voters = peer_snapshot.len() + 1; // peers + self
 

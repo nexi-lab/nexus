@@ -88,8 +88,11 @@ pub struct ZoneRaftRegistry {
     /// Shared TLS config — can be updated at runtime for plaintext→mTLS upgrade.
     /// All zones' client pools read from this on new connections.
     tls: Arc<RwLock<Option<TlsConfig>>>,
-    /// Serializes zone creation to prevent concurrent RedbStore opens.
-    create_lock: std::sync::Mutex<()>,
+    /// Per-zone creation guard: tracks zone_ids currently being set up.
+    /// Prevents two threads from concurrently opening the same RedbStore
+    /// ("Database already open") without a global mutex that would serialize
+    /// creation of *different* zones.
+    creating: DashMap<String, ()>,
 }
 
 impl ZoneRaftRegistry {
@@ -105,7 +108,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(None)),
-            create_lock: std::sync::Mutex::new(()),
+            creating: DashMap::new(),
         }
     }
 
@@ -117,7 +120,7 @@ impl ZoneRaftRegistry {
             base_path,
             node_id,
             tls: Arc::new(RwLock::new(tls)),
-            create_lock: std::sync::Mutex::new(()),
+            creating: DashMap::new(),
         }
     }
 
@@ -186,13 +189,57 @@ impl ZoneRaftRegistry {
         campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
-        // Serialize zone creation to prevent races between auto-join
-        // (step_message handler) and explicit create_zone (RPC handler).
-        // Without this, both could pass the zones.contains_key check,
-        // then one fails on RedbStore lock ("Database already open").
-        let _guard = self.create_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Fast path: zone already exists — no work needed.
+        if let Some(entry) = self.zones.get(zone_id) {
+            return Ok(entry.node.clone());
+        }
 
-        // Re-check under lock: zone may have been created by another thread
+        // Per-zone creation guard using DashMap::entry for atomic check-and-insert.
+        // Prevents two threads from concurrently opening the same RedbStore
+        // ("Database already open") without a global mutex that would serialize
+        // creation of *different* zones. No PoisonError — DashMap is lock-free.
+        // If another thread is already creating this zone, wait and return its result.
+        {
+            use dashmap::mapref::entry::Entry;
+            match self.creating.entry(zone_id.to_string()) {
+                Entry::Occupied(_occupied) => {
+                    // Drop the entry ref before sleeping so we don't hold the shard lock.
+                    drop(_occupied);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    return self
+                        .zones
+                        .get(zone_id)
+                        .map(|e| e.node.clone())
+                        .ok_or_else(|| {
+                            TransportError::Connection(format!(
+                                "Zone '{}' creation in progress by another thread",
+                                zone_id,
+                            ))
+                        });
+                }
+                Entry::Vacant(v) => {
+                    v.insert(());
+                }
+            }
+        }
+
+        // Ensure the per-zone guard is removed when we're done (success or failure).
+        struct CreatingGuard<'a> {
+            creating: &'a DashMap<String, ()>,
+            zone_id: String,
+        }
+        impl<'a> Drop for CreatingGuard<'a> {
+            fn drop(&mut self) {
+                self.creating.remove(&self.zone_id);
+            }
+        }
+        let _guard = CreatingGuard {
+            creating: &self.creating,
+            zone_id: zone_id.to_string(),
+        };
+
+        // Re-check: zone may have been created between the fast-path check
+        // and acquiring the per-zone guard.
         if let Some(entry) = self.zones.get(zone_id) {
             return Ok(entry.node.clone());
         }

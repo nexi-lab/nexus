@@ -301,6 +301,51 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
     }
 }
 
+/// Parse raw raft-rs message bytes, step into the given ZoneConsensus node,
+/// and return a StepMessageResponse.
+///
+/// Shared by both `ZoneTransportServiceImpl::step_message` (fullnode) and
+/// `WitnessServiceImpl::step_message` (witness) to avoid duplicated parsing
+/// and stepping logic.
+async fn parse_and_step_message<S: crate::raft::StateMachine + Send + Sync + 'static>(
+    node: &ZoneConsensus<S>,
+    message_bytes: &[u8],
+    zone_id: &str,
+    log_prefix: &str,
+) -> std::result::Result<Response<StepMessageResponse>, Status> {
+    let msg = match raft::eraftpb::Message::parse_from_bytes(message_bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok(Response::new(StepMessageResponse {
+                success: false,
+                error: Some(format!("Failed to deserialize raft message: {}", e)),
+            }));
+        }
+    };
+
+    tracing::trace!(
+        "{} StepMessage [zone={}]: type={:?}, from={}, to={}, term={}",
+        log_prefix,
+        zone_id,
+        msg.get_msg_type(),
+        msg.from,
+        msg.to,
+        msg.term,
+    );
+
+    if let Err(e) = node.step(msg).await {
+        return Ok(Response::new(StepMessageResponse {
+            success: false,
+            error: Some(format!("Failed to step message: {}", e)),
+        }));
+    }
+
+    Ok(Response::new(StepMessageResponse {
+        success: true,
+        error: None,
+    }))
+}
+
 /// Check that a sender node is a known member of a zone.
 ///
 /// Extract hostnames from a node_address for cert SAN inclusion.
@@ -377,10 +422,17 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
                 // Zone not found in memory — only reopen if data exists on disk
                 // (node restart scenario). For new dynamic zones, return not_found
                 // and let federation_create_zone RPC handle proper creation.
+                //
+                // Disk check contract: if `{zone_path}/raft` exists on disk, the
+                // zone was previously created and persisted Raft state (WAL + snapshots).
+                // This is the same recovery pattern as redb/sled: durable storage on
+                // disk is the source of truth for "has this zone ever been initialised".
+                // We re-open with the existing ConfState rather than bootstrapping
+                // a brand-new zone, which would corrupt the Raft log.
                 let zone_path = self.registry.base_path().join(&req.zone_id);
                 if !zone_path.join("raft").exists() {
-                    // New zone — not our job to create. The test/RPC will
-                    // call create_zone explicitly.
+                    // No prior Raft data — this is genuinely a new zone.
+                    // Return not_found so the caller uses create_zone / federation RPC.
                     return Err(Status::not_found(format!(
                         "zone '{}' not found on this node",
                         req.zone_id
@@ -404,39 +456,14 @@ impl ZoneTransportService for ZoneTransportServiceImpl {
             }
         };
 
-        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
-            Ok(m) => m,
-            Err(e) => {
-                return Ok(Response::new(StepMessageResponse {
-                    success: false,
-                    error: Some(format!("Failed to deserialize raft message: {}", e)),
-                }));
-            }
-        };
-
-        // Zone authorization: verify sender is a known zone member
-        check_zone_membership(&self.registry, &req.zone_id, msg.from)?;
-
-        tracing::trace!(
-            "StepMessage [zone={}]: type={:?}, from={}, to={}, term={}",
-            req.zone_id,
-            msg.get_msg_type(),
-            msg.from,
-            msg.to,
-            msg.term,
-        );
-
-        if let Err(e) = node.step(msg).await {
-            return Ok(Response::new(StepMessageResponse {
-                success: false,
-                error: Some(format!("Failed to step message: {}", e)),
-            }));
+        // Zone authorization: verify sender is a known zone member.
+        // Parse once just to extract `from` for the membership check, then
+        // delegate to the shared parse_and_step_message helper.
+        if let Ok(peek) = raft::eraftpb::Message::parse_from_bytes(&req.message) {
+            check_zone_membership(&self.registry, &req.zone_id, peek.from)?;
         }
 
-        Ok(Response::new(StepMessageResponse {
-            success: true,
-            error: None,
-        }))
+        parse_and_step_message(&node, &req.message, &req.zone_id, "").await
     }
 
     /// Handle EC replication entries from a peer (Phase C).
@@ -1108,8 +1135,7 @@ impl WitnessZoneRegistry {
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
     ) -> Result<ZoneConsensus<WitnessStateMachine>> {
-        use crate::raft::{RaftConfig, RaftStorage};
-        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
+        use crate::raft::RaftConfig;
 
         if self.zones.contains_key(zone_id) {
             return Err(TransportError::Connection(format!(
@@ -1117,6 +1143,60 @@ impl WitnessZoneRegistry {
                 zone_id
             )));
         }
+
+        // Witness RaftConfig (no replication log, cannot become leader)
+        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
+        let config = RaftConfig::witness(self.node_id, peer_ids);
+
+        self.setup_witness_zone(zone_id, config, peers, runtime_handle)
+    }
+
+    /// Auto-join a zone when receiving Raft messages for an unknown zone.
+    ///
+    /// Creates a witness Raft group with `skip_bootstrap=true` (empty ConfState).
+    /// The leader will send a snapshot with the correct ConfState — this is the
+    /// standard raft-rs contract for late-joining nodes.
+    ///
+    /// Used by step_message() handler for dynamic zone support.
+    #[allow(clippy::result_large_err)]
+    pub fn auto_join_zone(
+        &self,
+        zone_id: &str,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
+        use crate::raft::RaftConfig;
+
+        if let Some(existing) = self.zones.get(zone_id) {
+            return Ok(existing.node.clone());
+        }
+
+        // skip_bootstrap=true: empty ConfState, leader sends snapshot
+        let config = RaftConfig {
+            id: self.node_id,
+            peers: vec![],
+            is_witness: true,
+            skip_bootstrap: true,
+            election_tick: 10_000_000, // witness never initiates election
+            ..Default::default()
+        };
+
+        let peers: Vec<NodeAddress> = self.peers.clone();
+        self.setup_witness_zone(zone_id, config, peers, runtime_handle)
+    }
+
+    /// Internal: open storage, create ZoneConsensus + driver, spawn transport loop, register zone.
+    ///
+    /// Shared by `create_zone()` (static bootstrap) and `auto_join_zone()` (dynamic federation).
+    #[allow(clippy::result_large_err)]
+    fn setup_witness_zone(
+        &self,
+        zone_id: &str,
+        config: crate::raft::RaftConfig,
+        peers: Vec<NodeAddress>,
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
+        use crate::raft::RaftStorage;
+        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
 
         // Zone-specific storage
         let zone_path = self.base_path.join(zone_id);
@@ -1128,10 +1208,6 @@ impl WitnessZoneRegistry {
         let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness state machine: {}", e))
         })?;
-
-        // Witness RaftConfig (no replication log, cannot become leader)
-        let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let config = RaftConfig::witness(self.node_id, peer_ids);
 
         let (handle, mut driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
             .map_err(|e| {
@@ -1159,91 +1235,10 @@ impl WitnessZoneRegistry {
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
 
         tracing::info!(
-            "Witness zone '{}' created (node_id={})",
+            "Witness zone '{}' registered (node_id={})",
             zone_id,
             self.node_id,
         );
-
-        self.zones.insert(
-            zone_id.to_string(),
-            WitnessZoneEntry {
-                node: handle.clone(),
-                shutdown_tx,
-                _transport_handle: transport_handle,
-            },
-        );
-
-        Ok(handle)
-    }
-
-    /// Auto-join a zone when receiving Raft messages for an unknown zone.
-    ///
-    /// Creates a witness Raft group with `skip_bootstrap=true` (empty ConfState).
-    /// The leader will send a snapshot with the correct ConfState — this is the
-    /// standard raft-rs contract for late-joining nodes.
-    ///
-    /// Used by step_message() handler for dynamic zone support.
-    #[allow(clippy::result_large_err)]
-    pub fn auto_join_zone(
-        &self,
-        zone_id: &str,
-        runtime_handle: &tokio::runtime::Handle,
-    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
-        use crate::raft::{RaftConfig, RaftStorage};
-        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
-
-        if let Some(existing) = self.zones.get(zone_id) {
-            return Ok(existing.node.clone());
-        }
-
-        let zone_path = self.base_path.join(zone_id);
-        let store = RedbStore::open(zone_path.join("sm"))
-            .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
-            TransportError::Connection(format!("Failed to open raft storage: {}", e))
-        })?;
-        let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
-            TransportError::Connection(format!("Failed to create witness state machine: {}", e))
-        })?;
-
-        // skip_bootstrap=true: empty ConfState, leader sends snapshot
-        let config = RaftConfig {
-            id: self.node_id,
-            peers: vec![],
-            is_witness: true,
-            skip_bootstrap: true,
-            election_tick: 10_000_000, // witness never initiates election
-            ..Default::default()
-        };
-
-        let (handle, mut driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
-            .map_err(|e| {
-                TransportError::Connection(format!(
-                    "Failed to create witness ZoneConsensus for auto-join: {}",
-                    e
-                ))
-            })?;
-
-        let peer_map: HashMap<u64, NodeAddress> =
-            self.peers.iter().map(|p| (p.id, p.clone())).collect();
-        let shared_peers: super::SharedPeerMap = Arc::new(RwLock::new(peer_map));
-        driver.set_peer_map(shared_peers.clone());
-
-        let client_config = ClientConfig {
-            tls: self.tls.clone(),
-            ..Default::default()
-        };
-        let transport_loop = TransportLoop::new(
-            driver,
-            shared_peers,
-            RaftClientPool::with_config(client_config),
-        )
-        .with_zone_id(zone_id.to_string());
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
-
-        tracing::info!("Witness auto-joined zone '{}'", zone_id);
 
         self.zones.insert(
             zone_id.to_string(),
@@ -1378,35 +1373,7 @@ impl ZoneTransportService for WitnessServiceImpl {
             }
         };
 
-        let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
-            Ok(m) => m,
-            Err(e) => {
-                return Ok(Response::new(StepMessageResponse {
-                    success: false,
-                    error: Some(format!("Failed to deserialize raft message: {}", e)),
-                }));
-            }
-        };
-
-        tracing::trace!(
-            "[Witness] StepMessage [zone={}]: type={:?}, from={}, term={}",
-            req.zone_id,
-            msg.get_msg_type(),
-            msg.from,
-            msg.term,
-        );
-
-        if let Err(e) = node.step(msg).await {
-            return Ok(Response::new(StepMessageResponse {
-                success: false,
-                error: Some(format!("Failed to step message: {}", e)),
-            }));
-        }
-
-        Ok(Response::new(StepMessageResponse {
-            success: true,
-            error: None,
-        }))
+        parse_and_step_message(&node, &req.message, &req.zone_id, "[Witness]").await
     }
 
     /// Witness nodes do not participate in EC replication.

@@ -10,7 +10,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useInfraStore } from "../../stores/infra-store.js";
-import type { InfraTab } from "../../stores/infra-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
@@ -18,7 +17,7 @@ import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.j
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { ConnectorList } from "./connector-list.js";
 import { ConnectorDetail } from "./connector-detail.js";
 import { SubscriptionList } from "./subscription-list.js";
@@ -35,29 +34,16 @@ import { Tooltip } from "../../shared/components/tooltip.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
+import { EVENTS_TABS } from "../../shared/navigation.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter" | "replay_filter";
-
-type PanelTab = "events" | "mcl" | "replay" | "operations" | "audit" | InfraTab;
-
-const ALL_TABS: readonly TabDef<PanelTab>[] = [
-  { id: "events", label: "Events", brick: "eventlog" },
-  { id: "mcl", label: "MCL", brick: "catalog" },
-  { id: "replay", label: "Replay", brick: "eventlog" },
-  { id: "operations", label: "Operations", brick: "eventlog" },
-  { id: "connectors", label: "Connectors", brick: null },
-  { id: "subscriptions", label: "Subscriptions", brick: "eventlog" },
-  { id: "locks", label: "Locks", brick: null },
-  { id: "secrets", label: "Secrets", brick: "auth" },
-  { id: "audit", label: "Audit", brick: "auth" },
-];
 
 
 export default function EventsPanel(): React.ReactNode {
   const apiClient = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(EVENTS_TABS);
   const config = useGlobalStore((s) => s.config);
 
   // Clipboard copy
@@ -139,13 +125,11 @@ export default function EventsPanel(): React.ReactNode {
   const fetchConnectorCapabilities = useInfraStore((s) => s.fetchConnectorCapabilities);
   const fetchAuditTransactions = useInfraStore((s) => s.fetchAuditTransactions);
   const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
-  const setInfraTab = useInfraStore((s) => s.setActiveTab);
+  const activeTab = useInfraStore((s) => s.activePanelTab);
+  const setActiveTab = useInfraStore((s) => s.setActivePanelTab);
   const setSelectedConnectorIndex = useInfraStore((s) => s.setSelectedConnectorIndex);
   const setSelectedSubscriptionIndex = useInfraStore((s) => s.setSelectedSubscriptionIndex);
   const setSelectedLockIndex = useInfraStore((s) => s.setSelectedLockIndex);
-
-  // Track the combined active tab locally
-  const [activeTab, setActiveTab] = React.useState<PanelTab>("events");
 
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
@@ -186,13 +170,6 @@ export default function EventsPanel(): React.ReactNode {
     else if (activeTab === "operations") fetchOperations(apiClient);
     else if (activeTab === "audit") void fetchAuditTransactions({}, apiClient);
   }, [activeTab, apiClient, fetchConnectors, fetchSubscriptions, fetchLocks, fetchSecretAudit, fetchOperations, fetchReplay, fetchEventReplay, fetchAuditTransactions]);
-
-  // Sync infra tab state
-  useEffect(() => {
-    if (activeTab !== "events" && activeTab !== "mcl" && activeTab !== "replay" && activeTab !== "operations" && activeTab !== "audit") {
-      setInfraTab(activeTab as InfraTab);
-    }
-  }, [activeTab, setInfraTab]);
 
   const currentItemCount = (): number => {
     switch (activeTab) {

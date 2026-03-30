@@ -27,7 +27,7 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings, subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
@@ -46,14 +46,7 @@ import { NamespaceConfigView } from "./namespace-config-view.js";
 import { ManifestCreator } from "./manifest-creator.js";
 import { ConstraintList } from "./constraint-list.js";
 import { ConstraintCreator } from "./constraint-creator.js";
-
-const ALL_TABS: readonly TabDef<AccessTab>[] = [
-  { id: "manifests", label: "Manifests", brick: "access_manifest" },
-  { id: "alerts", label: "Alerts", brick: "governance" },
-  { id: "credentials", label: "Credentials", brick: "auth" },
-  { id: "fraud", label: "Fraud", brick: "governance" },
-  { id: "delegations", label: "Delegations", brick: "delegation" },
-];
+import { ACCESS_TABS } from "../../shared/navigation.js";
 type OverlayMode =
   | "none"
   | "permissionChecker"
@@ -68,7 +61,7 @@ export default function AccessPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(ACCESS_TABS);
   const { copy, copied } = useCopy();
   const [overlay, setOverlay] = useState<OverlayMode>("none");
 

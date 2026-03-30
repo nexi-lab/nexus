@@ -643,7 +643,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       }>(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}`);
       set((state) => ({
         delegations: state.delegations.map((d) =>
-          d.delegation_id === delegationId ? { ...d, status: "revoked" } : d,
+          d.delegation_id === delegationId ? { ...d, status: "revoked" as const } : d,
         ),
         delegationsLoading: false,
       }));
@@ -668,7 +668,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
       }>(`/api/v2/agents/delegate/${encodeURIComponent(delegationId)}/complete`, body);
       set((state) => ({
         delegations: state.delegations.map((d) =>
-          d.delegation_id === delegationId ? { ...d, status: outcome } : d,
+          d.delegation_id === delegationId ? { ...d, status: "completed" as const } : d,
         ),
         delegationsLoading: false,
       }));

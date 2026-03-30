@@ -7,13 +7,12 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useZonesStore } from "../../stores/zones-store.js";
-import type { ZoneTab } from "../../stores/zones-store.js";
 import { useWorkspaceStore } from "../../stores/workspace-store.js";
 import { useMcpStore } from "../../stores/mcp-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
@@ -30,19 +29,10 @@ import { allowedActionsForState } from "../../shared/brick-states.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
-
-const ALL_TABS: readonly TabDef<ZoneTab>[] = [
-  { id: "zones", label: "Zones", brick: null },
-  { id: "bricks", label: "Bricks", brick: null },
-  { id: "drift", label: "Drift", brick: null },
-  { id: "reindex", label: "Reindex", brick: ["search", "versioning"] },
-  { id: "workspaces", label: "Workspaces", brick: "workspace" },
-  { id: "mcp", label: "MCP", brick: "mcp" },
-  { id: "cache", label: "Cache", brick: "cache" },
-];
+import { ZONE_TABS } from "../../shared/navigation.js";
 export default function ZonesPanel(): React.ReactNode {
   const client = useApi();
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(ZONE_TABS);
 
   const zones = useZonesStore((s) => s.zones);
   const zonesLoading = useZonesStore((s) => s.zonesLoading);

@@ -21,12 +21,7 @@ import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
-
-const ALL_TABS: readonly TabDef<WorkflowTab>[] = [
-  { id: "workflows", label: "Workflows", brick: null },
-  { id: "executions", label: "Executions", brick: null },
-  { id: "scheduler", label: "Scheduler", brick: null },
-];
+import { WORKFLOW_TABS } from "../../shared/navigation.js";
 
 export default function WorkflowsPanel(): React.ReactNode {
   const client = useApi();
@@ -62,7 +57,7 @@ export default function WorkflowsPanel(): React.ReactNode {
 
   const overlayActive = useUiStore((s) => s.overlayActive);
 
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(WORKFLOW_TABS);
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight workflow execution

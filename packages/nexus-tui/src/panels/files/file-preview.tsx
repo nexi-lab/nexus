@@ -68,7 +68,7 @@ export function FilePreview(): React.ReactNode {
   // Use OpenTUI's Code component for syntax highlighting
   return (
     <scrollbox height="100%" width="100%">
-      <code content={previewContent} filetype={language} />
+      <code content={previewContent} filetype={language} syntaxStyle={undefined!} />
     </scrollbox>
   );
 }

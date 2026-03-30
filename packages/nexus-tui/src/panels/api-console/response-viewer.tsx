@@ -44,7 +44,7 @@ export function ResponseViewer(): React.ReactNode {
         {response.body.includes("\x1b[") ? (
           <StyledText>{response.body}</StyledText>
         ) : (
-          <code content={response.body} filetype="json" />
+          <code content={response.body} filetype="json" syntaxStyle={undefined!} />
         )}
       </scrollbox>
     </box>

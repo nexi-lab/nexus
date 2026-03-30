@@ -67,6 +67,7 @@ class NexusFUSE:
         zone_id: str | None = None,
         use_rust: bool = False,
         lease_manager: Any | None = None,
+        file_cache: Any | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -108,6 +109,7 @@ class NexusFUSE:
         self._zone_id = zone_id
         self._use_rust = use_rust
         self._lease_manager = lease_manager
+        self._file_cache = file_cache
         # Generate unique mount ID for lease holder identity (Decision 2A)
         import uuid
 
@@ -194,6 +196,7 @@ class NexusFUSE:
             subscription_manager=subscription_manager,
             lease_manager=self._lease_manager,
             mount_id=self._mount_id,
+            file_cache=self._file_cache,
         )
 
         # Issue #1115: Set up event loop for async event dispatch
@@ -447,6 +450,7 @@ def mount_nexus(
     zone_id: str | None = None,
     use_rust: bool = False,
     lease_manager: Any | None = None,
+    file_cache: Any | None = None,
 ) -> "NexusFUSE":
     """Convenience function to mount Nexus filesystem.
 
@@ -510,6 +514,7 @@ def mount_nexus(
         zone_id=zone_id,
         use_rust=use_rust,
         lease_manager=lease_manager,
+        file_cache=file_cache,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

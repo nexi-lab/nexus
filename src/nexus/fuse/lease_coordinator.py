@@ -41,10 +41,13 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from nexus.contracts.protocols.lease import Lease, LeaseManagerProtocol, LeaseState
 from nexus.fuse.cache import FUSECacheManager
+
+if TYPE_CHECKING:
+    from nexus.storage.file_cache import FileContentCache
 
 logger = logging.getLogger(__name__)
 
@@ -100,12 +103,16 @@ class FUSELeaseCoordinator:
         holder_id: str = "default-mount",
         lease_ttl: float = _DEFAULT_LEASE_TTL,
         acquire_timeout: float = _LEASE_ACQUIRE_TIMEOUT,
+        file_cache: "FileContentCache | None" = None,
+        zone_id: str | None = None,
     ) -> None:
         self._cache = cache
         self._lease_manager: LeaseManagerProtocol | None = lease_manager
         self._holder_id = holder_id
         self._lease_ttl = lease_ttl
         self._acquire_timeout = acquire_timeout
+        self._file_cache = file_cache
+        self._zone_id = zone_id
 
         # Local validity cache (Decision 13A)
         # {path: expires_at_monotonic} — avoids async thread switch on hot path
@@ -140,7 +147,11 @@ class FUSELeaseCoordinator:
         ready.wait(timeout=2.0)
 
     def _register_revocation_callback(self) -> None:
-        """Register callback so lease revocations clear our validity cache + L1 cache."""
+        """Register callback so lease revocations clear our validity cache + L1 cache.
+
+        Also marks the FileContentCache (L2/L3) content as stale so
+        subsequent reads force a re-fetch from the backend (Issue #3400).
+        """
         assert self._lease_manager is not None
         callback_id = f"fuse-coordinator-{self._holder_id}"
 
@@ -156,6 +167,11 @@ class FUSELeaseCoordinator:
                 path = path[len(_FUSE_RESOURCE_PREFIX) :]
             self._clear_validity(path)
             self._cache.invalidate_path(path)
+
+            # Mark FileContentCache content stale (Issue #3400, Decision 3A)
+            if self._file_cache is not None and self._zone_id is not None:
+                self._file_cache.mark_lease_revoked(self._zone_id, path)
+
             logger.debug(
                 "[FUSE-LEASE] Revocation callback: path=%s reason=%s holder=%s",
                 path,

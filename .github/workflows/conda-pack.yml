@@ -95,8 +95,13 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install protoc --version=3.20.3 -y
-          echo "NEXUS_PROTOC=$(Get-Command protoc | Select-Object -ExpandProperty Source)" >> $env:GITHUB_ENV
+          $protocDir = Join-Path $env:RUNNER_TEMP "protoc-3.20.3-win64"
+          $zipPath = Join-Path $env:RUNNER_TEMP "protoc-3.20.3-win64.zip"
+          Invoke-WebRequest "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip" -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $protocDir -Force
+          $protocExe = Join-Path $protocDir "bin/protoc.exe"
+          echo "NEXUS_PROTOC=$protocExe" >> $env:GITHUB_ENV
+          echo (Split-Path $protocExe) >> $env:GITHUB_PATH
           protoc --version
 
       - name: Install protoc (macOS)

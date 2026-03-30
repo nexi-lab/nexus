@@ -81,7 +81,7 @@ class TestMountCleanupOnFailure:
         first_backend.close = MagicMock()
         call_count = 0
 
-        def mock_create(spec, **kwargs):
+        def mock_create(spec):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

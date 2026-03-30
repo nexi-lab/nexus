@@ -114,7 +114,6 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
         record_store: "RecordStoreABC | None" = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
-        metastore: "Any | None" = None,
     ):
         try:
             from nexus.backends.transports.s3_transport import S3Transport
@@ -138,7 +137,6 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
                 bucket_name=bucket_name,
                 prefix=prefix,
                 versioning_enabled=versioning_enabled,
-                metastore=metastore,
             )
             self._s3_transport = transport
 
@@ -325,14 +323,6 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
                 logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         content_hash = new_version if new_version else self._compute_hash(content)
-
-        # PAS metadata persistence (driver-owned, like ext4 inode update).
-        # Must happen here because this override bypasses
-        # PathAddressingEngine.write_content which normally calls _commit_metadata.
-        if self._metastore is not None and context is not None:
-            vpath = getattr(context, "virtual_path", None)
-            if vpath:
-                self._commit_metadata(vpath, content_hash, len(content), context)
 
         return WriteResult(
             content_id=content_hash,

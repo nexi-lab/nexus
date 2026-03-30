@@ -26,7 +26,7 @@ from nexus.contracts.exceptions import (
     ServiceUnavailableError,
     ValidationError,
 )
-from nexus.lib.path_utils import validate_path
+from nexus.core.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)

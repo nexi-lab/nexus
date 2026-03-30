@@ -200,7 +200,7 @@ class FileEvent:
 
         # Glob pattern match — delegate to path_utils for consistency
         if "*" in pattern or "?" in pattern:
-            from nexus.lib.path_utils import path_matches_pattern
+            from nexus.core.path_utils import path_matches_pattern
 
             if path_matches_pattern(self.path, pattern):
                 return True

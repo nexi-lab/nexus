@@ -241,7 +241,7 @@ class SlimNexusFS:
         Returns:
             Metadata dict, or None if path does not exist.
         """
-        from nexus.lib.path_utils import validate_path
+        from nexus.core.path_utils import validate_path
 
         normalized = validate_path(path, allow_root=True)
 

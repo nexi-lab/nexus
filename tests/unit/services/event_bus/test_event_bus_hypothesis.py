@@ -7,7 +7,7 @@ pytest.importorskip("hypothesis")
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from nexus.lib.path_utils import path_matches_pattern
+from nexus.core.path_utils import path_matches_pattern
 from nexus.services.event_bus.types import FileEvent, FileEventType
 
 # Strategy for generating valid file paths

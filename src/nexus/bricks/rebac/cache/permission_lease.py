@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.lib.path_utils import parent_path
+from nexus.core.path_utils import parent_path
 
 if TYPE_CHECKING:
     from nexus.contracts.protocols.lease import Clock

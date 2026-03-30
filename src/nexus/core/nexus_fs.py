@@ -33,8 +33,8 @@ from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
+from nexus.core.path_utils import validate_path
 from nexus.core.router import PathRouter
-from nexus.lib.path_utils import validate_path
 from nexus.lib.rpc_decorator import rpc_expose
 from nexus.storage.record_store import RecordStoreABC
 

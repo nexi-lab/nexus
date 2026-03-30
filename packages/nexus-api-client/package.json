@@ -46,6 +46,9 @@
     "client",
     "sdk"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

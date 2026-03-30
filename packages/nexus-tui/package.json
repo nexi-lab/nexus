@@ -6,6 +6,10 @@
   "bin": {
     "nexus-tui": "./src/index.tsx"
   },
+  "files": [
+    "src",
+    "README.md"
+  ],
   "scripts": {
     "dev": "bun run src/index.tsx",
     "start": "bun run src/index.tsx",
@@ -32,6 +36,9 @@
     "terminal",
     "opentui"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 import warnings
+from pathlib import Path
 
 import click
 
@@ -34,9 +35,10 @@ setup_uvloop()
 def _exec_tui(extra_args: list[str] | None = None) -> None:
     """Replace the current process with the TUI.
 
-    Prefers a locally-installed ``nexus-tui`` binary (faster startup) and
-    falls back to ``bunx nexus-tui``.  If neither is available, prints a
-    helpful error and exits with code 1.
+    Order of preference:
+      1. ``nexus-tui`` already on PATH
+      2. repo-local ``packages/nexus-tui/src/index.tsx`` via ``bun run``
+      3. published ``@nexus/tui`` via ``bunx``
     """
     args = extra_args or []
 
@@ -46,16 +48,27 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
         os.execvp(nexus_tui, ["nexus-tui", *args])
         # execvp does not return
 
-    # Fallback: use bunx (Bun's npx equivalent)
+    # Repo-local dev path: walk up from CWD looking for packages/nexus-tui
+    # so `nexus` works directly from a source checkout.
+    bun = shutil.which("bun")
+    if bun is not None:
+        cwd = Path.cwd()
+        for candidate_root in (cwd, *cwd.parents):
+            local_entry = candidate_root / "packages" / "nexus-tui" / "src" / "index.tsx"
+            if local_entry.exists():
+                os.execvp(bun, ["bun", "run", str(local_entry), *args])
+                # execvp does not return
+
+    # Fallback: use bunx (Bun's npx equivalent) against the scoped package.
     bunx = shutil.which("bunx")
     if bunx is not None:
-        os.execvp(bunx, ["bunx", "nexus-tui", *args])
+        os.execvp(bunx, ["bunx", "@nexus/tui", *args])
         # execvp does not return
 
     # Neither found – give the user actionable guidance.
-    click.secho("Error: could not find nexus-tui or bunx on PATH.", fg="red", err=True)
+    click.secho("Error: could not find nexus-tui, bun, or bunx on PATH.", fg="red", err=True)
     click.echo(
-        "Install the TUI with:\n  npm install -g nexus-tui   # or\n  bun install -g nexus-tui\n",
+        "Install the TUI with:\n  bunx @nexus/tui   # or\n  bun install -g @nexus/tui\n",
         err=True,
     )
     sys.exit(1)

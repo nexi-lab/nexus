@@ -5,9 +5,9 @@
  * Parses CLI args, resolves config, and renders the TUI via OpenTUI.
  *
  * Usage:
- *   bunx nexus-tui
- *   bunx nexus-tui --url http://remote:2026 --api-key nx_live_myagent
- *   bunx nexus-tui --agent-id bot-worker-1 --zone-id org_acme
+ *   bunx @nexus/tui
+ *   bunx @nexus/tui --url http://remote:2026 --api-key nx_live_myagent
+ *   bunx @nexus/tui --agent-id bot-worker-1 --zone-id org_acme
  */
 
 import { createCliRenderer } from "@opentui/core";
@@ -55,6 +55,9 @@ nexus-tui — Terminal UI for Nexus
 Usage:
   nexus-tui [options]
 
+Published package:
+  bunx @nexus/tui [options]
+
 Options:
   --url, -u <url>        Nexus server URL (default: NEXUS_URL or http://localhost:2026)
   --api-key, -k <key>    API key (default: NEXUS_API_KEY env var)
@@ -72,6 +75,9 @@ Environment Variables:
 
 Config File:
   ~/.nexus/config.yaml   Auto-discovered (same as nexus CLI)
+
+Local development:
+  cd packages/nexus-tui && bun install && bun run src/index.tsx
 `.trim());
       process.exit(0);
     }

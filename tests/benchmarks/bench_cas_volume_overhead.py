@@ -96,6 +96,11 @@ def measure_volume_packed(root: Path, count: int) -> dict | None:
 def main():
     parser = argparse.ArgumentParser(description="CAS volume overhead benchmark")
     parser.add_argument("--count", type=int, default=10_000, help="Number of blobs")
+    parser.add_argument(
+        "--full-compaction",
+        action="store_true",
+        help="Run the real 1GB compaction benchmark (slow, ~30s+)",
+    )
     args = parser.parse_args()
 
     count = args.count
@@ -165,23 +170,33 @@ def main():
         print(f"{'=' * 60}\n")
         bench_compaction(count)
 
+    # Full 1GB compaction benchmark (Issue #3408 acceptance criterion)
+    if vol_result and args.full_compaction:
+        print(f"\n{'=' * 60}")
+        print("Full 1GB Compaction Benchmark (Acceptance Criterion)")
+        print(f"{'=' * 60}\n")
+        # 1GB with 1KB blobs = 1M entries. Use 4KB blobs = 256K entries.
+        blob_size = 4096
+        full_count = (1024 * 1024 * 1024) // blob_size  # ~262144 entries
+        bench_compaction(full_count, blob_size=blob_size)
 
-def bench_compaction(count: int = 10_000) -> dict | None:
+
+def bench_compaction(count: int = 10_000, blob_size: int = 100) -> dict | None:
     """Benchmark compaction throughput.
 
     Acceptance criterion from Issue #3408:
         'compaction of 1GB volume with 50% dead < 10s'
 
-    This benchmark creates a volume with the given number of entries,
-    deletes 50%, and measures compaction time.
+    Args:
+        count: Number of blobs to write.
+        blob_size: Size of each blob in bytes. Use --full-compaction
+            to run the real 1GB benchmark with 4KB blobs.
     """
     try:
         from nexus_fast import VolumeEngine
     except ImportError:
         print("[!] nexus_fast.VolumeEngine not available — compaction benchmark skipped")
         return None
-
-    blob_size = 100  # bytes per blob
 
     with tempfile.TemporaryDirectory() as tmpdir:
         vol_dir = Path(tmpdir) / "compact_bench"
@@ -252,15 +267,24 @@ def bench_compaction(count: int = 10_000) -> dict | None:
     print(f"{'Disk after (bytes)':<30} {disk_after:>15,}")
     print(f"{'Throughput (MB/s)':<30} {throughput_mb:>15.1f}")
 
-    # Validate acceptance criterion (scaled to blob_size)
-    # Original criterion: 1GB with 50% dead < 10s
-    # At 100B blobs, 1GB = 10M entries — scale linearly
-    projected_1gb_time = compact_time * (10_000_000 / max(count, 1))
-    print(f"\n{'Projected 1GB time (s)':<30} {projected_1gb_time:>15.1f}", end="")
-    if projected_1gb_time < 10.0:
-        print(" PASS (< 10s)")
+    # Validate acceptance criterion: 1GB with 50% dead < 10s
+    total_data = count * blob_size
+    is_full_benchmark = total_data >= 1_000_000_000  # ~1GB
+    if is_full_benchmark:
+        # Real 1GB benchmark — report actual time
+        print(f"\n{'Actual 1GB time (s)':<30} {compact_time:>15.3f}", end="")
+        if compact_time < 10.0:
+            print(" PASS (< 10s)")
+        else:
+            print(" FAIL (> 10s)")
     else:
-        print(" FAIL (> 10s)")
+        # Smaller benchmark — project linearly
+        projected_1gb_time = compact_time * (1_073_741_824 / max(total_data, 1))
+        print(f"\n{'Projected 1GB time (s)':<30} {projected_1gb_time:>15.1f}", end="")
+        if projected_1gb_time < 10.0:
+            print(" PASS (< 10s, projected)")
+        else:
+            print(" FAIL (> 10s, projected — run with --full-compaction for real benchmark)")
 
     return result
 

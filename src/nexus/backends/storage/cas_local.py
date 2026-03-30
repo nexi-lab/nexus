@@ -174,6 +174,14 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         # GC: metastore injected later via set_metastore() — not available at construction.
         self._gc = CASGarbageCollector(self)
 
+        # Volume compaction (Issue #3408): background scheduler.
+        # Requires volume packing (VolumeLocalTransport).
+        self._compactor: Any | None = None
+        if isinstance(transport, VolumeLocalTransport):
+            from nexus.services.volume_compactor import VolumeCompactor
+
+            self._compactor = VolumeCompactor(transport)
+
         # Cold tiering (Issue #3406): wire VolumeTieringService if enabled.
         # Requires volume packing (VolumeLocalTransport).
         self._tiering_service: Any | None = None
@@ -232,26 +240,31 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
         )
 
     def on_mount(self, ctx: Any) -> None:
-        """VFSMountHook: start tiering service when the backend is mounted.
+        """VFSMountHook: start background services when the backend is mounted.
 
         Called by KernelDispatch at mount time (async event loop is running).
-        Uses asyncio.ensure_future() to schedule the tiering background task,
-        same pattern as CASGarbageCollector.start().
+        Uses asyncio.ensure_future() to schedule background tasks.
         """
         import asyncio
 
         super().on_mount(ctx)
+        if self._compactor is not None:
+            asyncio.ensure_future(self._compactor.start())
+            logger.info("Volume compactor scheduled to start on mount")
         if self._tiering_service is not None:
             asyncio.ensure_future(self._tiering_service.start())
             logger.info("Cold tiering service scheduled to start on mount")
 
     def on_unmount(self, ctx: Any) -> None:
-        """VFSUnmountHook: stop tiering service when the backend is unmounted.
+        """VFSUnmountHook: stop background services when the backend is unmounted.
 
-        Schedules graceful shutdown of the background sweep task.
+        Schedules graceful shutdown of background tasks.
         """
         import asyncio
 
+        if self._compactor is not None:
+            asyncio.ensure_future(self._compactor.stop())
+            logger.info("Volume compactor scheduled to stop on unmount")
         if self._tiering_service is not None:
             asyncio.ensure_future(self._tiering_service.stop())
             logger.info("Cold tiering service scheduled to stop on unmount")

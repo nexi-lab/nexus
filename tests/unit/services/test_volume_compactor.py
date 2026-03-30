@@ -157,3 +157,65 @@ class TestCompactorInterval:
         from nexus.services.volume_compactor import DEFAULT_COMPACTION_INTERVAL
 
         assert DEFAULT_COMPACTION_INTERVAL == 300.0
+
+
+# ─── Concurrency Tests ─────────────────────────────────────────────────────
+
+
+class TestCompactorConcurrency:
+    @pytest.mark.asyncio
+    async def test_default_max_concurrent_is_one(self):
+        from nexus.services.volume_compactor import DEFAULT_MAX_CONCURRENT
+
+        assert DEFAULT_MAX_CONCURRENT == 1
+
+        transport = MockTransport()
+        compactor = VolumeCompactor(transport)
+        assert compactor.max_concurrent == 1
+
+    @pytest.mark.asyncio
+    async def test_custom_max_concurrent(self):
+        transport = MockTransport()
+        compactor = VolumeCompactor(transport, max_concurrent=4)
+        assert compactor.max_concurrent == 4
+
+    @pytest.mark.asyncio
+    async def test_max_concurrent_minimum_is_one(self):
+        transport = MockTransport()
+        compactor = VolumeCompactor(transport, max_concurrent=0)
+        assert compactor.max_concurrent == 1
+
+    @pytest.mark.asyncio
+    async def test_semaphore_limits_concurrency(self):
+        """Verify that the semaphore actually limits concurrent compactions."""
+        import time
+
+        max_concurrent_seen = 0
+        current_concurrent = 0
+
+        class SlowTransport:
+            def compact(self):
+                nonlocal max_concurrent_seen, current_concurrent
+                # Use a thread-safe approach since compact runs in a thread
+                import threading
+
+                with threading.Lock():
+                    current_concurrent += 1
+                    if current_concurrent > max_concurrent_seen:
+                        max_concurrent_seen = current_concurrent
+                time.sleep(0.05)
+                with threading.Lock():
+                    current_concurrent -= 1
+                return (1, 1, 100)
+
+        transport = SlowTransport()
+        compactor = VolumeCompactor(transport, interval=300.0, max_concurrent=1)
+        await compactor.start()
+
+        # Fire multiple concurrent compact_once() calls
+        tasks = [asyncio.create_task(compactor.compact_once()) for _ in range(3)]
+        await asyncio.gather(*tasks)
+        await compactor.stop()
+
+        # With max_concurrent=1, only 1 should run at a time
+        assert max_concurrent_seen == 1

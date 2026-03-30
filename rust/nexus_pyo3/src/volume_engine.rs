@@ -71,11 +71,12 @@ fn align_up(offset: u64, alignment: u64) -> u64 {
     (offset + alignment - 1) & !(alignment - 1)
 }
 
-/// Compute sparsity ratio: proportion of entries that are dead.
+/// Compute dead ratio: proportion of bytes that are dead.
+/// `dead_ratio = 1 - (live_bytes / total_bytes)` per Issue #3408.
 /// Returns 0.0 when total is 0 (empty volume is not sparse).
-fn sparsity(live_count: u64, total_count: u64) -> f64 {
-    if total_count > 0 {
-        1.0 - (live_count as f64 / total_count as f64)
+fn dead_ratio(live_bytes: u64, total_bytes: u64) -> f64 {
+    if total_bytes > 0 {
+        1.0 - (live_bytes as f64 / total_bytes as f64)
     } else {
         0.0
     }
@@ -420,7 +421,7 @@ impl VolumeEngine {
     ///     compaction_bytes_per_cycle: Max bytes to process per compact() call (0 = unlimited)
     ///     compaction_sparsity_threshold: Trigger compaction when sparsity exceeds this (0.0-1.0)
     #[new]
-    #[pyo3(signature = (path, target_volume_size=0, compaction_bytes_per_cycle=52_428_800, compaction_sparsity_threshold=0.4))]
+    #[pyo3(signature = (path, target_volume_size=0, compaction_bytes_per_cycle=52_428_800, compaction_sparsity_threshold=0.3))]
     fn new(
         path: &str,
         target_volume_size: u64,
@@ -1549,9 +1550,10 @@ impl VolumeEngine {
 
         // Phase 1: Find candidate volumes using TOC + mem_index.
         // Read each sealed volume's TOC, check which entries are still live
-        // via mem_index (O(1) per entry), compute sparsity.
+        // via mem_index (O(1) per entry), compute byte-based dead ratio.
+        // dead_ratio = 1 - (live_bytes / total_bytes) per Issue #3408.
         let paths = self.volume_paths.read().clone();
-        // (vol_id, path, file_size, sparsity, live TOC entries)
+        // (vol_id, path, file_size, dead_ratio, live TOC entries)
         let mut candidates: Vec<(u32, PathBuf, u64, f64, Vec<TocEntry>)> = Vec::new();
 
         for (vol_id, path) in &paths {
@@ -1560,7 +1562,8 @@ impl VolumeEngine {
                 continue;
             }
             if let Ok((_, toc_entries)) = read_volume_toc(path) {
-                let total_count = toc_entries.len() as u64;
+                // Compute total bytes from all TOC entries
+                let total_bytes: u64 = toc_entries.iter().map(|e| e.size as u64).sum();
                 // Filter for live entries using mem_index (O(1) per hash)
                 let idx = self.mem_index.read();
                 let live_toc: Vec<TocEntry> = toc_entries
@@ -1569,16 +1572,16 @@ impl VolumeEngine {
                     .collect();
                 drop(idx);
 
-                let live_count = live_toc.len() as u64;
-                let vol_sparsity = sparsity(live_count, total_count);
-                if vol_sparsity >= self.compaction_sparsity_threshold {
+                let live_bytes: u64 = live_toc.iter().map(|e| e.size as u64).sum();
+                let vol_dead_ratio = dead_ratio(live_bytes, total_bytes);
+                if vol_dead_ratio >= self.compaction_sparsity_threshold {
                     let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                    candidates.push((*vol_id, path.clone(), file_size, vol_sparsity, live_toc));
+                    candidates.push((*vol_id, path.clone(), file_size, vol_dead_ratio, live_toc));
                 }
             }
         }
 
-        // Sort by sparsity descending (most sparse first)
+        // Sort by dead ratio descending (most dead first)
         candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
         let mut cycle_budget = self.compaction_bytes_per_cycle as i64;

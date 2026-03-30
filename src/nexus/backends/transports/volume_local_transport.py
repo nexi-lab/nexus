@@ -116,7 +116,7 @@ class VolumeLocalTransport:
         fsync: bool = True,
         target_volume_size: int = 0,
         compaction_bytes_per_cycle: int = 52_428_800,
-        compaction_sparsity_threshold: float = 0.4,
+        compaction_sparsity_threshold: float = 0.3,
     ) -> None:
         self._root = Path(root_path).resolve()
         self._volume_available = False

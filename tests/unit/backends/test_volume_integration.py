@@ -151,6 +151,126 @@ class TestVolumeLocalTransportIntegration:
         assert result[meta_key] == b"meta blob"
 
 
+# ─── store_batch Integration (Issue #3409) ───────────────────────────────────
+
+
+class TestStoreBatchIntegration:
+    """VolumeLocalTransport.store_batch end-to-end."""
+
+    def _make_transport(self, tmp_path):
+        from nexus.backends.transports.volume_local_transport import VolumeLocalTransport
+
+        return VolumeLocalTransport(root_path=tmp_path, fsync=False)
+
+    def test_store_batch_roundtrip(self, tmp_path):
+        """store_batch writes, seal, fetch reads back correctly."""
+        import hashlib
+
+        transport = self._make_transport(tmp_path)
+
+        items = []
+        expected = {}
+        for i in range(20):
+            data = f"batch_content_{i}".encode()
+            h = hashlib.sha256(data).hexdigest()
+            cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+            items.append((cas_key, data))
+            expected[cas_key] = data
+
+        written = transport.store_batch(items)
+        assert written == 20, f"Expected 20 written, got {written}"
+
+        transport.seal_active_volume()
+
+        for key, data in expected.items():
+            fetched, _ = transport.fetch(key)
+            assert fetched == data, f"Content mismatch for {key}"
+
+    def test_store_batch_dedup(self, tmp_path):
+        """store_batch skips blobs already written by prior put()."""
+        import hashlib
+
+        transport = self._make_transport(tmp_path)
+
+        data = b"already_exists"
+        h = hashlib.sha256(data).hexdigest()
+        cas_key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+
+        # Write via normal put
+        transport.store(cas_key, data)
+
+        # store_batch with same hash should skip it
+        written = transport.store_batch([(cas_key, data)])
+        assert written == 0, f"Expected 0 new writes (dedup), got {written}"
+
+    def test_store_batch_mixed_with_single_writes(self, tmp_path):
+        """store_batch and single store() produce consistent state."""
+        import hashlib
+
+        transport = self._make_transport(tmp_path)
+
+        # Single writes
+        single_keys = {}
+        for i in range(5):
+            data = f"single_{i}".encode()
+            h = hashlib.sha256(data).hexdigest()
+            key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+            transport.store(key, data)
+            single_keys[key] = data
+
+        # Batch writes
+        batch_items = []
+        batch_keys = {}
+        for i in range(5, 15):
+            data = f"batch_{i}".encode()
+            h = hashlib.sha256(data).hexdigest()
+            key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+            batch_items.append((key, data))
+            batch_keys[key] = data
+
+        written = transport.store_batch(batch_items)
+        assert written == 10
+
+        transport.seal_active_volume()
+
+        # All 15 items readable
+        for key, data in {**single_keys, **batch_keys}.items():
+            fetched, _ = transport.fetch(key)
+            assert fetched == data
+
+    def test_store_batch_empty(self, tmp_path):
+        """store_batch with empty list returns 0."""
+        transport = self._make_transport(tmp_path)
+        assert transport.store_batch([]) == 0
+
+    def test_store_batch_large_batch(self, tmp_path):
+        """store_batch with 1000 items — verifies no data corruption at scale."""
+        import hashlib
+
+        transport = self._make_transport(tmp_path)
+
+        items = []
+        expected = {}
+        for i in range(1000):
+            data = f"large_batch_item_{i:05d}_{i * 7}".encode()
+            h = hashlib.sha256(data).hexdigest()
+            key = f"cas/{h[:2]}/{h[2:4]}/{h}"
+            items.append((key, data))
+            expected[key] = data
+
+        written = transport.store_batch(items)
+        assert written == 1000
+
+        transport.seal_active_volume()
+
+        # Verify a sample (every 100th item)
+        keys_list = list(expected.keys())
+        for idx in range(0, 1000, 100):
+            key = keys_list[idx]
+            fetched, _ = transport.fetch(key)
+            assert fetched == expected[key], f"Mismatch at index {idx}"
+
+
 # ─── CASLocalBackend Integration ─────────────────────────────────────────────
 
 

@@ -89,6 +89,13 @@ fn now_unix_secs() -> f64 {
         .as_secs_f64()
 }
 
+/// Compute the total aligned size of an entry with the given data size.
+/// Includes entry header (hash + size + flags) and 8-byte alignment padding.
+/// Shared by put_impl and batch pre-allocation (Decision #5A: DRY).
+fn compute_entry_aligned_size(data_size: u32) -> u64 {
+    align_up(ENTRY_HEADER_SIZE + data_size as u64, ALIGNMENT)
+}
+
 // ─── Index entry ─────────────────────────────────────────────────────────────
 
 /// Serialized as 32 bytes: volume_id(4) + offset(8) + size(4) + timestamp(8) + expiry(8)
@@ -144,6 +151,32 @@ struct TocEntry {
     flags: u8,
 }
 
+// ─── Batch pre-allocation types (Issue #3409) ──────────────────────────────
+
+/// Pre-allocated slot in a volume.
+#[derive(Clone, Debug)]
+struct SlotInfo {
+    volume_id: u32,
+    offset: u64,
+    data_size: u32,
+}
+
+/// Ephemeral batch reservation — in-memory only, not persisted (Decision #1A).
+/// If the process crashes, all reservations are lost and space is reclaimed
+/// by deleting .tmp files or by compaction of sealed volumes.
+struct BatchReservation {
+    slots: Vec<SlotInfo>,
+    /// Hash for each slot (set by write_slot).
+    hashes: Vec<Option<[u8; 32]>>,
+    /// Whether each slot has been written.
+    written: Vec<bool>,
+    /// Unix timestamp when this reservation expires.
+    expires_at: f64,
+}
+
+/// Default reservation timeout in seconds.
+const RESERVATION_TIMEOUT_SECS: f64 = 60.0;
+
 // ─── Active volume (the one currently being written to) ─────────────────────
 
 struct ActiveVolume {
@@ -153,6 +186,9 @@ struct ActiveVolume {
     write_offset: u64,
     entries: Vec<TocEntry>,
     target_size: u64,
+    /// Bytes reserved by batch preallocate (not in entries/TocEntries).
+    /// Prevents seal_volume from deleting volumes with batch-reserved space.
+    batch_reserved_bytes: u64,
 }
 
 impl ActiveVolume {
@@ -181,28 +217,25 @@ impl ActiveVolume {
             write_offset: HEADER_SIZE,
             entries: Vec::new(),
             target_size,
+            batch_reserved_bytes: 0,
         })
     }
 
-    /// Append a blob entry. Returns (offset, aligned_end) of the written data.
+    /// Append a blob entry. Returns the offset of the written data.
+    /// Uses a single write_all call to reduce syscalls (1 vs 5 per entry).
     fn append(&mut self, hash: &[u8; 32], data: &[u8]) -> io::Result<u64> {
         let offset = self.write_offset;
+        let aligned_total = compute_entry_aligned_size(data.len() as u32) as usize;
 
-        // Write entry header: hash(32) + size(4) + flags(1)
-        self.file.write_all(hash)?;
-        self.file.write_all(&(data.len() as u32).to_le_bytes())?;
-        self.file.write_all(&[FLAG_NONE])?;
+        // Build entry in a single buffer: hash(32) + size(4) + flags(1) + data + padding
+        let mut buf = vec![0u8; aligned_total];
+        buf[0..32].copy_from_slice(hash);
+        buf[32..36].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        buf[36] = FLAG_NONE;
+        buf[37..37 + data.len()].copy_from_slice(data);
+        // Padding bytes are already 0
 
-        // Write data
-        self.file.write_all(data)?;
-
-        // Align to 8 bytes
-        let end = offset + ENTRY_HEADER_SIZE + data.len() as u64;
-        let aligned_end = align_up(end, ALIGNMENT);
-        let padding = aligned_end - end;
-        if padding > 0 {
-            self.file.write_all(&vec![0u8; padding as usize])?;
-        }
+        self.file.write_all(&buf)?;
 
         self.entries.push(TocEntry {
             hash: *hash,
@@ -211,7 +244,7 @@ impl ActiveVolume {
             flags: FLAG_NONE,
         });
 
-        self.write_offset = aligned_end;
+        self.write_offset = offset + aligned_total as u64;
         Ok(offset)
     }
 
@@ -231,6 +264,10 @@ impl ActiveVolume {
     fn seal(mut self, volumes_dir: &Path) -> io::Result<(PathBuf, Vec<TocEntry>)> {
         let toc_offset = self.write_offset;
         let entry_count = self.entries.len() as u32;
+
+        // Seek to write_offset to handle gaps from batch pre-allocation (Issue #3409).
+        // For non-batch writes, this is a no-op (file position is already at write_offset).
+        self.file.seek(SeekFrom::Start(toc_offset))?;
 
         // Write TOC entries
         for entry in &self.entries {
@@ -401,6 +438,16 @@ pub struct VolumeEngine {
     /// deleted with a single `unlink()` — no per-entry scanning needed.
     /// Only populated for volumes that contain TTL entries (expiry > 0).
     volume_max_expiry: RwLock<HashMap<u32, f64>>,
+    /// Ephemeral batch reservations (Issue #3409).
+    /// Maps reservation_id → BatchReservation. In-memory only.
+    reservations: Mutex<HashMap<u64, BatchReservation>>,
+    /// Next reservation ID counter.
+    next_reservation_id: AtomicU64,
+    /// Cached write file descriptors for batch pwrite.
+    /// Opened in preallocate(), shared via RwLock read for concurrent write_slot(),
+    /// closed in commit_batch(). Uses pwrite (write_all_at) which takes &self,
+    /// so multiple threads can pwrite to the same fd concurrently.
+    batch_write_fds: RwLock<HashMap<u32, fs::File>>,
 }
 
 fn db_err(e: impl std::fmt::Display) -> PyErr {
@@ -460,6 +507,9 @@ impl VolumeEngine {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         // Startup recovery (also populates in-memory index)
@@ -891,7 +941,9 @@ impl VolumeEngine {
                     // Append to active volume
                     let (volume_id, offset) = self.append_to_active(&hash, &data)?;
 
-                    // Update index
+                    // Batch index write via pending_index (Decision #8A).
+                    // Replaces per-file redb transactions — flushed at batch boundaries
+                    // by do_seal_active() which calls flush_pending_index().
                     let entry = IndexEntry {
                         volume_id,
                         offset,
@@ -900,16 +952,19 @@ impl VolumeEngine {
                         expiry: 0.0, // Migrated content is permanent
                     };
                     {
-                        let db = self.db.read();
-                        let txn = db.begin_write().map_err(db_err)?;
-                        {
-                            let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-                            table
-                                .insert(hash.as_slice(), entry.to_bytes().as_slice())
-                                .map_err(db_err)?;
-                        }
-                        txn.commit().map_err(db_err)?;
+                        let mut pending = self.pending_index.lock();
+                        pending.push((hash, entry));
                     }
+                    // Update mem_index for O(1) reads during migration
+                    self.mem_index.write().insert(
+                        hash,
+                        MemIndexEntry {
+                            volume_id,
+                            offset,
+                            size: data.len() as u32,
+                            expiry: 0.0,
+                        },
+                    );
 
                     bytes_migrated += data.len() as u64;
                     self.total_bytes
@@ -1063,6 +1118,526 @@ impl VolumeEngine {
         } else {
             Ok(false)
         }
+    }
+
+    // ─── Batch pre-allocation (Issue #3409) ─────────────────────────────────
+
+    /// Filter a list of hashes, returning only those NOT already in the index.
+    /// Used for dedup before preallocate (Decision #14A: pre-filter + commit check).
+    fn filter_known(&self, hash_hexes: Vec<String>) -> PyResult<Vec<String>> {
+        let idx = self.mem_index.read();
+        let mut unknown = Vec::with_capacity(hash_hexes.len());
+        for hex in hash_hexes {
+            if let Ok(hash) = hex_to_hash(&hex) {
+                if idx.lookup_raw(&hash).is_none() {
+                    unknown.push(hex);
+                }
+            }
+        }
+        Ok(unknown)
+    }
+
+    /// Reserve N slots for batch writes (Issue #3409).
+    ///
+    /// Computes aligned offsets for each entry in a single Mutex hold (Decision #3A),
+    /// then returns a reservation_id. Callers write data via `write_slot()`
+    /// and finalize via `commit_batch()`.
+    ///
+    /// Auto-splits across volumes if the batch exceeds capacity (Decision #7A).
+    /// Reservations are ephemeral — in-memory only (Decision #1A).
+    ///
+    /// Args:
+    ///     sizes: List of data sizes (in bytes) for each entry.
+    ///
+    /// Returns:
+    ///     Reservation ID (u64) for use with write_slot() and commit_batch().
+    fn preallocate(&self, sizes: Vec<u32>) -> PyResult<u64> {
+        if sizes.is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Cannot preallocate zero slots",
+            ));
+        }
+
+        let mut slots = Vec::with_capacity(sizes.len());
+        let mut active_guard = self.active.lock();
+
+        for &size in &sizes {
+            let aligned_total = compute_entry_aligned_size(size);
+
+            // Ensure active volume exists
+            if active_guard.is_none() {
+                let vol_id = self.next_volume_id.fetch_add(1, Ordering::Relaxed);
+                let target = self.get_target_volume_size();
+                let vol = ActiveVolume::new(&self.volumes_dir, vol_id, target).map_err(io_err)?;
+                self.volume_paths.write().insert(vol_id, vol.path.clone());
+                *active_guard = Some(vol);
+            }
+
+            // Check if current volume has room (seal + create new if needed)
+            let needs_new_volume = {
+                let vol = active_guard.as_ref().unwrap();
+                vol.write_offset + aligned_total > vol.target_size && vol.write_offset > HEADER_SIZE
+            };
+
+            if needs_new_volume {
+                // Flush pending so seal can filter correctly
+                self.flush_pending_index()?;
+                let old_vol = active_guard.take().unwrap();
+                self.seal_volume(old_vol)?;
+
+                let vol_id = self.next_volume_id.fetch_add(1, Ordering::Relaxed);
+                let target = self.get_target_volume_size();
+                let new_vol =
+                    ActiveVolume::new(&self.volumes_dir, vol_id, target).map_err(io_err)?;
+                self.volume_paths
+                    .write()
+                    .insert(vol_id, new_vol.path.clone());
+                *active_guard = Some(new_vol);
+            }
+
+            let vol = active_guard.as_mut().unwrap();
+            let offset = vol.write_offset;
+            vol.write_offset += aligned_total;
+            vol.batch_reserved_bytes += aligned_total;
+
+            slots.push(SlotInfo {
+                volume_id: vol.volume_id,
+                offset,
+                data_size: size,
+            });
+        }
+
+        // Extend the active volume file to cover reserved space (Decision #2A)
+        // and seek the file cursor to write_offset so that subsequent sequential
+        // append() calls (from put()) land after the reserved space.
+        if let Some(vol) = active_guard.as_mut() {
+            let current_len = vol.file.metadata().map_err(io_err)?.len();
+            if vol.write_offset > current_len {
+                vol.file.set_len(vol.write_offset).map_err(io_err)?;
+            }
+            vol.file
+                .seek(SeekFrom::Start(vol.write_offset))
+                .map_err(io_err)?;
+        }
+
+        drop(active_guard);
+
+        // Open and cache write FDs for each volume used by the batch.
+        // Uses RwLock so write_slot can share the fd via read lock for pwrite.
+        {
+            let mut fds = self.batch_write_fds.write();
+            let paths = self.volume_paths.read();
+            for slot in &slots {
+                if let std::collections::hash_map::Entry::Vacant(e) = fds.entry(slot.volume_id) {
+                    if let Some(path) = paths.get(&slot.volume_id) {
+                        if let Ok(f) = fs::OpenOptions::new().write(true).open(path) {
+                            e.insert(f);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Store ephemeral reservation (Decision #1A)
+        let count = slots.len();
+        let res_id = self.next_reservation_id.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut reservations = self.reservations.lock();
+            reservations.insert(
+                res_id,
+                BatchReservation {
+                    slots,
+                    hashes: vec![None; count],
+                    written: vec![false; count],
+                    expires_at: now_unix_secs() + RESERVATION_TIMEOUT_SECS,
+                },
+            );
+        }
+
+        Ok(res_id)
+    }
+
+    /// Write data to a pre-allocated slot (Issue #3409).
+    ///
+    /// Uses pwrite at the pre-assigned offset — no lock contention with other
+    /// write_slot calls or with put(). GIL is released during the I/O (Decision #16A).
+    ///
+    /// Args:
+    ///     reservation_id: ID from preallocate().
+    ///     slot_index: 0-based index into the reservation's slot list.
+    ///     hash_hex: Content hash as hex string.
+    ///     data: Blob content (must match the size passed to preallocate).
+    fn write_slot(
+        &self,
+        py: Python<'_>,
+        reservation_id: u64,
+        slot_index: usize,
+        hash_hex: &str,
+        data: &[u8],
+    ) -> PyResult<()> {
+        let hash = hex_to_hash(hash_hex)?;
+
+        // Validate and mark slot as written (brief lock)
+        let (volume_id, offset) = {
+            let mut reservations = self.reservations.lock();
+            let res = reservations.get_mut(&reservation_id).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Invalid or expired reservation ID")
+            })?;
+
+            if now_unix_secs() >= res.expires_at {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Reservation has expired",
+                ));
+            }
+            if slot_index >= res.slots.len() {
+                return Err(pyo3::exceptions::PyIndexError::new_err(
+                    "Slot index out of range",
+                ));
+            }
+            if res.written[slot_index] {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "Slot already written",
+                ));
+            }
+            let slot = &res.slots[slot_index];
+            if data.len() as u32 != slot.data_size {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Data size {} doesn't match reserved size {}",
+                    data.len(),
+                    slot.data_size
+                )));
+            }
+            res.hashes[slot_index] = Some(hash);
+            res.written[slot_index] = true;
+            (slot.volume_id, slot.offset)
+        };
+
+        // Build entry: hash(32) + size(4) + flags(1) + data + padding
+        let aligned_total = compute_entry_aligned_size(data.len() as u32) as usize;
+        let mut buf = vec![0u8; aligned_total];
+        buf[0..32].copy_from_slice(&hash);
+        buf[32..36].copy_from_slice(&(data.len() as u32).to_le_bytes());
+        buf[36] = FLAG_NONE;
+        buf[37..37 + data.len()].copy_from_slice(data);
+
+        // pwrite using cached write FD (shared read lock — no contention).
+        // write_all_at takes &self so multiple threads can pwrite concurrently.
+        // GIL released during I/O (Decision #16A).
+        py.detach(|| {
+            let fds = self.batch_write_fds.read();
+            let file = fds.get(&volume_id).ok_or_else(|| {
+                pyo3::exceptions::PyIOError::new_err(format!("Volume {} not found", volume_id))
+            })?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                file.write_all_at(&buf, offset).map_err(io_err)?;
+            }
+            #[cfg(not(unix))]
+            {
+                // Fallback: open a new fd for non-unix (no write_all_at)
+                drop(fds);
+                let vol_path = {
+                    let paths = self.volume_paths.read();
+                    paths.get(&volume_id).cloned().ok_or_else(|| {
+                        pyo3::exceptions::PyIOError::new_err(format!(
+                            "Volume {} not found",
+                            volume_id
+                        ))
+                    })?
+                };
+                let mut f = fs::OpenOptions::new()
+                    .write(true)
+                    .open(&vol_path)
+                    .map_err(io_err)?;
+                f.seek(SeekFrom::Start(offset)).map_err(io_err)?;
+                f.write_all(&buf).map_err(io_err)?;
+            }
+
+            Ok::<_, PyErr>(())
+        })?;
+
+        Ok(())
+    }
+
+    /// Finalize a batch: fsync, update index in one transaction, update mem_index.
+    ///
+    /// Two-phase visibility (Decision #4A): entries become readable only after
+    /// this method completes. GIL is released during I/O (Decision #16A).
+    ///
+    /// Args:
+    ///     reservation_id: ID from preallocate().
+    ///     expiry: Optional expiry timestamp for all entries (0.0 = permanent).
+    #[pyo3(signature = (reservation_id, expiry=0.0))]
+    fn commit_batch(&self, py: Python<'_>, reservation_id: u64, expiry: f64) -> PyResult<()> {
+        // Extract and remove reservation
+        let reservation = {
+            let mut reservations = self.reservations.lock();
+            reservations.remove(&reservation_id).ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("Invalid or expired reservation ID")
+            })?
+        };
+
+        // Verify all slots were written
+        for (i, written) in reservation.written.iter().enumerate() {
+            if !*written {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "Slot {} was not written",
+                    i
+                )));
+            }
+        }
+
+        // Build index entries
+        let now = now_unix_secs();
+        let mut index_entries: Vec<([u8; 32], IndexEntry)> =
+            Vec::with_capacity(reservation.slots.len());
+        let mut mem_entries: Vec<([u8; 32], MemIndexEntry)> =
+            Vec::with_capacity(reservation.slots.len());
+        let mut total_new_bytes: u64 = 0;
+        let mut volume_id_set: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        // TocEntry data for active volume update (fixes Codex bugs #1 and #2)
+        let mut toc_updates: Vec<([u8; 32], u32, u32, u64)> =
+            Vec::with_capacity(reservation.slots.len());
+
+        for (i, slot) in reservation.slots.iter().enumerate() {
+            let hash = reservation.hashes[i].unwrap(); // verified all written above
+
+            // Commit-time dedup check (Decision #14A: defense against TOCTOU races)
+            if self.mem_index.read().lookup_raw(&hash).is_some() {
+                continue; // already indexed — skip (CAS idempotency)
+            }
+
+            index_entries.push((
+                hash,
+                IndexEntry {
+                    volume_id: slot.volume_id,
+                    offset: slot.offset,
+                    size: slot.data_size,
+                    timestamp: now,
+                    expiry,
+                },
+            ));
+            mem_entries.push((
+                hash,
+                MemIndexEntry {
+                    volume_id: slot.volume_id,
+                    offset: slot.offset,
+                    size: slot.data_size,
+                    expiry,
+                },
+            ));
+            total_new_bytes += slot.data_size as u64;
+            volume_id_set.insert(slot.volume_id);
+            toc_updates.push((hash, slot.data_size, slot.volume_id, slot.offset));
+        }
+
+        if index_entries.is_empty() {
+            return Ok(()); // all entries were duplicates
+        }
+
+        let volume_ids: Vec<u32> = volume_id_set.into_iter().collect();
+
+        // Heavy I/O with GIL released (Decision #16A)
+        py.detach(move || -> PyResult<()> {
+            // fsync each volume using cached write FDs (Decision #15A: data before metadata)
+            {
+                let fds = self.batch_write_fds.read();
+                for vol_id in &volume_ids {
+                    if let Some(file) = fds.get(vol_id) {
+                        let _ = file.sync_data();
+                    }
+                }
+            }
+
+            // Push to pending_index and flush in single transaction
+            {
+                let mut pending = self.pending_index.lock();
+                pending.extend(index_entries);
+            }
+            self.flush_pending_index()?;
+
+            // Update mem_index in bulk (Decision #4A: two-phase visibility)
+            {
+                let mut idx = self.mem_index.write();
+                for (hash, entry) in mem_entries {
+                    idx.insert(hash, entry);
+                }
+            }
+
+            // Track per-volume max expiry (Issue #3405)
+            if expiry > 0.0 {
+                let mut max_exp = self.volume_max_expiry.write();
+                for vol_id in &volume_ids {
+                    let current = max_exp.entry(*vol_id).or_insert(0.0);
+                    if expiry > *current {
+                        *current = expiry;
+                    }
+                }
+            }
+
+            self.total_bytes
+                .fetch_add(total_new_bytes, Ordering::Relaxed);
+
+            // Add TocEntries to active volume for committed batch slots.
+            // This fixes two bugs:
+            // 1. close()/Drop checks entry_count() > 0 to decide seal vs delete.
+            //    Without TocEntries, batch-only volumes are deleted → data loss.
+            // 2. seal() writes TOC records from vol.entries only. Without them,
+            //    batch entries are absent from sealed .vol TOC → breaks crash
+            //    recovery and parse_volume_toc() (used by tiering).
+            //
+            // For sealed volumes (from multi-volume spanning during preallocate),
+            // the TOC is already finalized. Those entries are preserved via redb;
+            // TOC reconciliation on crash recovery fills in any gaps.
+            {
+                let mut active_guard = self.active.lock();
+                if let Some(vol) = active_guard.as_mut() {
+                    for &(hash, size, volume_id, offset) in &toc_updates {
+                        if volume_id == vol.volume_id {
+                            vol.entries.push(TocEntry {
+                                hash,
+                                offset,
+                                size,
+                                flags: FLAG_NONE,
+                            });
+                            let aligned = compute_entry_aligned_size(size);
+                            if vol.batch_reserved_bytes >= aligned {
+                                vol.batch_reserved_bytes -= aligned;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Clean up cached write FDs only if no other reservation uses them
+            {
+                let still_in_use: std::collections::HashSet<u32> = {
+                    let reservations = self.reservations.lock();
+                    reservations
+                        .values()
+                        .flat_map(|r| r.slots.iter().map(|s| s.volume_id))
+                        .collect()
+                };
+                let mut fds = self.batch_write_fds.write();
+                for vol_id in &volume_ids {
+                    if !still_in_use.contains(vol_id) {
+                        fds.remove(vol_id);
+                    }
+                }
+            }
+
+            Ok(())
+        })?;
+
+        Ok(())
+    }
+
+    /// Batch write: all data in a single Python→Rust call (Issue #3409).
+    ///
+    /// Optimized bulk import path that eliminates per-entry Python overhead:
+    /// - Single GIL release for all entries (not 10K detach/reattach cycles)
+    /// - Single index flush at the end (not one every 256 entries)
+    /// - Dedup check per entry via mem_index
+    ///
+    /// This is the recommended path for connector sync and migration.
+    /// The 3-step API (preallocate/write_slot/commit_batch) is available
+    /// for cases needing fine-grained control.
+    ///
+    /// Args:
+    ///     items: List of (hash_hex, data) tuples.
+    ///
+    /// Returns:
+    ///     Number of new blobs written (excludes duplicates).
+    fn batch_put(&self, py: Python<'_>, items: Vec<(String, Vec<u8>)>) -> PyResult<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        // Parse hashes while GIL is held (hex_to_hash needs &str from Python)
+        let mut parsed: Vec<([u8; 32], Vec<u8>)> = Vec::with_capacity(items.len());
+        for (hash_hex, data) in items {
+            let hash = hex_to_hash(&hash_hex)?;
+            parsed.push((hash, data));
+        }
+
+        // All I/O with GIL released (Decision #16A)
+        py.detach(move || -> PyResult<usize> {
+            let now = now_unix_secs();
+            // (hash, size, volume_id, offset)
+            let mut new_entries: Vec<([u8; 32], u32, u32, u64)> = Vec::with_capacity(parsed.len());
+            let mut total_new_bytes: u64 = 0;
+
+            // Phase 1: Bulk dedup check (single RwLock read for all entries)
+            let known: std::collections::HashSet<[u8; 32]> = {
+                let idx = self.mem_index.read();
+                parsed
+                    .iter()
+                    .filter(|(h, _)| idx.lookup_raw(h).is_some())
+                    .map(|(h, _)| *h)
+                    .collect()
+            };
+
+            // Phase 2: Append unknown entries to volumes (active Mutex per entry)
+            for (hash, data) in &parsed {
+                if known.contains(hash) {
+                    continue;
+                }
+
+                let (volume_id, offset) = self.append_to_active(hash, data)?;
+                new_entries.push((*hash, data.len() as u32, volume_id, offset));
+
+                // Collect for batch pending_index push
+                let entry = IndexEntry {
+                    volume_id,
+                    offset,
+                    size: data.len() as u32,
+                    timestamp: now,
+                    expiry: 0.0,
+                };
+                {
+                    let mut pending = self.pending_index.lock();
+                    pending.push((*hash, entry));
+                }
+
+                total_new_bytes += data.len() as u64;
+            }
+
+            // Phase 3: Single flush for all entries
+            self.flush_pending_index()?;
+
+            // Phase 4: Bulk mem_index update (single RwLock write for all entries)
+            {
+                let mut idx = self.mem_index.write();
+                for &(hash, size, volume_id, offset) in &new_entries {
+                    idx.insert(
+                        hash,
+                        MemIndexEntry {
+                            volume_id,
+                            offset,
+                            size,
+                            expiry: 0.0,
+                        },
+                    );
+                }
+            }
+
+            self.total_bytes
+                .fetch_add(total_new_bytes, Ordering::Relaxed);
+
+            Ok(new_entries.len())
+        })
+    }
+
+    /// Remove expired reservations. Returns the count removed.
+    /// Called periodically by the Python transport for cleanup.
+    fn expire_reservations(&self) -> usize {
+        let now = now_unix_secs();
+        let mut reservations = self.reservations.lock();
+        let before = reservations.len();
+        reservations.retain(|_, res| now < res.expires_at);
+        before - reservations.len()
     }
 }
 
@@ -1247,8 +1822,8 @@ impl VolumeEngine {
     /// resurrected on crash recovery (which re-inserts TOC entries missing
     /// from the index).
     fn seal_volume(&self, mut vol: ActiveVolume) -> PyResult<()> {
-        if vol.entry_count() == 0 {
-            // Empty volume — just delete the temp file
+        if vol.entry_count() == 0 && vol.write_offset <= HEADER_SIZE {
+            // Truly empty (no data, no batch reservations) — delete
             let _ = fs::remove_file(&vol.path);
             self.volume_paths.write().remove(&vol.volume_id);
             return Ok(());
@@ -1266,8 +1841,8 @@ impl VolumeEngine {
                 .retain(|entry| table.get(entry.hash.as_slice()).ok().flatten().is_some());
         }
 
-        if vol.entries.is_empty() {
-            // All entries were deleted — discard the volume
+        if vol.entries.is_empty() && vol.batch_reserved_bytes == 0 {
+            // All entries were deleted and no batch reservations — discard
             let _ = fs::remove_file(&vol.path);
             self.volume_paths.write().remove(&vol.volume_id);
             return Ok(());
@@ -1986,6 +2561,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -2040,6 +2618,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -2079,6 +2660,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -2127,6 +2711,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         engine.recover_on_startup().unwrap();
@@ -2173,6 +2760,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         engine.recover_on_startup().unwrap();
@@ -2214,6 +2804,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         // Write enough data to trigger multiple volume seals
@@ -2262,6 +2855,9 @@ mod tests {
             compaction_blobs_moved_total: AtomicU64::new(0),
             compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
         };
 
         // Write 10 entries
@@ -2288,6 +2884,222 @@ mod tests {
         // Deleted entries should still be gone
         for i in 0..7u8 {
             assert!(!engine.exists(&hash_hex(i)).unwrap());
+        }
+    }
+
+    // ─── Batch pre-allocation tests (Issue #3409) ───────────────────────
+
+    #[test]
+    fn test_preallocate_returns_reservation_id() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("volume_index.redb");
+        let db = Database::create(&db_path).unwrap();
+        {
+            let txn = db.begin_write().unwrap();
+            txn.open_table(INDEX_TABLE).unwrap();
+            txn.open_table(META_TABLE).unwrap();
+            txn.commit().unwrap();
+        }
+        let engine = VolumeEngine {
+            volumes_dir: dir.path().to_path_buf(),
+            db: RwLock::new(db),
+            active: Mutex::new(None),
+            next_volume_id: AtomicU32::new(1),
+            total_bytes: AtomicU64::new(0),
+            volume_paths: RwLock::new(HashMap::new()),
+            is_open: AtomicBool::new(true),
+            target_volume_size_override: 1024 * 1024,
+            compaction_bytes_per_cycle: 0,
+            compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
+            mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
+        };
+
+        let res_id = engine.preallocate(vec![100, 200, 300]).unwrap();
+        assert!(res_id > 0, "Reservation ID should be positive");
+
+        // Should have 3 slots in the reservation
+        let reservations = engine.reservations.lock();
+        let res = reservations.get(&res_id).unwrap();
+        assert_eq!(res.slots.len(), 3);
+        assert_eq!(res.slots[0].data_size, 100);
+        assert_eq!(res.slots[1].data_size, 200);
+        assert_eq!(res.slots[2].data_size, 300);
+    }
+
+    #[test]
+    fn test_filter_known_excludes_existing() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("volume_index.redb");
+        let db = Database::create(&db_path).unwrap();
+        {
+            let txn = db.begin_write().unwrap();
+            txn.open_table(INDEX_TABLE).unwrap();
+            txn.open_table(META_TABLE).unwrap();
+            txn.commit().unwrap();
+        }
+        let engine = VolumeEngine {
+            volumes_dir: dir.path().to_path_buf(),
+            db: RwLock::new(db),
+            active: Mutex::new(None),
+            next_volume_id: AtomicU32::new(1),
+            total_bytes: AtomicU64::new(0),
+            volume_paths: RwLock::new(HashMap::new()),
+            is_open: AtomicBool::new(true),
+            target_volume_size_override: 1024 * 1024,
+            compaction_bytes_per_cycle: 0,
+            compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
+            mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
+        };
+
+        // Put hash 1 and 2
+        engine.put(&hash_hex(1), b"data1").unwrap();
+        engine.put(&hash_hex(2), b"data2").unwrap();
+
+        // filter_known should return only hash 3 (unknown)
+        let all = vec![hash_hex(1), hash_hex(2), hash_hex(3)];
+        let unknown = engine.filter_known(all).unwrap();
+        assert_eq!(unknown.len(), 1);
+        assert_eq!(unknown[0], hash_hex(3));
+    }
+
+    #[test]
+    fn test_expire_reservations() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("volume_index.redb");
+        let db = Database::create(&db_path).unwrap();
+        {
+            let txn = db.begin_write().unwrap();
+            txn.open_table(INDEX_TABLE).unwrap();
+            txn.open_table(META_TABLE).unwrap();
+            txn.commit().unwrap();
+        }
+        let engine = VolumeEngine {
+            volumes_dir: dir.path().to_path_buf(),
+            db: RwLock::new(db),
+            active: Mutex::new(None),
+            next_volume_id: AtomicU32::new(1),
+            total_bytes: AtomicU64::new(0),
+            volume_paths: RwLock::new(HashMap::new()),
+            is_open: AtomicBool::new(true),
+            target_volume_size_override: 1024 * 1024,
+            compaction_bytes_per_cycle: 0,
+            compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
+            mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
+        };
+
+        // Create a reservation
+        let _res_id = engine.preallocate(vec![100]).unwrap();
+
+        // Should NOT expire (fresh reservation)
+        assert_eq!(engine.expire_reservations(), 0);
+        assert_eq!(engine.reservations.lock().len(), 1);
+
+        // Manually expire by setting expires_at to past
+        {
+            let mut reservations = engine.reservations.lock();
+            for (_, res) in reservations.iter_mut() {
+                res.expires_at = 0.0; // expired in the past
+            }
+        }
+
+        // Now should expire
+        assert_eq!(engine.expire_reservations(), 1);
+        assert_eq!(engine.reservations.lock().len(), 0);
+    }
+
+    #[test]
+    fn test_compute_entry_aligned_size() {
+        // Entry header is 37 bytes, alignment is 8
+        // 37 + 0 = 37 → aligned to 40
+        assert_eq!(compute_entry_aligned_size(0), 40);
+        // 37 + 3 = 40 → already aligned
+        assert_eq!(compute_entry_aligned_size(3), 40);
+        // 37 + 4 = 41 → aligned to 48
+        assert_eq!(compute_entry_aligned_size(4), 48);
+        // 37 + 100 = 137 → aligned to 144
+        assert_eq!(compute_entry_aligned_size(100), 144);
+    }
+
+    #[test]
+    fn test_batch_preallocate_multi_volume_span() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("volume_index.redb");
+        let db = Database::create(&db_path).unwrap();
+        {
+            let txn = db.begin_write().unwrap();
+            txn.open_table(INDEX_TABLE).unwrap();
+            txn.open_table(META_TABLE).unwrap();
+            txn.commit().unwrap();
+        }
+        let engine = VolumeEngine {
+            volumes_dir: dir.path().to_path_buf(),
+            db: RwLock::new(db),
+            active: Mutex::new(None),
+            next_volume_id: AtomicU32::new(1),
+            total_bytes: AtomicU64::new(0),
+            volume_paths: RwLock::new(HashMap::new()),
+            is_open: AtomicBool::new(true),
+            target_volume_size_override: 256, // Very small volumes to force spanning
+            compaction_bytes_per_cycle: 0,
+            compaction_sparsity_threshold: 0.4,
+            pending_index: Mutex::new(Vec::new()),
+            index_batch_size: 256,
+            mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
+            reservations: Mutex::new(HashMap::new()),
+            next_reservation_id: AtomicU64::new(1),
+            batch_write_fds: RwLock::new(HashMap::new()),
+        };
+
+        // Each entry will be ~90 bytes (37 header + 50 data + 1 padding = 88, aligned to 88).
+        // With 256 byte volumes (minus 64 byte header = 192 usable), fits ~2 entries per volume.
+        // 6 entries should span 3+ volumes.
+        let res_id = engine.preallocate(vec![50; 6]).unwrap();
+
+        // Verify reservation has 6 slots
+        {
+            let reservations = engine.reservations.lock();
+            let res = reservations.get(&res_id).unwrap();
+            assert_eq!(res.slots.len(), 6);
+
+            // Should reference multiple volumes
+            let vol_ids: std::collections::HashSet<u32> =
+                res.slots.iter().map(|s| s.volume_id).collect();
+            assert!(
+                vol_ids.len() >= 2,
+                "Expected multi-volume spanning, got {} volume(s)",
+                vol_ids.len()
+            );
         }
     }
 }

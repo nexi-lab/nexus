@@ -386,11 +386,16 @@ class ConnectorSyncLoop:
     ) -> int:
         """Batch-write items to metastore and content cache.
 
-        Uses existing SyncService batch infrastructure where available,
-        falls back to individual writes.
+        Uses batch pre-allocation for CAS content writes (Issue #3409)
+        and existing SyncService batch infrastructure for metadata.
         """
         if not items:
             return 0
+
+        # Issue #3409: Batch CAS content writes via store_batch.
+        # This uses the Rust VolumeEngine's pre-allocation API for
+        # parallel pwrite at pre-assigned offsets — 3-5x faster.
+        self._batch_write_cas_content(backend, items)
 
         synced = 0
         sync_svc = getattr(self._mount_service, "_sync_service", None)
@@ -490,6 +495,44 @@ class ConnectorSyncLoop:
                 )
 
         return synced
+
+    def _batch_write_cas_content(
+        self,
+        backend: Any,
+        items: list[tuple[Any, bytes]],
+    ) -> None:
+        """Batch-write CAS content via transport.store_batch (Issue #3409).
+
+        Called before individual metastore writes. Uses the transport's
+        batch pre-allocation API for parallel volume writes.
+        Falls back silently if the transport doesn't support batch writes.
+        """
+        transport = getattr(backend, "_transport", None)
+        if transport is None or not hasattr(transport, "store_batch"):
+            return
+
+        try:
+            import hashlib
+
+            cas_items: list[tuple[str, bytes]] = []
+            for _item, content in items:
+                content_hash = hashlib.sha256(content).hexdigest()
+                cas_key = f"cas/{content_hash[:2]}/{content_hash[2:4]}/{content_hash}"
+                cas_items.append((cas_key, content))
+
+            if cas_items:
+                written = transport.store_batch(cas_items)
+                if written > 0:
+                    logger.debug(
+                        "[CONNECTOR_SYNC] Batch-wrote %d CAS blobs via store_batch",
+                        written,
+                    )
+        except Exception:
+            logger.debug(
+                "[CONNECTOR_SYNC] store_batch not available or failed, "
+                "falling back to individual writes",
+                exc_info=True,
+            )
 
     async def _batch_delete_from_metastore(self, mp: str, deleted_paths: list[str]) -> None:
         """Remove deleted items from metastore."""

@@ -71,6 +71,17 @@ fn align_up(offset: u64, alignment: u64) -> u64 {
     (offset + alignment - 1) & !(alignment - 1)
 }
 
+/// Compute dead ratio: proportion of bytes that are dead.
+/// `dead_ratio = 1 - (live_bytes / total_bytes)` per Issue #3408.
+/// Returns 0.0 when total is 0 (empty volume is not sparse).
+fn dead_ratio(live_bytes: u64, total_bytes: u64) -> f64 {
+    if total_bytes > 0 {
+        1.0 - (live_bytes as f64 / total_bytes as f64)
+    } else {
+        0.0
+    }
+}
+
 fn now_unix_secs() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -368,8 +379,9 @@ pub struct VolumeEngine {
     is_open: AtomicBool,
     /// Configurable target volume size override (0 = dynamic)
     target_volume_size_override: u64,
-    /// Compaction I/O rate limit in bytes/sec (0 = unlimited)
-    compaction_rate_limit: u64,
+    /// Max bytes to process per compaction cycle (0 = unlimited).
+    /// Controls how much I/O a single compact() call can do.
+    compaction_bytes_per_cycle: u64,
     /// Sparsity threshold for compaction trigger (0.0 - 1.0)
     compaction_sparsity_threshold: f64,
     /// Pending index writes — batched and flushed periodically to avoid
@@ -380,6 +392,10 @@ pub struct VolumeEngine {
     /// In-memory index for O(1) lookups — mirrors redb, avoids disk I/O on reads.
     /// Issue #3404.
     mem_index: RwLock<VolumeIndex>,
+    /// Compaction stats counters (Issue #3408).
+    compaction_volumes_total: AtomicU64,
+    compaction_blobs_moved_total: AtomicU64,
+    compaction_bytes_reclaimed_total: AtomicU64,
     /// Per-volume max expiry timestamp (Issue #3405).
     /// When `now > max_expiry` for a sealed volume, the entire volume can be
     /// deleted with a single `unlink()` — no per-entry scanning needed.
@@ -402,14 +418,14 @@ impl VolumeEngine {
     /// Args:
     ///     path: Root directory for volumes and index
     ///     target_volume_size: Override volume size in bytes (0 = dynamic)
-    ///     compaction_rate_limit: I/O rate limit for compaction in bytes/sec (0 = unlimited)
+    ///     compaction_bytes_per_cycle: Max bytes to process per compact() call (0 = unlimited)
     ///     compaction_sparsity_threshold: Trigger compaction when sparsity exceeds this (0.0-1.0)
     #[new]
-    #[pyo3(signature = (path, target_volume_size=0, compaction_rate_limit=52_428_800, compaction_sparsity_threshold=0.4))]
+    #[pyo3(signature = (path, target_volume_size=0, compaction_bytes_per_cycle=52_428_800, compaction_sparsity_threshold=0.3))]
     fn new(
         path: &str,
         target_volume_size: u64,
-        compaction_rate_limit: u64,
+        compaction_bytes_per_cycle: u64,
         compaction_sparsity_threshold: f64,
     ) -> PyResult<Self> {
         let volumes_dir = PathBuf::from(path);
@@ -435,11 +451,14 @@ impl VolumeEngine {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: target_volume_size,
-            compaction_rate_limit,
+            compaction_bytes_per_cycle,
             compaction_sparsity_threshold,
             pending_index: Mutex::new(Vec::with_capacity(256)),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
             volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
@@ -679,8 +698,10 @@ impl VolumeEngine {
 
     /// Run compaction on volumes exceeding sparsity threshold.
     /// Returns (volumes_compacted, blobs_moved, bytes_reclaimed).
-    fn compact(&self) -> PyResult<(u32, u64, u64)> {
-        self.do_compact()
+    ///
+    /// Releases the GIL during I/O-heavy compaction work (Issue #3408).
+    fn compact(&self, py: Python<'_>) -> PyResult<(u32, u64, u64)> {
+        py.detach(|| self.do_compact())
     }
 
     /// Get volume stats: {volume_count, total_blobs, total_bytes, active_volume_size}.
@@ -718,6 +739,21 @@ impl VolumeEngine {
         stats.insert("mem_index_bytes".to_string(), idx.memory_bytes() as u64);
         stats.insert("mem_index_volumes".to_string(), idx.volume_count() as u64);
         drop(idx);
+
+        // Compaction stats (Issue #3408)
+        stats.insert(
+            "compaction_volumes_total".to_string(),
+            self.compaction_volumes_total.load(Ordering::Relaxed),
+        );
+        stats.insert(
+            "compaction_blobs_moved_total".to_string(),
+            self.compaction_blobs_moved_total.load(Ordering::Relaxed),
+        );
+        stats.insert(
+            "compaction_bytes_reclaimed_total".to_string(),
+            self.compaction_bytes_reclaimed_total
+                .load(Ordering::Relaxed),
+        );
 
         Ok(stats)
     }
@@ -1498,35 +1534,27 @@ impl VolumeEngine {
     }
 
     /// Run compaction: find sparse volumes, copy live entries to new volume.
+    ///
+    /// Issue #3408 improvements:
+    /// - TOC-based lookup instead of full index scan (O(T) vs O(N) per volume)
+    /// - Batch redb commit after seal (atomic index update)
+    /// - Write-ahead ordering: seal new → commit index → delete old
+    /// - Sort entries by offset for sequential I/O
+    /// - Open old volume file once per compaction (not per-blob)
+    /// - Log + preserve old volume on pread errors (no silent data loss)
+    /// - Cumulative compaction stats counters
     fn do_compact(&self) -> PyResult<(u32, u64, u64)> {
         let mut volumes_compacted: u32 = 0;
         let mut blobs_moved: u64 = 0;
         let mut bytes_reclaimed: u64 = 0;
 
-        // Build per-volume live entry counts from index
-        let mut live_per_volume: HashMap<u32, (u64, u64)> = HashMap::new(); // vol_id → (live_count, live_bytes)
-        {
-            let db = self.db.read();
-            let txn = db.begin_read().map_err(db_err)?;
-            let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-            let iter = table.iter().map_err(db_err)?;
-            for item in iter {
-                let (_key, val) = item.map_err(db_err)?;
-                if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                    let stats = live_per_volume.entry(entry.volume_id).or_insert((0, 0));
-                    stats.0 += 1;
-                    stats.1 += entry.size as u64;
-                }
-            }
-        }
-
-        // Find candidate volumes with high sparsity.
-        // Sparsity is based on entry counts (live vs total), not byte sizes,
-        // because volume files have per-entry overhead (headers, TOC, alignment)
-        // that inflates the file size relative to content bytes.
+        // Phase 1: Find candidate volumes using TOC + mem_index.
+        // Read each sealed volume's TOC, check which entries are still live
+        // via mem_index (O(1) per entry), compute byte-based dead ratio.
+        // dead_ratio = 1 - (live_bytes / total_bytes) per Issue #3408.
         let paths = self.volume_paths.read().clone();
-        // (vol_id, path, file_size, live_count, total_count)
-        let mut candidates: Vec<(u32, PathBuf, u64, u64, u64)> = Vec::new();
+        // (vol_id, path, file_size, dead_ratio, live TOC entries)
+        let mut candidates: Vec<(u32, PathBuf, u64, f64, Vec<TocEntry>)> = Vec::new();
 
         for (vol_id, path) in &paths {
             // Skip .tmp (active) volumes
@@ -1534,66 +1562,56 @@ impl VolumeEngine {
                 continue;
             }
             if let Ok((_, toc_entries)) = read_volume_toc(path) {
-                let total_count = toc_entries.len() as u64;
-                let (live_count, _) = live_per_volume.get(vol_id).copied().unwrap_or((0, 0));
-                let sparsity = if total_count > 0 {
-                    1.0 - (live_count as f64 / total_count as f64)
-                } else {
-                    0.0
-                };
-                if sparsity >= self.compaction_sparsity_threshold {
+                // Compute total bytes from all TOC entries
+                let total_bytes: u64 = toc_entries.iter().map(|e| e.size as u64).sum();
+                // Filter for live entries using mem_index (O(1) per hash)
+                let idx = self.mem_index.read();
+                let live_toc: Vec<TocEntry> = toc_entries
+                    .into_iter()
+                    .filter(|e| e.flags & FLAG_TOMBSTONE == 0 && idx.contains(&e.hash))
+                    .collect();
+                drop(idx);
+
+                let live_bytes: u64 = live_toc.iter().map(|e| e.size as u64).sum();
+                let vol_dead_ratio = dead_ratio(live_bytes, total_bytes);
+                if vol_dead_ratio >= self.compaction_sparsity_threshold {
                     let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-                    candidates.push((*vol_id, path.clone(), file_size, live_count, total_count));
+                    candidates.push((*vol_id, path.clone(), file_size, vol_dead_ratio, live_toc));
                 }
             }
         }
 
-        // Sort by sparsity descending (most sparse first)
-        candidates.sort_by(|a, b| {
-            let sp_a = if a.4 > 0 {
-                1.0 - (a.3 as f64 / a.4 as f64)
-            } else {
-                0.0
-            };
-            let sp_b = if b.4 > 0 {
-                1.0 - (b.3 as f64 / b.4 as f64)
-            } else {
-                0.0
-            };
-            sp_b.partial_cmp(&sp_a).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        // Sort by dead ratio descending (most dead first)
+        candidates.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut rate_budget = self.compaction_rate_limit as i64;
+        let mut cycle_budget = self.compaction_bytes_per_cycle as i64;
 
-        for (vol_id, vol_path, vol_total, _, _) in candidates {
-            // Collect live entries from this volume
-            let mut live_entries: Vec<([u8; 32], IndexEntry)> = Vec::new();
-            {
-                let db = self.db.read();
-                let txn = db.begin_read().map_err(db_err)?;
-                let table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-                let iter = table.iter().map_err(db_err)?;
-                for item in iter {
-                    let (key, val) = item.map_err(db_err)?;
-                    if let Some(entry) = IndexEntry::from_bytes(val.value()) {
-                        if entry.volume_id == vol_id {
-                            let mut hash = [0u8; 32];
-                            hash.copy_from_slice(key.value());
-                            live_entries.push((hash, entry));
-                        }
-                    }
-                }
-            }
-
-            if live_entries.is_empty() {
+        for (vol_id, vol_path, vol_file_size, _, mut live_toc) in candidates {
+            if live_toc.is_empty() {
                 // Entirely dead volume — just delete
                 let _ = fs::remove_file(&vol_path);
                 self.volume_paths.write().remove(&vol_id);
-                self.mem_index.write().close_volume(vol_id); // Issue #3404
-                bytes_reclaimed += vol_total;
+                self.mem_index.write().close_volume(vol_id);
+                bytes_reclaimed += vol_file_size;
                 volumes_compacted += 1;
                 continue;
             }
+
+            // Sort live entries by offset for sequential I/O (Issue #3408)
+            live_toc.sort_by_key(|e| e.offset);
+
+            // Open old volume file once for all reads (Issue #3408)
+            let mut old_file = match fs::File::open(&vol_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    eprintln!(
+                        "Warning: compaction cannot open volume {}: {}",
+                        vol_path.display(),
+                        e
+                    );
+                    continue;
+                }
+            };
 
             // Read live blobs and write to new volume
             let new_vol_id = self.next_volume_id.fetch_add(1, Ordering::Relaxed);
@@ -1601,64 +1619,89 @@ impl VolumeEngine {
             let mut new_vol =
                 ActiveVolume::new(&self.volumes_dir, new_vol_id, target).map_err(io_err)?;
 
-            let total_live = live_entries.len();
+            let total_live = live_toc.len();
             let mut copied: u64 = 0;
-            let mut rate_exhausted = false;
+            let mut skipped: u64 = 0;
+            let mut cycle_exhausted = false;
+            // Collect index updates for batch commit
+            let mut index_updates: Vec<([u8; 32], IndexEntry)> = Vec::with_capacity(total_live);
 
-            for (hash, entry) in &live_entries {
-                // Read blob from old volume
-                match pread_blob(&vol_path, entry.offset, entry.size) {
-                    Ok(data) => {
-                        let new_offset = new_vol.append(hash, &data).map_err(io_err)?;
+            for toc_entry in &live_toc {
+                // Read blob from old volume using the already-open file handle
+                old_file
+                    .seek(SeekFrom::Start(toc_entry.offset + ENTRY_HEADER_SIZE))
+                    .map_err(io_err)?;
+                let mut buf = vec![0u8; toc_entry.size as usize];
+                match old_file.read_exact(&mut buf) {
+                    Ok(()) => {
+                        let new_offset = new_vol.append(&toc_entry.hash, &buf).map_err(io_err)?;
 
-                        // Update index to point to new volume
-                        let new_entry = IndexEntry {
-                            volume_id: new_vol_id,
-                            offset: new_offset,
-                            size: entry.size,
-                            timestamp: entry.timestamp,
-                            expiry: entry.expiry,
-                        };
-                        let db = self.db.read();
-                        let txn = db.begin_write().map_err(db_err)?;
-                        {
-                            let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
-                            table
-                                .insert(hash.as_slice(), new_entry.to_bytes().as_slice())
-                                .map_err(db_err)?;
-                        }
-                        txn.commit().map_err(db_err)?;
+                        // Look up original index entry to preserve timestamp + expiry
+                        let (timestamp, expiry) = self
+                            .mem_index
+                            .read()
+                            .lookup_raw(&toc_entry.hash)
+                            .map(|e| {
+                                // Read timestamp from redb (mem_index doesn't store it)
+                                let ts = self
+                                    .lookup_entry(&toc_entry.hash)
+                                    .ok()
+                                    .flatten()
+                                    .map(|ie| ie.timestamp)
+                                    .unwrap_or_else(now_unix_secs);
+                                (ts, e.expiry)
+                            })
+                            .unwrap_or_else(|| (now_unix_secs(), 0.0));
 
-                        // Update in-memory index (Issue #3404)
-                        self.mem_index.write().insert(
-                            *hash,
-                            MemIndexEntry {
+                        index_updates.push((
+                            toc_entry.hash,
+                            IndexEntry {
                                 volume_id: new_vol_id,
                                 offset: new_offset,
-                                size: entry.size,
-                                expiry: entry.expiry,
+                                size: toc_entry.size,
+                                timestamp,
+                                expiry,
                             },
-                        );
+                        ));
 
-                        blobs_moved += 1;
                         copied += 1;
 
-                        if rate_budget > 0 {
-                            rate_budget -= entry.size as i64;
-                            if rate_budget <= 0 {
-                                rate_exhausted = true;
+                        if cycle_budget > 0 {
+                            cycle_budget -= toc_entry.size as i64;
+                            if cycle_budget <= 0 {
+                                cycle_exhausted = true;
                                 break;
                             }
                         }
                     }
-                    Err(_) => continue, // Skip unreadable blobs
+                    Err(e) => {
+                        // Log and skip — do NOT silently lose data (Issue #3408)
+                        let hash_hex: String = toc_entry
+                            .hash
+                            .iter()
+                            .map(|b| format!("{:02x}", b))
+                            .collect();
+                        eprintln!(
+                            "Warning: compaction skipped unreadable blob {} in {}: {}",
+                            hash_hex,
+                            vol_path.display(),
+                            e
+                        );
+                        skipped += 1;
+                        continue;
+                    }
                 }
             }
 
-            // Seal the new volume
+            // Write-ahead ordering (Issue #3408):
+            // 1. Seal new volume (makes it a .vol — survives crash)
+            // 2. Batch commit index updates to redb (atomic)
+            // 3. Update mem_index
+            // 4. Delete old volume (only if all entries accounted for)
+
+            // Step 1: Seal new volume
             if new_vol.entry_count() > 0 {
                 let (sealed_path, _) = new_vol.seal(&self.volumes_dir).map_err(io_err)?;
-                // Cache FD for pread access (Issue #3404)
                 if let Err(e) = self.mem_index.write().open_volume(new_vol_id, &sealed_path) {
                     eprintln!("Warning: failed to cache compacted volume FD: {}", e);
                 }
@@ -1667,20 +1710,61 @@ impl VolumeEngine {
                 let _ = fs::remove_file(&new_vol.path);
             }
 
-            // Only delete old volume if ALL live entries were copied.
-            // If rate limit interrupted, some entries still reference the old volume.
-            if copied as usize >= total_live {
+            // Step 2: Batch commit all index updates in a single redb transaction
+            if !index_updates.is_empty() {
+                let db = self.db.read();
+                let txn = db.begin_write().map_err(db_err)?;
+                {
+                    let mut table = txn.open_table(INDEX_TABLE).map_err(db_err)?;
+                    for (hash, entry) in &index_updates {
+                        table
+                            .insert(hash.as_slice(), entry.to_bytes().as_slice())
+                            .map_err(db_err)?;
+                    }
+                }
+                txn.commit().map_err(db_err)?;
+            }
+
+            // Step 3: Update in-memory index
+            {
+                let mut idx = self.mem_index.write();
+                for (hash, entry) in &index_updates {
+                    idx.insert(
+                        *hash,
+                        MemIndexEntry {
+                            volume_id: entry.volume_id,
+                            offset: entry.offset,
+                            size: entry.size,
+                            expiry: entry.expiry,
+                        },
+                    );
+                }
+            }
+
+            blobs_moved += copied;
+
+            // Step 4: Delete old volume only if ALL live entries were copied.
+            // If rate limit interrupted or pread errors occurred, preserve old volume.
+            if copied + skipped >= total_live as u64 && skipped == 0 {
                 let _ = fs::remove_file(&vol_path);
                 self.volume_paths.write().remove(&vol_id);
-                self.mem_index.write().close_volume(vol_id); // Issue #3404
-                bytes_reclaimed += vol_total;
+                self.mem_index.write().close_volume(vol_id);
+                bytes_reclaimed += vol_file_size;
                 volumes_compacted += 1;
             }
 
-            if rate_exhausted {
+            if cycle_exhausted {
                 break;
             }
         }
+
+        // Update cumulative compaction stats (Issue #3408)
+        self.compaction_volumes_total
+            .fetch_add(volumes_compacted as u64, Ordering::Relaxed);
+        self.compaction_blobs_moved_total
+            .fetch_add(blobs_moved, Ordering::Relaxed);
+        self.compaction_bytes_reclaimed_total
+            .fetch_add(bytes_reclaimed, Ordering::Relaxed);
 
         Ok((volumes_compacted, blobs_moved, bytes_reclaimed))
     }
@@ -1893,11 +1977,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 1024 * 1024,
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -1943,11 +2031,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 1024 * 1024,
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -1978,11 +2070,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 1024 * 1024,
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         let hash = hash_hex(1);
@@ -2022,11 +2118,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 0,
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         engine.recover_on_startup().unwrap();
@@ -2064,11 +2164,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 0,
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         engine.recover_on_startup().unwrap();
@@ -2101,11 +2205,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 256, // Very small!
-            compaction_rate_limit: 0,
+            compaction_bytes_per_cycle: 0,
             compaction_sparsity_threshold: 0.4,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         // Write enough data to trigger multiple volume seals
@@ -2145,11 +2253,15 @@ mod tests {
             volume_paths: RwLock::new(HashMap::new()),
             is_open: AtomicBool::new(true),
             target_volume_size_override: 512, // Small volumes for testing
-            compaction_rate_limit: 0,         // No rate limit for tests
+            compaction_bytes_per_cycle: 0,    // No byte limit for tests
             compaction_sparsity_threshold: 0.3,
             pending_index: Mutex::new(Vec::new()),
             index_batch_size: 256,
             mem_index: RwLock::new(VolumeIndex::new()),
+            compaction_volumes_total: AtomicU64::new(0),
+            compaction_blobs_moved_total: AtomicU64::new(0),
+            compaction_bytes_reclaimed_total: AtomicU64::new(0),
+            volume_max_expiry: RwLock::new(HashMap::new()),
         };
 
         // Write 10 entries

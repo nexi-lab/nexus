@@ -408,7 +408,7 @@ class TestMemIndexCompaction:
         engine = VolumeEngine(
             str(tmp_path / "vol"),
             target_volume_size=512,
-            compaction_rate_limit=0,
+            compaction_bytes_per_cycle=0,
             compaction_sparsity_threshold=0.3,
         )
 

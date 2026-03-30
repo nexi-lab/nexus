@@ -103,7 +103,7 @@ class VolumeLocalTransport:
         root_path: Root directory for all storage.
         fsync: Whether LocalTransport uses fsync (for dirs/uploads).
         target_volume_size: Override volume size in bytes (0 = dynamic).
-        compaction_rate_limit: I/O rate limit for compaction (bytes/sec).
+        compaction_bytes_per_cycle: Max bytes to process per compact() call.
         compaction_sparsity_threshold: Trigger compaction above this (0.0-1.0).
     """
 
@@ -115,8 +115,8 @@ class VolumeLocalTransport:
         *,
         fsync: bool = True,
         target_volume_size: int = 0,
-        compaction_rate_limit: int = 52_428_800,
-        compaction_sparsity_threshold: float = 0.4,
+        compaction_bytes_per_cycle: int = 52_428_800,
+        compaction_sparsity_threshold: float = 0.3,
     ) -> None:
         self._root = Path(root_path).resolve()
         self._volume_available = False
@@ -137,7 +137,7 @@ class VolumeLocalTransport:
         # Permanent engine for non-TTL CAS blobs
         self._engine: Any = None
         self._target_volume_size = target_volume_size
-        self._compaction_rate_limit = compaction_rate_limit
+        self._compaction_bytes_per_cycle = compaction_bytes_per_cycle
         self._compaction_sparsity_threshold = compaction_sparsity_threshold
 
         if self._volume_available:
@@ -145,7 +145,7 @@ class VolumeLocalTransport:
             self._engine = self._VolumeEngine(
                 str(volumes_dir),
                 target_volume_size,
-                compaction_rate_limit,
+                compaction_bytes_per_cycle,
                 compaction_sparsity_threshold,
             )
             logger.info("CAS volume engine (permanent) initialized at %s", volumes_dir)
@@ -183,7 +183,7 @@ class VolumeLocalTransport:
         engine = self._VolumeEngine(
             str(ttl_dir),
             self._target_volume_size,
-            self._compaction_rate_limit,
+            self._compaction_bytes_per_cycle,
             self._compaction_sparsity_threshold,
         )
         self._ttl_engines[bucket] = engine

@@ -135,14 +135,25 @@ class ExternalRouteResult:
     io_profile: str = "balanced"
 
 
+# ---------------------------------------------------------------------------
+# Rust acceleration (try import, fallback to Python)
+# ---------------------------------------------------------------------------
+
+try:
+    from nexus_fast import RustPathRouter as _RustRouter  # type: ignore[import-untyped]
+
+    _HAS_RUST_ROUTER = True
+except ImportError:
+    _HAS_RUST_ROUTER = False
+
+
 class PathRouter:
     """Route virtual paths to storage backends using mount table.
 
     Design Principles:
     1. **Longest Prefix Match**: most specific mount wins (deepest path).
     2. **Mount-level access control**: ``readonly`` and ``admin_only`` as mount options.
-    3. **Metastore-backed**: DT_MOUNT entries in MetastoreABC are the source of truth.
-       Only backend instances live in-memory (``_backends`` registry).
+    3. **Rust-accelerated**: LPM + canonicalization in Rust (~30ns), Python fallback.
 
     Example Mounts::
 
@@ -160,6 +171,7 @@ class PathRouter:
         """
         self._metastore = metastore
         self._backends: dict[str, _MountEntry] = {}
+        self._rust: _RustRouter | None = _RustRouter() if _HAS_RUST_ROUTER else None
 
     def add_mount(
         self,
@@ -201,6 +213,8 @@ class PathRouter:
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
         )
+        if self._rust is not None:
+            self._rust.add_mount(mount_point, zone_id, readonly, admin_only, io_profile)
 
     def _register_mount_entry(
         self,
@@ -267,14 +281,34 @@ class PathRouter:
             if meta.is_stream:
                 return StreamRouteResult(path=virtual_path)
 
-        # Zone-canonical LPM: walk from deepest prefix to shallowest
-        # using in-memory _backends dict only (~50ns per level).
+        # Rust fast path: LPM + canonicalize in single FFI call (~30ns)
+        if self._rust is not None:
+            rust_result = self._rust.route(virtual_path, zone_id, is_admin, check_write)
+            entry = self._backends.get(rust_result.mount_point)
+            if entry is None:
+                raise PathNotMountedError(virtual_path)
+            if meta is not None and meta.is_external_storage:
+                return ExternalRouteResult(
+                    backend=entry.backend,
+                    backend_path=rust_result.backend_path,
+                    mount_point=rust_result.mount_point,
+                    readonly=rust_result.readonly,
+                    io_profile=rust_result.io_profile,
+                )
+            return RouteResult(
+                backend=entry.backend,
+                backend_path=rust_result.backend_path,
+                mount_point=rust_result.mount_point,
+                readonly=rust_result.readonly,
+                io_profile=rust_result.io_profile,
+            )
+
+        # Python fallback: zone-canonical LPM using _backends dict
         canonical = canonicalize_path(virtual_path, zone_id)
         current = canonical
         while True:
             entry = self._backends.get(current)
             if entry is not None:
-                # Mount-level access control (like Linux mount options)
                 if entry.admin_only and not is_admin:
                     raise AccessDeniedError(f"Mount '{current}' requires admin privileges")
                 if entry.readonly and check_write:
@@ -282,7 +316,6 @@ class PathRouter:
 
                 backend_path = self._strip_mount_prefix(canonical, current)
 
-                # DT_EXTERNAL_STORAGE: backend manages own content namespace
                 if meta is not None and meta.is_external_storage:
                     return ExternalRouteResult(
                         backend=entry.backend,
@@ -377,6 +410,8 @@ class PathRouter:
             canonical = canonicalize_path(normalized, zone_id)
             if canonical in self._backends:
                 del self._backends[canonical]
+                if self._rust is not None:
+                    self._rust.remove_mount(normalized, zone_id)
                 return True
             return False
         except ValueError:

@@ -49,9 +49,19 @@ def _get_delegation_service(request: Request) -> Any:
 
     record_store = getattr(state, "record_store", None)
     if record_store is None:
+        # Fallback: resolve from NexusFS service registry
+        nx = getattr(state, "nexus_fs", None)
+        if nx is not None:
+            record_store = getattr(nx, "_record_store", None)
+    if record_store is None:
         raise HTTPException(status_code=503, detail="RecordStore not available")
 
     rebac_manager = getattr(state, "rebac_manager", None)
+    if rebac_manager is None:
+        # Fallback: resolve from NexusFS service registry
+        nx = getattr(state, "nexus_fs", None)
+        if nx is not None:
+            rebac_manager = nx.service("rebac_manager") if hasattr(nx, "service") else None
     if rebac_manager is None:
         raise HTTPException(status_code=503, detail="ReBAC manager not available")
 
@@ -451,10 +461,11 @@ async def get_delegation_chain(
 ) -> DelegationChainResponse:
     """Trace delegation chain from a delegation back to the root."""
     subject_type = auth_result.get("subject_type", "")
-    if subject_type != "agent":
+    is_admin = auth_result.get("is_admin", False)
+    if subject_type != "agent" and not is_admin:
         raise HTTPException(
             status_code=403,
-            detail="Only agents can trace delegation chains.",
+            detail="Only agents or admins can trace delegation chains.",
         )
 
     chain = service.get_delegation_chain(delegation_id)
@@ -505,23 +516,25 @@ async def get_delegation_namespace(
     modifications, and the current mount table (visible paths).
     """
     subject_type = auth_result.get("subject_type", "")
-    if subject_type != "agent":
-        raise HTTPException(
-            status_code=403,
-            detail="Only agents can view delegation namespace details.",
-        )
+    is_admin = auth_result.get("is_admin", False)
 
     record = service.get_delegation_by_id(delegation_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
 
-    # Ownership check: only the parent agent can inspect namespace config
-    agent_id = auth_result.get("subject_id", "")
-    if record.parent_agent_id != agent_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the parent agent can view a delegation's namespace config.",
-        )
+    # Admins can view any delegation namespace; agents can only view their own
+    if not is_admin:
+        if subject_type != "agent":
+            raise HTTPException(
+                status_code=403,
+                detail="Only agents or admins can view delegation namespace details.",
+            )
+        agent_id = auth_result.get("subject_id", "")
+        if record.parent_agent_id != agent_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Only the parent agent can view a delegation's namespace config.",
+            )
 
     # Get current mount table for the worker agent
     mount_table: list[str] = []

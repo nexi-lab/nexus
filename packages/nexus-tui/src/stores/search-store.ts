@@ -20,10 +20,12 @@ export interface SearchResult {
   readonly chunk_text: string;
   readonly score: number;
   readonly chunk_index: number;
-  readonly line_start: number;
-  readonly line_end: number;
+  readonly line_start: number | null;
+  readonly line_end: number | null;
   readonly keyword_score: number | null;
   readonly vector_score: number | null;
+  readonly splade_score?: number | null;
+  readonly reranker_score?: number | null;
 }
 
 export interface KnowledgeEntity {
@@ -167,6 +169,9 @@ export interface SearchState {
   readonly searchTotal: number;
   readonly selectedResultIndex: number;
   readonly searchLoading: boolean;
+  // Expanded file content (Enter on search result)
+  readonly expandedContent: string | null;
+  readonly expandedPath: string | null;
 
   // Knowledge graph
   readonly selectedEntity: KnowledgeEntity | null;
@@ -246,6 +251,8 @@ export const useSearchStore = create<SearchState>((set, get) => ({
   searchQuery: "",
   searchResults: [],
   searchTotal: 0,
+  expandedContent: null,
+  expandedPath: null,
   selectedResultIndex: 0,
   searchLoading: false,
 

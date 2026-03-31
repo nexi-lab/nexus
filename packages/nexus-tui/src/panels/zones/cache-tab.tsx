@@ -1,5 +1,6 @@
 import React from "react";
 import { formatSize } from "../../shared/utils/format-size.js";
+import { statusColor } from "../../shared/theme.js";
 
 interface CacheStats {
   readonly total_entries?: number;
@@ -27,9 +28,9 @@ interface CacheTabProps {
 }
 
 function hitRateColor(rate: number): string | undefined {
-  if (rate > 0.8) return "green";
-  if (rate > 0.5) return "yellow";
-  return "red";
+  if (rate > 0.8) return statusColor.healthy;
+  if (rate > 0.5) return statusColor.warning;
+  return statusColor.error;
 }
 
 export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.ReactNode {

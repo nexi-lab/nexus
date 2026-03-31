@@ -410,10 +410,34 @@ def main(
         if auth_provider is None and api_key:
             from nexus.bricks.auth.providers.static_key import StaticAPIKeyAuth
 
-            auth_provider = StaticAPIKeyAuth(
+            static_provider = StaticAPIKeyAuth(
                 {api_key: {"subject_type": "user", "subject_id": "admin", "is_admin": True}}
             )
-            logger.info("Using static API key authentication (no database)")
+
+            # Chain with DatabaseAPIKeyAuth so agent keys generated at
+            # registration are also validated (Issue #3250).
+            _record_store = getattr(nx, "_record_store", None) if nx else None
+            logger.info(
+                "Auth chain: nx=%s, _record_store=%s",
+                type(nx).__name__ if nx else None,
+                type(_record_store).__name__ if _record_store else None,
+            )
+            if _record_store is not None:
+                try:
+                    from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
+                    from nexus.server.auth.factory import _ChainedAPIKeyAuth
+
+                    db_provider = DatabaseAPIKeyAuth(_record_store, require_expiry=False)
+                    auth_provider = _ChainedAPIKeyAuth(static_provider, db_provider)
+                    logger.info(
+                        "Using static + database API key authentication (agent key fallback)"
+                    )
+                except Exception as exc:
+                    auth_provider = static_provider
+                    logger.warning("Auth chain fallback failed: %s", exc, exc_info=True)
+            else:
+                auth_provider = static_provider
+                logger.info("Using static API key authentication (no database)")
 
         # --- Create FastAPI app + run ---------------------------------------
         from nexus.server.fastapi_server import create_app, run_server

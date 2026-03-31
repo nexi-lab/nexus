@@ -692,6 +692,59 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
 
+    # Payment endpoints (Issue #3250: TUI Payments panel)
+    try:
+        from nexus.server.api.v2.routers.pay import audit_router as pay_audit_router
+        from nexus.server.api.v2.routers.pay import router as pay_router
+
+        app.include_router(pay_router)
+        app.include_router(pay_audit_router)
+        logger.info("Payment endpoints registered (/api/v2/pay/*, /api/v2/audit/*)")
+    except ImportError as e:
+        logger.debug(f"Pay router unavailable: {e}")
+
+    # Catalog, Aspects, Lineage, Graph endpoints (Issue #3250: TUI Search/Knowledge)
+    try:
+        from nexus.server.api.v2.routers.catalog import router as catalog_router
+
+        app.include_router(catalog_router)
+        logger.info("Catalog endpoints registered (/api/v2/catalog/*)")
+    except ImportError as e:
+        logger.debug(f"Catalog router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.aspects import router as aspects_router
+
+        app.include_router(aspects_router)
+        logger.info("Aspects endpoints registered (/api/v2/aspects/*)")
+    except ImportError as e:
+        logger.debug(f"Aspects router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.lineage import router as lineage_router
+
+        app.include_router(lineage_router)
+        logger.info("Lineage endpoints registered (/api/v2/lineage/*)")
+    except ImportError as e:
+        logger.debug(f"Lineage router unavailable: {e}")
+
+    try:
+        from nexus.server.api.v2.routers.graph import router as graph_router
+
+        app.include_router(graph_router)
+        logger.info("Graph endpoints registered (/api/v2/graph/*)")
+    except ImportError as e:
+        logger.debug(f"Graph router unavailable: {e}")
+
+    # Locks endpoints (Issue #3250: TUI Locks tab)
+    try:
+        from nexus.server.api.v2.routers.locks import router as locks_router
+
+        app.include_router(locks_router)
+        logger.info("Locks endpoints registered (/api/v2/locks/*)")
+    except ImportError as e:
+        logger.debug(f"Locks router unavailable: {e}")
+
     # IPC Brick endpoints (Issue #1727, LEGO §8)
     try:
         from nexus.server.api.v2.routers.ipc import router as ipc_router

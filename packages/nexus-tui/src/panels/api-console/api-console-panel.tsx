@@ -6,9 +6,11 @@
  * Arrow up/down navigates command history in input mode.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useEffect, useCallback } from "react";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
+import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { EndpointList } from "./endpoint-list.js";
 import { RequestBuilder } from "./request-builder.js";
@@ -39,10 +41,6 @@ export default function ApiConsolePanel(): React.ReactNode {
 
   const setSearchQuery = useApiConsoleStore((s) => s.setSearchQuery);
 
-  // Endpoint filter mode
-  const [endpointFilterMode, setEndpointFilterMode] = useState(false);
-  const [endpointFilter, setEndpointFilter] = useState("");
-
   // Focus pane (ui-store)
   const uiFocusPane = useUiStore((s) => s.getFocusPane("console"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
@@ -60,17 +58,25 @@ export default function ApiConsolePanel(): React.ReactNode {
     ? filteredEndpoints.findIndex((ep) => ep.path === selectedEndpoint.path && ep.method === selectedEndpoint.method)
     : -1;
 
-  // Handle printable characters in command input or endpoint filter mode
+  // Shared list navigation (j/k/up/down/g/G)
+  const listNav = listNavigationBindings({
+    getIndex: () => selectedIdx,
+    setIndex: (i) => {
+      const ep = filteredEndpoints[i];
+      if (ep) selectEndpoint(ep);
+    },
+    getLength: () => filteredEndpoints.length,
+  });
+
+  // Endpoint filter input (replaces local endpointFilterMode/endpointFilter state)
+  const endpointFilter = useTextInput({
+    onSubmit: (val) => setSearchQuery(val.trim()),
+    onCancel: () => { setSearchQuery(""); },
+  });
+
+  // Handle printable characters in command input mode
   const handleUnhandledKey = useCallback(
     (keyName: string) => {
-      if (endpointFilterMode) {
-        if (keyName.length === 1) {
-          setEndpointFilter((b) => b + keyName);
-        } else if (keyName === "space") {
-          setEndpointFilter((b) => b + " ");
-        }
-        return;
-      }
       if (!commandInputMode) return;
       if (keyName.length === 1) {
         setCommandInputBuffer(commandInputBuffer + keyName);
@@ -78,27 +84,14 @@ export default function ApiConsolePanel(): React.ReactNode {
         setCommandInputBuffer(commandInputBuffer + " ");
       }
     },
-    [commandInputMode, endpointFilterMode, commandInputBuffer, setCommandInputBuffer],
+    [commandInputMode, commandInputBuffer, setCommandInputBuffer],
   );
 
   useKeyboard(
     overlayActive
       ? {}
-      : endpointFilterMode
-      ? {
-          return: () => {
-            setEndpointFilterMode(false);
-            setSearchQuery(endpointFilter.trim());
-          },
-          escape: () => {
-            setEndpointFilterMode(false);
-            setEndpointFilter("");
-            setSearchQuery("");
-          },
-          backspace: () => {
-            setEndpointFilter((b) => b.slice(0, -1));
-          },
-        }
+      : endpointFilter.active
+      ? endpointFilter.inputBindings
       : commandInputMode
       ? {
           return: () => {
@@ -117,36 +110,12 @@ export default function ApiConsolePanel(): React.ReactNode {
           down: () => navigateHistory("down"),
         }
       : {
-          j: () => {
-            if (filteredEndpoints.length === 0) return;
-            const next = Math.max(0, Math.min(selectedIdx + 1, filteredEndpoints.length - 1));
-            const ep = filteredEndpoints[next];
-            if (ep) selectEndpoint(ep);
-          },
-          down: () => {
-            if (filteredEndpoints.length === 0) return;
-            const next = Math.max(0, Math.min(selectedIdx + 1, filteredEndpoints.length - 1));
-            const ep = filteredEndpoints[next];
-            if (ep) selectEndpoint(ep);
-          },
-          k: () => {
-            if (selectedIdx < 0) return;
-            const prev = Math.max(selectedIdx - 1, 0);
-            const ep = filteredEndpoints[prev];
-            if (ep) selectEndpoint(ep);
-          },
-          up: () => {
-            if (selectedIdx < 0) return;
-            const prev = Math.max(selectedIdx - 1, 0);
-            const ep = filteredEndpoints[prev];
-            if (ep) selectEndpoint(ep);
-          },
+          ...listNav,
           return: () => {
             if (client) executeRequest(client);
           },
           "/": () => {
-            setEndpointFilterMode(true);
-            setEndpointFilter(endpointFilter);
+            endpointFilter.activate(endpointFilter.buffer);
           },
           ":": () => {
             setCommandInputMode(true);
@@ -158,7 +127,11 @@ export default function ApiConsolePanel(): React.ReactNode {
           },
           tab: () => toggleFocus("console"),
         },
-    overlayActive ? undefined : handleUnhandledKey,
+    overlayActive
+      ? undefined
+      : endpointFilter.active
+      ? endpointFilter.onUnhandled
+      : handleUnhandledKey,
   );
 
   return (
@@ -172,10 +145,10 @@ export default function ApiConsolePanel(): React.ReactNode {
         </box>
         <box height={1} width="100%">
           <text>
-            {endpointFilterMode
-              ? `Filter: ${endpointFilter}\u2588`
-              : endpointFilter
-                ? `Filter: ${endpointFilter}  (Esc to clear)`
+            {endpointFilter.active
+              ? `Filter: ${endpointFilter.buffer}\u2588`
+              : endpointFilter.buffer
+                ? `Filter: ${endpointFilter.buffer}  (Esc to clear)`
                 : "/:filter endpoints"}
           </text>
         </box>

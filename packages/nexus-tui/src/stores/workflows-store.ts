@@ -94,6 +94,10 @@ export interface SchedulerMetrics {
   readonly avg_wait_ms: number;
   readonly avg_duration_ms: number;
   readonly throughput_per_minute: number;
+  // Raw Astraea API fields
+  readonly queue_by_class?: readonly { priority_class: string; count: number }[];
+  readonly fair_share?: Record<string, unknown>;
+  readonly use_hrrn?: boolean;
 }
 
 // =============================================================================
@@ -257,9 +261,24 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
     set({ schedulerLoading: true, error: null });
 
     try {
-      const metrics = await client.get<SchedulerMetrics>(
+      const raw = await client.get<Record<string, unknown>>(
         "/api/v2/scheduler/metrics",
       );
+      // Normalize Astraea response → SchedulerMetrics
+      const queueByClass = (raw.queue_by_class ?? raw.queueByClass ?? []) as readonly { count: number }[];
+      const totalQueued = queueByClass.reduce((sum, c) => sum + (c.count ?? 0), 0);
+      const metrics: SchedulerMetrics = {
+        queued_tasks: totalQueued,
+        running_tasks: (raw.running_tasks ?? raw.runningTasks ?? 0) as number,
+        completed_tasks: (raw.completed_tasks ?? raw.completedTasks ?? 0) as number,
+        failed_tasks: (raw.failed_tasks ?? raw.failedTasks ?? 0) as number,
+        avg_wait_ms: (raw.avg_wait_ms ?? raw.avgWaitMs ?? 0) as number,
+        avg_duration_ms: (raw.avg_duration_ms ?? raw.avgDurationMs ?? 0) as number,
+        throughput_per_minute: (raw.throughput_per_minute ?? raw.throughputPerMinute ?? 0) as number,
+        queue_by_class: queueByClass as SchedulerMetrics["queue_by_class"],
+        fair_share: (raw.fair_share ?? raw.fairShare ?? {}) as Record<string, unknown>,
+        use_hrrn: (raw.use_hrrn ?? raw.useHrrn ?? false) as boolean,
+      };
       set({ schedulerMetrics: metrics, schedulerLoading: false });
       useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {

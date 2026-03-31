@@ -6,7 +6,7 @@ This module now delegates to nexus.auth brick providers (Issue #1399).
 import logging
 from typing import Any
 
-from nexus.bricks.auth.providers.base import AuthProvider
+from nexus.bricks.auth.providers.base import AuthProvider, AuthResult
 from nexus.bricks.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.bricks.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
 from nexus.bricks.auth.providers.local import LocalAuth
@@ -47,8 +47,20 @@ def create_auth_provider(
             }
         if not auth_config:
             raise ValueError("auth_config is required for static authentication")
-        logger.info("Creating StaticAPIKeyAuth provider")
-        return StaticAPIKeyAuth.from_config(auth_config)
+
+        static_provider = StaticAPIKeyAuth.from_config(auth_config)
+
+        # Chain with DatabaseAPIKeyAuth so agent keys generated at registration
+        # are also validated. Without this, agents can register and get keys but
+        # those keys are never accepted by the static-only provider.
+        record_store = kwargs.get("record_store")
+        if record_store is not None:
+            logger.info("Creating StaticAPIKeyAuth + DatabaseAPIKeyAuth (agent key fallback)")
+            db_provider = DatabaseAPIKeyAuth(record_store, require_expiry=False)
+            return _ChainedAPIKeyAuth(static_provider, db_provider)
+
+        logger.info("Creating StaticAPIKeyAuth provider (no DB fallback)")
+        return static_provider
 
     elif auth_type == "database":
         record_store = kwargs.get("record_store")
@@ -77,3 +89,29 @@ def create_auth_provider(
 
     else:
         raise ValueError(f"Unknown auth_type: {auth_type}")
+
+
+class _ChainedAPIKeyAuth(AuthProvider):
+    """Chains two API key providers: tries primary first, falls back to secondary.
+
+    Used when static auth needs to also validate agent keys from the database.
+    """
+
+    def __init__(self, primary: AuthProvider, fallback: AuthProvider) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    async def authenticate(self, token: str) -> AuthResult:
+        result = await self._primary.authenticate(token)
+        if result.authenticated:
+            return result
+        return await self._fallback.authenticate(token)
+
+    async def validate_token(self, token: str) -> bool:
+        if await self._primary.validate_token(token):
+            return True
+        return await self._fallback.validate_token(token)
+
+    def close(self) -> None:
+        self._primary.close()
+        self._fallback.close()

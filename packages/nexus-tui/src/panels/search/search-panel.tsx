@@ -5,12 +5,13 @@
  * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchMode } from "../../stores/search-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
-import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
+import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
+import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
@@ -34,6 +35,15 @@ const MODE_LABELS: Readonly<Record<SearchMode, string>> = {
   hybrid: "HYB",
 };
 
+const HELP_TEXT: Readonly<Record<string, string>> = {
+  search: "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit",
+  knowledge: "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit",
+  memories: "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  u:update  d:delete  Esc:close  r:refresh  q:quit",
+  playbooks: "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit",
+  ask: "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit",
+  columns: "/:search column  Tab:switch tab  r:refresh  q:quit",
+};
+
 export default function SearchPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
@@ -43,12 +53,11 @@ export default function SearchPanel(): React.ReactNode {
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
   const serverZoneId = useGlobalStore((s) => s.zoneId);
   const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
-  const [inputMode, setInputMode] = useState(false);
 
-  const inputBuffer = useSearchStore((s) => s.inputBuffer);
-  const setInputBuffer = useSearchStore((s) => s.setInputBuffer);
   const searchQuery = useSearchStore((s) => s.searchQuery);
   const searchResults = useSearchStore((s) => s.searchResults);
+  const expandedContent = useSearchStore((s) => s.expandedContent);
+  const expandedPath = useSearchStore((s) => s.expandedPath);
   const searchTotal = useSearchStore((s) => s.searchTotal);
   const selectedResultIndex = useSearchStore((s) => s.selectedResultIndex);
   const searchLoading = useSearchStore((s) => s.searchLoading);
@@ -146,110 +155,59 @@ export default function SearchPanel(): React.ReactNode {
     }
   }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, searchByColumn, effectiveZoneId]);
 
-  // In input mode, capture printable characters via onUnhandled
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      if (!inputMode) return;
-      // Single printable character (letter, digit, symbol, space)
-      if (keyName.length === 1) {
-        setInputBuffer(inputBuffer + keyName);
-      } else if (keyName === "space") {
-        setInputBuffer(inputBuffer + " ");
-      }
+  // Text input for search bar
+  const textInput = useTextInput({
+    onSubmit: (val) => {
+      // Clear expanded content when submitting a new search
+      useSearchStore.setState({ expandedContent: null, expandedPath: null });
+      submitSearch(val);
     },
-    [inputMode, inputBuffer, setInputBuffer],
-  );
+  });
+
+  // Shared list navigation (j/k/up/down/g/G) — switches per active tab
+  const listNav = listNavigationBindings({
+    getIndex: () => {
+      if (activeTab === "search") return selectedResultIndex;
+      if (activeTab === "memories") return selectedMemoryIndex;
+      if (activeTab === "playbooks") return selectedPlaybookIndex;
+      return 0;
+    },
+    setIndex: (i) => {
+      if (activeTab === "search") setSelectedResultIndex(i);
+      else if (activeTab === "memories") setSelectedMemoryIndex(i);
+      else if (activeTab === "playbooks") setSelectedPlaybookIndex(i);
+    },
+    getLength: () => {
+      if (activeTab === "search") return searchResults.length;
+      if (activeTab === "memories") return memories.length;
+      if (activeTab === "playbooks") return playbooks.length;
+      return 0;
+    },
+  });
 
   useKeyboard(
     overlayActive
       ? {}
-      : inputMode
-      ? {
-          // Input mode: capture keystrokes for the search query
-          return: () => {
-            setInputMode(false);
-            submitSearch(inputBuffer);
-          },
-          escape: () => {
-            setInputMode(false);
-            setInputBuffer("");
-          },
-          backspace: () => {
-            setInputBuffer(inputBuffer.slice(0, -1));
-          },
-        }
+      : textInput.active
+      ? textInput.inputBindings
       : {
-          // Normal mode: navigation
-          j: () => {
-            if (activeTab === "search") {
-              if (searchResults.length === 0) return;
-              setSelectedResultIndex(
-                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
-              );
-            } else if (activeTab === "memories") {
-              if (memories.length === 0) return;
-              setSelectedMemoryIndex(
-                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
-              );
-            } else if (activeTab === "playbooks") {
-              if (playbooks.length === 0) return;
-              setSelectedPlaybookIndex(
-                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
-              );
-            }
-          },
-          down: () => {
-            if (activeTab === "search") {
-              if (searchResults.length === 0) return;
-              setSelectedResultIndex(
-                Math.max(0, Math.min(selectedResultIndex + 1, searchResults.length - 1)),
-              );
-            } else if (activeTab === "memories") {
-              if (memories.length === 0) return;
-              setSelectedMemoryIndex(
-                Math.max(0, Math.min(selectedMemoryIndex + 1, memories.length - 1)),
-              );
-            } else if (activeTab === "playbooks") {
-              if (playbooks.length === 0) return;
-              setSelectedPlaybookIndex(
-                Math.max(0, Math.min(selectedPlaybookIndex + 1, playbooks.length - 1)),
-              );
-            }
-          },
-          k: () => {
-            if (activeTab === "search") {
-              setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
-            } else if (activeTab === "memories") {
-              setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
-            } else if (activeTab === "playbooks") {
-              setSelectedPlaybookIndex(Math.max(selectedPlaybookIndex - 1, 0));
-            }
-          },
-          up: () => {
-            if (activeTab === "search") {
-              setSelectedResultIndex(Math.max(selectedResultIndex - 1, 0));
-            } else if (activeTab === "memories") {
-              setSelectedMemoryIndex(Math.max(selectedMemoryIndex - 1, 0));
-            } else if (activeTab === "playbooks") {
-              setSelectedPlaybookIndex(Math.max(selectedPlaybookIndex - 1, 0));
-            }
-          },
+          ...listNav,
           ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           r: () => refreshCurrentView(),
           m: () => cycleSearchMode(),
-          "/": () => {
-            setInputMode(true);
-            setInputBuffer(searchQuery);
-          },
+          "/": () => textInput.activate(searchQuery),
           return: () => {
             if (!client) return;
 
             if (activeTab === "search") {
               const result = searchResults[selectedResultIndex];
               if (result) {
-                fetchEntity(result.path, client);
-                fetchNeighbors(result.path, client);
-                setActiveTab("knowledge");
+                // Read the full file and show as expanded content
+                client.get<{ content: string }>(`/api/v2/files/read?path=${encodeURIComponent(result.path)}`)
+                  .then((r) => {
+                    useSearchStore.setState({ expandedContent: r.content, expandedPath: result.path });
+                  })
+                  .catch(() => {});
               }
             } else if (activeTab === "knowledge") {
               if (selectedEntity) {
@@ -267,7 +225,6 @@ export default function SearchPanel(): React.ReactNode {
                   (memory as Record<string, unknown>).memory_id ?? "",
                 );
                 if (memId) {
-                  // Toggle: if history is already shown for this memory, clear it
                   if (memoryHistory?.memory_id === memId) {
                     clearMemoryHistory();
                     clearMemoryDiff();
@@ -290,7 +247,6 @@ export default function SearchPanel(): React.ReactNode {
             );
             if (!memId) return;
 
-            // Need at least 2 versions to diff
             if (memoryHistory && memoryHistory.memory_id === memId && memoryHistory.current_version >= 2) {
               fetchMemoryDiff(
                 memId,
@@ -322,13 +278,11 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
           n: () => {
-            // Create new memory from search query text
             if (activeTab === "memories" && client && searchQuery.trim()) {
               createMemory(searchQuery.trim(), {}, client);
             }
           },
           u: () => {
-            // Update selected memory with current search query as new content
             if (activeTab === "memories" && client && searchQuery.trim()) {
               const memory = memories[selectedMemoryIndex];
               if (memory) {
@@ -338,44 +292,28 @@ export default function SearchPanel(): React.ReactNode {
             }
           },
           a: () => {
-            // Add selected search result path to RLM document context
             if (activeTab === "search") {
               const result = searchResults[selectedResultIndex];
               if (result) {
                 addRlmContextPath(result.path);
               }
             } else if (activeTab === "ask") {
-              // Clear context paths when pressing 'a' on Ask tab
               clearRlmContextPaths();
             }
           },
           escape: () => {
-            // Clear expanded views when Escape is pressed in normal mode
+            // Close expanded file content
+            if (expandedContent !== null) {
+              useSearchStore.setState({ expandedContent: null, expandedPath: null });
+              return;
+            }
             if (activeTab === "memories" && (memoryHistory || memoryDiff)) {
               clearMemoryHistory();
               clearMemoryDiff();
             }
           },
-          g: () => {
-            if (activeTab === "search") {
-              setSelectedResultIndex(jumpToStart());
-            } else if (activeTab === "memories") {
-              setSelectedMemoryIndex(jumpToStart());
-            } else if (activeTab === "playbooks") {
-              setSelectedPlaybookIndex(jumpToStart());
-            }
-          },
-          "shift+g": () => {
-            if (activeTab === "search") {
-              setSelectedResultIndex(jumpToEnd(searchResults.length));
-            } else if (activeTab === "memories") {
-              setSelectedMemoryIndex(jumpToEnd(memories.length));
-            } else if (activeTab === "playbooks") {
-              setSelectedPlaybookIndex(jumpToEnd(playbooks.length));
-            }
-          },
         },
-    overlayActive ? undefined : handleUnhandledKey,
+    overlayActive ? undefined : textInput.active ? textInput.onUnhandled : undefined,
   );
 
   return (
@@ -384,8 +322,8 @@ export default function SearchPanel(): React.ReactNode {
       {/* Search input bar */}
       <box height={1} width="100%">
         <text>
-          {inputMode
-            ? `Search: ${inputBuffer}█`
+          {textInput.active
+            ? `Search: ${textInput.buffer}█`
             : `Query: ${searchQuery || "(press / to search)"}  [${MODE_LABELS[searchMode]}]`}
         </text>
       </box>
@@ -402,7 +340,17 @@ export default function SearchPanel(): React.ReactNode {
 
       {/* Tab content */}
       <box flexGrow={1} borderStyle="single">
-        {activeTab === "search" && (
+        {activeTab === "search" && expandedContent !== null && (
+          <box height="100%" width="100%" flexDirection="column">
+            <box height={1} width="100%">
+              <text bold>{`── ${expandedPath} ── (Escape to close)`}</text>
+            </box>
+            <scrollbox flexGrow={1} width="100%">
+              <text>{expandedContent}</text>
+            </scrollbox>
+          </box>
+        )}
+        {activeTab === "search" && expandedContent === null && (
           <SearchResults
             results={searchResults}
             total={searchTotal}
@@ -447,17 +395,9 @@ export default function SearchPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         <text>
-          {inputMode
+          {textInput.active
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
-            : activeTab === "memories"
-              ? "j/k:navigate  Tab:tab  /:search  Enter:history  v:diff  n:create  u:update  d:delete  Esc:close  r:refresh  q:quit"
-              : activeTab === "ask"
-                ? "/:ask  a:clear context  Tab:switch tab  r:refresh  q:quit"
-                : activeTab === "columns"
-                  ? "/:search column  Tab:switch tab  r:refresh  q:quit"
-                  : activeTab === "search"
-                    ? "j/k:navigate  a:add to context  /:search  m:mode  Enter:select  Tab:tab  r:refresh  q:quit"
-                    : "j/k:navigate  Tab:switch tab  /:search  m:mode  Enter:select  d:delete  r:refresh  q:quit"}
+            : HELP_TEXT[activeTab] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
         </text>
       </box>
     </box>

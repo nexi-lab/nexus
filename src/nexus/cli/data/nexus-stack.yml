@@ -67,6 +67,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      tigerbeetle:
+        condition: service_started
     environment:
       # Server
       NEXUS_HOST: "0.0.0.0"
@@ -98,6 +100,14 @@ services:
       # Zoekt (external container, not built-in sidecar)
       ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
+      # TigerBeetle (Nexus Pay)
+      TIGERBEETLE_ADDRESS: ${TIGERBEETLE_ADDRESS:-tigerbeetle:3000}
+      NEXUS_PAY_ENABLED: ${NEXUS_PAY_ENABLED:-true}
+    # TigerBeetle client needs io_uring (seccomp unconfined) + memory locking
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - IPC_LOCK
     volumes:
       - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/app/data
     ports:
@@ -109,6 +119,56 @@ services:
       timeout: 10s
       retries: 30
       start_period: 60s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
+  # TigerBeetle — Financial Ledger (Nexus Pay)
+  # ============================================================================
+  # Init service: formats data file on first run (idempotent — exits if already formatted)
+  tigerbeetle-init:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    profiles:
+      - core
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - IPC_LOCK
+    command: ["format", "--cluster=0", "--replica=0", "--replica-count=1", "/data/0_0.tigerbeetle"]
+    volumes:
+      - tigerbeetle-data:/data
+    networks:
+      - nexus-network
+
+  tigerbeetle:
+    image: ghcr.io/tigerbeetle/tigerbeetle:0.16.78
+    restart: unless-stopped
+    profiles:
+      - core
+    depends_on:
+      tigerbeetle-init:
+        condition: service_completed_successfully
+    # io_uring requires seccomp=unconfined on Docker Desktop / OrbStack (Issue #3250)
+    security_opt:
+      - seccomp=unconfined
+    cap_add:
+      - IPC_LOCK
+    command: ["start", "--addresses=0.0.0.0:3000", "/data/0_0.tigerbeetle"]
+    volumes:
+      - tigerbeetle-data:/data
+    ports:
+      - "${TIGERBEETLE_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - nexus-network
     logging:
@@ -221,6 +281,8 @@ volumes:
   zoekt-index:
     driver: local
   nats-data:
+    driver: local
+  tigerbeetle-data:
     driver: local
 
 # ============================================================================

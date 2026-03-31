@@ -56,6 +56,7 @@ class ColumnSearchResult(ApiModel):
     entity_urn: str
     column_name: str
     column_type: str
+    path: str | None = None
     schema_: dict[str, Any] = Field(default_factory=dict, alias="schema")
 
     model_config = {"extra": "ignore", "populate_by_name": True}

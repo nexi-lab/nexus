@@ -8,7 +8,8 @@ import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
-import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
+import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
+import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
@@ -17,7 +18,7 @@ import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
-import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { statusColor } from "../../shared/theme.js";
 import { BalanceCard } from "./balance-card.js";
 import { ReservationList } from "./reservation-list.js";
 import { TransferForm } from "./transfer-form.js";
@@ -26,7 +27,14 @@ import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
 import { ApprovalList } from "./approval-list.js";
 import { PAYMENTS_TABS } from "../../shared/navigation.js";
-import { statusColor } from "../../shared/theme.js";
+
+const HELP_TEXT: Readonly<Record<string, string>> = {
+  balance: "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit",
+  reservations: "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit",
+  transactions: "j/k:navigate  ]:next  [:prev  i:verify integrity  y:copy  Tab:switch tab  r:refresh",
+  policies: "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit",
+  approvals: "j/k:navigate  n:new request  a:approve  x:reject  Tab:switch tab  r:refresh  q:quit",
+};
 
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
@@ -34,10 +42,6 @@ export default function PaymentsPanel(): React.ReactNode {
   const overlayActive = useUiStore((s) => s.overlayActive);
   const { copy, copied } = useCopy();
   const [showTransfer, setShowTransfer] = useState(false);
-  const [affordInputMode, setAffordInputMode] = useState(false);
-  const [affordBuffer, setAffordBuffer] = useState("");
-  const [policyInputMode, setPolicyInputMode] = useState(false);
-  const [policyBuffer, setPolicyBuffer] = useState("");
   const [approvalInputMode, setApprovalInputMode] = useState(false);
   const [approvalAmountBuffer, setApprovalAmountBuffer] = useState("");
   const [approvalPurposeBuffer, setApprovalPurposeBuffer] = useState("");
@@ -140,33 +144,57 @@ export default function PaymentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, client]);
 
+  // Text input for afford check (numbers-only)
+  const affordInput = useTextInput({
+    onSubmit: (val) => {
+      if (val && client) checkAfford(val, client);
+    },
+    filter: (ch) => /[\d.]/.test(ch),
+  });
+
+  // Text input for policy name creation
+  const policyInput = useTextInput({
+    onSubmit: (val) => {
+      if (val && client) createPolicy(val, {}, client);
+    },
+  });
+
+  // Shared list navigation (j/k/up/down/g/G) — switches per active tab
+  const listNav = listNavigationBindings({
+    getIndex: () => {
+      if (activeTab === "reservations") return selectedReservationIndex;
+      if (activeTab === "transactions") return selectedTransactionIndex;
+      if (activeTab === "policies") return selectedPolicyIndex;
+      if (activeTab === "approvals") return selectedApprovalIndex;
+      return 0;
+    },
+    setIndex: (i) => {
+      if (activeTab === "reservations") setSelectedReservationIndex(i);
+      else if (activeTab === "transactions") setSelectedTransactionIndex(i);
+      else if (activeTab === "policies") setSelectedPolicyIndex(i);
+      else if (activeTab === "approvals") setSelectedApprovalIndex(i);
+    },
+    getLength: () => {
+      if (activeTab === "reservations") return reservations.length;
+      if (activeTab === "transactions") return transactions.length;
+      if (activeTab === "policies") return policies.length;
+      if (activeTab === "approvals") return approvals.length;
+      return 0;
+    },
+  });
+
+  // Determine which input mode (if any) is active for useKeyboard routing
+  const anyInputActive = affordInput.active || policyInput.active || approvalInputMode;
+
   useKeyboard(
     overlayActive
       ? {}
       : showTransfer
       ? {}
-      : affordInputMode
-        ? {
-            return: () => {
-              const amount = affordBuffer.trim();
-              if (amount && client) checkAfford(amount, client);
-              setAffordInputMode(false);
-              setAffordBuffer("");
-            },
-            escape: () => { setAffordInputMode(false); setAffordBuffer(""); },
-            backspace: () => { setAffordBuffer((b) => b.slice(0, -1)); },
-          }
-        : policyInputMode
-          ? {
-              return: () => {
-                const name = policyBuffer.trim();
-                if (name && client) createPolicy(name, {}, client);
-                setPolicyInputMode(false);
-                setPolicyBuffer("");
-              },
-              escape: () => { setPolicyInputMode(false); setPolicyBuffer(""); },
-              backspace: () => { setPolicyBuffer((b) => b.slice(0, -1)); },
-            }
+      : affordInput.active
+        ? affordInput.inputBindings
+        : policyInput.active
+          ? policyInput.inputBindings
           : approvalInputMode
             ? {
                 return: () => {
@@ -198,74 +226,7 @@ export default function PaymentsPanel(): React.ReactNode {
                 },
               }
             : {
-          j: () => {
-            if (activeTab === "reservations") {
-              if (reservations.length === 0) return;
-              setSelectedReservationIndex(
-                Math.max(0, Math.min(selectedReservationIndex + 1, reservations.length - 1)),
-              );
-            } else if (activeTab === "transactions") {
-              if (transactions.length === 0) return;
-              setSelectedTransactionIndex(
-                Math.max(0, Math.min(selectedTransactionIndex + 1, transactions.length - 1)),
-              );
-            } else if (activeTab === "policies") {
-              if (policies.length === 0) return;
-              setSelectedPolicyIndex(
-                Math.max(0, Math.min(selectedPolicyIndex + 1, policies.length - 1)),
-              );
-            } else if (activeTab === "approvals") {
-              if (approvals.length === 0) return;
-              setSelectedApprovalIndex(
-                Math.max(0, Math.min(selectedApprovalIndex + 1, approvals.length - 1)),
-              );
-            }
-          },
-          down: () => {
-            if (activeTab === "reservations") {
-              if (reservations.length === 0) return;
-              setSelectedReservationIndex(
-                Math.max(0, Math.min(selectedReservationIndex + 1, reservations.length - 1)),
-              );
-            } else if (activeTab === "transactions") {
-              if (transactions.length === 0) return;
-              setSelectedTransactionIndex(
-                Math.max(0, Math.min(selectedTransactionIndex + 1, transactions.length - 1)),
-              );
-            } else if (activeTab === "policies") {
-              if (policies.length === 0) return;
-              setSelectedPolicyIndex(
-                Math.max(0, Math.min(selectedPolicyIndex + 1, policies.length - 1)),
-              );
-            } else if (activeTab === "approvals") {
-              if (approvals.length === 0) return;
-              setSelectedApprovalIndex(
-                Math.max(0, Math.min(selectedApprovalIndex + 1, approvals.length - 1)),
-              );
-            }
-          },
-          k: () => {
-            if (activeTab === "reservations") {
-              setSelectedReservationIndex(Math.max(selectedReservationIndex - 1, 0));
-            } else if (activeTab === "transactions") {
-              setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
-            } else if (activeTab === "policies") {
-              setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
-            } else if (activeTab === "approvals") {
-              setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
-            }
-          },
-          up: () => {
-            if (activeTab === "reservations") {
-              setSelectedReservationIndex(Math.max(selectedReservationIndex - 1, 0));
-            } else if (activeTab === "transactions") {
-              setSelectedTransactionIndex(Math.max(selectedTransactionIndex - 1, 0));
-            } else if (activeTab === "policies") {
-              setSelectedPolicyIndex(Math.max(selectedPolicyIndex - 1, 0));
-            } else if (activeTab === "approvals") {
-              setSelectedApprovalIndex(Math.max(selectedApprovalIndex - 1, 0));
-            }
-          },
+          ...listNav,
           ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           t: () => {
             setShowTransfer(true);
@@ -325,8 +286,7 @@ export default function PaymentsPanel(): React.ReactNode {
           },
           a: async () => {
             if (activeTab === "balance") {
-              setAffordInputMode(true);
-              setAffordBuffer("");
+              affordInput.activate();
             } else if (activeTab === "approvals" && client) {
               const selected = approvals[selectedApprovalIndex];
               if (selected && selected.status === "pending") {
@@ -346,30 +306,7 @@ export default function PaymentsPanel(): React.ReactNode {
           },
           "shift+n": () => {
             if (activeTab === "policies") {
-              setPolicyInputMode(true);
-              setPolicyBuffer("");
-            }
-          },
-          g: () => {
-            if (activeTab === "reservations") {
-              setSelectedReservationIndex(jumpToStart());
-            } else if (activeTab === "transactions") {
-              setSelectedTransactionIndex(jumpToStart());
-            } else if (activeTab === "policies") {
-              setSelectedPolicyIndex(jumpToStart());
-            } else if (activeTab === "approvals") {
-              setSelectedApprovalIndex(jumpToStart());
-            }
-          },
-          "shift+g": () => {
-            if (activeTab === "reservations") {
-              setSelectedReservationIndex(jumpToEnd(reservations.length));
-            } else if (activeTab === "transactions") {
-              setSelectedTransactionIndex(jumpToEnd(transactions.length));
-            } else if (activeTab === "policies") {
-              setSelectedPolicyIndex(jumpToEnd(policies.length));
-            } else if (activeTab === "approvals") {
-              setSelectedApprovalIndex(jumpToEnd(approvals.length));
+              policyInput.activate();
             }
           },
           y: () => {
@@ -379,21 +316,23 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
         },
-    (!overlayActive && (affordInputMode || policyInputMode || approvalInputMode)) ? (keyName: string) => {
-      if (affordInputMode && keyName.length === 1 && /[\d.]/.test(keyName)) {
-        setAffordBuffer((b) => b + keyName);
-      } else if (policyInputMode && keyName.length === 1) {
-        setPolicyBuffer((b) => b + keyName);
-      } else if (policyInputMode && keyName === "space") {
-        setPolicyBuffer((b) => b + " ");
-      } else if (approvalInputMode && approvalField === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
-        setApprovalAmountBuffer((b) => b + keyName);
-      } else if (approvalInputMode && approvalField === "purpose" && keyName.length === 1) {
-        setApprovalPurposeBuffer((b) => b + keyName);
-      } else if (approvalInputMode && approvalField === "purpose" && keyName === "space") {
-        setApprovalPurposeBuffer((b) => b + " ");
-      }
-    } : undefined,
+    !overlayActive && anyInputActive
+      ? affordInput.active
+        ? affordInput.onUnhandled
+        : policyInput.active
+          ? policyInput.onUnhandled
+          : approvalInputMode
+            ? (keyName: string) => {
+                if (approvalField === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
+                  setApprovalAmountBuffer((b) => b + keyName);
+                } else if (approvalField === "purpose" && keyName.length === 1) {
+                  setApprovalPurposeBuffer((b) => b + keyName);
+                } else if (approvalField === "purpose" && keyName === "space") {
+                  setApprovalPurposeBuffer((b) => b + " ");
+                }
+              }
+            : undefined
+      : undefined,
   );
 
   return (
@@ -403,38 +342,36 @@ export default function PaymentsPanel(): React.ReactNode {
         <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Afford check input */}
-        {affordInputMode && (
+        {affordInput.active && (
           <box height={1} width="100%">
-            <text>{`Check afford amount: ${affordBuffer}\u2588  (Enter:check  Escape:cancel)`}</text>
+            <text>{`Check afford amount: ${affordInput.buffer}\u2588  (Enter:check  Escape:cancel)`}</text>
           </box>
         )}
 
         {/* Policy create input */}
-        {policyInputMode && (
+        {policyInput.active && (
           <box height={1} width="100%">
-            <text>{`New policy name: ${policyBuffer}\u2588  (Enter:create  Escape:cancel)`}</text>
+            <text>{`New policy name: ${policyInput.buffer}\u2588  (Enter:create  Escape:cancel)`}</text>
           </box>
         )}
 
-        {/* Approval request input */}
+        {/* Approval request input (inline bar) */}
         {approvalInputMode && (
-          <box flexDirection="column" width="100%">
-            <box height={1} width="100%">
-              <text>{approvalField === "amount" ? `> Amount:  ${approvalAmountBuffer}\u2588` : `  Amount:  ${approvalAmountBuffer}`}</text>
-            </box>
-            <box height={1} width="100%">
-              <text>{approvalField === "purpose" ? `> Purpose: ${approvalPurposeBuffer}\u2588` : `  Purpose: ${approvalPurposeBuffer}`}</text>
-            </box>
-            <box height={1} width="100%">
-              <text>{"  Tab:next field  Enter:submit  Escape:cancel"}</text>
-            </box>
+          <box height={1} width="100%">
+            <text>
+              {approvalField === "amount"
+                ? `Amount: ${approvalAmountBuffer}\u2588 \u2502 Purpose: ${approvalPurposeBuffer}  (Tab:next  Enter:submit  Esc:cancel)`
+                : `Amount: ${approvalAmountBuffer} \u2502 Purpose: ${approvalPurposeBuffer}\u2588  (Tab:next  Enter:submit  Esc:cancel)`}
+            </text>
           </box>
         )}
 
-        {/* Error display */}
+        {/* Error display — 404 means the pay API routes aren't registered */}
         {error && (
           <box height={1} width="100%">
-            <text>{`Error: ${error}`}</text>
+            <text>{error.includes("Not Found") || error.includes("404")
+              ? "Payment APIs not available on this server. The pay brick is enabled but REST routes are not registered."
+              : `Error: ${error}`}</text>
           </box>
         )}
 
@@ -505,15 +442,7 @@ export default function PaymentsPanel(): React.ReactNode {
             : <text>
             {showTransfer
               ? "Tab:next field  Enter:submit  Escape:cancel"
-              : activeTab === "transactions"
-                ? "j/k:navigate  ]:next  [:prev  i:verify integrity  y:copy  Tab:switch tab  r:refresh"
-                : activeTab === "policies"
-                  ? "j/k:navigate  Tab:switch tab  Shift+N:new  d:delete  b:budget  r:refresh  q:quit"
-                  : activeTab === "balance"
-                    ? "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit"
-                    : activeTab === "approvals"
-                      ? "j/k:navigate  n:new request  a:approve  x:reject  Tab:switch tab  r:refresh  q:quit"
-                      : "j/k:navigate  Tab:switch tab  t:transfer  r:refresh  c:commit  x:release  q:quit"}
+              : HELP_TEXT[activeTab] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
           </text>}
         </box>
       </box>

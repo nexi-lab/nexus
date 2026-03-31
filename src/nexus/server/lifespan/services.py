@@ -411,7 +411,7 @@ def _startup_access_manifest(app: "FastAPI", svc: "LifespanServices") -> None:
     record_store = getattr(svc.nexus_fs, "_record_store", None) or getattr(
         svc, "record_store", None
     )
-    rebac_mgr = app.state.rebac_manager if hasattr(app.state, "rebac_manager") else None
+    rebac_mgr = svc.rebac_manager
     if record_store is None or rebac_mgr is None:
         logger.debug("[ACCESS-MANIFEST] Skipped — record_store or rebac_manager not available")
         return

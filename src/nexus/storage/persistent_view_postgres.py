@@ -75,8 +75,8 @@ _CREATE_TABLE = text("""
         mount_paths_json TEXT        NOT NULL,
         grants_hash     VARCHAR(16)  NOT NULL,
         revision_bucket INTEGER      NOT NULL,
-        created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE (subject_type, subject_id, zone_id)
     )
 """)

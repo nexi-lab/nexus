@@ -47,6 +47,63 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# REST API client for demo seeding (Issue #3250)
+#
+# When a Nexus server is running, demo init should write files through the
+# REST API so they appear in the server's VFS index. This client implements
+# the minimal NexusFS interface used by the seeding functions.
+# ---------------------------------------------------------------------------
+
+
+class _RestApiNexusClient:
+    """Minimal NexusFS-compatible client that writes via REST API.
+
+    Implements: write, mkdir, access, read, sys_readdir, flush_write_observer.
+    Used by demo seeding when a running server is detected.
+    """
+
+    def __init__(self, base_url: str, api_key: str) -> None:
+        from nexus.cli.api_client import NexusApiClient
+
+        self._client = NexusApiClient(url=base_url, api_key=api_key)
+        self._base_url = base_url
+
+    async def write(self, path: str, content: bytes) -> None:
+        text = content.decode("utf-8", errors="replace")
+        self._client.post("/api/v2/files/write", json_body={"path": path, "content": text})
+
+    async def mkdir(self, path: str, *, parents: bool = False, exist_ok: bool = False) -> None:  # noqa: ARG002
+        try:
+            self._client.post("/api/v2/files/mkdir", json_body={"path": path})
+        except Exception:
+            if not exist_ok:
+                raise
+
+    async def access(self, path: str) -> bool:
+        try:
+            self._client.get(f"/api/v2/files/metadata?path={path}")
+            return True
+        except Exception:
+            return False
+
+    async def read(self, path: str) -> bytes:
+        result = self._client.get(f"/api/v2/files/read?path={path}")
+        content = result.get("content", "") if isinstance(result, dict) else str(result)
+        return content.encode("utf-8")
+
+    async def sys_readdir(self, path: str) -> list[str]:
+        try:
+            result = self._client.get(f"/api/v2/files/list?path={path}")
+            items = result.get("items", []) if isinstance(result, dict) else []
+            return [item.get("name", "") for item in items]
+        except Exception:
+            return []
+
+    def flush_write_observer(self) -> None:
+        pass  # REST writes are synchronous — no buffering
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -193,7 +250,25 @@ async def _get_nexus_client(config: dict[str, Any]) -> Any:
             )
             raise
 
-    # Local preset — connect directly to data dir
+    # Local preset — try running server first, fall back to local data dir.
+    # Issue #3250: local NexusFS writes bypass the server's VFS index,
+    # causing demo files to be invisible in the TUI/API. Always prefer
+    # the server REST API when one is reachable.
+    rt = _resolve_runtime_connection(config)
+    base_url = rt["base_url"]
+    api_key = rt["api_key"]
+
+    try:
+        from nexus.cli.api_client import NexusApiClient
+
+        test_client = NexusApiClient(url=base_url, api_key=api_key)
+        test_client.get("/healthz/ready")
+        logger.info("Local server detected at %s — using REST API for demo seeding", base_url)
+        return _RestApiNexusClient(base_url, api_key)
+    except Exception:
+        pass
+
+    # No server running — fall back to local data dir
     data_dir = config.get("data_dir", "./nexus-data")
     return await nexus.connect(config={"data_dir": data_dir})
 

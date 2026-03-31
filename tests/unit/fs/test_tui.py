@@ -248,6 +248,22 @@ class TestFileBrowser:
         browser._total_count = 42
         assert browser.entry_count == 42
 
+    @pytest.mark.asyncio
+    async def test_empty_directory_shows_empty_state(self, tmp_path):
+        """Empty directory shows 'Empty folder' message instead of blank table."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            browser = app.query_one("#file-browser", FileBrowser)
+
+            from textual.widgets import Static
+
+            empty_state = browser.query_one("#empty-state", Static)
+            table = browser.query_one("#file-table", DataTable)
+            assert empty_state.display is True
+            assert table.display is False
+
 
 # ---------------------------------------------------------------------------
 # File preview tests

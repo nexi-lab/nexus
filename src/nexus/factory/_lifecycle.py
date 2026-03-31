@@ -97,14 +97,14 @@ async def _wire_services(
     if workflow_engine is not None:
         _brick_updates["workflow_engine"] = workflow_engine
 
-    # Merge factory-phase additions into the unified services dict
-    _svc.update(_brick_updates)
-
     # --- Resolve enabled_bricks for profile gating ---
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:
         _resolved_bricks = _DP.FULL.default_bricks()
     _brick_updates["enabled_bricks"] = _resolved_bricks
+
+    # Merge factory-phase additions into the unified services dict
+    _svc.update(_brick_updates)
 
     def svc_on(name: str) -> bool:
         return name in _resolved_bricks

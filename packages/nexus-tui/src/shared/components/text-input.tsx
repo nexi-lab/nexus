@@ -10,6 +10,7 @@
 import React from "react";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 interface TextInputProps {
   /** Current input value */
@@ -61,11 +62,11 @@ export function TextInput({
   return (
     <box flexDirection="row" height={1}>
       {label && (
-        <text foregroundColor={statusColor.info}>{`${label}: `}</text>
+        <text style={textStyle({ fg: statusColor.info })}>{`${label}: `}</text>
       )}
-      <text dimColor={!!isDimmed}>
+      <text style={textStyle({ dim: !!isDimmed })}>
         {displayValue}
-        {active && <span foregroundColor={statusColor.info}>{"█"}</span>}
+        {active && <span style={textStyle({ fg: statusColor.info })}>{"█"}</span>}
       </text>
     </box>
   );

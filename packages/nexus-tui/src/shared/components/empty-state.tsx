@@ -9,6 +9,7 @@
 
 import React from "react";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 interface EmptyStateProps {
   /** Primary message, e.g. "No transactions yet." */
@@ -26,9 +27,9 @@ export function EmptyState({ message, hint }: EmptyStateProps): React.ReactNode 
       alignItems="center"
       flexDirection="column"
     >
-      <text dimColor>{message}</text>
+      <text style={textStyle({ dim: true })}>{message}</text>
       {hint && (
-        <text foregroundColor={statusColor.dim}>{hint}</text>
+        <text style={textStyle({ fg: statusColor.dim })}>{hint}</text>
       )}
     </box>
   );

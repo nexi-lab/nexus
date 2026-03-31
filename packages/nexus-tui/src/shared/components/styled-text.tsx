@@ -10,6 +10,7 @@
 
 import React from "react";
 import Anser from "anser";
+import { textStyle } from "../text-style.js";
 
 /** Convert anser's "R, G, B" format to "#RRGGBB" hex for terminal compatibility. */
 function rgbToHex(rgb: string): string {
@@ -45,12 +46,14 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
         return (
           <span
             key={i}
-            bold={decoration.includes("bold") || undefined}
-            dimColor={decoration.includes("dim") || undefined}
-            underline={decoration.includes("underline") || undefined}
-            inverse={decoration.includes("reverse") || undefined}
-            foregroundColor={span.fg ? rgbToHex(span.fg) : undefined}
-            backgroundColor={span.bg ? rgbToHex(span.bg) : undefined}
+            style={textStyle({
+              bold: decoration.includes("bold") || undefined,
+              dim: decoration.includes("dim") || undefined,
+              underline: decoration.includes("underline") || undefined,
+              inverse: decoration.includes("reverse") || undefined,
+              fg: span.fg ? rgbToHex(span.fg) : undefined,
+              bg: span.bg ? rgbToHex(span.bg) : undefined,
+            })}
           >
             {span.content}
           </span>

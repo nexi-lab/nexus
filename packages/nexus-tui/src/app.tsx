@@ -6,12 +6,11 @@
  */
 
 import React, { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
-import { useTerminalDimensions } from "@opentui/react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { useErrorStore } from "./stores/error-store.js";
 import { useAnnouncementStore } from "./stores/announcement-store.js";
-import { SideNav } from "./shared/components/side-nav.js";
+import { TabBar, type Tab } from "./shared/components/tab-bar.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
 import { AnnouncementBar } from "./shared/components/announcement-bar.js";
@@ -23,8 +22,11 @@ import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
 import { HelpOverlay } from "./shared/components/help-overlay.js";
 import { WelcomeScreen } from "./shared/components/welcome-screen.js";
 import { PreConnectionScreen } from "./shared/components/pre-connection-screen.js";
+import { CommandPalette } from "./shared/components/command-palette.js";
+import { type CommandPaletteItem } from "./shared/command-palette.js";
 import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 import { detectConnectionState } from "./shared/hooks/use-connection-state.js";
+import { useVisibleTabs, type TabDef } from "./shared/hooks/use-visible-tabs.js";
 import { killAllProcesses } from "./services/command-runner.js";
 import { PANEL_DESCRIPTORS } from "./shared/navigation.js";
 import {
@@ -44,10 +46,22 @@ const SearchPanel = lazy(() => import("./panels/search/search-panel.js"));
 const WorkflowsPanel = lazy(() => import("./panels/workflows/workflows-panel.js"));
 const EventsPanel = lazy(() => import("./panels/events/events-panel.js"));
 const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-panel.js"));
-const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.js"));
-const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
 
-// Panel definitions are in shared/nav-items.ts (single source of truth).
+type AppTab = Tab & TabDef<PanelId>;
+
+const TABS: readonly AppTab[] = [
+  { id: "files", label: "Files", shortcut: "1", brick: null },
+  { id: "versions", label: "Ver", shortcut: "2", brick: "versioning" },
+  { id: "agents", label: "Agent", shortcut: "3", brick: ["agent_runtime", "delegation", "ipc"] },
+  { id: "zones", label: "Zone", shortcut: "4", brick: null },
+  { id: "access", label: "ACL", shortcut: "5", brick: ["access_manifest", "governance", "auth", "delegation"] },
+  { id: "payments", label: "Pay", shortcut: "6", brick: "pay" },
+  { id: "search", label: "Find", shortcut: "7", brick: null },
+  { id: "workflows", label: "Flow", shortcut: "8", brick: "workflows" },
+  { id: "infrastructure", label: "Event", shortcut: "9", brick: null },
+  { id: "console", label: "CLI", shortcut: "0", brick: null },
+];
+
 function PanelRouter(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
 
@@ -72,10 +86,6 @@ function PanelRouter(): React.ReactNode {
       return <EventsPanel />;
     case "console":
       return <ApiConsolePanel />;
-    case "connectors":
-      return <ConnectorsPanel />;
-    case "stack":
-      return <StackPanel />;
     default:
       return (
         <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -117,13 +127,7 @@ function shutdown(): void {
   process.exit(0);
 }
 
-const MIN_COLS = 80;
-const MIN_ROWS = 24;
-
 export function App(): React.ReactNode {
-  const { width: termCols, height: termRows } = useTerminalDimensions();
-  const tooSmall = termCols < MIN_COLS || termRows < MIN_ROWS;
-
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
@@ -133,10 +137,11 @@ export function App(): React.ReactNode {
   const announce = useAnnouncementStore((s) => s.announce);
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
-  const sideNavVisible = useUiStore((s) => s.sideNavVisible);
-  const toggleSideNav = useUiStore((s) => s.toggleSideNav);
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const visibleTabs = useVisibleTabs(TABS);
+  const tabBarTabs = visibleTabs as readonly AppTab[];
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const showWelcome = isFresh === true && !welcomeDismissed;
@@ -153,8 +158,15 @@ export function App(): React.ReactNode {
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
   useEffect(() => {
-    setOverlayActive(identitySwitcherOpen || helpOpen || showWelcome);
-  }, [identitySwitcherOpen, helpOpen, showWelcome, setOverlayActive]);
+    setOverlayActive(identitySwitcherOpen || helpOpen || commandPaletteOpen || showWelcome);
+  }, [identitySwitcherOpen, helpOpen, commandPaletteOpen, showWelcome, setOverlayActive]);
+
+  useEffect(() => {
+    const visibleIds = visibleTabs.map((tab) => tab.id);
+    if (visibleIds.length > 0 && !visibleIds.includes(activePanel)) {
+      setActivePanel(visibleIds[0]!);
+    }
+  }, [activePanel, setActivePanel, visibleTabs]);
 
   useEffect(() => {
     if (previousPanelRef.current !== null && previousPanelRef.current !== activePanel) {
@@ -194,14 +206,73 @@ export function App(): React.ReactNode {
     setIdentitySwitcherOpen(false);
   }, []);
 
+  const closeCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(false);
+  }, []);
+
+  const commandPaletteItems = React.useMemo<readonly CommandPaletteItem[]>(() => {
+    const panelCommands: CommandPaletteItem[] = tabBarTabs.map((tab) => ({
+      id: `panel:${tab.id}`,
+      title: `Switch to ${tab.label}`,
+      section: "Panels",
+      hint: tab.shortcut,
+      keywords: [tab.id, tab.label, "panel", "switch"],
+      run: () => setActivePanel(tab.id as PanelId),
+    }));
+
+    const appCommands: CommandPaletteItem[] = [
+      {
+        id: "app:help",
+        title: "Open help overlay",
+        section: "Global",
+        hint: "?",
+        keywords: ["help", "shortcuts", "bindings"],
+        run: () => setHelpOpen(true),
+      },
+      {
+        id: "app:identity",
+        title: "Open identity switcher",
+        section: "Global",
+        hint: "Ctrl+I",
+        keywords: ["identity", "agent", "subject", "zone"],
+        run: () => setIdentitySwitcherOpen(true),
+      },
+      {
+        id: "app:disconnect",
+        title: "Disconnect and return to setup",
+        section: "Global",
+        hint: "Ctrl+D",
+        keywords: ["disconnect", "setup", "reconnect"],
+        run: () => useGlobalStore.getState().setConnectionStatus("error", "Disconnected by user"),
+      },
+      {
+        id: "app:zoom",
+        title: zoomedPanel === activePanel ? "Exit zoom" : `Zoom ${activePanel}`,
+        section: "Global",
+        hint: "z",
+        keywords: ["zoom", "fullscreen", activePanel],
+        run: () => toggleZoom(activePanel),
+      },
+      {
+        id: "app:quit",
+        title: "Quit Nexus TUI",
+        section: "Global",
+        hint: "q",
+        keywords: ["quit", "exit", "close"],
+        run: shutdown,
+      },
+    ];
+
+    return [...appCommands, ...panelCommands];
+  }, [tabBarTabs, setActivePanel, zoomedPanel, activePanel, toggleZoom]);
+
   useKeyboard(
     showPreConnection
       ? {
           // Pre-connection screen handles its own keybindings
           "q": shutdown,
-          "?": () => setHelpOpen(true),
         }
-      : identitySwitcherOpen || helpOpen || showWelcome
+      : identitySwitcherOpen || helpOpen || commandPaletteOpen || showWelcome
       ? {
           // When an overlay is open, only dismiss keys work from app level.
           "ctrl+i": toggleIdentitySwitcher,
@@ -219,9 +290,8 @@ export function App(): React.ReactNode {
           "8": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("workflows"); },
           "9": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("infrastructure"); },
           "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
-          "shift+c": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("connectors"); },
-          "shift+s": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("stack"); },
-          "ctrl+b": () => { if (!useUiStore.getState().fileEditorOpen) toggleSideNav(); },
+          "ctrl+p": () => { if (!useUiStore.getState().fileEditorOpen) setCommandPaletteOpen(true); },
+          ":": () => { if (!useUiStore.getState().fileEditorOpen) setCommandPaletteOpen(true); },
           "ctrl+i": toggleIdentitySwitcher,
           "ctrl+d": () => {
             // Disconnect and go back to setup menu
@@ -233,28 +303,11 @@ export function App(): React.ReactNode {
         },
   );
 
-  // Terminal size guard: show friendly message when below 80×24
-  if (tooSmall) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
-        <text><span bold>Terminal too small ({termCols}×{termRows})</span></text>
-        <text> </text>
-        <text>Nexus TUI requires at least {MIN_COLS}×{MIN_ROWS}</text>
-        <text><span dimColor>Current: {termCols}×{termRows}</span></text>
-      </box>
-    );
-  }
-
   // Pre-connection screen (Decision 3A): shown when server is unavailable
   if (showPreConnection) {
     return (
       <box height="100%" width="100%" flexDirection="column">
-        <box flexGrow={1}>
-          {helpOpen
-            ? <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
-            : <PreConnectionScreen />
-          }
-        </box>
+        <PreConnectionScreen />
         <StatusBar />
       </box>
     );
@@ -262,32 +315,28 @@ export function App(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Main row: sidebar + content */}
-      <box flexGrow={1} flexDirection="row">
-        {/* Side navigation (hidden when zoomed or welcome screen active) */}
-        {!zoomedPanel && !showWelcome && (
-          <SideNav activePanel={activePanel} visible={sideNavVisible} />
-        )}
+      {/* Tab bar (hidden when zoomed) */}
+      {!zoomedPanel && <TabBar tabs={tabBarTabs} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />}
 
-        {/* Panel content */}
-        <box flexGrow={1}>
-          <ErrorBoundary>
-            <Suspense
-              fallback={
-                <box height="100%" width="100%" justifyContent="center" alignItems="center">
-                  <Spinner label="Loading panel..." />
-                </box>
-              }
-            >
-              <PanelRouter />
-            </Suspense>
-          </ErrorBoundary>
-        </box>
+      {/* Main content */}
+      <box flexGrow={1}>
+        <ErrorBoundary>
+          <Suspense
+            fallback={
+              <box height="100%" width="100%" justifyContent="center" alignItems="center">
+                <Spinner label="Loading panel..." />
+              </box>
+            }
+          >
+            <PanelRouter />
+          </Suspense>
+        </ErrorBoundary>
       </box>
 
       {/* Overlays */}
       {showWelcome && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
       <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
+      <CommandPalette visible={commandPaletteOpen} commands={commandPaletteItems} onClose={closeCommandPalette} />
       <AppConfirmDialog />
       <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
 

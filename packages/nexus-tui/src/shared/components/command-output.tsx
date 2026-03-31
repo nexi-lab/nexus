@@ -10,6 +10,7 @@ import { useCommandRunnerStore } from "../../services/command-runner.js";
 import { StyledText } from "./styled-text.js";
 import { Spinner } from "./spinner.js";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 const ERROR_HINTS: ReadonlyArray<{ pattern: RegExp; hint: string }> = [
   { pattern: /authentication required|unauthorized|401/i, hint: "Check your API key (NEXUS_API_KEY or nexus.yaml api_key)" },
@@ -49,8 +50,8 @@ export function CommandOutput(): React.ReactNode {
       {/* Header */}
       <box height={1} width="100%">
         <text>
-          <span dimColor>{"$ "}</span>
-          <span bold>{commandLabel}</span>
+          <span style={textStyle({ dim: true })}>{"$ "}</span>
+          <span style={textStyle({ bold: true })}>{commandLabel}</span>
         </text>
       </box>
 
@@ -66,26 +67,26 @@ export function CommandOutput(): React.ReactNode {
       {/* Spawn error */}
       {spawnError && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.error}>{"Error: "}{spawnError}</text>
+          <text style={textStyle({ fg: statusColor.error })}>{"Error: "}{spawnError}</text>
         </box>
       )}
 
       {/* Status footer */}
       {status === "success" && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.success}>{"Command completed successfully"}</text>
+          <text style={textStyle({ fg: statusColor.success })}>{"Command completed successfully"}</text>
         </box>
       )}
       {status === "error" && exitCode !== null && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.error}>{`Command failed with exit code ${exitCode}`}</text>
+          <text style={textStyle({ fg: statusColor.error })}>{`Command failed with exit code ${exitCode}`}</text>
         </box>
       )}
       {status === "error" && (() => {
         const hint = findErrorHint(outputLines);
         return hint ? (
           <box height={1} width="100%">
-            <text foregroundColor={statusColor.warning}>{`  Hint: ${hint}`}</text>
+            <text style={textStyle({ fg: statusColor.warning })}>{`  Hint: ${hint}`}</text>
           </box>
         ) : null;
       })()}

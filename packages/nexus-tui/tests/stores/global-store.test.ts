@@ -64,6 +64,15 @@ describe("GlobalStore", () => {
     });
   });
 
+  describe("initConfig", () => {
+    it("creates a client even without an API key", () => {
+      useGlobalStore.getState().initConfig({ baseUrl: "http://localhost:2026", apiKey: "" });
+      const state = useGlobalStore.getState();
+      expect(state.client).not.toBeNull();
+      expect(state.connectionStatus).toBe("connecting");
+    });
+  });
+
   describe("setServerInfo", () => {
     it("sets version, zoneId, uptime", () => {
       useGlobalStore.getState().setServerInfo({

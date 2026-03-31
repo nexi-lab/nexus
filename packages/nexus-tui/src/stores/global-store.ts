@@ -7,7 +7,6 @@ import type { NexusClientOptions } from "@nexus/api-client";
 import { FetchClient, resolveConfig } from "@nexus/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
-import { useUiStore } from "./ui-store.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -21,9 +20,7 @@ export type PanelId =
   | "search"
   | "workflows"
   | "infrastructure"
-  | "console"
-  | "connectors"
-  | "stack";
+  | "console";
 
 /** Response from GET /api/v2/features */
 export interface FeaturesResponse {
@@ -101,9 +98,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
 
   initConfig: (overrides) => {
     const config = resolveConfig({ transformKeys: false, ...overrides });
-    const client = config.apiKey ? new FetchClient(config) : null;
+    const client = new FetchClient(config);
     set({ config, client, connectionStatus: client ? "connecting" : "disconnected" });
-    useUiStore.getState().resetFreshnessTimestamps();
 
     if (client) {
       get().testConnection();
@@ -198,7 +194,6 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       activePanel: panel,
       panelHistory: [...state.panelHistory.slice(-9), current],
     }));
-    useUiStore.getState().markPanelVisited(panel);
     // Re-fetch features on panel switch (Decision 3A)
     get().refreshFeatures();
   },
@@ -224,9 +219,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       subject: "subject" in identity ? identity.subject : currentConfig.subject,
       zoneId: "zoneId" in identity ? identity.zoneId : currentConfig.zoneId,
     };
-    const client = config.apiKey ? new FetchClient(config) : null;
+    const client = new FetchClient(config);
     set({ config, client });
-    useUiStore.getState().resetFreshnessTimestamps();
   },
 
   setFeatures: (features) => {

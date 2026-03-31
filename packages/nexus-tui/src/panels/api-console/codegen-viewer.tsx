@@ -6,6 +6,7 @@ import React, { useState } from "react";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { generateCode, type CodegenLanguage } from "./codegen.js";
+import { defaultSyntaxStyle } from "../../shared/syntax-style.js";
 
 const LANGUAGES: readonly CodegenLanguage[] = ["curl", "fetch", "python"];
 
@@ -28,7 +29,7 @@ export function CodegenViewer(): React.ReactNode {
 
       {/* Code output */}
       <scrollbox flexGrow={1} width="100%">
-        <code content={code} filetype={lang === "curl" ? "bash" : lang === "fetch" ? "javascript" : "python"} syntaxStyle={undefined!} />
+        <code content={code} filetype={lang === "curl" ? "bash" : lang === "fetch" ? "javascript" : "python"} syntaxStyle={defaultSyntaxStyle} />
       </scrollbox>
     </box>
   );

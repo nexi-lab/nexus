@@ -7,6 +7,8 @@ import { useFilesStore } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { StyledText } from "../../shared/components/styled-text.js";
+import { textStyle } from "../../shared/text-style.js";
+import { defaultSyntaxStyle } from "../../shared/syntax-style.js";
 
 export function FilePreview(): React.ReactNode {
   const client = useApi();
@@ -43,7 +45,7 @@ export function FilePreview(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <text>Unable to load preview</text>
         {previewError && (
-          <text dimColor>{previewError}</text>
+          <text style={textStyle({ dim: true })}>{previewError}</text>
         )}
       </box>
     );
@@ -68,7 +70,7 @@ export function FilePreview(): React.ReactNode {
   // Use OpenTUI's Code component for syntax highlighting
   return (
     <scrollbox height="100%" width="100%">
-      <code content={previewContent} filetype={language} syntaxStyle={undefined!} />
+      <code content={previewContent} filetype={language} syntaxStyle={defaultSyntaxStyle} />
     </scrollbox>
   );
 }

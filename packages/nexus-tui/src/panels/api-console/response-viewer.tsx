@@ -6,6 +6,8 @@ import React from "react";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { httpStatusColor } from "../../shared/theme.js";
 import { StyledText } from "../../shared/components/styled-text.js";
+import { textStyle } from "../../shared/text-style.js";
+import { defaultSyntaxStyle } from "../../shared/syntax-style.js";
 
 export function ResponseViewer(): React.ReactNode {
   const response = useApiConsoleStore((s) => s.response);
@@ -35,7 +37,7 @@ export function ResponseViewer(): React.ReactNode {
       {/* Status line */}
       <box height={1} width="100%">
         <text>{`${statusPrefix} `}</text>
-        <text foregroundColor={httpStatusColor(response.status)}>{`${response.status}`}</text>
+        <text style={textStyle({ fg: httpStatusColor(response.status) })}>{`${response.status}`}</text>
         <text>{` ${response.statusText} — ${response.timeMs.toFixed(0)}ms`}</text>
       </box>
 
@@ -44,7 +46,7 @@ export function ResponseViewer(): React.ReactNode {
         {response.body.includes("\x1b[") ? (
           <StyledText>{response.body}</StyledText>
         ) : (
-          <code content={response.body} filetype="json" syntaxStyle={undefined!} />
+          <code content={response.body} filetype="json" syntaxStyle={defaultSyntaxStyle} />
         )}
       </scrollbox>
     </box>

@@ -6,6 +6,7 @@ import React from "react";
 import type { InboxMessage } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
+import { textStyle } from "../../shared/text-style.js";
 
 interface InboxViewProps {
   readonly messages: readonly InboxMessage[];
@@ -27,7 +28,7 @@ function parseFilename(filename: string): { label: string; ext: string } {
 
 function MessageList({ messages, emptyText }: { messages: readonly InboxMessage[]; emptyText: string }): React.ReactNode {
   if (messages.length === 0) {
-    return <text dimColor>{`  ${emptyText}`}</text>;
+    return <text style={textStyle({ dim: true })}>{`  ${emptyText}`}</text>;
   }
   return (
     <>
@@ -57,8 +58,8 @@ export function InboxView({ messages, count, processedMessages, deadLetterMessag
         {/* Inbox section */}
         <box height={1} width="100%">
           <text>
-            <span foregroundColor={statusColor.info} bold>{`Inbox (${count})`}</span>
-            <span dimColor>{" — pending messages"}</span>
+            <span style={textStyle({ fg: statusColor.info, bold: true })}>{`Inbox (${count})`}</span>
+            <span style={textStyle({ dim: true })}>{" — pending messages"}</span>
           </text>
         </box>
         <MessageList messages={messages} emptyText="No pending messages" />
@@ -67,8 +68,8 @@ export function InboxView({ messages, count, processedMessages, deadLetterMessag
         <text>{""}</text>
         <box height={1} width="100%">
           <text>
-            <span foregroundColor={statusColor.healthy} bold>{`Processed (${processedMessages.length})`}</span>
-            <span dimColor>{" — consumed by agent"}</span>
+            <span style={textStyle({ fg: statusColor.healthy, bold: true })}>{`Processed (${processedMessages.length})`}</span>
+            <span style={textStyle({ dim: true })}>{" — consumed by agent"}</span>
           </text>
         </box>
         <MessageList messages={processedMessages} emptyText="No processed messages" />
@@ -77,8 +78,8 @@ export function InboxView({ messages, count, processedMessages, deadLetterMessag
         <text>{""}</text>
         <box height={1} width="100%">
           <text>
-            <span foregroundColor={statusColor.error} bold>{`Dead Letter (${deadLetterMessages.length})`}</span>
-            <span dimColor>{" — expired or failed"}</span>
+            <span style={textStyle({ fg: statusColor.error, bold: true })}>{`Dead Letter (${deadLetterMessages.length})`}</span>
+            <span style={textStyle({ dim: true })}>{" — expired or failed"}</span>
           </text>
         </box>
         <MessageList messages={deadLetterMessages} emptyText="No dead letter messages" />
@@ -86,7 +87,7 @@ export function InboxView({ messages, count, processedMessages, deadLetterMessag
         {totalAll === 0 && (
           <>
             <text>{""}</text>
-            <text dimColor>{"  No IPC messages. Send messages with POST /api/v2/ipc/send"}</text>
+            <text style={textStyle({ dim: true })}>{"  No IPC messages. Send messages with POST /api/v2/ipc/send"}</text>
           </>
         )}
       </scrollbox>

@@ -34,7 +34,6 @@ import { FilePreview } from "./file-preview.js";
 import { FileEditor } from "./file-editor.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
-import { FileLineage } from "./file-lineage.js";
 import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
@@ -47,9 +46,6 @@ import {
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
-import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
-import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useAnnouncementStore } from "../../stores/announcement-store.js";
@@ -59,6 +55,8 @@ import {
   formatSelectionAnnouncement,
   formatSuccessAnnouncement,
 } from "../../shared/accessibility-announcements.js";
+import { textStyle } from "../../shared/text-style.js";
+import { formatActionHints, getFilesFooterBindings } from "../../shared/action-registry.js";
 import crypto from "node:crypto";
 
 // =============================================================================
@@ -100,7 +98,7 @@ interface BindingContext {
   readonly toggleNode: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
   readonly collapseNode: (path: string) => void;
   readonly fetchPreview: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
-  readonly setMetadataTab: (tab: "metadata" | "aspects" | "schema" | "lineage") => void;
+  readonly setMetadataTab: (tab: "metadata" | "aspects" | "schema") => void;
   readonly catalogAvailable: boolean;
   // Share links
   readonly shareLinks: readonly { link_id: string; status: string }[];
@@ -196,7 +194,12 @@ function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
 /** Tab cycling (shared across all modes). */
 function getTabCycleBindings(ctx: BindingContext): Record<string, () => void> {
   return {
-    ...subTabCycleBindings(ctx.visibleTabs, ctx.activeTab, ctx.setActiveTab),
+    tab: () => {
+      const ids = ctx.visibleTabs.map((t) => t.id);
+      const idx = ids.indexOf(ctx.activeTab);
+      const next = ids[(idx + 1) % ids.length];
+      if (next) ctx.setActiveTab(next);
+    },
     "shift+tab": () => ctx.toggleFocus("files"),
   };
 }
@@ -215,7 +218,6 @@ function getExplorerActionBindings(ctx: BindingContext): Record<string, () => vo
     },
     // Metadata tabs
     m: () => ctx.setMetadataTab("metadata"),
-    "shift+l": () => ctx.setMetadataTab("lineage"),
     ...(ctx.catalogAvailable ? {
       a: () => ctx.setMetadataTab("aspects"),
       s: () => ctx.setMetadataTab("schema"),
@@ -475,45 +477,6 @@ function getInputLabel(mode: InputMode, buffer: string): string {
 }
 
 // =============================================================================
-// Help bar text
-// =============================================================================
-
-function getHelpText(
-  inputMode: InputMode,
-  activeTab: FilesTab,
-  catalogAvailable: boolean,
-  visualMode: boolean,
-  selectionCount: number,
-  clipboard: BindingContext["clipboard"],
-): string {
-  if (inputMode === "filter") return "Type to filter, Enter:keep filter, Escape:clear";
-  if (inputMode === "search") return "g:pattern=glob  r:pattern=grep  plain=deep search  Enter:search  Esc:cancel";
-  if (inputMode === "paste-dest") return "Enter path, Enter:paste, Escape:cancel";
-  if (inputMode !== "none") return "Type name, Enter:confirm, Escape:cancel, Backspace:delete";
-
-  if (activeTab === "explorer") {
-    const parts = ["j/k:nav", "l/Enter:expand", "h:collapse"];
-    if (visualMode) {
-      parts.push("v:exit visual", "c:copy", "x:cut");
-    } else if (selectionCount > 0) {
-      parts.push(`${selectionCount} selected`, "c:copy", "x:cut", "Esc:clear");
-    } else {
-      parts.push("/:filter", "Ctrl+F:search", "v:visual", "Space:select");
-    }
-    if (clipboard) {
-      parts.push(`p:paste ${clipboard.paths.length} ${clipboard.operation === "cut" ? "cut" : "copied"}`, "P:paste to path");
-    }
-    parts.push("d:del", "N:mkdir", "R:rename", "e:edit", "E:new file");
-    if (catalogAvailable) parts.push("m/a/s:meta");
-    parts.push("?:help");
-    return parts.join("  ");
-  }
-
-  if (activeTab === "shareLinks") return "j/k:navigate  x:revoke  r:refresh  Tab:switch tab  q:quit";
-  return "j/k:navigate  Tab:switch tab  q:quit";
-}
-
-// =============================================================================
 // Component
 // =============================================================================
 
@@ -524,7 +487,13 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Panel-level active tab
   const [activeTab, setActiveTab] = useState<FilesTab>("explorer");
 
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab]);
 
   // Files store
   const currentPath = useFilesStore((s) => s.currentPath);
@@ -582,7 +551,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const { available: catalogAvailable } = useBrickAvailable("catalog");
 
   // Active metadata sub-tab
-  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema" | "lineage">("metadata");
+  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema">("metadata");
   React.useEffect(() => {
     if (!catalogAvailable && (metadataTab === "aspects" || metadataTab === "schema")) {
       setMetadataTab("metadata");
@@ -843,7 +812,13 @@ export default function FileExplorerPanel(): React.ReactNode {
       ) : <>
 
       {/* Panel-level tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <box height={1} width="100%">
+        <text>
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
+          }).join(" ")}
+        </text>
+      </box>
 
       {/* Input bar for text modes */}
       {inputMode !== "none" && (
@@ -855,7 +830,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Paste progress indicator */}
       {pasteProgress && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.info}>
+          <text style={textStyle({ fg: "cyan" })}>
             {pasteProgress.completed + pasteProgress.failed >= pasteProgress.total
               ? `Paste complete: ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`
               : `Pasting... ${pasteProgress.completed + pasteProgress.failed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
@@ -866,7 +841,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Clipboard indicator (only when not actively pasting) */}
       {clipboard && !pasteProgress && inputMode === "none" && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.warning}>
+          <text style={textStyle({ fg: "yellow" })}>
             {`${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
           </text>
         </box>
@@ -894,7 +869,7 @@ export default function FileExplorerPanel(): React.ReactNode {
                     </box>
                   ))}
                 <box height={1}>
-                  <text dimColor>Press Escape to return to explorer</text>
+                  <text style={textStyle({ dim: true })}>Press Escape to return to explorer</text>
                 </box>
               </scrollbox>
             </box>
@@ -919,14 +894,13 @@ export default function FileExplorerPanel(): React.ReactNode {
                 {/* Metadata tab bar with aspect count badge */}
                 <box height={1} width="100%">
                   <text>
-                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "lineage" ? "[Lineage]" : " Lineage "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
+                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
                   </text>
                 </box>
 
                 {/* Metadata sidebar (bottom 30%) */}
                 <box flexGrow={3} borderStyle="single">
                   {metadataTab === "metadata" && <FileMetadata item={selectedItem} />}
-                  {metadataTab === "lineage" && <FileLineage item={selectedItem} />}
                   {metadataTab === "aspects" && catalogAvailable && <FileAspects item={selectedItem} />}
                   {metadataTab === "schema" && catalogAvailable && <FileSchema item={selectedItem} />}
                 </box>
@@ -961,13 +935,16 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
+          ? <text style={textStyle({ fg: "green" })}>Copied!</text>
           : <text>
-            {getHelpText(
-              inputMode, activeTab, catalogAvailable,
-              visualModeAnchor !== null, effectiveSelection.size,
+            {formatActionHints(getFilesFooterBindings({
+              inputMode,
+              activeTab,
+              catalogAvailable,
+              visualMode: visualModeAnchor !== null,
+              selectionCount: effectiveSelection.size,
               clipboard,
-            )}
+            }))}
           </text>}
       </box>
 

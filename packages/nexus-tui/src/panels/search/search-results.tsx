@@ -4,6 +4,7 @@
 
 import React, { useCallback } from "react";
 import type { SearchResult } from "../../stores/search-store.js";
+import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
@@ -79,9 +80,9 @@ export function SearchResults({
         <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
           <text>
             <span>{prefix}</span>
-            <span foregroundColor={scoreColor(result.score)}>{score}</span>
+            <span style={textStyle({ fg: scoreColor(result.score) })}>{score}</span>
             <span>{`  ${lines}  ${path}  `}</span>
-            <span dimColor>{breakdown ? `[${breakdown}]  ` : ""}</span>
+            <span style={textStyle({ dim: true })}>{breakdown ? `[${breakdown}]  ` : ""}</span>
             <span>{chunk}</span>
           </text>
         </box>

@@ -8,6 +8,7 @@
 
 import React from "react";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 interface PaginationBarProps {
   /** Whether there are more items to load (next page available) */
@@ -46,10 +47,10 @@ export function PaginationBar({
 
   return (
     <box height={1} width="100%" flexDirection="row">
-      <text dimColor>
+      <text style={textStyle({ dim: true })}>
         {hasPrev && (
           <span>
-            <span foregroundColor={statusColor.info}>{prevKey}</span>
+            <span style={textStyle({ fg: statusColor.info })}>{prevKey}</span>
             <span>{":prev "}</span>
           </span>
         )}
@@ -57,7 +58,7 @@ export function PaginationBar({
         {hasMore && (
           <span>
             <span>{" "}</span>
-            <span foregroundColor={statusColor.info}>{nextKey}</span>
+            <span style={textStyle({ fg: statusColor.info })}>{nextKey}</span>
             <span>{":next"}</span>
           </span>
         )}

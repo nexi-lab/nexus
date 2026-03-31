@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { FileItem } from "../../stores/files-store.js";
+import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
 import { statusColor } from "../../shared/theme.js";
 
@@ -27,8 +28,8 @@ function MetaRow({ label, value, color }: { label: string; value: string; color?
   return (
     <box height={1} width="100%">
       <text>
-        <span foregroundColor={statusColor.dim}>{`${label.padEnd(8)} `}</span>
-        <span foregroundColor={color}>{value}</span>
+        <span style={textStyle({ fg: statusColor.dim })}>{`${label.padEnd(8)} `}</span>
+        <span style={color ? textStyle({ fg: color }) : undefined}>{value}</span>
       </text>
     </box>
   );

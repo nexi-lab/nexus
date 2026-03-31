@@ -5,8 +5,9 @@
 import React, { useState } from "react";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { useGlobalStore } from "../../stores/global-store.js";
-import { palette, statusColor } from "../theme.js";
+import { statusColor } from "../theme.js";
 import { Spinner } from "./spinner.js";
+import { textStyle } from "../text-style.js";
 
 interface WelcomeScreenProps {
   readonly onDismiss: () => void;
@@ -48,23 +49,23 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
         width={56}
         padding={1}
       >
-        <text bold foregroundColor={palette.accent}>
+        <text style={textStyle({ fg: "#00d4ff", bold: true })}>
           {"    _   _ _____ __  __ _   _ ____"}
         </text>
-        <text bold foregroundColor={palette.accent}>
+        <text style={textStyle({ fg: "#00b8ff", bold: true })}>
           {"   | \\ | | ____|  \\/  | | | / ___|"}
         </text>
-        <text bold foregroundColor={palette.accent}>
+        <text style={textStyle({ fg: "#4d8eff", bold: true })}>
           {"   |  \\| |  _|  >\\/< | | | \\___ \\"}
         </text>
-        <text bold foregroundColor={palette.accent}>
+        <text style={textStyle({ fg: "#8066ff", bold: true })}>
           {"   | |\\  | |___/ /\\ \\| |_| |___) |"}
         </text>
-        <text bold foregroundColor={palette.accent}>
+        <text style={textStyle({ fg: "#b44dff", bold: true })}>
           {"   |_| \\_|_____/_/  \\_\\\\___/|____/"}
         </text>
         <text>{""}</text>
-        <text dimColor>{`  Connected to ${baseUrl}${serverVersion ? ` (v${serverVersion})` : ""}`}</text>
+        <text style={textStyle({ dim: true })}>{`  Connected to ${baseUrl}${serverVersion ? ` (v${serverVersion})` : ""}`}</text>
         <text>{""}</text>
         <text>{"  This server has no data yet. Would you like"}</text>
         <text>{"  to seed demo content?"}</text>
@@ -74,34 +75,34 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
         ) : (
           <>
             <text>
-              <text foregroundColor={statusColor.info}>{"  [Y]"}</text>
-              <text>{" Seed demo data (files, agents, permissions)"}</text>
+              <span style={textStyle({ fg: statusColor.info })}>{"  [Y]"}</span>
+              <span>{" Seed demo data (files, agents, permissions)"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.dim}>{"  [N]"}</text>
-              <text>{" Start with empty server"}</text>
+              <span style={textStyle({ fg: statusColor.dim })}>{"  [N]"}</span>
+              <span>{" Start with empty server"}</span>
             </text>
             <text>
-              <text foregroundColor={statusColor.dim}>{"  [?]"}</text>
-              <text>{" What's in the demo data?"}</text>
+              <span style={textStyle({ fg: statusColor.dim })}>{"  [?]"}</span>
+              <span>{" What's in the demo data?"}</span>
             </text>
           </>
         )}
         {seedError && (
           <>
             <text>{""}</text>
-            <text foregroundColor={statusColor.error}>{"  "}{seedError}</text>
+            <text style={textStyle({ fg: statusColor.error })}>{"  "}{seedError}</text>
           </>
         )}
         {showDetails && (
           <>
             <text>{""}</text>
-            <text dimColor>{"  Demo data includes:"}</text>
-            <text dimColor>{"  \u2022 12 sample files (markdown, code, data)"}</text>
-            <text dimColor>{"  \u2022 2 user identities"}</text>
-            <text dimColor>{"  \u2022 1 agent with trajectories"}</text>
-            <text dimColor>{"  \u2022 HERB evaluation corpus"}</text>
-            <text dimColor>{"  \u2022 ReBAC permission policies"}</text>
+            <text style={textStyle({ dim: true })}>{"  Demo data includes:"}</text>
+            <text style={textStyle({ dim: true })}>{"  \u2022 12 sample files (markdown, code, data)"}</text>
+            <text style={textStyle({ dim: true })}>{"  \u2022 2 user identities"}</text>
+            <text style={textStyle({ dim: true })}>{"  \u2022 1 agent with trajectories"}</text>
+            <text style={textStyle({ dim: true })}>{"  \u2022 HERB evaluation corpus"}</text>
+            <text style={textStyle({ dim: true })}>{"  \u2022 ReBAC permission policies"}</text>
           </>
         )}
       </box>

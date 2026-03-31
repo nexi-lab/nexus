@@ -9,6 +9,7 @@ import React from "react";
 import type { AuditTransaction } from "../../stores/infra-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
 
 export interface AuditTrailProps {
@@ -66,8 +67,8 @@ export function AuditTrail({
             </box>
           );
         })}
-        {hasMore && <text dimColor>{"  ... more transactions (press m to load more)"}</text>}
-        {loading && transactions.length > 0 && <text dimColor>{"  Loading..."}</text>}
+        {hasMore && <text style={textStyle({ dim: true })}>{"  ... more transactions (press m to load more)"}</text>}
+        {loading && transactions.length > 0 && <text style={textStyle({ dim: true })}>{"  Loading..."}</text>}
       </scrollbox>
     </box>
   );

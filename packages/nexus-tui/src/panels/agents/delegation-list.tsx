@@ -7,6 +7,7 @@ import type { DelegationItem } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { delegationModeColor, delegationStatusColor, statusColor } from "../../shared/theme.js";
+import { textStyle } from "../../shared/text-style.js";
 
 interface DelegationListProps {
   readonly delegations: readonly DelegationItem[];
@@ -51,20 +52,20 @@ function DelegationDetail({ delegation }: { delegation: DelegationItem }): React
       <text>{`  Created:  ${delegation.created_at}`}</text>
       <text>{`  Expires:  ${formatExpiry(delegation.lease_expires_at)}`}</text>
       <text>{""}</text>
-      <text bold foregroundColor={statusColor.info}>{"  Granted Capabilities:"}</text>
+      <text style={textStyle({ fg: "cyan", bold: true })}>{"  Granted Capabilities:"}</text>
       {perms.length === 0 ? (
-        <text dimColor>{"    (none or loading...)"}</text>
+        <text style={textStyle({ dim: true })}>{"    (none or loading...)"}</text>
       ) : (
         perms.map((p, i) => {
           const tool = p.object_id.replace("/tools/", "");
           const accessLevel = p.relation.replace("direct_", "");
           const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
-          const color = icon === "R" ? statusColor.info : icon === "W" ? statusColor.warning : statusColor.dim;
+          const color = icon === "R" ? "cyan" : icon === "W" ? "yellow" : "gray";
           return (
             <text key={`perm-${i}`}>
-              <span foregroundColor={color}>{`    [${icon}] `}</span>
+              <span style={textStyle({ fg: color })}>{`    [${icon}] `}</span>
               <span>{tool}</span>
-              <span dimColor>{` (${accessLevel})`}</span>
+              <span style={textStyle({ dim: true })}>{` (${accessLevel})`}</span>
             </text>
           );
         })
@@ -128,16 +129,16 @@ export function DelegationList({
             <box key={d.delegation_id} height={1} width="100%">
               <text>
                 <span>{prefix}</span>
-                <span foregroundColor={badgeColor}>{badge}</span>
-                <span dimColor>{`   ${shortId(d.delegation_id).padEnd(10)}  `}</span>
-                <span foregroundColor={modeColor}>{d.delegation_mode.padEnd(6)}</span>
+                <span style={textStyle({ fg: badgeColor })}>{badge}</span>
+                <span style={textStyle({ dim: true })}>{`   ${shortId(d.delegation_id).padEnd(10)}  `}</span>
+                <span style={textStyle({ fg: modeColor })}>{d.delegation_mode.padEnd(6)}</span>
                 <span>{"  "}</span>
-                <span foregroundColor={statusColor.identity}>{shortId(d.agent_id)}</span>
-                <span dimColor>{"→"}</span>
+                <span style={textStyle({ fg: statusColor.identity })}>{shortId(d.agent_id)}</span>
+                <span style={textStyle({ dim: true })}>{"→"}</span>
                 <span>{shortId(d.parent_agent_id).padEnd(12)}</span>
-                <span dimColor>{"  "}</span>
+                <span style={textStyle({ dim: true })}>{"  "}</span>
                 <span>{(d.intent.length > 19 ? `${d.intent.slice(0, 16)}...` : d.intent).padEnd(19)}</span>
-                <span dimColor>{`  ${String(d.depth).padEnd(5)}  ${formatExpiry(d.lease_expires_at)}`}</span>
+                <span style={textStyle({ dim: true })}>{`  ${String(d.depth).padEnd(5)}  ${formatExpiry(d.lease_expires_at)}`}</span>
               </text>
             </box>
           );

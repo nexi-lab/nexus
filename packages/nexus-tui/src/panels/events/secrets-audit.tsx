@@ -5,6 +5,7 @@
 import React from "react";
 import type { SecretAuditEntry } from "../../stores/infra-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
+import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
 
 export function SecretsAudit({
@@ -37,7 +38,7 @@ export function SecretsAudit({
       {/* Count indicator */}
       {needle ? (
         <box height={1} width="100%">
-          <text dimColor>{`${filtered.length} of ${entries.length} entries`}</text>
+          <text style={textStyle({ dim: true })}>{`${filtered.length} of ${entries.length} entries`}</text>
         </box>
       ) : null}
 

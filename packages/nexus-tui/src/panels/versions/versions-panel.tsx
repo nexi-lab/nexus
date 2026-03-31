@@ -20,7 +20,9 @@ import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { ConflictsView } from "./conflicts-tab.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { focusColor, statusColor } from "../../shared/theme.js";
+import { focusColor } from "../../shared/theme.js";
+import { textStyle } from "../../shared/text-style.js";
+import { formatActionHints, getVersionsFooterBindings } from "../../shared/action-registry.js";
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
@@ -263,11 +265,9 @@ export default function VersionsPanel(): React.ReactNode {
         {/* Help bar */}
         <box height={1} width="100%">
           {copied
-            ? <text foregroundColor={statusColor.healthy}>Copied!</text>
+            ? <text style={textStyle({ fg: "green" })}>Copied!</text>
             : <text>
-            {txnFilterMode
-              ? "Type to filter, Enter:apply, Escape:clear"
-              : "j/k:navigate  n:new txn  Enter:commit  Backspace:rollback  f:filter  /:search  v:diff  c:conflicts  y:copy  q:quit"}
+            {formatActionHints(getVersionsFooterBindings({ txnFilterMode }))}
           </text>}
         </box>
       </box>

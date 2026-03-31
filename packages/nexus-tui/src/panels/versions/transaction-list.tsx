@@ -5,6 +5,7 @@
 import React from "react";
 import type { Transaction } from "../../stores/versions-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { textStyle } from "../../shared/text-style.js";
 import { transactionStatusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
 
@@ -76,7 +77,7 @@ export function TransactionList({
           return (
             <box key={txn.transaction_id} height={1} width="100%">
               <text>{prefix}</text>
-              <text foregroundColor={transactionStatusColor[txn.status]}>{badge}</text>
+              <text style={textStyle({ fg: transactionStatusColor[txn.status] })}>{badge}</text>
               <text>
                 {` ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
               </text>

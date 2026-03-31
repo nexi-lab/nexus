@@ -5,13 +5,16 @@
  * Shows PreConnectionScreen when the server is unavailable (Decision 3A).
  */
 
-import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
+import React, { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
 import { useTerminalDimensions } from "@opentui/react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
+import { useErrorStore } from "./stores/error-store.js";
+import { useAnnouncementStore } from "./stores/announcement-store.js";
 import { SideNav } from "./shared/components/side-nav.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
+import { AnnouncementBar } from "./shared/components/announcement-bar.js";
 import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
@@ -23,6 +26,12 @@ import { PreConnectionScreen } from "./shared/components/pre-connection-screen.j
 import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 import { detectConnectionState } from "./shared/hooks/use-connection-state.js";
 import { killAllProcesses } from "./services/command-runner.js";
+import { PANEL_DESCRIPTORS } from "./shared/navigation.js";
+import {
+  formatConnectionAnnouncement,
+  formatErrorAnnouncement,
+  formatPanelAnnouncement,
+} from "./shared/accessibility-announcements.js";
 
 // Lazy-loaded panels
 const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
@@ -120,6 +129,8 @@ export function App(): React.ReactNode {
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
   const connectionError = useGlobalStore((s) => s.connectionError);
   const config = useGlobalStore((s) => s.config);
+  const latestError = useErrorStore((s) => (s.errors.length > 0 ? s.errors[s.errors.length - 1] : null));
+  const announce = useAnnouncementStore((s) => s.announce);
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
   const sideNavVisible = useUiStore((s) => s.sideNavVisible);
@@ -135,11 +146,45 @@ export function App(): React.ReactNode {
   // screen with a spinner to avoid flashing the main UI during connection attempts.
   const connState = detectConnectionState(connectionStatus, connectionError, config);
   const showPreConnection = connState !== "ready";
+  const previousPanelRef = useRef<PanelId | null>(null);
+  const previousConnectionRef = useRef(connectionStatus);
+  const lastErrorIdRef = useRef<string | null>(null);
+  const panelLabel = PANEL_DESCRIPTORS[activePanel]?.breadcrumbLabel ?? activePanel;
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
   useEffect(() => {
     setOverlayActive(identitySwitcherOpen || helpOpen || showWelcome);
   }, [identitySwitcherOpen, helpOpen, showWelcome, setOverlayActive]);
+
+  useEffect(() => {
+    if (previousPanelRef.current !== null && previousPanelRef.current !== activePanel) {
+      announce(formatPanelAnnouncement(panelLabel));
+    }
+    previousPanelRef.current = activePanel;
+  }, [activePanel, panelLabel, announce]);
+
+  useEffect(() => {
+    if (previousConnectionRef.current !== connectionStatus) {
+      announce(
+        formatConnectionAnnouncement(connectionStatus, connectionError),
+        connectionStatus === "error" ? "error" : connectionStatus === "connected" ? "success" : "info",
+      );
+    }
+    previousConnectionRef.current = connectionStatus;
+  }, [connectionStatus, connectionError, announce]);
+
+  useEffect(() => {
+    if (!latestError || lastErrorIdRef.current === latestError.id) return;
+    lastErrorIdRef.current = latestError.id;
+    if (
+      latestError.source === "global"
+      && connectionStatus === "error"
+      && latestError.message === connectionError
+    ) {
+      return;
+    }
+    announce(formatErrorAnnouncement(latestError.message), "error");
+  }, [latestError, connectionStatus, connectionError, announce]);
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);
@@ -247,6 +292,7 @@ export function App(): React.ReactNode {
       <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
 
       {/* Error bar + Status bar */}
+      <AnnouncementBar />
       <ErrorBar />
       <StatusBar />
     </box>

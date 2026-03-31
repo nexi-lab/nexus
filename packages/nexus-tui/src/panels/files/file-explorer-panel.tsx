@@ -17,7 +17,7 @@
  * @see Issue #3102 — TUI rendering & data-fetching performance
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import {
   useFilesStore,
   type FileItem,
@@ -52,7 +52,13 @@ import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.j
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
+import { useAnnouncementStore } from "../../stores/announcement-store.js";
 import { focusColor, statusColor } from "../../shared/theme.js";
+import {
+  formatDirectoryAnnouncement,
+  formatSelectionAnnouncement,
+  formatSuccessAnnouncement,
+} from "../../shared/accessibility-announcements.js";
 import crypto from "node:crypto";
 
 // =============================================================================
@@ -551,6 +557,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const clearClipboard = useFilesStore((s) => s.clearClipboard);
   const pasteFiles = useFilesStore((s) => s.pasteFiles);
   const pasteProgress = useFilesStore((s) => s.pasteProgress);
+  const announce = useAnnouncementStore((s) => s.announce);
 
   // Share link store
   const shareLinks = useShareLinkStore((s) => s.links);
@@ -590,6 +597,10 @@ export default function FileExplorerPanel(): React.ReactNode {
 
   const selectedNode = visibleNodes[selectedIndex] ?? null;
   const isSentinel = selectedNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false;
+  const currentTreeNode = treeNodes.get(currentPath);
+  const lastDirectoryAnnouncementRef = useRef<string | null>(null);
+  const lastSelectionAnnouncementRef = useRef<string | null>(null);
+  const lastPasteAnnouncementRef = useRef<string | null>(null);
 
   // For metadata/actions, look up FileItem from parent's file cache first,
   // then fall back to constructing a minimal FileItem from the tree node.
@@ -620,6 +631,52 @@ export default function FileExplorerPanel(): React.ReactNode {
   const visibleNodeCount = visibleNodes.length;
   // Keep cachedFiles for backward compat with BindingContext (selection uses it)
   const cachedFiles = fileCacheRevision >= 0 ? (getCachedFiles(currentPath) ?? []) : [];
+
+  useEffect(() => {
+    lastSelectionAnnouncementRef.current = null;
+  }, [currentPath]);
+
+  useEffect(() => {
+    if (pasteProgress === null) {
+      lastPasteAnnouncementRef.current = null;
+    }
+  }, [pasteProgress]);
+
+  useEffect(() => {
+    if (!currentTreeNode || currentTreeNode.loading) return;
+    const key = `${currentPath}:${cachedFiles.length}:${fileCacheRevision}`;
+    if (lastDirectoryAnnouncementRef.current === key) return;
+    lastDirectoryAnnouncementRef.current = key;
+    announce(formatDirectoryAnnouncement(currentPath, cachedFiles.length));
+  }, [currentTreeNode, currentPath, cachedFiles.length, fileCacheRevision, announce]);
+
+  useEffect(() => {
+    if (!selectedNode || isSentinel) return;
+    if (lastSelectionAnnouncementRef.current === null) {
+      lastSelectionAnnouncementRef.current = selectedNode.path;
+      return;
+    }
+    if (lastSelectionAnnouncementRef.current === selectedNode.path) return;
+    lastSelectionAnnouncementRef.current = selectedNode.path;
+    announce(formatSelectionAnnouncement(selectedNode.name, selectedNode.isDirectory));
+  }, [selectedNode, isSentinel, announce]);
+
+  useEffect(() => {
+    if (!pasteProgress) return;
+    const completed = pasteProgress.completed + pasteProgress.failed;
+    if (completed < pasteProgress.total) return;
+    const key = `${pasteProgress.total}:${pasteProgress.completed}:${pasteProgress.failed}:${clipboard?.operation ?? "none"}`;
+    if (lastPasteAnnouncementRef.current === key) return;
+    lastPasteAnnouncementRef.current = key;
+    announce(
+      formatSuccessAnnouncement(
+        pasteProgress.failed > 0
+          ? `Paste complete: ${pasteProgress.completed} succeeded, ${pasteProgress.failed} failed`
+          : `Paste complete: ${pasteProgress.completed} items`,
+      ),
+      pasteProgress.failed > 0 ? "error" : "success",
+    );
+  }, [pasteProgress, clipboard?.operation, announce]);
 
   // Aspect count badge
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);

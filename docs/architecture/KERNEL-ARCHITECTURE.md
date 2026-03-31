@@ -171,12 +171,18 @@ Kernel syscalls, all POSIX-aligned, all path-addressed:
 |-------|----------|
 | **Metadata** | `sys_stat`, `sys_setattr`, `sys_rename`, `sys_unlink`, `sys_readdir` |
 | **Content** | `sys_read` (pread), `sys_write` (pwrite), `sys_copy` |
-| **Locking** | `sys_lock` (flock), `sys_unlock` |
+| **Locking** | `sys_lock` (acquire + extend), `sys_unlock` (release + force) |
 | **Watch** | `sys_watch` (inotify) |
 
 `sys_setattr` is the universal creation/management syscall:
 `mkdir` = `sys_setattr(entry_type=DT_DIR)`, `mount` = `sys_setattr(entry_type=DT_MOUNT, backend=...)`,
 `umount` = `rmdir` on DT_MOUNT path.
+
+Lock operations are consolidated into two syscalls (POSIX `fcntl(F_SETLK)` pattern):
+- `sys_lock(path, lock_id=None)` — acquire (lock_id=None) or extend TTL (lock_id=existing)
+- `sys_unlock(path, lock_id=None, force=False)` — release by lock_id or force-release all holders
+- Lock state: `sys_stat(path, include_lock=True)` — zero cost when False (default)
+- Lock listing: `sys_readdir("/__sys__/locks/")` — virtual namespace (like `/proc/locks`)
 `/__sys__/` paths are kernel management operations (not filesystem metadata):
 `sys_setattr("/__sys__/services/X", service=inst)` registers,
 `sys_unlink("/__sys__/services/X")` unregisters.
@@ -364,7 +370,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 |-----------|---------|---------------|------|
 | **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is service-layer |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock`. Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
+| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Lock info via `sys_stat(include_lock=True)`. Lock listing via `sys_readdir("/__sys__/locks/")`. Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust PathTrie + HookRegistry. Empty = zero overhead |
 | **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (RingBuffer). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |

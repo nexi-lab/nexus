@@ -336,45 +336,6 @@ class KernelDispatch:
                 return True, result
         return False, None
 
-    # ── Metadata routing (Linux inode_operations.setattr analogue) ───
-
-    def resolve_get(self, path: str) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for metadata read.
-
-        Used by MetastoreABC.get() to route to the correct zone store
-        in federation mode. Non-federation = no resolvers = no-op.
-        """
-        for r in self._fallback_resolvers:
-            result = r.try_get(path)
-            if result is not None:
-                return True, result
-        return False, None
-
-    def resolve_put(self, path: str, metadata: Any) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for metadata write.
-
-        Routes metadata.put() to the correct zone store. Returns
-        (True, write_token) when handled, (False, None) otherwise.
-        """
-        for r in self._fallback_resolvers:
-            result = r.try_put(path, metadata)
-            if result is not None:
-                return True, result
-        return False, None
-
-    def resolve_list(
-        self, prefix: str, recursive: bool = True, **kwargs: Any
-    ) -> tuple[bool, list[Any] | None]:
-        """PRE-DISPATCH: first-match resolver for metadata list.
-
-        Routes metadata.list() across zone boundaries (BFS mount traversal).
-        """
-        for r in self._fallback_resolvers:
-            result = r.try_list(prefix, recursive=recursive, **kwargs)
-            if result is not None:
-                return True, result
-        return False, None
-
     @property
     def resolver_count(self) -> int:
         return len(self._trie_resolvers) + len(self._fallback_resolvers)

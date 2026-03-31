@@ -353,25 +353,6 @@ class VFSPathResolver(Protocol):
     def try_write(self, path: str, content: bytes) -> dict[str, Any] | None: ...
     def try_delete(self, path: str, *, context: Any = None) -> dict[str, Any] | None: ...
 
-    # Metadata routing (Linux inode_operations.setattr analogue).
-    # Default returns None = "not handled, pass to next resolver".
-    def try_get(self, path: str) -> Any | None:  # noqa: ARG002
-        """Route metadata read to correct store. Returns FileMetadata or None."""
-        return None
-
-    def try_put(self, path: str, metadata: Any) -> int | None:  # noqa: ARG002
-        """Route metadata write to correct store. Returns write token or None."""
-        return None
-
-    def try_list(
-        self,
-        prefix: str,  # noqa: ARG002
-        recursive: bool = True,  # noqa: ARG002
-        **kwargs: Any,  # noqa: ARG002
-    ) -> list[Any] | None:
-        """Route metadata list to correct store(s). Returns list or None."""
-        return None
-
 
 # ---------------------------------------------------------------------------
 # MOUNT/UNMOUNT hooks — driver lifecycle notifications (Issue #1811)

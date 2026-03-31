@@ -101,7 +101,8 @@ The TUI is a separate TypeScript package built on OpenTUI:
 ```bash
 bunx @nexus/tui                                        # published package, connects to localhost:2026
 bunx @nexus/tui --url http://remote:2026 --api-key KEY # connect to remote instance
-cd packages/nexus-tui && bun install && bun run src/index.tsx  # local development from this repo
+cd packages/nexus-api-client && npm install && npm run build && cd -  # build sibling dependency once in a fresh checkout
+cd packages/nexus-tui && bun install && bun run src/index.tsx          # local development from this repo
 ```
 
 File explorer, API inspector, monitoring dashboard, agent lifecycle management, and more — all from your terminal.

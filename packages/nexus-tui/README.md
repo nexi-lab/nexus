@@ -20,6 +20,10 @@ nexus-tui
 ## Local Development
 
 ```bash
+cd packages/nexus-api-client
+npm install
+npm run build
+
 cd packages/nexus-tui
 bun install
 bun run src/index.tsx

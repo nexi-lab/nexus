@@ -77,6 +77,7 @@ Config File:
   ~/.nexus/config.yaml   Auto-discovered (same as nexus CLI)
 
 Local development:
+  cd packages/nexus-api-client && npm install && npm run build
   cd packages/nexus-tui && bun install && bun run src/index.tsx
 `.trim());
       process.exit(0);

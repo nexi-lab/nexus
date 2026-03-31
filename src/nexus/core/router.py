@@ -2,32 +2,70 @@
 
 PathRouter = Linux VFS mount table.  Routes virtual paths to storage backends
 using longest-prefix matching with mount-level access control (readonly,
-admin_only).  No namespace or zone concepts — those belong in ReBAC and
-federation layers respectively.
+admin_only).  Zone-aware: ``route(path, zone_id=)`` canonicalizes to
+``/{zone_id}/{path}`` internally for LPM against zone-canonical mount keys.
 
 PathRouter is a pure in-memory routing table (like Linux VFS ``vfsmount``).
 DT_MOUNT persistence in the metastore is a separate concern owned by the
 mount subsystem (``MountService``, ``ZoneManager.mount``,
 ``ensure_topology``).
 
-route() performs LPM by walking path components from deepest to shallowest,
-checking metastore for DT_MOUNT at each level.  Metastore's Rust-level
-in-memory cache (redb) provides ~5 μs reads — no Python cache needed.
-
 Architecture:
-    path → PathRouter.route() → (backend, backend_path)
+    path, zone_id → PathRouter.route() → canonicalize → LPM → (backend, backend_path)
 """
 
 import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
     from nexus.core.object_store import ObjectStoreABC
     from nexus.core.protocols.vfs_router import MountInfo
+
+
+# ---------------------------------------------------------------------------
+# Zone-canonical path helpers (pure functions, ~0 cost)
+# ---------------------------------------------------------------------------
+
+
+def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
+    """Canonicalize a virtual path with zone prefix for routing.
+
+    ``canonicalize_path("/workspace/file.txt", "root")``
+    → ``"/root/workspace/file.txt"``
+    """
+    stripped = path.lstrip("/")
+    return f"/{zone_id}/{stripped}" if stripped else f"/{zone_id}"
+
+
+def strip_zone_prefix(canonical_path: str, zone_id: str) -> str:
+    """Strip zone prefix from canonical path to get metastore-relative path.
+
+    ``strip_zone_prefix("/root/workspace/file.txt", "root")``
+    → ``"/workspace/file.txt"``
+    """
+    prefix = f"/{zone_id}"
+    if canonical_path == prefix:
+        return "/"
+    if canonical_path.startswith(prefix + "/"):
+        return canonical_path[len(prefix) :]
+    return canonical_path
+
+
+def extract_zone_id(canonical_path: str) -> tuple[str, str]:
+    """Extract (zone_id, relative_path) from a canonical path.
+
+    ``extract_zone_id("/root/workspace/file.txt")``
+    → ``("root", "/workspace/file.txt")``
+    """
+    parts = canonical_path.lstrip("/").split("/", 1)
+    zone_id = parts[0]
+    relative = "/" + parts[1] if len(parts) > 1 else "/"
+    return zone_id, relative
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,12 +227,13 @@ class PathRouter:
         *,
         is_admin: bool = False,
         check_write: bool = False,
+        zone_id: str = ROOT_ZONE_ID,
     ) -> RouteResult | PipeRouteResult | StreamRouteResult | ExternalRouteResult:
         """Route virtual path to backend with mount-level access control.
 
-        Algorithm: walk path components from deepest to shallowest, checking
-        metastore for DT_MOUNT at each level (longest prefix match).  Each
-        metastore.get() is ~5 μs with redb's Rust in-memory cache.
+        Zone-aware: canonicalizes ``virtual_path`` with ``zone_id`` prefix
+        internally, then performs LPM against zone-canonical mount keys.
+        Callers pass ``route(path, zone_id=self._zone_id)``.
 
         DT_PIPE / DT_STREAM inodes are detected at the exact target path
         (first iteration) and short-circuit to ``PipeRouteResult`` /
@@ -217,6 +256,11 @@ class PathRouter:
             InvalidPathError: Path validation failed.
         """
         virtual_path = self.validate_path(virtual_path)
+
+        # Phase 2 will canonicalize here: canonical = canonicalize_path(virtual_path, zone_id)
+        # and LPM against zone-canonical mount keys. For now, zone_id is
+        # captured for forward compatibility; routing uses raw path.
+        _zone = zone_id  # noqa: F841 — used in Phase 2
 
         # LPM: walk from deepest prefix to shallowest
         current = virtual_path

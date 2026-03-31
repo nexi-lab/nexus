@@ -116,6 +116,10 @@ class NexusFS(  # type: ignore[misc]
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
 
+        # Kernel zone identity — analogous to Linux sb->s_dev.
+        # Standalone: always ROOT_ZONE_ID. Federation: set at link time.
+        self._zone_id: str = ROOT_ZONE_ID
+
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed

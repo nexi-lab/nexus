@@ -73,12 +73,14 @@ class _MountEntry:
     """Runtime mount entry — holds Python objects that cannot be serialized.
 
     The ``backend`` field is typed ``ObjectStoreABC`` — the kernel's file
-    operations contract.  PathRouter stores and returns it; the caller
-    (NexusFS) invokes CAS / directory methods directly.  Like
-    Linux ``struct super_block *`` in the mount table.
+    operations contract.  ``metastore`` is the zone's MetastoreABC instance
+    (per-zone Raft store).  PathRouter stores both; the caller (NexusFS)
+    uses ``route.backend`` for content I/O and ``route.metastore`` for
+    metadata ops.  Like Linux ``struct super_block *`` in the mount table.
     """
 
     backend: "ObjectStoreABC"
+    metastore: "MetastoreABC"
     readonly: bool
     admin_only: bool
     io_profile: str
@@ -87,9 +89,10 @@ class _MountEntry:
 
 @dataclass
 class RouteResult:
-    """Result of path routing — dispatches to ObjectStoreABC backend."""
+    """Result of path routing — dispatches to ObjectStoreABC backend + MetastoreABC."""
 
     backend: "ObjectStoreABC"
+    metastore: "MetastoreABC"  # Zone's metadata store (per-zone Raft store)
     backend_path: str  # Path relative to backend root
     mount_point: str  # Matched mount point
     readonly: bool
@@ -178,6 +181,7 @@ class PathRouter:
         mount_point: str,
         backend: "ObjectStoreABC",
         *,
+        metastore: "MetastoreABC | None" = None,
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
@@ -193,6 +197,8 @@ class PathRouter:
         Args:
             mount_point: Virtual path prefix (must start with /).
             backend: ObjectStoreABC instance (kernel file_operations contract).
+            metastore: Zone's MetastoreABC instance. Defaults to router's
+                root metastore if not provided (standalone mode).
             readonly: Whether mount is readonly.
             admin_only: Whether mount requires admin privileges.
             io_profile: I/O tuning profile.
@@ -208,6 +214,7 @@ class PathRouter:
         self._register_mount_entry(
             canonical_key,
             backend,
+            metastore=metastore or self._metastore,
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
@@ -221,6 +228,7 @@ class PathRouter:
         mount_point: str,
         backend: "ObjectStoreABC",
         *,
+        metastore: "MetastoreABC",
         readonly: bool,
         admin_only: bool,
         io_profile: str,
@@ -229,6 +237,7 @@ class PathRouter:
         """Register the runtime mount entry for path routing."""
         self._backends[mount_point] = _MountEntry(
             backend=backend,
+            metastore=metastore,
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
@@ -305,6 +314,7 @@ class PathRouter:
                 )
             return RouteResult(
                 backend=entry.backend,
+                metastore=entry.metastore,
                 backend_path=rust_result.backend_path,
                 mount_point=user_mp,
                 readonly=rust_result.readonly,
@@ -335,6 +345,7 @@ class PathRouter:
                     )
                 return RouteResult(
                     backend=entry.backend,
+                    metastore=entry.metastore,
                     backend_path=backend_path,
                     mount_point=user_mp,
                     readonly=entry.readonly,

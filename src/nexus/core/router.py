@@ -343,13 +343,16 @@ class PathRouter:
     # ------------------------------------------------------------------
 
     def get_mount_points(self) -> list[str]:
-        """Return all active mount point paths.
+        """Return all active mount point paths (user-facing, no zone prefix).
 
         Returns paths from the ``_backends`` registry (active mounts with
-        loaded backends). DT_MOUNT entries in metastore without a loaded
-        backend are excluded (stale/remote mounts).
+        loaded backends). Zone-canonical keys are stripped to user-facing paths.
         """
-        return sorted(self._backends.keys())
+        result = []
+        for key in self._backends:
+            _, rel = extract_zone_id(key)
+            result.append(rel)
+        return sorted(result)
 
     def has_mount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Check if an active mount exists at the given mount point."""
@@ -371,7 +374,7 @@ class PathRouter:
             if entry is None:
                 return None
             return MountInfo(
-                mount_point=canonical,
+                mount_point=normalized,
                 readonly=entry.readonly,
                 admin_only=entry.admin_only,
                 backend=entry.backend,
@@ -424,7 +427,7 @@ class PathRouter:
         return sorted(
             [
                 MountInfo(
-                    mount_point=mp,
+                    mount_point=extract_zone_id(mp)[1],
                     readonly=entry.readonly,
                     admin_only=entry.admin_only,
                     backend=entry.backend,

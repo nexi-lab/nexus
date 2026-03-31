@@ -486,14 +486,13 @@ async def _boot_post_kernel_services(
         from nexus.services.llm_streaming_service import LLMStreamingService
 
         _llm_backend: Any = None
-        # Try to resolve an LLM backend from the router (may not be mounted yet).
-        with contextlib.suppress(Exception):
-            _llm_backend = nx.router.route("/llm").backend
-        if _llm_backend is None:
-            # Check for any mount under common LLM paths
-            for _llm_prefix in ("/llm", "/root/llm"):
-                with contextlib.suppress(Exception):
-                    _llm_backend = nx.router.route(_llm_prefix).backend
+        # Find an LLM-capable backend (must have generate_streaming).
+        # Root mount (PathLocalBackend) may cover /llm via LPM — skip non-LLM backends.
+        for _llm_prefix in ("/llm", "/root/llm"):
+            with contextlib.suppress(Exception):
+                _candidate = nx.router.route(_llm_prefix).backend
+                if hasattr(_candidate, "generate_streaming"):
+                    _llm_backend = _candidate
                     break
 
         if _llm_backend is not None:

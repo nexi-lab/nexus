@@ -26,6 +26,7 @@ import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
 import { ApprovalList } from "./approval-list.js";
 import { PAYMENTS_TABS } from "../../shared/navigation.js";
+import { statusColor } from "../../shared/theme.js";
 
 export default function PaymentsPanel(): React.ReactNode {
   const client = useApi();
@@ -500,7 +501,7 @@ export default function PaymentsPanel(): React.ReactNode {
         {/* Help bar */}
         <box height={1} width="100%">
           {copied
-            ? <text foregroundColor="green">Copied!</text>
+            ? <text foregroundColor={statusColor.healthy}>Copied!</text>
             : <text>
             {showTransfer
               ? "Tab:next field  Enter:submit  Escape:cancel"

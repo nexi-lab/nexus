@@ -35,6 +35,7 @@ import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { EVENTS_TABS } from "../../shared/navigation.js";
+import { statusColor } from "../../shared/theme.js";
 
 type FilterMode = "none" | "type" | "search" | "mcl_urn" | "mcl_aspect" | "acquire_path" | "secrets_filter" | "replay_filter";
 
@@ -616,7 +617,7 @@ export default function EventsPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor="green">Copied!</text>
+          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>
           {filterMode !== "none"
             ? "Type value, Enter:apply, Escape:cancel, Backspace:delete"

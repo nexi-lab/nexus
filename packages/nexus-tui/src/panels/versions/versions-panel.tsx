@@ -20,7 +20,7 @@ import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { ConflictsView } from "./conflicts-tab.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { focusColor } from "../../shared/theme.js";
+import { focusColor, statusColor } from "../../shared/theme.js";
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
@@ -263,7 +263,7 @@ export default function VersionsPanel(): React.ReactNode {
         {/* Help bar */}
         <box height={1} width="100%">
           {copied
-            ? <text foregroundColor="green">Copied!</text>
+            ? <text foregroundColor={statusColor.healthy}>Copied!</text>
             : <text>
             {txnFilterMode
               ? "Type to filter, Enter:apply, Escape:clear"

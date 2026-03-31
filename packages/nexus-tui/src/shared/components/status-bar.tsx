@@ -120,8 +120,9 @@ export function StatusBar(): React.ReactNode {
         {hasActiveFilter ? (
           <span foregroundColor={statusColor.warning}>{" [filtered]"}</span>
         ) : ""}
-        <span foregroundColor={palette.faint}>{" │ Ctrl+D:setup  ?:help"}</span>
       </text>
+      <box flexGrow={1} />
+      <text dimColor>{"? Help"}</text>
     </box>
   );
 }

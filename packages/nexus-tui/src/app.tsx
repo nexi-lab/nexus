@@ -6,6 +6,7 @@
  */
 
 import React, { lazy, Suspense, useState, useCallback, useEffect } from "react";
+import { useTerminalDimensions } from "@opentui/react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { SideNav } from "./shared/components/side-nav.js";
@@ -107,7 +108,13 @@ function shutdown(): void {
   process.exit(0);
 }
 
+const MIN_COLS = 80;
+const MIN_ROWS = 24;
+
 export function App(): React.ReactNode {
+  const { width: termCols, height: termRows } = useTerminalDimensions();
+  const tooSmall = termCols < MIN_COLS || termRows < MIN_ROWS;
+
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
@@ -147,6 +154,7 @@ export function App(): React.ReactNode {
       ? {
           // Pre-connection screen handles its own keybindings
           "q": shutdown,
+          "?": () => setHelpOpen(true),
         }
       : identitySwitcherOpen || helpOpen || showWelcome
       ? {
@@ -180,11 +188,28 @@ export function App(): React.ReactNode {
         },
   );
 
+  // Terminal size guard: show friendly message when below 80×24
+  if (tooSmall) {
+    return (
+      <box height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
+        <text><span bold>Terminal too small ({termCols}×{termRows})</span></text>
+        <text> </text>
+        <text>Nexus TUI requires at least {MIN_COLS}×{MIN_ROWS}</text>
+        <text><span dimColor>Current: {termCols}×{termRows}</span></text>
+      </box>
+    );
+  }
+
   // Pre-connection screen (Decision 3A): shown when server is unavailable
   if (showPreConnection) {
     return (
       <box height="100%" width="100%" flexDirection="column">
-        <PreConnectionScreen />
+        <box flexGrow={1}>
+          {helpOpen
+            ? <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
+            : <PreConnectionScreen />
+          }
+        </box>
         <StatusBar />
       </box>
     );

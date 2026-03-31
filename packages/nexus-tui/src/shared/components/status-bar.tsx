@@ -118,7 +118,7 @@ export function StatusBar(): React.ReactNode {
           </>
         ) : ""}
         {hasActiveFilter ? (
-          <span foregroundColor="yellow">{" [filtered]"}</span>
+          <span foregroundColor={statusColor.warning}>{" [filtered]"}</span>
         ) : ""}
         <span foregroundColor={palette.faint}>{" │ Ctrl+D:setup  ?:help"}</span>
       </text>

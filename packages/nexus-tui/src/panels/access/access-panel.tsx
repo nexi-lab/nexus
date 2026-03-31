@@ -591,7 +591,7 @@ export default function AccessPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor="green">Copied!</text>
+          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>{HELP[activeTab]}</text>}
       </box>
     </box>

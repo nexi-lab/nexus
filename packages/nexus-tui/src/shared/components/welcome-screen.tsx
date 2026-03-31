@@ -5,7 +5,7 @@
 import React, { useState } from "react";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { useGlobalStore } from "../../stores/global-store.js";
-import { statusColor } from "../theme.js";
+import { palette, statusColor } from "../theme.js";
 import { Spinner } from "./spinner.js";
 
 interface WelcomeScreenProps {
@@ -48,19 +48,19 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
         width={56}
         padding={1}
       >
-        <text bold foregroundColor="#00d4ff">
+        <text bold foregroundColor={palette.accent}>
           {"    _   _ _____ __  __ _   _ ____"}
         </text>
-        <text bold foregroundColor="#00b8ff">
+        <text bold foregroundColor={palette.accent}>
           {"   | \\ | | ____|  \\/  | | | / ___|"}
         </text>
-        <text bold foregroundColor="#4d8eff">
+        <text bold foregroundColor={palette.accent}>
           {"   |  \\| |  _|  >\\/< | | | \\___ \\"}
         </text>
-        <text bold foregroundColor="#8066ff">
+        <text bold foregroundColor={palette.accent}>
           {"   | |\\  | |___/ /\\ \\| |_| |___) |"}
         </text>
-        <text bold foregroundColor="#b44dff">
+        <text bold foregroundColor={palette.accent}>
           {"   |_| \\_|_____/_/  \\_\\\\___/|____/"}
         </text>
         <text>{""}</text>

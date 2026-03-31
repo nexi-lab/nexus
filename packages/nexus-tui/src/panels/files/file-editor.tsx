@@ -15,6 +15,10 @@ import { useApi } from "../../shared/hooks/use-api.js";
 import { useFilesStore } from "../../stores/files-store.js";
 import { useVersionsStore } from "../../stores/versions-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
+import { palette } from "../../shared/theme.js";
+
+const EDITOR_BG = "#1a1a2e";
+const EDITOR_SELECTION = "#264f78";
 
 interface FileEditorProps {
   readonly path: string;
@@ -116,26 +120,26 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
       {/* Header */}
       <box height={1} width="100%">
         <text>
-          <span foregroundColor="#00d4ff" bold>{` ${fileName}`}</span>
-          <span foregroundColor="#666666">{` — ${path}`}</span>
-          {dirty ? <span foregroundColor="#ffaa00">{" [modified]"}</span> : ""}
-          {saving ? <span foregroundColor="#ffaa00">{" saving..."}</span> : ""}
-          {hasTxn ? <span foregroundColor="#4dff88">{` [txn:${activeTxn!.transaction_id.slice(0, 8)}]`}</span> : ""}
+          <span foregroundColor={palette.accent} bold>{` ${fileName}`}</span>
+          <span foregroundColor={palette.muted}>{` — ${path}`}</span>
+          {dirty ? <span foregroundColor={palette.warning}>{" [modified]"}</span> : ""}
+          {saving ? <span foregroundColor={palette.warning}>{" saving..."}</span> : ""}
+          {hasTxn ? <span foregroundColor={palette.success}>{` [txn:${activeTxn!.transaction_id.slice(0, 8)}]`}</span> : ""}
         </text>
       </box>
 
       {/* Editor */}
-      <box flexGrow={1} borderStyle="single" borderColor={dirty ? "#ffaa00" : "#444444"}>
+      <box flexGrow={1} borderStyle="single" borderColor={dirty ? palette.warning : palette.faint}>
         <textarea
           ref={textareaRef}
           initialValue={initialContent}
           placeholder="Start typing..."
           wrapMode="word"
-          focusedTextColor="#ffffff"
-          focusedBackgroundColor="#1a1a2e"
-          textColor="#cccccc"
-          cursorColor="#00d4ff"
-          selectionBg="#264f78"
+          focusedTextColor={palette.title}
+          focusedBackgroundColor={EDITOR_BG}
+          textColor={palette.bright}
+          cursorColor={palette.accent}
+          selectionBg={EDITOR_SELECTION}
           focused
           onContentChange={() => setDirty(true)}
           onSubmit={() => handleSave()}
@@ -145,13 +149,13 @@ export function FileEditor({ path, onClose }: FileEditorProps): React.ReactNode 
       {/* Footer */}
       <box height={1} width="100%">
         <text>
-          <span foregroundColor="#4dff88" bold>{"  Ctrl+S"}</span>
-          <span foregroundColor="#888888">{":save  "}</span>
-          <span foregroundColor="#ff4444" bold>{"Esc"}</span>
-          <span foregroundColor="#888888">{":cancel  "}</span>
-          <span foregroundColor="#00d4ff">{"Meta+Enter"}</span>
-          <span foregroundColor="#888888">{":save  "}</span>
-          {error ? <span foregroundColor="#ff4444">{`  Error: ${error}`}</span> : ""}
+          <span foregroundColor={palette.success} bold>{"  Ctrl+S"}</span>
+          <span foregroundColor={palette.muted}>{":save  "}</span>
+          <span foregroundColor={palette.error} bold>{"Esc"}</span>
+          <span foregroundColor={palette.muted}>{":cancel  "}</span>
+          <span foregroundColor={palette.accent}>{"Meta+Enter"}</span>
+          <span foregroundColor={palette.muted}>{":save  "}</span>
+          {error ? <span foregroundColor={palette.error}>{`  Error: ${error}`}</span> : ""}
         </text>
       </box>
     </box>

@@ -16,7 +16,7 @@ import { detectConnectionState } from "../hooks/use-connection-state.js";
 import { executeLocalCommand, useCommandRunnerStore } from "../../services/command-runner.js";
 import { CommandOutput } from "./command-output.js";
 import { Spinner } from "./spinner.js";
-import { statusColor } from "../theme.js";
+import { palette, statusColor } from "../theme.js";
 import { resolveConfig, FetchClient } from "@nexus/api-client";
 import { useFilesStore } from "../../stores/files-store.js";
 
@@ -225,25 +225,25 @@ export function PreConnectionScreen(): React.ReactNode {
         <box height={1} width="100%">
           {commandStatus === "success" ? (
             <text>
-              <span foregroundColor="#4dff88" bold>{"  ✓ Done"}</span>
-              <span foregroundColor="#666666">{"  │  "}</span>
-              <span foregroundColor="#00d4ff">{"Esc"}</span>
-              <span foregroundColor="#888888">{":back  "}</span>
-              <span foregroundColor="#00d4ff">{"R"}</span>
-              <span foregroundColor="#888888">{":retry"}</span>
+              <span foregroundColor={palette.success} bold>{"  ✓ Done"}</span>
+              <span foregroundColor={palette.muted}>{"  │  "}</span>
+              <span foregroundColor={palette.accent}>{"Esc"}</span>
+              <span foregroundColor={palette.muted}>{":back  "}</span>
+              <span foregroundColor={palette.accent}>{"R"}</span>
+              <span foregroundColor={palette.muted}>{":retry"}</span>
             </text>
           ) : commandStatus === "error" ? (
             <text>
-              <span foregroundColor="#ff4444" bold>{"  ✗ Failed"}</span>
-              <span foregroundColor="#666666">{"  │  "}</span>
-              <span foregroundColor="#00d4ff">{"Esc"}</span>
-              <span foregroundColor="#888888">{":back  "}</span>
-              <span foregroundColor="#00d4ff">{"R"}</span>
-              <span foregroundColor="#888888">{":retry"}</span>
+              <span foregroundColor={palette.error} bold>{"  ✗ Failed"}</span>
+              <span foregroundColor={palette.muted}>{"  │  "}</span>
+              <span foregroundColor={palette.accent}>{"Esc"}</span>
+              <span foregroundColor={palette.muted}>{":back  "}</span>
+              <span foregroundColor={palette.accent}>{"R"}</span>
+              <span foregroundColor={palette.muted}>{":retry"}</span>
             </text>
           ) : (
             <text>
-              <span foregroundColor="#ffaa00">{"  ◐ Running..."}</span>
+              <span foregroundColor={palette.warning}>{"  ◐ Running..."}</span>
             </text>
           )}
         </box>
@@ -259,20 +259,20 @@ export function PreConnectionScreen(): React.ReactNode {
         width={64}
         padding={1}
       >
-        {/* Logo with gradient: cyan → blue → magenta */}
-        <text bold foregroundColor="#00d4ff">
+        {/* Logo uses the shared accent token after theme unification. */}
+        <text bold foregroundColor={palette.accent}>
           {"    _   _ _____ __  __ _   _ ____"}
         </text>
-        <text bold foregroundColor="#00b8ff">
+        <text bold foregroundColor={palette.accent}>
           {"   | \\ | | ____|  \\/  | | | / ___|"}
         </text>
-        <text bold foregroundColor="#4d8eff">
+        <text bold foregroundColor={palette.accent}>
           {"   |  \\| |  _|  >\\/< | | | \\___ \\"}
         </text>
-        <text bold foregroundColor="#8066ff">
+        <text bold foregroundColor={palette.accent}>
           {"   | |\\  | |___/ /\\ \\| |_| |___) |"}
         </text>
-        <text bold foregroundColor="#b44dff">
+        <text bold foregroundColor={palette.accent}>
           {"   |_| \\_|_____/_/  \\_\\\\___/|____/"}
         </text>
         <text>{""}</text>
@@ -281,25 +281,25 @@ export function PreConnectionScreen(): React.ReactNode {
         {connState === "no-config" && (
           <>
             <text>
-              <span foregroundColor="#ffaa00" bold>{"  ⚠ "}</span>
-              <span foregroundColor="#ffaa00" bold>{"No API key configured"}</span>
+              <span foregroundColor={palette.warning} bold>{"  ⚠ "}</span>
+              <span foregroundColor={palette.warning} bold>{"No API key configured"}</span>
             </text>
             <text>{""}</text>
-            <text foregroundColor="#888888">{"  Set NEXUS_API_KEY or add api_key to ~/.nexus/config.yaml"}</text>
-            <text foregroundColor="#888888">{"  Or press [I] to initialize a new project."}</text>
+            <text foregroundColor={palette.muted}>{"  Set NEXUS_API_KEY or add api_key to ~/.nexus/config.yaml"}</text>
+            <text foregroundColor={palette.muted}>{"  Or press [I] to initialize a new project."}</text>
           </>
         )}
 
         {connState === "no-server" && (
           <>
             <text>
-              <span foregroundColor="#ff4444" bold>{"  ✗ "}</span>
-              <span foregroundColor="#ff4444" bold>{"Cannot connect to server"}</span>
+              <span foregroundColor={palette.error} bold>{"  ✗ "}</span>
+              <span foregroundColor={palette.error} bold>{"Cannot connect to server"}</span>
             </text>
             <text>{""}</text>
-            <text foregroundColor="#888888">{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
+            <text foregroundColor={palette.muted}>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
             {connectionError && (
-              <text foregroundColor="#ff6666">{`  Error: ${connectionError}`}</text>
+              <text foregroundColor={palette.errorDim}>{`  Error: ${connectionError}`}</text>
             )}
           </>
         )}
@@ -307,12 +307,12 @@ export function PreConnectionScreen(): React.ReactNode {
         {connState === "auth-failed" && (
           <>
             <text>
-              <span foregroundColor="#ff4444" bold>{"  ✗ "}</span>
-              <span foregroundColor="#ff4444" bold>{"Authentication failed"}</span>
+              <span foregroundColor={palette.error} bold>{"  ✗ "}</span>
+              <span foregroundColor={palette.error} bold>{"Authentication failed"}</span>
             </text>
             <text>{""}</text>
-            <text foregroundColor="#888888">{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
-            <text foregroundColor="#ff6666">{"  Check your API key or credentials."}</text>
+            <text foregroundColor={palette.muted}>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
+            <text foregroundColor={palette.errorDim}>{"  Check your API key or credentials."}</text>
           </>
         )}
 
@@ -323,7 +323,7 @@ export function PreConnectionScreen(): React.ReactNode {
         {apiKeyWarning && (
           <>
             <text>{""}</text>
-            <text foregroundColor="#ffaa00">{`  ⚠ ${apiKeyWarning}`}</text>
+            <text foregroundColor={palette.warning}>{`  ⚠ ${apiKeyWarning}`}</text>
           </>
         )}
 
@@ -332,11 +332,11 @@ export function PreConnectionScreen(): React.ReactNode {
         {/* URL editor */}
         {editingUrl && (
           <>
-            <text foregroundColor="#00d4ff">{"  Enter server URL:"}</text>
+            <text foregroundColor={palette.accent}>{"  Enter server URL:"}</text>
             <box height={1} width="100%">
-              <text foregroundColor="#ffffff">{`  > ${urlInput}\u2588`}</text>
+              <text foregroundColor={palette.title}>{`  > ${urlInput}\u2588`}</text>
             </box>
-            <text foregroundColor="#666666">{"  Enter to connect, Esc to cancel"}</text>
+            <text foregroundColor={palette.muted}>{"  Enter to connect, Esc to cancel"}</text>
             <text>{""}</text>
           </>
         )}
@@ -344,50 +344,50 @@ export function PreConnectionScreen(): React.ReactNode {
         {/* Actions */}
         {connState !== "connecting" && !editingUrl && (
           <>
-            <text foregroundColor="#888888" bold>{"  Setup"}</text>
+            <text foregroundColor={palette.muted} bold>{"  Setup"}</text>
             <text>
-              <span foregroundColor="#00d4ff" bold>{"  [I] "}</span>
-              <span foregroundColor="#cccccc">{"Init local"}</span>
-              <span foregroundColor="#666666">{" (nexus init)"}</span>
+              <span foregroundColor={palette.accent} bold>{"  [I] "}</span>
+              <span foregroundColor={palette.bright}>{"Init local"}</span>
+              <span foregroundColor={palette.muted}>{" (nexus init)"}</span>
             </text>
             <text>
-              <span foregroundColor="#00d4ff" bold>{"  [S] "}</span>
-              <span foregroundColor="#cccccc">{"Init shared Docker"}</span>
-              <span foregroundColor="#666666">{" (--preset shared)"}</span>
+              <span foregroundColor={palette.accent} bold>{"  [S] "}</span>
+              <span foregroundColor={palette.bright}>{"Init shared Docker"}</span>
+              <span foregroundColor={palette.muted}>{" (--preset shared)"}</span>
             </text>
             <text>
-              <span foregroundColor="#00d4ff" bold>{"  [D] "}</span>
-              <span foregroundColor="#cccccc">{"Init demo Docker"}</span>
-              <span foregroundColor="#666666">{" (--preset demo)"}</span>
+              <span foregroundColor={palette.accent} bold>{"  [D] "}</span>
+              <span foregroundColor={palette.bright}>{"Init demo Docker"}</span>
+              <span foregroundColor={palette.muted}>{" (--preset demo)"}</span>
             </text>
             <text>
-              <span foregroundColor="#4dff88" bold>{"  [U] "}</span>
-              <span foregroundColor="#cccccc">{"Start server"}</span>
-              <span foregroundColor="#666666">{" (nexus up)"}</span>
+              <span foregroundColor={palette.success} bold>{"  [U] "}</span>
+              <span foregroundColor={palette.bright}>{"Start server"}</span>
+              <span foregroundColor={palette.muted}>{" (nexus up)"}</span>
             </text>
             <text>
-              <span foregroundColor="#4dff88" bold>{"  [⇧U] "}</span>
-              <span foregroundColor="#cccccc">{"Build from source"}</span>
-              <span foregroundColor="#666666">{" (nexus up --build)"}</span>
+              <span foregroundColor={palette.success} bold>{"  [⇧U] "}</span>
+              <span foregroundColor={palette.bright}>{"Build from source"}</span>
+              <span foregroundColor={palette.muted}>{" (nexus up --build)"}</span>
             </text>
             <text>
-              <span foregroundColor="#ffaa00" bold>{"  [P] "}</span>
-              <span foregroundColor="#cccccc">{"Seed demo data"}</span>
-              <span foregroundColor="#666666">{" (nexus demo init)"}</span>
+              <span foregroundColor={palette.warning} bold>{"  [P] "}</span>
+              <span foregroundColor={palette.bright}>{"Seed demo data"}</span>
+              <span foregroundColor={palette.muted}>{" (nexus demo init)"}</span>
             </text>
             <text>{""}</text>
-            <text foregroundColor="#888888" bold>{"  Connection"}</text>
+            <text foregroundColor={palette.muted} bold>{"  Connection"}</text>
             <text>
-              <span foregroundColor="#b44dff" bold>{"  [C] "}</span>
-              <span foregroundColor="#cccccc">{"Connect to a different URL"}</span>
+              <span foregroundColor={palette.accent} bold>{"  [C] "}</span>
+              <span foregroundColor={palette.bright}>{"Connect to a different URL"}</span>
             </text>
             <text>
-              <span foregroundColor="#b44dff" bold>{"  [R] "}</span>
-              <span foregroundColor="#cccccc">{`Retry connection${retryCount > 0 ? ` (${retryCount})` : ""}`}</span>
+              <span foregroundColor={palette.accent} bold>{"  [R] "}</span>
+              <span foregroundColor={palette.bright}>{`Retry connection${retryCount > 0 ? ` (${retryCount})` : ""}`}</span>
             </text>
             <text>
-              <span foregroundColor={autoPoll ? "#4dff88" : "#888888"} bold>{"  [A] "}</span>
-              <span foregroundColor={autoPoll ? "#4dff88" : "#cccccc"}>{autoPoll ? "Auto-check: ON (every 5s)" : "Enable auto-check (every 5s)"}</span>
+              <span foregroundColor={autoPoll ? palette.success : palette.muted} bold>{"  [A] "}</span>
+              <span foregroundColor={autoPoll ? palette.success : palette.bright}>{autoPoll ? "Auto-check: ON (every 5s)" : "Enable auto-check (every 5s)"}</span>
             </text>
           </>
         )}

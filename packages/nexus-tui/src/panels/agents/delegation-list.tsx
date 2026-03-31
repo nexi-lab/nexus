@@ -51,15 +51,15 @@ function DelegationDetail({ delegation }: { delegation: DelegationItem }): React
       <text>{`  Created:  ${delegation.created_at}`}</text>
       <text>{`  Expires:  ${formatExpiry(delegation.lease_expires_at)}`}</text>
       <text>{""}</text>
-      <text bold foregroundColor="cyan">{"  Granted Permissions:"}</text>
+      <text bold foregroundColor={statusColor.info}>{"  Granted Permissions:"}</text>
       {perms.length === 0 ? (
         <text dimColor>{"    (none or loading...)"}</text>
       ) : (
         perms.map((p, i) => (
           <text key={`perm-${i}`}>
-            <span foregroundColor="green">{`    ${p.relation}`}</span>
+            <span foregroundColor={statusColor.healthy}>{`    ${p.relation}`}</span>
             <span dimColor>{" on "}</span>
-            <span foregroundColor="blue">{`${p.object_type}:${p.object_id}`}</span>
+            <span foregroundColor={statusColor.reference}>{`${p.object_type}:${p.object_id}`}</span>
           </text>
         ))
       )}

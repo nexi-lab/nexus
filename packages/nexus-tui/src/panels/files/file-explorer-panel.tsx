@@ -52,7 +52,7 @@ import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.j
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { focusColor } from "../../shared/theme.js";
+import { focusColor, statusColor } from "../../shared/theme.js";
 import crypto from "node:crypto";
 
 // =============================================================================
@@ -798,7 +798,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Paste progress indicator */}
       {pasteProgress && (
         <box height={1} width="100%">
-          <text foregroundColor="cyan">
+          <text foregroundColor={statusColor.info}>
             {pasteProgress.completed + pasteProgress.failed >= pasteProgress.total
               ? `Paste complete: ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`
               : `Pasting... ${pasteProgress.completed + pasteProgress.failed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
@@ -809,7 +809,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Clipboard indicator (only when not actively pasting) */}
       {clipboard && !pasteProgress && inputMode === "none" && (
         <box height={1} width="100%">
-          <text foregroundColor="yellow">
+          <text foregroundColor={statusColor.warning}>
             {`${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
           </text>
         </box>
@@ -904,7 +904,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor="green">Copied!</text>
+          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>
             {getHelpText(
               inputMode, activeTab, catalogAvailable,

@@ -374,20 +374,20 @@ export default function AgentsPanel(): React.ReactNode {
                   <box height="100%" width="100%" flexDirection="column" padding={1}>
                     <text bold>{`Agent: ${selectedAgent.agent_id}`}</text>
                     <text>{""}</text>
-                    <text><span foregroundColor="cyan">{"State:  "}</span><span>{"registered"}</span></text>
-                    <text><span foregroundColor="cyan">{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
-                    <text><span foregroundColor="cyan">{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
-                    <text><span foregroundColor="cyan">{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
+                    <text><span foregroundColor={statusColor.info}>{"State:  "}</span><span>{"registered"}</span></text>
+                    <text><span foregroundColor={statusColor.info}>{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
+                    <text><span foregroundColor={statusColor.info}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
+                    <text><span foregroundColor={statusColor.info}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
                     <text>{""}</text>
-                    <text bold foregroundColor="cyan">{"Permissions:"}</text>
+                    <text bold foregroundColor={statusColor.info}>{"Permissions:"}</text>
                     {perms.length === 0 ? (
                       <text dimColor>{"  No permissions assigned"}</text>
                     ) : (
                       perms.map((p, i) => (
                         <text key={`perm-${i}`}>
-                          <span foregroundColor="green">{`  ${p.relation}`}</span>
+                          <span foregroundColor={statusColor.healthy}>{`  ${p.relation}`}</span>
                           <span dimColor>{" on "}</span>
-                          <span foregroundColor="blue">{`${p.object_type}:${p.object_id}`}</span>
+                          <span foregroundColor={statusColor.reference}>{`${p.object_type}:${p.object_id}`}</span>
                         </text>
                       ))
                     )}
@@ -444,7 +444,7 @@ export default function AgentsPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor="green">Copied!</text>
+          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>
           {"j/k:navigate  Tab:switch tab  r:refresh  n:spawn agent  Enter:detail  d:revoke  Shift+W:warmup  Shift+E:evict  y:copy  q:quit"}
         </text>}

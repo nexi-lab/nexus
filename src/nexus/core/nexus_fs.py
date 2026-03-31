@@ -1144,7 +1144,7 @@ class NexusFS(  # type: ignore[misc]
 
         # VFS I/O Lock
         with self._vfs_locked(path, "read"):
-            meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
+            meta = _resolve_hint if _resolve_hint is not None else route.metastore.get(path)
 
             if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
                 overlay_config = self._get_overlay_config(path)
@@ -1315,7 +1315,7 @@ class NexusFS(  # type: ignore[misc]
         with self._vfs_locked(path, "read"):
             # Check if file exists in metadata (for regular backends)
             # _resolve_hint may carry prefetched metadata from a resolver
-            meta = _resolve_hint if _resolve_hint is not None else self.metadata.get(path)
+            meta = _resolve_hint if _resolve_hint is not None else route.metastore.get(path)
 
             # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
             if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
@@ -2472,7 +2472,7 @@ class NexusFS(  # type: ignore[misc]
                     context=context,
                 )
                 new_version = metadata.version
-                self.metadata.put(metadata, consistency=consistency)
+                route.metastore.put(metadata, consistency=consistency)
 
         return _WriteContentResult(
             content_hash=content_hash,

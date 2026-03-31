@@ -101,37 +101,26 @@ class RouteResult:
 
 @dataclass(frozen=True, slots=True)
 class PipeRouteResult:
-    """Route result for DT_PIPE — kernel dispatches to PipeManager.
-
-    Like Linux VFS dispatching to ``fifo_fops`` when ``S_ISFIFO``
-    on inode lookup.  Callers (sys_read, sys_write, sys_unlink)
-    check ``isinstance`` and dispatch to PipeManager.
-    """
+    """Route result for DT_PIPE — kernel dispatches to PipeManager."""
 
     path: str
+    metastore: "MetastoreABC"
 
 
 @dataclass(frozen=True, slots=True)
 class StreamRouteResult:
-    """Route result for DT_STREAM — kernel dispatches to StreamManager.
-
-    Like ``PipeRouteResult`` but for append-only streams with
-    non-destructive offset-based reads.
-    """
+    """Route result for DT_STREAM — kernel dispatches to StreamManager."""
 
     path: str
+    metastore: "MetastoreABC"
 
 
 @dataclass(frozen=True, slots=True)
 class ExternalRouteResult:
-    """Route result for DT_EXTERNAL_STORAGE — backend manages own namespace.
-
-    Like ``PipeRouteResult`` for DT_PIPE, but for backends whose content lives
-    outside kernel-managed storage (OAuth connectors, CLI connectors, APIs).
-    Kernel skips metastore lookup and dispatches directly to backend methods.
-    """
+    """Route result for DT_EXTERNAL_STORAGE — backend manages own namespace."""
 
     backend: "ObjectStoreABC"
+    metastore: "MetastoreABC"
     backend_path: str
     mount_point: str
     readonly: bool
@@ -286,9 +275,9 @@ class PathRouter:
         meta = self._metastore.get(virtual_path)
         if meta is not None:
             if meta.is_pipe:
-                return PipeRouteResult(path=virtual_path)
+                return PipeRouteResult(path=virtual_path, metastore=self._metastore)
             if meta.is_stream:
-                return StreamRouteResult(path=virtual_path)
+                return StreamRouteResult(path=virtual_path, metastore=self._metastore)
 
         # Rust fast path: LPM + canonicalize in single FFI call (~30ns)
         if self._rust is not None:
@@ -307,6 +296,7 @@ class PathRouter:
             if meta is not None and meta.is_external_storage:
                 return ExternalRouteResult(
                     backend=entry.backend,
+                    metastore=entry.metastore,
                     backend_path=rust_result.backend_path,
                     mount_point=user_mp,
                     readonly=rust_result.readonly,
@@ -338,6 +328,7 @@ class PathRouter:
                 if meta is not None and meta.is_external_storage:
                     return ExternalRouteResult(
                         backend=entry.backend,
+                        metastore=entry.metastore,
                         backend_path=backend_path,
                         mount_point=user_mp,
                         readonly=entry.readonly,

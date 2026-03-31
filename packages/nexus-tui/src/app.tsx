@@ -176,8 +176,15 @@ export function App(): React.ReactNode {
   useEffect(() => {
     if (!latestError || lastErrorIdRef.current === latestError.id) return;
     lastErrorIdRef.current = latestError.id;
+    if (
+      latestError.source === "global"
+      && connectionStatus === "error"
+      && latestError.message === connectionError
+    ) {
+      return;
+    }
     announce(formatErrorAnnouncement(latestError.message), "error");
-  }, [latestError, announce]);
+  }, [latestError, connectionStatus, connectionError, announce]);
 
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);

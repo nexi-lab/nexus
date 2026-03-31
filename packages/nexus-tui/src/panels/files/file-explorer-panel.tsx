@@ -637,6 +637,12 @@ export default function FileExplorerPanel(): React.ReactNode {
   }, [currentPath]);
 
   useEffect(() => {
+    if (pasteProgress === null) {
+      lastPasteAnnouncementRef.current = null;
+    }
+  }, [pasteProgress]);
+
+  useEffect(() => {
     if (!currentTreeNode || currentTreeNode.loading) return;
     const key = `${currentPath}:${cachedFiles.length}:${fileCacheRevision}`;
     if (lastDirectoryAnnouncementRef.current === key) return;
@@ -659,7 +665,7 @@ export default function FileExplorerPanel(): React.ReactNode {
     if (!pasteProgress) return;
     const completed = pasteProgress.completed + pasteProgress.failed;
     if (completed < pasteProgress.total) return;
-    const key = `${pasteProgress.total}:${pasteProgress.completed}:${pasteProgress.failed}`;
+    const key = `${pasteProgress.total}:${pasteProgress.completed}:${pasteProgress.failed}:${clipboard?.operation ?? "none"}`;
     if (lastPasteAnnouncementRef.current === key) return;
     lastPasteAnnouncementRef.current = key;
     announce(
@@ -670,7 +676,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       ),
       pasteProgress.failed > 0 ? "error" : "success",
     );
-  }, [pasteProgress, announce]);
+  }, [pasteProgress, clipboard?.operation, announce]);
 
   // Aspect count badge
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);

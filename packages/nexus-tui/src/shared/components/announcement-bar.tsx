@@ -20,11 +20,11 @@ export function AnnouncementBar(): React.ReactNode {
     return () => clearTimeout(timer);
   }, [message, sequence, clear]);
 
-  if (!message) return null;
-
   return (
     <box height={1} width="100%">
-      <text foregroundColor={ANNOUNCEMENT_COLORS[level]}>{message}</text>
+      {message
+        ? <text foregroundColor={ANNOUNCEMENT_COLORS[level]}>{message}</text>
+        : <text> </text>}
     </box>
   );
 }

@@ -43,16 +43,26 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
     args = extra_args or []
 
     # Repo-local dev path: walk up from CWD looking for a runnable TS workspace.
-    # The TUI depends on the sibling api-client package, which currently exports
-    # built dist/ artifacts. In a fresh checkout, prefer the local workspace
-    # only when both the TUI entrypoint and api-client build output exist.
+    # The TUI depends on:
+    #   - the sibling api-client package having been built, and
+    #   - the TUI workspace itself having been installed (`bun install`)
+    # In a partial setup, fall back to the installed binary or bunx.
     bun = shutil.which("bun")
     if bun is not None:
         cwd = Path.cwd()
         for candidate_root in (cwd, *cwd.parents):
             local_entry = candidate_root / "packages" / "nexus-tui" / "src" / "index.tsx"
             api_client_dist = candidate_root / "packages" / "nexus-api-client" / "dist" / "index.js"
-            if local_entry.exists() and api_client_dist.exists():
+            tui_workspace_dep = (
+                candidate_root
+                / "packages"
+                / "nexus-tui"
+                / "node_modules"
+                / "@nexus"
+                / "api-client"
+                / "package.json"
+            )
+            if local_entry.exists() and api_client_dist.exists() and tui_workspace_dep.exists():
                 os.execvp(bun, ["bun", "run", str(local_entry), *args])
                 # execvp does not return
 

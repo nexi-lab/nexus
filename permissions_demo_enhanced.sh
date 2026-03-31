@@ -25,11 +25,19 @@ export NEXUS_REPO_ROOT="$SCRIPT_DIR"
 export PYTHONPATH="$NEXUS_REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 nexus() {
-    uv run python -m nexus.cli.main "$@"
+    if command -v uv >/dev/null 2>&1; then
+        uv run python -m nexus.cli.main "$@"
+    else
+        python -m nexus.cli.main "$@"
+    fi
 }
 
 nexus_python() {
-    uv run python "$@"
+    if command -v uv >/dev/null 2>&1; then
+        uv run python "$@"
+    else
+        python "$@"
+    fi
 }
 
 # Colors

@@ -182,9 +182,11 @@ ENV LD_PRELOAD="/usr/lib/libgomp.so.1 /usr/lib/libc10.so"
 ARG TARGETARCH
 RUN set -eux; \
     ARCH=$([ "${TARGETARCH}" = "arm64" ] && echo "aarch64" || echo "x86_64"); \
+    tmpdir="$(mktemp -d)"; \
+    trap 'rm -rf "$tmpdir"' EXIT; \
     curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin "google-workspace-cli-${ARCH}-unknown-linux-gnu/gws" \
-    && chmod +x /usr/local/bin/gws; \
+        | tar -xz -C "$tmpdir"; \
+    install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \

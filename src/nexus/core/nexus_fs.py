@@ -603,9 +603,14 @@ class NexusFS(  # type: ignore[misc]
         self,
         path: str,
         *,
+        include_lock: bool = False,
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
-        """Get file metadata without reading content (FUSE getattr)."""
+        """Get file metadata without reading content (FUSE getattr).
+
+        When include_lock=True, appends a "lock" field with advisory lock
+        state from _lock_manager (zero cost when False — default).
+        """
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
@@ -658,7 +663,7 @@ class NexusFS(  # type: ignore[misc]
         if file_meta is None:
             return None
 
-        return {
+        result: dict[str, Any] = {
             "path": file_meta.path,
             "backend_name": file_meta.backend_name,
             "physical_path": file_meta.physical_path,
@@ -673,6 +678,32 @@ class NexusFS(  # type: ignore[misc]
             "mode": 0o644,  # -rw-r--r--
             "version": file_meta.version,
             "zone_id": file_meta.zone_id,
+        }
+
+        # Optional lock enrichment (zero cost when include_lock=False)
+        if include_lock:
+            lock_info = await self._lock_manager.get_lock_info(normalized)
+            result["lock"] = self._format_lock_info(lock_info) if lock_info else None
+
+        return result
+
+    @staticmethod
+    def _format_lock_info(info: Any) -> dict[str, Any]:
+        """Format LockInfo for sys_stat(include_lock=True) response."""
+        return {
+            "path": info.path,
+            "mode": info.mode,
+            "max_holders": info.max_holders,
+            "fence_token": info.fence_token,
+            "holders": [
+                {
+                    "lock_id": h.lock_id,
+                    "holder_info": h.holder_info,
+                    "acquired_at": h.acquired_at,
+                    "expires_at": h.expires_at,
+                }
+                for h in info.holders
+            ],
         }
 
     @rpc_expose(description="Upsert file metadata attributes")
@@ -4568,6 +4599,13 @@ class NexusFS(  # type: ignore[misc]
         limit: int | None = None,
         cursor: str | None = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
+        # ── /__sys__/locks/ virtual namespace (like /proc/locks) ──
+        if path.rstrip("/") == "/__sys__/locks":
+            locks = await self._lock_manager.list_locks()
+            if details:
+                return [self._format_lock_info(lk) for lk in locks]
+            return [lk.path for lk in locks]
+
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):
             prefix = prefix + "/"

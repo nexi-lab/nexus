@@ -126,8 +126,13 @@ nx._upgrade_lock_manager(_raft_lm)
 ```
 
 Same pattern as FileWatcher: kernel-owned local + kernel-knows remote.
-Exposed via kernel syscalls: `sys_lock`, `sys_unlock`, `lock()` (Tier 2 blocking wait),
-`locked()` (Tier 2 async context manager).
+Exposed via kernel syscalls:
+- `sys_lock(path, lock_id=None)` — acquire (lock_id=None) or extend TTL (lock_id=existing)
+- `sys_unlock(path, lock_id=None, force=False)` — release by lock_id or force-release all holders
+- `sys_stat(path, include_lock=True)` — lock state query (zero cost when False)
+- `sys_readdir("/__sys__/locks/")` — list active locks (virtual namespace)
+- `lock_acquire(path, ...)` — Tier 2 dict wrapper for gRPC Call RPC
+- `lock()`, `locked()` — Tier 2 blocking wait / async context manager
 
 | Profile | Metastore | lock_manager → |
 |---------|-----------|----------------|
@@ -163,7 +168,8 @@ FileMetadata), queryable, Raft-replicated in federation. Like HDFS leases in Nam
 **D3: Kernel-owned, not service-owned** — NexusFS.__init__ constructs LocalLockManager.
 Federation upgrades to RaftLockManager via `_upgrade_lock_manager()` at link time.
 Same pattern as FileWatcher (kernel-owned local + kernel-knows remote).
-Exposed via kernel syscalls: `sys_lock`/`sys_unlock` (Tier 1), `lock()`/`locked()` (Tier 2).
+Exposed via kernel syscalls: `sys_lock`/`sys_unlock` (Tier 1), `lock_acquire`/`lock()`/`locked()` (Tier 2).
+Lock info via `sys_stat(include_lock=True)`, lock listing via `sys_readdir("/__sys__/locks/")`.
 
 **D4: No backend-level locking** — CAS metadata RMW uses `VFSSemaphore` directly.
 

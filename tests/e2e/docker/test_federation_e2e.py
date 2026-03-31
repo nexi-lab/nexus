@@ -696,13 +696,11 @@ class TestDistributedLocks:
         # Release
         release_r = _grpc_call(
             grpc1,
-            "lock_release",
+            "sys_unlock",
             {"path": lock_path, "lock_id": lock_id},
             api_key=api_key,
         )
         assert "error" not in release_r, f"Release failed: {release_r}"
-        release_data = release_r.get("result", release_r)
-        assert release_data.get("released") is True
 
     def test_lock_contention(self, cluster, api_key):
         """Two concurrent lock acquires on the same path -- one should block/fail."""
@@ -751,7 +749,7 @@ class TestDistributedLocks:
         # Cleanup: release first lock
         _grpc_call(
             grpc1,
-            "lock_release",
+            "sys_unlock",
             {"path": lock_path, "lock_id": lock_id_1},
             api_key=api_key,
         )
@@ -804,7 +802,7 @@ class TestDistributedLocks:
                 # Cleanup
                 _grpc_call(
                     grpc1,
-                    "lock_release",
+                    "sys_unlock",
                     {"path": lock_path, "lock_id": a2_data.get("lock_id", "")},
                     api_key=api_key,
                 )

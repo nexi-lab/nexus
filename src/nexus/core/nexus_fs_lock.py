@@ -1,7 +1,10 @@
 """LockMixin — Advisory locking syscalls (POSIX flock equivalent).
 
-Tier 1: sys_lock, sys_unlock (single try-acquire / release)
-Tier 2: lock_info, lock_list, lock_extend, lock_force_release, lock_release
+Tier 1: sys_lock (acquire + extend), sys_unlock (release + force)
+Tier 2: lock_acquire (dict wrapper for RPC)
+
+lock_info → sys_stat(include_lock=True)
+lock_list → sys_readdir("/__sys__/locks/")
 
 Delegates to kernel AdvisoryLockManager (local or Raft-backed).
 """
@@ -29,25 +32,37 @@ class LockMixin:
     def _validate_path(self, path: str, allow_root: bool = False) -> str:  # noqa: ARG002
         return path  # overridden by NexusFS
 
-    # ── Locking (POSIX flock equivalent) ──────────────────────────
+    # ── Tier 1: Locking (POSIX flock equivalent) ─────────────────
 
-    @rpc_expose(description="Acquire advisory lock on a path")
+    @rpc_expose(description="Acquire or extend advisory lock on a path")
     async def sys_lock(
         self,
         path: str,
         mode: str = "exclusive",
         ttl: float = 30.0,
         max_holders: int = 1,
+        lock_id: str | None = None,
         *,
         context: "OperationContext | None" = None,  # noqa: ARG002
     ) -> str | None:
-        """Acquire advisory lock (POSIX flock(2)). Returns lock_id or None.
+        """Acquire or extend advisory lock (POSIX fcntl(F_SETLK)).
 
-        Tier 1 syscall — single try-acquire, returns immediately.
-        Use Tier 2 ``lock()`` for blocking wait with retry.
+        Tier 1 syscall — try-once semantics, returns immediately.
+
+        When lock_id is None: try-acquire a new lock.
+        When lock_id is provided: extend TTL of an existing lock (heartbeat).
+
+        Returns lock_id on success, None on failure.
         """
         path = self._validate_path(path)
         _mode: Literal["exclusive", "shared"] = "exclusive" if mode == "exclusive" else "shared"
+
+        if lock_id is not None:
+            # Extend existing lock TTL (heartbeat)
+            result = await self._lock_manager.extend(lock_id, path, ttl=ttl)
+            return lock_id if result.success else None
+
+        # Try-acquire new lock
         return await self._lock_manager.acquire(
             path,
             mode=_mode,
@@ -56,109 +71,51 @@ class LockMixin:
             timeout=0,  # try-once, no blocking
         )
 
-    @rpc_expose(description="Release advisory lock")
+    @rpc_expose(description="Release advisory lock (normal or force)")
     async def sys_unlock(
-        self,
-        path: str,
-        lock_id: str,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> bool:
-        """Release advisory lock. Returns True if released."""
-        path = self._validate_path(path)
-        return await self._lock_manager.release(lock_id, path)
-
-    @rpc_expose(description="Get advisory lock info for a path")
-    async def lock_info(
-        self,
-        path: str,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any] | None:
-        """Get lock info for path (Tier 2 admin query)."""
-        path = self._validate_path(path)
-        info = await self._lock_manager.get_lock_info(path)
-        if info is None:
-            return None
-        return {
-            "path": info.path,
-            "mode": info.mode,
-            "max_holders": info.max_holders,
-            "fence_token": info.fence_token,
-            "holders": [
-                {
-                    "lock_id": h.lock_id,
-                    "holder_info": h.holder_info,
-                    "acquired_at": h.acquired_at,
-                    "expires_at": h.expires_at,
-                }
-                for h in info.holders
-            ],
-        }
-
-    @rpc_expose(description="List active advisory locks")
-    async def lock_list(
-        self,
-        pattern: str = "",
-        limit: int = 100,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """List active advisory locks (Tier 2 admin query)."""
-        locks = await self._lock_manager.list_locks(pattern=pattern, limit=limit)
-        return {
-            "locks": [await self.lock_info(lk.path) for lk in locks],
-            "count": len(locks),
-        }
-
-    @rpc_expose(description="Extend advisory lock TTL (heartbeat)")
-    async def lock_extend(
-        self,
-        lock_id: str,
-        path: str,
-        ttl: float = 60.0,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Extend lock TTL / heartbeat (Tier 2)."""
-        path = self._validate_path(path)
-        result = await self._lock_manager.extend(lock_id, path, ttl=ttl)
-        return {
-            "success": result.success,
-            "lock_info": (await self.lock_info(path)) if result.lock_info else None,
-        }
-
-    @rpc_expose(description="Force-release all holders of a lock (admin)")
-    async def lock_force_release(
-        self,
-        path: str,
-        *,
-        context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Force-release all holders (Tier 2 admin operation)."""
-        path = self._validate_path(path)
-        released = await self._lock_manager.force_release(path)
-        return {"released": released}
-
-    @rpc_expose(description="Release a lock (normal or force)")
-    async def lock_release(
         self,
         path: str,
         lock_id: str | None = None,
         force: bool = False,
         *,
         context: "OperationContext | None" = None,  # noqa: ARG002
-    ) -> dict[str, Any]:
-        """Release a lock — dispatches to sys_unlock or lock_force_release.
+    ) -> bool:
+        """Release advisory lock.
 
-        CLI-friendly: single method handles both normal and force release.
+        Tier 1 syscall.
+
+        When force=False (default): release lock by lock_id (requires lock_id).
+        When force=True: force-release ALL holders (admin operation, ignores lock_id).
+
+        Returns True if released.
         """
+        path = self._validate_path(path)
         if force:
-            return await self.lock_force_release(path)
+            return await self._lock_manager.force_release(path)
         if not lock_id:
             raise ValueError("lock_id is required for non-force release")
-        released = await self.sys_unlock(path, lock_id)
-        return {"released": released}
+        return await self._lock_manager.release(lock_id, path)
+
+    # ── Tier 2: RPC-safe wrappers over Tier 1 ───────────────────
+
+    @rpc_expose(description="Acquire advisory lock (blocking with timeout)")
+    async def lock_acquire(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> dict[str, Any]:
+        """Tier 2: wraps sys_lock with dict return for gRPC Call RPC.
+
+        sys_lock returns raw str|None which gRPC encoder can't serialize.
+        """
+        lock_id = await self.sys_lock(
+            path, mode=mode, ttl=ttl, max_holders=max_holders, context=context
+        )
+        return {"acquired": lock_id is not None, "lock_id": lock_id}
 
     # ── Distributed lock helpers (sync bridge for write(lock=True)) ──
 

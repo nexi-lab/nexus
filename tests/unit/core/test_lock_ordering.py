@@ -335,7 +335,7 @@ class TestCrossZoneConcurrentLocking:
         from nexus.lib.semaphore import create_vfs_semaphore
 
         sem = create_vfs_semaphore()
-        managers = [LocalLockManager(sem, zone_id=f"zone-{i}") for i in range(3)]
+        managers = [LocalLockManager(sem) for i in range(3)]
 
         results: list[str] = []
 

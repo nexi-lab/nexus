@@ -2,32 +2,70 @@
 
 PathRouter = Linux VFS mount table.  Routes virtual paths to storage backends
 using longest-prefix matching with mount-level access control (readonly,
-admin_only).  No namespace or zone concepts — those belong in ReBAC and
-federation layers respectively.
+admin_only).  Zone-aware: ``route(path, zone_id=)`` canonicalizes to
+``/{zone_id}/{path}`` internally for LPM against zone-canonical mount keys.
 
 PathRouter is a pure in-memory routing table (like Linux VFS ``vfsmount``).
 DT_MOUNT persistence in the metastore is a separate concern owned by the
 mount subsystem (``MountService``, ``ZoneManager.mount``,
 ``ensure_topology``).
 
-route() performs LPM by walking path components from deepest to shallowest,
-checking metastore for DT_MOUNT at each level.  Metastore's Rust-level
-in-memory cache (redb) provides ~5 μs reads — no Python cache needed.
-
 Architecture:
-    path → PathRouter.route() → (backend, backend_path)
+    path, zone_id → PathRouter.route() → canonicalize → LPM → (backend, backend_path)
 """
 
 import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
     from nexus.core.object_store import ObjectStoreABC
     from nexus.core.protocols.vfs_router import MountInfo
+
+
+# ---------------------------------------------------------------------------
+# Zone-canonical path helpers (pure functions, ~0 cost)
+# ---------------------------------------------------------------------------
+
+
+def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
+    """Canonicalize a virtual path with zone prefix for routing.
+
+    ``canonicalize_path("/workspace/file.txt", "root")``
+    → ``"/root/workspace/file.txt"``
+    """
+    stripped = path.lstrip("/")
+    return f"/{zone_id}/{stripped}" if stripped else f"/{zone_id}"
+
+
+def strip_zone_prefix(canonical_path: str, zone_id: str) -> str:
+    """Strip zone prefix from canonical path to get metastore-relative path.
+
+    ``strip_zone_prefix("/root/workspace/file.txt", "root")``
+    → ``"/workspace/file.txt"``
+    """
+    prefix = f"/{zone_id}"
+    if canonical_path == prefix:
+        return "/"
+    if canonical_path.startswith(prefix + "/"):
+        return canonical_path[len(prefix) :]
+    return canonical_path
+
+
+def extract_zone_id(canonical_path: str) -> tuple[str, str]:
+    """Extract (zone_id, relative_path) from a canonical path.
+
+    ``extract_zone_id("/root/workspace/file.txt")``
+    → ``("root", "/workspace/file.txt")``
+    """
+    parts = canonical_path.lstrip("/").split("/", 1)
+    zone_id = parts[0]
+    relative = "/" + parts[1] if len(parts) > 1 else "/"
+    return zone_id, relative
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,14 +135,25 @@ class ExternalRouteResult:
     io_profile: str = "balanced"
 
 
+# ---------------------------------------------------------------------------
+# Rust acceleration (try import, fallback to Python)
+# ---------------------------------------------------------------------------
+
+try:
+    from nexus_fast import RustPathRouter as _RustRouter
+
+    _HAS_RUST_ROUTER = True
+except ImportError:
+    _HAS_RUST_ROUTER = False
+
+
 class PathRouter:
     """Route virtual paths to storage backends using mount table.
 
     Design Principles:
     1. **Longest Prefix Match**: most specific mount wins (deepest path).
     2. **Mount-level access control**: ``readonly`` and ``admin_only`` as mount options.
-    3. **Metastore-backed**: DT_MOUNT entries in MetastoreABC are the source of truth.
-       Only backend instances live in-memory (``_backends`` registry).
+    3. **Rust-accelerated**: LPM + canonicalization in Rust (~30ns), Python fallback.
 
     Example Mounts::
 
@@ -122,6 +171,7 @@ class PathRouter:
         """
         self._metastore = metastore
         self._backends: dict[str, _MountEntry] = {}
+        self._rust: _RustRouter | None = _RustRouter() if _HAS_RUST_ROUTER else None
 
     def add_mount(
         self,
@@ -132,13 +182,13 @@ class PathRouter:
         admin_only: bool = False,
         io_profile: str = "balanced",
         stream_backend_factory: Any = None,
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Register a backend at *mount_point* for path routing.
 
         Pure in-memory operation (like Linux VFS ``vfsmount`` insertion).
-        DT_MOUNT persistence in the metastore is a separate concern owned
-        by the mount subsystem (``MountService``, ``ZoneManager.mount``,
-        ``ensure_topology``).
+        Mount key is zone-canonical: ``/{zone_id}/{mount_point}`` so that
+        LPM naturally distinguishes zones.
 
         Args:
             mount_point: Virtual path prefix (must start with /).
@@ -148,21 +198,23 @@ class PathRouter:
             io_profile: I/O tuning profile.
             stream_backend_factory: Optional callable ``(path, capacity) -> StreamBackend``
                 for creating DT_STREAM with non-default backing store (e.g. CAS, WAL).
-                When set, ``sys_setattr(entry_type=DT_STREAM)`` under this mount uses
-                the factory instead of the default in-memory StreamBuffer.
+            zone_id: Zone for this mount (default ROOT_ZONE_ID).
 
         Raises:
             ValueError: If mount_point is invalid.
         """
         mount_point = self._normalize_path(mount_point)
+        canonical_key = canonicalize_path(mount_point, zone_id)
         self._register_mount_entry(
-            mount_point,
+            canonical_key,
             backend,
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
         )
+        if self._rust is not None:
+            self._rust.add_mount(mount_point, zone_id, readonly, admin_only, io_profile)
 
     def _register_mount_entry(
         self,
@@ -189,12 +241,13 @@ class PathRouter:
         *,
         is_admin: bool = False,
         check_write: bool = False,
+        zone_id: str = ROOT_ZONE_ID,
     ) -> RouteResult | PipeRouteResult | StreamRouteResult | ExternalRouteResult:
         """Route virtual path to backend with mount-level access control.
 
-        Algorithm: walk path components from deepest to shallowest, checking
-        metastore for DT_MOUNT at each level (longest prefix match).  Each
-        metastore.get() is ~5 μs with redb's Rust in-memory cache.
+        Zone-aware: canonicalizes ``virtual_path`` with ``zone_id`` prefix
+        internally, then performs LPM against zone-canonical mount keys.
+        Callers pass ``route(path, zone_id=self._zone_id)``.
 
         DT_PIPE / DT_STREAM inodes are detected at the exact target path
         (first iteration) and short-circuit to ``PipeRouteResult`` /
@@ -218,55 +271,72 @@ class PathRouter:
         """
         virtual_path = self.validate_path(virtual_path)
 
-        # LPM: walk from deepest prefix to shallowest
-        current = virtual_path
+        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch at exact target
+        # path.  IPC inodes are endpoints (not prefixes), checked before
+        # mount LPM.  This is the only metastore.get() in route().
+        meta = self._metastore.get(virtual_path)
+        if meta is not None:
+            if meta.is_pipe:
+                return PipeRouteResult(path=virtual_path)
+            if meta.is_stream:
+                return StreamRouteResult(path=virtual_path)
+
+        # Rust fast path: LPM + canonicalize in single FFI call (~30ns)
+        if self._rust is not None:
+            try:
+                rust_result = self._rust.route(virtual_path, zone_id, is_admin, check_write)
+            except PermissionError as e:
+                # Re-raise with user-facing path (strip zone prefix from Rust error)
+                msg = str(e).replace(f"/{zone_id}/", "/").replace(f"/{zone_id}'", "/'")
+                raise AccessDeniedError(msg) from None
+            except ValueError:
+                raise PathNotMountedError(virtual_path) from None
+            entry = self._backends.get(rust_result.mount_point)
+            if entry is None:
+                raise PathNotMountedError(virtual_path)
+            user_mp = extract_zone_id(rust_result.mount_point)[1]
+            if meta is not None and meta.is_external_storage:
+                return ExternalRouteResult(
+                    backend=entry.backend,
+                    backend_path=rust_result.backend_path,
+                    mount_point=user_mp,
+                    readonly=rust_result.readonly,
+                    io_profile=rust_result.io_profile,
+                )
+            return RouteResult(
+                backend=entry.backend,
+                backend_path=rust_result.backend_path,
+                mount_point=user_mp,
+                readonly=rust_result.readonly,
+                io_profile=rust_result.io_profile,
+            )
+
+        # Python fallback: zone-canonical LPM using _backends dict
+        canonical = canonicalize_path(virtual_path, zone_id)
+        current = canonical
         while True:
-            meta = self._metastore.get(current)
-
-            # DT_PIPE / DT_STREAM: kernel-native IPC dispatch at exact
-            # target path. IPC inodes are endpoints (not prefixes), so
-            # only match on the first iteration (current == virtual_path).
-            if meta is not None and current == virtual_path:
-                if meta.is_pipe:
-                    return PipeRouteResult(path=virtual_path)
-                if meta.is_stream:
-                    return StreamRouteResult(path=virtual_path)
-
-            # Primary: metastore DT_MOUNT (persistent, cross-session).
-            # Fallback: _backends registry (in-memory, current session).
-            # The fallback is required for REMOTE profile where the
-            # server "stat" RPC does not return entry_type, so
-            # metastore.get() never reports is_mount=True.
-            if (
-                meta is not None and (meta.is_mount or meta.is_external_storage)
-            ) or current in self._backends:
-                entry = self._backends.get(current)
-                if entry is None:
-                    # DT_MOUNT in metastore but backend not loaded
-                    # (stale mount from previous session or remote zone)
-                    raise PathNotMountedError(virtual_path)
-
-                # Mount-level access control (like Linux mount options)
+            entry = self._backends.get(current)
+            if entry is not None:
+                user_mp = extract_zone_id(current)[1]
                 if entry.admin_only and not is_admin:
-                    raise AccessDeniedError(f"Mount '{current}' requires admin privileges")
+                    raise AccessDeniedError(f"Mount '{user_mp}' requires admin privileges")
                 if entry.readonly and check_write:
-                    raise AccessDeniedError(f"Mount '{current}' is read-only")
+                    raise AccessDeniedError(f"Mount '{user_mp}' is read-only")
 
-                backend_path = self._strip_mount_prefix(virtual_path, current)
+                backend_path = self._strip_mount_prefix(canonical, current)
 
-                # DT_EXTERNAL_STORAGE: backend manages own content namespace
                 if meta is not None and meta.is_external_storage:
                     return ExternalRouteResult(
                         backend=entry.backend,
                         backend_path=backend_path,
-                        mount_point=current,
+                        mount_point=user_mp,
                         readonly=entry.readonly,
                         io_profile=entry.io_profile,
                     )
                 return RouteResult(
                     backend=entry.backend,
                     backend_path=backend_path,
-                    mount_point=current,
+                    mount_point=user_mp,
                     readonly=entry.readonly,
                     io_profile=entry.io_profile,
                 )
@@ -282,29 +352,34 @@ class PathRouter:
     # ------------------------------------------------------------------
 
     def get_mount_points(self) -> list[str]:
-        """Return all active mount point paths.
+        """Return all active mount point paths (user-facing, no zone prefix).
 
         Returns paths from the ``_backends`` registry (active mounts with
-        loaded backends). DT_MOUNT entries in metastore without a loaded
-        backend are excluded (stale/remote mounts).
+        loaded backends). Zone-canonical keys are stripped to user-facing paths.
         """
-        return sorted(self._backends.keys())
+        result = []
+        for key in self._backends:
+            _, rel = extract_zone_id(key)
+            result.append(rel)
+        return sorted(result)
 
-    def has_mount(self, mount_point: str) -> bool:
+    def has_mount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Check if an active mount exists at the given mount point."""
         try:
             normalized = self._normalize_path(mount_point)
-            return normalized in self._backends
+            canonical = canonicalize_path(normalized, zone_id)
+            return canonical in self._backends
         except ValueError:
             return False
 
-    def get_mount(self, mount_point: str) -> "MountInfo | None":
+    def get_mount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> "MountInfo | None":
         """Get mount info for a specific mount point, or None if not found."""
         from nexus.core.protocols.vfs_router import MountInfo
 
         try:
             normalized = self._normalize_path(mount_point)
-            entry = self._backends.get(normalized)
+            canonical = canonicalize_path(normalized, zone_id)
+            entry = self._backends.get(canonical)
             if entry is None:
                 return None
             return MountInfo(
@@ -316,13 +391,15 @@ class PathRouter:
         except ValueError:
             return None
 
-    def get_mount_entry_for_path(self, path: str) -> "_MountEntry | None":
+    def get_mount_entry_for_path(
+        self, path: str, zone_id: str = ROOT_ZONE_ID
+    ) -> "_MountEntry | None":
         """Find the mount entry covering *path* via longest-prefix match.
 
         Returns the raw ``_MountEntry`` (internal, includes stream_backend_factory).
         For public mount info, use ``get_mount()`` instead.
         """
-        current = path
+        current = canonicalize_path(path, zone_id)
         while True:
             entry = self._backends.get(current)
             if entry is not None:
@@ -331,7 +408,7 @@ class PathRouter:
                 return None
             current = current.rsplit("/", 1)[0] or "/"
 
-    def remove_mount(self, mount_point: str) -> bool:
+    def remove_mount(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount from the in-memory routing table.
 
         Pure in-memory operation.  DT_MOUNT cleanup in the metastore is
@@ -342,8 +419,11 @@ class PathRouter:
         """
         try:
             normalized = self._normalize_path(mount_point)
-            if normalized in self._backends:
-                del self._backends[normalized]
+            canonical = canonicalize_path(normalized, zone_id)
+            if canonical in self._backends:
+                del self._backends[canonical]
+                if self._rust is not None:
+                    self._rust.remove_mount(normalized, zone_id)
                 return True
             return False
         except ValueError:
@@ -356,7 +436,7 @@ class PathRouter:
         return sorted(
             [
                 MountInfo(
-                    mount_point=mp,
+                    mount_point=extract_zone_id(mp)[1],
                     readonly=entry.readonly,
                     admin_only=entry.admin_only,
                     backend=entry.backend,

@@ -116,6 +116,10 @@ class NexusFS(  # type: ignore[misc]
         memory = memory or MemoryConfig()
         parsing = parsing or ParseConfig()
 
+        # Kernel zone identity — analogous to Linux sb->s_dev.
+        # Standalone: always ROOT_ZONE_ID. Federation: set at link time.
+        self._zone_id: str = ROOT_ZONE_ID
+
         self._cache_config = cache
         self._perm_config = permissions
         self._distributed_config = distributed
@@ -174,7 +178,6 @@ class NexusFS(  # type: ignore[misc]
 
         self._lock_manager: Any = LocalLockManager(
             create_vfs_semaphore(),
-            zone_id=ROOT_ZONE_ID,
             vfs_lock_manager=self._vfs_lock_manager,
         )
 
@@ -547,6 +550,7 @@ class NexusFS(  # type: ignore[misc]
                 path,
                 is_admin=ctx.is_admin,
                 check_write=False,
+                zone_id=self._zone_id,
             )
             if route.backend.is_directory(route.backend_path):
                 return True
@@ -890,7 +894,7 @@ class NexusFS(  # type: ignore[misc]
         if entry_type == DT_DIR:
             now = datetime.now(UTC)
             empty_hash = hash_content(b"")
-            route = self.router.route(path, is_admin=True)
+            route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
             metadata = FileMetadata(
                 path=path,
                 backend_name=route.backend.name,
@@ -938,7 +942,9 @@ class NexusFS(  # type: ignore[misc]
             if not path or path == "/":
                 try:
                     zone_id, _agent_id, is_admin = self._get_context_identity(context)
-                    root_route = self.router.route("/", is_admin=is_admin, check_write=False)
+                    root_route = self.router.route(
+                        "/", is_admin=is_admin, check_write=False, zone_id=self._zone_id
+                    )
                     entries = root_route.backend.list_dir(root_route.backend_path)
                     for entry in entries:
                         if entry.endswith("/"):  # Directory marker
@@ -955,6 +961,7 @@ class NexusFS(  # type: ignore[misc]
                     path.rstrip("/"),
                     is_admin=is_admin,
                     check_write=False,
+                    zone_id=self._zone_id,
                 )
                 backend_path = route.backend_path
 
@@ -1108,7 +1115,7 @@ class NexusFS(  # type: ignore[misc]
             )
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(path, is_admin=is_admin, check_write=False)
+        route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
 
         # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
         from nexus.core.router import ExternalRouteResult, PipeRouteResult, StreamRouteResult
@@ -1269,6 +1276,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=False,
+            zone_id=self._zone_id,
         )
 
         # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
@@ -1517,6 +1525,7 @@ class NexusFS(  # type: ignore[misc]
                     path,
                     is_admin=is_admin,
                     check_write=False,
+                    zone_id=self._zone_id,
                 )
                 path_info[path] = (meta, route)
 
@@ -1746,7 +1755,9 @@ class NexusFS(  # type: ignore[misc]
             self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
             zone_id, agent_id, is_admin = self._get_context_identity(context)
-            route = self.router.route(path, is_admin=is_admin, check_write=False)
+            route = self.router.route(
+                path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
+            )
 
             meta = self.metadata.get(path)
 
@@ -1823,6 +1834,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=False,
+            zone_id=self._zone_id,
         )
 
         # Check if file exists in metadata
@@ -1868,6 +1880,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=False,
+            zone_id=self._zone_id,
         )
 
         meta = self.metadata.get(path)
@@ -1925,6 +1938,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=True,
+            zone_id=self._zone_id,
         )
 
         # Check if path is read-only
@@ -2125,7 +2139,9 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
 
         # Route to backend with write access check
-        route = self.router.route(path, is_admin=ctx.is_admin, check_write=True)
+        route = self.router.route(
+            path, is_admin=ctx.is_admin, check_write=True, zone_id=self._zone_id
+        )
 
         if route.readonly:
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
@@ -2357,6 +2373,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=True,
+            zone_id=self._zone_id,
         )
 
         # Check if path is read-only
@@ -2975,6 +2992,7 @@ class NexusFS(  # type: ignore[misc]
                 path,
                 is_admin=is_admin,
                 check_write=True,
+                zone_id=self._zone_id,
             )
             # Check if path is read-only
             if route.readonly:
@@ -3159,6 +3177,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=True,
+            zone_id=self._zone_id,
         )
 
         # Check if path is read-only
@@ -3347,11 +3366,13 @@ class NexusFS(  # type: ignore[misc]
             old_path,
             is_admin=is_admin,
             check_write=True,  # Need write access to source
+            zone_id=self._zone_id,
         )
         new_route = self.router.route(
             new_path,
             is_admin=is_admin,
             check_write=True,  # Need write access to destination
+            zone_id=self._zone_id,
         )
 
         # Check if paths are read-only
@@ -3509,8 +3530,10 @@ class NexusFS(  # type: ignore[misc]
         zone_id, agent_id, is_admin = self._get_context_identity(context)
 
         # Route both paths
-        src_route = self.router.route(src_path, is_admin=is_admin)
-        dst_route = self.router.route(dst_path, is_admin=is_admin, check_write=True)
+        src_route = self.router.route(src_path, is_admin=is_admin, zone_id=self._zone_id)
+        dst_route = self.router.route(
+            dst_path, is_admin=is_admin, check_write=True, zone_id=self._zone_id
+        )
 
         if dst_route.readonly:
             raise PermissionError(f"Cannot copy to read-only path: {dst_path}")
@@ -3798,6 +3821,7 @@ class NexusFS(  # type: ignore[misc]
                 path,
                 is_admin=is_admin,
                 check_write=False,
+                zone_id=self._zone_id,
             )
             try:
                 # Add backend_path to context for path-based connectors
@@ -4209,6 +4233,7 @@ class NexusFS(  # type: ignore[misc]
             path,
             is_admin=is_admin,
             check_write=True,
+            zone_id=self._zone_id,
         )
 
         if route.readonly:
@@ -4737,7 +4762,7 @@ class NexusFS(  # type: ignore[misc]
 
             for mp in self.router.get_mount_points():
                 try:
-                    route = self.router.route(mp, is_admin=True)
+                    route = self.router.route(mp, is_admin=True, zone_id=self._zone_id)
                     if isinstance(route.backend, OAuthCapableProtocol):
                         route.backend.token_manager.close()
                 except Exception as e:

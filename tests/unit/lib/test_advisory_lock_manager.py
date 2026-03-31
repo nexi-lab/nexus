@@ -22,7 +22,7 @@ def sem():
 
 @pytest.fixture
 def mgr(sem):
-    return LocalLockManager(sem, zone_id="z1")
+    return LocalLockManager(sem)
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,10 @@ async def _wire_services(
     from nexus.factory.service_routing import enlist_services
 
     _svc = services or {}
-    # permission_enforcer is now accessed via ServiceRegistry (enlist), not kernel DI.
+
+    # Set kernel zone identity from factory (federation provides actual zone_id)
+    if zone_id is not None:
+        nx._zone_id = zone_id
 
     _parsing = parsing if parsing is not None else nx._parse_config
 
@@ -154,7 +157,7 @@ async def _wire_services(
         try:
             from nexus.raft.lock_manager import RaftLockManager
 
-            _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
+            _raft_lm = RaftLockManager(nx.metadata)
             nx._upgrade_lock_manager(_raft_lm)
             logger.info("[LINK] RaftLockManager upgraded into kernel")
         except Exception as exc:

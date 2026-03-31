@@ -116,8 +116,12 @@ a kernel sentinel — no-agent profiles (REMOTE) never construct it.
 
 Permission enforcement is fully delegated to KernelDispatch INTERCEPT hooks
 (PermissionCheckHook). No hook registered = no check = zero overhead.
-`_permission_enforcer` and `_descendant_checker` removed — no kernel DI needed.
 
+**Zone identity:** `self._zone_id = ROOT_ZONE_ID` — kernel namespace partition
+(analogous to Linux `sb->s_dev`). PathRouter canonicalizes all paths to
+`/{zone_id}/{path}` for zone-aware LPM routing. Standalone: always `"root"`.
+Federation: set at link time. All primitives (LockManager, FileEvent) receive
+canonical paths — zone handling is PathRouter's responsibility, not theirs.
 
 **Source of truth:** `contracts/protocols/service_lifecycle.py`
 
@@ -368,9 +372,9 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 
 | Primitive | Package | Linux Analogue | Role |
 |-----------|---------|---------------|------|
-| **VFSRouter** | `core.protocols.vfs_router` | VFS `lookup_slow()` | `route(path)` → `ResolvedPath` (backend, backend_path, mount_point). ~5μs redb lookup. Resolution only — mount CRUD is service-layer |
+| **VFSRouter** | `core.router` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust / ~300ns Python). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
-| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Lock info via `sys_stat(include_lock=True)`. Lock listing via `sys_readdir("/__sys__/locks/")`. Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
+| **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Zone-agnostic (receives canonical paths from router). Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
 | **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust PathTrie + HookRegistry. Empty = zero overhead |
 | **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (RingBuffer). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |

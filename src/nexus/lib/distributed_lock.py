@@ -6,9 +6,13 @@ contention).  Distinct from kernel I/O locks (VFSLockManager, ~200ns,
 in-memory, process-scoped).
 
 Architecture:
-- AdvisoryLockManager: Async advisory lock API (POSIX flock(2), zone_id bound at construction)
+- AdvisoryLockManager: Async advisory lock API (POSIX flock(2))
 - LocalLockManager: Standalone mode — wraps VFSSemaphore (this file)
 - RaftLockManager: Federation mode — wraps RaftMetadataStore (raft/)
+
+Lock keys are zone-canonical paths (e.g. ``/root/workspace/file.txt``)
+constructed by PathRouter. Lock managers are zone-agnostic — they receive
+canonical paths and use them as-is.
 
 NexusFS kernel auto-creates LocalLockManager (standalone) or receives
 RaftLockManager (federation) via _upgrade_lock_manager().
@@ -81,9 +85,8 @@ class AdvisoryLockManager(ABC):
     (``LOCK_SH``) semantics.  When ``max_holders > 1``, the lock degrades to
     a counting semaphore (no exclusive/shared distinction).
 
-    zone_id is bound at construction time — callers never pass it per-method.
-    zone_id is a kernel namespace partition concept — callers need not manage it.
-    Internally, zone_id is used as a key prefix for store-level scoping.
+    Lock keys are zone-canonical paths (``/root/workspace/file.txt``)
+    constructed by PathRouter. Lock managers are zone-agnostic.
 
     Subclasses must implement all abstract methods.
     """
@@ -91,17 +94,9 @@ class AdvisoryLockManager(ABC):
     DEFAULT_TTL = 30.0  # Default lock TTL in seconds
     DEFAULT_TIMEOUT = 30.0  # Default acquisition timeout
 
-    def __init__(self, *, zone_id: str = "root") -> None:
-        self._zone_id = zone_id
-
     def _lock_key(self, path: str) -> str:
-        """Compose store-level lock key from zone_id + path."""
-        return f"{self._zone_id}:{path}"
-
-    def _parse_lock_key(self, lock_key: str) -> tuple[str, str]:
-        """Parse a lock key into (zone_id, path)."""
-        zone_id, _, path = lock_key.partition(":")
-        return zone_id, path
+        """Return store-level lock key. Identity — path is already canonical."""
+        return path
 
     @abstractmethod
     async def acquire(
@@ -235,10 +230,9 @@ class LocalLockManager(AdvisoryLockManager):
         self,
         semaphore: Any,
         *,
-        zone_id: str = "root",
         vfs_lock_manager: Any = None,
     ) -> None:
-        super().__init__(zone_id=zone_id)
+        super().__init__()
         self._sem = semaphore
         self._vfs_lock = vfs_lock_manager  # lock_fast: ~200ns RW lock for exclusive/shared
         # lock_id → (lock_type, handle_or_holder_id) for release
@@ -505,7 +499,7 @@ class LocalLockManager(AdvisoryLockManager):
         for _lid, (lock_type, payload) in self._active_locks.items():
             if lock_type == self._VFS_LOCK:
                 vfs_key, _handle = payload
-                _, path = self._parse_lock_key(vfs_key)
+                path = vfs_key
                 if path in seen_paths:
                     continue
                 if pattern and pattern not in path:
@@ -524,7 +518,7 @@ class LocalLockManager(AdvisoryLockManager):
                 if base.endswith(suffix):
                     base = base[: -len(suffix)]
                     break
-            _, path = self._parse_lock_key(base)
+            path = base
             if path in seen_paths:
                 continue
             if pattern and pattern not in path:

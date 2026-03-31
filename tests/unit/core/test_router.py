@@ -35,8 +35,8 @@ def temp_backend() -> CASLocalBackend:
 def test_add_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test adding a mount to the router."""
     router.add_mount("/workspace", temp_backend)
-    assert "/workspace" in router._backends
-    assert router._backends["/workspace"].backend == temp_backend
+    assert "/root/workspace" in router._backends
+    assert router._backends["/root/workspace"].backend == temp_backend
 
 
 def test_add_mount_does_not_persist_metadata(
@@ -45,14 +45,14 @@ def test_add_mount_does_not_persist_metadata(
     """Runtime mounts should only populate the in-memory mount table."""
     router.add_mount("/workspace", temp_backend)
 
-    assert "/workspace" in router._backends
+    assert "/root/workspace" in router._backends
     assert metastore.get("/workspace") is None
 
 
 def test_add_mount_normalizes_path(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     """Test that mount points are normalized."""
     router.add_mount("/workspace/", temp_backend)  # Trailing slash
-    assert "/workspace" in router._backends
+    assert "/root/workspace" in router._backends
 
 
 def test_add_mount_replaces_existing(router: PathRouter, temp_backend: CASLocalBackend) -> None:
@@ -61,7 +61,7 @@ def test_add_mount_replaces_existing(router: PathRouter, temp_backend: CASLocalB
         backend2 = CASLocalBackend(tmpdir2)
         router.add_mount("/workspace", temp_backend)
         router.add_mount("/workspace", backend2)
-        assert router._backends["/workspace"].backend == backend2
+        assert router._backends["/root/workspace"].backend == backend2
 
 
 def test_get_mount_points(router: PathRouter, temp_backend: CASLocalBackend) -> None:

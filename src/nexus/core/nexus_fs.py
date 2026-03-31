@@ -234,6 +234,12 @@ class NexusFS(  # type: ignore[misc]
 
         self._event_bus: Any = None
         self._overlay_resolver = None
+        self._self_address: str | None = (
+            _ipc_self_addr  # Content locality (same as IPC self_address)
+        )
+        self._remote_fetcher: Any = (
+            None  # RemoteContentFetcher — injected by factory for federation
+        )
 
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
@@ -446,6 +452,31 @@ class NexusFS(  # type: ignore[misc]
         if context is not None:
             return _dc_replace(context, ttl_seconds=ttl)
         return OperationContext(user_id="anonymous", groups=[], ttl_seconds=ttl)
+
+    def _read_content_locality(
+        self,
+        route: Any,
+        meta: Any,
+        *,
+        context: Any = None,
+    ) -> bytes:
+        """Read content with locality check — local backend or remote fetch.
+
+        If metadata's backend_name has an origin address that differs from
+        this node's address, delegates to _remote_fetcher (gRPC scatter-gather).
+        Otherwise reads from the local backend via route.backend.
+
+        Single-node: _self_address is None or origin is empty → always local.
+        """
+        if self._remote_fetcher is not None and self._self_address and meta.backend_name:
+            from nexus.contracts.backend_address import BackendAddress
+
+            addr = BackendAddress.parse(meta.backend_name)
+            if addr.has_origin and self._self_address not in addr.origins:
+                return self._remote_fetcher.fetch_remote_content(
+                    list(addr.origins), meta.etag or ""
+                )
+        return route.backend.read_content(meta.etag or "", context=context)
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """Validate and normalize virtual path. Delegates to lib/path_utils."""
@@ -1159,7 +1190,7 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag, context=read_context)
+            content = self._read_content_locality(route, meta, context=read_context)
 
         # Post-read hooks
         if self._dispatch.read_hook_count > 0:
@@ -1338,7 +1369,7 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag or "", context=read_context)
+            content = self._read_content_locality(route, meta, context=read_context)
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 
@@ -1585,7 +1616,7 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._read_content_locality(route, meta, context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1618,7 +1649,7 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._read_content_locality(route, meta, context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,

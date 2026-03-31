@@ -169,9 +169,16 @@ class TestConcurrentRevokeAndWrite:
         t_revoke.join(timeout=10.0)
         t_write.join(timeout=10.0)
 
-        # Write clears staleness, so read should return v2
-        assert file_cache.is_stale(ZONE, PATH) is False
-        assert file_cache.read(ZONE, PATH) == b"v2"
+        # Race: either write clears staleness (write after revoke) or
+        # revoke sets staleness (revoke after write). Both are correct —
+        # the important thing is no crash/deadlock and data is consistent.
+        data = file_cache.read(ZONE, PATH)
+        if file_cache.is_stale(ZONE, PATH):
+            # Revoke happened after write — stale is correct
+            assert data == b"v2"
+        else:
+            # Write happened after revoke — cleared staleness
+            assert data == b"v2"
 
 
 # ---------------------------------------------------------------------------

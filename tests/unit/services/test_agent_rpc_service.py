@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+from nexus.contracts.process_types import AgentState
+from nexus.core.agent_registry import AgentRegistry
 from nexus.services.agents.agent_rpc_service import AgentRPCService
 
 
@@ -13,9 +15,6 @@ def _make_service(agent_registry):
 
 
 def test_agent_transition_connected_bootstraps_registered_external_agent():
-    from nexus.core.agent_registry import AgentRegistry
-    from nexus.contracts.process_types import AgentState
-
     registry = AgentRegistry()
     service = _make_service(registry)
     desc = registry.register_external(

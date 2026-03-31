@@ -148,17 +148,19 @@ class TestConcurrentRevokeAndWrite:
         file_cache.mark_lease_acquired(ZONE, PATH)
         file_cache.write(ZONE, PATH, b"v1")
 
-        # Use a barrier to ensure both threads start nearly simultaneously
         barrier = threading.Barrier(2, timeout=5.0)
+        revoke_done = threading.Event()
 
         def revoker() -> None:
             barrier.wait()
             file_cache.mark_lease_revoked(ZONE, PATH)
+            revoke_done.set()
 
         def writer() -> None:
             barrier.wait()
-            # Small delay to let revoke likely happen first
-            time.sleep(0.001)
+            # Use an explicit handoff instead of a timing guess so CI can't
+            # observe the write before revocation completes.
+            revoke_done.wait(timeout=5.0)
             file_cache.write(ZONE, PATH, b"v2")
 
         t_revoke = threading.Thread(target=revoker)

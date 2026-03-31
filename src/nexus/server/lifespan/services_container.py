@@ -113,7 +113,7 @@ class LifespanServices:
             record_store=getattr(app.state, "record_store", None),
             zone_id=getattr(app.state, "zone_id", None),
             agent_registry=(
-                getattr(nx, "_agent_registry", None)
+                _svc("agent_registry") or getattr(nx, "_agent_registry", None)
                 if nx
                 else getattr(app.state, "agent_registry", None)
             ),

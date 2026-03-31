@@ -68,7 +68,7 @@ class AgentSignal(StrEnum):
 
     SIGTERM = "SIGTERM"  # Graceful shutdown → TERMINATED
     SIGSTOP = "SIGSTOP"  # Suspend → SUSPENDED
-    SIGCONT = "SIGCONT"  # Resume → READY
+    SIGCONT = "SIGCONT"  # Resume/connect → READY
     SIGKILL = "SIGKILL"  # Immediate kill + reap
     SIGUSR1 = "SIGUSR1"  # User-defined (agent steering)
 

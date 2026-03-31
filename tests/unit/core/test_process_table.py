@@ -218,6 +218,12 @@ def _spawn_ready(pt: AgentRegistry, name: str = "a") -> "AgentDescriptor":
 
 
 class TestSignals:
+    def test_sigcont_from_registered_is_invalid(self) -> None:
+        pt = _make_table()
+        desc = pt.register_external("a", OWNER, ZONE, connection_id="conn-a")
+        with pytest.raises(InvalidTransitionError, match="from registered to ready"):
+            pt.signal(desc.pid, AgentSignal.SIGCONT)
+
     def test_sigstop(self) -> None:
         pt = _make_table()
         desc = _spawn_ready(pt)

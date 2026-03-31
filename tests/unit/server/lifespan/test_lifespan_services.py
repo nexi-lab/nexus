@@ -122,6 +122,15 @@ class TestFromAppExtraction:
 class TestFromAppSystemServices:
     """Test extraction from ServiceRegistry (previously _system_services)."""
 
+    def test_extracts_agent_registry_from_service_registry(self) -> None:
+        """AgentRegistry should be resolved from nx.service() in live boot paths."""
+        agent_registry = object()
+        nx = _make_nexus_fs(_service_map={"agent_registry": agent_registry})
+        app = _make_app(nexus_fs=nx)
+        svc = LifespanServices.from_app(app)
+
+        assert svc.agent_registry is agent_registry
+
     def test_extracts_system_services(self) -> None:
         """System services (eviction_manager, etc.) are extracted via nx.service()."""
         nx = _make_nexus_fs(

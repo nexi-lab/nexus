@@ -50,6 +50,7 @@ class AgentRPCService:
         rebac_create_fn: Any | None = None,
         rebac_list_tuples_fn: Any | None = None,
         rebac_delete_fn: Any | None = None,
+        agent_warmup_service: Any | None = None,
     ) -> None:
         self._vfs = vfs
         self._metastore = metastore
@@ -65,6 +66,7 @@ class AgentRPCService:
         self._rebac_create_fn = rebac_create_fn
         self._rebac_list_tuples_fn = rebac_list_tuples_fn
         self._rebac_delete_fn = rebac_delete_fn
+        self._agent_warmup_service = agent_warmup_service
 
     # ------------------------------------------------------------------
     # Context Helpers
@@ -711,7 +713,7 @@ class AgentRPCService:
     # ------------------------------------------------------------------
 
     @rpc_expose(description="Transition agent lifecycle state")
-    def agent_transition(
+    async def agent_transition(
         self,
         agent_id: str,
         target_state: str,
@@ -723,6 +725,7 @@ class AgentRPCService:
             raise ValueError("AgentRegistry not available")
         from nexus.contracts.process_types import (
             AgentSignal,
+            AgentState,
             InvalidTransitionError,
         )
 
@@ -738,7 +741,7 @@ class AgentRPCService:
                 f"Invalid target state '{target_state}'. Valid: CONNECTED, IDLE, SUSPENDED"
             )
 
-        # CAS check if generation provided
+        current = None
         if expected_generation is not None:
             current = self._agent_registry.get(agent_id)
             if current is None:
@@ -747,8 +750,28 @@ class AgentRPCService:
                 raise InvalidTransitionError(
                     f"stale generation for {agent_id}: expected {expected_generation}, got {current.generation}"
                 )
+        elif target_state.upper() == "CONNECTED":
+            current = self._agent_registry.get(agent_id)
+            if current is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
 
-        desc = self._agent_registry.signal(agent_id, sig)
+        if (
+            target_state.upper() == "CONNECTED"
+            and current is not None
+            and current.state is AgentState.REGISTERED
+        ):
+            if self._agent_warmup_service is None:
+                raise ValueError("AgentWarmupService not available")
+
+            result = await self._agent_warmup_service.warmup(agent_id)
+            if not result.success:
+                raise InvalidTransitionError(result.error or f"warmup failed for {agent_id}")
+
+            desc = self._agent_registry.get(agent_id)
+            if desc is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+        else:
+            desc = self._agent_registry.signal(agent_id, sig)
         return {
             "agent_id": desc.pid,
             "state": str(desc.state),

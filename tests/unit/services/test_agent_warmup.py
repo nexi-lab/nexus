@@ -353,6 +353,24 @@ class TestEdgeCases:
         assert desc.state is AgentState.READY
 
     @pytest.mark.asyncio
+    async def test_empty_step_list_from_registered_agent(self, warmup_service, agent_registry):
+        """Freshly registered external agents can warm up directly to READY."""
+        desc = agent_registry.register_external(
+            "fresh-agent",
+            owner_id="alice",
+            zone_id="test",
+            connection_id="conn-fresh-agent",
+        )
+
+        result = await warmup_service.warmup(desc.pid, steps=[])
+        assert result.success is True
+
+        updated = agent_registry.get(desc.pid)
+        assert updated is not None
+        assert updated.state is AgentState.READY
+        assert updated.generation == desc.generation + 1
+
+    @pytest.mark.asyncio
     async def test_agent_unregistered_during_warmup(self, warmup_service, agent_registry):
         """Agent unregistered between warmup start and transition -> clean failure."""
         pid = _register_agent(agent_registry)

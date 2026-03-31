@@ -264,13 +264,19 @@ Federation has two I/O planes with different routing strategies:
 | **Metadata** | Transparent DI proxy | `FederatedMetadataProxy` wraps MetastoreABC, zone-routes all ops |
 | **Content** | PRE-DISPATCH resolver | `FederationContentResolver` intercepts read/delete before kernel |
 
+**Zone-aware path routing:** PathRouter canonicalizes all paths to
+`/{zone_id}/{path}` and does zone-canonical LPM. For local-zone paths,
+FederationContentResolver fast-exits without metadata lookup (~0 cost).
+Cross-zone paths still require metadata lookup to determine content locality
+(CAS blobs are node-specific). See `KERNEL-ARCHITECTURE.md` §4.
+
 #### Content CRUD Status
 
 | Operation | Mechanism | Routing |
 |-----------|-----------|---------|
-| **Read** | `FederationContentResolver.try_read()` | Remote: gRPC Read/StreamRead RPC (streaming for large files, no local persistence) |
+| **Read** | `FederationContentResolver.try_read()` | Local zone: fast-exit (no metadata lookup). Remote: gRPC Read/StreamRead RPC |
 | **Write** | Always local (by design) | `FederatedMetadataProxy` enriches `backend_name` with node address (`local@host:port`) |
-| **Delete** | `FederationContentResolver.try_delete()` | Remote: gRPC Delete RPC delegates full `sys_unlink` to origin peer |
+| **Delete** | `FederationContentResolver.try_delete()` | Local zone: fast-exit. Remote: gRPC Delete RPC delegates `sys_unlink` to origin peer |
 | **Rename** | Metadata-only (CAS content stays at same hash) | Cross-zone rename blocked by `FederatedMetadataProxy` |
 
 Streaming reads: `FederationContentResolver.try_read()` uses a size threshold —

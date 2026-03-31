@@ -486,12 +486,14 @@ async def _boot_post_kernel_services(
         from nexus.services.llm_streaming_service import LLMStreamingService
 
         _llm_backend: Any = None
-        # Find an LLM-capable backend (must have generate_streaming).
-        # Root mount (PathLocalBackend) may cover /llm via LPM — skip non-LLM backends.
+        # Find an OpenAI-compatible LLM backend at common mount paths.
+        # Root mount (PathLocalBackend) may cover /llm via LPM — check class type.
+        from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+
         for _llm_prefix in ("/llm", "/root/llm"):
             with contextlib.suppress(Exception):
                 _candidate = nx.router.route(_llm_prefix).backend
-                if hasattr(_candidate, "generate_streaming"):
+                if isinstance(_candidate, OpenAICompatibleBackend):
                     _llm_backend = _candidate
                     break
 

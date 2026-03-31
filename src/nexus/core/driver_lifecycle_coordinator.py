@@ -57,6 +57,7 @@ class DriverLifecycleCoordinator:
         mount_point: str,
         backend: Any,
         *,
+        metastore: Any = None,
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
@@ -66,11 +67,15 @@ class DriverLifecycleCoordinator:
         1. Add to routing table (PathRouter)
         2. Register VFS hooks from hook_spec (fixes CAS wiring bug #1320)
         3. Broadcast mount event via KernelDispatch
+
+        Args:
+            metastore: Zone's MetastoreABC. Defaults to router's root metastore.
         """
         # 1. Add to routing table
         self._router.add_mount(
             mount_point,
             backend,
+            metastore=metastore,
             readonly=readonly,
             admin_only=admin_only,
             io_profile=io_profile,

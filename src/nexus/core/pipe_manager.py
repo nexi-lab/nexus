@@ -1,14 +1,17 @@
 """PipeManager — VFS named pipe manager (fs/pipe.c equivalent).
 
 Kernel primitive (§4.2) managing DT_PIPE lifecycle and buffer registry
-with per-pipe locking for MPMC.
+with VFSLockManager-backed per-pipe locking for MPMC.
 
     core/pipe.py         = kfifo     (include/linux/kfifo.h + lib/kfifo.c)
     core/pipe_manager.py = fs/pipe.c (VFS named pipe with per-pipe lock)
 
 Concurrency model (aligned with Linux pipe(7)):
   - RingBuffer (kfifo) is SPSC, no internal lock.
-  - PipeManager (mkfifo) adds per-pipe asyncio.Lock for MPMC safety.
+  - PipeManager (mkfifo) adds per-pipe VFSLockManager locks for MPMC safety
+    (Issue #3198). Replaces dict[str, asyncio.Lock] with Rust-backed
+    VFSLockManager (~100-200ns per acquire) for hierarchical awareness,
+    crash-safe release, and observability via holders().
     Async methods use Linux-style lock→try_nowait→unlock→wait→retry
     to avoid holding the lock during blocking waits (deadlock-free).
   - Sync methods (pipe_write_nowait) are atomic under asyncio event loop
@@ -20,9 +23,15 @@ See: core/pipe.py for RingBuffer, federation-memo.md §7j
 import asyncio
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.core.lock_fast import (
+    PythonVFSLockManager,
+    RustVFSLockManager,
+    create_vfs_lock_manager,
+)
 from nexus.core.pipe import (
     PipeBackend,
     PipeClosedError,
@@ -74,12 +83,25 @@ class PipeManager:
         metastore: "MetastoreABC",
         self_address: str | None = None,
         channel_pool: "PeerChannelPool | None" = None,
+        vfs_lock_manager: "RustVFSLockManager | PythonVFSLockManager | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
         self._channel_pool = channel_pool
         self._buffers: dict[str, PipeBackend] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        # Issue #3198: VFSLockManager replaces dict[str, asyncio.Lock] for
+        # per-pipe MPMC locking — Rust-backed (~100-200ns), hierarchical
+        # awareness, crash-safe release, and observability via holders().
+        # Dedicated instance (not shared with NexusFS) so pipe lock
+        # contention cannot interfere with filesystem locks that may
+        # block for up to 5s on rename/move operations.
+        self._vfs_lock: RustVFSLockManager | PythonVFSLockManager = (
+            vfs_lock_manager or create_vfs_lock_manager()
+        )
+        # Dedicated 2-thread executor for lock contention fallback so
+        # pipe waits don't consume the default asyncio executor used by
+        # asyncio.to_thread() and FastAPI sync endpoints.
+        self._lock_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pipe-lock")
         # Backpressure counters — track blocking events on the MPMC async path.
         # Only incremented in pipe_write/pipe_read (not the lock-free nowait path).
         self._write_blocks: int = 0
@@ -313,7 +335,6 @@ class PipeManager:
         if buf is None:
             raise PipeNotFoundError(f"no pipe at: {path}")
         buf.close()
-        self._locks.pop(path, None)
         logger.debug("pipe closed: %s", path)
 
     def destroy(self, path: str) -> None:
@@ -325,7 +346,6 @@ class PipeManager:
         buf = self._buffers.pop(path, None)
         if buf is not None:
             buf.close()
-        self._locks.pop(path, None)
 
         metadata = self._metastore.get(path)
         if metadata is None:
@@ -343,33 +363,56 @@ class PipeManager:
             raise PipeNotFoundError(f"no pipe at: {path}")
         return buf
 
-    def _get_lock(self, path: str) -> asyncio.Lock:
-        """Get or create per-pipe lock for MPMC safety."""
-        lock = self._locks.get(path)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._locks[path] = lock
-        return lock
+    # Timeout for blocking VFS lock acquire in the thread-pool fallback.
+    # Kept short — the lock is only held for a single nowait buffer op (~200ns).
+    _VFS_LOCK_CONTENTION_TIMEOUT_MS = 10
+
+    async def _acquire_vfs_lock_async(self, path: str) -> int:
+        """Acquire VFSLockManager write lock, async-safe.
+
+        Fast path: non-blocking try (timeout_ms=0), no thread pool overhead.
+        Slow path (contention): delegates to a **dedicated** 2-thread
+        executor with a blocking timeout so the coroutine suspends
+        properly without consuming the default asyncio executor.
+        """
+        # Fast path — uncontended (~100-200ns, no thread dispatch)
+        handle = self._vfs_lock.acquire(path, "write", timeout_ms=0)
+        if handle:
+            return handle
+        # Slow path — suspend coroutine on dedicated executor
+        loop = asyncio.get_running_loop()
+        while True:
+            handle = await loop.run_in_executor(
+                self._lock_executor,
+                self._vfs_lock.acquire,
+                path,
+                "write",
+                self._VFS_LOCK_CONTENTION_TIMEOUT_MS,
+            )
+            if handle:
+                return handle
 
     # ------------------------------------------------------------------
     # Data path — MPMC-safe read/write
     # ------------------------------------------------------------------
 
     async def pipe_write(self, path: str, data: bytes, *, blocking: bool = True) -> int:
-        """Write to a named pipe. MPMC-safe (per-pipe asyncio.Lock).
+        """Write to a named pipe. MPMC-safe (VFSLockManager write lock).
 
         Uses Linux pipe_write pattern: lock → try_nowait → unlock → wait → retry.
         Lock is never held during blocking waits (deadlock-free).
         """
         buf = self._get_buffer(path)
-        lock = self._get_lock(path)
         while True:
-            async with lock:
+            handle = await self._acquire_vfs_lock_async(path)
+            try:
                 try:
                     return buf.write_nowait(data)
                 except PipeFullError:
                     if not blocking:
                         raise
+            finally:
+                self._vfs_lock.release(handle)
             # Full and blocking: wait for space without holding lock
             self._write_blocks += 1
             t0 = time.perf_counter_ns()
@@ -377,20 +420,22 @@ class PipeManager:
             self._total_write_wait_ns += time.perf_counter_ns() - t0
 
     async def pipe_read(self, path: str, *, blocking: bool = True) -> bytes:
-        """Read from a named pipe. MPMC-safe (per-pipe asyncio.Lock).
+        """Read from a named pipe. MPMC-safe (VFSLockManager write lock).
 
         Uses Linux pipe_read pattern: lock → try_nowait → unlock → wait → retry.
         Lock is never held during blocking waits (deadlock-free).
         """
         buf = self._get_buffer(path)
-        lock = self._get_lock(path)
         while True:
-            async with lock:
+            handle = await self._acquire_vfs_lock_async(path)
+            try:
                 try:
                     return buf.read_nowait()
                 except PipeEmptyError:
                     if not blocking:
                         raise
+            finally:
+                self._vfs_lock.release(handle)
             # Empty and blocking: wait for data without holding lock
             self._read_blocks += 1
             t0 = time.perf_counter_ns()
@@ -457,4 +502,4 @@ class PipeManager:
             buf.close()
             logger.debug("pipe closed (shutdown): %s", path)
         self._buffers.clear()
-        self._locks.clear()
+        self._lock_executor.shutdown(wait=False)

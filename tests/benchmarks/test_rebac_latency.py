@@ -17,6 +17,8 @@ Run with:
     pytest tests/benchmarks/test_rebac_latency.py -v --benchmark-only
 """
 
+import time
+
 import pytest
 from sqlalchemy import create_engine
 
@@ -27,6 +29,23 @@ from nexus.storage.models import Base
 from tests.helpers.dict_metastore import DictMetastore
 
 ZONE_ID = "bench_zone"
+
+
+def _get_median_ms(benchmark) -> float | None:
+    """Return benchmark median in ms, or None if stats unavailable (xdist)."""
+    if benchmark.stats is not None:
+        return benchmark.stats["median"] * 1000
+    return None
+
+
+def _measure_single_ms(func, *args, **kwargs):
+    """Manual single-iteration timing fallback when benchmark stats are disabled."""
+    t0 = time.perf_counter()
+    result = func(*args, **kwargs)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    return result, elapsed_ms
+
+
 SUBJECT_ALICE = ("agent", "alice")
 SUBJECT_BOB = ("agent", "bob")
 
@@ -197,7 +216,11 @@ class TestL1CacheHit:
         assert result is True
 
         # SLA: p50 < 2ms (generous for CI machines)
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            _, median_ms = _measure_single_ms(
+                m.rebac_check, subject=subject, permission="read", object=obj, zone_id=ZONE_ID
+            )
         assert median_ms < 2.0, f"L1 cache hit too slow: p50={median_ms:.3f}ms (target <2ms)"
 
 
@@ -232,7 +255,15 @@ class TestBoundaryCacheHit:
         )
         assert result is True
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            _, median_ms = _measure_single_ms(
+                m.rebac_check,
+                subject=SUBJECT_ALICE,
+                permission="read",
+                object=("file", "/workspace/project/file_0.txt"),
+                zone_id=ZONE_ID,
+            )
         assert median_ms < 5.0, f"Boundary cache hit too slow: p50={median_ms:.3f}ms (target <5ms)"
 
 
@@ -277,7 +308,15 @@ class TestLeopardIndexHit:
         )
         assert result is True
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            _, median_ms = _measure_single_ms(
+                m.rebac_check,
+                subject=SUBJECT_ALICE,
+                permission="read",
+                object=("file", "/workspace/"),
+                zone_id=ZONE_ID,
+            )
         assert median_ms < 10.0, (
             f"Leopard group check too slow: p50={median_ms:.3f}ms (target <10ms)"
         )
@@ -309,7 +348,17 @@ class TestDirectGrantTraversal:
         )
         assert result is True
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            if m._l1_cache is not None:
+                m._l1_cache.clear()
+            _, median_ms = _measure_single_ms(
+                m.rebac_check,
+                subject=SUBJECT_ALICE,
+                permission="read",
+                object=("file", "/workspace/project/file_0.txt"),
+                zone_id=ZONE_ID,
+            )
         assert median_ms < 20.0, (
             f"Direct grant traversal too slow: p50={median_ms:.3f}ms (target <20ms)"
         )
@@ -341,7 +390,17 @@ class TestDeepInheritanceTraversal:
         )
         assert result is True
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            if m._l1_cache is not None:
+                m._l1_cache.clear()
+            _, median_ms = _measure_single_ms(
+                m.rebac_check,
+                subject=SUBJECT_ALICE,
+                permission="read",
+                object=("file", "/workspace/deep/l1/l2/l3/l4/l5/file_deep.txt"),
+                zone_id=ZONE_ID,
+            )
         assert median_ms < 200.0, (
             f"Deep inheritance too slow: p50={median_ms:.3f}ms (target <200ms)"
         )
@@ -374,7 +433,15 @@ class TestBulkPermissionCheck:
         assert len(results) == 100
         assert all(results.values()), "Not all bulk checks returned True"
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            checks_repeat = [
+                (SUBJECT_BOB, "read", ("file", f"/workspace/bulk/file_{i:04d}.txt"))
+                for i in range(100)
+            ]
+            _, median_ms = _measure_single_ms(
+                m.rebac_check_bulk, checks=checks_repeat, zone_id=ZONE_ID
+            )
         assert median_ms < 500.0, (
             f"Bulk check (100 objects) too slow: p50={median_ms:.3f}ms (target <500ms)"
         )
@@ -444,7 +511,15 @@ class TestDenialLatency:
         )
         assert result is False
 
-        median_ms = benchmark.stats["median"] * 1000
+        median_ms = _get_median_ms(benchmark)
+        if median_ms is None:
+            _, median_ms = _measure_single_ms(
+                m.rebac_check,
+                subject=("agent", "unknown_user"),
+                permission="write",
+                object=("file", "/workspace/project/file_0.txt"),
+                zone_id=ZONE_ID,
+            )
         assert median_ms < 50.0, f"Denial check too slow: p50={median_ms:.3f}ms (target <50ms)"
 
 

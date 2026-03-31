@@ -283,7 +283,14 @@ class PathRouter:
 
         # Rust fast path: LPM + canonicalize in single FFI call (~30ns)
         if self._rust is not None:
-            rust_result = self._rust.route(virtual_path, zone_id, is_admin, check_write)
+            try:
+                rust_result = self._rust.route(virtual_path, zone_id, is_admin, check_write)
+            except PermissionError as e:
+                # Re-raise with user-facing path (strip zone prefix from Rust error)
+                msg = str(e).replace(f"/{zone_id}/", "/").replace(f"/{zone_id}'", "/'")
+                raise AccessDeniedError(msg) from None
+            except ValueError:
+                raise PathNotMountedError(virtual_path) from None
             entry = self._backends.get(rust_result.mount_point)
             if entry is None:
                 raise PathNotMountedError(virtual_path)

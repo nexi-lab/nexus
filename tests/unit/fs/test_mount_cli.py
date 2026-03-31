@@ -1,4 +1,4 @@
-"""Tests for the ``nexus-fs mount`` CLI command."""
+"""Tests for the ``nexus-fs mount`` and ``unmount`` CLI commands."""
 
 from __future__ import annotations
 
@@ -103,6 +103,136 @@ def test_mount_error_exits_nonzero() -> None:
 
     assert result.exit_code == 1
     assert "Invalid URI" in result.output
+
+
+def test_mount_list_human_output(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+    (tmp_path / "mounts.json").write_text(
+        json.dumps(
+            [
+                {"uri": "s3://my-bucket", "at": "/data"},
+                {"uri": "local:///tmp/cache", "at": None},
+            ]
+        )
+    )
+
+    runner = CliRunner(env=_env_no_auto_json())
+    result = runner.invoke(main, ["mount", "list"])
+
+    assert result.exit_code == 0
+    assert "s3://my-bucket -> /data [persisted]" in result.output
+    assert "local:///tmp/cache -> (default) [persisted]" in result.output
+
+
+def test_mount_list_json_output(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+    (tmp_path / "mounts.json").write_text(json.dumps([{"uri": "s3://my-bucket", "at": "/data"}]))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["mount", "list", "--json"])
+
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert envelope["data"]["mounts"] == [
+        {"uri": "s3://my-bucket", "at": "/data", "status": "persisted"}
+    ]
+
+
+def test_mount_list_empty(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+    runner = CliRunner(env=_env_no_auto_json())
+    result = runner.invoke(main, ["mount", "list"])
+
+    assert result.exit_code == 0
+    assert "No persisted mounts." in result.output
+
+
+def test_mount_test_runs_doctor_without_persisting(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+
+    mock_mount = _make_mock_mount(["/s3/my-bucket"])
+
+    with (
+        patch("nexus.fs.mount", mock_mount),
+        patch(
+            "nexus.fs._doctor.run_all_checks",
+            AsyncMock(
+                return_value={
+                    "Environment": [],
+                    "Backends": [],
+                    "Mounts": [],
+                }
+            ),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(main, ["mount", "test", "s3://my-bucket", "--json"])
+
+    assert result.exit_code == 0
+    envelope = json.loads(result.output)
+    assert "Mounts" in envelope["data"]
+    assert not (tmp_path / "mounts.json").exists()
+    mock_mount.assert_awaited_once_with("s3://my-bucket")
+
+
+def test_mount_test_restores_existing_mounts_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+    original = [{"uri": "local:///tmp/cache", "at": None}]
+    mounts_path = tmp_path / "mounts.json"
+    mounts_path.write_text(json.dumps(original))
+
+    mock_mount = _make_mock_mount(["/s3/my-bucket"])
+
+    with (
+        patch("nexus.fs.mount", mock_mount),
+        patch(
+            "nexus.fs._doctor.run_all_checks",
+            AsyncMock(
+                return_value={
+                    "Environment": [],
+                    "Backends": [],
+                    "Mounts": [],
+                }
+            ),
+        ),
+    ):
+        runner = CliRunner(env=_env_no_auto_json())
+        result = runner.invoke(main, ["mount", "test", "s3://my-bucket"])
+
+    assert result.exit_code == 0
+    assert json.loads(mounts_path.read_text()) == original
+
+
+def test_unmount_removes_entry(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+    mounts_path = tmp_path / "mounts.json"
+    mounts_path.write_text(
+        json.dumps(
+            [
+                {"uri": "s3://my-bucket", "at": "/data"},
+                {"uri": "local:///tmp/cache", "at": None},
+            ]
+        )
+    )
+
+    runner = CliRunner(env=_env_no_auto_json())
+    result = runner.invoke(main, ["unmount", "s3://my-bucket"])
+
+    assert result.exit_code == 0
+    assert "Removed persisted mount: s3://my-bucket" in result.output
+    assert json.loads(mounts_path.read_text()) == [{"uri": "local:///tmp/cache", "at": None}]
+
+
+def test_unmount_missing_uri_exits_nonzero(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("NEXUS_FS_STATE_DIR", str(tmp_path))
+    (tmp_path / "mounts.json").write_text(json.dumps([{"uri": "local:///tmp/cache", "at": None}]))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["unmount", "s3://my-bucket"])
+
+    assert result.exit_code == 1
+    assert "mount not found" in result.output.lower()
 
 
 # =========================================================================

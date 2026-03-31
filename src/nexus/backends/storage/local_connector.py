@@ -285,7 +285,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     # Content Operations (with L1 Caching)
     # =========================================================================
 
-    def read_content(
+    def _read_content_raw(
         self,
         content_id: str,
         context: "OperationContext | None" = None,

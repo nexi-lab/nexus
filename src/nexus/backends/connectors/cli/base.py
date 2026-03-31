@@ -620,7 +620,7 @@ class PathCLIBackend(
 
     # --- Read operations (override PathAddressingEngine for CLI-specific behavior) ---
 
-    def read_content(
+    def _read_content_raw(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,

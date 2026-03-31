@@ -256,7 +256,9 @@ class PathSlackBackend(
         except Exception as e:
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         """Read channel messages as YAML, with cache check.
 
         Args:
@@ -283,7 +285,7 @@ class PathSlackBackend(
                 return cached.content_binary
 
         # Delegate to PathAddressingEngine (which calls transport.fetch)
-        content = super().read_content(content_id, context)
+        content = super()._read_content_raw(content_id, context)
 
         # Cache the result with a timestamp-based version
         if self._has_caching():

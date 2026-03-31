@@ -403,7 +403,9 @@ class PathGDriveBackend(
         content_hash = hash_content(content)
         return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         """Read content from Google Drive by path.
 
         Binds transport to context for OAuth, then delegates to
@@ -416,7 +418,7 @@ class PathGDriveBackend(
             )
 
         self._bind_transport(context)
-        return super().read_content(content_id, context)
+        return super()._read_content_raw(content_id, context)
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Delete content from Google Drive (move to trash).

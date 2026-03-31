@@ -305,7 +305,9 @@ send_notifications: true
     # Content operations — override for Calendar CRUD
     # =================================================================
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 "Calendar connector requires backend_path in OperationContext.",
@@ -322,7 +324,7 @@ send_notifications: true
                 return cached.content_binary
 
         # Delegate to PathAddressingEngine → transport.fetch
-        content = super().read_content(content_id, context)
+        content = super()._read_content_raw(content_id, context)
 
         # Cache result
         if self._has_caching():

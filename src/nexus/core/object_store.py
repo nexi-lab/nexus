@@ -17,9 +17,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.contracts.types import WriteResult
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from nexus.contracts.types import OperationContext
 
 # Re-export WriteResult for backward compatibility — canonical home is contracts.types
@@ -32,10 +35,20 @@ class ObjectStoreABC(ABC):
     Linux analogue: ``struct file_operations``.
     Exception-based errors.
 
-    Subclasses must implement the 6 abstract methods.  Streaming, batch,
-    capability flags, and lifecycle have concrete defaults that work out of
-    the box.
+    Includes content fallback: if ``_content_fallback`` is set (DI by factory),
+    ``read_content()`` tries local ``_read_content_raw()`` first, then falls
+    back to the remote fetcher on ``NexusFileNotFoundError``.  Like a CDN
+    origin pull — local miss → fetch from origin node.
+
+    Subclasses implement ``_read_content_raw`` (was ``read_content``),
+    plus write_content, delete_content, get_content_size, mkdir, rmdir.
     """
+
+    def __init__(self) -> None:
+        # Content fallback — DI by factory at mount time for federation.
+        # None = no fallback (standalone mode). Injected object must have
+        # .fetch(content_id, context) → bytes.
+        self._content_fallback: "Any | None" = None
 
     # === Identity ===
 
@@ -76,9 +89,25 @@ class ObjectStoreABC(ABC):
         """
         ...
 
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+        """Read content with fallback — local read, then remote if not found.
+
+        Tries ``_read_content_raw()`` (local). On ``NexusFileNotFoundError``,
+        falls back to ``_content_fallback.fetch()`` if injected (federation).
+        Standalone mode: no fallback, re-raises immediately.
+        """
+        try:
+            return self._read_content_raw(content_id, context=context)
+        except NexusFileNotFoundError:
+            if self._content_fallback is not None:
+                return self._content_fallback.fetch(content_id, context)
+            raise
+
     @abstractmethod
-    def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
-        """Read content by its opaque identifier.
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
+        """Read content from local storage (no fallback).
 
         Args:
             content_id: Opaque content identifier (e.g. SHA-256 hash for CAS,
@@ -89,7 +118,7 @@ class ObjectStoreABC(ABC):
             File content as bytes.
 
         Raises:
-            NexusFileNotFoundError: If content does not exist.
+            NexusFileNotFoundError: If content does not exist locally.
             BackendError: If read operation fails.
         """
         ...

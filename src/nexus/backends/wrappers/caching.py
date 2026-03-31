@@ -153,7 +153,9 @@ class CachingBackendWrapper(DelegatingBackend):
 
     # === Cached Content Operations ===
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         """Read content with L1 → inner backend fallback.
 
         L2 is write-populate-only; reads never check L2.

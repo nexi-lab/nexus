@@ -250,7 +250,9 @@ class PathS3Backend(PathAddressingEngine, CacheConnectorMixin, MultipartUpload):
 
     # === Content Operations with Caching ===
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 message="S3 connector requires backend_path in OperationContext.",

@@ -87,7 +87,9 @@ class LoggingBackendWrapper(DelegatingBackend):
 
     # === Content Operations (with logging) ===
 
-    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
+    def _read_content_raw(
+        self, content_id: str, context: "OperationContext | None" = None
+    ) -> bytes:
         content, elapsed_ms = self._timed(
             "read_content",
             lambda: self._inner.read_content(content_id, context=context),

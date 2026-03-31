@@ -9,6 +9,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -302,6 +303,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         selectedResultIndex: 0,
         searchLoading: false,
       });
+      useUiStore.getState().markDataUpdated("search");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to search";
       set({ searchLoading: false, error: message });
@@ -331,6 +333,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         neighbors: response.neighbors ?? [],
         knowledgeLoading: false,
       });
+      useUiStore.getState().markDataUpdated("search");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch neighbors";
       set({
@@ -354,6 +357,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         knowledgeSearchResult: response.entity ?? null,
         knowledgeLoading: false,
       });
+      useUiStore.getState().markDataUpdated("search");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to search knowledge graph";
       set({
@@ -396,6 +400,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
         );
         return { memories: updated, memoriesLoading: false };
       });
+      useUiStore.getState().markDataUpdated("search");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch memory detail";
       set({ memoriesLoading: false, error: message });

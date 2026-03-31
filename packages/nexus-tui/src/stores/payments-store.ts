@@ -12,6 +12,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -376,6 +377,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         transactionsLoading: false,
         integrityResult: null,
       });
+      useUiStore.getState().markDataUpdated("payments");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch transactions";
       set({
@@ -438,6 +440,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         `/api/v2/audit/integrity/${encodeURIComponent(recordId)}`,
       );
       set({ integrityResult: result });
+      useUiStore.getState().markDataUpdated("payments");
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to verify integrity";
@@ -466,6 +469,7 @@ export const usePaymentsStore = create<PaymentsState>((set, get) => ({
         `/api/v2/pay/can-afford?amount=${encodeURIComponent(amount)}`,
       );
       set({ affordResult: result });
+      useUiStore.getState().markDataUpdated("payments");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to check affordability";
       set({ error: message });

@@ -7,6 +7,7 @@ import type { NexusClientOptions } from "@nexus/api-client";
 import { FetchClient, resolveConfig } from "@nexus/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
@@ -196,6 +197,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       activePanel: panel,
       panelHistory: [...state.panelHistory.slice(-9), current],
     }));
+    useUiStore.getState().markPanelVisited(panel);
     // Re-fetch features on panel switch (Decision 3A)
     get().refreshFeatures();
   },

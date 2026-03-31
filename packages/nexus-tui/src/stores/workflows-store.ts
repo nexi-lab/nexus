@@ -9,6 +9,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -196,6 +197,7 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         `/api/v2/workflows/${encodeURIComponent(name)}`,
       );
       set({ selectedWorkflow: workflow, detailLoading: false });
+      useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch workflow detail";
       set({
@@ -239,6 +241,7 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       );
 
       set({ executions: executions ?? [], executionsLoading: false });
+      useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch executions";
       set({
@@ -258,6 +261,7 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         "/api/v2/scheduler/metrics",
       );
       set({ schedulerMetrics: metrics, schedulerLoading: false });
+      useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch scheduler metrics";
       set({
@@ -349,6 +353,7 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
         `/api/v2/workflows/executions/${encodeURIComponent(executionId)}`,
       );
       set({ selectedExecution: detail, executionDetailLoading: false });
+      useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch execution detail";
       set({

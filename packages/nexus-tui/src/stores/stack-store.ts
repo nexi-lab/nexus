@@ -10,6 +10,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { useErrorStore } from "./error-store.js";
 import { categorizeError } from "./create-api-action.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types
@@ -222,6 +223,7 @@ export const useStackStore = create<StackState>((set, get) => ({
 
       const containers = parseDockerPs(stdout);
       set({ containers, containersLoading: false });
+      useUiStore.getState().markDataUpdated("stack");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to query Docker";
       set({ containersLoading: false, error: message });
@@ -268,6 +270,7 @@ export const useStackStore = create<StackState>((set, get) => ({
       } else {
         set({ configYaml: "", configLoading: false, paths: null });
       }
+      useUiStore.getState().markDataUpdated("stack");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to read nexus.yaml";
       set({ configYaml: `Error: ${message}`, configLoading: false });
@@ -303,6 +306,7 @@ export const useStackStore = create<StackState>((set, get) => ({
       } else {
         set({ stateJson: null, stateLoading: false });
       }
+      useUiStore.getState().markDataUpdated("stack");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to read .state.json";
       set({ stateJson: null, stateLoading: false, error: message });
@@ -314,6 +318,7 @@ export const useStackStore = create<StackState>((set, get) => ({
     try {
       const health = await client.get<DetailedHealth>("/health/detailed");
       set({ healthDetails: health, healthLoading: false });
+      useUiStore.getState().markDataUpdated("stack");
     } catch {
       // Fall back to basic health
       try {
@@ -322,6 +327,7 @@ export const useStackStore = create<StackState>((set, get) => ({
           healthDetails: { status: basic.status, service: basic.service, components: {} },
           healthLoading: false,
         });
+        useUiStore.getState().markDataUpdated("stack");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Health check failed";
         set({ healthDetails: null, healthLoading: false });

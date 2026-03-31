@@ -9,6 +9,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -180,6 +181,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
 
       const transactions = response.transactions ?? [];
       set({ transactions, isLoading: false });
+      useUiStore.getState().markDataUpdated("versions");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch transactions");
       set({
@@ -220,6 +222,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         `/api/v2/snapshots/${encodeURIComponent(txnId)}/entries`,
       );
       set({ entries: entries ?? [], entriesLoading: false });
+      useUiStore.getState().markDataUpdated("versions");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch entries");
       set({
@@ -251,6 +254,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         },
         diffLoading: false,
       });
+      useUiStore.getState().markDataUpdated("versions");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch diff");
       set({
@@ -333,6 +337,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
         conflicts: response.conflicts ?? [],
         conflictsLoading: false,
       });
+      useUiStore.getState().markDataUpdated("versions");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch conflicts");
       set({

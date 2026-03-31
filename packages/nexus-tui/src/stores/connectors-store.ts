@@ -7,6 +7,7 @@
 import { create } from "zustand";
 import { createApiAction } from "./create-api-action.js";
 import type { FetchClient } from "@nexus/api-client";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (wire format — snake_case matches API responses)
@@ -384,6 +385,7 @@ export const useConnectorsStore = create<ConnectorsState>((set, get) => ({
       // Refresh mounts to get updated sync status
       const mounts = await client.get<MountInfo[]>("/api/v2/connectors/mounts");
       set({ mounts });
+      useUiStore.getState().markDataUpdated("connectors");
     } catch (err) {
       const updated = new Set(get().syncingMounts);
       updated.delete(mountPoint);

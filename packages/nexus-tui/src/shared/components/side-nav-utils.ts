@@ -18,6 +18,9 @@ export type SideNavMode = "full" | "collapsed" | "hidden";
 // Constants
 // =============================================================================
 
+/** Data not refreshed within this threshold (ms) is considered stale. */
+export const STALE_THRESHOLD_MS = 60_000;
+
 /** Minimum terminal width to show full labels. */
 export const FULL_THRESHOLD = 120;
 

@@ -97,7 +97,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
-ENV CARGO_TARGET_DIR=/build/target
+ENV CARGO_TARGET_DIR=/build/target \
+    CARGO_BUILD_JOBS=2 \
+    CARGO_NET_RETRY=10 \
+    CARGO_HTTP_TIMEOUT=120
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
@@ -108,15 +111,27 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_F16=0 \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
-    maturin build --release --out /build/dist -m rust/nexus_pyo3/Cargo.toml && \
-    maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml && \
-    pip install --no-cache-dir /build/dist/nexus_fast-*.whl /build/dist/nexus_raft-*.whl
+    maturin build --release --out /build/dist -m rust/nexus_pyo3/Cargo.toml
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+        export SIMSIMD_TARGET_SVE=0 \
+               SIMSIMD_TARGET_SVE2=0 \
+               SIMSIMD_TARGET_SVE_BF16=0 \
+               SIMSIMD_TARGET_SVE_F16=0 \
+               SIMSIMD_TARGET_SVE_I8=0; \
+    fi && \
+    maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml
+RUN pip install --no-cache-dir /build/dist/nexus_fast-*.whl /build/dist/nexus_raft-*.whl
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic/alembic.ini ./alembic.ini
 RUN rm -rf src/*.egg-info build/ && \
+    find /usr/local/lib/python3.*/site-packages/nexus/ -name "*.pyc" -delete 2>/dev/null; \
+    find /usr/local/lib/python3.*/site-packages/nexus/ -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null; \
     pip install --no-cache-dir --no-deps --force-reinstall .
 
 # On arm64, remove hnswlib LAST — after all pip installs are done.

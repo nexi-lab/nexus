@@ -1,6 +1,6 @@
 {
   "name": "@nexus/tui",
-  "version": "0.9.16",
+  "version": "0.9.17",
   "description": "Terminal UI for Nexus — file explorer, API inspector, and monitoring dashboard",
   "type": "module",
   "bin": {

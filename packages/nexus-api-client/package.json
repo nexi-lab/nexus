@@ -1,6 +1,6 @@
 {
   "name": "@nexus/api-client",
-  "version": "0.1.0",
+  "version": "0.9.16",
   "description": "Shared HTTP client for Nexus APIs — retry, auth, error mapping, case transform",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -46,6 +46,9 @@
     "client",
     "sdk"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",

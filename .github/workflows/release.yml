@@ -31,11 +31,15 @@ jobs:
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           RUST_PKG_VERSION=$(grep '^version = ' rust/nexus_pyo3/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           RUST_CARGO_VERSION=$(grep '^version = ' rust/nexus_pyo3/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          API_CLIENT_VERSION=$(node -p "require('./packages/nexus-api-client/package.json').version")
+          TUI_VERSION=$(node -p "require('./packages/nexus-tui/package.json').version")
           echo "Tag version: $TAG_VERSION"
           echo "Package version: $PKG_VERSION"
           echo "Rust package version: $RUST_PKG_VERSION"
           echo "Rust Cargo version: $RUST_CARGO_VERSION"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ]; then
+          echo "API client version: $API_CLIENT_VERSION"
+          echo "TUI version: $TUI_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_PKG_VERSION" ] || [ "$TAG_VERSION" != "$RUST_CARGO_VERSION" ] || [ "$TAG_VERSION" != "$API_CLIENT_VERSION" ] || [ "$TAG_VERSION" != "$TUI_VERSION" ]; then
             echo "❌ Version mismatch! Tag is v$TAG_VERSION but package metadata is inconsistent"
             exit 1
           fi
@@ -335,6 +339,83 @@ jobs:
           path: dist-nexus-fs/*
           retention-days: 90
 
+  publish-ts-packages:
+    name: Publish TypeScript packages to npm
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Skip when NPM token is not configured
+        if: ${{ env.NODE_AUTH_TOKEN == '' }}
+        run: echo "NPM_TOKEN not configured; skipping TypeScript package publish."
+
+      - name: Set up Node
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set up Bun
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build and test api-client
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        working-directory: packages/nexus-api-client
+        run: |
+          npm install
+          npm run build
+          npm test
+
+      - name: Publish @nexus/api-client
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          VERSION="$(node -p "require('./packages/nexus-api-client/package.json').version")"
+          if npm view "@nexus/api-client@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus/api-client@${VERSION} already published"
+          else
+            cd packages/nexus-api-client
+            npm publish --access public
+          fi
+
+      - name: Test TUI
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        working-directory: packages/nexus-tui
+        run: |
+          bun install
+          bun test
+
+      - name: Prepare TUI manifest for publish
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          API_VERSION="$(node -p "require('./packages/nexus-api-client/package.json').version")"
+          API_VERSION="$API_VERSION" node <<'EOF'
+          const fs = require("fs");
+          const path = "packages/nexus-tui/package.json";
+          const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+          pkg.dependencies["@nexus/api-client"] = `^${process.env.API_VERSION}`;
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          EOF
+
+      - name: Publish @nexus/tui
+        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+        run: |
+          VERSION="$(node -p "require('./packages/nexus-tui/package.json').version")"
+          if npm view "@nexus/tui@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus/tui@${VERSION} already published"
+          else
+            cd packages/nexus-tui
+            npm publish --access public
+          fi
+
   # Docker build, smoke test, and GHCR push — inline in release.yml so
   # create-release can depend on it directly (Issue #2946 atomic release).
   # docker-publish.yml handles branch pushes (develop/main) separately.
@@ -463,7 +544,7 @@ jobs:
   # doesn't appear on the releases page or trigger notifications.
   create-release:
     name: Create GitHub Release
-    needs: [publish-pypi, publish-rust, publish-nexus-fs, build-docker]
+    needs: [publish-pypi, publish-rust, publish-nexus-fs, publish-ts-packages, build-docker]
     runs-on: ubuntu-latest
 
     steps:

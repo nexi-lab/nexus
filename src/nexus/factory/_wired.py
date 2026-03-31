@@ -1,5 +1,6 @@
 """Boot Tier 2b (POST-KERNEL) — services needing NexusFS reference."""
 
+import contextlib
 import logging
 import time
 from collections.abc import Callable
@@ -477,6 +478,39 @@ async def _boot_post_kernel_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
 
+    # --- LLMStreamingService: DT_STREAM orchestration for LLM token delivery ---
+    # Backend is mounted dynamically (not at boot), so this is a lazy service:
+    # created with stream_manager only, backend resolved on first use via router.
+    llm_streaming_service: Any = None
+    try:
+        from nexus.services.llm_streaming_service import LLMStreamingService
+
+        _llm_backend: Any = None
+        # Try to resolve an LLM backend from the router (may not be mounted yet).
+        with contextlib.suppress(Exception):
+            _llm_backend = nx.router.route("/llm").backend
+        if _llm_backend is None:
+            # Check for any mount under common LLM paths
+            for _llm_prefix in ("/llm", "/root/llm"):
+                with contextlib.suppress(Exception):
+                    _llm_backend = nx.router.route(_llm_prefix).backend
+                    break
+
+        if _llm_backend is not None:
+            llm_streaming_service = LLMStreamingService(
+                stream_manager=nx._stream_manager,
+                backend=_llm_backend,
+            )
+            await nx.sys_setattr("/__sys__/services/llm_streaming", service=llm_streaming_service)
+            logger.debug("[BOOT:WIRED] LLMStreamingService created (backend available)")
+        else:
+            logger.debug(
+                "[BOOT:WIRED] LLMStreamingService deferred — no LLM backend mounted yet. "
+                "Will be created on first llm_call or after 'nexus mounts add --type openai'."
+            )
+    except Exception as exc:
+        logger.debug("[BOOT:WIRED] LLMStreamingService unavailable: %s", exc)
+
     result: dict[str, Any] = {
         "rebac_service": rebac_service,
         "mount_service": mount_service,
@@ -497,6 +531,7 @@ async def _boot_post_kernel_services(
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,
         "descendant_checker": descendant_checker,
+        "llm_streaming_service": llm_streaming_service,
     }
 
     elapsed = time.perf_counter() - t0

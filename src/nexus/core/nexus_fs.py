@@ -3741,6 +3741,55 @@ class NexusFS(  # type: ignore[misc]
 
         return result
 
+    # ------------------------------------------------------------------
+    # llm_call — Tier 2 LLM streaming convenience (Issue #1589)
+    # ------------------------------------------------------------------
+
+    @rpc_expose(description="Start LLM streaming call")
+    async def llm_call(
+        self,
+        path: str,
+        request: dict[str, Any],
+        *,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Start an LLM streaming call, returning a DT_STREAM path for reading tokens.
+
+        Creates a DT_STREAM at *path*, starts background LLM generation via
+        :class:`~nexus.services.llm_streaming_service.LLMStreamingService`,
+        and returns immediately.  Callers read tokens via
+        ``sys_read(stream_path, offset=N)``.
+
+        If no LLM backend is mounted yet, the service is lazily created on
+        first call by probing the router for an ``OpenAICompatibleBackend``.
+
+        Args:
+            path: VFS path for the DT_STREAM (e.g.
+                ``/root/llm/.streams/my-session``).
+            request: LLM request dict with at least ``{"messages": [...]}``.
+            context: Optional operation context for permission checks.
+
+        Returns:
+            ``{"stream_path": ..., "status": "streaming"}``
+
+        Raises:
+            BackendError: If no LLM streaming service or backend is available.
+        """
+        import json as _json
+
+        svc = self.service("llm_streaming")
+        if svc is None:
+            raise BackendError(
+                "LLM streaming service not available. "
+                "Mount an OpenAI-compatible backend first: "
+                'nexus mount /llm --backend=openai_compatible --config=\'{"api_key":"..."}\''
+            )
+
+        return await svc.start_stream(
+            request_bytes=_json.dumps(request, separators=(",", ":")).encode("utf-8"),
+            stream_path=path,
+        )
+
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """

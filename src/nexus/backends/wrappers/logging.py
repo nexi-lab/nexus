@@ -214,7 +214,6 @@ class LoggingBackendWrapper(DelegatingBackend):
         )
         logger.debug(
             "check_connection backend=%s success=%s latency_ms=%.2f",
-        super().__init__()
             self._inner.name,
             response.success,
             elapsed_ms,

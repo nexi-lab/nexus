@@ -68,7 +68,7 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
         return {h: storage.get(h) for h in content_hashes}
 
     mock.write_content = MagicMock(side_effect=write_content)
-    mock.read_content = MagicMock(side_effect=read_content)
+    mock.read_content = MagicMock(side_effect=_read_content_raw)
     mock.batch_read_content = MagicMock(side_effect=batch_read_content)
     mock.delete_content = MagicMock(return_value=None)
     return mock, storage

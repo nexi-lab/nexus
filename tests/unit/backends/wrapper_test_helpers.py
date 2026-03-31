@@ -54,7 +54,7 @@ def make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
         storage[h] = content
         return WriteResult(content_id=h, version=h, size=len(content))
 
-    def read_content(content_hash: str, context: object = None) -> bytes:
+    def _read_content_raw(content_hash: str, context: object = None) -> bytes:
         if content_hash in storage:
             return storage[content_hash]
         raise NexusFileNotFoundError(content_hash)

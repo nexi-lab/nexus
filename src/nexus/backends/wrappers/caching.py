@@ -116,6 +116,7 @@ class CachingBackendWrapper(DelegatingBackend):
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         super().__init__(inner)
+        super().__init__()
         self._config = config or CacheWrapperConfig()
         self._cache_store = cache_store
 

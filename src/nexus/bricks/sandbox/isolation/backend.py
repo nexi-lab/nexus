@@ -41,6 +41,7 @@ class IsolatedBackend(Backend):
     """
 
     def __init__(self, config: IsolationConfig) -> None:
+        super().__init__()
         self._config = config
         self._pool = IsolatedPool(config)
         self._prop_lock = threading.Lock()

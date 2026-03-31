@@ -49,6 +49,7 @@ class RemoteBackend(ObjectStoreABC):
     capabilities: frozenset[str] = frozenset()
 
     def __init__(self, transport: "RPCTransport") -> None:
+        super().__init__()
         self._transport = transport
 
         # Reuse BaseRemoteNexusFS error handling (static method access)

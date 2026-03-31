@@ -218,7 +218,7 @@ class TestRegistryCapabilities:
             def write_content(self, *a: object, **kw: object) -> object:
                 return None
 
-            def read_content(self, *a: object, **kw: object) -> object:
+            def _read_content_raw(self, *a: object, **kw: object) -> object:
                 return b""
 
             def delete_content(self, *a: object, **kw: object) -> object:

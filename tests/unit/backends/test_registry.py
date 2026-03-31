@@ -44,7 +44,7 @@ class DummyBackend(Backend):
     def write_content(self, content, content_id: str = "", *, offset: int = 0, context=None):
         return "hash"
 
-    def read_content(self, content_hash, context=None):
+    def _read_content_raw(self, content_hash, context=None):
         return b""
 
     def delete_content(self, content_hash, context=None):

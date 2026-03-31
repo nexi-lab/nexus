@@ -117,6 +117,7 @@ class CASAddressingEngine(Backend):
         on_write_callback: Any | None = None,
         cdc_engine: "ChunkingStrategy | None" = None,
     ) -> None:
+        super().__init__()
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
         # Feature DI: None means feature disabled (cloud backends pass nothing)

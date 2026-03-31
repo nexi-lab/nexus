@@ -434,7 +434,7 @@ class MockGCSBackend(Backend):
         self._content[h] = content
         return WriteResult(content_id=h, size=len(content))
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def _read_content_raw(self, content_hash, context=None) -> bytes:
         self.read_count += 1
         if content_hash not in self._content:
             raise NexusFileNotFoundError(content_hash)
@@ -591,7 +591,7 @@ class MockS3ConnectorForBatch(PathAddressingEngine, CacheConnectorMixin):
     def files(self, value: dict[str, bytes]) -> None:
         self._transport.files = value
 
-    def read_content(self, content_hash, context=None) -> bytes:
+    def _read_content_raw(self, content_hash, context=None) -> bytes:
         """S3-style read that requires context.backend_path."""
         self.read_count += 1
         if not context or not context.backend_path:

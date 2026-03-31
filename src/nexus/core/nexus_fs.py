@@ -3778,50 +3778,17 @@ class NexusFS(  # type: ignore[misc]
         import json as _json
 
         svc = self.service("llm_streaming")
-
-        # Lazy creation: if service isn't registered yet, try to find an LLM
-        # backend on the router and wire up the service on the fly.
-        if svc is None:
-            svc = await self._ensure_llm_streaming_service()
-
         if svc is None:
             raise BackendError(
                 "LLM streaming service not available. "
                 "Mount an OpenAI-compatible backend first: "
-                "nexus mounts add /llm --type openai --config api_key=sk-..."
+                'nexus mount /llm --backend=openai_compatible --config=\'{"api_key":"..."}\''
             )
 
         return await svc.start_stream(
             request_bytes=_json.dumps(request, separators=(",", ":")).encode("utf-8"),
             stream_path=path,
         )
-
-    async def _ensure_llm_streaming_service(self) -> Any:
-        """Lazily create LLMStreamingService when an LLM backend becomes available."""
-        from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
-
-        _backend: Any = None
-        for _prefix in ("/llm", "/root/llm"):
-            try:
-                route = self.router.route(_prefix)
-                if isinstance(route.backend, OpenAICompatibleBackend):
-                    _backend = route.backend
-                    break
-            except Exception:
-                continue
-
-        if _backend is None:
-            return None
-
-        from nexus.services.llm_streaming_service import LLMStreamingService
-
-        svc = LLMStreamingService(
-            stream_manager=self._stream_manager,
-            backend=_backend,
-        )
-        await self.sys_setattr("/__sys__/services/llm_streaming", service=svc)
-        logger.info("LLMStreamingService lazily created (backend found at router)")
-        return svc
 
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:

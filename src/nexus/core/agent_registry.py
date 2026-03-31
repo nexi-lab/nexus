@@ -183,11 +183,6 @@ class AgentRegistry:
                 return self._transition(desc, AgentState.SUSPENDED)
             case AgentSignal.SIGCONT:
                 new_gen = desc.generation + 1
-                if desc.state is AgentState.REGISTERED:
-                    # External agents bootstrap through WARMING_UP before they can
-                    # become READY. Keep SIGCONT as the public "connect/resume"
-                    # signal and perform the legal two-step transition internally.
-                    desc = self._transition(desc, AgentState.WARMING_UP)
                 return self._transition(desc, AgentState.READY, generation=new_gen)
             case AgentSignal.SIGTERM:
                 return self.kill(pid)

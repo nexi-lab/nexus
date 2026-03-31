@@ -1,34 +1,104 @@
-from unittest.mock import MagicMock
+from typing import Any, cast
 
-from nexus.contracts.process_types import AgentState
+import pytest
+
+from nexus.contracts.process_types import AgentSignal, AgentState
 from nexus.core.agent_registry import AgentRegistry
 from nexus.services.agents.agent_rpc_service import AgentRPCService
+from nexus.services.agents.agent_warmup import AgentWarmupService
+from nexus.services.agents.warmup_steps import register_standard_steps
 
 
-def _make_service(agent_registry):
-    return AgentRPCService(
-        vfs=MagicMock(),
-        metastore=MagicMock(),
-        session_factory=MagicMock(),
-        agent_registry=agent_registry,
-    )
+class _ExplodingWarmupService:
+    async def warmup(self, _agent_id: str):
+        raise AssertionError("warmup should not be called for resumed agents")
 
 
-def test_agent_transition_connected_bootstraps_registered_external_agent():
+_DUMMY = cast(Any, object())
+
+
+@pytest.mark.asyncio
+async def test_agent_transition_connected_bootstraps_registered_agent() -> None:
     registry = AgentRegistry()
-    service = _make_service(registry)
     desc = registry.register_external(
-        "rpc-agent",
+        "agent-1",
         owner_id="alice",
         zone_id="test",
-        connection_id="conn-rpc-agent",
+        connection_id="conn-1",
     )
 
-    result = service.agent_transition(
+    warmup_service = AgentWarmupService(agent_registry=registry)
+    register_standard_steps(warmup_service)
+    rpc = AgentRPCService(
+        vfs=_DUMMY,
+        metastore=_DUMMY,
+        session_factory=lambda: None,
+        agent_registry=registry,
+        agent_warmup_service=warmup_service,
+    )
+
+    result = await rpc.agent_transition(
         desc.pid,
         "CONNECTED",
         expected_generation=desc.generation,
     )
 
-    assert result["state"] == str(AgentState.READY)
-    assert result["generation"] == desc.generation + 1
+    updated = registry.get(desc.pid)
+    assert updated is not None
+    assert updated.state is AgentState.READY
+    assert result["state"] == AgentState.READY
+    assert result["generation"] == updated.generation
+
+
+@pytest.mark.asyncio
+async def test_agent_transition_connected_resumes_suspended_agent_without_warmup() -> None:
+    registry = AgentRegistry()
+    desc = registry.register_external(
+        "agent-2",
+        owner_id="alice",
+        zone_id="test",
+        connection_id="conn-2",
+    )
+    desc = registry._transition(desc, AgentState.WARMING_UP)
+    desc = registry._transition(desc, AgentState.READY)
+    desc = registry.signal(desc.pid, AgentSignal.SIGSTOP)
+
+    rpc = AgentRPCService(
+        vfs=_DUMMY,
+        metastore=_DUMMY,
+        session_factory=lambda: None,
+        agent_registry=registry,
+        agent_warmup_service=_ExplodingWarmupService(),
+    )
+
+    result = await rpc.agent_transition(
+        desc.pid,
+        "CONNECTED",
+        expected_generation=desc.generation,
+    )
+
+    updated = registry.get(desc.pid)
+    assert updated is not None
+    assert updated.state is AgentState.READY
+    assert result["generation"] == updated.generation
+
+
+@pytest.mark.asyncio
+async def test_agent_transition_connected_requires_warmup_for_registered_agent() -> None:
+    registry = AgentRegistry()
+    desc = registry.register_external(
+        "agent-3",
+        owner_id="alice",
+        zone_id="test",
+        connection_id="conn-3",
+    )
+    rpc = AgentRPCService(
+        vfs=_DUMMY,
+        metastore=_DUMMY,
+        session_factory=lambda: None,
+        agent_registry=registry,
+        agent_warmup_service=None,
+    )
+
+    with pytest.raises(ValueError, match="AgentWarmupService not available"):
+        await rpc.agent_transition(desc.pid, "CONNECTED", expected_generation=desc.generation)

@@ -104,6 +104,7 @@ async def _wire_services(
     _resolved_bricks = enabled_bricks
     if _resolved_bricks is None:
         _resolved_bricks = _DP.FULL.default_bricks()
+    _brick_updates["enabled_bricks"] = _resolved_bricks
 
     def svc_on(name: str) -> bool:
         return name in _resolved_bricks

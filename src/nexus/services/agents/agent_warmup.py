@@ -145,6 +145,22 @@ class AgentWarmupService:
                 duration_ms=_elapsed_ms(start),
             )
 
+        if record.state is AgentState.REGISTERED:
+            try:
+                record = self._agent_registry._transition(record, AgentState.WARMING_UP)
+            except (InvalidTransitionError, AgentError) as exc:
+                logger.warning(
+                    "[WARMUP] Failed to transition agent %s into WARMING_UP: %s",
+                    agent_id,
+                    exc,
+                )
+                return WarmupResult(
+                    success=False,
+                    agent_id=agent_id,
+                    error=str(exc),
+                    duration_ms=_elapsed_ms(start),
+                )
+
         # Edge case 5: Empty step list → immediate transition
         if not steps:
             return await self._transition_connected(agent_id, record.generation, start, (), ())

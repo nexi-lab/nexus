@@ -270,6 +270,24 @@ async def _boot_post_kernel_services(
 
     agent_rpc_service: Any = None
     try:
+        agent_warmup_service: Any = None
+        _agent_registry = getattr(nx, "_agent_registry", None)
+        if _agent_registry is not None:
+            try:
+                from nexus.services.agents.agent_warmup import AgentWarmupService
+                from nexus.services.agents.warmup_steps import register_standard_steps
+
+                agent_warmup_service = AgentWarmupService(
+                    agent_registry=_agent_registry,
+                    namespace_manager=services.get("async_namespace_manager"),
+                    enabled_bricks=services.get("enabled_bricks", frozenset()),
+                    cache_store=getattr(services.get("cache_brick"), "cache_store", None),
+                    mcp_config=None,
+                )
+                register_standard_steps(agent_warmup_service)
+            except Exception as exc:
+                logger.warning("[BOOT:WIRED] AgentWarmupService unavailable: %s", exc)
+
         from nexus.services.agents.agent_rpc_service import AgentRPCService
 
         agent_rpc_service = AgentRPCService(
@@ -286,6 +304,7 @@ async def _boot_post_kernel_services(
             rebac_create_fn=(rebac_service.rebac_create_sync if rebac_service else None),
             rebac_list_tuples_fn=(rebac_service.rebac_list_tuples_sync if rebac_service else None),
             rebac_delete_fn=(rebac_service.rebac_delete_sync if rebac_service else None),
+            agent_warmup_service=agent_warmup_service,
         )
         logger.debug("[BOOT:WIRED] AgentRPCService created")
     except Exception as exc:
@@ -313,6 +332,22 @@ async def _boot_post_kernel_services(
     # Late-bind AgentRegistry → AgentRPCService (Issue #3524)
     if _agent_reg is not None and agent_rpc_service is not None:
         agent_rpc_service._agent_registry = _agent_reg
+        if getattr(agent_rpc_service, "_agent_warmup_service", None) is None:
+            try:
+                from nexus.services.agents.agent_warmup import AgentWarmupService
+                from nexus.services.agents.warmup_steps import register_standard_steps
+
+                agent_warmup_service = AgentWarmupService(
+                    agent_registry=_agent_reg,
+                    namespace_manager=services.get("async_namespace_manager"),
+                    enabled_bricks=services.get("enabled_bricks", frozenset()),
+                    cache_store=getattr(services.get("cache_brick"), "cache_store", None),
+                    mcp_config=None,
+                )
+                register_standard_steps(agent_warmup_service)
+                agent_rpc_service._agent_warmup_service = agent_warmup_service
+            except Exception as exc:
+                logger.warning("[BOOT:WIRED] Late AgentWarmupService unavailable: %s", exc)
 
     # EvictionManager (QoS-aware agent eviction)
     if _agent_reg is not None:

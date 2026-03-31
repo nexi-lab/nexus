@@ -218,12 +218,11 @@ def _spawn_ready(pt: AgentRegistry, name: str = "a") -> "AgentDescriptor":
 
 
 class TestSignals:
-    def test_sigcont_from_registered_bootstraps_to_ready(self) -> None:
+    def test_sigcont_from_registered_is_invalid(self) -> None:
         pt = _make_table()
         desc = pt.register_external("a", OWNER, ZONE, connection_id="conn-a")
-        updated = pt.signal(desc.pid, AgentSignal.SIGCONT)
-        assert updated.state == AgentState.READY
-        assert updated.generation == desc.generation + 1
+        with pytest.raises(InvalidTransitionError, match="from registered to ready"):
+            pt.signal(desc.pid, AgentSignal.SIGCONT)
 
     def test_sigstop(self) -> None:
         pt = _make_table()

@@ -35,7 +35,12 @@ async def load_credentials(ctx: "WarmupContext") -> bool:
 
     from nexus.contracts.process_types import AgentState
 
-    eligible = {AgentState.REGISTERED, AgentState.READY, AgentState.SUSPENDED}
+    eligible = {
+        AgentState.REGISTERED,
+        AgentState.WARMING_UP,
+        AgentState.READY,
+        AgentState.SUSPENDED,
+    }
     if record.state not in eligible:
         logger.warning(
             "[WARMUP:credentials] Agent %s in non-eligible state %s",

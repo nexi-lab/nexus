@@ -908,7 +908,7 @@ class NexusFS(  # type: ignore[misc]
                 version=1,
                 zone_id=attrs.get("zone_id", ROOT_ZONE_ID),
             )
-            self.metadata.put(metadata)
+            route.metastore.put(metadata)
             return {"path": path, "created": True, "entry_type": entry_type}
 
         raise ValueError(f"sys_setattr create not supported for entry_type={entry_type}")
@@ -1759,7 +1759,7 @@ class NexusFS(  # type: ignore[misc]
                 path, is_admin=is_admin, check_write=False, zone_id=self._zone_id
             )
 
-            meta = self.metadata.get(path)
+            meta = route.metastore.get(path)
 
             if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
                 overlay_config = self._get_overlay_config(path)
@@ -1838,7 +1838,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Check if file exists in metadata
-        meta = self.metadata.get(path)
+        meta = route.metastore.get(path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
@@ -1883,7 +1883,7 @@ class NexusFS(  # type: ignore[misc]
             zone_id=self._zone_id,
         )
 
-        meta = self.metadata.get(path)
+        meta = route.metastore.get(path)
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path)
 
@@ -1952,7 +1952,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Get existing metadata for version tracking
         now = datetime.now(UTC)
-        meta = self.metadata.get(path)
+        meta = route.metastore.get(path)
 
         # Add backend_path to context for path-based connectors
         if context:
@@ -1989,7 +1989,7 @@ class NexusFS(  # type: ignore[misc]
             zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
-        self.metadata.put(new_meta)
+        route.metastore.put(new_meta)
 
         # Issue #3391: OBSERVE dispatch was missing for write_stream — add it.
         await self._dispatch.notify(
@@ -2147,7 +2147,7 @@ class NexusFS(  # type: ignore[misc]
             raise PermissionError(f"Cannot create directory in read-only path: {path}")
 
         # Check if directory already exists
-        existing = self.metadata.get(path)
+        existing = route.metastore.get(path)
         is_implicit_dir = existing is None and self.metadata.is_implicit_directory(path)
 
         if existing is not None or is_implicit_dir:
@@ -2382,7 +2382,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Get existing metadata for permission check and update detection (single query)
         now = datetime.now(UTC)
-        meta = _meta if _meta is not None else self.metadata.get(path)
+        meta = _meta if _meta is not None else route.metastore.get(path)
 
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
@@ -2443,7 +2443,7 @@ class NexusFS(  # type: ignore[misc]
                 new_version = metadata.version
                 # Local external backends need metadata persisted locally
                 if not _is_remote:
-                    self.metadata.put(metadata, consistency=consistency)
+                    route.metastore.put(metadata, consistency=consistency)
             else:
                 _wr = route.backend.write_content(
                     content,
@@ -3186,7 +3186,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Check if file exists in metadata.
         # Use prefetched hint from resolve_delete() if available (#1311)
-        meta = _result if _result is not None else self.metadata.get(path)
+        meta = _result if _result is not None else route.metastore.get(path)
 
         # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
         if meta is None and getattr(self, "_overlay_resolver", None):
@@ -3227,7 +3227,7 @@ class NexusFS(  # type: ignore[misc]
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         with self._vfs_locked(path, "write"):
-            self.metadata.delete(path)
+            route.metastore.delete(path)
 
         # --- Lock released — event dispatch ---
         await self._dispatch.notify(
@@ -3269,20 +3269,20 @@ class NexusFS(  # type: ignore[misc]
         if meta.is_mount:
             removed = self._driver_coordinator.unmount(path)
             if removed:
-                self.metadata.delete(path)
+                route.metastore.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
         # Check if directory contains any files
         dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = self.metadata.list(dir_path)
+        files_in_dir = route.metastore.list(dir_path)
 
         if files_in_dir:
             if not recursive:
                 raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
             # Recursive: batch delete all children
             file_paths = [file_meta.path for file_meta in files_in_dir]
-            self.metadata.delete_batch(file_paths)
+            route.metastore.delete_batch(file_paths)
 
         # Remove directory in backend (suppress errors — CAS may not have physical dir)
         with contextlib.suppress(NexusFileNotFoundError):
@@ -3290,14 +3290,14 @@ class NexusFS(  # type: ignore[misc]
 
         # Delete directory's own metadata entry
         try:
-            self.metadata.delete(path)
+            route.metastore.delete(path)
         except Exception as e:
             logger.debug("Failed to delete directory metadata for %s: %s", path, e)
 
         # Clean up sparse directory index entries
-        if hasattr(self.metadata, "delete_directory_entries_recursive"):
+        if hasattr(route.metastore, "delete_directory_entries_recursive"):
             try:
-                self.metadata.delete_directory_entries_recursive(path)
+                route.metastore.delete_directory_entries_recursive(path)
             except Exception as e:
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
@@ -3384,10 +3384,12 @@ class NexusFS(  # type: ignore[misc]
         # ── Fast-fail (unlocked, optimization only) ──
         # Avoids lock acquisition for the common "file not found" error case.
         # Not authoritative — re-checked under lock below.
-        if not self.metadata.exists(old_path) and not self.metadata.is_implicit_directory(old_path):
+        if not old_route.metastore.exists(old_path) and not self.metadata.is_implicit_directory(
+            old_path
+        ):
             raise NexusFileNotFoundError(old_path)
 
-        meta = self.metadata.get(old_path)
+        meta = old_route.metastore.get(old_path)
         is_directory = (
             meta and meta.mime_type == "inode/directory"
         ) or self.metadata.is_implicit_directory(old_path)
@@ -3414,17 +3416,17 @@ class NexusFS(  # type: ignore[misc]
             _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
                 # ── Authoritative checks (under lock, TOCTOU-safe) ──
-                is_implicit_dir = not self.metadata.exists(
+                is_implicit_dir = not old_route.metastore.exists(
                     old_path
                 ) and self.metadata.is_implicit_directory(old_path)
-                if not self.metadata.exists(old_path) and not is_implicit_dir:
+                if not old_route.metastore.exists(old_path) and not is_implicit_dir:
                     raise NexusFileNotFoundError(old_path)
 
-                meta = self.metadata.get(old_path)
+                meta = old_route.metastore.get(old_path)
                 is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
                 # Check destination — use backend.file_exists() for PAS backends
-                if self.metadata.exists(new_path):
+                if new_route.metastore.exists(new_path):
                     if hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
@@ -3433,7 +3435,7 @@ class NexusFS(  # type: ignore[misc]
                             "Cleaning up stale metadata for %s (file not in backend storage)",
                             new_path,
                         )
-                        self.metadata.delete(new_path)
+                        new_route.metastore.delete(new_path)
                     else:
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
@@ -3442,23 +3444,23 @@ class NexusFS(  # type: ignore[misc]
                 # MetastoreABC primitives. Put-first for crash safety (#3062).
                 from dataclasses import replace as _replace
 
-                _old_meta = self.metadata.get(old_path)
+                _old_meta = old_route.metastore.get(old_path)
                 if _old_meta is not None:
                     # Single entry (file or explicit directory)
                     _new_meta = _replace(_old_meta, path=new_path)
-                    self.metadata.put(_new_meta)
-                    self.metadata.delete(old_path)
+                    new_route.metastore.put(_new_meta)
+                    old_route.metastore.delete(old_path)
                 elif not is_directory:
                     raise NexusFileNotFoundError(old_path)
 
                 # Rename children (for directories — explicit or implicit)
                 if is_directory:
                     _prefix = old_path.rstrip("/") + "/"
-                    for child in self.metadata.list(_prefix, recursive=True):
+                    for child in old_route.metastore.list(_prefix, recursive=True):
                         _child_new = new_path + child.path[len(old_path) :]
                         _child_new_meta = _replace(child, path=_child_new)
-                        self.metadata.put(_child_new_meta)
-                        self.metadata.delete(child.path)
+                        new_route.metastore.put(_child_new_meta)
+                        old_route.metastore.delete(child.path)
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)
@@ -3539,10 +3541,12 @@ class NexusFS(  # type: ignore[misc]
             raise PermissionError(f"Cannot copy to read-only path: {dst_path}")
 
         # Fast-fail (unlocked — re-checked under lock)
-        if not self.metadata.exists(src_path) and not self.metadata.is_implicit_directory(src_path):
+        if not src_route.metastore.exists(src_path) and not self.metadata.is_implicit_directory(
+            src_path
+        ):
             raise NexusFileNotFoundError(src_path)
 
-        src_meta = self.metadata.get(src_path)
+        src_meta = src_route.metastore.get(src_path)
         if src_meta is None:
             raise NexusFileNotFoundError(src_path)
         if src_meta.mime_type == "inode/directory":
@@ -3568,11 +3572,11 @@ class NexusFS(  # type: ignore[misc]
             _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
                 # Authoritative checks under lock
-                src_meta = self.metadata.get(src_path)
+                src_meta = src_route.metastore.get(src_path)
                 if src_meta is None:
                     raise NexusFileNotFoundError(src_path)
 
-                if self.metadata.exists(dst_path):
+                if dst_route.metastore.exists(dst_path):
                     raise FileExistsError(f"Destination path already exists: {dst_path}")
 
                 same_backend = src_route.backend is dst_route.backend
@@ -3600,7 +3604,7 @@ class NexusFS(  # type: ignore[misc]
                         etag=dst_version or src_meta.etag,
                         size=dst_size,
                     )
-                    self.metadata.put(dst_meta)
+                    dst_route.metastore.put(dst_meta)
                     result = {
                         "path": dst_path,
                         "size": dst_size,
@@ -3613,7 +3617,7 @@ class NexusFS(  # type: ignore[misc]
                     from dataclasses import replace as _replace
 
                     dst_meta = _replace(src_meta, path=dst_path)
-                    self.metadata.put(dst_meta)
+                    dst_route.metastore.put(dst_meta)
                     result = {
                         "path": dst_path,
                         "size": dst_meta.size or 0,
@@ -3650,7 +3654,7 @@ class NexusFS(  # type: ignore[misc]
                             physical_path=dst_route.backend_path,
                             etag=dst_version_id or src_meta.etag,
                         )
-                        self.metadata.put(dst_meta)
+                        dst_route.metastore.put(dst_meta)
                         result = {
                             "path": dst_path,
                             "size": dst_meta.size or 0,
@@ -3700,7 +3704,7 @@ class NexusFS(  # type: ignore[misc]
                             path=dst_path,
                             physical_path=write_result.content_id or dst_route.backend_path,
                         )
-                        self.metadata.put(dst_meta)
+                        dst_route.metastore.put(dst_meta)
                         result = {
                             "path": dst_path,
                             "size": dst_meta.size or 0,
@@ -4245,7 +4249,7 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.intercept_pre_write(_WHC(path=path, content=b"", context=context))
 
         # Check if path exists (explicit or implicit)
-        meta = self.metadata.get(path)
+        meta = route.metastore.get(path)
         if is_implicit is None:
             is_implicit = meta is None and self.metadata.is_implicit_directory(path)
 
@@ -4258,7 +4262,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Get files in directory
         dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = self.metadata.list(dir_path)
+        files_in_dir = route.metastore.list(dir_path)
 
         if files_in_dir and not recursive:
             raise OSError(errno.ENOTEMPTY, "Directory not empty", path)
@@ -4269,7 +4273,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]
-            self.metadata.delete_batch(file_paths)
+            route.metastore.delete_batch(file_paths)
 
         # Remove directory in backend
         with contextlib.suppress(NexusFileNotFoundError):
@@ -4277,7 +4281,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Delete the directory metadata (only if explicit directory)
         if not is_implicit:
-            self.metadata.delete(path)
+            route.metastore.delete(path)
 
     @rpc_expose(description="Rename/move multiple files")
     async def rename_batch(

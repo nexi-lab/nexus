@@ -576,8 +576,10 @@ class TestPlaygroundApp:
         async with app.run_test(size=(99, 24)) as pilot:
             await pilot.pause(delay=0.5)
             banner = app.query_one("#playground-banner")
+            panel = app.query_one("#mount-panel", MountPanel)
             assert "`m` show mounts" in str(banner.render())
             assert app.show_mount_panel is False
+            assert panel.display is False
 
     @pytest.mark.asyncio
     async def test_too_small_hides_main_content(self, tmp_path):

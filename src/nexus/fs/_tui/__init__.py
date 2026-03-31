@@ -487,6 +487,7 @@ class PlaygroundApp(App[None]):
         # Mount panel
         mount_panel = MountPanel(self._fs, self._mount_points, id="mount-panel")
         await main.mount(mount_panel)
+        mount_panel.display = self.show_mount_panel
 
         # File browser
         browser = FileBrowser(self._fs, id="file-browser")

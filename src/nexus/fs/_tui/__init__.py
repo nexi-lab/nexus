@@ -368,6 +368,7 @@ class PlaygroundApp(App[None]):
         self._restored_mounts = False
         self._picker_title = "Supported connectors"
         self._picker_pending_uri: str | None = None
+        self._mount_panel_auto_collapsed = False
 
     async def on_mount(self) -> None:
         """Initialize filesystem and load mounts."""
@@ -608,7 +609,10 @@ class PlaygroundApp(App[None]):
 
     def _update_banner(self) -> None:
         """Render a visible top-of-screen summary of available actions."""
-        banner = self.query_one("#playground-banner", Static)
+        try:
+            banner = self.query_one("#playground-banner", Static)
+        except Exception:
+            return
         if self.picker_visible:
             banner.update(
                 "[bold]Add Mount[/bold] Browse supported connectors, press Enter to continue, "
@@ -619,8 +623,12 @@ class PlaygroundApp(App[None]):
         restored = ""
         if self._restored_mounts and self._mount_points:
             restored = f"[yellow]Restored {len(self._mount_points)} mount(s) from the previous session.[/yellow]  "
+        mount_hint = ""
+        if self._mount_panel_auto_collapsed and not self.show_mount_panel:
+            mount_hint = "[bold]Mounts:[/bold] `m` show mounts  "
         banner.update(
             f"{restored}[bold]Add Mount:[/bold] `a`  "
+            f"{mount_hint}"
             "[bold]Mounts:[/bold] `m` focus  `u` unmount  "
             "[bold]Open:[/bold] `Enter` selected folder/file  "
             "[bold]Ops:[/bold] `n` file  `N` dir  `r` rename  `d` delete  `p` preview"
@@ -1585,6 +1593,7 @@ class PlaygroundApp(App[None]):
             panel.display = show
         except Exception:
             pass
+        self._update_banner()
 
     def on_resize(self, event: Any) -> None:  # noqa: ARG002
         """Handle terminal resize for responsive layout."""
@@ -1620,8 +1629,10 @@ class PlaygroundApp(App[None]):
 
         # Auto-collapse mount panel at narrow widths
         if width < MOUNT_PANEL_COLLAPSE_WIDTH:
+            self._mount_panel_auto_collapsed = True
             self.show_mount_panel = False
         else:
+            self._mount_panel_auto_collapsed = False
             self.show_mount_panel = True
 
     async def on_key(self, event: Any) -> None:

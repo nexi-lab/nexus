@@ -569,6 +569,17 @@ class TestPlaygroundApp:
                 assert "Restored 1 mount" in str(banner.render())
 
     @pytest.mark.asyncio
+    async def test_browser_banner_mentions_show_mounts_when_auto_collapsed(self, tmp_path):
+        """Narrow terminals should advertise how to reopen the auto-collapsed mount panel."""
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(99, 24)) as pilot:
+            await pilot.pause(delay=0.5)
+            banner = app.query_one("#playground-banner")
+            assert "`m` show mounts" in str(banner.render())
+            assert app.show_mount_panel is False
+
+    @pytest.mark.asyncio
     async def test_too_small_hides_main_content(self, tmp_path):
         """Too-small terminals should show only the warning, not stacked content underneath."""
         app = PlaygroundApp(uris=(f"local://{tmp_path}",))

@@ -218,6 +218,13 @@ def _spawn_ready(pt: AgentRegistry, name: str = "a") -> "AgentDescriptor":
 
 
 class TestSignals:
+    def test_sigcont_from_registered_bootstraps_to_ready(self) -> None:
+        pt = _make_table()
+        desc = pt.register_external("a", OWNER, ZONE, connection_id="conn-a")
+        updated = pt.signal(desc.pid, AgentSignal.SIGCONT)
+        assert updated.state == AgentState.READY
+        assert updated.generation == desc.generation + 1
+
     def test_sigstop(self) -> None:
         pt = _make_table()
         desc = _spawn_ready(pt)

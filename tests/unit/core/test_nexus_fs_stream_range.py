@@ -84,6 +84,7 @@ def stub_fs():
 
     route = MagicMock()
     route.backend = backend
+    route.metastore = metadata  # route.metastore == self.metadata (same mock)
     route.backend_path = "/test"
     route.readonly = False
     router = MagicMock()

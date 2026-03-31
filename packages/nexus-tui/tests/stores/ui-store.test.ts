@@ -17,6 +17,7 @@ describe("UiStore", () => {
       sideNavVisible: true,
       panelDataTimestamps: {},
       panelVisitTimestamps: { files: Date.now() },
+      activePanelId: "files" as any,
     });
   });
 

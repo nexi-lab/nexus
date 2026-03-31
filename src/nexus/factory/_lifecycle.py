@@ -51,7 +51,10 @@ async def _wire_services(
     from nexus.factory.service_routing import enlist_services
 
     _svc = services or {}
-    # permission_enforcer is now accessed via ServiceRegistry (enlist), not kernel DI.
+
+    # Set kernel zone identity from factory (federation provides actual zone_id)
+    if zone_id is not None:
+        nx._zone_id = zone_id
 
     _parsing = parsing if parsing is not None else nx._parse_config
 

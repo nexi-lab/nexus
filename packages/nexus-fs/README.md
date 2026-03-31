@@ -85,6 +85,15 @@ pip install nexus-fs[tui]
 nexus-fs playground s3://my-bucket local://./data
 ```
 
+## CLI
+
+```bash
+nexus-fs mount s3://my-bucket
+nexus-fs mount list
+nexus-fs mount test s3://my-bucket
+nexus-fs unmount s3://my-bucket
+```
+
 > **Note:** The TUI uses direct backend access for low-latency browsing.
 > File operation semantics in the playground may differ from the library API
 > (e.g., metadata fields, error messages). The library API (`mount()` /

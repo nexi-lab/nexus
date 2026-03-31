@@ -2,6 +2,9 @@
 
 Provides the `nexus-fs` console command with subcommands:
 - nexus-fs mount       — register backends for later use
+- nexus-fs mount list  — show persisted mounts
+- nexus-fs mount test  — test backend connectivity without persisting
+- nexus-fs unmount     — remove persisted mounts
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
 - nexus-fs playground  — interactive TUI file browser
 - nexus-fs cp          — copy files between mounted backends
@@ -15,6 +18,7 @@ pulling in optional dependencies (e.g., Textual) when they aren't needed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import sys
 from dataclasses import asdict
 
@@ -33,6 +37,111 @@ def main(ctx: click.Context) -> None:
         click.echo(ctx.get_help())
 
 
+def _mount_list(output_opts: OutputOptions) -> None:
+    """List persisted mounts from mounts.json."""
+    from nexus.fs._paths import load_persisted_mounts
+
+    entries = load_persisted_mounts()
+    data = {
+        "mounts": [
+            {"uri": entry["uri"], "at": entry.get("at"), "status": "persisted"} for entry in entries
+        ]
+    }
+
+    def _human_display(d: dict) -> None:
+        mounts = d["mounts"]
+        if not mounts:
+            click.echo("No persisted mounts.")
+            return
+        for mount in mounts:
+            mount_point = mount["at"] or "(default)"
+            click.echo(f"{mount['uri']} -> {mount_point} [{mount['status']}]")
+        click.echo(f"Listed {len(mounts)} persisted mount(s).")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
+
+
+def _mount_test(uris: tuple[str, ...], output_opts: OutputOptions) -> None:
+    """Test backend connectivity without persisting mount state."""
+    from nexus.fs._doctor import DoctorStatus, render_doctor, run_all_checks
+    from nexus.fs._paths import mounts_file
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict[str, list[dict[str, str | float | None]]]:
+        from nexus.fs import mount
+        from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts
+
+        mf = mounts_file()
+        had_mounts_file = mf.exists()
+        previous_entries = load_persisted_mounts() if had_mounts_file else []
+        try:
+            fs = await mount(*uris)
+            results = await run_all_checks(fs=fs)
+        finally:
+            if had_mounts_file:
+                save_persisted_mounts(previous_entries, merge=False)
+            else:
+                with contextlib.suppress(OSError):
+                    mf.unlink()
+
+        return {
+            section: [{**asdict(r), "status": r.status.value} for r in checks]
+            for section, checks in results.items()
+        }
+
+    try:
+        serializable = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    has_failure = any(
+        result["status"] == DoctorStatus.FAIL.value for result in serializable.get("Mounts", [])
+    )
+
+    def _human_display(data: dict[str, list[dict[str, str | float | None]]]) -> None:
+        from nexus.fs._doctor import DoctorCheckResult
+
+        def _string_field(item: dict[str, str | float | None], key: str) -> str | None:
+            value = item.get(key)
+            return value if isinstance(value, str) or value is None else str(value)
+
+        def _latency_field(item: dict[str, str | float | None]) -> float | None:
+            value = item.get("latency_ms")
+            return float(value) if isinstance(value, (str, float, int)) else None
+
+        results = {
+            section: [
+                DoctorCheckResult(
+                    name=str(item["name"]),
+                    status=DoctorStatus(str(item["status"])),
+                    message=str(item["message"]),
+                    fix_hint=_string_field(item, "fix_hint"),
+                    latency_ms=_latency_field(item),
+                    install_cmd=_string_field(item, "install_cmd"),
+                )
+                for item in checks
+            ]
+            for section, checks in data.items()
+        }
+        render_doctor(results)
+        if has_failure:
+            sys.exit(1)
+
+    render_output(
+        data=serializable,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
+
+    if output_opts.json_output and has_failure:
+        sys.exit(1)
+
+
 @main.command("mount")
 @click.argument("uris", nargs=-1, required=True)
 @click.option(
@@ -42,11 +151,12 @@ def main(ctx: click.Context) -> None:
 )
 @add_output_options
 def mount_cmd(uris: tuple[str, ...], at: str | None, output_opts: OutputOptions) -> None:
-    """Register backends for later use by other commands.
+    """Manage persisted mounts and test backend connectivity.
 
-    Mounts the given backend URIs and persists them so that subsequent
-    commands (cp, playground) can auto-discover them without needing
-    URIs again.
+    The default form mounts the given backend URIs and persists them so that
+    subsequent commands (cp, playground) can auto-discover them without
+    needing URIs again. ``list`` and ``test`` are accepted as the first
+    positional token to provide a subcommand-style workflow:
 
     \b
     Examples:
@@ -55,8 +165,24 @@ def mount_cmd(uris: tuple[str, ...], at: str | None, output_opts: OutputOptions)
       nexus-fs mount s3://my-bucket
       nexus-fs mount s3://my-bucket gcs://project/bucket local://./data
       nexus-fs mount s3://my-bucket --at /custom/path
+      nexus-fs mount list
+      nexus-fs mount test s3://my-bucket
       nexus-fs mount s3://my-bucket --json
     """
+    if uris[0] == "list":
+        if len(uris) != 1 or at is not None:
+            raise click.UsageError("Usage: nexus-fs mount list")
+        _mount_list(output_opts)
+        return
+
+    if uris[0] == "test":
+        if at is not None:
+            raise click.UsageError("'--at' is not supported with 'nexus-fs mount test'")
+        if len(uris) == 1:
+            raise click.UsageError("Usage: nexus-fs mount test <uri> [<uri> ...]")
+        _mount_test(uris[1:], output_opts)
+        return
+
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
@@ -76,6 +202,34 @@ def mount_cmd(uris: tuple[str, ...], at: str | None, output_opts: OutputOptions)
         for mp in d["mounts"]:
             click.echo(f"  {mp}")
         click.echo(f"Mounted {len(d['mounts'])} backend(s).")
+
+    render_output(
+        data=data,
+        output_opts=output_opts,
+        human_formatter=_human_display,
+    )
+
+
+@main.command("unmount")
+@click.argument("uri", type=str)
+@add_output_options
+def unmount_cmd(uri: str, output_opts: OutputOptions) -> None:
+    """Remove a persisted mount entry from mounts.json."""
+    from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts
+
+    entries = load_persisted_mounts()
+    remaining = [entry for entry in entries if entry["uri"] != uri]
+    removed = len(entries) - len(remaining)
+
+    if removed == 0:
+        click.echo(f"Error: mount not found: {uri}", err=True)
+        sys.exit(1)
+
+    save_persisted_mounts(remaining, merge=False)
+    data = {"uri": uri, "removed": removed}
+
+    def _human_display(d: dict) -> None:
+        click.echo(f"Removed persisted mount: {d['uri']}")
 
     render_output(
         data=data,

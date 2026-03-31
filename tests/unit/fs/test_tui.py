@@ -856,6 +856,74 @@ class TestPlaygroundApp:
             mock_mount.assert_awaited_once_with("gws://drive")
             assert fs.list_mounts() == ["/gws/drive"]
 
+    @pytest.mark.asyncio
+    async def test_shift_tab_moves_focus_to_mount_panel(self, tmp_path):
+        """Shift+Tab from file browser should move focus back to mount panel."""
+        (tmp_path / "hello.txt").write_text("hello")
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            browser = app.query_one("#file-browser", FileBrowser)
+            table = browser.query_one("#file-table", DataTable)
+
+            # Start with focus on file table
+            table.focus()
+            await pilot.pause(delay=0.1)
+            assert app.focused is table
+
+            # Shift+Tab should move focus to mount panel
+            await pilot.press("shift+tab")
+            await pilot.pause(delay=0.2)
+            assert isinstance(app.focused, MountPanel)
+
+    @pytest.mark.asyncio
+    async def test_tab_and_shift_tab_round_trip(self, tmp_path):
+        """Tab and Shift+Tab should cycle focus between mount panel and file browser."""
+        (tmp_path / "hello.txt").write_text("hello")
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            mount_panel = app.query_one("#mount-panel", MountPanel)
+
+            # Focus mount panel, then Tab forward to file browser
+            mount_panel.focus()
+            await pilot.pause(delay=0.1)
+            assert isinstance(app.focused, MountPanel)
+
+            await pilot.press("tab")
+            await pilot.pause(delay=0.2)
+            assert not isinstance(app.focused, MountPanel)
+
+            # Shift+Tab back to mount panel
+            await pilot.press("shift+tab")
+            await pilot.pause(delay=0.2)
+            assert isinstance(app.focused, MountPanel)
+
+    @pytest.mark.asyncio
+    async def test_shift_tab_noop_when_mount_panel_collapsed(self, tmp_path):
+        """Shift+Tab should not focus mount panel when it is collapsed."""
+        (tmp_path / "hello.txt").write_text("hello")
+        app = PlaygroundApp(uris=(f"local://{tmp_path}",))
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause(delay=0.5)
+            browser = app.query_one("#file-browser", FileBrowser)
+            table = browser.query_one("#file-table", DataTable)
+
+            # Focus file table first, then collapse mount panel
+            table.focus()
+            await pilot.pause(delay=0.1)
+            app.show_mount_panel = False
+            await pilot.pause(delay=0.1)
+            assert app.focused is table
+
+            # Shift+Tab should NOT move focus to (hidden) mount panel
+            await pilot.press("shift+tab")
+            await pilot.pause(delay=0.2)
+            assert not isinstance(app.focused, MountPanel)
+
 
 # ---------------------------------------------------------------------------
 # Edge cases

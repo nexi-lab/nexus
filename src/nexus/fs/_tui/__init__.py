@@ -1649,6 +1649,13 @@ class PlaygroundApp(App[None]):
                 self._refocus_table()
                 event.prevent_default()
                 return
+        if event.key == "shift+tab" and not isinstance(focused, (MountPanel, Input)):
+            if self.show_mount_panel:
+                # Reverse focus: file browser → mount panel
+                self.action_focus_mount_panel()
+            # Always suppress default Textual focus cycling for shift+tab
+            event.prevent_default()
+            return
         if event.key in {"enter", "return", "ctrl+m"} and await self._mount_selected_picker_uri():
             event.prevent_default()
             return

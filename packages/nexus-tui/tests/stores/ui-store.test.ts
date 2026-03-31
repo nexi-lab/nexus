@@ -258,4 +258,24 @@ describe("UiStore", () => {
       expect(useUiStore.getState().panelVisitTimestamps["agents"]).toBeDefined();
     });
   });
+
+  // ===========================================================================
+  // Reset freshness timestamps (#3503)
+  // ===========================================================================
+
+  describe("resetFreshnessTimestamps", () => {
+    it("clears data timestamps and preserves only active panel visit", () => {
+      useUiStore.getState().markDataUpdated("files");
+      useUiStore.getState().markDataUpdated("agents");
+      useUiStore.getState().markPanelVisited("agents");
+
+      useUiStore.getState().resetFreshnessTimestamps();
+
+      expect(useUiStore.getState().panelDataTimestamps).toEqual({});
+      // Active panel (agents) should still be marked visited
+      expect(useUiStore.getState().panelVisitTimestamps["agents"]).toBeDefined();
+      // Other panels should be cleared
+      expect(useUiStore.getState().panelVisitTimestamps["files"]).toBeUndefined();
+    });
+  });
 });

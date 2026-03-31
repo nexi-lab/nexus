@@ -58,6 +58,7 @@ export interface UiState {
   readonly setSideNavVisible: (visible: boolean) => void;
   readonly markDataUpdated: (panel: PanelId) => void;
   readonly markPanelVisited: (panel: PanelId) => void;
+  readonly resetFreshnessTimestamps: () => void;
 }
 
 // =============================================================================
@@ -149,5 +150,12 @@ export const useUiStore = create<UiState>((set, get) => ({
       panelVisitTimestamps: { ...state.panelVisitTimestamps, [panel]: Date.now() },
       activePanelId: panel,
     }));
+  },
+
+  resetFreshnessTimestamps: () => {
+    set({
+      panelDataTimestamps: {},
+      panelVisitTimestamps: { [get().activePanelId]: Date.now() },
+    });
   },
 }));

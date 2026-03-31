@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 export type { DelegationItem } from "./delegation-store.js";
 import type { DelegationItem } from "./delegation-store.js";
 
@@ -326,6 +327,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         `/api/v2/agents/${encodeURIComponent(agentId)}/spec`,
       );
       set({ agentSpec: response, error: null });
+      useUiStore.getState().markDataUpdated("agents");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch agent spec";
       set({ error: message });
@@ -339,6 +341,7 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
         `/api/v2/agents/${encodeURIComponent(agentId)}/identity`,
       );
       set({ agentIdentity: response, error: null });
+      useUiStore.getState().markDataUpdated("agents");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch agent identity";
       set({ error: message });

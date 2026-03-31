@@ -8,6 +8,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 export type { DelegationItem } from "./delegation-store.js";
 import type { DelegationItem } from "./delegation-store.js";
 
@@ -382,6 +383,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         }
         return {};
       });
+      useUiStore.getState().markDataUpdated("access");
     } catch {
       // Non-critical: entries just won't be available for the checker trace
     }
@@ -598,6 +600,7 @@ export const useAccessStore = create<AccessState>((set, get) => ({
         delegationsLoading: false,
         selectedDelegationIndex: 0,
       });
+      useUiStore.getState().markDataUpdated("access");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch delegations";
       set({ delegationsLoading: false, error: message });

@@ -15,6 +15,9 @@ describe("UiStore", () => {
       zoomedPanel: null,
       scrollPositions: {},
       sideNavVisible: true,
+      panelDataTimestamps: {},
+      panelVisitTimestamps: { files: Date.now() },
+      activePanelId: "files" as any,
     });
   });
 
@@ -171,6 +174,109 @@ describe("UiStore", () => {
 
     it("returns 0 for unknown key", () => {
       expect(useUiStore.getState().getScrollPosition("unknown")).toBe(0);
+    });
+  });
+
+  // ===========================================================================
+  // Panel data timestamps (#3503)
+  // ===========================================================================
+
+  describe("markDataUpdated", () => {
+    it("records a timestamp for the panel", () => {
+      const before = Date.now();
+      useUiStore.getState().markDataUpdated("files");
+      const after = Date.now();
+
+      const ts = useUiStore.getState().panelDataTimestamps["files"];
+      expect(ts).toBeDefined();
+      expect(ts!).toBeGreaterThanOrEqual(before);
+      expect(ts!).toBeLessThanOrEqual(after);
+    });
+
+    it("preserves other panels' timestamps", () => {
+      useUiStore.getState().markDataUpdated("files");
+      useUiStore.getState().markDataUpdated("agents");
+
+      expect(useUiStore.getState().panelDataTimestamps["files"]).toBeDefined();
+      expect(useUiStore.getState().panelDataTimestamps["agents"]).toBeDefined();
+    });
+
+    it("overwrites previous timestamp for the same panel", () => {
+      useUiStore.getState().markDataUpdated("files");
+      const first = useUiStore.getState().panelDataTimestamps["files"]!;
+
+      useUiStore.getState().markDataUpdated("files");
+      const second = useUiStore.getState().panelDataTimestamps["files"]!;
+
+      expect(second).toBeGreaterThanOrEqual(first);
+    });
+
+    it("also updates visit timestamp when panel is currently active", () => {
+      // "files" is the default active panel in global-store
+      useUiStore.getState().markDataUpdated("files");
+
+      const dataTs = useUiStore.getState().panelDataTimestamps["files"]!;
+      const visitTs = useUiStore.getState().panelVisitTimestamps["files"]!;
+
+      // Visit should be updated to match data, preventing false unseen
+      expect(visitTs).toBeGreaterThanOrEqual(dataTs);
+    });
+
+    it("does not update visit timestamp for non-active panel", () => {
+      // Reset visit timestamp for agents (not the active panel)
+      useUiStore.setState({
+        panelVisitTimestamps: { ...useUiStore.getState().panelVisitTimestamps, agents: 100 },
+      });
+
+      useUiStore.getState().markDataUpdated("agents");
+
+      // Visit timestamp should remain at 100 (not updated)
+      expect(useUiStore.getState().panelVisitTimestamps["agents"]).toBe(100);
+    });
+  });
+
+  // ===========================================================================
+  // Panel visit timestamps (#3503)
+  // ===========================================================================
+
+  describe("markPanelVisited", () => {
+    it("records a timestamp for the panel", () => {
+      const before = Date.now();
+      useUiStore.getState().markPanelVisited("versions");
+      const after = Date.now();
+
+      const ts = useUiStore.getState().panelVisitTimestamps["versions"];
+      expect(ts).toBeDefined();
+      expect(ts!).toBeGreaterThanOrEqual(before);
+      expect(ts!).toBeLessThanOrEqual(after);
+    });
+
+    it("preserves other panels' visit timestamps", () => {
+      useUiStore.getState().markPanelVisited("files");
+      useUiStore.getState().markPanelVisited("agents");
+
+      expect(useUiStore.getState().panelVisitTimestamps["files"]).toBeDefined();
+      expect(useUiStore.getState().panelVisitTimestamps["agents"]).toBeDefined();
+    });
+  });
+
+  // ===========================================================================
+  // Reset freshness timestamps (#3503)
+  // ===========================================================================
+
+  describe("resetFreshnessTimestamps", () => {
+    it("clears data timestamps and preserves only active panel visit", () => {
+      useUiStore.getState().markDataUpdated("files");
+      useUiStore.getState().markDataUpdated("agents");
+      useUiStore.getState().markPanelVisited("agents");
+
+      useUiStore.getState().resetFreshnessTimestamps();
+
+      expect(useUiStore.getState().panelDataTimestamps).toEqual({});
+      // Active panel (agents) should still be marked visited
+      expect(useUiStore.getState().panelVisitTimestamps["agents"]).toBeDefined();
+      // Other panels should be cleared
+      expect(useUiStore.getState().panelVisitTimestamps["files"]).toBeUndefined();
     });
   });
 });

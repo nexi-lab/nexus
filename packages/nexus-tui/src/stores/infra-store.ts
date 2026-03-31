@@ -8,6 +8,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -306,6 +307,7 @@ export const useInfraStore = create<InfraState>((set, get) => ({
           auditNextCursor: response.next_cursor ?? null,
         };
       });
+      useUiStore.getState().markDataUpdated("infrastructure");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch audit transactions";
       set({ auditLoading: false, error: message });

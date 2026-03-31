@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 /** Minimal OpenAPI 3.x spec shape — only what we parse. */
 interface OpenApiSpec {
@@ -334,6 +335,7 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
         ].slice(-MAX_COMMAND_HISTORY),
         historyIndex: -1,
       }));
+      useUiStore.getState().markDataUpdated("console");
     } catch (err) {
       const timeMs = performance.now() - start;
       const message = err instanceof Error ? err.message : "Request failed";
@@ -372,6 +374,7 @@ export const useApiConsoleStore = create<ApiConsoleState>((set, get) => ({
       // Sort: by path, then by method
       endpoints.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
       get().setEndpoints(endpoints);
+      useUiStore.getState().markDataUpdated("console");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch OpenAPI spec";
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });

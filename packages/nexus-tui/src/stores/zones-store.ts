@@ -9,6 +9,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 
 // =============================================================================
 // Types (snake_case matching API wire format)
@@ -180,6 +181,7 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       }
       const data = (await raw.json()) as { zones?: ZoneResponse[] };
       set({ zones: data.zones ?? [], zonesLoading: false });
+      useUiStore.getState().markDataUpdated("zones");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch zones";
       set({ zones: [], zonesLoading: false, error: message });
@@ -232,6 +234,7 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
         `/api/v2/bricks/${encodeURIComponent(name)}`,
       );
       set({ brickDetail: detail, detailLoading: false });
+      useUiStore.getState().markDataUpdated("zones");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch brick detail";
       set({
@@ -251,6 +254,7 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
         "/api/v2/bricks/drift",
       );
       set({ driftReport: report, driftLoading: false });
+      useUiStore.getState().markDataUpdated("zones");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch drift report";
       set({

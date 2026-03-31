@@ -35,6 +35,15 @@ export interface UiState {
   /** Whether the side navigation bar is visible (toggled via Ctrl+B). */
   readonly sideNavVisible: boolean;
 
+  /** Timestamp (ms) of the last successful data update per panel. 0 = never fetched. */
+  readonly panelDataTimestamps: Readonly<Partial<Record<PanelId, number>>>;
+
+  /** Timestamp (ms) of the last time the user visited each panel. 0 = never visited. */
+  readonly panelVisitTimestamps: Readonly<Partial<Record<PanelId, number>>>;
+
+  /** Mirror of global-store activePanel, kept in sync by markPanelVisited. */
+  readonly activePanelId: PanelId;
+
   // Actions
   readonly setFocusPane: (panel: string, pane: FocusPane) => void;
   readonly toggleFocusPane: (panel: string) => void;
@@ -47,6 +56,9 @@ export interface UiState {
   readonly setFileEditorOpen: (open: boolean) => void;
   readonly toggleSideNav: () => void;
   readonly setSideNavVisible: (visible: boolean) => void;
+  readonly markDataUpdated: (panel: PanelId) => void;
+  readonly markPanelVisited: (panel: PanelId) => void;
+  readonly resetFreshnessTimestamps: () => void;
 }
 
 // =============================================================================
@@ -60,6 +72,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   overlayActive: false,
   fileEditorOpen: false,
   sideNavVisible: true,
+  panelDataTimestamps: {},
+  // "files" is the default active panel — mark it visited at startup so data
+  // fetched during the initial load does not produce a false-positive unseen dot.
+  panelVisitTimestamps: { files: Date.now() },
+  activePanelId: "files" as PanelId,
 
   setFocusPane: (panel, pane) => {
     set((state) => ({
@@ -113,5 +130,32 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setSideNavVisible: (visible) => {
     set({ sideNavVisible: visible });
+  },
+
+  markDataUpdated: (panel) => {
+    const now = Date.now();
+    // If the user is currently viewing this panel, also update the visit
+    // timestamp so the panel is not marked "unseen" when the user leaves.
+    const isActive = get().activePanelId === panel;
+    set((state) => ({
+      panelDataTimestamps: { ...state.panelDataTimestamps, [panel]: now },
+      ...(isActive
+        ? { panelVisitTimestamps: { ...state.panelVisitTimestamps, [panel]: now } }
+        : {}),
+    }));
+  },
+
+  markPanelVisited: (panel) => {
+    set((state) => ({
+      panelVisitTimestamps: { ...state.panelVisitTimestamps, [panel]: Date.now() },
+      activePanelId: panel,
+    }));
+  },
+
+  resetFreshnessTimestamps: () => {
+    set({
+      panelDataTimestamps: {},
+      panelVisitTimestamps: { [get().activePanelId]: Date.now() },
+    });
   },
 }));

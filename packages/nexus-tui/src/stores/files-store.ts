@@ -9,6 +9,7 @@ import { create } from "zustand";
 import type { FetchClient } from "@nexus/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
 import { LruCache } from "../shared/utils/lru-cache.js";
 
 // =============================================================================
@@ -251,6 +252,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       const sorted = sortFileItems(items);
       fileCache.set(path, { data: sorted, fetchedAt: Date.now() });
       set({ fileCacheRevision: get().fileCacheRevision + 1, error: null });
+      useUiStore.getState().markDataUpdated("files");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : "Failed to fetch files";
@@ -271,6 +273,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
         { signal: controller.signal },
       );
       set({ previewContent: response.content ?? "", previewLoading: false });
+      useUiStore.getState().markDataUpdated("files");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       const message = err instanceof Error ? err.message : "Failed to fetch preview";
@@ -353,6 +356,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       fileCache.set(path, { data: sorted, fetchedAt: Date.now() });
 
       set({ treeNodes: updatedNodes, fileCacheRevision: get().fileCacheRevision + 1, error: null });
+      useUiStore.getState().markDataUpdated("files");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       // Revert loading state
@@ -430,6 +434,7 @@ export const useFilesStore = create<FilesState>((set, get) => ({
       }
 
       set({ treeNodes: updatedNodes, error: null });
+      useUiStore.getState().markDataUpdated("files");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") return;
       // Revert loadingMore state

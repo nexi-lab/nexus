@@ -8,6 +8,8 @@
 
 import type { FetchClient } from "@nexus/api-client";
 import { useErrorStore, type ErrorCategory } from "./error-store.js";
+import { useUiStore } from "./ui-store.js";
+import type { PanelId } from "./global-store.js";
 
 type SetState<S> = (partial: Partial<S> | ((state: S) => Partial<S>)) => void;
 
@@ -108,6 +110,9 @@ export function createApiAction<
     try {
       const result = await config.action(...args);
       set({ ...result, [config.loadingKey]: false } as Partial<S>);
+      if (config.source) {
+        useUiStore.getState().markDataUpdated(config.source as PanelId);
+      }
       config.onSuccess?.();
     } catch (err) {
       const message = err instanceof Error

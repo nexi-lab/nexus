@@ -28,6 +28,7 @@ import { useInfraStore } from "../../src/stores/infra-store.js";
 import { useApiConsoleStore } from "../../src/stores/api-console-store.js";
 import { useConnectorsStore } from "../../src/stores/connectors-store.js";
 import { useStackStore } from "../../src/stores/stack-store.js";
+import { useUiStore } from "../../src/stores/ui-store.js";
 
 // =============================================================================
 // Helpers
@@ -67,6 +68,8 @@ function resetStores(): void {
   useApiConsoleStore.setState({ isLoading: false });
   useConnectorsStore.setState({ error: null });
   useStackStore.setState({ error: null });
+  // Reset unseen/stale timestamps (files visited at startup matches production init)
+  useUiStore.setState({ panelDataTimestamps: {}, panelVisitTimestamps: { files: Date.now() } });
 }
 
 // =============================================================================
@@ -224,6 +227,71 @@ describe("SideNav render", () => {
       // Should not contain any nav item labels or icons
       expect(frame).not.toContain("Files");
       expect(frame).not.toContain("◂");
+    });
+  });
+
+  // ===========================================================================
+  // Unseen indicator (#3503)
+  // ===========================================================================
+
+  describe("unseen indicator", () => {
+    it("shows blue ● for panel with unseen data (not active)", async () => {
+      // Data updated at t=1000, never visited → unseen
+      useUiStore.setState({
+        panelDataTimestamps: { versions: 1000 },
+        panelVisitTimestamps: {},
+      });
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+
+      const lines = frame.split("\n");
+      const versionsLine = lines.find((l) => l.includes("Versions"));
+      expect(versionsLine).toBeDefined();
+      expect(versionsLine!).toContain("●");
+    });
+
+    it("does not show unseen ● for the active panel", async () => {
+      // Data updated but panel is active → show ◂ not ●
+      useUiStore.setState({
+        panelDataTimestamps: { files: 1000 },
+        panelVisitTimestamps: {},
+      });
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+
+      const lines = frame.split("\n");
+      const filesLine = lines.find((l) => l.includes("Files"));
+      expect(filesLine).toBeDefined();
+      expect(filesLine!).toContain("◂");
+    });
+
+    it("clears unseen after visit timestamp exceeds data timestamp", async () => {
+      // Data at t=1000, visited at t=2000 → no longer unseen
+      useUiStore.setState({
+        panelDataTimestamps: { versions: 1000 },
+        panelVisitTimestamps: { versions: 2000 },
+      });
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+
+      const lines = frame.split("\n");
+      const versionsLine = lines.find((l) => l.includes("Versions"));
+      expect(versionsLine).toBeDefined();
+      // Should not have ● (no unseen, no error)
+      expect(versionsLine!).not.toContain("●");
+    });
+  });
+
+  // ===========================================================================
+  // Stale indicator (#3503)
+  // ===========================================================================
+
+  describe("stale indicator", () => {
+    it("does not show stale for panels with no data yet", async () => {
+      // No data timestamps → not stale (never fetched)
+      const frame = await renderSideNav({ activePanel: "files" }, { width: 140 });
+
+      // All inactive panels should use normal muted text, not faint
+      // Verify no error dots — panels are just "healthy"
+      const errorDots = (frame.match(/●/g) || []).length;
+      expect(errorDots).toBe(0);
     });
   });
 

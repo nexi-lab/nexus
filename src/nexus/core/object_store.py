@@ -100,7 +100,8 @@ class ObjectStoreABC(ABC):
             return self._read_content_raw(content_id, context=context)
         except NexusFileNotFoundError:
             if self._content_fallback is not None:
-                return self._content_fallback.fetch(content_id, context)
+                result: bytes = self._content_fallback.fetch(content_id, context)
+                return result
             raise
 
     @abstractmethod

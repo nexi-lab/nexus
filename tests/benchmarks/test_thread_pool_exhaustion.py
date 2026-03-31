@@ -406,12 +406,18 @@ async def test_async_thread_exhaustion(
             if hasattr(nx._rebac_manager, "_l1_cache") and nx._rebac_manager._l1_cache:
                 nx._rebac_manager._l1_cache.clear()
 
-        async def sync_list_operation(request_id: int) -> RequestResult:
-            """Sync operation that will be run in thread pool."""
+        main_loop = asyncio.get_running_loop()
+
+        def sync_list_operation(request_id: int) -> RequestResult:
+            """Sync operation run in thread pool — simulates FastAPI sync endpoint."""
             thread_name = threading.current_thread().name
             start = time.time()
             try:
-                _result = await nx.sys_readdir("/", recursive=False, context=context)
+                future = asyncio.run_coroutine_threadsafe(
+                    nx.sys_readdir("/", recursive=False, context=context),
+                    main_loop,
+                )
+                _result = future.result(timeout=timeout)
                 end = time.time()
                 return RequestResult(
                     request_id=request_id,

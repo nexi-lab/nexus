@@ -468,27 +468,24 @@ class TestPipeManager:
         assert await mgr.pipe_read("/nexus/pipes/mixed") == b"event-1"
         assert await mgr.pipe_read("/nexus/pipes/mixed") == b"event-2"
 
-    def test_close_all_clears_locks(self) -> None:
+    def test_close_all_clears_buffers(self) -> None:
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/a")
-        mgr._get_lock("/nexus/pipes/a")  # force lock creation
-        assert len(mgr._locks) == 1
+        assert len(mgr._buffers) == 1
         mgr.close_all()
-        assert len(mgr._locks) == 0
+        assert len(mgr._buffers) == 0
 
-    def test_close_clears_lock(self) -> None:
+    def test_close_removes_buffer(self) -> None:
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/a")
-        mgr._get_lock("/nexus/pipes/a")
         mgr.close("/nexus/pipes/a")
-        assert "/nexus/pipes/a" not in mgr._locks
+        assert "/nexus/pipes/a" not in mgr._buffers
 
-    def test_destroy_clears_lock(self) -> None:
+    def test_destroy_removes_buffer(self) -> None:
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/a")
-        mgr._get_lock("/nexus/pipes/a")
         mgr.destroy("/nexus/pipes/a")
-        assert "/nexus/pipes/a" not in mgr._locks
+        assert "/nexus/pipes/a" not in mgr._buffers
 
 
 # ======================================================================
@@ -1132,15 +1129,14 @@ class TestPipeManagerSignalClose:
         with pytest.raises(PipeClosedError):
             await mgr.pipe_read("/nexus/pipes/drain")
 
-    def test_signal_close_keeps_lock(self) -> None:
-        """signal_close() should NOT remove the lock (unlike close/destroy)."""
+    def test_signal_close_keeps_buffer(self) -> None:
+        """signal_close() should NOT remove the buffer (unlike close/destroy)."""
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/sc-lock", capacity=1024)
-        mgr._get_lock("/nexus/pipes/sc-lock")
-        assert "/nexus/pipes/sc-lock" in mgr._locks
+        assert "/nexus/pipes/sc-lock" in mgr._buffers
 
         mgr.signal_close("/nexus/pipes/sc-lock")
-        assert "/nexus/pipes/sc-lock" in mgr._locks  # Lock stays for drain
+        assert "/nexus/pipes/sc-lock" in mgr._buffers  # Buffer stays for drain
 
     def test_signal_close_keeps_buffer_in_registry(self) -> None:
         """signal_close() keeps the buffer in _buffers for drain access."""
@@ -1154,13 +1150,11 @@ class TestPipeManagerSignalClose:
         """close() after signal_close() should clean up everything."""
         mgr, _ = self._make_manager()
         mgr.create("/nexus/pipes/sc-then-close", capacity=1024)
-        mgr._get_lock("/nexus/pipes/sc-then-close")
 
         mgr.signal_close("/nexus/pipes/sc-then-close")
         mgr.close("/nexus/pipes/sc-then-close")
 
         assert "/nexus/pipes/sc-then-close" not in mgr._buffers
-        assert "/nexus/pipes/sc-then-close" not in mgr._locks
 
     def test_signal_close_nonexistent_raises(self) -> None:
         mgr, _ = self._make_manager()

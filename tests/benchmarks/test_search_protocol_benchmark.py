@@ -21,45 +21,37 @@ class FastMockSearchBrick:
 
     _results: list[dict[str, Any]] = [{"path": "/test.py", "chunk_text": "match", "score": 0.9}]
 
-    async def search(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        path_filter: str | None = None,
-        search_mode: str = "hybrid",
-    ) -> list[Any]:
-        return self._results
+    @property
+    def is_initialized(self) -> bool:
+        return True
 
-    async def index_document(
-        self,
-        path: str,
-        content: str,
-        *,
-        zone_id: str | None = None,
-    ) -> int:
-        return 1
-
-    async def index_directory(self, path: str = "/") -> dict[str, int]:
-        return {"/test.py": 1}
-
-    async def delete_document_index(self, path: str) -> None:
-        pass
-
-    async def get_index_stats(self) -> dict[str, Any]:
-        return {"total_chunks": 100}
-
-    async def get_stats(self) -> dict[str, Any]:
-        return {"total_chunks": 100}
-
-    async def initialize(self) -> None:
+    async def startup(self) -> None:
         pass
 
     async def shutdown(self) -> None:
         pass
 
-    def verify_imports(self) -> dict[str, bool]:
-        return {"nexus.bricks.search.semantic": True}
+    async def search(
+        self,
+        query: str,
+        search_type: str = "hybrid",
+        limit: int = 10,
+        path_filter: str | None = None,
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        adaptive_k: bool = False,
+        zone_id: str | None = None,
+    ) -> list[Any]:
+        return self._results
+
+    def get_stats(self) -> dict[str, Any]:
+        return {"total_chunks": 100}
+
+    def get_health(self) -> dict[str, Any]:
+        return {"status": "healthy"}
+
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None:
+        pass
 
 
 # =============================================================================
@@ -81,7 +73,7 @@ class SearchServiceAdapter:
         return await self._brick.search(query, limit=limit)
 
     async def get_stats(self) -> dict[str, Any]:
-        return await self._brick.get_stats()
+        return self._brick.get_stats()
 
 
 # =============================================================================
@@ -171,8 +163,8 @@ class TestProtocolPassthroughOverhead:
             )
 
     @pytest.mark.asyncio
-    async def test_verify_imports_sync_call(self) -> None:
-        """Sync verify_imports should work through protocol."""
+    async def test_get_health_sync_call(self) -> None:
+        """Sync get_health should work through protocol."""
         brick = FastMockSearchBrick()
-        result = brick.verify_imports()
+        result = brick.get_health()
         assert isinstance(result, dict)

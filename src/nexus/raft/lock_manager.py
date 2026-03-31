@@ -5,7 +5,7 @@ any ``LockStoreProtocol``-compatible store for strong-consistency distributed lo
 
 Architecture:
     LockManagerBase (lib/distributed_lock.py) defines the async advisory lock API.
-    zone_id is bound at construction time — callers never pass it per-method.
+    Lock keys are zone-canonical paths from PathRouter.
     RaftLockManager adds exponential backoff (network jitter) on top.
 
 References:
@@ -66,20 +66,18 @@ class RaftLockManager(LockManagerBase):
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
     RETRY_MULTIPLIER = 2.0  # Double each retry
 
-    def __init__(self, raft_store: Any, *, zone_id: str = "root") -> None:
+    def __init__(self, raft_store: Any) -> None:
         """Initialize RaftLockManager.
 
         Args:
             raft_store: Lock-capable metadata store (e.g., RaftMetadataStore)
-            zone_id: Zone ID for key scoping (bound at construction)
         """
-        super().__init__(zone_id=zone_id)
+        super().__init__()
         self._store = raft_store
 
     def _store_info_to_lock_info(self, store_info: dict[str, Any]) -> LockInfo:
         """Convert store-level lock info dict to a LockInfo dataclass."""
-        lock_key = store_info["path"]
-        _, resource_path = self._parse_lock_key(lock_key)
+        resource_path = store_info["path"]
         max_holders = store_info["max_holders"]
         holders = [
             HolderInfo(
@@ -197,9 +195,8 @@ class RaftLockManager(LockManagerBase):
             return None
 
     async def list_locks(self, pattern: str = "", limit: int = 100) -> list[LockInfo]:
-        prefix = f"{self._zone_id}:"
         try:
-            store_locks = self._store.list_locks(prefix=prefix, limit=limit)
+            store_locks = self._store.list_locks(prefix="", limit=limit)
             if store_locks is None:
                 return []
             results = [self._store_info_to_lock_info(info) for info in store_locks]
@@ -207,7 +204,7 @@ class RaftLockManager(LockManagerBase):
                 results = [r for r in results if pattern in r.path]
             return results
         except Exception as e:
-            logger.error("Failed to list locks for zone %s: %s", self._zone_id, e)
+            logger.error("Failed to list locks: %s", e)
             return []
 
     async def force_release(self, path: str) -> bool:

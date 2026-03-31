@@ -178,7 +178,6 @@ class NexusFS(  # type: ignore[misc]
 
         self._lock_manager: Any = LocalLockManager(
             create_vfs_semaphore(),
-            zone_id=ROOT_ZONE_ID,
             vfs_lock_manager=self._vfs_lock_manager,
         )
 

@@ -154,7 +154,7 @@ async def _wire_services(
         try:
             from nexus.raft.lock_manager import RaftLockManager
 
-            _raft_lm = RaftLockManager(nx.metadata, zone_id=zone_id or "root")
+            _raft_lm = RaftLockManager(nx.metadata)
             nx._upgrade_lock_manager(_raft_lm)
             logger.info("[LINK] RaftLockManager upgraded into kernel")
         except Exception as exc:

@@ -140,7 +140,7 @@ class ExternalRouteResult:
 # ---------------------------------------------------------------------------
 
 try:
-    from nexus_fast import RustPathRouter as _RustRouter  # type: ignore[import-untyped]
+    from nexus_fast import RustPathRouter as _RustRouter
 
     _HAS_RUST_ROUTER = True
 except ImportError:
@@ -287,18 +287,19 @@ class PathRouter:
             entry = self._backends.get(rust_result.mount_point)
             if entry is None:
                 raise PathNotMountedError(virtual_path)
+            user_mp = extract_zone_id(rust_result.mount_point)[1]
             if meta is not None and meta.is_external_storage:
                 return ExternalRouteResult(
                     backend=entry.backend,
                     backend_path=rust_result.backend_path,
-                    mount_point=rust_result.mount_point,
+                    mount_point=user_mp,
                     readonly=rust_result.readonly,
                     io_profile=rust_result.io_profile,
                 )
             return RouteResult(
                 backend=entry.backend,
                 backend_path=rust_result.backend_path,
-                mount_point=rust_result.mount_point,
+                mount_point=user_mp,
                 readonly=rust_result.readonly,
                 io_profile=rust_result.io_profile,
             )
@@ -309,10 +310,11 @@ class PathRouter:
         while True:
             entry = self._backends.get(current)
             if entry is not None:
+                user_mp = extract_zone_id(current)[1]
                 if entry.admin_only and not is_admin:
-                    raise AccessDeniedError(f"Mount '{current}' requires admin privileges")
+                    raise AccessDeniedError(f"Mount '{user_mp}' requires admin privileges")
                 if entry.readonly and check_write:
-                    raise AccessDeniedError(f"Mount '{current}' is read-only")
+                    raise AccessDeniedError(f"Mount '{user_mp}' is read-only")
 
                 backend_path = self._strip_mount_prefix(canonical, current)
 
@@ -320,14 +322,14 @@ class PathRouter:
                     return ExternalRouteResult(
                         backend=entry.backend,
                         backend_path=backend_path,
-                        mount_point=current,
+                        mount_point=user_mp,
                         readonly=entry.readonly,
                         io_profile=entry.io_profile,
                     )
                 return RouteResult(
                     backend=entry.backend,
                     backend_path=backend_path,
-                    mount_point=current,
+                    mount_point=user_mp,
                     readonly=entry.readonly,
                     io_profile=entry.io_profile,
                 )

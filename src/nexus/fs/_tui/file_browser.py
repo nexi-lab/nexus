@@ -56,6 +56,7 @@ class FileBrowser(Widget):
         text-align: center;
         padding: 4 2;
         color: $text-muted;
+        display: none;
     }
     FileBrowser .error-message {
         text-align: center;
@@ -102,6 +103,11 @@ class FileBrowser(Widget):
         table.cursor_type = "row"
         table.add_columns("Name", "Size", "Modified")
         yield table
+        yield Static(
+            "Empty folder\n\nPress [bold]b[/bold] to go back",
+            id="empty-state",
+            classes="empty-message",
+        )
         yield Static("", id="overflow", classes="overflow-indicator")
 
     async def load_directory(self, path: str) -> None:
@@ -134,6 +140,15 @@ class FileBrowser(Widget):
                 modified = _format_modified(entry.get("modified_at"))
                 table.add_row(name, size, modified)
 
+            # Toggle empty state vs table visibility
+            empty_state = self.query_one("#empty-state", Static)
+            if not self._entries:
+                table.display = False
+                empty_state.display = True
+            else:
+                table.display = True
+                empty_state.display = False
+
             # Update overflow indicator
             overflow = self.query_one("#overflow", Static)
             if self._total_count > MAX_DISPLAY_ENTRIES:
@@ -148,6 +163,8 @@ class FileBrowser(Widget):
             self._error = format_runtime_error(path, exc)
             self._entries = []
             self._total_count = 0
+            table.display = True
+            self.query_one("#empty-state", Static).display = False
             overflow = self.query_one("#overflow", Static)
             overflow.update(f"[red]Error: {self._error}[/red]")
 

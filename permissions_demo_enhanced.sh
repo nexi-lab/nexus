@@ -52,6 +52,7 @@ create_user_api_key() {
     local zone_id="$3"
     local admin_flag="${4:-false}"
     local expires_days="${5:-1}"
+    local attempt output api_key
 
     local args=(
         admin create-user "$user_id"
@@ -64,13 +65,19 @@ create_user_api_key() {
         args+=(--is-admin)
     fi
 
-    local output
-    output=$(nexus "${args[@]}" --json 2>/dev/null || true)
-    if [ -z "$output" ]; then
-        return 1
-    fi
+    for attempt in $(seq 1 10); do
+        if output=$(nexus "${args[@]}" --json 2>/dev/null); then
+            api_key=$(printf '%s' "$output" | python -c 'import json, sys; print(json.load(sys.stdin)["data"]["api_key"])' 2>/dev/null || true)
+            if [ -n "$api_key" ]; then
+                printf '%s' "$api_key"
+                return 0
+            fi
+        fi
 
-    printf '%s' "$output" | python -c 'import json, sys; print(json.load(sys.stdin)["data"]["api_key"])' 2>/dev/null
+        sleep 1
+    done
+
+    return 1
 }
 
 # Colors
@@ -115,7 +122,9 @@ print_test() { echo -e "${MAGENTA}TEST:${NC} $1"; }
 # This ensures DATABASE_URL, NEXUS_GRPC_HOST, etc. are set even if
 # the user only ran `nexus up` without `eval $(nexus env)`.
 if command -v nexus &>/dev/null; then
-    eval $(nexus env 2>/dev/null) || true
+    if nexus_env_output="$(nexus env 2>/dev/null)"; then
+        eval "$nexus_env_output"
+    fi
 fi
 
 # Check prerequisites
@@ -150,7 +159,7 @@ export DEMO_BASE="/workspace/rebac-comprehensive-demo"  # BUGFIX: Export for Pyt
 # scoping — meaning files created by root-zone admin live at /workspace/... while
 # non-admin users see /zone/default/workspace/... (zone-scoped). Using a
 # default-zone admin key ensures consistent path scoping across all operations.
-ADMIN_KEY=$(create_user_api_key admin "Demo Admin (default zone)" default true 1)
+ADMIN_KEY=$(create_user_api_key admin "Demo Admin (default zone)" default true 1 || true)
 if [ -z "$ADMIN_KEY" ]; then
     echo "WARNING: Failed to create default-zone admin key, falling back to root admin"
     ADMIN_KEY="$ROOT_ADMIN_KEY"
@@ -339,9 +348,9 @@ echo ""
 # Create test users
 # Create user API keys in zone "default" so their file I/O paths
 # are zone-scoped consistently with the admin key and ReBAC tuples.
-ALICE_KEY=$(create_user_api_key alice "Alice Owner" default false 1)
-BOB_KEY=$(create_user_api_key bob "Bob Editor" default false 1)
-CHARLIE_KEY=$(create_user_api_key charlie "Charlie Viewer" default false 1)
+ALICE_KEY=$(create_user_api_key alice "Alice Owner" default false 1 || true)
+BOB_KEY=$(create_user_api_key bob "Bob Editor" default false 1 || true)
+CHARLIE_KEY=$(create_user_api_key charlie "Charlie Viewer" default false 1 || true)
 
 if [ -z "$ALICE_KEY" ] || [ -z "$BOB_KEY" ] || [ -z "$CHARLIE_KEY" ]; then
     print_error "Failed to create one or more demo user API keys"
@@ -870,7 +879,7 @@ fi
 print_section "9. Multi-Tenant Isolation"
 
 print_subsection "9.1 Create user in different tenant"
-TENANT_ACME_KEY=$(create_user_api_key acme_user "ACME Corp User" acme false 1)
+TENANT_ACME_KEY=$(create_user_api_key acme_user "ACME Corp User" acme false 1 || true)
 print_success "Created acme_user (tenant: acme)"
 print_info "Alice, Bob, Charlie are in tenant: default"
 

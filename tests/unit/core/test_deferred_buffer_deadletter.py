@@ -125,15 +125,13 @@ class TestGrantsRetry:
         stats = buffer.get_stats()
         assert stats["pending_grants"] > 0
 
-    def test_grants_flush_retry_on_runtime_error(self, buffer, rebac_manager):
-        """On RuntimeError the grant items must be re-queued for retry."""
+    def test_grants_flush_runtime_error_propagates(self, buffer, rebac_manager):
+        """Unexpected RuntimeError should propagate on synchronous flush."""
         rebac_manager.rebac_write_batch.side_effect = RuntimeError("internal error")
 
         buffer.queue_owner_grant("alice", "/doc.txt", "z1")
-        buffer.flush()
-
-        stats = buffer.get_stats()
-        assert stats["pending_grants"] > 0
+        with pytest.raises(RuntimeError, match="internal error"):
+            buffer.flush()
 
     def test_grants_repeated_failures_dead_letter_after_max_retries(self, buffer, rebac_manager):
         """After max_retries failures, grants are dead-lettered, not re-queued."""
@@ -183,7 +181,7 @@ class TestTransientErrorRecovery:
     def test_permanent_error_not_caught(self, buffer, rebac_manager):
         """Errors NOT in the retry-safe tuple (e.g., ValueError) propagate.
 
-        The buffer only catches (OperationalError, TimeoutError, RuntimeError).
+        The buffer only catches (OperationalError, TimeoutError).
         Other exceptions propagate through _flush_sync.
         """
         rebac_manager.rebac_write_batch.side_effect = ValueError("bad data")

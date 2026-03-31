@@ -426,6 +426,17 @@ class TestErrorHandling:
         assert stats["pending_grants"] == 2
         assert stats["total_grants_flushed"] == 0
 
+    def test_grant_flush_unexpected_runtime_error_propagates(self) -> None:
+        """Unexpected bugs should fail fast on the caller thread."""
+        rebac = MagicMock()
+        rebac.rebac_write_batch.side_effect = RuntimeError("unexpected bug")
+        buffer = DeferredPermissionBuffer(rebac_manager=rebac)
+
+        buffer.queue_owner_grant("user1", "/file1", "zone1")
+
+        with pytest.raises(RuntimeError, match="unexpected bug"):
+            buffer.flush()
+
     def test_flush_loop_catches_exceptions_and_continues(self) -> None:
         """Test that flush loop catches exceptions and continues running."""
         rebac = MagicMock()

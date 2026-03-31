@@ -147,12 +147,9 @@ class DeferredPermissionBuffer(DeferredBuffer):
         hierarchy_batch: list[tuple[str, str]] = items[0]
         grants_batch: list[dict[str, Any]] = items[1]
 
-        retryable_errors: tuple[type[BaseException], ...]
-        if catch_unexpected:
-            retryable_errors = (Exception,)
-        else:
-            retryable_errors = (OperationalError, TimeoutError, RuntimeError)
-
+        retryable_errors: tuple[type[BaseException], ...] = (
+            (Exception,) if catch_unexpected else (OperationalError, TimeoutError)
+        )
         hierarchy_count = 0
         grants_count = 0
 

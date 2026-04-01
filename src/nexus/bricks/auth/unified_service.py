@@ -752,6 +752,7 @@ class UnifiedAuthService:
         if shutil.which("gws") is None:
             return None
 
+        proc: asyncio.subprocess.Process | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 "gws",
@@ -767,6 +768,9 @@ class UnifiedAuthService:
             )
             stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         except Exception:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             return None
 
         if proc.returncode != 0:
@@ -860,6 +864,7 @@ class UnifiedAuthService:
 
         async def _probe_single(target: str) -> tuple[str, dict[str, Any]]:
             args = _GWS_TARGET_PROBES[target]
+            proc: asyncio.subprocess.Process | None = None
             try:
                 env = {**os.environ}
                 if access_token:
@@ -872,6 +877,9 @@ class UnifiedAuthService:
                 )
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
             except Exception as exc:
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
                 return target, {
                     "target": target,
                     "success": False,

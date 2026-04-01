@@ -514,8 +514,16 @@ def test_probe_timeout_does_not_block_others(
     class _TimeoutProcess:
         """Simulates a process whose communicate() raises TimeoutError."""
 
+        returncode: int | None = None
+
         async def communicate(self) -> tuple[bytes, bytes]:
             raise TimeoutError("probe timed out")
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return -9
 
     processes: dict[str, _FakeProcess] = {}
     for t in _TARGETS:

@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { useStackStore } from "../../src/stores/stack-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 describe("StackStore", () => {
   beforeEach(() => {

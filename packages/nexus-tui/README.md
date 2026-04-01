@@ -1,4 +1,4 @@
-# @nexus/tui
+# @nexus-ai-fs/tui
 
 Terminal UI for Nexus.
 
@@ -7,8 +7,8 @@ Terminal UI for Nexus.
 Run the published package with Bun:
 
 ```bash
-bunx @nexus/tui
-bunx @nexus/tui --url http://remote:2026 --api-key KEY
+bunx @nexus-ai-fs/tui
+bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY
 ```
 
 The installed binary name is:

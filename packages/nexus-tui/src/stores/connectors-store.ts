@@ -6,7 +6,7 @@
 
 import { create } from "zustand";
 import { createApiAction } from "./create-api-action.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useUiStore } from "./ui-store.js";
 
 // =============================================================================

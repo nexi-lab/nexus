@@ -6,7 +6,7 @@
  *
  * @example
  * ```typescript
- * import { NexusPay } from '@nexus/pay';
+ * import { NexusPay } from '@nexus-ai-fs/pay';
  *
  * const pay = new NexusPay({ apiKey: 'sk-your-api-key' });
  * const balance = await pay.getBalance();

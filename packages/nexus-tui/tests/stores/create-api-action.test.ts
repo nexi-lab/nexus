@@ -8,7 +8,7 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { createApiAction } from "../../src/stores/create-api-action.js";
 import { useUiStore } from "../../src/stores/ui-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 // =============================================================================
 // Test helpers

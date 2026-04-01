@@ -1,11 +1,11 @@
 /**
  * Error classes for the Nexus Pay SDK.
  *
- * Extends the shared NexusApiError base from @nexus/api-client
+ * Extends the shared NexusApiError base from @nexus-ai-fs/api-client
  * with payment-specific error types.
  *
  * Hierarchy:
- *   NexusApiError (from @nexus/api-client)
+ *   NexusApiError (from @nexus-ai-fs/api-client)
  *   └── NexusPayError (base for pay-specific errors)
  *       ├── InsufficientCreditsError (402)
  *       ├── BudgetExceededError      (403)
@@ -13,10 +13,10 @@
  *       └── ReservationError         (409)
  *
  * Note: AuthenticationError (401) and RateLimitError (429) are
- * re-exported from @nexus/api-client — no pay-specific override needed.
+ * re-exported from @nexus-ai-fs/api-client — no pay-specific override needed.
  */
 
-import { NexusApiError } from "@nexus/api-client";
+import { NexusApiError } from "@nexus-ai-fs/api-client";
 
 export class NexusPayError extends NexusApiError {
   constructor(message: string, status: number, code: string) {
@@ -54,4 +54,4 @@ export class ReservationError extends NexusPayError {
 }
 
 // Re-export shared errors for backward compatibility
-export { AuthenticationError, RateLimitError } from "@nexus/api-client";
+export { AuthenticationError, RateLimitError } from "@nexus-ai-fs/api-client";

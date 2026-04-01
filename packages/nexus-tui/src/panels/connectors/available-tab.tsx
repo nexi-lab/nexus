@@ -11,7 +11,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";

@@ -37,5 +37,5 @@ Read the design docs before changing the storage model, service boundaries, or d
 - GitHub: <https://github.com/nexi-lab/nexus>
 - PyPI: <https://pypi.org/project/nexus-ai-fs/>
 - nexus-fs (slim): <https://pypi.org/project/nexus-fs/>
-- @nexus/tui (Terminal UI): <https://www.npmjs.com/package/@nexus/tui>
+- @nexus-ai-fs/tui (Terminal UI): <https://www.npmjs.com/package/@nexus-ai-fs/tui>
 - Examples: <https://github.com/nexi-lab/nexus/tree/main/examples>

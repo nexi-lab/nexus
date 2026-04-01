@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { detectConnectionState } from "../../src/shared/hooks/use-connection-state.js";
-import type { NexusClientOptions } from "@nexus/api-client";
+import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
 
 const baseConfig: NexusClientOptions = {
   baseUrl: "http://localhost:2026",

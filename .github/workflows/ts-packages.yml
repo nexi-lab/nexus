@@ -12,7 +12,7 @@ on:
 
 jobs:
   api-client:
-    name: "@nexus/api-client"
+    name: "@nexus-ai-fs/api-client"
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -29,7 +29,7 @@ jobs:
       - run: npm run test:coverage
 
   nexus-pay-ts:
-    name: "@nexus/pay"
+    name: "@nexus-ai-fs/pay"
     runs-on: ubuntu-latest
     needs: api-client
     defaults:
@@ -49,7 +49,7 @@ jobs:
       - run: npm run test:coverage
 
   nexus-tui:
-    name: "@nexus/tui"
+    name: "@nexus-ai-fs/tui"
     runs-on: ubuntu-latest
     needs: api-client
     defaults:

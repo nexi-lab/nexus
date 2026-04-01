@@ -16,7 +16,7 @@ import { useAccessStore } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { statusColor } from "../../shared/theme.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 type EditField = "scopePrefix" | "addGrant" | "removeGrant" | "readonlyPath";
 

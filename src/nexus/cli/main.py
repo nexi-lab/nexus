@@ -38,7 +38,7 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
     Order of preference:
       1. repo-local ``packages/nexus-tui/src/index.tsx`` via ``bun run``
       2. ``nexus-tui`` already on PATH
-      3. published ``@nexus/tui`` via ``bunx``
+      3. published ``@nexus-ai-fs/tui`` via ``bunx``
     """
     args = extra_args or []
 
@@ -75,13 +75,13 @@ def _exec_tui(extra_args: list[str] | None = None) -> None:
     # Fallback: use bunx (Bun's npx equivalent) against the scoped package.
     bunx = shutil.which("bunx")
     if bunx is not None:
-        os.execvp(bunx, ["bunx", "@nexus/tui", *args])
+        os.execvp(bunx, ["bunx", "@nexus-ai-fs/tui", *args])
         # execvp does not return
 
     # Neither found – give the user actionable guidance.
     click.secho("Error: could not find nexus-tui, bun, or bunx on PATH.", fg="red", err=True)
     click.echo(
-        "Install the TUI with:\n  bunx @nexus/tui   # or\n  bun install -g @nexus/tui\n",
+        "Install the TUI with:\n  bunx @nexus-ai-fs/tui   # or\n  bun install -g @nexus-ai-fs/tui\n",
         err=True,
     )
     sys.exit(1)

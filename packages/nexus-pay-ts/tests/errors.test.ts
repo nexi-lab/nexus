@@ -8,7 +8,7 @@ import {
   ReservationError,
   RateLimitError,
 } from "../src/errors.js";
-import { NexusApiError } from "@nexus/api-client";
+import { NexusApiError } from "@nexus-ai-fs/api-client";
 
 describe("NexusPayError", () => {
   it("has correct name, message, status, and code", () => {

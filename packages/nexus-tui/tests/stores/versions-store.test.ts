@@ -3,7 +3,7 @@ import {
   useVersionsStore,
   nextStatusFilter,
 } from "../../src/stores/versions-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 // =============================================================================
 // Helpers

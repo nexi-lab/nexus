@@ -13,12 +13,12 @@ Give every agent one place to read, write, search, remember, and collaborate —
 [![CI](https://github.com/nexi-lab/nexus/actions/workflows/test.yml/badge.svg)](https://github.com/nexi-lab/nexus/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/nexus-ai-fs?color=blue)](https://pypi.org/project/nexus-ai-fs/)
 [![nexus-fs](https://img.shields.io/pypi/v/nexus-fs?label=nexus-fs&color=blue)](https://pypi.org/project/nexus-fs/)
-[![@nexus/tui](https://img.shields.io/npm/v/@nexus/tui?label=@nexus/tui&color=blue)](https://www.npmjs.com/package/@nexus/tui)
+[![@nexus-ai-fs/tui](https://img.shields.io/npm/v/@nexus-ai-fs/tui?label=@nexus-ai-fs/tui&color=blue)](https://www.npmjs.com/package/@nexus-ai-fs/tui)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
 [![Discord](https://img.shields.io/badge/Discord-community-5865F2?logo=discord&logoColor=white)](https://discord.gg/nexus)
 
-[Documentation](https://nexi-lab.github.io/nexus/) · [Quickstart](https://nexi-lab.github.io/nexus/getting-started/quickstart/) · [Examples](examples/) · [PyPI](https://pypi.org/project/nexus-ai-fs/) · [nexus-fs](https://pypi.org/project/nexus-fs/) · [TUI](https://www.npmjs.com/package/@nexus/tui) · [Roadmap](https://github.com/nexi-lab/nexus/issues)
+[Documentation](https://nexi-lab.github.io/nexus/) · [Quickstart](https://nexi-lab.github.io/nexus/getting-started/quickstart/) · [Examples](examples/) · [PyPI](https://pypi.org/project/nexus-ai-fs/) · [nexus-fs](https://pypi.org/project/nexus-fs/) · [TUI](https://www.npmjs.com/package/@nexus-ai-fs/tui) · [Roadmap](https://github.com/nexi-lab/nexus/issues)
 
 </div>
 
@@ -101,8 +101,8 @@ nexus versions history /hello.txt
 The TUI is a separate TypeScript package built on OpenTUI:
 
 ```bash
-bunx @nexus/tui                                        # published package, connects to localhost:2026
-bunx @nexus/tui --url http://remote:2026 --api-key KEY # connect to remote instance
+bunx @nexus-ai-fs/tui                                        # published package, connects to localhost:2026
+bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key KEY # connect to remote instance
 cd packages/nexus-api-client && npm install && npm run build && cd -  # build sibling dependency once in a fresh checkout
 cd packages/nexus-tui && bun install && bun run src/index.tsx          # local development from this repo
 ```

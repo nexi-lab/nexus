@@ -1,13 +1,13 @@
 /**
  * Internal HTTP client for the Nexus Pay SDK.
  *
- * Thin wrapper around @nexus/api-client's FetchClient that overrides
+ * Thin wrapper around @nexus-ai-fs/api-client's FetchClient that overrides
  * error mapping to produce pay-specific error types (402, 403, 404, 409).
  *
  * Not exported from the public API — used only by the NexusPay client class.
  */
 
-import { FetchClient as BaseFetchClient, type NexusApiError } from "@nexus/api-client";
+import { FetchClient as BaseFetchClient, type NexusApiError } from "@nexus-ai-fs/api-client";
 import {
   BudgetExceededError,
   InsufficientCreditsError,

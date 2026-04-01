@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/tui",
+  "name": "@nexus-ai-fs/tui",
   "version": "0.9.18",
   "description": "Terminal UI for Nexus — file explorer, API inspector, and monitoring dashboard",
   "type": "module",
@@ -18,7 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@nexus/api-client": "file:../nexus-api-client",
+    "@nexus-ai-fs/api-client": "file:../nexus-api-client",
     "@opentui/core": "latest",
     "@opentui/react": "latest",
     "anser": "^2.3.5",

@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { useDelegationStore } from "../../src/stores/delegation-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 // =============================================================================
 // Helpers

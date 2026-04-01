@@ -17,7 +17,7 @@ import { executeLocalCommand, useCommandRunnerStore } from "../../services/comma
 import { CommandOutput } from "./command-output.js";
 import { Spinner } from "./spinner.js";
 import { statusColor } from "../theme.js";
-import { resolveConfig, FetchClient } from "@nexus/api-client";
+import { resolveConfig, FetchClient } from "@nexus-ai-fs/api-client";
 import { useFilesStore } from "../../stores/files-store.js";
 import { textStyle } from "../text-style.js";
 

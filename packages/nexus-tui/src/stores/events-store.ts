@@ -3,8 +3,8 @@
  */
 
 import { create } from "zustand";
-import type { SseEvent } from "@nexus/api-client";
-import { SseClient } from "@nexus/api-client";
+import type { SseEvent } from "@nexus-ai-fs/api-client";
+import { SseClient } from "@nexus-ai-fs/api-client";
 import { CircularBuffer } from "../shared/lib/circular-buffer.js";
 
 const EVENTS_BUFFER_CAPACITY = 10_000;

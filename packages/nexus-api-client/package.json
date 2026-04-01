@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/api-client",
+  "name": "@nexus-ai-fs/api-client",
   "version": "0.9.18",
   "description": "Shared HTTP client for Nexus APIs — retry, auth, error mapping, case transform",
   "type": "module",

@@ -1,9 +1,9 @@
 /**
- * @nexus/api-client — Shared HTTP client for Nexus APIs.
+ * @nexus-ai-fs/api-client — Shared HTTP client for Nexus APIs.
  *
  * @example
  * ```typescript
- * import { FetchClient, resolveConfig } from '@nexus/api-client';
+ * import { FetchClient, resolveConfig } from '@nexus-ai-fs/api-client';
  *
  * const config = resolveConfig({ apiKey: 'nx_live_myagent' });
  * const client = new FetchClient(config);

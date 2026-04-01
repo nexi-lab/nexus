@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "bun:test";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useApiConsoleStore, type EndpointInfo } from "../../src/stores/api-console-store.js";
 
 const SAMPLE_ENDPOINTS: readonly EndpointInfo[] = [

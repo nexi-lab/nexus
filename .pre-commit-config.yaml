@@ -43,7 +43,7 @@ repos:
         name: Check File Size Limit
         entry: python .pre-commit-hooks/check_file_size.py
         language: python
-        files: \.py$
+        files: \.(py|ts|tsx)$
         exclude: ^tests/
 
       - id: check-type-ignore

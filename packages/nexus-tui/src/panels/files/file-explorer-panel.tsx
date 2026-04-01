@@ -21,7 +21,6 @@ import React, { useState, useCallback, useEffect, useMemo, useRef } from "react"
 import {
   useFilesStore,
   type FileItem,
-  type TreeNode,
   getEffectiveSelection,
 } from "../../stores/files-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -34,18 +33,17 @@ import { FilePreview } from "./file-preview.js";
 import { FileEditor } from "./file-editor.js";
 import { FileMetadata } from "./file-metadata.js";
 import { FileAspects } from "./file-aspects.js";
+import { FileLineage } from "./file-lineage.js";
 import { FileSchema } from "./file-schema.js";
 import { ShareLinksTab } from "./share-links-tab.js";
 import { UploadsTab } from "./uploads-tab.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
-import {
-  listNavigationBindings,
-  jumpToEnd,
-} from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useBrickAvailable } from "../../shared/hooks/use-brick-available.js";
 import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useAnnouncementStore } from "../../stores/announcement-store.js";
@@ -55,426 +53,21 @@ import {
   formatSelectionAnnouncement,
   formatSuccessAnnouncement,
 } from "../../shared/accessibility-announcements.js";
-import { textStyle } from "../../shared/text-style.js";
-import { formatActionHints, getFilesFooterBindings } from "../../shared/action-registry.js";
 import crypto from "node:crypto";
+import {
+  getKeyBindings, getInputLabel, getHelpText,
+} from "./file-explorer-keybindings.js";
+import type { InputMode, BindingContext, FilesTab } from "./file-explorer-keybindings.js";
 
 // =============================================================================
 // Panel-level tabs
 // =============================================================================
-
-type FilesTab = "explorer" | "shareLinks" | "uploads";
 
 const ALL_TABS: readonly TabDef<FilesTab>[] = [
   { id: "explorer", label: "Explorer", brick: null },
   { id: "shareLinks", label: "Share Links", brick: "share_link" },
   { id: "uploads", label: "Uploads", brick: "uploads" },
 ];
-
-// =============================================================================
-// Input mode types
-// =============================================================================
-
-type InputMode = "none" | "mkdir" | "rename" | "filter" | "search" | "paste-dest" | "create";
-
-// =============================================================================
-// Keybinding builders — one function per mode (Decision 6A)
-// =============================================================================
-
-interface BindingContext {
-  // Active tab
-  readonly activeTab: FilesTab;
-  // Explorer
-  readonly cachedFiles: readonly FileItem[];
-  readonly selectedIndex: number;
-  readonly selectedItem: FileItem | null;
-  readonly selectedNode: TreeNode | null;
-  readonly isSentinel: boolean;
-  readonly visibleNodeCount: number;
-  readonly currentPath: string;
-  readonly client: ReturnType<typeof useApi>;
-  // Stores
-  readonly setSelectedIndex: (i: number) => void;
-  readonly toggleNode: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
-  readonly collapseNode: (path: string) => void;
-  readonly fetchPreview: (path: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
-  readonly setMetadataTab: (tab: "metadata" | "aspects" | "schema") => void;
-  readonly catalogAvailable: boolean;
-  // Share links
-  readonly shareLinks: readonly { link_id: string; status: string }[];
-  readonly selectedLinkIndex: number;
-  readonly setSelectedLinkIndex: (i: number) => void;
-  readonly revokeLink: (id: string, client: NonNullable<ReturnType<typeof useApi>>) => void;
-  readonly fetchLinks: (client: NonNullable<ReturnType<typeof useApi>>) => void;
-  // Uploads
-  readonly uploadSessions: readonly unknown[];
-  readonly selectedSessionIndex: number;
-  readonly setSelectedSessionIndex: (i: number) => void;
-  // Tabs
-  readonly visibleTabs: readonly TabDef<FilesTab>[];
-  readonly setActiveTab: (tab: FilesTab) => void;
-  readonly toggleFocus: (panel: string) => void;
-  // Actions
-  readonly copy: (text: string) => void;
-  readonly setConfirmDelete: (v: boolean) => void;
-  readonly setInputMode: (mode: InputMode) => void;
-  readonly setInputBuffer: (v: string | ((prev: string) => string)) => void;
-  // Selection & clipboard
-  readonly selectedPaths: ReadonlySet<string>;
-  readonly visualModeAnchor: number | null;
-  readonly clipboard: { readonly paths: readonly string[]; readonly operation: "copy" | "cut" } | null;
-  readonly toggleSelect: (path: string) => void;
-  readonly clearSelection: () => void;
-  readonly enterVisualMode: (anchor: number) => void;
-  readonly exitVisualMode: () => void;
-  readonly yankToClipboard: (paths: readonly string[]) => void;
-  readonly cutToClipboard: (paths: readonly string[]) => void;
-  readonly clearClipboard: () => void;
-  readonly pasteFiles: (destinationDir: string, client: NonNullable<ReturnType<typeof useApi>>) => Promise<void>;
-  // Filter
-  readonly filterQuery: string;
-  readonly setFilterQuery: (v: string | ((prev: string) => string)) => void;
-  readonly searchQuery: string;
-  readonly setSearchQuery: (v: string | ((prev: string) => string)) => void;
-  readonly executeSearch: (query: string) => void;
-  // Search results
-  readonly searchResults: readonly { path: string; line?: number; content?: string }[] | null;
-  readonly setSearchResults: (v: readonly { path: string; line?: number; content?: string }[] | null) => void;
-  // Paste destination input
-  readonly setInputModeWithCallback: (mode: InputMode, onSubmit: (value: string) => void) => void;
-  // Editor
-  readonly openEditor: (path: string) => void;
-}
-
-/** Navigation bindings for the currently active tab (Decision 5A). */
-function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
-  switch (ctx.activeTab) {
-    case "explorer":
-      return {
-        ...listNavigationBindings({
-          getIndex: () => ctx.selectedIndex,
-          setIndex: ctx.setSelectedIndex,
-          getLength: () => ctx.visibleNodeCount,
-          onSelect: (index) => {
-            // Sentinel nodes are handled by FileTree's auto-load effect
-            if (ctx.isSentinel) return;
-            if (ctx.selectedNode && ctx.client) {
-              if (ctx.selectedNode.isDirectory) {
-                ctx.toggleNode(ctx.selectedNode.path, ctx.client);
-              } else {
-                ctx.fetchPreview(ctx.selectedNode.path, ctx.client);
-              }
-            }
-          },
-        }),
-        // g = jump to start (not in listNavigationBindings)
-        g: () => ctx.setSelectedIndex(0),
-      };
-    case "shareLinks":
-      return {
-        ...listNavigationBindings({
-          getIndex: () => ctx.selectedLinkIndex,
-          setIndex: ctx.setSelectedLinkIndex,
-          getLength: () => ctx.shareLinks.length,
-        }),
-        g: () => ctx.setSelectedLinkIndex(0),
-      };
-    case "uploads":
-      return {
-        ...listNavigationBindings({
-          getIndex: () => ctx.selectedSessionIndex,
-          setIndex: ctx.setSelectedSessionIndex,
-          getLength: () => ctx.uploadSessions.length,
-        }),
-        g: () => ctx.setSelectedSessionIndex(0),
-      };
-  }
-}
-
-/** Tab cycling (shared across all modes). */
-function getTabCycleBindings(ctx: BindingContext): Record<string, () => void> {
-  return {
-    tab: () => {
-      const ids = ctx.visibleTabs.map((t) => t.id);
-      const idx = ids.indexOf(ctx.activeTab);
-      const next = ids[(idx + 1) % ids.length];
-      if (next) ctx.setActiveTab(next);
-    },
-    "shift+tab": () => ctx.toggleFocus("files"),
-  };
-}
-
-/** Explorer-specific action bindings (not navigation). */
-function getExplorerActionBindings(ctx: BindingContext): Record<string, () => void> {
-  return {
-    // Tree navigation
-    l: () => {
-      if (ctx.isSentinel) return;
-      if (ctx.selectedNode?.isDirectory && ctx.client) ctx.toggleNode(ctx.selectedNode.path, ctx.client);
-    },
-    h: () => {
-      if (ctx.isSentinel) return;
-      if (ctx.selectedNode?.isDirectory) ctx.collapseNode(ctx.selectedNode.path);
-    },
-    // Metadata tabs
-    m: () => ctx.setMetadataTab("metadata"),
-    ...(ctx.catalogAvailable ? {
-      a: () => ctx.setMetadataTab("aspects"),
-      s: () => ctx.setMetadataTab("schema"),
-    } : {}),
-    // File operations — bulk delete if selection active, otherwise single item
-    d: () => {
-      if (ctx.isSentinel) return;
-      const effective = getEffectiveSelection(
-        ctx.selectedPaths, ctx.visualModeAnchor, ctx.selectedIndex,
-        ctx.cachedFiles.map((f) => f.path),
-      );
-      if (effective.size > 0 || ctx.selectedItem) {
-        ctx.setConfirmDelete(true);
-      }
-    },
-    "shift+n": () => { ctx.setInputMode("mkdir"); ctx.setInputBuffer(""); },
-    "shift+r": () => {
-      if (ctx.isSentinel) return;
-      if (ctx.selectedItem) {
-        ctx.setInputMode("rename");
-        ctx.setInputBuffer(ctx.selectedItem.name);
-      }
-    },
-    // Edit existing file: open full-screen editor
-    e: () => {
-      if (ctx.selectedItem && !ctx.selectedItem.isDirectory) {
-        ctx.openEditor(ctx.selectedItem.path);
-      }
-    },
-    // Create new file: prompt for filename, then open editor
-    "shift+e": () => {
-      const dir = ctx.selectedItem?.isDirectory
-        ? ctx.selectedItem.path
-        : ctx.currentPath;
-      const prefix = dir === "/" ? "/" : dir + "/";
-      ctx.setInputMode("create");
-      ctx.setInputBuffer(prefix);
-    },
-    // Copy path to system clipboard
-    y: () => {
-      if (ctx.isSentinel) return;
-      if (ctx.selectedItem) ctx.copy(ctx.selectedItem.path);
-    },
-    // Selection
-    space: () => {
-      if (ctx.isSentinel) return;
-      const item = ctx.cachedFiles[ctx.selectedIndex];
-      if (item) ctx.toggleSelect(item.path);
-    },
-    // Visual mode
-    v: () => {
-      if (ctx.visualModeAnchor !== null) {
-        ctx.exitVisualMode();
-      } else {
-        ctx.enterVisualMode(ctx.selectedIndex);
-      }
-    },
-    // Clipboard: copy/cut/paste
-    c: () => {
-      const effective = getEffectiveSelection(
-        ctx.selectedPaths, ctx.visualModeAnchor, ctx.selectedIndex,
-        ctx.cachedFiles.map((f) => f.path),
-      );
-      if (effective.size > 0) {
-        ctx.yankToClipboard([...effective]);
-        ctx.clearSelection();
-      }
-    },
-    x: () => {
-      const effective = getEffectiveSelection(
-        ctx.selectedPaths, ctx.visualModeAnchor, ctx.selectedIndex,
-        ctx.cachedFiles.map((f) => f.path),
-      );
-      if (effective.size > 0) {
-        ctx.cutToClipboard([...effective]);
-        ctx.clearSelection();
-      }
-    },
-    p: () => {
-      if (ctx.clipboard && ctx.client) {
-        ctx.pasteFiles(ctx.currentPath, ctx.client);
-      }
-    },
-    // Shift+P: paste to a specific path (prompts for destination)
-    "shift+p": () => {
-      if (ctx.clipboard && ctx.client) {
-        ctx.setInputMode("paste-dest");
-        ctx.setInputBuffer(ctx.currentPath);
-      }
-    },
-    // Escape: dismiss search results > exit visual mode > clear selection
-    escape: () => {
-      if (ctx.searchResults !== null) {
-        ctx.setSearchResults(null);
-      } else if (ctx.visualModeAnchor !== null) {
-        ctx.exitVisualMode();
-      } else if (ctx.selectedPaths.size > 0) {
-        ctx.clearSelection();
-      }
-    },
-    // Filter & search modes
-    "/": () => { ctx.setInputMode("filter"); ctx.setInputBuffer(""); },
-    "ctrl+f": () => { ctx.setInputMode("search"); ctx.setInputBuffer(""); },
-  };
-}
-
-/** ShareLinks-specific action bindings. */
-function getShareLinksActionBindings(ctx: BindingContext): Record<string, () => void> {
-  return {
-    x: () => {
-      if (ctx.client) {
-        const link = ctx.shareLinks[ctx.selectedLinkIndex] as { link_id: string; status: string } | undefined;
-        if (link && link.status === "active") {
-          ctx.revokeLink(link.link_id, ctx.client);
-        }
-      }
-    },
-    r: () => { if (ctx.client) ctx.fetchLinks(ctx.client); },
-  };
-}
-
-/** Input mode bindings (mkdir, rename, filter, search). */
-function getInputModeBindings(
-  inputMode: InputMode,
-  ctx: BindingContext,
-): Record<string, () => void> {
-  const resetInput = () => {
-    ctx.setInputMode("none");
-    ctx.setInputBuffer("");
-  };
-
-  const baseBindings: Record<string, () => void> = {
-    escape: resetInput,
-    backspace: () => ctx.setInputBuffer((b) => b.slice(0, -1)),
-  };
-
-  switch (inputMode) {
-    case "mkdir":
-      return {
-        ...baseBindings,
-        return: () => {
-          const value = ctx.filterQuery.trim(); // inputBuffer is used but accessed via closure
-          if (!value || !ctx.client) { resetInput(); return; }
-          const dirPath = ctx.currentPath === "/" ? `/${value}` : `${ctx.currentPath}/${value}`;
-          useFilesStore.getState().mkdirFile(dirPath, ctx.client);
-          resetInput();
-        },
-      };
-
-    case "rename":
-      return {
-        ...baseBindings,
-        return: () => {
-          const value = ctx.filterQuery.trim();
-          if (!value || !ctx.client || !ctx.selectedItem) { resetInput(); return; }
-          const parentPath = ctx.selectedItem.path.split("/").slice(0, -1).join("/") || "/";
-          const newPath = parentPath === "/" ? `/${value}` : `${parentPath}/${value}`;
-          useFilesStore.getState().renameFile(ctx.selectedItem.path, newPath, ctx.client);
-          resetInput();
-        },
-      };
-
-    case "filter":
-      return {
-        ...baseBindings,
-        return: resetInput, // confirm filter and return to normal mode (filter stays applied)
-        escape: () => {
-          ctx.setFilterQuery("");
-          resetInput();
-        },
-      };
-
-    case "search":
-      return {
-        ...baseBindings,
-        return: () => {
-          const query = ctx.searchQuery.trim();
-          if (query) ctx.executeSearch(query);
-          resetInput();
-        },
-        escape: () => {
-          ctx.setSearchQuery("");
-          resetInput();
-        },
-      };
-
-    case "paste-dest":
-      return {
-        ...baseBindings,
-        return: () => {
-          const dest = ctx.filterQuery.trim();
-          if (dest && ctx.client) {
-            useFilesStore.getState().pasteFiles(dest, ctx.client);
-          }
-          resetInput();
-        },
-      };
-
-    case "create":
-      return {
-        ...baseBindings,
-        return: () => {
-          const filePath = ctx.filterQuery.trim();
-          if (!filePath) { resetInput(); return; }
-          // Open editor for the new path (editor handles creation on save)
-          ctx.openEditor(filePath);
-          resetInput();
-        },
-      };
-
-    default:
-      return {};
-  }
-}
-
-/** Top-level binding dispatch based on current mode. */
-function getKeyBindings(
-  inputMode: InputMode,
-  overlayActive: boolean,
-  confirmDelete: boolean,
-  editorOpen: boolean,
-  ctx: BindingContext,
-): Record<string, () => void> {
-  if (overlayActive || confirmDelete || editorOpen) return {};
-
-  if (inputMode !== "none") {
-    return getInputModeBindings(inputMode, ctx);
-  }
-
-  // Normal mode: navigation + tab cycling + tab-specific actions
-  const navBindings = getTabNavBindings(ctx);
-  const tabBindings = getTabCycleBindings(ctx);
-
-  const actionBindings = ctx.activeTab === "explorer"
-    ? getExplorerActionBindings(ctx)
-    : ctx.activeTab === "shareLinks"
-      ? getShareLinksActionBindings(ctx)
-      : {};
-
-  return { ...navBindings, ...tabBindings, ...actionBindings };
-}
-
-// =============================================================================
-// Input bar label per mode
-// =============================================================================
-
-function getInputLabel(mode: InputMode, buffer: string): string {
-  switch (mode) {
-    case "mkdir": return `New directory: ${buffer}\u2588`;
-    case "rename": return `Rename to: ${buffer}\u2588`;
-    case "filter": return `/${buffer}\u2588`;
-    case "search": return `Search (g: glob, r: grep): ${buffer}\u2588`;
-    case "paste-dest": return `Paste to: ${buffer}\u2588`;
-    case "create": return `New file path: ${buffer}\u2588`;
-    default: return "";
-  }
-}
 
 // =============================================================================
 // Component
@@ -487,13 +80,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   // Panel-level active tab
   const [activeTab, setActiveTab] = useState<FilesTab>("explorer");
 
-  // Fall back to first visible tab if the active tab becomes hidden
-  const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
-      setActiveTab(visibleIds[0]!);
-    }
-  }, [visibleIds.join(","), activeTab]);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Files store
   const currentPath = useFilesStore((s) => s.currentPath);
@@ -551,7 +138,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const { available: catalogAvailable } = useBrickAvailable("catalog");
 
   // Active metadata sub-tab
-  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema">("metadata");
+  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema" | "lineage">("metadata");
   React.useEffect(() => {
     if (!catalogAvailable && (metadataTab === "aspects" || metadataTab === "schema")) {
       setMetadataTab("metadata");
@@ -812,13 +399,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       ) : <>
 
       {/* Panel-level tab bar */}
-      <box height={1} width="100%">
-        <text>
-          {visibleTabs.map((tab) => {
-            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-          }).join(" ")}
-        </text>
-      </box>
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
       {/* Input bar for text modes */}
       {inputMode !== "none" && (
@@ -830,7 +411,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Paste progress indicator */}
       {pasteProgress && (
         <box height={1} width="100%">
-          <text style={textStyle({ fg: "cyan" })}>
+          <text foregroundColor={statusColor.info}>
             {pasteProgress.completed + pasteProgress.failed >= pasteProgress.total
               ? `Paste complete: ${pasteProgress.completed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`
               : `Pasting... ${pasteProgress.completed + pasteProgress.failed}/${pasteProgress.total}${pasteProgress.failed > 0 ? ` (${pasteProgress.failed} failed)` : ""}`}
@@ -841,7 +422,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Clipboard indicator (only when not actively pasting) */}
       {clipboard && !pasteProgress && inputMode === "none" && (
         <box height={1} width="100%">
-          <text style={textStyle({ fg: "yellow" })}>
+          <text foregroundColor={statusColor.warning}>
             {`${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
           </text>
         </box>
@@ -869,7 +450,7 @@ export default function FileExplorerPanel(): React.ReactNode {
                     </box>
                   ))}
                 <box height={1}>
-                  <text style={textStyle({ dim: true })}>Press Escape to return to explorer</text>
+                  <text dimColor>Press Escape to return to explorer</text>
                 </box>
               </scrollbox>
             </box>
@@ -894,13 +475,14 @@ export default function FileExplorerPanel(): React.ReactNode {
                 {/* Metadata tab bar with aspect count badge */}
                 <box height={1} width="100%">
                   <text>
-                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
+                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "lineage" ? "[Lineage]" : " Lineage "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
                   </text>
                 </box>
 
                 {/* Metadata sidebar (bottom 30%) */}
                 <box flexGrow={3} borderStyle="single">
                   {metadataTab === "metadata" && <FileMetadata item={selectedItem} />}
+                  {metadataTab === "lineage" && <FileLineage item={selectedItem} />}
                   {metadataTab === "aspects" && catalogAvailable && <FileAspects item={selectedItem} />}
                   {metadataTab === "schema" && catalogAvailable && <FileSchema item={selectedItem} />}
                 </box>
@@ -935,16 +517,13 @@ export default function FileExplorerPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text style={textStyle({ fg: "green" })}>Copied!</text>
+          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>
-            {formatActionHints(getFilesFooterBindings({
-              inputMode,
-              activeTab,
-              catalogAvailable,
-              visualMode: visualModeAnchor !== null,
-              selectionCount: effectiveSelection.size,
+            {getHelpText(
+              inputMode, activeTab, catalogAvailable,
+              visualModeAnchor !== null, effectiveSelection.size,
               clipboard,
-            }))}
+            )}
           </text>}
       </box>
 

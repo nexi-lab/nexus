@@ -1,7 +1,7 @@
 """Integration tests for mount I/O profiles (Issue #1413).
 
-Tests that io_profile propagates through the PathRouter -> RouteResult pipeline
-and that MountConfigModel round-trips io_profile through the database.
+Tests that io_profile propagates through the MountTable -> PathRouter -> RouteResult
+pipeline and that MountConfigModel round-trips io_profile through the database.
 """
 
 from unittest.mock import MagicMock
@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.contracts.io_profile import IOProfile
+from nexus.core.mount_table import MountTable
 from nexus.core.router import PathRouter, RouteResult
 from tests.helpers.dict_metastore import DictMetastore
 
@@ -21,22 +22,25 @@ class TestPathRouterIOProfile:
         backend.name = "mock-backend"
         return backend
 
-    def _make_router(self) -> PathRouter:
-        return PathRouter(DictMetastore())
+    def _make_mount_table_and_router(self) -> tuple[MountTable, PathRouter]:
+        metastore = DictMetastore()
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        return mount_table, router
 
     def test_add_mount_with_io_profile(self) -> None:
-        router = self._make_router()
+        mount_table, router = self._make_mount_table_and_router()
         backend = self._make_backend()
-        router.add_mount("/weights", backend, io_profile="fast_read")
+        mount_table.add("/weights", backend, io_profile="fast_read")
 
         mounts = list(router.list_mounts())
         weight_mount = [m for m in mounts if m.mount_point == "/weights"]
         assert len(weight_mount) == 1
 
     def test_route_propagates_io_profile(self) -> None:
-        router = self._make_router()
+        mount_table, router = self._make_mount_table_and_router()
         backend = self._make_backend()
-        router.add_mount("/models", backend, io_profile="fast_read")
+        mount_table.add("/models", backend, io_profile="fast_read")
 
         result = router.route("/models/gpt4/weights.bin")
         assert result is not None
@@ -44,16 +48,16 @@ class TestPathRouterIOProfile:
         assert result.io_profile == "fast_read"
 
     def test_route_default_io_profile(self) -> None:
-        router = self._make_router()
+        mount_table, router = self._make_mount_table_and_router()
         backend = self._make_backend()
-        router.add_mount("/data", backend)
+        mount_table.add("/data", backend)
 
         result = router.route("/data/file.txt")
         assert result is not None
         assert result.io_profile == "balanced"
 
     def test_multiple_mounts_different_profiles(self) -> None:
-        router = self._make_router()
+        mount_table, router = self._make_mount_table_and_router()
         backend_read = self._make_backend()
         backend_read.name = "read-backend"
         backend_write = self._make_backend()
@@ -61,9 +65,9 @@ class TestPathRouterIOProfile:
         backend_edit = self._make_backend()
         backend_edit.name = "edit-backend"
 
-        router.add_mount("/models", backend_read, io_profile="fast_read")
-        router.add_mount("/logs", backend_write, io_profile="fast_write")
-        router.add_mount("/workspace", backend_edit, io_profile="edit")
+        mount_table.add("/models", backend_read, io_profile="fast_read")
+        mount_table.add("/logs", backend_write, io_profile="fast_write")
+        mount_table.add("/workspace", backend_edit, io_profile="edit")
 
         result_models = router.route("/models/weights.bin")
         result_logs = router.route("/logs/app.log")
@@ -80,6 +84,7 @@ class TestPathRouterIOProfile:
         backend = self._make_backend()
         rr = RouteResult(
             backend=backend,
+            metastore=DictMetastore(),
             backend_path="/file.txt",
             mount_point="/data",
             readonly=False,

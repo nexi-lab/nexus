@@ -9,7 +9,7 @@ Usage:
 
     >>> def wal_stream_factory(path: str, capacity: int) -> WALStreamBackend:
     ...     return WALStreamBackend(metastore, stream_id=path)
-    >>> router.add_mount("/durable-ipc", backend, stream_backend_factory=wal_stream_factory)
+    >>> mount_table.add("/durable-ipc", backend, stream_backend_factory=wal_stream_factory)
     >>> # sys_setattr("/durable-ipc/channel", entry_type=DT_STREAM) → WALStreamBackend
 """
 

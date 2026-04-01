@@ -21,8 +21,6 @@ from nexus.contracts.types import OperationContext
 def _mock_gateway(*, permission_ok: bool = True) -> MagicMock:
     """Create a mock NexusFSGateway with router, rebac, metadata, etc."""
     gw = MagicMock()
-    gw.router.add_mount.return_value = None
-    gw.router.remove_mount.return_value = True
     gw.router.has_mount.return_value = False
     gw.mkdir = AsyncMock(return_value=None)
     gw.rebac_create.return_value = "tuple-1"
@@ -118,7 +116,7 @@ class TestAddMountRollback:
         assert result == "/mnt/test"
         # Permission grant still ran, so no rollback
         gw.rebac_create.assert_called_once()
-        gw.router.remove_mount.assert_not_called()
+        service._driver_coordinator.unmount.assert_not_called()
 
     def test_add_mount_no_context_skips_permissions_no_rollback(self) -> None:
         """Without context, permission grant is skipped -- no failure, no rollback."""
@@ -130,7 +128,7 @@ class TestAddMountRollback:
             context=None,
         )
         assert result == "/mnt/test"
-        gw.router.remove_mount.assert_not_called()
+        service._driver_coordinator.unmount.assert_not_called()
         # rebac_create should not be called without context
         gw.rebac_create.assert_not_called()
 
@@ -191,7 +189,7 @@ class TestGrantOwnerPermission:
             context=_op_context(),
         )
         assert result == "/mnt/test"
-        gw.router.remove_mount.assert_not_called()
+        service._driver_coordinator.unmount.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -457,8 +457,11 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        router = PathRouter(metastore)
-        router.add_mount("/local", backend)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        mount_table.add("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         kernel = NexusFS(
@@ -493,8 +496,11 @@ class TestSlimNexusFSLifecycle:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        router = PathRouter(metastore)
-        router.add_mount("/local", backend)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        mount_table.add("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         kernel = NexusFS(

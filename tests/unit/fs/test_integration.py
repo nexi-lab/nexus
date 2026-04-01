@@ -45,7 +45,10 @@ def slim_fs(tmp_path: Path):
     backend = CASLocalBackend(root_path=data_dir)
 
     # Router (empty — mounts added via coordinator)
-    router = PathRouter(metastore)
+    from nexus.core.mount_table import MountTable
+
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
 
     # Kernel
     kernel = NexusFS(
@@ -102,7 +105,10 @@ def dual_fs(tmp_path: Path):
     backend_a.__class__ = _BackendA
     backend_b.__class__ = _BackendB
 
-    router = PathRouter(metastore)
+    from nexus.core.mount_table import MountTable
+
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
 
     kernel = NexusFS(
         metadata_store=metastore,

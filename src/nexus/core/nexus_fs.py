@@ -98,8 +98,8 @@ class NexusFS(  # type: ignore[misc]
         """Initialize NexusFS kernel.
 
         Kernel boots with MetastoreABC (inode layer) and an optional router.
-        Backends are mounted externally via ``router.add_mount()`` — like
-        Linux VFS, no global backend.
+        Backends are mounted externally via ``DriverLifecycleCoordinator.mount()``
+        (which writes to MountTable) — like Linux VFS, no global backend.
 
         Args:
             router: PathRouter instance for VFS routing. When None, a default
@@ -487,7 +487,7 @@ class NexusFS(  # type: ignore[misc]
 
         This is factored out of ``mkdir`` so it can be called both on the
         normal code-path *and* on the early-return path when the target path
-        already exists (e.g. a DT_MOUNT entry written by ``PathRouter.add_mount``).
+        already exists (e.g. a DT_MOUNT entry written by ``MountTable.add()``).
         """
         parent_path = self._get_parent_path(path)
         parents_to_create: list[str] = []
@@ -2169,7 +2169,7 @@ class NexusFS(  # type: ignore[misc]
         if existing is not None or is_implicit_dir:
             if not exist_ok and not parents:
                 raise FileExistsError(f"Directory already exists: {path}")
-            # DT_MOUNT entries are created by PathRouter.add_mount() *before*
+            # DT_MOUNT entries are created by MountTable.add() *before*
             # mkdir is called, so parent dirs may still need metadata.
             if existing is not None:
                 if parents:

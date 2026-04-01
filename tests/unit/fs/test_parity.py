@@ -36,7 +36,10 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    router = PathRouter(metastore)
+    from nexus.core.mount_table import MountTable
+
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
 
     kernel = NexusFS(
         metadata_store=metastore,

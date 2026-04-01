@@ -30,7 +30,7 @@ class MountConfig:
     This is a service-layer data transfer object. The kernel PathRouter no
     longer exposes MountConfig (it uses _MountEntry internally). This DTO
     carries the fields needed by callers of ``restore_mounts()`` to call
-    ``router.add_mount()``.
+    ``mount_table.add()``.
     """
 
     mount_point: str

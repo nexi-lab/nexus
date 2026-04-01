@@ -55,7 +55,10 @@ class MockMetastore:
 class TestPathRouterPipeRoute:
     def test_pipe_path_returns_pipe_route_result(self) -> None:
         ms = MockMetastore()
-        router = PathRouter(ms)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(ms)
+        router = PathRouter(mount_table)
         mgr = PipeManager(ms)
         mgr.create("/pipes/inbox", capacity=1024)
 
@@ -65,14 +68,18 @@ class TestPathRouterPipeRoute:
 
     def test_regular_file_returns_route_result(self) -> None:
         ms = MockMetastore()
-        router = PathRouter(ms)
 
         # Need a mount for the regular file to route through
         from unittest.mock import MagicMock
 
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(ms)
+        router = PathRouter(mount_table)
+
         backend = MagicMock()
         backend.name = "local"
-        router.add_mount("/workspace", backend)
+        mount_table.add("/workspace", backend)
 
         result = router.route("/workspace/file.txt")
         assert isinstance(result, RouteResult)
@@ -80,7 +87,10 @@ class TestPathRouterPipeRoute:
 
     def test_nonexistent_path_raises(self) -> None:
         ms = MockMetastore()
-        router = PathRouter(ms)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(ms)
+        router = PathRouter(mount_table)
 
         from nexus.contracts.exceptions import PathNotMountedError
 
@@ -90,7 +100,10 @@ class TestPathRouterPipeRoute:
     def test_pipe_at_exact_path_only(self) -> None:
         """DT_PIPE only matches at exact target path, not parent paths."""
         ms = MockMetastore()
-        router = PathRouter(ms)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(ms)
+        router = PathRouter(mount_table)
         mgr = PipeManager(ms)
         mgr.create("/pipes/inbox", capacity=1024)
 

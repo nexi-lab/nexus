@@ -47,6 +47,7 @@ pytestmark = pytest.mark.skipif(
 def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
     """Build a NexusFileSystem backed by a real local CASLocalBackend."""
     from nexus.backends.storage.cas_local import CASLocalBackend
+    from nexus.core.mount_table import MountTable
 
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
@@ -55,8 +56,9 @@ def _build_nexus_fsspec(tmp_path: Path) -> NexusFileSystem:
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    router = PathRouter(metastore)
-    router.add_mount("/local", backend)
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
+    mount_table.add("/local", backend)
     metastore.put(_make_mount_entry("/local", backend.name))
 
     kernel = NexusFS(

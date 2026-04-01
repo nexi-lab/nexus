@@ -179,7 +179,7 @@ class PathRouter:
             if meta.is_stream:
                 return StreamRouteResult(path=virtual_path, metastore=self._metastore)
 
-        # Rust fast path: LPM + canonicalize in single FFI call (~30ns)
+        # RUST_FALLBACK: route — LPM + canonicalize in single FFI call (~30ns)
         rust = self._mount_table.rust
         if rust is not None:
             try:

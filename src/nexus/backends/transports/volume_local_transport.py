@@ -122,6 +122,7 @@ class VolumeLocalTransport:
         self._volume_available = False
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
+        # RUST_FALLBACK: VolumeEngine
         # Try to import Rust VolumeEngine
         try:
             from nexus_fast import VolumeEngine

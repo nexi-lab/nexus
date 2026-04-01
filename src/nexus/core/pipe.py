@@ -31,10 +31,14 @@ import logging
 from collections import deque
 from typing import Protocol, runtime_checkable
 
+# RUST_FALLBACK: RingBufferCore
+_RingBufferCoreType: type | None = None
 try:
-    from nexus_fast import RingBufferCore as _RingBufferCoreType
+    from nexus_fast import RingBufferCore
+
+    _RingBufferCoreType = RingBufferCore
 except ImportError:  # pragma: no cover
-    _RingBufferCoreType = None
+    pass
 
 if _RingBufferCoreType is None:  # pragma: no cover
 
@@ -216,6 +220,7 @@ class RingBuffer:
         """
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
+        assert _RingBufferCoreType is not None
         self._core = _RingBufferCoreType(capacity)
         self._not_empty = asyncio.Event()
         self._not_full = asyncio.Event()

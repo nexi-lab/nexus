@@ -5,12 +5,37 @@ and security validation to eliminate DRY violations across the codebase
 (Issue #1293 Item #6, Issue #1287 Decision 5).
 
 All functions are pure and return immutable results (tuples).
+
+# RUST_FALLBACK: path_utils — all functions have Rust equivalents in nexus_fast.
+# When Rust is available, every public function delegates to the Rust impl
+# (~50ns vs ~1μs Python).  ``grep RUST_FALLBACK src/`` finds all fallback sites.
 """
 
 import functools
 import re
 
 from nexus.contracts.exceptions import InvalidPathError
+
+# ---------------------------------------------------------------------------
+# Rust acceleration (optional — falls back to Python below)
+# ---------------------------------------------------------------------------
+
+_RUST_AVAILABLE = False
+
+try:
+    from nexus_fast import get_ancestors as _rust_get_ancestors
+    from nexus_fast import get_parent as _rust_get_parent
+    from nexus_fast import get_parent_chain as _rust_get_parent_chain
+    from nexus_fast import normalize_path as _rust_normalize_path
+    from nexus_fast import parent_path as _rust_parent_path
+    from nexus_fast import path_matches_pattern as _rust_path_matches_pattern
+    from nexus_fast import split_path as _rust_split_path
+    from nexus_fast import unscope_internal_path as _rust_unscope_internal_path
+    from nexus_fast import validate_path as _rust_validate_path
+
+    _RUST_AVAILABLE = True
+except ImportError:
+    pass
 
 # Pre-compiled regex for normalizing consecutive slashes
 _MULTI_SLASH = re.compile(r"/+")
@@ -29,6 +54,9 @@ def split_path(path: str) -> tuple[str, ...]:
         Tuple of path components (e.g., ("a", "b", "c.txt"))
         Empty tuple for root path or empty string.
     """
+    # RUST_FALLBACK: split_path
+    if _RUST_AVAILABLE:
+        return tuple(_rust_split_path(path))
     if not path or path == "/":
         return ()
     return tuple(path.strip("/").split("/"))
@@ -51,6 +79,9 @@ def get_parent(path: str) -> str | None:
         >>> get_parent("/")
         None
     """
+    # RUST_FALLBACK: get_parent
+    if _RUST_AVAILABLE:
+        return _rust_get_parent(path)
     parts = split_path(path)
     if not parts:
         return None
@@ -77,6 +108,9 @@ def get_ancestors(path: str) -> tuple[str, ...]:
         >>> get_ancestors("/")
         ()
     """
+    # RUST_FALLBACK: get_ancestors
+    if _RUST_AVAILABLE:
+        return tuple(_rust_get_ancestors(path))
     parts = split_path(path)
     if not parts:
         return ()
@@ -101,6 +135,9 @@ def get_parent_chain(path: str) -> tuple[tuple[str, str], ...]:
         >>> get_parent_chain("/a")
         ()
     """
+    # RUST_FALLBACK: get_parent_chain
+    if _RUST_AVAILABLE:
+        return tuple((child, parent) for child, parent in _rust_get_parent_chain(path))
     parts = split_path(path)
     if len(parts) < 2:
         return ()
@@ -139,6 +176,13 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
             ...
         InvalidPathError: Path cannot be empty or whitespace-only
     """
+    # RUST_FALLBACK: validate_path
+    if _RUST_AVAILABLE:
+        try:
+            return _rust_validate_path(path, allow_root)
+        except ValueError as e:
+            raise InvalidPathError(path, str(e)) from None
+
     original_path = path
     path = path.strip() if isinstance(path, str) else path
 
@@ -199,6 +243,9 @@ def normalize_path(path: str) -> str:
     Raises:
         ValueError: If path is not absolute or traversal detected.
     """
+    # RUST_FALLBACK: normalize_path
+    if _RUST_AVAILABLE:
+        return _rust_normalize_path(path)
     import posixpath
 
     if not path.startswith("/"):
@@ -244,6 +291,9 @@ def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
 
 def path_matches_pattern(path: str, pattern: str) -> bool:
     """Check if *path* matches a glob pattern (``*``, ``**``, ``?``)."""
+    # RUST_FALLBACK: path_matches_pattern
+    if _RUST_AVAILABLE:
+        return _rust_path_matches_pattern(path, pattern)
     compiled = _compile_glob_pattern(pattern)
     if compiled is None:
         return False
@@ -252,6 +302,9 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
 
 def parent_path(path: str) -> str | None:
     """Return the parent directory of *path*, or ``None`` for root."""
+    # RUST_FALLBACK: parent_path
+    if _RUST_AVAILABLE:
+        return _rust_parent_path(path)
     if path == "/":
         return None
     path = path.rstrip("/")
@@ -263,6 +316,9 @@ def parent_path(path: str) -> str | None:
 
 def unscope_internal_path(path: str) -> str:
     """Strip internal zone/tenant/user prefix from a storage path."""
+    # RUST_FALLBACK: unscope_internal_path
+    if _RUST_AVAILABLE:
+        return _rust_unscope_internal_path(path)
     parts = path.lstrip("/").split("/")
     skip = 0
     if parts and parts[0].startswith("tenant:"):

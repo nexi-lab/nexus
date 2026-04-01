@@ -12,7 +12,7 @@ import asyncio
 import contextlib
 import logging
 import os
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from nexus.core.stream import (
     StreamClosedError,
@@ -21,10 +21,13 @@ from nexus.core.stream import (
     _translate_rust_error,
 )
 
-try:
+if TYPE_CHECKING:
     from nexus_fast import SharedStreamBufferCore
-except ImportError:
-    SharedStreamBufferCore = None
+
+# RUST_FALLBACK: SharedStreamBufferCore
+_SharedStreamBufferCore: type[SharedStreamBufferCore] | None = None
+with contextlib.suppress(ImportError):
+    from nexus_fast import SharedStreamBufferCore as _SharedStreamBufferCore
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +73,9 @@ class SharedStreamBuffer:
             - shm_path: pass to reader for attach()
             - data_rd_fd: pass to reader (reader listens for data notifications)
         """
-        if SharedStreamBufferCore is None:
+        if _SharedStreamBufferCore is None:
             raise ImportError("SharedStreamBufferCore not available in nexus_fast")
-        core, shm_path, data_rd_fd = SharedStreamBufferCore.create(capacity)
+        core, shm_path, data_rd_fd = _SharedStreamBufferCore.create(capacity)
         buf = cls(core, data_rd_fd=-1)
         return buf, shm_path, data_rd_fd
 
@@ -85,9 +88,9 @@ class SharedStreamBuffer:
             notify_data_wr: Write-end of data pipe (passed to Rust core for notification).
             data_rd_fd: Read-end of data pipe (reader listens here).
         """
-        if SharedStreamBufferCore is None:
+        if _SharedStreamBufferCore is None:
             raise ImportError("SharedStreamBufferCore not available in nexus_fast")
-        core = SharedStreamBufferCore.attach(shm_path, notify_data_wr)
+        core = _SharedStreamBufferCore.attach(shm_path, notify_data_wr)
         return cls(core, data_rd_fd=data_rd_fd)
 
     # -- fd callback ----------------------------------------------------------

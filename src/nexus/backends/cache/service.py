@@ -33,6 +33,7 @@ from nexus.core.hash_fast import hash_content
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import FilePathModel
 
+# RUST_FALLBACK: L1MetadataCache
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache
     from sqlalchemy.orm import Session
@@ -253,16 +254,18 @@ class CacheService:
         # L1: Check Rust metadata cache first
         if l1_cache is not None:
             if original:
-                l1_result = l1_cache.get_content(path)
-                if l1_result is not None:
-                    content_bytes, content_hash, _is_text = l1_result
+                content_result = l1_cache.get_content(path)
+                if content_result is not None:
+                    content_bytes, content_hash, _is_text = content_result
                     entry = CacheEntry.from_l1_content(bytes(content_bytes), content_hash)
                     logger.info("[CACHE] L1 HIT (Rust): %s", path)
                     return entry
             else:
-                l1_result = l1_cache.get(path)
-                if l1_result is not None:
-                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = l1_result
+                meta_result = l1_cache.get(path)
+                if meta_result is not None:
+                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = (
+                        meta_result
+                    )
                     if is_fresh:
                         entry = CacheEntry.from_l1_metadata(path_id, content_hash, original_size)
                         logger.info("[CACHE] L1 HIT (Rust metadata): %s", path)
@@ -340,24 +343,30 @@ class CacheService:
                 paths_needing_l2.append(path)
                 continue
 
-            l1_result = l1_cache.get_content(path) if original else l1_cache.get(path)
-            if l1_result is not None:
-                if original:
-                    content_bytes, content_hash, _is_text = l1_result
+            if original:
+                content_result = l1_cache.get_content(path)
+                if content_result is not None:
+                    content_bytes, content_hash, _is_text = content_result
                     entry = CacheEntry.from_l1_content(bytes(content_bytes), content_hash, now)
                     results[path] = entry
                     logger.debug("[CACHE-BULK] L1 HIT: %s", path)
-                else:
-                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = l1_result
+                    continue
+            else:
+                meta_result = l1_cache.get(path)
+                if meta_result is not None:
+                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = (
+                        meta_result
+                    )
                     if is_fresh:
                         entry = CacheEntry.from_l1_metadata(
                             path_id, content_hash, original_size, now
                         )
                         results[path] = entry
                         logger.debug("[CACHE-BULK] L1 HIT (metadata): %s", path)
+                        continue
                     else:
                         paths_needing_l2.append(path)
-                continue
+                        continue
             paths_needing_l2.append(path)
 
         if not paths_needing_l2:

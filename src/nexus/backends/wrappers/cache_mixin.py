@@ -21,6 +21,7 @@ from nexus.backends.cache.models import (
 )
 from nexus.contracts.types import OperationContext
 
+# RUST_FALLBACK: L1MetadataCache
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache
     from sqlalchemy.orm import Session

@@ -246,6 +246,7 @@ class PythonVFSSemaphore:
 # ---------------------------------------------------------------------------
 
 
+# RUST_FALLBACK: VFSSemaphore
 class RustVFSSemaphore:
     """Thin wrapper around ``nexus_fast.VFSSemaphore``."""
 

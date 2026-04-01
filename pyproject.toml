@@ -394,6 +394,7 @@ exclude_lines = [
 [tool.mypy]
 # Type checking configuration - Phase 3 will enable full strict mode
 python_version = "3.11"
+mypy_path = "stubs"
 exclude = [
     "_pb2(_grpc)?\\.py$",  # Generated gRPC/protobuf stubs
 ]

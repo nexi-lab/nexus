@@ -256,6 +256,7 @@ class PythonVFSLockManager:
 # ---------------------------------------------------------------------------
 
 
+# RUST_FALLBACK: VFSLockManager
 class RustVFSLockManager:
     """Thin wrapper around ``nexus_fast.VFSLockManager``."""
 
@@ -265,23 +266,23 @@ class RustVFSLockManager:
         self._inner = VFSLockManager()
 
     def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int:
-        return self._inner.acquire(path, mode, timeout_ms)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.acquire(path, mode, timeout_ms)
 
     def release(self, handle: int) -> bool:
-        return self._inner.release(handle)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.release(handle)
 
     def is_locked(self, path: str) -> bool:
-        return self._inner.is_locked(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.is_locked(path)
 
     def holders(self, path: str) -> dict | None:
-        return self._inner.holders(path)  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.holders(path)
 
     def stats(self) -> dict:
-        return self._inner.stats()  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.stats()
 
     @property
     def active_locks(self) -> int:
-        return self._inner.active_locks  # type: ignore[no-any-return]  # allowed: untyped Rust ext
+        return self._inner.active_locks
 
 
 # ---------------------------------------------------------------------------

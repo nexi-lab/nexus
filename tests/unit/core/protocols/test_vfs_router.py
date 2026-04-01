@@ -95,7 +95,8 @@ class TestVFSRouterProtocol:
     """Verify the protocol is runtime-checkable and has expected methods."""
 
     def test_expected_methods(self) -> None:
-        expected = {"route", "add_mount", "remove_mount", "list_mounts", "get_mount_points"}
+        # PathRouter is read-only — add_mount/remove_mount moved to coordinator
+        expected = {"route", "list_mounts", "get_mount_points"}
         actual = {
             name
             for name in dir(VFSRouterProtocol)
@@ -117,12 +118,17 @@ class TestPathRouterConformance:
 
         for method_name in (
             "route",
-            "add_mount",
-            "remove_mount",
             "list_mounts",
             "get_mount_points",
         ):
             assert hasattr(PathRouter, method_name), f"PathRouter missing method '{method_name}'"
+
+    def test_no_mutation_methods(self) -> None:
+        """PathRouter is read-only — mount mutations go through coordinator."""
+        from nexus.core.router import PathRouter
+
+        assert not hasattr(PathRouter, "add_mount"), "PathRouter should not have add_mount"
+        assert not hasattr(PathRouter, "remove_mount"), "PathRouter should not have remove_mount"
 
     def test_parameter_names_compatible(self) -> None:
         """Check parameter names match.
@@ -142,8 +148,8 @@ class TestPathRouterConformance:
             f"PathRouter.route missing protocol params: {proto_params - impl_params}"
         )
 
-        # For remove_mount, list_mounts -- check direct match
-        for method_name in ("remove_mount", "list_mounts"):
+        # For list_mounts -- check direct match
+        for method_name in ("list_mounts",):
             proto_m = getattr(VFSRouterProtocol, method_name)
             impl_m = getattr(PathRouter, method_name)
             p_params = {n for n in inspect.signature(proto_m).parameters if n != "self"}

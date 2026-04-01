@@ -12,6 +12,7 @@ mod glob;
 mod hash;
 mod io;
 mod lock;
+mod path_utils;
 mod pipe;
 mod prefix;
 mod rebac;
@@ -109,5 +110,17 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // PathRouter (zone-aware LPM routing)
     m.add_class::<router::RustPathRouter>()?;
     m.add_class::<router::RustRouteResult>()?;
+    // Path utilities (Issue #1817 prerequisite)
+    m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::get_ancestors, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::get_parent_chain, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::parent_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::validate_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::normalize_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::path_matches_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::unscope_internal_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::canonicalize_path, m)?)?;
+    m.add_function(wrap_pyfunction!(path_utils::extract_zone_id, m)?)?;
     Ok(())
 }

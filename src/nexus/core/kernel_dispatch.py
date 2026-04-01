@@ -38,22 +38,13 @@ Issue #900, #889, #1665.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.operation_result import OperationWarning
-
-try:
-    from nexus_fast import HookRegistry as _HookRegistry
-    from nexus_fast import ObserverRegistry as _ObserverRegistry
-    from nexus_fast import PathTrie as _PathTrie
-except ImportError:  # pragma: no cover — Rust extension not built
-    _PathTrie = None
-    _HookRegistry = None
-    _ObserverRegistry = None
-
 from nexus.contracts.vfs_hooks import (
     AccessHookContext,
     CopyHookContext,
@@ -84,7 +75,20 @@ from nexus.contracts.vfs_hooks import (
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
+    from nexus_fast import HookRegistry, ObserverRegistry, PathTrie
+
     from nexus.contracts.vfs_hooks import VFSPathResolver
+
+# RUST_FALLBACK: PathTrie, HookRegistry, ObserverRegistry
+_PathTrie: type[PathTrie] | None = None
+_HookRegistry: type[HookRegistry] | None = None
+_ObserverRegistry: type[ObserverRegistry] | None = None
+with contextlib.suppress(ImportError):
+    from nexus_fast import HookRegistry, ObserverRegistry, PathTrie
+
+    _PathTrie = PathTrie
+    _HookRegistry = HookRegistry
+    _ObserverRegistry = ObserverRegistry
 
 logger = logging.getLogger(__name__)
 

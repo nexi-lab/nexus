@@ -27,7 +27,21 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # Zone-canonical path helpers (pure functions, ~0 cost)
+# RUST_FALLBACK: canonicalize_path, extract_zone_id
 # ---------------------------------------------------------------------------
+
+_RUST_ZONE_AVAILABLE = False
+try:
+    from nexus_fast import (
+        canonicalize_path as _rust_canonicalize_path,
+    )
+    from nexus_fast import (
+        extract_zone_id as _rust_extract_zone_id,
+    )
+
+    _RUST_ZONE_AVAILABLE = True
+except ImportError:
+    pass
 
 
 def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
@@ -36,6 +50,9 @@ def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
     ``canonicalize_path("/workspace/file.txt", "root")``
     → ``"/root/workspace/file.txt"``
     """
+    # RUST_FALLBACK: canonicalize_path
+    if _RUST_ZONE_AVAILABLE:
+        return _rust_canonicalize_path(path, zone_id)
     stripped = path.lstrip("/")
     return f"/{zone_id}/{stripped}" if stripped else f"/{zone_id}"
 
@@ -46,6 +63,9 @@ def extract_zone_id(canonical_path: str) -> tuple[str, str]:
     ``extract_zone_id("/root/workspace/file.txt")``
     → ``("root", "/workspace/file.txt")``
     """
+    # RUST_FALLBACK: extract_zone_id
+    if _RUST_ZONE_AVAILABLE:
+        return _rust_extract_zone_id(canonical_path)
     parts = canonical_path.lstrip("/").split("/", 1)
     zone_id = parts[0]
     relative = "/" + parts[1] if len(parts) > 1 else "/"
@@ -95,7 +115,7 @@ class MountTable:
     def __init__(self, default_metastore: "MetastoreABC") -> None:
         self._entries: dict[str, MountEntry] = {}
         self._default_metastore: MetastoreABC = default_metastore
-        # Rust LPM acceleration (optional)
+        # RUST_FALLBACK: RustPathRouter — LPM acceleration
         self._rust: Any = None
         try:
             from nexus_fast import RustPathRouter

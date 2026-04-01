@@ -383,6 +383,7 @@ class LocalTransport:
         if not keys:
             return {}
 
+        # RUST_FALLBACK: read_files_bulk
         try:
             from nexus_fast import read_files_bulk
 

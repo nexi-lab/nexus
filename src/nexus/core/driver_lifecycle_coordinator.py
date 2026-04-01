@@ -15,9 +15,8 @@ Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
 
 Boot timing:
-    create_nexus_fs()  → router.add_mount("/", backend)   # before __init__
-    NexusFS.__init__() → creates DriverLifecycleCoordinator
-    _do_link()         → adopt_existing_mount("/")          # retroactive hook_spec
+    NexusFS.__init__()     → creates DriverLifecycleCoordinator
+    create_nexus_fs()      → coordinator.mount("/", backend)  # unified lifecycle
 
 Issue #1811, #1320.
 """
@@ -73,7 +72,7 @@ class DriverLifecycleCoordinator:
         """Register a backend in the driver pool. Returns the pool key.
 
         Key = backend.name + @self_address (if set). Called automatically
-        on mount() and adopt_existing_mount().
+        on mount().
         """
         key = f"{backend.name}@{self._self_address}" if self._self_address else backend.name
         self._backend_pool[key] = backend
@@ -136,35 +135,6 @@ class DriverLifecycleCoordinator:
 
         # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
-
-    def adopt_existing_mount(self, mount_point: str) -> None:
-        """Adopt a backend already in the routing table.
-
-        For mounts that predate coordinator creation (root mount in
-        create_nexus_fs).  Registers backend in pool, hook_spec VFS hooks,
-        and broadcasts mount notification.
-        """
-        info = self._router.get_mount(mount_point)
-        if info is None:
-            logger.debug("[DRIVER] adopt_existing_mount(%s): not found", mount_point)
-            return
-
-        backend = info.backend
-
-        # Register in backend pool
-        self.register_backend(backend)
-
-        # Register hook_spec
-        self._register_backend_hooks(mount_point, backend)
-
-        # Broadcast mount event
-        self._dispatch.notify_mount(mount_point, backend)
-
-        logger.debug(
-            "[DRIVER] adopted existing mount %s (backend=%s)",
-            mount_point,
-            getattr(backend, "name", "?"),
-        )
 
     def unmount(self, mount_point: str) -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.

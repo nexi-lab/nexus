@@ -133,11 +133,9 @@ async def _wire_services(
     await enlist_services(nx, _wired)
 
     # Issue #1811: DriverLifecycleCoordinator is kernel-owned (created in
-    # NexusFS.__init__). Root mount ("/") was added to PathRouter in
-    # create_nexus_fs() before __init__ — adopt retroactively registers
-    # the backend's hook_spec (fixes CAS ref_count wiring bug #1320).
+    # NexusFS.__init__). Root mount ("/") registered via coordinator.mount()
+    # in create_nexus_fs() — unified lifecycle (pool + hooks + notify).
     await nx.sys_setattr("/__sys__/services/driver_coordinator", service=nx._driver_coordinator)
-    nx._driver_coordinator.adopt_existing_mount("/")
 
     # Issue #1811 Phase 2: Inject coordinator into MountService so dynamic
     # mounts go through coordinator (hook_spec registration + KernelDispatch).

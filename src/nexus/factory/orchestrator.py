@@ -223,9 +223,8 @@ async def create_nexus_fs(
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
-    # Create and configure router
+    # Create router (root mount deferred to coordinator.mount after kernel construction)
     router = PathRouter(metadata_store)
-    router.add_mount("/", backend)
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
     # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only
@@ -290,6 +289,9 @@ async def create_nexus_fs(
         router=router,
         init_cred=_init_cred,
     )
+
+    # Root mount — through coordinator (unified lifecycle: pool + hooks + notify)
+    nx._driver_coordinator.mount("/", backend)
 
     # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
     init_ctx = await _wire_services(

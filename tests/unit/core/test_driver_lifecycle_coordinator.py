@@ -202,57 +202,6 @@ class TestUnmount:
 
 
 # ---------------------------------------------------------------------------
-# adopt_existing_mount()
-# ---------------------------------------------------------------------------
-
-
-class TestAdoptExistingMount:
-    def test_adopt_registers_hooks(self) -> None:
-        router, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
-
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
-
-        coord.adopt_existing_mount("/")
-
-        assert dispatch.observer_count == 1
-        assert dispatch.mount_hook_count == 1
-
-    def test_adopt_broadcasts_mount(self) -> None:
-        router, dispatch, coord = _make_coordinator()
-        backend = _BackendWithHookSpec()
-
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
-
-        coord.adopt_existing_mount("/")
-
-        hook = backend._mount_hook
-        assert len(hook.calls) == 1
-        assert hook.calls[0].mount_point == "/"
-
-    def test_adopt_not_found_does_nothing(self) -> None:
-        router, dispatch, coord = _make_coordinator()
-        router.get_mount.return_value = None
-
-        coord.adopt_existing_mount("/missing")  # No exception
-
-    def test_adopt_plain_backend_no_hooks(self) -> None:
-        router, dispatch, coord = _make_coordinator()
-        backend = _FakeBackend()
-
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
-
-        coord.adopt_existing_mount("/plain")
-        assert dispatch.observer_count == 0
-
-
-# ---------------------------------------------------------------------------
 # CAS wiring fix (#1320)
 # ---------------------------------------------------------------------------
 
@@ -260,7 +209,7 @@ class TestAdoptExistingMount:
 class TestCASWiringFix:
     def test_cas_hook_spec_has_no_observers(self) -> None:
         """CAS hook_spec() returns HookSpec with NO observers (empty tuple), only mount_hooks."""
-        router, dispatch, coord = _make_coordinator()
+        _, dispatch, coord = _make_coordinator()
 
         # Create a minimal CAS-like backend with hook_spec that has no observers
         mount_hook = _FakeMountHook()
@@ -268,11 +217,7 @@ class TestCASWiringFix:
         backend.name = "cas-local"
         backend.hook_spec.return_value = HookSpec(observers=(), mount_hooks=(mount_hook,))
 
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
-
-        coord.adopt_existing_mount("/")
+        coord.mount("/", backend)
 
         assert dispatch.observer_count == 0
         assert dispatch.mount_hook_count == 1

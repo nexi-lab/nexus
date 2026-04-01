@@ -1,6 +1,7 @@
 """Shared gRPC channel factory for peer-to-peer communication.
 
-Extracted from FederationContentResolver._build_channel() so that
+Builds gRPC peer channels with optional mTLS.
+
 NexusFS pipe proxy and any future peer RPC callers can reuse the
 same channel construction logic (keepalive, mTLS, options).
 

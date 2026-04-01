@@ -90,8 +90,8 @@ class KernelVFSAdapter:
     async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
         self._require_bound()
         # Route through PathRouter directly to the LocalConnector backend.
-        # This bypasses the metadata layer (FederatedMetadataProxy) whose
-        # Raft prefix scan may not index entries under the /agents mount.
+        # This bypasses the metadata layer whose Raft prefix scan may not
+        # index entries under the /agents mount.
         import asyncio
 
         route = self._nx.router.route(path, is_admin=True, check_write=False)

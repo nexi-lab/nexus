@@ -207,8 +207,8 @@ class ContentReplicationService:
     def _replicate_by_hash(self, origin: str, content_hash: str) -> None:
         """CDC-aware replication: fetch manifest → local check → fetch missing chunks.
 
-        Same logic as FederationContentResolver._fetch_content_by_hash but for
-        background replication (stores content locally, no assembly needed).
+        CDC-aware replication: fetch manifest, check local CAS, fetch missing
+        chunks.  Stores content locally; no assembly needed.
         """
         client = self._peer_blob_client
         store = self._object_store
@@ -242,7 +242,7 @@ class ContentReplicationService:
         store.write_content(blob_data)
 
     # ------------------------------------------------------------------
-    # gRPC content pull (reuses FederationContentResolver pattern)
+    # gRPC content pull (peer-to-peer fetch via ReadBlob RPC)
     # ------------------------------------------------------------------
 
     def _fetch_from_peer(self, address: str, virtual_path: str) -> bytes:

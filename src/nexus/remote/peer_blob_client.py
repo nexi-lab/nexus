@@ -5,7 +5,7 @@ peers via gRPC ReadBlob RPC.  Bypasses VFS path routing entirely —
 this is backend transport, not a syscall.
 
 Used by:
-    - FederationContentResolver: CDC-aware chunk assembly
+    - DriverLifecycleCoordinator.resolve_backend(): CDC-aware chunk assembly
     - ContentReplicationService: hash-based content pull
 
 Auth/encryption: same mTLS as all peer gRPC (zone join certificates).

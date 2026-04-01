@@ -116,7 +116,6 @@ class CachingBackendWrapper(DelegatingBackend):
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         super().__init__(inner)
-        super().__init__()
         self._config = config or CacheWrapperConfig()
         self._cache_store = cache_store
 
@@ -154,9 +153,7 @@ class CachingBackendWrapper(DelegatingBackend):
 
     # === Cached Content Operations ===
 
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read content with L1 → inner backend fallback.
 
         L2 is write-populate-only; reads never check L2.

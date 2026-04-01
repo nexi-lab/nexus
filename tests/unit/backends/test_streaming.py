@@ -44,7 +44,7 @@ class TestBackendWriteStreamDefault:
                 self.written_content = content
                 return ObjectStoreWriteResult(content_id=hash_content(content), size=len(content))
 
-            def _read_content_raw(self, content_hash: str, context=None) -> bytes:
+            def read_content(self, content_hash: str, context=None) -> bytes:
                 return b""
 
             def delete_content(self, content_hash: str, context=None) -> None:

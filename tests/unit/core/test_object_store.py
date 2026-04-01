@@ -50,7 +50,7 @@ class MockBackend(Backend):
             self._ref_counts[h] = 1
         return WriteResult(content_id=h, size=len(content))
 
-    def _read_content_raw(self, content_hash, context=None) -> bytes:
+    def read_content(self, content_hash, context=None) -> bytes:
         self._last_context = context
         if content_hash not in self._content:
             raise NexusFileNotFoundError(path=content_hash, message="Content not found")

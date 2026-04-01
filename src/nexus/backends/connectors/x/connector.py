@@ -201,7 +201,7 @@ class PathXBackend(
         """Bind the transport to the current request context (OAuth token)."""
         self._transport = self._x_transport.with_context(context)
 
-    def _read_content_raw(
+    def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
@@ -217,7 +217,7 @@ class PathXBackend(
             )
 
         self._bind_transport(context)
-        return super()._read_content_raw(content_hash, context)
+        return super().read_content(content_hash, context)
 
     def write_content(
         self,

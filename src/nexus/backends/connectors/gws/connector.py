@@ -308,7 +308,7 @@ class DocsConnector(PathCLIBackend):
             )
         raise ValueError(f"Document not found: {name}")
 
-    def _read_content_raw(self, content_hash: str, context: Any = None) -> bytes:
+    def read_content(self, content_hash: str, context: Any = None) -> bytes:
         """Read a Google Doc by resolving the selected display name back to a document id."""
         from nexus.contracts.exceptions import BackendError
 
@@ -1000,7 +1000,7 @@ class GmailConnector(PathCLIBackend):
             entries.append(f"{tid}-{msg_id}.yaml")
         return entries
 
-    def _read_content_raw(
+    def read_content(
         self,
         content_hash: str,
         context: Any = None,
@@ -1453,7 +1453,7 @@ class CalendarConnector(PathCLIBackend):
         # Month listing: return event files
         return [f"{eid}.yaml" for eid in event_ids]
 
-    def _read_content_raw(
+    def read_content(
         self,
         content_hash: str,
         context: Any = None,

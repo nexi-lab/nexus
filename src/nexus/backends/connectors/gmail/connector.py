@@ -407,9 +407,7 @@ class PathGmailBackend(
                 backend="gmail",
             ) from e
 
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 "Gmail connector requires backend_path in OperationContext.",

@@ -302,9 +302,7 @@ class Backend(ObjectStoreABC):
         pass
 
     @abstractmethod
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """
         Read content by its opaque identifier.
 
@@ -706,7 +704,7 @@ class AsyncBackend(Protocol):
         context: "OperationContext | None" = None,
     ) -> WriteResult: ...
 
-    async def _read_content_raw(
+    async def read_content(
         self, content_id: str, context: "OperationContext | None" = None
     ) -> bytes: ...
 

@@ -154,9 +154,7 @@ class DelegatingBackend(Backend):
         transformed = self._transform_on_write(content)
         return self._inner.write_content(transformed, content_id, offset=offset, context=context)
 
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         """Read from inner, then transform via ``_transform_on_read``."""
         data = self._inner.read_content(content_id, context=context)
         return self._transform_on_read(data)

@@ -180,9 +180,7 @@ class PathAddressingEngine(Backend):
 
         return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
 
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
             raise BackendError(
                 f"{self.name} connector requires backend_path in OperationContext. "

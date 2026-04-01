@@ -103,7 +103,7 @@ class IsolatedBackend(Backend):
             self._call("write_content", content, content_id, offset=offset, context=context),
         )
 
-    def _read_content_raw(self, content_id: str, context: "Any | None" = None) -> bytes:
+    def read_content(self, content_id: str, context: "Any | None" = None) -> bytes:
         return cast(bytes, self._call("read_content", content_id, context=context))
 
     def delete_content(self, content_id: str, context: "Any | None" = None) -> None:

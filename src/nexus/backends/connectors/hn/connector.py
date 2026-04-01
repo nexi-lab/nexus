@@ -154,7 +154,7 @@ class PathHNBackend(
     # Content operations -- override PathAddressingEngine for HN
     # =================================================================
 
-    def _read_content_raw(
+    def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
@@ -180,7 +180,7 @@ class PathHNBackend(
                 return cached.content_binary
 
         # Delegate to PathAddressingEngine (which calls transport.fetch)
-        content = super()._read_content_raw(content_hash, context)
+        content = super().read_content(content_hash, context)
 
         # Cache the result
         if self._has_caching():

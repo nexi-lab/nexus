@@ -125,7 +125,7 @@ class RemoteBackend(ObjectStoreABC):
             size=result.get("size", len(content)),
         )
 
-    def _read_content_raw(self, content_id: str, context: OperationContext | None = None) -> bytes:
+    def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
         return self._transport.read_file(path)  # Typed RPC — raw bytes, no JSON decode
 

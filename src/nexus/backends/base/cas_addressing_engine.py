@@ -331,9 +331,7 @@ class CASAddressingEngine(Backend):
         new_data = old_data[:offset] + buf + old_data[offset + len(buf) :]
         return self.write_content(new_data, context=context)
 
-    def _read_content_raw(
-        self, content_id: str, context: "OperationContext | None" = None
-    ) -> bytes:
+    def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         content_hash = content_id  # CAS: content_id is a SHA-256 hash
         # Feature DI: cache hit → skip transport
         if self._cache is not None:

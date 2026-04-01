@@ -92,6 +92,7 @@ class DriverLifecycleCoordinator:
         """Resolve backend from pool by backend_name.
 
         Pool hit → cached backend (local or RemoteBackend).
+        Pool miss + local name → scan mount table for matching backend.name.
         Pool miss + remote origin → lazy-create RemoteBackend, register, return.
 
         Raises:
@@ -100,11 +101,19 @@ class DriverLifecycleCoordinator:
         cached = self._backend_pool.get(backend_name)
         if cached is not None:
             return cached
-        # Pool miss — must be a remote backend we haven't seen yet.
+        # Pool miss — check if it's a remote backend address.
         from nexus.contracts.backend_address import BackendAddress
 
         addr = BackendAddress.parse(backend_name)
         if not addr.has_origin:
+            # No remote origin — try to find a mounted backend whose .name
+            # matches.  This covers the case where a backend was added to the
+            # mount table directly (e.g. in tests) without going through
+            # coordinator.mount(), so it was never registered in the pool.
+            for entry in self._mount_table._entries.values():
+                if entry.backend.name == backend_name:
+                    self._backend_pool[backend_name] = entry.backend
+                    return entry.backend
             raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
         origin = addr.origins[0]
         if self._transport_pool is None:

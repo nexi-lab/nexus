@@ -291,6 +291,11 @@ def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
 
 def path_matches_pattern(path: str, pattern: str) -> bool:
     """Check if *path* matches a glob pattern (``*``, ``**``, ``?``)."""
+    # Fast path: no glob metacharacters → exact string comparison.
+    # Skips regex compile entirely — O(n) str eq vs regex compile+match.
+    # Also avoids Rust regex crate issues with exotic Unicode codepoints.
+    if "*" not in pattern and "?" not in pattern:
+        return path == pattern
     # RUST_FALLBACK: path_matches_pattern
     if _RUST_AVAILABLE:
         return _rust_path_matches_pattern(path, pattern)

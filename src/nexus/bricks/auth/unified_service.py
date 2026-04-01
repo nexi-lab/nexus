@@ -767,7 +767,7 @@ class UnifiedAuthService:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
-        except Exception:
+        except BaseException:
             if proc is not None and proc.returncode is None:
                 proc.kill()
                 await proc.wait()
@@ -876,15 +876,16 @@ class UnifiedAuthService:
                     env=env,
                 )
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
-            except Exception as exc:
+            except BaseException as exc:
                 if proc is not None and proc.returncode is None:
                     proc.kill()
                     await proc.wait()
+                error_msg = str(exc) or f"{target} probe timed out or was cancelled."
                 return target, {
                     "target": target,
                     "success": False,
                     "source": probe_source,
-                    "message": str(exc),
+                    "message": error_msg,
                     "reason": "probe_error",
                 }
 

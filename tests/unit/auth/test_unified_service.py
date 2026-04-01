@@ -517,7 +517,7 @@ def test_probe_timeout_does_not_block_others(
         returncode: int | None = None
 
         async def communicate(self) -> tuple[bytes, bytes]:
-            raise TimeoutError("probe timed out")
+            raise TimeoutError()  # real asyncio.wait_for raises empty TimeoutError
 
         def kill(self) -> None:
             self.returncode = -9
@@ -557,6 +557,7 @@ def test_probe_timeout_does_not_block_others(
         assert checks[t]["success"] is True
     assert checks["chat"]["success"] is False
     assert checks["chat"]["reason"] == "probe_error"
+    assert checks["chat"]["message"]  # must not be blank even with empty TimeoutError
 
 
 def test_probe_mixed_results(

@@ -36,7 +36,7 @@ jobs:
 
   rpc-parity:
     name: RPC Parity Check
-    needs: detect-changes
+    needs: [detect-changes, build-rust]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +56,15 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.13
+
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-wheels-ubuntu-latest
+          path: dist
+
+      - name: Install Rust extensions
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -416,7 +425,7 @@ jobs:
   # ── nexus-fs standalone package validation ─────────────────────────────
   nexus-fs-smoke:
     name: nexus-fs Smoke Test
-    needs: detect-changes
+    needs: [detect-changes, build-rust]
     if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -460,11 +469,18 @@ jobs:
           pip install pydistcheck
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist/*.whl
 
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-wheels-ubuntu-latest
+          path: rust-dist
+
       - name: Install in clean environment (with timing)
         env:
           VIRTUAL_ENV: /tmp/nexus-fs-test
         run: |
           uv venv --python 3.13 $VIRTUAL_ENV
+          uv pip install --python $VIRTUAL_ENV/bin/python rust-dist/*.whl
           start_time=$(date +%s%N)
           uv pip install --python $VIRTUAL_ENV/bin/python dist/*.whl
           end_time=$(date +%s%N)

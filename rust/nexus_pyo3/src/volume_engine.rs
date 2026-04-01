@@ -1337,6 +1337,7 @@ impl VolumeEngine {
             #[cfg(not(unix))]
             {
                 // Fallback: open a new fd for non-unix (no write_all_at)
+                let _ = file; // used on unix; silence warning on windows
                 drop(fds);
                 let vol_path = {
                     let paths = self.volume_paths.read();

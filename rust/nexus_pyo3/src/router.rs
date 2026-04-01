@@ -233,7 +233,9 @@ fn strip_mount_prefix(path: &str, mount_point: &str) -> String {
     } else if mount_point == "/" {
         path.trim_start_matches('/').to_string()
     } else {
-        path[mount_point.len()..].trim_start_matches('/').to_string()
+        path[mount_point.len()..]
+            .trim_start_matches('/')
+            .to_string()
     }
 }
 
@@ -247,27 +249,39 @@ mod tests {
 
     #[test]
     fn test_canonicalize() {
-        assert_eq!(canonicalize("/workspace/file.txt", "root"), "/root/workspace/file.txt");
+        assert_eq!(
+            canonicalize("/workspace/file.txt", "root"),
+            "/root/workspace/file.txt"
+        );
         assert_eq!(canonicalize("/", "root"), "/root");
         assert_eq!(canonicalize("/a/b/c", "zone-1"), "/zone-1/a/b/c");
     }
 
     #[test]
     fn test_strip_zone() {
-        assert_eq!(strip_zone("/root/workspace/file.txt", "root"), "/workspace/file.txt");
+        assert_eq!(
+            strip_zone("/root/workspace/file.txt", "root"),
+            "/workspace/file.txt"
+        );
         assert_eq!(strip_zone("/root", "root"), "/");
         assert_eq!(strip_zone("/zone-1/a/b", "zone-1"), "/a/b");
     }
 
     #[test]
     fn test_extract_zone() {
-        assert_eq!(extract_zone("/root/workspace/file.txt"), ("root".into(), "/workspace/file.txt".into()));
+        assert_eq!(
+            extract_zone("/root/workspace/file.txt"),
+            ("root".into(), "/workspace/file.txt".into())
+        );
         assert_eq!(extract_zone("/root"), ("root".into(), "/".into()));
     }
 
     #[test]
     fn test_strip_mount_prefix() {
-        assert_eq!(strip_mount_prefix("/root/workspace/data/file.txt", "/root/workspace"), "data/file.txt");
+        assert_eq!(
+            strip_mount_prefix("/root/workspace/data/file.txt", "/root/workspace"),
+            "data/file.txt"
+        );
         assert_eq!(strip_mount_prefix("/root/workspace", "/root/workspace"), "");
         assert_eq!(strip_mount_prefix("/root/a/b", "/root"), "a/b");
     }
@@ -278,7 +292,9 @@ mod tests {
         router.add_mount("/", "root", false, false, "balanced");
         router.add_mount("/workspace", "root", false, false, "fast");
 
-        let result = router.route_impl("/workspace/file.txt", "root", false, false).unwrap();
+        let result = router
+            .route_impl("/workspace/file.txt", "root", false, false)
+            .unwrap();
         assert_eq!(result.mount_point, "/root/workspace");
         assert_eq!(result.backend_path, "file.txt");
         assert_eq!(result.io_profile, "fast");
@@ -289,7 +305,9 @@ mod tests {
         let mut router = RustPathRouter::new();
         router.add_mount("/", "root", false, false, "balanced");
 
-        let result = router.route_impl("/unknown/path", "root", false, false).unwrap();
+        let result = router
+            .route_impl("/unknown/path", "root", false, false)
+            .unwrap();
         assert_eq!(result.mount_point, "/root");
         assert_eq!(result.backend_path, "unknown/path");
     }
@@ -299,7 +317,9 @@ mod tests {
         let mut router = RustPathRouter::new();
         router.add_mount("/system", "root", true, false, "balanced");
 
-        let err = router.route_impl("/system/config", "root", false, true).unwrap_err();
+        let err = router
+            .route_impl("/system/config", "root", false, true)
+            .unwrap_err();
         assert!(matches!(err, RouteError::AccessDenied(_)));
     }
 
@@ -308,10 +328,14 @@ mod tests {
         let mut router = RustPathRouter::new();
         router.add_mount("/admin", "root", false, true, "balanced");
 
-        let err = router.route_impl("/admin/secrets", "root", false, false).unwrap_err();
+        let err = router
+            .route_impl("/admin/secrets", "root", false, false)
+            .unwrap_err();
         assert!(matches!(err, RouteError::AccessDenied(_)));
 
-        let result = router.route_impl("/admin/secrets", "root", true, false).unwrap();
+        let result = router
+            .route_impl("/admin/secrets", "root", true, false)
+            .unwrap();
         assert_eq!(result.mount_point, "/root/admin");
     }
 
@@ -321,10 +345,14 @@ mod tests {
         router.add_mount("/", "root", false, false, "balanced");
         router.add_mount("/shared", "zone-beta", false, false, "balanced");
 
-        let result = router.route_impl("/workspace/file.txt", "root", false, false).unwrap();
+        let result = router
+            .route_impl("/workspace/file.txt", "root", false, false)
+            .unwrap();
         assert_eq!(result.mount_point, "/root");
 
-        let result = router.route_impl("/shared/doc.txt", "zone-beta", false, false).unwrap();
+        let result = router
+            .route_impl("/shared/doc.txt", "zone-beta", false, false)
+            .unwrap();
         assert_eq!(result.mount_point, "/zone-beta/shared");
     }
 }

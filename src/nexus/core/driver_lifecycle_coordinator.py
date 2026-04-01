@@ -50,7 +50,7 @@ class DriverLifecycleCoordinator:
         "_mount_specs",
         "_backend_pool",
         "_self_address",
-        "_tls_config",
+        "_transport_pool",
     )
 
     def __init__(
@@ -59,14 +59,14 @@ class DriverLifecycleCoordinator:
         dispatch: "KernelDispatch",
         *,
         self_address: str | None = None,
-        tls_config: Any = None,
+        transport_pool: Any = None,
     ) -> None:
         self._router = router
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
         self._backend_pool: dict[str, Any] = {}
         self._self_address: str | None = self_address
-        self._tls_config: Any = tls_config  # ZoneTlsConfig — set at federation bootstrap
+        self._transport_pool: Any = transport_pool  # RPCTransportPool
 
     def backend_key(self, backend: Any) -> str:
         """Canonical pool key for a backend: ``name@self_address`` or just ``name``.
@@ -104,10 +104,11 @@ class DriverLifecycleCoordinator:
         if not addr.has_origin:
             raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
         origin = addr.origins[0]
+        if self._transport_pool is None:
+            raise KeyError(f"Cannot create RemoteBackend for '{origin}': no transport pool")
         from nexus.backends.storage.remote import RemoteBackend
-        from nexus.remote.rpc_transport import RPCTransport
 
-        transport = RPCTransport(origin, tls_config=self._tls_config)
+        transport = self._transport_pool.get(origin)
         remote = RemoteBackend(transport)
         self._backend_pool[backend_name] = remote
         return remote

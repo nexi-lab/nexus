@@ -9,7 +9,7 @@ import {
   ReservationError,
   WalletNotFoundError,
 } from "../src/errors.js";
-import { NexusApiError } from "@nexus/api-client";
+import { NexusApiError } from "@nexus-ai-fs/api-client";
 
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {

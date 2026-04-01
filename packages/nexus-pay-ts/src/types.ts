@@ -5,7 +5,7 @@
  * This matches the REST API wire format (JSON string amounts).
  */
 
-import type { NexusClientOptions, RequestOptions as BaseRequestOptions } from "@nexus/api-client";
+import type { NexusClientOptions, RequestOptions as BaseRequestOptions } from "@nexus-ai-fs/api-client";
 
 // =============================================================================
 // SDK Configuration (extends shared client options)
@@ -13,13 +13,13 @@ import type { NexusClientOptions, RequestOptions as BaseRequestOptions } from "@
 
 /**
  * Options for creating a NexusPay client.
- * Extends NexusClientOptions from @nexus/api-client.
+ * Extends NexusClientOptions from @nexus-ai-fs/api-client.
  */
 export type NexusPayOptions = NexusClientOptions;
 
 /**
  * Per-request options.
- * Re-exported from @nexus/api-client for backward compatibility.
+ * Re-exported from @nexus-ai-fs/api-client for backward compatibility.
  */
 export type RequestOptions = BaseRequestOptions;
 

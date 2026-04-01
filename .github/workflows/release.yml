@@ -375,12 +375,12 @@ jobs:
           npm run build
           npm test
 
-      - name: Publish @nexus/api-client
+      - name: Publish @nexus-ai-fs/api-client
         if: ${{ env.NODE_AUTH_TOKEN != '' }}
         run: |
           VERSION="$(node -p "require('./packages/nexus-api-client/package.json').version")"
-          if npm view "@nexus/api-client@${VERSION}" version >/dev/null 2>&1; then
-            echo "@nexus/api-client@${VERSION} already published"
+          if npm view "@nexus-ai-fs/api-client@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus-ai-fs/api-client@${VERSION} already published"
           else
             cd packages/nexus-api-client
             npm publish --access public
@@ -401,16 +401,16 @@ jobs:
           const fs = require("fs");
           const path = "packages/nexus-tui/package.json";
           const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-          pkg.dependencies["@nexus/api-client"] = `^${process.env.API_VERSION}`;
+          pkg.dependencies["@nexus-ai-fs/api-client"] = `^${process.env.API_VERSION}`;
           fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
           EOF
 
-      - name: Publish @nexus/tui
+      - name: Publish @nexus-ai-fs/tui
         if: ${{ env.NODE_AUTH_TOKEN != '' }}
         run: |
           VERSION="$(node -p "require('./packages/nexus-tui/package.json').version")"
-          if npm view "@nexus/tui@${VERSION}" version >/dev/null 2>&1; then
-            echo "@nexus/tui@${VERSION} already published"
+          if npm view "@nexus-ai-fs/tui@${VERSION}" version >/dev/null 2>&1; then
+            echo "@nexus-ai-fs/tui@${VERSION} already published"
           else
             cd packages/nexus-tui
             npm publish --access public

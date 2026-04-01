@@ -1,4 +1,4 @@
-# @nexus/pay
+# @nexus-ai-fs/pay
 
 TypeScript SDK for Nexus Pay — agent payment API.
 
@@ -7,13 +7,13 @@ Zero dependencies. Works in Node.js 18+, browsers, Deno, Bun, and edge runtimes.
 ## Install
 
 ```bash
-npm install @nexus/pay
+npm install @nexus-ai-fs/pay
 ```
 
 ## Quick Start
 
 ```typescript
-import { NexusPay } from '@nexus/pay';
+import { NexusPay } from '@nexus-ai-fs/pay';
 
 const pay = new NexusPay({ apiKey: 'nx_live_myagent' });
 
@@ -64,7 +64,7 @@ All amounts are `string` type to prevent floating-point precision loss.
 ## Error Handling
 
 ```typescript
-import { NexusPay, InsufficientCreditsError, NexusPayError } from '@nexus/pay';
+import { NexusPay, InsufficientCreditsError, NexusPayError } from '@nexus-ai-fs/pay';
 
 try {
   await pay.transfer({ to: 'agent-bob', amount: '9999.00' });

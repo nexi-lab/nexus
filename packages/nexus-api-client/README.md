@@ -1,4 +1,4 @@
-# @nexus/api-client
+# @nexus-ai-fs/api-client
 
 Shared HTTP client for Nexus APIs.
 

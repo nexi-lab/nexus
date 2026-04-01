@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { useKnowledgeStore } from "../../src/stores/knowledge-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 function mockClient(responses: Record<string, unknown>): FetchClient {
   return {

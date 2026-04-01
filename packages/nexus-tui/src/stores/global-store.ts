@@ -3,8 +3,8 @@
  */
 
 import { create } from "zustand";
-import type { NexusClientOptions } from "@nexus/api-client";
-import { FetchClient, resolveConfig } from "@nexus/api-client";
+import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
+import { FetchClient, resolveConfig } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
 

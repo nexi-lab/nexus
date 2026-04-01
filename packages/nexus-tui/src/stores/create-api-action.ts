@@ -6,7 +6,7 @@
  * error store integration (Decision 8A).
  */
 
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useErrorStore, type ErrorCategory } from "./error-store.js";
 import { useUiStore } from "./ui-store.js";
 import type { PanelId } from "./global-store.js";

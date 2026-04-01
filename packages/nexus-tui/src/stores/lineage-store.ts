@@ -4,7 +4,7 @@
  */
 
 import { create } from "zustand";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useErrorStore } from "./error-store.js";
 
 // =============================================================================

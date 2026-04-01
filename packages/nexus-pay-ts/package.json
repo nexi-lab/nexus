@@ -1,5 +1,5 @@
 {
-  "name": "@nexus/pay",
+  "name": "@nexus-ai-fs/pay",
   "version": "0.1.0",
   "description": "TypeScript SDK for Nexus Pay — agent payment API",
   "type": "module",
@@ -35,7 +35,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@nexus/api-client": "file:../nexus-api-client"
+    "@nexus-ai-fs/api-client": "file:../nexus-api-client"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

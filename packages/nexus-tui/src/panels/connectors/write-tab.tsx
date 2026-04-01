@@ -13,7 +13,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";

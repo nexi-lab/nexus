@@ -5,7 +5,7 @@
  */
 
 import { create } from "zustand";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
 import { useUiStore } from "./ui-store.js";

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { useAccessStore } from "../../src/stores/access-store.js";
-import type { FetchClient } from "@nexus/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 
 function mockClient(responses: Record<string, unknown>): FetchClient {
   const handler = mock(async (path: string) => {

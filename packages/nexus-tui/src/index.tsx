@@ -5,14 +5,14 @@
  * Parses CLI args, resolves config, and renders the TUI via OpenTUI.
  *
  * Usage:
- *   bunx @nexus/tui
- *   bunx @nexus/tui --url http://remote:2026 --api-key nx_live_myagent
- *   bunx @nexus/tui --agent-id bot-worker-1 --zone-id org_acme
+ *   bunx @nexus-ai-fs/tui
+ *   bunx @nexus-ai-fs/tui --url http://remote:2026 --api-key nx_live_myagent
+ *   bunx @nexus-ai-fs/tui --agent-id bot-worker-1 --zone-id org_acme
  */
 
 import { createCliRenderer } from "@opentui/core";
 import { createRoot } from "@opentui/react";
-import { resolveConfig } from "@nexus/api-client";
+import { resolveConfig } from "@nexus-ai-fs/api-client";
 import { useGlobalStore } from "./stores/global-store.js";
 import { App } from "./app.js";
 
@@ -56,7 +56,7 @@ Usage:
   nexus-tui [options]
 
 Published package:
-  bunx @nexus/tui [options]
+  bunx @nexus-ai-fs/tui [options]
 
 Options:
   --url, -u <url>        Nexus server URL (default: NEXUS_URL or http://localhost:2026)

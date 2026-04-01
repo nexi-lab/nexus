@@ -5,7 +5,7 @@
  */
 
 import type { ConnectionStatus } from "../../stores/global-store.js";
-import type { NexusClientOptions } from "@nexus/api-client";
+import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
 
 /**
  * Describes why the TUI cannot connect, guiding the PreConnectionScreen UI.

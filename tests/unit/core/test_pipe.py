@@ -889,16 +889,16 @@ SELF_ADDR = "10.0.0.1:50051"
 REMOTE_ADDR = "10.0.0.2:50051"
 
 
-class _MockChannelPool:
-    """Minimal PeerChannelPool duck-type for PipeManager tests."""
+class _MockTransportPool:
+    """Minimal RPCTransportPool duck-type for PipeManager tests."""
 
     def __init__(self) -> None:
         from unittest.mock import MagicMock
 
-        self.channel = MagicMock()
+        self._transport = MagicMock()
 
     def get(self, address: str) -> object:
-        return self.channel
+        return self._transport
 
 
 class TestPipeManagerRemoteDetection:
@@ -906,10 +906,10 @@ class TestPipeManagerRemoteDetection:
 
     def _make_manager_with_pool(
         self,
-    ) -> tuple[PipeManager, MockMetastore, _MockChannelPool]:
+    ) -> tuple[PipeManager, MockMetastore, _MockTransportPool]:
         ms = MockMetastore()
-        pool = _MockChannelPool()
-        mgr = PipeManager(ms, self_address=SELF_ADDR, channel_pool=pool)
+        pool = _MockTransportPool()
+        mgr = PipeManager(ms, self_address=SELF_ADDR, transport_pool=pool)
         return mgr, ms, pool
 
     def test_open_remote_pipe_installs_remote_backend(self) -> None:
@@ -963,9 +963,9 @@ class TestPipeManagerRemoteDetection:
         assert isinstance(backend, RingBuffer)
 
     def test_open_without_pool_always_ringbuffer(self) -> None:
-        """Without channel_pool, open() always creates RingBuffer even for remote."""
+        """Without transport_pool, open() always creates RingBuffer even for remote."""
         ms = MockMetastore()
-        mgr = PipeManager(ms, self_address=SELF_ADDR)  # no channel_pool
+        mgr = PipeManager(ms, self_address=SELF_ADDR)  # no transport_pool
         meta = FileMetadata(
             path="/nexus/pipes/remote-no-pool",
             backend_name=f"pipe@{REMOTE_ADDR}",

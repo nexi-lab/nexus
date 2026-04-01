@@ -90,7 +90,7 @@ class TestRemoteBackendRPC:
         ctx = self._make_ctx("/file.txt", "file.txt")
         result = backend.read_content("hash", context=ctx)
 
-        mock_transport.read_file.assert_called_once_with("/file.txt")
+        mock_transport.read_file.assert_called_once_with("/file.txt", content_id="hash")
         assert result == b"content"
 
     def test_delete_content_is_noop(self, backend: RemoteBackend) -> None:

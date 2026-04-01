@@ -308,26 +308,18 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
         request: "vfs_pb2.ReadRequest",
         _context: grpc.aio.ServicerContext,
     ) -> "vfs_pb2.ReadResponse":
-        """Typed read — returns raw bytes, no JSON/base64 overhead."""
+        """Typed read — returns raw bytes, no JSON/base64 overhead.
+
+        Reads content directly from backend by ``content_id`` (opaque identifier:
+        hash for CAS, path for PAS). No metastore lookup — the caller already
+        resolved metadata and knows the content_id.
+        """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            result = await self._nexus_fs.read(
-                request.path,
-                context=op_context,
-                return_metadata=True,
-            )
-            if isinstance(result, dict):
-                content = result.get("content", b"")
-                if isinstance(content, str):
-                    content = content.encode("utf-8")
-                etag = result.get("etag", "")
-                size = result.get("size", len(content))
-            else:
-                content = result if isinstance(result, bytes) else b""
-                etag = ""
-                size = len(content)
-            return vfs_pb2.ReadResponse(content=content, etag=etag, size=size)
+            route = self._nexus_fs.router.route(request.path, zone_id=op_context.zone_id)
+            content = route.backend.read_content(request.content_id, context=op_context)
+            return vfs_pb2.ReadResponse(content=content, etag=request.content_id, size=len(content))
         except ZoneScopingError as e:
             return vfs_pb2.ReadResponse(
                 is_error=True,

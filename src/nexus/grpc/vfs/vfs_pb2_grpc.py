@@ -5,7 +5,7 @@ import warnings
 
 from nexus.grpc.vfs import vfs_pb2 as nexus_dot_grpc_dot_vfs_dot_vfs__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.78.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -54,11 +54,6 @@ class NexusVFSServiceStub(object):
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
                 response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
                 _registered_method=True)
-        self.StreamRead = channel.unary_stream(
-                '/nexus.grpc.vfs.NexusVFSService/StreamRead',
-                request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
-                response_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
-                _registered_method=True)
         self.ReadBlob = channel.unary_unary(
                 '/nexus.grpc.vfs.NexusVFSService/ReadBlob',
                 request_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadBlobRequest.SerializeToString,
@@ -96,12 +91,6 @@ class NexusVFSServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Delete(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def StreamRead(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -145,11 +134,6 @@ def add_NexusVFSServiceServicer_to_server(servicer, server):
                     servicer.Delete,
                     request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.FromString,
                     response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.SerializeToString,
-            ),
-            'StreamRead': grpc.unary_stream_rpc_method_handler(
-                    servicer.StreamRead,
-                    request_deserializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.FromString,
-                    response_serializer=nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.SerializeToString,
             ),
             'ReadBlob': grpc.unary_unary_rpc_method_handler(
                     servicer.ReadBlob,
@@ -270,33 +254,6 @@ class NexusVFSService(object):
             '/nexus.grpc.vfs.NexusVFSService/Delete',
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteRequest.SerializeToString,
             nexus_dot_grpc_dot_vfs_dot_vfs__pb2.DeleteResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def StreamRead(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/nexus.grpc.vfs.NexusVFSService/StreamRead',
-            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.StreamReadRequest.SerializeToString,
-            nexus_dot_grpc_dot_vfs_dot_vfs__pb2.ReadChunk.FromString,
             options,
             channel_credentials,
             insecure,

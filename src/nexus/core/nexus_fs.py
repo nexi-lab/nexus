@@ -192,13 +192,10 @@ class NexusFS(  # type: ignore[misc]
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
 
-        from nexus.grpc.channel_pool import PeerChannelPool as _PeerChannelPool
         from nexus.remote.rpc_transport import RPCTransportPool as _RPCTransportPool
 
-        self._channel_pool: _PeerChannelPool | None = None
         self._transport_pool: _RPCTransportPool | None = None
         if _ipc_self_addr:
-            self._channel_pool = _PeerChannelPool()
             self._transport_pool = _RPCTransportPool()
 
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
@@ -213,12 +210,12 @@ class NexusFS(  # type: ignore[misc]
         self._pipe_manager = PipeManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            transport_pool=self._transport_pool,
         )
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            transport_pool=self._transport_pool,
         )
 
         from nexus.core.file_watcher import FileWatcher
@@ -4810,11 +4807,9 @@ class NexusFS(  # type: ignore[misc]
             self._pipe_manager.close_all()
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
-        # Close transport pools (persistent gRPC connections)
+        # Close transport pool (persistent gRPC connections)
         if hasattr(self, "_transport_pool") and self._transport_pool is not None:
             self._transport_pool.close_all()
-        if hasattr(self, "_channel_pool") and self._channel_pool is not None:
-            self._channel_pool.close_all()
 
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.

@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.lock_fast import (
@@ -45,7 +45,6 @@ from nexus.core.pipe import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
-    from nexus.grpc.channel_pool import PeerChannelPool
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +81,12 @@ class PipeManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        channel_pool: "PeerChannelPool | None" = None,
+        transport_pool: Any = None,
         vfs_lock_manager: "RustVFSLockManager | PythonVFSLockManager | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
-        self._channel_pool = channel_pool
+        self._transport_pool = transport_pool
         self._buffers: dict[str, PipeBackend] = {}
         # Issue #3198: VFSLockManager replaces dict[str, asyncio.Lock] for
         # per-pipe MPMC locking — Rust-backed (~100-200ns), hierarchical
@@ -251,17 +250,18 @@ class PipeManager:
             raise PipeNotFoundError(f"no pipe at: {path}")
 
         # Detect remote pipe — install RemotePipeBackend for fast-path
-        if self._channel_pool is not None and metadata.backend_name:
+        if self._transport_pool is not None and metadata.backend_name:
             from nexus.contracts.backend_address import BackendAddress
 
             addr = BackendAddress.parse(metadata.backend_name)
             if addr.has_origin and self._self_address not in addr.origins:
                 from nexus.core.remote_pipe import RemotePipeBackend
 
+                transport = self._transport_pool.get(addr.origins[0])
                 backend: PipeBackend = RemotePipeBackend(
                     origin=addr.origins[0],
                     path=path,
-                    channel_pool=self._channel_pool,
+                    transport=transport,
                 )
                 self._buffers[path] = backend
                 logger.debug("pipe opened (remote): %s → %s", path, addr.origins[0])

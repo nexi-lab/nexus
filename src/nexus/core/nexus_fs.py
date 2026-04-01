@@ -34,6 +34,7 @@ from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_ipc import IPCMixin
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
+from nexus.core.object_store import ObjectStoreABC
 from nexus.core.path_utils import validate_path
 from nexus.core.router import PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
@@ -234,6 +235,11 @@ class NexusFS(  # type: ignore[misc]
 
         self._event_bus: Any = None
         self._overlay_resolver = None
+        # Backend pool — keyed by backend_name (e.g. "CASLocalBackend@10.0.0.5:2028").
+        # Router uses this to resolve per-file backend from metadata.
+        # Standalone: empty (all reads use mount entry backend).
+        # Federation: populated with RemoteBackend instances for remote nodes.
+        self._backend_pool: dict[str, ObjectStoreABC] = {}
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -439,6 +445,40 @@ class NexusFS(  # type: ignore[misc]
         from nexus.lib.context_utils import parse_context
 
         return parse_context(context)
+
+    def _resolve_backend(self, backend_name: str | None, fallback: Any) -> Any:
+        """Resolve backend from pool by backend_name. Falls back to mount backend.
+
+        Pool hit → cached backend (local or RemoteBackend).
+        Pool miss + local → fallback (mount entry backend).
+        Pool miss + remote → lazy-create RemoteBackend, cache in pool.
+
+        Standalone (empty pool): always returns fallback.
+        """
+        if not backend_name or not self._backend_pool:
+            return fallback
+        cached = self._backend_pool.get(backend_name)
+        if cached is not None:
+            return cached
+        # Parse origin from backend_name (e.g. "CASLocalBackend@10.0.0.5:2028")
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(backend_name)
+        if not addr.has_origin or (self._self_address and self._self_address in addr.origins):
+            # Local — cache mount entry backend under this backend_name
+            self._backend_pool[backend_name] = fallback
+            return fallback
+        # Remote — lazy-create RemoteBackend
+        origin = addr.origins[0]
+        from nexus.backends.storage.remote import RemoteBackend
+
+        if self._channel_pool is not None:
+            transport = self._channel_pool.get_transport(origin)
+            remote = RemoteBackend(transport)
+            self._backend_pool[backend_name] = remote
+            return remote
+        # No channel pool — can't create remote backend, fallback to local
+        return fallback
 
     def _ensure_context_ttl(self, context: OperationContext | None, ttl: float) -> OperationContext:
         """Ensure context exists and has ttl_seconds set (Issue #3405)."""

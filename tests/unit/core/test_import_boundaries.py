@@ -214,13 +214,11 @@ class TestFourStoragePillars:
         assert not missing, f"MetastoreABC missing abstract methods: {missing}"
 
     def test_metastore_implementations_exist(self):
-        """At least RaftMetadataStore and FederatedMetadataProxy implement MetastoreABC."""
+        """At least RaftMetadataStore implements MetastoreABC."""
         from nexus.core.metastore import MetastoreABC
-        from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
         from nexus.storage.raft_metadata_store import RaftMetadataStore
 
         assert issubclass(RaftMetadataStore, MetastoreABC)
-        assert issubclass(FederatedMetadataProxy, MetastoreABC)
 
     def test_no_old_name_in_codebase(self):
         """FileMetadataProtocol should not appear in src/ (clean rename)."""

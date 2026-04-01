@@ -104,7 +104,7 @@ class NexusFederation:
         *,
         metadata_path: str,
     ) -> tuple["NexusFederation", Any]:
-        """Bootstrap federation: create ZoneManager + FederatedMetadataProxy.
+        """Bootstrap federation: create ZoneManager + root zone MetastoreABC.
 
         Encapsulates all of connect()'s federation setup (~100 lines):
         env var parsing, TLS pre-provisioning, join token flow, ZoneManager
@@ -114,7 +114,7 @@ class NexusFederation:
             metadata_path: Path to the metastore directory (used to derive zones_dir).
 
         Returns:
-            Tuple of (NexusFederation instance, MetastoreABC via FederatedMetadataProxy).
+            Tuple of (NexusFederation instance, root zone MetastoreABC).
 
         Raises:
             ImportError: Rust extensions not available.
@@ -126,7 +126,6 @@ class NexusFederation:
         from pathlib import Path
 
         from nexus.contracts.constants import DEFAULT_GRPC_BIND_ADDR
-        from nexus.raft import FederatedMetadataProxy
         from nexus.raft.peer_address import PeerAddress, hostname_to_node_id
         from nexus.raft.zone_manager import ZoneManager
 
@@ -223,9 +222,11 @@ class NexusFederation:
                 _time.sleep(delay)
 
         assert zone_mgr is not None  # guaranteed by loop above
-        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
-        # Wire dcache invalidation: mount/unmount evicts stale proxy entries
-        zone_mgr._dcache_proxy = metadata_store
+        # Root zone metastore — PathRouter per-mount metastore binding (#3580)
+        # handles cross-zone routing. No FederatedMetadataProxy needed.
+        metadata_store = zone_mgr.get_store("root")
+        if metadata_store is None:
+            raise RuntimeError("Root zone metastore not available after bootstrap")
         federation = cls(zone_manager=zone_mgr)
         return federation, metadata_store
 

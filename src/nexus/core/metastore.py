@@ -18,7 +18,6 @@ FFI + protobuf decode). The cache is write-through and authoritative
 
 Implementations:
   - RaftMetadataStore  (storage/raft_metadata_store.py)
-  - FederatedMetadataProxy (raft/federated_metadata_proxy.py)
 
 SSOT: proto/nexus/core/metadata.proto defines the FileMetadata fields.
 This ABC defines the *operations* over those fields.

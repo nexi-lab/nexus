@@ -565,24 +565,19 @@ async def connect(
 
 
 async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backend: Any) -> None:
-    """Register federation resolvers via coordinator.enlist() (#163, #1625, #1710).
+    """Wire federation transport — set TLS config on RPCTransportPool.
 
-    Registration order matters — IPC resolver is registered FIRST so remote
-    DT_PIPE/DT_STREAM are intercepted before the content resolver.  Content
-    resolver is registered LAST as a generic fallback for CAS-backed content.
+    Content locality (remote reads) and IPC (remote pipe/stream) are now
+    handled transparently by DriverLifecycleCoordinator.resolve_backend()
+    and RPCTransportPool. No PRE-DISPATCH resolvers needed.
 
-    Both resolvers declare hook_spec() and are enlisted via the unified
-    coordinator.enlist() entry point (#1710).
-
-    When the local backend supports CAS (content_exists/read_content), a
-    CASRemoteContentFetcher is wired for hash-based scatter-gather fetch.
-    Otherwise the resolver falls back to path-based gRPC Read/StreamRead.
+    The old FederationContentResolver, FederationIPCResolver, and
+    FederatedMetadataProxy have been deleted — their functionality is
+    subsumed by PathRouter per-mount metastore (#3580), backend_key()
+    write enrichment, and resolve_backend() pool lookup.
     """
-    from nexus.raft.federation_content_resolver import FederationContentResolver
-    from nexus.raft.federation_ipc_resolver import FederationIPCResolver
-
+    _ = backend  # unused after resolver deletion
     _zone_mgr = federation.zone_manager
-    _coordinator = nx_fs.service_coordinator
 
     # Set TLS config on transport pool now that federation is initialized
     if (
@@ -592,53 +587,7 @@ async def _register_federation_resolver(nx_fs: "NexusFS", federation: Any, backe
     ):
         nx_fs._transport_pool.set_tls_config(_zone_mgr.tls_config)
 
-    # IPC resolver — remote DT_PIPE/DT_STREAM (#1625)
-    ipc_resolver = FederationIPCResolver(
-        metastore=nx_fs.metadata,
-        self_address=_zone_mgr.advertise_addr,
-        tls_config=_zone_mgr.tls_config,
-        pipe_manager=nx_fs._pipe_manager,
-        stream_manager=nx_fs._stream_manager,
-    )
-    await _coordinator.enlist("federation_ipc", ipc_resolver)
-
-    # Build CAS remote content fetcher if backend supports CAS (#1744)
-    remote_content_fetcher = None
-    if hasattr(backend, "content_exists") and hasattr(backend, "read_content"):
-        import os as _os_peer
-
-        from nexus.backends.base.remote_content_fetcher import CASRemoteContentFetcher
-        from nexus.remote.peer_blob_client import PeerBlobClient
-
-        _peer_auth = _os_peer.environ.get("NEXUS_API_KEY", "")
-        peer_blob_client = PeerBlobClient(tls_config=_zone_mgr.tls_config, auth_token=_peer_auth)
-        remote_content_fetcher = CASRemoteContentFetcher(
-            peer_blob_client=peer_blob_client,
-            local_object_store=backend,
-        )
-        logger.info("CAS remote content fetcher wired for federation scatter-gather")
-
-    # Content resolver — remote CAS content (#163)
-    # self_address uses VFS gRPC port (default 2028), not Raft port (2126).
-    # Content fetcher connects via NexusVFSService (VFS gRPC), not Raft gRPC.
-    _raft_addr = _zone_mgr.advertise_addr  # e.g. "nexus-1:2126"
-    _hostname = _raft_addr.rsplit(":", 1)[0] if ":" in _raft_addr else _raft_addr
-    import os as _os_mod
-
-    _vfs_grpc_port = _os_mod.environ.get("NEXUS_GRPC_PORT", "2028")
-    _content_addr = f"{_hostname}:{_vfs_grpc_port}"
-    _content_auth = _os_mod.environ.get("NEXUS_API_KEY", "")
-    content_resolver = FederationContentResolver(
-        metastore=nx_fs.metadata,
-        self_address=_content_addr,
-        tls_config=_zone_mgr.tls_config,
-        remote_content_fetcher=remote_content_fetcher,
-        local_object_store=backend,
-        auth_token=_content_auth,
-    )
-    await _coordinator.enlist("federation_content", content_resolver)
-
-    logger.info("Federation resolvers registered: IPC + Content (self=%s)", _content_addr)
+    logger.info("Federation transport configured (TLS=%s)", _zone_mgr.tls_config is not None)
 
 
 async def _restore_mounts(nx_fs: "NexusFS") -> None:

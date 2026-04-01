@@ -70,7 +70,6 @@ except (ImportError, AttributeError):
     pass
 
 # Python wrappers for multi-zone federation
-from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_manager import ZoneManager
 from nexus.raft.zone_path_resolver import ZonePathResolver
 
@@ -96,7 +95,6 @@ __all__ = [
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
     # Multi-zone federation
-    "FederatedMetadataProxy",
     "ZoneManager",
     "ZonePathResolver",
     "ZoneHandle",

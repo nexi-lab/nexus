@@ -15,6 +15,7 @@ mod lock;
 mod pipe;
 mod prefix;
 mod rebac;
+mod router;
 mod search;
 mod semaphore;
 #[cfg(unix)]
@@ -24,7 +25,6 @@ mod shm_stream;
 mod simd;
 mod stream;
 mod trigram;
-mod router;
 mod volume_engine;
 mod volume_index;
 

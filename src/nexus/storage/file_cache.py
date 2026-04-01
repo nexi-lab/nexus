@@ -104,21 +104,15 @@ class FileContentCache:
 
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
-        try:
-            from nexus_fast import BloomFilter
+        # RUST_FALLBACK: BloomFilter
+        from nexus_fast import BloomFilter
 
-            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
-            self._populate_bloom_from_disk()
-            logger.debug(
-                f"Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}, memory={self._bloom.memory_bytes} bytes"
-            )
-        except ImportError:
-            logger.debug("nexus_fast not available, Bloom filter disabled")
-            self._bloom = None
-        except Exception as e:
-            logger.warning(f"Failed to initialize Bloom filter: {e}")
-            self._bloom = None
+        self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+        self._populate_bloom_from_disk()
+        logger.debug(
+            f"Bloom filter initialized: capacity={self._bloom_capacity}, "
+            f"fp_rate={self._bloom_fp_rate}, memory={self._bloom.memory_bytes} bytes"
+        )
 
     def _populate_bloom_from_disk(self) -> None:
         """Populate Bloom filter from existing cache entries on disk.
@@ -408,20 +402,12 @@ class FileContentCache:
 
         cache_path = self._get_cache_path(zone_id, virtual_path)
 
-        try:
-            from nexus_fast import read_file
+        # RUST_FALLBACK: read_file
+        from nexus_fast import read_file
 
+        try:
             result: bytes | None = read_file(str(cache_path))
             return result
-        except ImportError:
-            # Fallback to standard read if nexus_fast not available
-            if not cache_path.exists():
-                return None
-            try:
-                return cache_path.read_bytes()
-            except Exception as e:
-                logger.warning(f"Failed to read cache file {cache_path}: {e}")
-                return None
         except Exception as e:
             logger.warning(f"Failed to read cache file {cache_path}: {e}")
             return None
@@ -495,27 +481,19 @@ class FileContentCache:
             cache_to_virtual[cache_path] = vpath
             cache_paths.append(cache_path)
 
-        try:
-            from nexus_fast import read_files_bulk
+        # RUST_FALLBACK: read_files_bulk
+        from nexus_fast import read_files_bulk
 
-            # Parallel mmap read
-            cache_contents = read_files_bulk(cache_paths)
+        # Parallel mmap read
+        cache_contents = read_files_bulk(cache_paths)
 
-            # Map back to virtual paths
-            result: dict[str, bytes] = {}
-            for cache_path, content in cache_contents.items():
-                virtual_path = cache_to_virtual.get(cache_path)
-                if virtual_path:
-                    result[virtual_path] = content
-            return result
-        except ImportError:
-            # Fallback to sequential read if nexus_fast not available
-            fallback_result: dict[str, bytes] = {}
-            for path in paths_to_check:
-                cached = self.read(zone_id, path)
-                if cached is not None:
-                    fallback_result[path] = cached
-            return fallback_result
+        # Map back to virtual paths
+        result: dict[str, bytes] = {}
+        for cache_path, content in cache_contents.items():
+            virtual_path = cache_to_virtual.get(cache_path)
+            if virtual_path:
+                result[virtual_path] = content
+        return result
 
     def read_text_bulk(
         self,

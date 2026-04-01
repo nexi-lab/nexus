@@ -9,13 +9,9 @@ import fnmatch
 from typing import Any
 
 # RUST_FALLBACK: filter_paths
-# Try to import Rust acceleration
-try:
-    import nexus_fast
+import nexus_fast
 
-    RUST_AVAILABLE = True
-except ImportError:
-    RUST_AVAILABLE = False
+RUST_AVAILABLE = True
 
 # OS-generated metadata file patterns
 # These files are automatically created by operating systems and should be

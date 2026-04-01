@@ -123,17 +123,10 @@ class VolumeLocalTransport:
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
         # RUST_FALLBACK: VolumeEngine
-        # Try to import Rust VolumeEngine
-        try:
-            from nexus_fast import VolumeEngine
+        from nexus_fast import VolumeEngine
 
-            self._VolumeEngine = VolumeEngine
-            self._volume_available = True
-        except ImportError:
-            logger.warning(
-                "nexus_fast.VolumeEngine not available, "
-                "falling back to file-per-blob LocalTransport"
-            )
+        self._VolumeEngine = VolumeEngine
+        self._volume_available = True
 
         # Permanent engine for non-TTL CAS blobs
         self._engine: Any = None

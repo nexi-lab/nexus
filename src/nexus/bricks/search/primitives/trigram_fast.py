@@ -12,46 +12,33 @@ Pattern follows grep_fast.py.
 
 import logging
 import os
-from collections.abc import Callable
 from typing import Any
+
+# RUST_FALLBACK: trigram_fast — build_trigram_index, trigram_grep, etc. have Rust equivalents in nexus_fast.
+from nexus_fast import (
+    build_trigram_index as _build_trigram_index,
+)
+from nexus_fast import (
+    build_trigram_index_from_entries as _build_trigram_index_from_entries,
+)
+from nexus_fast import (
+    invalidate_trigram_cache as _invalidate_trigram_cache,
+)
+from nexus_fast import (
+    trigram_grep as _trigram_grep,
+)
+from nexus_fast import (
+    trigram_index_stats as _trigram_index_stats,
+)
+from nexus_fast import (
+    trigram_search_candidates as _trigram_search_candidates,
+)
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
 
-# RUST_FALLBACK: trigram_fast — build_trigram_index, trigram_grep, etc. have Rust equivalents in nexus_fast.
-# Try to import Rust extension
-TRIGRAM_AVAILABLE = False
-_build_trigram_index: Callable[..., None] | None = None
-_build_trigram_index_from_entries: Callable[..., None] | None = None
-_trigram_grep: Callable[..., list[dict[str, Any]]] | None = None
-_trigram_search_candidates: Callable[..., list[str]] | None = None
-_trigram_index_stats: Callable[..., dict[str, Any]] | None = None
-_invalidate_trigram_cache: Callable[..., None] | None = None
-
-try:
-    from nexus_fast import (
-        build_trigram_index as _build_trigram_index,
-    )
-    from nexus_fast import (
-        build_trigram_index_from_entries as _build_trigram_index_from_entries,
-    )
-    from nexus_fast import (
-        invalidate_trigram_cache as _invalidate_trigram_cache,
-    )
-    from nexus_fast import (
-        trigram_grep as _trigram_grep,
-    )
-    from nexus_fast import (
-        trigram_index_stats as _trigram_index_stats,
-    )
-    from nexus_fast import (
-        trigram_search_candidates as _trigram_search_candidates,
-    )
-
-    TRIGRAM_AVAILABLE = True
-except ImportError:
-    pass
+TRIGRAM_AVAILABLE = True
 
 
 def is_available() -> bool:

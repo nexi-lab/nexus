@@ -18,18 +18,11 @@ Functions:
 
 import fnmatch
 import re
-from collections.abc import Callable
 
 # RUST_FALLBACK: glob_match_bulk
-RUST_AVAILABLE = False
-_rust_glob_match_bulk: Callable[[list[str], list[str]], list[str]] | None = None
+from nexus_fast import glob_match_bulk as _rust_glob_match_bulk
 
-try:
-    from nexus_fast import glob_match_bulk as _rust_glob_match_bulk
-
-    RUST_AVAILABLE = True
-except ImportError:
-    pass
+RUST_AVAILABLE = True
 
 
 def glob_match_bulk(

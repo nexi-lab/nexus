@@ -34,6 +34,17 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
+      - name: Build Rust extensions
+        uses: ./.github/actions/build-rust-extensions
+        with:
+          profile: dev
+          rust-cache-shared-key: "rust-lint-py"
+          output-dir: dist
+          github-token: ${{ github.token }}
+
+      - name: Install Rust extensions
+        run: uv pip install dist/*.whl
+
       - name: Install dependencies
         run: |
           uv pip install -e ".[dev]"

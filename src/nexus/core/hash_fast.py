@@ -24,32 +24,20 @@ import hashlib
 import logging
 from typing import Any
 
+# RUST_FALLBACK: hash_content_py, hash_content_smart_py
+# Priority 1: Rust-accelerated BLAKE3
+from nexus_fast import hash_content_py, hash_content_smart_py
+
 logger = logging.getLogger(__name__)
 
 # --- Backend availability detection ---
 
-_RUST_AVAILABLE = False
 _PYTHON_BLAKE3_AVAILABLE = False
 _python_blake3: Any = None
-_rust_hash_content: Any = None
-_rust_hash_content_smart: Any = None
 
-# RUST_FALLBACK: hash_content_py, hash_content_smart_py
-# Priority 1: Rust-accelerated BLAKE3
-try:
-    from nexus_fast import hash_content_py, hash_content_smart_py
-
-    _rust_hash_content = hash_content_py
-    _rust_hash_content_smart = hash_content_smart_py
-    _RUST_AVAILABLE = True
-    logger.debug("Using Rust BLAKE3 acceleration")
-except (ImportError, AttributeError):
-    logger.info(
-        "Optional Rust BLAKE3 extension not available; using Python blake3. "
-        "Install with: pip install nexus-fast or, from a matching source "
-        "checkout in a Python 3.12+ environment, maturin develop "
-        "-m rust/nexus_pyo3/Cargo.toml"
-    )
+_rust_hash_content: Any = hash_content_py
+_rust_hash_content_smart: Any = hash_content_smart_py
+_RUST_AVAILABLE = True
 
 # Priority 2: Python blake3 package (Issue #582, #833)
 try:

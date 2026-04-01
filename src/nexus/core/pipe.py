@@ -28,83 +28,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
 from typing import Protocol, runtime_checkable
 
 # RUST_FALLBACK: RingBufferCore
-_RingBufferCoreType: type | None = None
-try:
-    from nexus_fast import RingBufferCore
+from nexus_fast import RingBufferCore
 
-    _RingBufferCoreType = RingBufferCore
-except ImportError:  # pragma: no cover
-    pass
-
-if _RingBufferCoreType is None:  # pragma: no cover
-
-    class _RingBufferCoreFallback:
-        """Pure-Python fallback for source checkouts without ``nexus_fast``."""
-
-        def __init__(self, capacity: int) -> None:
-            self._capacity = capacity
-            self._queue: deque[bytes] = deque()
-            self._used = 0
-            self.closed = False
-
-        def push(self, data: bytes) -> int:
-            if self.closed:
-                raise RuntimeError("PipeClosed:write to closed pipe")
-            if len(data) > self._capacity:
-                raise ValueError("message larger than capacity")
-            if self._used + len(data) > self._capacity:
-                raise RuntimeError("PipeFull:buffer full")
-            payload = bytes(data)
-            self._queue.append(payload)
-            self._used += len(payload)
-            return len(payload)
-
-        def pop(self) -> bytes:
-            if self._queue:
-                payload = self._queue.popleft()
-                self._used -= len(payload)
-                return payload
-            if self.closed:
-                raise RuntimeError("PipeClosed:read from closed pipe")
-            raise RuntimeError("PipeEmpty:buffer empty")
-
-        def push_u64(self, val: int) -> None:
-            self.push(int(val).to_bytes(8, "little", signed=False))
-
-        def pop_u64(self) -> int:
-            payload = self.pop()
-            if len(payload) != 8:
-                raise RuntimeError("PipeEmpty:expected u64 frame")
-            return int.from_bytes(payload, "little", signed=False)
-
-        def is_full(self) -> bool:
-            return self._used >= self._capacity
-
-        def is_empty(self) -> bool:
-            return not self._queue
-
-        def peek(self) -> bytes | None:
-            return self._queue[0] if self._queue else None
-
-        def peek_all(self) -> list[bytes]:
-            return list(self._queue)
-
-        def close(self) -> None:
-            self.closed = True
-
-        def stats(self) -> dict[str, int | bool]:
-            return {
-                "capacity": self._capacity,
-                "used_bytes": self._used,
-                "message_count": len(self._queue),
-                "closed": self.closed,
-            }
-
-    _RingBufferCoreType = _RingBufferCoreFallback
+_RingBufferCoreType: type = RingBufferCore
 
 
 logger = logging.getLogger(__name__)
@@ -220,7 +149,6 @@ class RingBuffer:
         """
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
-        assert _RingBufferCoreType is not None
         self._core = _RingBufferCoreType(capacity)
         self._not_empty = asyncio.Event()
         self._not_full = asyncio.Event()

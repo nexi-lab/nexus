@@ -376,34 +376,18 @@ class LocalTransport:
         return result
 
     def batch_fetch(self, keys: list[str]) -> dict[str, bytes | None]:
-        """Batch read multiple blobs, using Rust parallel mmap when available.
-
-        Falls back to sequential reads if nexus_fast is not available.
-        """
+        """Batch read multiple blobs, using Rust parallel mmap."""
         if not keys:
             return {}
 
         # RUST_FALLBACK: read_files_bulk
-        try:
-            from nexus_fast import read_files_bulk
+        from nexus_fast import read_files_bulk
 
-            paths = [str(self._resolve(k)) for k in keys]
-            disk_contents = read_files_bulk(paths)
-            result: dict[str, bytes | None] = {}
-            for key, path in zip(keys, paths, strict=True):
-                result[key] = disk_contents.get(path)
-            return result
-        except ImportError:
-            pass
-
-        # Sequential fallback
-        result = {}
-        for key in keys:
-            try:
-                data, _ = self.fetch(key)
-                result[key] = data
-            except Exception:
-                result[key] = None
+        paths = [str(self._resolve(k)) for k in keys]
+        disk_contents = read_files_bulk(paths)
+        result: dict[str, bytes | None] = {}
+        for key, path in zip(keys, paths, strict=True):
+            result[key] = disk_contents.get(path)
         return result
 
     # === Internal Helpers ===

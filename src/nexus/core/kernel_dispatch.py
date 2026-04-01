@@ -40,10 +40,12 @@ Issue #900, #889, #1665.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING, Any
+
+# RUST_FALLBACK: PathTrie, HookRegistry, ObserverRegistry
+from nexus_fast import HookRegistry, ObserverRegistry, PathTrie
 
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.operation_result import OperationWarning
@@ -77,20 +79,11 @@ from nexus.contracts.vfs_hooks import (
 from nexus.core.file_events import FileEvent
 
 if TYPE_CHECKING:
-    from nexus_fast import HookRegistry, ObserverRegistry, PathTrie
-
     from nexus.contracts.vfs_hooks import VFSPathResolver
 
-# RUST_FALLBACK: PathTrie, HookRegistry, ObserverRegistry
-_PathTrie: type[PathTrie] | None = None
-_HookRegistry: type[HookRegistry] | None = None
-_ObserverRegistry: type[ObserverRegistry] | None = None
-with contextlib.suppress(ImportError):
-    from nexus_fast import HookRegistry, ObserverRegistry, PathTrie
-
-    _PathTrie = PathTrie
-    _HookRegistry = HookRegistry
-    _ObserverRegistry = ObserverRegistry
+_PathTrie = PathTrie
+_HookRegistry = HookRegistry
+_ObserverRegistry = ObserverRegistry
 
 logger = logging.getLogger(__name__)
 

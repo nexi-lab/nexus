@@ -6,11 +6,11 @@ without forcing static secrets through OAuth-specific storage semantics.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import shutil
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -28,6 +28,7 @@ from nexus.fs._credentials import discover_credentials
 from nexus.security.secret_file import write_secret_file
 
 logger = logging.getLogger(__name__)
+_UNSET = object()
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
@@ -410,13 +411,20 @@ class UnifiedAuthService:
 
         if self._oauth_service is not None:
             oauth_creds = await self._oauth_service.list_credentials(context=context)
+            cached_native: dict[str, str] | None | object = _UNSET
             for service, providers in _OAUTH_PROVIDER_ALIASES.items():
                 seen_services.add(service)
                 matching = [cred for cred in oauth_creds if cred.get("provider") in providers]
-                native = self._detect_oauth_native(service)
+                if service in _GOOGLE_OAUTH_SERVICES:
+                    if cached_native is _UNSET:
+                        cached_native = await self._detect_google_workspace_cli_native()
+                    native = cached_native if isinstance(cached_native, dict) else None
+                else:
+                    native = None
                 if native is not None and google_target_checks is None:
-                    google_target_checks = self._probe_google_workspace_targets(
+                    google_target_checks = await self._probe_google_workspace_targets(
                         _GWS_TARGETS,
+                        native=native,
                         user_email=native.get("email"),
                     )
                 if matching:
@@ -592,14 +600,15 @@ class UnifiedAuthService:
         if user_email is not None:
             matches = [cred for cred in matches if cred.get("user_email") == user_email]
         desired_targets = self._google_targets_for_service(service, target=target)
-        native = self._detect_oauth_native(service, user_email=user_email)
+        native = await self._detect_oauth_native(service, user_email=user_email)
         if not matches:
             if native is not None:
                 if desired_targets:
-                    return self._google_target_test_result(
+                    return await self._google_target_test_result(
                         service,
                         desired_targets,
                         source=native["source"],
+                        native=native,
                         user_email=user_email or native.get("email"),
                     )
                 return {
@@ -627,10 +636,11 @@ class UnifiedAuthService:
 
         if bool(candidate.get("is_expired")) and native is not None:
             if desired_targets:
-                result = self._google_target_test_result(
+                result = await self._google_target_test_result(
                     service,
                     desired_targets,
                     source=native["source"],
+                    native=native,
                     user_email=user_email or native.get("email"),
                 )
                 result["message"] = "Stored OAuth credential is expired; " + str(
@@ -724,7 +734,7 @@ class UnifiedAuthService:
         message = f"Native provider chain available via {details.get('source', 'native')}."
         return {**{k: str(v) for k, v in details.items()}, "message": message}
 
-    def _detect_oauth_native(
+    async def _detect_oauth_native(
         self,
         service: str,
         *,
@@ -732,9 +742,9 @@ class UnifiedAuthService:
     ) -> dict[str, str] | None:
         if service not in _GOOGLE_OAUTH_SERVICES:
             return None
-        return self._detect_google_workspace_cli_native(user_email=user_email)
+        return await self._detect_google_workspace_cli_native(user_email=user_email)
 
-    def _detect_google_workspace_cli_native(
+    async def _detect_google_workspace_cli_native(
         self,
         *,
         user_email: str | None = None,
@@ -742,30 +752,31 @@ class UnifiedAuthService:
         if shutil.which("gws") is None:
             return None
 
+        proc: asyncio.subprocess.Process | None = None
         try:
-            result = subprocess.run(
-                [
-                    "gws",
-                    "gmail",
-                    "users",
-                    "getProfile",
-                    "--params",
-                    '{"userId":"me"}',
-                    "--format",
-                    "json",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                check=False,
+            proc = await asyncio.create_subprocess_exec(
+                "gws",
+                "gmail",
+                "users",
+                "getProfile",
+                "--params",
+                '{"userId":"me"}',
+                "--format",
+                "json",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except Exception:
+            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except BaseException:
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
             return None
 
-        if result.returncode != 0:
+        if proc.returncode != 0:
             return None
 
-        stdout = result.stdout.strip()
+        stdout = stdout_bytes.decode().strip()
         if not stdout:
             return None
 
@@ -828,56 +839,61 @@ class UnifiedAuthService:
         except Exception:
             return None
 
-    def _probe_google_workspace_targets(
+    async def _probe_google_workspace_targets(
         self,
         targets: tuple[str, ...],
         *,
+        native: dict[str, str] | None = None,
         user_email: str | None = None,
         access_token: str | None = None,
         source: str | None = None,
     ) -> dict[str, dict[str, Any]]:
-        checks: dict[str, dict[str, Any]] = {}
-        native = self._detect_google_workspace_cli_native(user_email=user_email)
         probe_source = source or (native["source"] if native is not None else "oauth")
         probe_email = user_email or (native.get("email") if native is not None else None)
         if access_token is None and native is None:
-            for target in targets:
-                checks[target] = {
+            return {
+                target: {
                     "target": target,
                     "success": False,
                     "source": probe_source,
                     "message": "No Google auth is available for target verification.",
                     "reason": "missing_google_auth",
                 }
-            return checks
+                for target in targets
+            }
 
-        for target in targets:
+        async def _probe_single(target: str) -> tuple[str, dict[str, Any]]:
             args = _GWS_TARGET_PROBES[target]
+            proc: asyncio.subprocess.Process | None = None
             try:
-                env = None
+                env = {**os.environ}
                 if access_token:
-                    env = {"GWS_ACCESS_TOKEN": access_token}
-                result = subprocess.run(
-                    args,
-                    capture_output=True,
-                    text=True,
-                    timeout=15,
-                    check=False,
-                    env={**os.environ, **(env or {})},
+                    env["GWS_ACCESS_TOKEN"] = access_token
+                proc = await asyncio.create_subprocess_exec(
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=env,
                 )
-            except Exception as exc:
-                checks[target] = {
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
+            except BaseException as exc:
+                if proc is not None and proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
+                error_msg = str(exc) or f"{target} probe timed out or was cancelled."
+                return target, {
                     "target": target,
                     "success": False,
                     "source": probe_source,
-                    "message": str(exc),
+                    "message": error_msg,
                     "reason": "probe_error",
                 }
-                continue
 
-            combined = f"{result.stdout}\n{result.stderr}".lower()
-            if result.returncode == 0:
-                checks[target] = {
+            stdout = stdout_bytes.decode()
+            stderr = stderr_bytes.decode()
+            combined = f"{stdout}\n{stderr}".lower()
+            if proc.returncode == 0:
+                return target, {
                     "target": target,
                     "success": True,
                     "source": probe_source,
@@ -887,7 +903,6 @@ class UnifiedAuthService:
                         else f"{target} target is ready via local gws CLI."
                     ),
                 }
-                continue
 
             if "insufficient authentication scopes" in combined:
                 message = (
@@ -902,18 +917,20 @@ class UnifiedAuthService:
                 )
                 reason = "expired"
             else:
-                summary = (result.stderr or result.stdout).strip() or f"{target} probe failed."
+                summary = (stderr or stdout).strip() or f"{target} probe failed."
                 message = summary.splitlines()[0]
                 reason = "probe_failed"
 
-            checks[target] = {
+            return target, {
                 "target": target,
                 "success": False,
                 "source": probe_source,
                 "message": message,
                 "reason": reason,
             }
-        return checks
+
+        results = await asyncio.gather(*[_probe_single(t) for t in targets])
+        return dict(results)
 
     async def _google_target_test_result_for_stored_oauth(
         self,
@@ -970,7 +987,7 @@ class UnifiedAuthService:
                 "stored_oauth_status": AuthStatus.AUTHED.value,
             }
 
-        return self._google_target_test_result(
+        return await self._google_target_test_result(
             service,
             targets,
             source="oauth",
@@ -1090,17 +1107,19 @@ class UnifiedAuthService:
             },
         }
 
-    def _google_target_test_result(
+    async def _google_target_test_result(
         self,
         service: str,
         targets: tuple[str, ...],
         *,
         source: str,
+        native: dict[str, str] | None = None,
         user_email: str | None = None,
         access_token: str | None = None,
     ) -> dict[str, Any]:
-        checks = self._probe_google_workspace_targets(
+        checks = await self._probe_google_workspace_targets(
             targets,
+            native=native,
             user_email=user_email,
             access_token=access_token,
             source=source,

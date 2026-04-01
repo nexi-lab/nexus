@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,42 @@ import pytest
 from nexus.bricks.auth.oauth.types import OAuthCredential
 from nexus.bricks.auth.unified_service import FileSecretCredentialStore, UnifiedAuthService
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
+
+
+async def _fake_probe_all_ok(  # noqa: ANN001
+    targets, *, native=None, user_email=None, access_token=None, source=None
+):
+    return {
+        target: {
+            "target": target,
+            "success": True,
+            "source": source or "oauth",
+            "message": f"{target} target is ready via stored OAuth.",
+        }
+        for target in targets
+    }
+
+
+async def _fake_probe_native_ok(  # noqa: ANN001
+    targets, *, native=None, user_email=None, access_token=None, source=None
+):
+    return {
+        target: {
+            "target": target,
+            "success": True,
+            "source": source or "native:gws_cli",
+            "message": f"{target} target is ready via local gws CLI.",
+        }
+        for target in targets
+    }
+
+
+async def _fake_native_gws(*, user_email=None):  # noqa: ANN001, ARG001
+    return {
+        "source": "native:gws_cli",
+        "email": "alice@example.com",
+        "message": "Local gws CLI profile available for alice@example.com.",
+    }
 
 
 class _FakeOAuthService:
@@ -98,19 +135,7 @@ def test_list_summaries_includes_oauth_and_secret(
     monkeypatch.setattr(
         auth_service, "_get_stored_oauth_credential", _fake_get_stored_oauth_credential
     )
-    monkeypatch.setattr(
-        auth_service,
-        "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
-            target: {
-                "target": target,
-                "success": True,
-                "source": source or "oauth",
-                "message": f"{target} target is ready via stored OAuth.",
-            }
-            for target in targets
-        },
-    )
+    monkeypatch.setattr(auth_service, "_probe_google_workspace_targets", _fake_probe_all_ok)
 
     auth_service.connect_secret(
         "gcs",
@@ -176,15 +201,7 @@ def test_test_service_supports_gws_alias(
     monkeypatch.setattr(
         auth_service,
         "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
-            target: {
-                "target": target,
-                "success": True,
-                "source": source or "oauth",
-                "message": f"{target} target is ready via stored OAuth.",
-            }
-            for target in targets
-        },
+        _fake_probe_all_ok,
     )
 
     result = asyncio.run(auth_service.test_service("gws", user_email="alice@example.com"))
@@ -209,28 +226,8 @@ def test_list_summaries_prefers_native_gws_when_stored_oauth_expired(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(
-        service,
-        "_detect_google_workspace_cli_native",
-        lambda user_email=None: {
-            "source": "native:gws_cli",
-            "email": "alice@example.com",
-            "message": "Local gws CLI profile available for alice@example.com.",
-        },
-    )
-    monkeypatch.setattr(
-        service,
-        "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
-            target: {
-                "target": target,
-                "success": True,
-                "source": source or "native:gws_cli",
-                "message": f"{target} target is ready via local gws CLI.",
-            }
-            for target in targets
-        },
-    )
+    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_native_ok)
 
     summaries = asyncio.run(service.list_summaries())
     summary_by_service = {summary.service: summary for summary in summaries}
@@ -255,28 +252,8 @@ def test_test_service_prefers_native_gws_when_stored_oauth_expired(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(
-        service,
-        "_detect_google_workspace_cli_native",
-        lambda user_email=None: {
-            "source": "native:gws_cli",
-            "email": "alice@example.com",
-            "message": "Local gws CLI profile available for alice@example.com.",
-        },
-    )
-    monkeypatch.setattr(
-        service,
-        "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
-            target: {
-                "target": target,
-                "success": True,
-                "source": source or "native:gws_cli",
-                "message": f"{target} target is ready via local gws CLI.",
-            }
-            for target in targets
-        },
-    )
+    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+    monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_native_ok)
 
     result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
 
@@ -299,19 +276,12 @@ def test_test_service_gws_reports_target_failures(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(
-        service,
-        "_detect_google_workspace_cli_native",
-        lambda user_email=None: {
-            "source": "native:gws_cli",
-            "email": "alice@example.com",
-            "message": "Local gws CLI profile available for alice@example.com.",
-        },
-    )
-    monkeypatch.setattr(
-        service,
-        "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
+    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+
+    async def _fake_probe_chat_fails(
+        targets, *, native=None, user_email=None, access_token=None, source=None
+    ):  # noqa: ANN001, ARG001
+        return {
             target: {
                 "target": target,
                 "success": target != "chat",
@@ -320,8 +290,9 @@ def test_test_service_gws_reports_target_failures(
                 "reason": None if target != "chat" else "missing_scopes",
             }
             for target in targets
-        },
-    )
+        }
+
+    monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_chat_fails)
 
     result = asyncio.run(service.test_service("gws", user_email="alice@example.com"))
 
@@ -344,19 +315,12 @@ def test_list_summaries_marks_gws_error_when_some_targets_fail(
         }
     ]
     service = UnifiedAuthService(oauth_service=oauth, secret_store=secret_store)
-    monkeypatch.setattr(
-        service,
-        "_detect_google_workspace_cli_native",
-        lambda user_email=None: {
-            "source": "native:gws_cli",
-            "email": "alice@example.com",
-            "message": "Local gws CLI profile available for alice@example.com.",
-        },
-    )
-    monkeypatch.setattr(
-        service,
-        "_probe_google_workspace_targets",
-        lambda targets, user_email=None, access_token=None, source=None: {
+    monkeypatch.setattr(service, "_detect_google_workspace_cli_native", _fake_native_gws)
+
+    async def _fake_probe_chat_scopes(
+        targets, *, native=None, user_email=None, access_token=None, source=None
+    ):  # noqa: ANN001, ARG001
+        return {
             target: {
                 "target": target,
                 "success": target in {"drive", "docs", "sheets", "gmail", "calendar"},
@@ -367,8 +331,9 @@ def test_list_summaries_marks_gws_error_when_some_targets_fail(
                 "reason": None if target != "chat" else "missing_scopes",
             }
             for target in targets
-        },
-    )
+        }
+
+    monkeypatch.setattr(service, "_probe_google_workspace_targets", _fake_probe_chat_scopes)
 
     summaries = asyncio.run(service.list_summaries())
     summary_by_service = {summary.service: summary for summary in summaries}
@@ -428,3 +393,215 @@ def test_native_marker_requires_live_provider_chain_for_summary_and_resolution(
     assert summary_by_service["s3"].source == "missing"
     assert resolution.status == AuthStatus.NO_AUTH
     assert resolution.source == "missing"
+
+
+# ---------------------------------------------------------------------------
+# Direct tests for _probe_google_workspace_targets (async parallel probes)
+# ---------------------------------------------------------------------------
+
+
+class _FakeProcess:
+    """Simulates asyncio.subprocess.Process for testing."""
+
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = "") -> None:
+        self.returncode = returncode
+        self._stdout = stdout.encode()
+        self._stderr = stderr.encode()
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        return self._stdout, self._stderr
+
+
+def _make_subprocess_mock(process_map: dict[str, _FakeProcess]):
+    """Return an async mock for asyncio.create_subprocess_exec.
+
+    ``process_map`` maps the first arg (program name + subcommand) to a _FakeProcess.
+    We identify each probe by matching the target-specific arguments from _GWS_TARGET_PROBES.
+    """
+    from nexus.bricks.auth.unified_service import _GWS_TARGET_PROBES
+
+    _probe_to_target = {tuple(args): target for target, args in _GWS_TARGET_PROBES.items()}
+
+    async def _mock_create(*args, **kwargs):  # noqa: ANN002, ANN003, ARG001
+        key = tuple(args)
+        target = _probe_to_target.get(key)
+        if target and target in process_map:
+            return process_map[target]
+        return _FakeProcess(returncode=1, stderr="unknown command")
+
+    return _mock_create
+
+
+@pytest.fixture
+def probe_service(tmp_path: Path) -> UnifiedAuthService:
+    store = FileSecretCredentialStore(tmp_path / "credentials.json")
+    return UnifiedAuthService(oauth_service=_FakeOAuthService(), secret_store=store)
+
+
+_NATIVE = {
+    "source": "native:gws_cli",
+    "email": "alice@example.com",
+    "message": "Local gws CLI profile available for alice@example.com.",
+}
+_TARGETS = ("drive", "docs", "sheets", "gmail", "calendar", "chat")
+
+
+def test_probe_all_targets_succeed(
+    probe_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """All 6 probes succeed → every target marked success."""
+    import asyncio
+
+    processes = {t: _FakeProcess(returncode=0, stdout="{}") for t in _TARGETS}
+    monkeypatch.setattr(
+        "nexus.bricks.auth.unified_service.asyncio.create_subprocess_exec",
+        _make_subprocess_mock(processes),
+    )
+
+    checks = asyncio.run(
+        probe_service._probe_google_workspace_targets(
+            _TARGETS, native=_NATIVE, user_email="alice@example.com"
+        )
+    )
+
+    assert len(checks) == 6
+    for target in _TARGETS:
+        assert checks[target]["success"] is True
+        assert checks[target]["source"] == "native:gws_cli"
+
+
+def test_probe_failure_classification(
+    probe_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probes that fail are classified by error type: missing_scopes, expired, probe_failed."""
+    import asyncio
+
+    processes = {
+        "drive": _FakeProcess(returncode=0, stdout="{}"),
+        "docs": _FakeProcess(returncode=1, stderr="Insufficient Authentication Scopes for request"),
+        "sheets": _FakeProcess(returncode=1, stderr="auth_expired: token is no longer valid"),
+        "gmail": _FakeProcess(returncode=1, stderr="some other error occurred"),
+        "calendar": _FakeProcess(returncode=0, stdout="{}"),
+        "chat": _FakeProcess(returncode=0, stdout="{}"),
+    }
+    monkeypatch.setattr(
+        "nexus.bricks.auth.unified_service.asyncio.create_subprocess_exec",
+        _make_subprocess_mock(processes),
+    )
+
+    checks = asyncio.run(
+        probe_service._probe_google_workspace_targets(
+            _TARGETS, native=_NATIVE, user_email="alice@example.com"
+        )
+    )
+
+    assert checks["drive"]["success"] is True
+    assert checks["docs"]["success"] is False
+    assert checks["docs"]["reason"] == "missing_scopes"
+    assert checks["sheets"]["success"] is False
+    assert checks["sheets"]["reason"] == "expired"
+    assert checks["gmail"]["success"] is False
+    assert checks["gmail"]["reason"] == "probe_failed"
+    assert checks["calendar"]["success"] is True
+    assert checks["chat"]["success"] is True
+
+
+def test_probe_timeout_does_not_block_others(
+    probe_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A single probe timing out doesn't prevent other probes from returning."""
+
+    class _TimeoutProcess:
+        """Simulates a process whose communicate() raises TimeoutError."""
+
+        returncode: int | None = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            raise TimeoutError()  # real asyncio.wait_for raises empty TimeoutError
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            return -9
+
+    processes: dict[str, _FakeProcess] = {}
+    for t in _TARGETS:
+        if t == "chat":
+            continue
+        processes[t] = _FakeProcess(returncode=0, stdout="{}")
+
+    from nexus.bricks.auth.unified_service import _GWS_TARGET_PROBES
+
+    _probe_to_target = {tuple(args): target for target, args in _GWS_TARGET_PROBES.items()}
+
+    async def _mock_create(*args, **kwargs):  # noqa: ANN002, ANN003, ARG001
+        target = _probe_to_target.get(tuple(args))
+        if target == "chat":
+            return _TimeoutProcess()
+        return processes.get(target, _FakeProcess(returncode=1, stderr="unknown"))
+
+    monkeypatch.setattr(
+        "nexus.bricks.auth.unified_service.asyncio.create_subprocess_exec",
+        _mock_create,
+    )
+
+    checks = asyncio.run(
+        probe_service._probe_google_workspace_targets(
+            _TARGETS, native=_NATIVE, user_email="alice@example.com"
+        )
+    )
+
+    assert len(checks) == 6
+    for t in ("drive", "docs", "sheets", "gmail", "calendar"):
+        assert checks[t]["success"] is True
+    assert checks["chat"]["success"] is False
+    assert checks["chat"]["reason"] == "probe_error"
+    assert checks["chat"]["message"]  # must not be blank even with empty TimeoutError
+
+
+def test_probe_mixed_results(
+    probe_service: UnifiedAuthService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mix of success and failure returns correct per-target results with access_token path."""
+    import asyncio
+
+    processes = {
+        "drive": _FakeProcess(returncode=0, stdout="{}"),
+        "docs": _FakeProcess(returncode=0, stdout="{}"),
+        "sheets": _FakeProcess(returncode=1, stderr="permission denied"),
+        "gmail": _FakeProcess(returncode=0, stdout="{}"),
+        "calendar": _FakeProcess(returncode=1, stderr="Expired token"),
+        "chat": _FakeProcess(returncode=0, stdout="{}"),
+    }
+    monkeypatch.setattr(
+        "nexus.bricks.auth.unified_service.asyncio.create_subprocess_exec",
+        _make_subprocess_mock(processes),
+    )
+
+    checks = asyncio.run(
+        probe_service._probe_google_workspace_targets(
+            _TARGETS, access_token="ya29.test", user_email="alice@example.com"
+        )
+    )
+
+    assert checks["drive"]["success"] is True
+    assert "stored OAuth" in checks["drive"]["message"]
+    assert checks["sheets"]["success"] is False
+    assert checks["sheets"]["reason"] == "probe_failed"
+    assert checks["calendar"]["success"] is False
+    assert checks["calendar"]["reason"] == "expired"
+
+
+def test_probe_early_return_no_auth(probe_service: UnifiedAuthService) -> None:
+    """When no access_token and no native, all targets return missing_google_auth."""
+    import asyncio
+
+    checks = asyncio.run(
+        probe_service._probe_google_workspace_targets(_TARGETS, native=None, access_token=None)
+    )
+
+    assert len(checks) == 6
+    for target in _TARGETS:
+        assert checks[target]["success"] is False
+        assert checks[target]["reason"] == "missing_google_auth"

@@ -70,11 +70,11 @@ class _BackendWithHookSpec:
 
 
 def _make_coordinator() -> tuple[MagicMock, KernelDispatch, DriverLifecycleCoordinator]:
-    """Create a coordinator with a mock router and real KernelDispatch."""
-    router = MagicMock()
+    """Create a coordinator with a mock mount_table and real KernelDispatch."""
+    mount_table = MagicMock()
     dispatch = KernelDispatch()
-    coord = DriverLifecycleCoordinator(router, dispatch)
-    return router, dispatch, coord
+    coord = DriverLifecycleCoordinator(mount_table, dispatch)
+    return mount_table, dispatch, coord
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +83,14 @@ def _make_coordinator() -> tuple[MagicMock, KernelDispatch, DriverLifecycleCoord
 
 
 class TestMount:
-    def test_mount_calls_router_add_mount(self) -> None:
-        router, _, coord = _make_coordinator()
+    def test_mount_calls_mount_table_add(self) -> None:
+        mount_table, _, coord = _make_coordinator()
         backend = _FakeBackend()
 
         coord.mount("/data", backend, readonly=True, io_profile="throughput")
 
-        router.add_mount.assert_called_once()
-        args, kwargs = router.add_mount.call_args
+        mount_table.add.assert_called_once()
+        args, kwargs = mount_table.add.call_args
         assert args == ("/data", backend)
         assert kwargs["readonly"] is True
         assert kwargs["admin_only"] is False
@@ -125,12 +125,12 @@ class TestMount:
         assert hook.calls[0].backend is backend
 
     def test_mount_no_hook_spec_still_routes(self) -> None:
-        router, dispatch, coord = _make_coordinator()
+        mount_table, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
         coord.mount("/plain", backend)
 
-        router.add_mount.assert_called_once()
+        mount_table.add.assert_called_once()
         assert dispatch.observer_count == 0
 
 
@@ -141,16 +141,16 @@ class TestMount:
 
 class TestUnmount:
     def test_unmount_unregisters_hooks(self) -> None:
-        router, dispatch, coord = _make_coordinator()
+        mount_table, dispatch, coord = _make_coordinator()
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
         assert dispatch.observer_count == 1
 
-        # Setup router.get_mount to return the backend
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
+        # Setup mount_table.get to return a MountEntry-like object
+        mount_entry = MagicMock()
+        mount_entry.backend = backend
+        mount_table.get.return_value = mount_entry
 
         result = coord.unmount("/data")
         assert result is True
@@ -158,16 +158,16 @@ class TestUnmount:
         assert dispatch.mount_hook_count == 0
 
     def test_unmount_calls_on_unmount(self) -> None:
-        router, dispatch, coord = _make_coordinator()
+        mount_table, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
         # Register an unmount hook directly
         unmount_hook = _FakeUnmountHook()
         dispatch.register_unmount_hook(unmount_hook)
 
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
+        mount_entry = MagicMock()
+        mount_entry.backend = backend
+        mount_table.get.return_value = mount_entry
 
         coord.unmount("/data")
 
@@ -176,14 +176,14 @@ class TestUnmount:
         assert unmount_hook.calls[0].backend is backend
 
     def test_unmount_not_found_returns_false(self) -> None:
-        router, _, coord = _make_coordinator()
-        router.get_mount.return_value = None
+        mount_table, _, coord = _make_coordinator()
+        mount_table.get.return_value = None
 
         assert coord.unmount("/nonexistent") is False
 
     def test_unmount_catches_notification_exception(self) -> None:
         """on_unmount errors don't propagate (best-effort)."""
-        router, dispatch, coord = _make_coordinator()
+        mount_table, dispatch, coord = _make_coordinator()
         backend = _FakeBackend()
 
         class _FailingUnmountHook:
@@ -192,9 +192,9 @@ class TestUnmount:
 
         dispatch.register_unmount_hook(_FailingUnmountHook())
 
-        mount_info = MagicMock()
-        mount_info.backend = backend
-        router.get_mount.return_value = mount_info
+        mount_entry = MagicMock()
+        mount_entry.backend = backend
+        mount_table.get.return_value = mount_entry
 
         # Should not raise
         coord.unmount("/data")

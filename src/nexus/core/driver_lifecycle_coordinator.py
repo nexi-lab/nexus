@@ -31,8 +31,8 @@ from nexus.contracts.protocols.service_hooks import HookSpec
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
     from nexus.core.metastore import MetastoreABC
+    from nexus.core.mount_table import MountTable
     from nexus.core.object_store import ObjectStoreABC
-    from nexus.core.router import PathRouter
     from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ class DriverLifecycleCoordinator:
     """
 
     __slots__ = (
-        "_router",
+        "_mount_table",
         "_dispatch",
         "_mount_specs",
         "_backend_pool",
@@ -58,13 +58,13 @@ class DriverLifecycleCoordinator:
 
     def __init__(
         self,
-        router: "PathRouter",
+        mount_table: "MountTable",
         dispatch: "KernelDispatch",
         *,
         self_address: str | None = None,
         transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
-        self._router = router
+        self._mount_table = mount_table
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
         self._backend_pool: dict[str, ObjectStoreABC] = {}
@@ -127,8 +127,8 @@ class DriverLifecycleCoordinator:
         io_profile: str = "balanced",
     ) -> None:
         """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
-        # 1. Add to routing table
-        self._router.add_mount(
+        # 1. Add to mount table (kernel mount_hashtable)
+        self._mount_table.add(
             mount_point,
             backend,
             metastore=metastore,
@@ -151,11 +151,11 @@ class DriverLifecycleCoordinator:
 
         Returns True if mount was removed, False if not found.
         """
-        info = self._router.get_mount(mount_point)
-        if info is None:
+        entry = self._mount_table.get(mount_point)
+        if entry is None:
             return False
 
-        backend = info.backend
+        backend = entry.backend
 
         # 1. Unregister VFS hooks
         spec = self._mount_specs.pop(mount_point, None)
@@ -168,8 +168,8 @@ class DriverLifecycleCoordinator:
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
-        # 3. Remove from routing table
-        self._router.remove_mount(mount_point)
+        # 3. Remove from mount table
+        self._mount_table.remove(mount_point)
         return True
 
     # ------------------------------------------------------------------

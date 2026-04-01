@@ -186,22 +186,27 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
 
 
 def normalize_path(path: str) -> str:
-    """Lightweight path normalization without security checks.
+    """Normalize virtual path: absolute, collapse ``//``, resolve ``.`` / ``..``.
 
-    Use this for internal paths that are already validated.
-    For user-facing paths, always use ``validate_path`` instead.
+    Used by MountTable and PathRouter for canonical path comparison.
 
     Args:
-        path: Path to normalize.
+        path: Absolute virtual path.
 
     Returns:
-        Normalized path with leading slash, no trailing slash.
+        Normalized absolute path.
+
+    Raises:
+        ValueError: If path is not absolute or traversal detected.
     """
+    import posixpath
+
     if not path.startswith("/"):
-        path = "/" + path
-    if path != "/" and path.endswith("/"):
-        path = path.rstrip("/")
-    return path
+        raise ValueError(f"Path must be absolute: {path}")
+    normalized = posixpath.normpath(path)
+    if not normalized.startswith("/"):
+        raise ValueError(f"Path traversal detected: {path}")
+    return normalized
 
 
 # ── Glob matching + helpers ──────────────────────────────────────────────

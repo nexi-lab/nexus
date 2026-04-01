@@ -301,11 +301,13 @@ async def connect(
         # Server is SSOT; client just proxies calls via gRPC.
         # No parser registries — remote delegates all parsing to the server.
         from nexus.core.config import PermissionConfig as _PermissionConfig
+        from nexus.core.mount_table import MountTable as _MountTable
         from nexus.core.nexus_fs import NexusFS as _RemoteNexusFS
         from nexus.core.router import PathRouter as _PathRouter
 
-        _router = _PathRouter(remote_metastore)
-        _router.add_mount("/", remote_backend)
+        _mount_table = _MountTable(remote_metastore)
+        _mount_table.add("/", remote_backend)
+        _router = _PathRouter(_mount_table)
 
         from nexus.contracts.types import OperationContext as _RemoteOC
 

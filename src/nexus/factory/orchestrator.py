@@ -220,11 +220,13 @@ async def create_nexus_fs(
     from nexus.core.config import (
         DistributedConfig as _DistributedConfig,
     )
+    from nexus.core.mount_table import MountTable
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
 
-    # Create router (root mount deferred to coordinator.mount after kernel construction)
-    router = PathRouter(metadata_store)
+    # Create mount table + router (root mount deferred to coordinator.mount after kernel construction)
+    mount_table = MountTable(metadata_store)
+    router = PathRouter(mount_table)
 
     # KERNEL-ARCHITECTURE §2: No CacheStore AND no Redis/Dragonfly → EventBus disabled.
     # EventBus uses Redis/Dragonfly pub/sub independently of CacheStore, so only

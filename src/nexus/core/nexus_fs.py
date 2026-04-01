@@ -154,11 +154,16 @@ class NexusFS(  # type: ignore[misc]
             cache_store if cache_store is not None else NullCacheStore()
         )
 
-        # Path router (metastore-backed mount table)
+        # Mount table (kernel mount_hashtable) + path router (read-only query)
+        from nexus.core.mount_table import MountTable
+
         if router is not None:
             self.router = router
+            # Extract mount_table from the router (already constructed by factory)
+            self._mount_table: MountTable = router._mount_table
         else:
-            self.router = PathRouter(metadata_store)
+            self._mount_table = MountTable(metadata_store)
+            self.router = PathRouter(self._mount_table)
 
         # Issue #1801: kernel process credential — like Linux init_task.cred.
         # Immutable after construction. Used as fallback identity for internal
@@ -201,7 +206,7 @@ class NexusFS(  # type: ignore[misc]
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
 
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
-            self.router,
+            self._mount_table,
             self._dispatch,
             self_address=_ipc_self_addr,
             transport_pool=self._transport_pool,

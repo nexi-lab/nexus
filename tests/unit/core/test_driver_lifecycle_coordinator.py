@@ -92,7 +92,6 @@ class TestMount:
         router.add_mount.assert_called_once_with(
             "/data",
             backend,
-            metastore=None,
             readonly=True,
             admin_only=False,
             io_profile="throughput",

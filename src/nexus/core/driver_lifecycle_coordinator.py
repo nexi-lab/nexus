@@ -45,12 +45,67 @@ class DriverLifecycleCoordinator:
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
-    __slots__ = ("_router", "_dispatch", "_mount_specs")
+    __slots__ = (
+        "_router",
+        "_dispatch",
+        "_mount_specs",
+        "_backend_pool",
+        "_self_address",
+        "_channel_pool",
+    )
 
-    def __init__(self, router: "PathRouter", dispatch: "KernelDispatch") -> None:
+    def __init__(
+        self,
+        router: "PathRouter",
+        dispatch: "KernelDispatch",
+        *,
+        self_address: str | None = None,
+        channel_pool: Any = None,
+    ) -> None:
         self._router = router
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
+        self._backend_pool: dict[str, Any] = {}
+        self._self_address: str | None = self_address
+        self._channel_pool: Any = channel_pool  # PeerChannelPool
+
+    def register_backend(self, backend: Any) -> str:
+        """Register a backend in the driver pool. Returns the pool key.
+
+        Key = backend.name + @self_address (if set). Called automatically
+        on mount() and adopt_existing_mount().
+        """
+        key = f"{backend.name}@{self._self_address}" if self._self_address else backend.name
+        self._backend_pool[key] = backend
+        return key
+
+    def resolve_backend(self, backend_name: str) -> Any:
+        """Resolve backend from pool by backend_name.
+
+        Pool hit → cached backend (local or RemoteBackend).
+        Pool miss + remote origin → lazy-create RemoteBackend, register, return.
+
+        Raises:
+            KeyError: backend_name not in pool and cannot create remote.
+        """
+        cached = self._backend_pool.get(backend_name)
+        if cached is not None:
+            return cached
+        # Pool miss — must be a remote backend we haven't seen yet.
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(backend_name)
+        if not addr.has_origin:
+            raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
+        origin = addr.origins[0]
+        if self._channel_pool is None:
+            raise KeyError(f"Cannot create RemoteBackend for '{origin}': no channel pool")
+        from nexus.backends.storage.remote import RemoteBackend
+
+        transport = self._channel_pool.get_transport(origin)
+        remote = RemoteBackend(transport)
+        self._backend_pool[backend_name] = remote
+        return remote
 
     def mount(
         self,
@@ -62,15 +117,7 @@ class DriverLifecycleCoordinator:
         admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """Mount a backend with full lifecycle: routing + hooks + notification.
-
-        1. Add to routing table (PathRouter)
-        2. Register VFS hooks from hook_spec (fixes CAS wiring bug #1320)
-        3. Broadcast mount event via KernelDispatch
-
-        Args:
-            metastore: Zone's MetastoreABC. Defaults to router's root metastore.
-        """
+        """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
         # 1. Add to routing table
         self._router.add_mount(
             mount_point,
@@ -81,18 +128,21 @@ class DriverLifecycleCoordinator:
             io_profile=io_profile,
         )
 
-        # 2. Register hook_spec
+        # 2. Register in backend pool
+        self.register_backend(backend)
+
+        # 3. Register hook_spec
         self._register_backend_hooks(mount_point, backend)
 
-        # 3. Broadcast mount event
+        # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
 
     def adopt_existing_mount(self, mount_point: str) -> None:
         """Adopt a backend already in the routing table.
 
         For mounts that predate coordinator creation (root mount in
-        create_nexus_fs).  Registers hook_spec VFS hooks and broadcasts
-        mount notification.
+        create_nexus_fs).  Registers backend in pool, hook_spec VFS hooks,
+        and broadcasts mount notification.
         """
         info = self._router.get_mount(mount_point)
         if info is None:
@@ -100,6 +150,9 @@ class DriverLifecycleCoordinator:
             return
 
         backend = info.backend
+
+        # Register in backend pool
+        self.register_backend(backend)
 
         # Register hook_spec
         self._register_backend_hooks(mount_point, backend)

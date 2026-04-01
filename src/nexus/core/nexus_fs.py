@@ -34,7 +34,6 @@ from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_ipc import IPCMixin
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
-from nexus.core.object_store import ObjectStoreABC
 from nexus.core.path_utils import validate_path
 from nexus.core.router import PathRouter
 from nexus.lib.rpc_decorator import rpc_expose
@@ -195,19 +194,28 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.grpc.channel_pool import PeerChannelPool as _PeerChannelPool
 
-        self._channel_pool: _PeerChannelPool | None = None
+        _channel_pool: _PeerChannelPool | None = None
         if _ipc_self_addr:
-            self._channel_pool = _PeerChannelPool()
+            _channel_pool = _PeerChannelPool()
+
+        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+
+        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
+            self.router,
+            self._dispatch,
+            self_address=_ipc_self_addr,
+            channel_pool=_channel_pool,
+        )
 
         self._pipe_manager = PipeManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            channel_pool=_channel_pool,
         )
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            channel_pool=_channel_pool,
         )
 
         from nexus.core.file_watcher import FileWatcher
@@ -215,7 +223,7 @@ class NexusFS(  # type: ignore[misc]
         self._file_watcher = FileWatcher()
 
         logger.info(
-            "IPC primitives initialized: PipeManager + StreamManager + FileWatcher (self_address=%s)",
+            "IPC primitives initialized: DriverCoordinator + PipeManager + StreamManager + FileWatcher (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 
@@ -223,23 +231,12 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
-        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
-
-        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
-            self.router, self._dispatch
-        )
-
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
         self._overlay_resolver = None
-        # Backend pool — keyed by backend_name (e.g. "CASLocalBackend@10.0.0.5:2028").
-        # Router uses this to resolve per-file backend from metadata.
-        # Standalone: empty (all reads use mount entry backend).
-        # Federation: populated with RemoteBackend instances for remote nodes.
-        self._backend_pool: dict[str, ObjectStoreABC] = {}
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -445,40 +442,6 @@ class NexusFS(  # type: ignore[misc]
         from nexus.lib.context_utils import parse_context
 
         return parse_context(context)
-
-    def _resolve_backend(self, backend_name: str | None, fallback: Any) -> Any:
-        """Resolve backend from pool by backend_name. Falls back to mount backend.
-
-        Pool hit → cached backend (local or RemoteBackend).
-        Pool miss + local → fallback (mount entry backend).
-        Pool miss + remote → lazy-create RemoteBackend, cache in pool.
-
-        Standalone (empty pool): always returns fallback.
-        """
-        if not backend_name or not self._backend_pool:
-            return fallback
-        cached = self._backend_pool.get(backend_name)
-        if cached is not None:
-            return cached
-        # Parse origin from backend_name (e.g. "CASLocalBackend@10.0.0.5:2028")
-        from nexus.contracts.backend_address import BackendAddress
-
-        addr = BackendAddress.parse(backend_name)
-        if not addr.has_origin or (self._self_address and self._self_address in addr.origins):
-            # Local — cache mount entry backend under this backend_name
-            self._backend_pool[backend_name] = fallback
-            return fallback
-        # Remote — lazy-create RemoteBackend
-        origin = addr.origins[0]
-        from nexus.backends.storage.remote import RemoteBackend
-
-        if self._channel_pool is not None:
-            transport = self._channel_pool.get_transport(origin)
-            remote = RemoteBackend(transport)
-            self._backend_pool[backend_name] = remote
-            return remote
-        # No channel pool — can't create remote backend, fallback to local
-        return fallback
 
     def _ensure_context_ttl(self, context: OperationContext | None, ttl: float) -> OperationContext:
         """Ensure context exists and has ttl_seconds set (Issue #3405)."""
@@ -4837,9 +4800,12 @@ class NexusFS(  # type: ignore[misc]
             self._pipe_manager.close_all()
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
-        # Close peer channel pool (persistent gRPC channels)
-        if hasattr(self, "_channel_pool") and self._channel_pool is not None:
-            self._channel_pool.close_all()
+        # Close peer channel pool (persistent gRPC channels) — owned by coordinator
+        if (
+            hasattr(self, "_driver_coordinator")
+            and self._driver_coordinator._channel_pool is not None
+        ):
+            self._driver_coordinator._channel_pool.close_all()
 
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.

@@ -171,17 +171,14 @@ class LocalDiskCache:
 
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
-        try:
-            from nexus_fast import BloomFilter
+        # RUST_FALLBACK: BloomFilter
+        from nexus_fast import BloomFilter
 
-            self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
-            logger.debug(
-                f"Bloom filter initialized: capacity={self._bloom_capacity}, "
-                f"fp_rate={self._bloom_fp_rate}"
-            )
-        except ImportError:
-            logger.debug("nexus_fast not available, Bloom filter disabled")
-            self._bloom = None
+        self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
+        logger.debug(
+            f"Bloom filter initialized: capacity={self._bloom_capacity}, "
+            f"fp_rate={self._bloom_fp_rate}"
+        )
 
     def _make_cache_key(self, content_hash: str, zone_id: str | None = None) -> str:
         """Create zone-isolated cache key.

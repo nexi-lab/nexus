@@ -14,28 +14,22 @@ All functions are pure and return immutable results (tuples).
 import functools
 import re
 
-from nexus.contracts.exceptions import InvalidPathError
-
 # ---------------------------------------------------------------------------
 # Rust acceleration (optional — falls back to Python below)
 # ---------------------------------------------------------------------------
+from nexus_fast import get_ancestors as _rust_get_ancestors
+from nexus_fast import get_parent as _rust_get_parent
+from nexus_fast import get_parent_chain as _rust_get_parent_chain
+from nexus_fast import normalize_path as _rust_normalize_path
+from nexus_fast import parent_path as _rust_parent_path
+from nexus_fast import path_matches_pattern as _rust_path_matches_pattern
+from nexus_fast import split_path as _rust_split_path
+from nexus_fast import unscope_internal_path as _rust_unscope_internal_path
+from nexus_fast import validate_path as _rust_validate_path
 
-_RUST_AVAILABLE = False
+from nexus.contracts.exceptions import InvalidPathError
 
-try:
-    from nexus_fast import get_ancestors as _rust_get_ancestors
-    from nexus_fast import get_parent as _rust_get_parent
-    from nexus_fast import get_parent_chain as _rust_get_parent_chain
-    from nexus_fast import normalize_path as _rust_normalize_path
-    from nexus_fast import parent_path as _rust_parent_path
-    from nexus_fast import path_matches_pattern as _rust_path_matches_pattern
-    from nexus_fast import split_path as _rust_split_path
-    from nexus_fast import unscope_internal_path as _rust_unscope_internal_path
-    from nexus_fast import validate_path as _rust_validate_path
-
-    _RUST_AVAILABLE = True
-except ImportError:
-    pass
+_RUST_AVAILABLE = True
 
 # Pre-compiled regex for normalizing consecutive slashes
 _MULTI_SLASH = re.compile(r"/+")

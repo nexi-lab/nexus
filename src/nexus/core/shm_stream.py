@@ -25,9 +25,7 @@ if TYPE_CHECKING:
     from nexus_fast import SharedStreamBufferCore
 
 # RUST_FALLBACK: SharedStreamBufferCore
-_SharedStreamBufferCore: type[SharedStreamBufferCore] | None = None
-with contextlib.suppress(ImportError):
-    from nexus_fast import SharedStreamBufferCore as _SharedStreamBufferCore
+from nexus_fast import SharedStreamBufferCore as _SharedStreamBufferCore
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +71,6 @@ class SharedStreamBuffer:
             - shm_path: pass to reader for attach()
             - data_rd_fd: pass to reader (reader listens for data notifications)
         """
-        if _SharedStreamBufferCore is None:
-            raise ImportError("SharedStreamBufferCore not available in nexus_fast")
         core, shm_path, data_rd_fd = _SharedStreamBufferCore.create(capacity)
         buf = cls(core, data_rd_fd=-1)
         return buf, shm_path, data_rd_fd
@@ -88,8 +84,6 @@ class SharedStreamBuffer:
             notify_data_wr: Write-end of data pipe (passed to Rust core for notification).
             data_rd_fd: Read-end of data pipe (reader listens here).
         """
-        if _SharedStreamBufferCore is None:
-            raise ImportError("SharedStreamBufferCore not available in nexus_fast")
         core = _SharedStreamBufferCore.attach(shm_path, notify_data_wr)
         return cls(core, data_rd_fd=data_rd_fd)
 

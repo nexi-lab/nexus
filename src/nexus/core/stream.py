@@ -24,17 +24,14 @@ Data plane backed by Rust ``nexus_fast.StreamBufferCore``.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus_fast import StreamBufferCore
+    pass
 
 # RUST_FALLBACK: StreamBufferCore
-_StreamBufferCoreType: type[StreamBufferCore] | None = None
-with contextlib.suppress(ImportError):
-    from nexus_fast import StreamBufferCore as _StreamBufferCoreType
+from nexus_fast import StreamBufferCore as _StreamBufferCoreType
 
 logger = logging.getLogger(__name__)
 
@@ -120,11 +117,6 @@ class StreamBuffer:
     __slots__ = ("_core", "_not_empty", "_not_full")
 
     def __init__(self, capacity: int = 65_536) -> None:
-        if _StreamBufferCoreType is None:
-            raise ImportError(
-                "StreamBufferCore not available in nexus_fast — "
-                "rebuild the Rust extension with stream support"
-            )
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
         self._core = _StreamBufferCoreType(capacity)

@@ -57,29 +57,22 @@ def _init_bloom_from_transport(
     capacity: int,
     fp_rate: float,
 ) -> Any:
-    """Initialize Bloom filter, populated from transport. Returns None if unavailable.
+    """Initialize Bloom filter, populated from transport.
 
     Uses transport.list_content_hashes() to seed the Bloom filter — works for
     both volume-packed storage and file-per-blob storage (Issue #3403).
     """
     # RUST_FALLBACK: BloomFilter
-    try:
-        from nexus_fast import BloomFilter
+    from nexus_fast import BloomFilter
 
-        bloom = BloomFilter(capacity, fp_rate)
-        if hasattr(transport, "list_content_hashes"):
-            hashes_ts = transport.list_content_hashes()
-            if hashes_ts:
-                keys = [h for h, _ts in hashes_ts]
-                bloom.add_bulk(keys)
-                logger.info("CAS Bloom filter populated with %d entries", len(keys))
-        return bloom
-    except ImportError:
-        logger.debug("nexus_fast not available, CAS Bloom filter disabled")
-        return None
-    except Exception as e:
-        logger.warning("Failed to initialize CAS Bloom filter: %s", e)
-        return None
+    bloom = BloomFilter(capacity, fp_rate)
+    if hasattr(transport, "list_content_hashes"):
+        hashes_ts = transport.list_content_hashes()
+        if hashes_ts:
+            keys = [h for h, _ts in hashes_ts]
+            bloom.add_bulk(keys)
+            logger.info("CAS Bloom filter populated with %d entries", len(keys))
+    return bloom
 
 
 @register_connector(

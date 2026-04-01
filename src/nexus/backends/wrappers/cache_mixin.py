@@ -82,24 +82,21 @@ class CacheConnectorMixin:
     _l1_default_ttl: int = 300
 
     @classmethod
-    def _get_l1_cache(cls) -> "L1MetadataCache | None":
+    def _get_l1_cache(cls) -> "L1MetadataCache":
         """Get or create the shared L1 metadata cache (Rust-based)."""
         if cls._l1_cache is None:
-            try:
-                from nexus_fast import L1MetadataCache
+            # RUST_FALLBACK: L1MetadataCache
+            from nexus_fast import L1MetadataCache
 
-                cls._l1_cache = L1MetadataCache(
-                    max_entries=cls._l1_max_entries,
-                    default_ttl=cls._l1_default_ttl,
-                )
-                logger.info(
-                    "[CACHE] L1 Rust cache initialized: max_entries=%d, default_ttl=%ds",
-                    cls._l1_max_entries,
-                    cls._l1_default_ttl,
-                )
-            except ImportError:
-                logger.debug("[CACHE] nexus_fast not available, L1 cache disabled")
-                return None
+            cls._l1_cache = L1MetadataCache(
+                max_entries=cls._l1_max_entries,
+                default_ttl=cls._l1_default_ttl,
+            )
+            logger.info(
+                "[CACHE] L1 Rust cache initialized: max_entries=%d, default_ttl=%ds",
+                cls._l1_max_entries,
+                cls._l1_default_ttl,
+            )
         return cls._l1_cache
 
     @classmethod

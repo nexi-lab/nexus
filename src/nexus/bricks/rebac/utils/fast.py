@@ -15,6 +15,9 @@ The module automatically falls back to Python implementation if Rust is unavaila
 import logging
 from typing import TYPE_CHECKING, Any
 
+# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_fast
+import nexus_fast as _rust_module
+
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
     from nexus.bricks.rebac.domain import NamespaceConfig as ReBACNamespaceConfig
@@ -24,21 +27,10 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
-# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_fast
-# Try to import Rust extension (nexus_fast PyO3 crate)
-_internal_module: Any = None
-_external_module: Any = None
-RUST_AVAILABLE = False
-
-try:
-    import nexus_fast as _rust_module
-
-    _internal_module = _rust_module
-    _external_module = _rust_module
-    RUST_AVAILABLE = True
-    logger.info("✓ Rust acceleration available (nexus_fast)")
-except ImportError:
-    logger.info("✗ Rust acceleration not available")
+_internal_module: Any = _rust_module
+_external_module: Any = _rust_module
+RUST_AVAILABLE = True
+logger.info("Rust acceleration available (nexus_fast)")
 
 
 def is_rust_available() -> bool:

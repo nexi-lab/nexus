@@ -17,6 +17,17 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+# RUST_FALLBACK: canonicalize_path, extract_zone_id, RustPathRouter
+from nexus_fast import (
+    RustPathRouter,
+)
+from nexus_fast import (
+    canonicalize_path as _rust_canonicalize_path,
+)
+from nexus_fast import (
+    extract_zone_id as _rust_extract_zone_id,
+)
+
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import normalize_path
 
@@ -27,21 +38,9 @@ if TYPE_CHECKING:
 
 # ---------------------------------------------------------------------------
 # Zone-canonical path helpers (pure functions, ~0 cost)
-# RUST_FALLBACK: canonicalize_path, extract_zone_id
 # ---------------------------------------------------------------------------
 
-_RUST_ZONE_AVAILABLE = False
-try:
-    from nexus_fast import (
-        canonicalize_path as _rust_canonicalize_path,
-    )
-    from nexus_fast import (
-        extract_zone_id as _rust_extract_zone_id,
-    )
-
-    _RUST_ZONE_AVAILABLE = True
-except ImportError:
-    pass
+_RUST_ZONE_AVAILABLE = True
 
 
 def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
@@ -116,13 +115,7 @@ class MountTable:
         self._entries: dict[str, MountEntry] = {}
         self._default_metastore: MetastoreABC = default_metastore
         # RUST_FALLBACK: RustPathRouter — LPM acceleration
-        self._rust: Any = None
-        try:
-            from nexus_fast import RustPathRouter
-
-            self._rust = RustPathRouter()
-        except ImportError:
-            pass
+        self._rust: Any = RustPathRouter()
 
     # -- Write operations (called by coordinator) ---------------------------
 

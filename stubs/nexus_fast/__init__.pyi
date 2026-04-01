@@ -44,7 +44,7 @@ def hash_bytes(data: bytes) -> str: ...
 
 def grep_bulk(
     pattern: str,
-    file_contents: dict[str, str],
+    file_contents: dict[str, Any],
     ignore_case: bool = False,
     max_results: int = 1000,
 ) -> list[dict[str, Any]]: ...

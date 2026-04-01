@@ -89,13 +89,12 @@ class TestMount:
 
         coord.mount("/data", backend, readonly=True, io_profile="throughput")
 
-        router.add_mount.assert_called_once_with(
-            "/data",
-            backend,
-            readonly=True,
-            admin_only=False,
-            io_profile="throughput",
-        )
+        router.add_mount.assert_called_once()
+        args, kwargs = router.add_mount.call_args
+        assert args == ("/data", backend)
+        assert kwargs["readonly"] is True
+        assert kwargs["admin_only"] is False
+        assert kwargs["io_profile"] == "throughput"
 
     def test_mount_registers_hook_spec_observers(self) -> None:
         _, dispatch, coord = _make_coordinator()

@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 import blake3
 
+# RUST_FALLBACK: BloomFilter, read_file, read_files_bulk
 if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
@@ -509,12 +510,12 @@ class FileContentCache:
             return result
         except ImportError:
             # Fallback to sequential read if nexus_fast not available
-            result = {}
+            fallback_result: dict[str, bytes] = {}
             for path in paths_to_check:
-                content = self.read(zone_id, path)
-                if content is not None:
-                    result[path] = content
-            return result
+                cached = self.read(zone_id, path)
+                if cached is not None:
+                    fallback_result[path] = cached
+            return fallback_result
 
     def read_text_bulk(
         self,

@@ -62,6 +62,7 @@ def _init_bloom_from_transport(
     Uses transport.list_content_hashes() to seed the Bloom filter — works for
     both volume-packed storage and file-per-blob storage (Issue #3403).
     """
+    # RUST_FALLBACK: BloomFilter
     try:
         from nexus_fast import BloomFilter
 

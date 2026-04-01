@@ -127,13 +127,12 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
     db_path = str(tmp_path / "metadata.db")
     metastore = SQLiteMetastore(db_path)
 
-    # Router with mount
-    mount_point = "/gcs/test-project/test-gcs-bucket"
-    router = PathRouter(metastore)
-    router.add_mount(mount_point, backend)
+    # Router (empty — mounts added via coordinator)
+    from nexus.core.mount_table import MountTable
 
-    # Create DT_MOUNT entry
-    metastore.put(_make_mount_entry(mount_point, backend.name))
+    mount_point = "/gcs/test-project/test-gcs-bucket"
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
 
     # Kernel
     kernel = NexusFS(
@@ -147,6 +146,12 @@ def _build_gcs_fs(tmp_path: Path) -> tuple[SlimNexusFS, str]:
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
+
+    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    kernel._driver_coordinator.mount(mount_point, backend)
+
+    # Create DT_MOUNT entry
+    metastore.put(_make_mount_entry(mount_point, backend.name))
 
     return SlimNexusFS(kernel), mount_point
 

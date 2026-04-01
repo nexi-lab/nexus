@@ -108,6 +108,7 @@ def create_negative_cache(
     Returns:
         A NegativeCache instance (Bloom or Null).
     """
+    # RUST_FALLBACK: BloomFilter
     try:
         from nexus_fast import BloomFilter
 

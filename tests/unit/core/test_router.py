@@ -1,4 +1,4 @@
-"""Unit tests for PathRouter (metastore-backed mount table)."""
+"""Unit tests for PathRouter (MountTable-backed mount routing)."""
 
 import tempfile
 
@@ -6,6 +6,7 @@ import pytest
 
 from nexus.backends.storage.cas_local import CASLocalBackend
 from nexus.contracts.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+from nexus.core.mount_table import MountTable
 from nexus.core.router import PathRouter
 from tests.helpers.dict_metastore import DictMetastore
 
@@ -17,9 +18,15 @@ def metastore() -> DictMetastore:
 
 
 @pytest.fixture
-def router(metastore: DictMetastore) -> PathRouter:
-    """Create a PathRouter instance backed by an in-memory metastore."""
-    return PathRouter(metastore)
+def mount_table(metastore: DictMetastore) -> MountTable:
+    """Create a MountTable backed by an in-memory metastore."""
+    return MountTable(metastore)
+
+
+@pytest.fixture
+def router(mount_table: MountTable) -> PathRouter:
+    """Create a PathRouter instance backed by a MountTable."""
+    return PathRouter(mount_table)
 
 
 @pytest.fixture
@@ -32,70 +39,89 @@ def temp_backend() -> CASLocalBackend:
 # === Mount management tests ===
 
 
-def test_add_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
-    """Test adding a mount to the router."""
-    router.add_mount("/workspace", temp_backend)
-    assert "/root/workspace" in router._backends
-    assert router._backends["/root/workspace"].backend == temp_backend
+def test_add_mount(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
+    """Test adding a mount to the mount table."""
+    mount_table.add("/workspace", temp_backend)
+    assert mount_table.has("/workspace")
+    result = router.route("/workspace")
+    assert result.backend == temp_backend
 
 
 def test_add_mount_does_not_persist_metadata(
-    router: PathRouter, metastore: DictMetastore, temp_backend: CASLocalBackend
+    mount_table: MountTable,
+    router: PathRouter,
+    metastore: DictMetastore,
+    temp_backend: CASLocalBackend,
 ) -> None:
     """Runtime mounts should only populate the in-memory mount table."""
-    router.add_mount("/workspace", temp_backend)
+    mount_table.add("/workspace", temp_backend)
 
-    assert "/root/workspace" in router._backends
+    assert mount_table.has("/workspace")
     assert metastore.get("/workspace") is None
 
 
-def test_add_mount_normalizes_path(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_add_mount_normalizes_path(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that mount points are normalized."""
-    router.add_mount("/workspace/", temp_backend)  # Trailing slash
-    assert "/root/workspace" in router._backends
+    mount_table.add("/workspace/", temp_backend)  # Trailing slash
+    assert mount_table.has("/workspace")
 
 
-def test_add_mount_replaces_existing(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_add_mount_replaces_existing(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that adding a mount at the same path replaces it."""
     with tempfile.TemporaryDirectory() as tmpdir2:
         backend2 = CASLocalBackend(tmpdir2)
-        router.add_mount("/workspace", temp_backend)
-        router.add_mount("/workspace", backend2)
-        assert router._backends["/root/workspace"].backend == backend2
+        mount_table.add("/workspace", temp_backend)
+        mount_table.add("/workspace", backend2)
+        result = router.route("/workspace")
+        assert result.backend == backend2
 
 
-def test_get_mount_points(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_get_mount_points(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test get_mount_points returns sorted active mount points."""
-    router.add_mount("/workspace", temp_backend)
-    router.add_mount("/shared", temp_backend)
-    router.add_mount("/external", temp_backend)
+    mount_table.add("/workspace", temp_backend)
+    mount_table.add("/shared", temp_backend)
+    mount_table.add("/external", temp_backend)
     points = router.get_mount_points()
     assert points == ["/external", "/shared", "/workspace"]
 
 
-def test_has_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_has_mount(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test has_mount checks active mounts."""
-    router.add_mount("/workspace", temp_backend)
+    mount_table.add("/workspace", temp_backend)
     assert router.has_mount("/workspace") is True
     assert router.has_mount("/nonexistent") is False
 
 
-def test_remove_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_remove_mount(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test removing a mount."""
-    router.add_mount("/workspace", temp_backend)
-    assert router.remove_mount("/workspace") is True
+    mount_table.add("/workspace", temp_backend)
+    assert mount_table.remove("/workspace") is True
     assert router.has_mount("/workspace") is False
 
 
-def test_remove_mount_nonexistent(router: PathRouter) -> None:
+def test_remove_mount_nonexistent(mount_table: MountTable, router: PathRouter) -> None:
     """Test removing a nonexistent mount returns False."""
-    assert router.remove_mount("/nonexistent") is False
+    assert mount_table.remove("/nonexistent") is False
 
 
-def test_list_mounts(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_list_mounts(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test list_mounts returns MountInfo objects."""
-    router.add_mount("/workspace", temp_backend)
-    router.add_mount("/shared", temp_backend, readonly=True)
+    mount_table.add("/workspace", temp_backend)
+    mount_table.add("/shared", temp_backend, readonly=True)
     mounts = router.list_mounts()
     assert len(mounts) == 2
     mount_points = {m.mount_point for m in mounts}
@@ -104,9 +130,11 @@ def test_list_mounts(router: PathRouter, temp_backend: CASLocalBackend) -> None:
     assert shared_mount.readonly is True
 
 
-def test_get_backend_by_name(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_get_backend_by_name(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test get_backend_by_name looks up backend by its name attribute."""
-    router.add_mount("/workspace", temp_backend)
+    mount_table.add("/workspace", temp_backend)
     found = router.get_backend_by_name(temp_backend.name)
     assert found is temp_backend
 
@@ -119,9 +147,11 @@ def test_get_backend_by_name_not_found(router: PathRouter) -> None:
 # === Route matching tests ===
 
 
-def test_route_exact_match(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_exact_match(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test routing with exact mount point match."""
-    router.add_mount("/data", temp_backend)
+    mount_table.add("/data", temp_backend)
 
     result = router.route("/data")
 
@@ -131,9 +161,11 @@ def test_route_exact_match(router: PathRouter, temp_backend: CASLocalBackend) ->
     assert result.readonly is False
 
 
-def test_route_prefix_match(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_prefix_match(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test routing with prefix match."""
-    router.add_mount("/workspace", temp_backend)
+    mount_table.add("/workspace", temp_backend)
 
     result = router.route("/workspace/data/file.txt")
 
@@ -142,9 +174,11 @@ def test_route_prefix_match(router: PathRouter, temp_backend: CASLocalBackend) -
     assert result.mount_point == "/workspace"
 
 
-def test_route_root_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_root_mount(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test routing with root mount."""
-    router.add_mount("/", temp_backend)
+    mount_table.add("/", temp_backend)
 
     result = router.route("/anything/goes/here.txt")
 
@@ -154,10 +188,10 @@ def test_route_root_mount(router: PathRouter, temp_backend: CASLocalBackend) -> 
 
 
 def test_route_mount_without_metastore_entry(
-    router: PathRouter, temp_backend: CASLocalBackend
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
 ) -> None:
     """Route fallback should work for ephemeral runtime mounts."""
-    router.add_mount("/", temp_backend)
+    mount_table.add("/", temp_backend)
 
     result = router.route("/anything/goes/here.txt")
 
@@ -168,13 +202,14 @@ def test_route_mount_without_metastore_entry(
 
 def test_route_longest_prefix_wins(metastore: DictMetastore) -> None:
     """Test that longest matching prefix wins."""
-    router = PathRouter(metastore)
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
     with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:
         backend1 = CASLocalBackend(tmpdir1)
         backend2 = CASLocalBackend(tmpdir2)
 
-        router.add_mount("/workspace", backend1)
-        router.add_mount("/workspace/data", backend2)
+        mount_table.add("/workspace", backend1)
+        mount_table.add("/workspace/data", backend2)
 
         result = router.route("/workspace/data/file.txt")
 
@@ -183,9 +218,11 @@ def test_route_longest_prefix_wins(metastore: DictMetastore) -> None:
         assert result.mount_point == "/workspace/data"
 
 
-def test_route_no_match_raises_error(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_no_match_raises_error(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that routing with no mount raises error."""
-    router.add_mount("/workspace", temp_backend)
+    mount_table.add("/workspace", temp_backend)
 
     with pytest.raises(PathNotMountedError) as exc_info:
         router.route("/other/path")
@@ -193,17 +230,21 @@ def test_route_no_match_raises_error(router: PathRouter, temp_backend: CASLocalB
     assert "/other/path" in str(exc_info.value)
 
 
-def test_route_readonly_mount(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_readonly_mount(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test routing to readonly mount."""
-    router.add_mount("/readonly", temp_backend, readonly=True)
+    mount_table.add("/readonly", temp_backend, readonly=True)
 
     result = router.route("/readonly/file.txt")
     assert result.readonly is True
 
 
-def test_route_readonly_rejects_writes(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_readonly_rejects_writes(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that readonly mounts reject write operations."""
-    router.add_mount("/archives", temp_backend, readonly=True)
+    mount_table.add("/archives", temp_backend, readonly=True)
 
     with pytest.raises(AccessDeniedError) as exc_info:
         router.route("/archives/backup.tar", check_write=True)
@@ -211,26 +252,32 @@ def test_route_readonly_rejects_writes(router: PathRouter, temp_backend: CASLoca
     assert "read-only" in str(exc_info.value)
 
 
-def test_route_readonly_allows_reads(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_readonly_allows_reads(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that readonly mounts allow read operations."""
-    router.add_mount("/archives", temp_backend, readonly=True)
+    mount_table.add("/archives", temp_backend, readonly=True)
 
     result = router.route("/archives/backup.tar", check_write=False)
     assert result.backend == temp_backend
     assert result.readonly is True
 
 
-def test_route_io_profile_propagated(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_io_profile_propagated(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that io_profile is propagated in RouteResult."""
-    router.add_mount("/weights", temp_backend, io_profile="fast_read")
+    mount_table.add("/weights", temp_backend, io_profile="fast_read")
 
     result = router.route("/weights/model.bin")
     assert result.io_profile == "fast_read"
 
 
-def test_route_default_io_profile(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_route_default_io_profile(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that default io_profile is 'balanced'."""
-    router.add_mount("/data", temp_backend)
+    mount_table.add("/data", temp_backend)
 
     result = router.route("/data/file.txt")
     assert result.io_profile == "balanced"
@@ -240,10 +287,10 @@ def test_route_default_io_profile(router: PathRouter, temp_backend: CASLocalBack
 
 
 def test_mount_admin_only_rejects_non_admin(
-    router: PathRouter, temp_backend: CASLocalBackend
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
 ) -> None:
     """Test that admin_only mount requires admin privileges."""
-    router.add_mount("/system", temp_backend, admin_only=True)
+    mount_table.add("/system", temp_backend, admin_only=True)
 
     with pytest.raises(AccessDeniedError) as exc_info:
         router.route("/system/config/settings.json", is_admin=False)
@@ -251,17 +298,21 @@ def test_mount_admin_only_rejects_non_admin(
     assert "requires admin" in str(exc_info.value)
 
 
-def test_mount_admin_only_allows_admin(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_mount_admin_only_allows_admin(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that admin can access admin_only mount."""
-    router.add_mount("/system", temp_backend, admin_only=True)
+    mount_table.add("/system", temp_backend, admin_only=True)
 
     result = router.route("/system/config/settings.json", is_admin=True)
     assert result.backend == temp_backend
 
 
-def test_mount_admin_only_and_readonly(router: PathRouter, temp_backend: CASLocalBackend) -> None:
+def test_mount_admin_only_and_readonly(
+    mount_table: MountTable, router: PathRouter, temp_backend: CASLocalBackend
+) -> None:
     """Test that admin_only + readonly mount rejects admin writes."""
-    router.add_mount("/system", temp_backend, admin_only=True, readonly=True)
+    mount_table.add("/system", temp_backend, admin_only=True, readonly=True)
 
     # Admin can read
     result = router.route("/system/config.json", is_admin=True, check_write=False)

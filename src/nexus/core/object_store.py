@@ -89,7 +89,7 @@ class ObjectStoreABC(ABC):
             File content as bytes.
 
         Raises:
-            NexusFileNotFoundError: If content does not exist.
+            NexusFileNotFoundError: If content does not exist locally.
             BackendError: If read operation fails.
         """
         ...

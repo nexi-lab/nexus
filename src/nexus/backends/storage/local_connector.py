@@ -127,6 +127,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         Raises:
             BackendError: If local_path doesn't exist or is not a directory
         """
+        super().__init__()
         self.local_path = Path(local_path).resolve()
         self.readonly = readonly
         self.follow_symlinks = follow_symlinks

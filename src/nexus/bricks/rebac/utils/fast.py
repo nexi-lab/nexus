@@ -24,6 +24,7 @@ NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' k
 
 logger = logging.getLogger(__name__)
 
+# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_fast
 # Try to import Rust extension (nexus_fast PyO3 crate)
 _internal_module: Any = None
 _external_module: Any = None

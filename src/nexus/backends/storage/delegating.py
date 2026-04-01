@@ -57,6 +57,7 @@ class DelegatingBackend(Backend):
     """
 
     def __init__(self, inner: Backend) -> None:
+        super().__init__()
         self._inner = inner
         self._cached_backend_features = inner.backend_features
 

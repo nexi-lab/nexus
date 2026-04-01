@@ -3,6 +3,8 @@
 This module provides BLAKE3 hashing for content-addressable storage,
 with ~3x speedup over SHA-256.
 
+# RUST_FALLBACK: hash_fast — hash_content, hash_content_smart have Rust equivalents in nexus_fast.
+
 Usage:
     from nexus.core.hash_fast import hash_content, hash_content_smart
 
@@ -32,6 +34,7 @@ _python_blake3: Any = None
 _rust_hash_content: Any = None
 _rust_hash_content_smart: Any = None
 
+# RUST_FALLBACK: hash_content_py, hash_content_smart_py
 # Priority 1: Rust-accelerated BLAKE3
 try:
     from nexus_fast import hash_content_py, hash_content_smart_py

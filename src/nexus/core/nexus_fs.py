@@ -98,8 +98,8 @@ class NexusFS(  # type: ignore[misc]
         """Initialize NexusFS kernel.
 
         Kernel boots with MetastoreABC (inode layer) and an optional router.
-        Backends are mounted externally via ``router.add_mount()`` — like
-        Linux VFS, no global backend.
+        Backends are mounted externally via ``DriverLifecycleCoordinator.mount()``
+        (which writes to MountTable) — like Linux VFS, no global backend.
 
         Args:
             router: PathRouter instance for VFS routing. When None, a default
@@ -154,11 +154,16 @@ class NexusFS(  # type: ignore[misc]
             cache_store if cache_store is not None else NullCacheStore()
         )
 
-        # Path router (metastore-backed mount table)
+        # Mount table (kernel mount_hashtable) + path router (read-only query)
+        from nexus.core.mount_table import MountTable
+
         if router is not None:
             self.router = router
+            # Extract mount_table from the router (already constructed by factory)
+            self._mount_table: MountTable = router._mount_table
         else:
-            self.router = PathRouter(metadata_store)
+            self._mount_table = MountTable(metadata_store)
+            self.router = PathRouter(self._mount_table)
 
         # Issue #1801: kernel process credential — like Linux init_task.cred.
         # Immutable after construction. Used as fallback identity for internal
@@ -192,21 +197,30 @@ class NexusFS(  # type: ignore[misc]
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
 
-        from nexus.grpc.channel_pool import PeerChannelPool as _PeerChannelPool
+        from nexus.remote.rpc_transport import RPCTransportPool as _RPCTransportPool
 
-        self._channel_pool: _PeerChannelPool | None = None
+        self._transport_pool: _RPCTransportPool | None = None
         if _ipc_self_addr:
-            self._channel_pool = _PeerChannelPool()
+            self._transport_pool = _RPCTransportPool()
+
+        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
+
+        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
+            self._mount_table,
+            self._dispatch,
+            self_address=_ipc_self_addr,
+            transport_pool=self._transport_pool,
+        )
 
         self._pipe_manager = PipeManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            transport_pool=self._transport_pool,
         )
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            channel_pool=self._channel_pool,
+            transport_pool=self._transport_pool,
         )
 
         from nexus.core.file_watcher import FileWatcher
@@ -214,7 +228,7 @@ class NexusFS(  # type: ignore[misc]
         self._file_watcher = FileWatcher()
 
         logger.info(
-            "IPC primitives initialized: PipeManager + StreamManager + FileWatcher (self_address=%s)",
+            "IPC primitives initialized: DriverCoordinator + PipeManager + StreamManager + FileWatcher (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 
@@ -222,19 +236,12 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
-        from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
-
-        self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
-            self.router, self._dispatch
-        )
-
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
         self._overlay_resolver = None
-
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -480,7 +487,7 @@ class NexusFS(  # type: ignore[misc]
 
         This is factored out of ``mkdir`` so it can be called both on the
         normal code-path *and* on the early-return path when the target path
-        already exists (e.g. a DT_MOUNT entry written by ``PathRouter.add_mount``).
+        already exists (e.g. a DT_MOUNT entry written by ``MountTable.add()``).
         """
         parent_path = self._get_parent_path(path)
         parents_to_create: list[str] = []
@@ -897,7 +904,7 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
             metadata = FileMetadata(
                 path=path,
-                backend_name=route.backend.name,
+                backend_name=self._driver_coordinator.backend_key(route.backend),
                 physical_path=empty_hash,
                 size=0,
                 etag=empty_hash,
@@ -1159,7 +1166,9 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag, context=read_context)
+            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+                meta.etag or "", context=read_context
+            )
 
         # Post-read hooks
         if self._dispatch.read_hook_count > 0:
@@ -1338,7 +1347,9 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag or "", context=read_context)
+            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+                meta.etag or "", context=read_context
+            )
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 
@@ -1585,7 +1596,9 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._driver_coordinator.resolve_backend(
+                                meta.backend_name
+                            ).read_content(meta.etag or "", context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1618,7 +1631,9 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(meta.etag, context=read_context)
+                            content = self._driver_coordinator.resolve_backend(
+                                meta.backend_name
+                            ).read_content(meta.etag or "", context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1774,13 +1789,14 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            if hasattr(route.backend, "read_content_range"):
+            _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
+            if hasattr(_rb, "read_content_range"):
                 from dataclasses import replace as _replace
 
                 read_context = (
                     _replace(context, backend_path=route.backend_path) if context else None
                 )
-                return route.backend.read_content_range(meta.etag, start, end, context=read_context)
+                return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
         # FALLBACK: full read via _resolve_and_read + slice
         content, _meta, _route, _zone_id, _agent_id = await self._resolve_and_read(path, context)
@@ -1979,7 +1995,7 @@ class NexusFS(  # type: ignore[misc]
         new_version = (meta.version + 1) if meta else 1
         new_meta = FileMetadata(
             path=path,
-            backend_name=route.backend.name,
+            backend_name=self._driver_coordinator.backend_key(route.backend),
             physical_path=content_hash,  # CAS: hash is the "physical" location
             etag=content_hash,
             size=size,
@@ -2153,7 +2169,7 @@ class NexusFS(  # type: ignore[misc]
         if existing is not None or is_implicit_dir:
             if not exist_ok and not parents:
                 raise FileExistsError(f"Directory already exists: {path}")
-            # DT_MOUNT entries are created by PathRouter.add_mount() *before*
+            # DT_MOUNT entries are created by MountTable.add() *before*
             # mkdir is called, so parent dirs may still need metadata.
             if existing is not None:
                 if parents:
@@ -2432,7 +2448,7 @@ class NexusFS(  # type: ignore[misc]
                 content_hash = wr.content_id
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=route.backend.name,
+                    backend_name=self._driver_coordinator.backend_key(route.backend),
                     content_hash=content_hash,
                     size=wr.size if offset > 0 else len(content),
                     existing_meta=meta,
@@ -2462,7 +2478,7 @@ class NexusFS(  # type: ignore[misc]
                 # after backend.write_content(). Drivers only manage content.
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=route.backend.name,
+                    backend_name=self._driver_coordinator.backend_key(route.backend),
                     content_hash=content_hash,
                     # _wr.size is the total file size after splice (not bytes written)
                     size=_wr.size if offset > 0 else len(content),
@@ -3049,7 +3065,7 @@ class NexusFS(  # type: ignore[misc]
             # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
-                backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
+                backend_name=self._driver_coordinator.backend_key(route.backend),
                 physical_path=content_hash,  # CAS: hash is the "physical" location
                 size=len(content),
                 etag=content_hash,  # SHA-256 hash for integrity
@@ -3686,7 +3702,9 @@ class NexusFS(  # type: ignore[misc]
                             if context
                             else context
                         )
-                        content = src_route.backend.read_content(
+                        content = self._driver_coordinator.resolve_backend(
+                            src_meta.backend_name
+                        ).read_content(
                             src_meta.physical_path or src_route.backend_path,
                             context=src_ctx,
                         )
@@ -4794,9 +4812,9 @@ class NexusFS(  # type: ignore[misc]
             self._pipe_manager.close_all()
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
-        # Close peer channel pool (persistent gRPC channels)
-        if hasattr(self, "_channel_pool") and self._channel_pool is not None:
-            self._channel_pool.close_all()
+        # Close transport pool (persistent gRPC connections)
+        if hasattr(self, "_transport_pool") and self._transport_pool is not None:
+            self._transport_pool.close_all()
 
         # Auto-close all enlisted services that have a close() method
         # (rebac_manager, audit_store, etc.). Reverse registration order.

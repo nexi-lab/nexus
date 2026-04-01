@@ -181,9 +181,8 @@ class ZoneManager:
         self._tls_ca_path = tls_ca_path
         self._pending_mounts: dict[str, str] | None = None
         self._topology_initialized = False
-        # Set by FederatedMetadataProxy after creation to receive dcache
-        # invalidation on mount/unmount (dcache entries under a changed
-        # mount point become stale).
+        # Receives dcache invalidation on mount/unmount (dcache entries
+        # under a changed mount point become stale).
         self._dcache_proxy: Any | None = None
 
     @property

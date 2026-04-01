@@ -319,6 +319,7 @@ class PermissionEnforcer:
                     logger.debug(f"[BATCH-OPT] Empty paths for {subject_type}:{subject_id}")
                 return dict.fromkeys(prefixes, False)
 
+            # RUST_FALLBACK: rebac enforcer — nexus_fast for batch permission checks
             # Try Rust-accelerated prefix matching (Issue #1565)
             try:
                 import nexus_fast

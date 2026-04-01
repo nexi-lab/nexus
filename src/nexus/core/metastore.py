@@ -18,7 +18,6 @@ FFI + protobuf decode). The cache is write-through and authoritative
 
 Implementations:
   - RaftMetadataStore  (storage/raft_metadata_store.py)
-  - FederatedMetadataProxy (raft/federated_metadata_proxy.py)
 
 SSOT: proto/nexus/core/metadata.proto defines the FileMetadata fields.
 This ABC defines the *operations* over those fields.
@@ -123,17 +122,10 @@ class MetastoreABC(ABC):
     def list(
         self, prefix: str = "", recursive: bool = True, **kwargs: Any
     ) -> builtins.list[FileMetadata]:
-        """List all files with given path prefix (populates dcache).
-
-        DT_MOUNT entries are excluded from dcache — they are internal
-        pointers that the FederatedMetadataProxy resolves transparently.
-        Caching raw DT_MOUNT would make PathRouter see a mount with no
-        local backend, causing PathNotMountedError.
-        """
+        """List all files with given path prefix (populates dcache)."""
         results = self._list_raw(prefix, recursive, **kwargs)
         for meta in results:
-            if not getattr(meta, "is_mount", False):
-                self._dcache[meta.path] = meta
+            self._dcache[meta.path] = meta
         return results
 
     def list_iter(
@@ -148,8 +140,7 @@ class MetastoreABC(ABC):
         Subclasses may override ``_list_raw`` for true streaming.
         """
         for meta in self._list_raw(prefix, recursive, **kwargs):
-            if not getattr(meta, "is_mount", False):
-                self._dcache[meta.path] = meta
+            self._dcache[meta.path] = meta
             yield meta
 
     # ── Batch operations (dcache-aware) ───────────────────────────────

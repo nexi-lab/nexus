@@ -6,6 +6,8 @@ the pure Python implementation using regex/fnmatch.
 
 Falls back to Python fnmatch if Rust extension is not available.
 
+# RUST_FALLBACK: glob_fast — glob_match_bulk has Rust equivalent in nexus_fast.
+
 Functions:
     glob_match_bulk: Match paths against multiple patterns (returns None if Rust unavailable)
     glob_match: Check if a single path matches any pattern (always returns a value)
@@ -18,12 +20,12 @@ import fnmatch
 import re
 from collections.abc import Callable
 
-# Try to import Rust extension
+# RUST_FALLBACK: glob_match_bulk
 RUST_AVAILABLE = False
 _rust_glob_match_bulk: Callable[[list[str], list[str]], list[str]] | None = None
 
 try:
-    from nexus_fast import glob_match_bulk as _rust_glob_match_bulk  # type: ignore[no-redef]
+    from nexus_fast import glob_match_bulk as _rust_glob_match_bulk
 
     RUST_AVAILABLE = True
 except ImportError:

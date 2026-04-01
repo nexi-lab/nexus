@@ -206,7 +206,7 @@ class FileWatcher:
 
         Cross-zone watch is NOT handled here — zones are visibility
         boundaries. Cross-zone access goes through DT_MOUNT at the
-        routing layer (FederationContentResolver / FederationIPCResolver).
+        routing layer (DriverLifecycleCoordinator).
         """
         has_remote = self._remote_watcher is not None
 

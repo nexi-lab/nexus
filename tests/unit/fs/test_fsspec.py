@@ -733,6 +733,7 @@ class TestFsspecIntegration:
         from nexus.contracts.constants import ROOT_ZONE_ID
         from nexus.contracts.types import OperationContext
         from nexus.core.config import PermissionConfig
+        from nexus.core.mount_table import MountTable
         from nexus.core.nexus_fs import NexusFS
         from nexus.core.router import PathRouter
         from nexus.fs import _make_mount_entry
@@ -746,8 +747,9 @@ class TestFsspecIntegration:
         data_dir.mkdir()
         backend = CASLocalBackend(root_path=data_dir)
 
-        router = PathRouter(metastore)
-        router.add_mount("/local", backend)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        mount_table.add("/local", backend)
         metastore.put(_make_mount_entry("/local", backend.name))
 
         kernel = NexusFS(

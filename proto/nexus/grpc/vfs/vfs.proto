@@ -51,6 +51,7 @@ message CallResponse {
 message ReadRequest {
   string path = 1;
   string auth_token = 2;
+  string content_id = 3;   // Opaque content identifier (hash for CAS, path for PAS) — when set, server reads content directly (no metastore lookup)
 }
 
 message ReadResponse {

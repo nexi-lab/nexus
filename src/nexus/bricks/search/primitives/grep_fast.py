@@ -6,21 +6,23 @@ the pure Python implementation.
 
 Falls back to None if Rust extension is not available.
 
+# RUST_FALLBACK: grep_fast — grep_bulk, grep_files_mmap have Rust equivalents in nexus_fast.
+
 Issue #893: Added grep_files_mmap for memory-mapped I/O performance.
 """
 
 from collections.abc import Callable
 from typing import Any
 
-# Try to import Rust extension
+# RUST_FALLBACK: grep_bulk, grep_files_mmap
 RUST_AVAILABLE = False
 MMAP_AVAILABLE = False
 _rust_grep_bulk: Callable[..., list[dict[str, Any]]] | None = None
 _rust_grep_files_mmap: Callable[..., list[dict[str, Any]]] | None = None
 
 try:
-    from nexus_fast import grep_bulk as _rust_grep_bulk  # type: ignore[no-redef]
-    from nexus_fast import grep_files_mmap as _rust_grep_files_mmap  # type: ignore[no-redef]
+    from nexus_fast import grep_bulk as _rust_grep_bulk
+    from nexus_fast import grep_files_mmap as _rust_grep_files_mmap
 
     RUST_AVAILABLE = True
     MMAP_AVAILABLE = True

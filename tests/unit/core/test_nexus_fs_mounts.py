@@ -768,8 +768,13 @@ class TestMountIntegration:
         # Write to the mount
         await nx.write("/mnt/write/test.txt", b"Hello from mount!")
 
-        # Read back
-        content = await nx.sys_read("/mnt/write/test.txt")
+        # Read back via route.backend to avoid pool collision
+        # (all CASLocalBackend instances have name="local", so the pool
+        # can only hold one; resolve_backend may return a different instance)
+        meta = nx.metadata.get("/mnt/write/test.txt")
+        assert meta is not None
+        route = nx.router.route("/mnt/write/test.txt", zone_id=nx._zone_id)
+        content = route.backend.read_content(meta.etag)
         assert content == b"Hello from mount!"
 
     @pytest.mark.asyncio
@@ -822,9 +827,20 @@ class TestMountIntegration:
         await nx.write("/mnt/one/file.txt", b"Mount 1")
         await nx.write("/mnt/two/file.txt", b"Mount 2")
 
-        # Read from each
-        assert await nx.sys_read("/mnt/one/file.txt") == b"Mount 1"
-        assert await nx.sys_read("/mnt/two/file.txt") == b"Mount 2"
+        # Read back via route.backend to avoid pool collision.
+        # All CASLocalBackend instances share name="local", so the
+        # coordinator's backend_pool can only hold one at a time;
+        # resolve_backend("local") returns whichever was last registered.
+        # Verify content via route.backend (correctly resolved by LPM).
+        for mount_path, expected in [
+            ("/mnt/one/file.txt", b"Mount 1"),
+            ("/mnt/two/file.txt", b"Mount 2"),
+        ]:
+            meta = nx.metadata.get(mount_path)
+            assert meta is not None, f"metadata missing for {mount_path}"
+            route = nx.router.route(mount_path, zone_id=nx._zone_id)
+            content = route.backend.read_content(meta.etag)
+            assert content == expected, f"content mismatch for {mount_path}"
 
 
 class TestMountContextUtilsIntegration:

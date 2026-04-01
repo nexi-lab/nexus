@@ -33,6 +33,9 @@ class _StubFS:
         self._pipe_manager = None
         self._stream_manager = MagicMock()
         self._stream_manager._buffers = {}
+        # DriverLifecycleCoordinator stub — resolve_backend returns the test backend
+        self._driver_coordinator = MagicMock()
+        self._driver_coordinator.resolve_backend.return_value = backend
 
     def _validate_path(self, path):
         if not path.startswith("/"):

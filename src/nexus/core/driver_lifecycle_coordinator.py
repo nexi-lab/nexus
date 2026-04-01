@@ -15,9 +15,8 @@ Kernel-owned: created in ``NexusFS.__init__()`` (like ServiceRegistry).
 Always available after kernel construction.
 
 Boot timing:
-    create_nexus_fs()  → router.add_mount("/", backend)   # before __init__
-    NexusFS.__init__() → creates DriverLifecycleCoordinator
-    _do_link()         → adopt_existing_mount("/")          # retroactive hook_spec
+    NexusFS.__init__()     → creates DriverLifecycleCoordinator
+    create_nexus_fs()      → coordinator.mount("/", backend)  # unified lifecycle
 
 Issue #1811, #1320.
 """
@@ -25,13 +24,16 @@ Issue #1811, #1320.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
-    from nexus.core.router import PathRouter
+    from nexus.core.metastore import MetastoreABC
+    from nexus.core.mount_table import MountTable
+    from nexus.core.object_store import ObjectStoreABC
+    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -45,34 +47,97 @@ class DriverLifecycleCoordinator:
     Parallel to ServiceRegistry lifecycle orchestration (services vs drivers).
     """
 
-    __slots__ = ("_router", "_dispatch", "_mount_specs")
+    __slots__ = (
+        "_mount_table",
+        "_dispatch",
+        "_mount_specs",
+        "_backend_pool",
+        "_self_address",
+        "_transport_pool",
+    )
 
-    def __init__(self, router: "PathRouter", dispatch: "KernelDispatch") -> None:
-        self._router = router
+    def __init__(
+        self,
+        mount_table: "MountTable",
+        dispatch: "KernelDispatch",
+        *,
+        self_address: str | None = None,
+        transport_pool: "RPCTransportPool | None" = None,
+    ) -> None:
+        self._mount_table = mount_table
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
+        self._backend_pool: dict[str, ObjectStoreABC] = {}
+        self._self_address: str | None = self_address
+        self._transport_pool: RPCTransportPool | None = transport_pool
+
+    def backend_key(self, backend: "ObjectStoreABC") -> str:
+        """Canonical pool key for a backend: ``name@self_address`` or just ``name``.
+
+        Used by kernel write path to store the correct ``backend_name`` in
+        metadata so that read path can resolve it back via ``resolve_backend()``.
+        """
+        return f"{backend.name}@{self._self_address}" if self._self_address else backend.name
+
+    def register_backend(self, backend: "ObjectStoreABC") -> str:
+        """Register a backend in the driver pool. Returns the pool key.
+
+        Key = backend_key(backend). Called automatically on mount().
+        """
+        key = self.backend_key(backend)
+        self._backend_pool[key] = backend
+        return key
+
+    def resolve_backend(self, backend_name: str) -> "ObjectStoreABC":
+        """Resolve backend from pool by backend_name.
+
+        Pool hit → cached backend (local or RemoteBackend).
+        Pool miss + local name → scan mount table for matching backend.name.
+        Pool miss + remote origin → lazy-create RemoteBackend, register, return.
+
+        Raises:
+            KeyError: backend_name not in pool and cannot create remote.
+        """
+        cached = self._backend_pool.get(backend_name)
+        if cached is not None:
+            return cached
+        # Pool miss — check if it's a remote backend address.
+        from nexus.contracts.backend_address import BackendAddress
+
+        addr = BackendAddress.parse(backend_name)
+        if not addr.has_origin:
+            # No remote origin — try to find a mounted backend whose .name
+            # matches.  This covers the case where a backend was added to the
+            # mount table directly (e.g. in tests) without going through
+            # coordinator.mount(), so it was never registered in the pool.
+            for entry in self._mount_table._entries.values():
+                if entry.backend.name == backend_name:
+                    self._backend_pool[backend_name] = entry.backend
+                    return entry.backend
+            raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
+        origin = addr.origins[0]
+        if self._transport_pool is None:
+            raise KeyError(f"Cannot create RemoteBackend for '{origin}': no transport pool")
+        from nexus.backends.storage.remote import RemoteBackend
+
+        transport = self._transport_pool.get(origin)
+        remote = RemoteBackend(transport)
+        self._backend_pool[backend_name] = remote
+        return remote
 
     def mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: "ObjectStoreABC",
         *,
-        metastore: Any = None,
+        metastore: "MetastoreABC | None" = None,
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """Mount a backend with full lifecycle: routing + hooks + notification.
-
-        1. Add to routing table (PathRouter)
-        2. Register VFS hooks from hook_spec (fixes CAS wiring bug #1320)
-        3. Broadcast mount event via KernelDispatch
-
-        Args:
-            metastore: Zone's MetastoreABC. Defaults to router's root metastore.
-        """
-        # 1. Add to routing table
-        self._router.add_mount(
+        """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
+        # 1. Add to mount table (kernel mount_hashtable)
+        self._mount_table.add(
             mount_point,
             backend,
             metastore=metastore,
@@ -81,48 +146,25 @@ class DriverLifecycleCoordinator:
             io_profile=io_profile,
         )
 
-        # 2. Register hook_spec
+        # 2. Register in backend pool
+        self.register_backend(backend)
+
+        # 3. Register hook_spec
         self._register_backend_hooks(mount_point, backend)
 
-        # 3. Broadcast mount event
+        # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
-
-    def adopt_existing_mount(self, mount_point: str) -> None:
-        """Adopt a backend already in the routing table.
-
-        For mounts that predate coordinator creation (root mount in
-        create_nexus_fs).  Registers hook_spec VFS hooks and broadcasts
-        mount notification.
-        """
-        info = self._router.get_mount(mount_point)
-        if info is None:
-            logger.debug("[DRIVER] adopt_existing_mount(%s): not found", mount_point)
-            return
-
-        backend = info.backend
-
-        # Register hook_spec
-        self._register_backend_hooks(mount_point, backend)
-
-        # Broadcast mount event
-        self._dispatch.notify_mount(mount_point, backend)
-
-        logger.debug(
-            "[DRIVER] adopted existing mount %s (backend=%s)",
-            mount_point,
-            getattr(backend, "name", "?"),
-        )
 
     def unmount(self, mount_point: str) -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.
 
         Returns True if mount was removed, False if not found.
         """
-        info = self._router.get_mount(mount_point)
-        if info is None:
+        entry = self._mount_table.get(mount_point)
+        if entry is None:
             return False
 
-        backend = info.backend
+        backend = entry.backend
 
         # 1. Unregister VFS hooks
         spec = self._mount_specs.pop(mount_point, None)
@@ -135,15 +177,15 @@ class DriverLifecycleCoordinator:
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
-        # 3. Remove from routing table
-        self._router.remove_mount(mount_point)
+        # 3. Remove from mount table
+        self._mount_table.remove(mount_point)
         return True
 
     # ------------------------------------------------------------------
     # Internal hook registration (mirrors ServiceRegistry lifecycle)
     # ------------------------------------------------------------------
 
-    def _register_backend_hooks(self, mount_point: str, backend: Any) -> None:
+    def _register_backend_hooks(self, mount_point: str, backend: "ObjectStoreABC") -> None:
         """Extract and register hook_spec from backend."""
         if not hasattr(backend, "hook_spec"):
             return

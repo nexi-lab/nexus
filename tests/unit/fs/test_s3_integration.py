@@ -46,9 +46,12 @@ def s3_fs(tmp_path: Path):
         metastore = SQLiteMetastore(db_path)
 
         # Router with mount
-        router = PathRouter(metastore)
+        from nexus.core.mount_table import MountTable
+
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         mount_point = f"/s3/{BUCKET_NAME}"
-        router.add_mount(mount_point, backend)
+        mount_table.add(mount_point, backend)
 
         # Create DT_MOUNT entry
         metastore.put(_make_mount_entry(mount_point, backend.name))

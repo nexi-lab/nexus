@@ -1,6 +1,7 @@
 """Unit tests for RemotePipeBackend."""
 
-from unittest.mock import MagicMock, patch
+import base64
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -8,51 +9,15 @@ from nexus.core.pipe import PipeClosedError
 from nexus.core.remote_pipe import RemotePipeBackend
 
 
-class MockChannelPool:
-    """Minimal PeerChannelPool duck-type for tests."""
-
-    def __init__(self) -> None:
-        self.channel = MagicMock()
-
-    def get(self, address: str) -> object:
-        return self.channel
-
-    def set_tls_config(self, config: object) -> None:
-        pass
-
-    def close_all(self) -> None:
-        pass
-
-
-def _patch_grpc_vfs(mock_stub_instance):
-    """Context manager that patches nexus.grpc.vfs with mock stubs."""
-    mock_pb2 = MagicMock()
-    mock_pb2_grpc = MagicMock()
-    mock_pb2_grpc.NexusVFSServiceStub.return_value = mock_stub_instance
-
-    mock_vfs = MagicMock()
-    mock_vfs.vfs_pb2 = mock_pb2
-    mock_vfs.vfs_pb2_grpc = mock_pb2_grpc
-
-    return patch.dict(
-        "sys.modules",
-        {
-            "nexus.grpc.vfs": mock_vfs,
-            "nexus.grpc.vfs.vfs_pb2": mock_pb2,
-            "nexus.grpc.vfs.vfs_pb2_grpc": mock_pb2_grpc,
-        },
-    )
-
-
 class TestRemotePipeBackend:
-    def _make_backend(self) -> tuple[RemotePipeBackend, MockChannelPool]:
-        pool = MockChannelPool()
+    def _make_backend(self) -> tuple[RemotePipeBackend, MagicMock]:
+        transport = MagicMock()
         backend = RemotePipeBackend(
             origin="10.0.0.2:50051",
             path="/nexus/pipes/test",
-            channel_pool=pool,
+            transport=transport,
         )
-        return backend, pool
+        return backend, transport
 
     def test_stats(self) -> None:
         backend, _ = self._make_backend()
@@ -81,36 +46,32 @@ class TestRemotePipeBackend:
             backend.read_nowait()
 
     def test_write_nowait_calls_rpc(self) -> None:
-        backend, _ = self._make_backend()
-        mock_response = MagicMock()
-        mock_response.is_error = False
-        mock_response.payload = b'{"result": 5}'
+        backend, transport = self._make_backend()
+        transport.call_rpc.return_value = 5
 
-        mock_stub = MagicMock()
-        mock_stub.Call.return_value = mock_response
-
-        with _patch_grpc_vfs(mock_stub):
-            result = backend.write_nowait(b"hello")
+        result = backend.write_nowait(b"hello")
 
         assert result == 5
-        mock_stub.Call.assert_called_once()
+        transport.call_rpc.assert_called_once_with(
+            "sys_write",
+            {
+                "path": "/nexus/pipes/test",
+                "buf": base64.b64encode(b"hello").decode("ascii"),
+            },
+        )
 
     def test_read_nowait_calls_rpc(self) -> None:
-        backend, _ = self._make_backend()
-        import base64
-
+        backend, transport = self._make_backend()
         encoded_data = base64.b64encode(b"hello").decode("ascii")
-        mock_response = MagicMock()
-        mock_response.is_error = False
-        mock_response.payload = f'{{"result": "{encoded_data}"}}'.encode()
+        transport.call_rpc.return_value = encoded_data
 
-        mock_stub = MagicMock()
-        mock_stub.Call.return_value = mock_response
-
-        with _patch_grpc_vfs(mock_stub):
-            result = backend.read_nowait()
+        result = backend.read_nowait()
 
         assert result == b"hello"
+        transport.call_rpc.assert_called_once_with(
+            "sys_read",
+            {"path": "/nexus/pipes/test"},
+        )
 
     @pytest.mark.asyncio
     async def test_async_wait_writable(self) -> None:

@@ -196,13 +196,21 @@ class RPCTransport:
         retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
         reraise=True,
     )
-    def read_file(self, path: str, read_timeout: float | None = None) -> bytes:
+    def read_file(
+        self, path: str, *, content_id: str = "", read_timeout: float | None = None
+    ) -> bytes:
         """Read file content via typed Read RPC — no JSON/base64 overhead.
+
+        Args:
+            path: Virtual file path (used for routing on server).
+            content_id: Opaque content identifier. When set, server reads
+                content directly from the backend (no metastore lookup).
+            read_timeout: Optional per-call timeout override.
 
         Returns:
             Raw file content as bytes.
         """
-        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token)
+        request = vfs_pb2.ReadRequest(path=path, auth_token=self._auth_token, content_id=content_id)
         timeout = read_timeout if read_timeout is not None else self._timeout
         try:
             response = self._stub.Read(request, timeout=timeout)
@@ -329,3 +337,49 @@ class RPCTransport:
     def close(self) -> None:
         """Close the gRPC channel."""
         self._channel.close()
+
+
+class RPCTransportPool:
+    """Pool of RPCTransport instances — one per peer address.
+
+    Thread-safe. Replaces PeerChannelPool with a higher-level abstraction
+    that includes retry, auth, and typed RPC methods.
+
+    TLS config is deferred: set via ``set_tls_config()`` after federation
+    bootstrap (not available at NexusFS init time).
+    """
+
+    def __init__(self, *, timeout: float = 30.0) -> None:
+        self._transports: dict[str, RPCTransport] = {}
+        self._tls_config: ZoneTlsConfig | None = None
+        self._timeout = timeout
+        self._lock = __import__("threading").Lock()
+
+    def get(self, address: str) -> RPCTransport:
+        """Get or create a persistent RPCTransport to *address*."""
+        transport = self._transports.get(address)
+        if transport is not None:
+            return transport
+        with self._lock:
+            transport = self._transports.get(address)
+            if transport is not None:
+                return transport
+            transport = RPCTransport(address, timeout=self._timeout, tls_config=self._tls_config)
+            self._transports[address] = transport
+            logger.debug("RPCTransportPool: created transport to %s", address)
+            return transport
+
+    def set_tls_config(self, config: "ZoneTlsConfig") -> None:
+        """Set TLS config for future transports. Existing transports are NOT replaced."""
+        self._tls_config = config
+
+    def close_all(self) -> None:
+        """Close all pooled transports."""
+        with self._lock:
+            for addr, t in self._transports.items():
+                try:
+                    t.close()
+                except Exception:
+                    logger.debug("RPCTransportPool: error closing transport to %s", addr)
+            self._transports.clear()
+        logger.debug("RPCTransportPool: all transports closed")

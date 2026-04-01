@@ -17,6 +17,7 @@ from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from nexus.backends.storage.cas_local import CASLocalBackend
+from nexus.core.mount_table import MountTable
 from nexus.core.router import (
     AccessDeniedError,
     InvalidPathError,
@@ -41,12 +42,13 @@ def _make_router_with_mounts() -> tuple[PathRouter, CASLocalBackend]:
     tmpdir = tempfile.mkdtemp()
     backend = CASLocalBackend(tmpdir)
     metastore = DictMetastore()
-    router = PathRouter(metastore)
-    router.add_mount("/workspace", backend)
-    router.add_mount("/shared", backend)
-    router.add_mount("/external", backend)
-    router.add_mount("/system", backend, admin_only=True, readonly=True)
-    router.add_mount("/archives", backend, readonly=True)
+    mount_table = MountTable(metastore)
+    router = PathRouter(mount_table)
+    mount_table.add("/workspace", backend)
+    mount_table.add("/shared", backend)
+    mount_table.add("/external", backend)
+    mount_table.add("/system", backend, admin_only=True, readonly=True)
+    mount_table.add("/archives", backend, readonly=True)
     return router, backend
 
 
@@ -65,7 +67,8 @@ class TestPathNormalizationInvariants:
     def test_normalize_is_idempotent(self, path: str) -> None:
         """normalize(normalize(p)) == normalize(p) for all valid paths."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         once = router._normalize_path(path)
         twice = router._normalize_path(once)
         assert once == twice
@@ -74,7 +77,8 @@ class TestPathNormalizationInvariants:
     def test_normalized_path_starts_with_slash(self, path: str) -> None:
         """All normalized paths are absolute (start with /)."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         normalized = router._normalize_path(path)
         assert normalized.startswith("/")
 
@@ -82,7 +86,8 @@ class TestPathNormalizationInvariants:
     def test_normalized_path_has_no_double_slashes(self, path: str) -> None:
         """Normalized paths never contain //."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         normalized = router._normalize_path(path)
         assert "//" not in normalized
 
@@ -90,7 +95,8 @@ class TestPathNormalizationInvariants:
     def test_normalized_path_has_no_trailing_slash(self, path: str) -> None:
         """Normalized paths have no trailing slash (except root /)."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         normalized = router._normalize_path(path)
         if normalized != "/":
             assert not normalized.endswith("/")
@@ -108,7 +114,8 @@ class TestPathTraversalInvariants:
     def test_traversal_attempts_rejected(self, attempt: str) -> None:
         """All path traversal attempts are rejected by validate_path."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         try:
             result = router.validate_path(attempt)
             # If validation succeeds, the path must still be within the
@@ -129,7 +136,8 @@ class TestPathTraversalInvariants:
     def test_arbitrary_strings_never_escape_root(self, path: str) -> None:
         """No arbitrary string can produce a path outside /."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         try:
             result = router.validate_path(path)
             assert result.startswith("/"), f"Escaped root: {path!r} -> {result!r}"
@@ -140,7 +148,8 @@ class TestPathTraversalInvariants:
     def test_validate_roundtrip(self, path: str) -> None:
         """validate_path is idempotent: validate(validate(p)) == validate(p)."""
         metastore = DictMetastore()
-        router = PathRouter(metastore)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
         try:
             once = router.validate_path(path)
             twice = router.validate_path(once)
@@ -190,9 +199,10 @@ class TestLongestPrefixMatchInvariants:
         backend_deep = CASLocalBackend(tmpdir)
 
         metastore = DictMetastore()
-        router = PathRouter(metastore)
-        router.add_mount(mount1, backend_shallow)
-        router.add_mount(deeper_path, backend_deep)
+        mount_table = MountTable(metastore)
+        router = PathRouter(mount_table)
+        mount_table.add(mount1, backend_shallow)
+        mount_table.add(deeper_path, backend_deep)
 
         try:
             result = router.route(query_path)

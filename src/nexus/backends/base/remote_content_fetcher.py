@@ -1,8 +1,8 @@
 """RemoteContentFetcher — addressing-agnostic protocol for remote content fetch.
 
-FederationContentResolver delegates to this protocol so it never needs to know
-about CAS, CDC, manifests, or chunks.  Each addressing mode provides its own
-implementation.
+DriverLifecycleCoordinator.resolve_backend() delegates to this protocol so it
+never needs to know about CAS, CDC, manifests, or chunks.  Each addressing mode
+provides its own implementation.
 
     RemoteContentFetcher (Protocol)
         └── CASRemoteContentFetcher  — CAS+CDC: manifest parse, local chunk
@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 class RemoteContentFetcher(Protocol):
     """Addressing-agnostic protocol for fetching content from remote origins.
 
-    FederationContentResolver calls this with a list of origins and a content
-    hash.  The implementation owns transport, manifest logic, local caching,
-    and scatter-gather strategy.
+    DriverLifecycleCoordinator.resolve_backend() calls this with a list of
+    origins and a content hash.  The implementation owns transport, manifest
+    logic, local caching, and scatter-gather strategy.
     """
 
     def fetch_remote_content(
@@ -59,8 +59,8 @@ class RemoteContentFetcher(Protocol):
 class CASRemoteContentFetcher:
     """CAS+CDC implementation: manifest parse, local chunk check, scatter-gather.
 
-    Absorbs all CAS-specific logic that was previously in
-    FederationContentResolver._fetch_content_by_hash().
+    Absorbs all CAS-specific logic that was previously spread across the
+    federation content resolution layer.
 
     Args:
         peer_blob_client: Transport for fetching blobs by hash from peers.

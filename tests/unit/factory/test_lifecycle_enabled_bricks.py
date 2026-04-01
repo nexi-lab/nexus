@@ -28,8 +28,7 @@ class _DummyPermissionChecker:
 
 
 class _DummyDriverCoordinator:
-    def adopt_existing_mount(self, _mount: str) -> None:
-        return None
+    pass
 
 
 @pytest.mark.asyncio

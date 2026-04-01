@@ -8,6 +8,7 @@ because only FUSE handlers use it.
 import fnmatch
 from typing import Any
 
+# RUST_FALLBACK: filter_paths
 # Try to import Rust acceleration
 try:
     import nexus_fast

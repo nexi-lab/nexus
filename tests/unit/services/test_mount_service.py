@@ -22,8 +22,6 @@ from nexus.contracts.types import OperationContext
 def mock_router():
     """Create a mock PathRouter."""
     router = MagicMock()
-    router.add_mount.return_value = None
-    router.remove_mount.return_value = True
     router.has_mount.return_value = False
     router.get_mount.return_value = None
     router.list_mounts.return_value = []

@@ -49,6 +49,7 @@ class RemoteBackend(ObjectStoreABC):
     capabilities: frozenset[str] = frozenset()
 
     def __init__(self, transport: "RPCTransport") -> None:
+        super().__init__()
         self._transport = transport
 
         # Reuse BaseRemoteNexusFS error handling (static method access)
@@ -126,7 +127,7 @@ class RemoteBackend(ObjectStoreABC):
 
     def read_content(self, content_id: str, context: OperationContext | None = None) -> bytes:
         path = self._to_server_path(context)
-        return self._transport.read_file(path)  # Typed RPC — raw bytes, no JSON decode
+        return self._transport.read_file(path, content_id=content_id)
 
     def delete_content(self, content_id: str, context: OperationContext | None = None) -> None:
         """No-op: server-side deletion is handled by RemoteMetastore.delete().

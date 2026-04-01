@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+# RUST_FALLBACK: BloomFilter
 if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 

@@ -63,6 +63,7 @@ class PathAddressingEngine(Backend):
         prefix: str = "",
         versioning_enabled: bool = False,
     ) -> None:
+        super().__init__()
         self._transport = transport
         self._backend_name = backend_name or f"path-{transport.transport_name}"
         self.bucket_name = bucket_name

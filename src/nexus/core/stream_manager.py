@@ -31,7 +31,7 @@ from nexus.core.stream import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
-    from nexus.grpc.channel_pool import PeerChannelPool
+    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +63,11 @@ class StreamManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        channel_pool: "PeerChannelPool | None" = None,
+        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
-        self._channel_pool = channel_pool
+        self._transport_pool = transport_pool
         self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -163,17 +163,18 @@ class StreamManager:
             raise StreamNotFoundError(f"no stream at: {path}")
 
         # Detect remote stream — install RemoteStreamBackend for fast-path
-        if self._channel_pool is not None and metadata.backend_name:
+        if self._transport_pool is not None and metadata.backend_name:
             from nexus.contracts.backend_address import BackendAddress
 
             addr = BackendAddress.parse(metadata.backend_name)
             if addr.has_origin and self._self_address not in addr.origins:
                 from nexus.core.remote_stream import RemoteStreamBackend
 
+                transport = self._transport_pool.get(addr.origins[0])
                 backend: StreamBackend = RemoteStreamBackend(
                     origin=addr.origins[0],
                     path=path,
-                    channel_pool=self._channel_pool,
+                    transport=transport,
                 )
                 self._buffers[path] = backend
                 logger.debug("stream opened (remote): %s → %s", path, addr.origins[0])

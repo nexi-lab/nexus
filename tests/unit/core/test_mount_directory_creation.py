@@ -50,8 +50,8 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     mount_backend = MagicMock()
     mount_backend.name = "test_mount"
 
-    # Add mount directly to router (simulating config-based mount)
-    nx.router.add_mount("/mnt/test", mount_backend, readonly=False)
+    # Add mount via driver coordinator (simulating config-based mount)
+    nx._driver_coordinator.mount("/mnt/test", mount_backend, readonly=False)
 
     # Create directory entry (this is what server.py now does)
     await nx.mkdir("/mnt/test", parents=True, exist_ok=True)
@@ -65,7 +65,7 @@ async def test_mount_creates_directory_entry(nx_with_mount):
     mnt_meta = nx.metadata.get("/mnt")
     assert mnt_meta is not None
 
-    # PathRouter.add_mount() is pure in-memory (no metastore.put); DT_MOUNT
+    # MountTable.add() is pure in-memory (no metastore.put); DT_MOUNT
     # persistence is the mount subsystem's job.  mkdir creates a DT_DIR
     # entry, which the kernel still treats as directory-like.
     assert await nx.is_directory("/mnt/test")
@@ -89,7 +89,7 @@ async def test_mount_appears_in_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx.router.add_mount("/mnt/gcs_demo", mount_backend, readonly=False)
+    nx._driver_coordinator.mount("/mnt/gcs_demo", mount_backend, readonly=False)
     await nx.mkdir("/mnt/gcs_demo", parents=True, exist_ok=True)
 
     # List root directory (non-recursive)
@@ -115,7 +115,7 @@ async def test_mount_appears_in_detailed_listing(nx_with_mount):
     mount_backend.name = "test_mount"
 
     # Add mount and create directory
-    nx.router.add_mount("/personal/alice", mount_backend, readonly=False)
+    nx._driver_coordinator.mount("/personal/alice", mount_backend, readonly=False)
     await nx.mkdir("/personal/alice", parents=True, exist_ok=True)
 
     # List with details
@@ -152,7 +152,7 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
     mount_backend.name = "deep_mount"
 
     # Add mount and create directory with parents
-    nx.router.add_mount("/a/b/c/mount", mount_backend, readonly=False)
+    nx._driver_coordinator.mount("/a/b/c/mount", mount_backend, readonly=False)
     await nx.mkdir("/a/b/c/mount", parents=True, exist_ok=True)
 
     # Verify all parents exist
@@ -163,12 +163,12 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
 
     # Verify all paths are recognized as directories by the kernel.
     # Parent directories are created by mkdir, while the mount point
-    # itself is a DT_MOUNT created by PathRouter.add_mount.  Both are
-    # treated as directory-like by is_directory.
+    # itself is a DT_MOUNT created by DriverLifecycleCoordinator.mount().
+    # Both are treated as directory-like by is_directory.
     for p in ["/a", "/a/b", "/a/b/c", "/a/b/c/mount"]:
         assert await nx.is_directory(p), f"Expected {p} to be a directory"
 
-    # PathRouter.add_mount() is pure in-memory; mkdir creates DT_DIR.
+    # MountTable.add() is pure in-memory; mkdir creates DT_DIR.
     mount_meta = nx.metadata.get("/a/b/c/mount")
     assert mount_meta is not None
     # mkdir creates DT_DIR (entry_type=1); DT_MOUNT is set by topology code.
@@ -278,7 +278,7 @@ async def test_multiple_mounts_in_same_parent(nx_with_mount):
     for name in ["mount1", "mount2", "mount3"]:
         mount_backend = MagicMock()
         mount_backend.name = name
-        nx.router.add_mount(f"/mnt/{name}", mount_backend, readonly=False)
+        nx._driver_coordinator.mount(f"/mnt/{name}", mount_backend, readonly=False)
         await nx.mkdir(f"/mnt/{name}", parents=True, exist_ok=True)
 
     # List /mnt

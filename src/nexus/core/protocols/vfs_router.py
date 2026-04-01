@@ -66,6 +66,9 @@ class MountInfo:
 class VFSRouterProtocol(Protocol):
     """Kernel contract for virtual path routing.
 
+    PathRouter is a read-only query engine over MountTable.
+    Mount mutations go through DriverLifecycleCoordinator.
+
     All methods are sync — metastore-backed PathRouter reads are ~5 μs
     via redb's Rust in-memory cache. No async overhead needed.
     """
@@ -77,18 +80,6 @@ class VFSRouterProtocol(Protocol):
         is_admin: bool = False,
         check_write: bool = False,
     ) -> ResolvedPath: ...
-
-    def add_mount(
-        self,
-        mount_point: str,
-        backend: ObjectStoreABC,
-        *,
-        readonly: bool = False,
-        admin_only: bool = False,
-        io_profile: str = "balanced",
-    ) -> None: ...
-
-    def remove_mount(self, mount_point: str) -> bool: ...
 
     def list_mounts(self) -> list[MountInfo]: ...
 

@@ -250,16 +250,18 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
       if (entityUrn) url += `&entity_urn=${encodeURIComponent(entityUrn)}`;
       if (aspectName) url += `&aspect_name=${encodeURIComponent(aspectName)}`;
       const result = await client.get<{
-        records: ReplayEntry[];
-        nextCursor: number | null;
-        hasMore: boolean;
+        records: any[];
+        next_cursor?: number | null;
+        nextCursor?: number | null;
+        has_more?: boolean;
+        hasMore?: boolean;
       }>(url);
-      const records: ReplayEntry[] = result.records ?? [];
-      const entries = records.map((r) => ({
-        sequenceNumber: r.sequenceNumber ?? 0,
-        entityUrn: r.entityUrn ?? "",
-        aspectName: r.aspectName ?? "",
-        changeType: r.changeType ?? "",
+      const records = result.records ?? [];
+      const entries: ReplayEntry[] = records.map((r: any) => ({
+        sequenceNumber: r.sequenceNumber ?? r.sequence_number ?? 0,
+        entityUrn: r.entityUrn ?? r.entity_urn ?? "",
+        aspectName: r.aspectName ?? r.aspect_name ?? "",
+        changeType: r.changeType ?? r.change_type ?? "",
         timestamp: r.timestamp ?? "",
       }));
       set({
@@ -268,8 +270,8 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
             ? entries
             : [...get().replayEntries, ...entries],
         replayLoading: false,
-        replayHasMore: result.hasMore ?? false,
-        replayNextCursor: result.nextCursor ?? 0,
+        replayHasMore: result.hasMore ?? result.has_more ?? false,
+        replayNextCursor: result.nextCursor ?? result.next_cursor ?? 0,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch replay";
@@ -295,9 +297,9 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
         has_more: boolean;
         next_cursor: string | null;
       }>(url);
-      const events: EventReplayEntry[] = (result.events ?? []).map((e) => ({
+      const events: EventReplayEntry[] = (result.events ?? []).map((e: any) => ({
         event_id: e.event_id ?? "",
-        event_type: e.event_type ?? "",
+        event_type: e.event_type ?? e.type ?? "",
         agent_id: e.agent_id ?? null,
         path: e.path ?? null,
         timestamp: e.timestamp ?? "",
@@ -325,14 +327,26 @@ export const useKnowledgeStore = create<KnowledgeState>((set, get) => ({
     action: async (column, client) => {
       const result = await client.get<{
         results: {
-          entityUrn: string;
-          columnName: string;
-          columnType: string;
+          entity_urn?: string;
+          entityUrn?: string;
+          column_name?: string;
+          columnName?: string;
+          column_type?: string;
+          columnType?: string;
+          schema?: unknown;
         }[];
       }>(
         `/api/v2/catalog/search?column=${encodeURIComponent(column)}`,
       );
-      return { columnSearchResults: result.results ?? [] };
+      // Normalize snake_case → camelCase (API may return either)
+      const normalized = (result.results ?? []).map((r: any) => ({
+        entityUrn: r.entityUrn ?? r.entity_urn ?? "",
+        columnName: r.columnName ?? r.column_name ?? "",
+        columnType: r.columnType ?? r.column_type ?? "",
+        path: r.path ?? null,
+        schema: r.schema,
+      }));
+      return { columnSearchResults: normalized };
     },
   }),
 

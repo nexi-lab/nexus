@@ -77,11 +77,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     fi && \
     if [ "$NEXUS_TXTAI_USE_API_EMBEDDINGS" = "true" ]; then \
         uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
+            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
             "txtai[ann]>=9.0"; \
     else \
         uv pip install --system -i $(cat /tmp/pip_index) \
-            ".[all,performance,compression,monitoring,docker,event-streaming,sentry]" \
+            ".[all,performance,compression,monitoring,docker,event-streaming,sentry,pay]" \
             "txtai[ann]>=9.0" \
             "sentence-transformers>=5.3"; \
     fi

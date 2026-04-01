@@ -142,7 +142,12 @@ class LifespanServices:
             rebac_manager=_svc("rebac_manager"),
             event_bus=getattr(nx, "_event_bus", None) if nx else None,
             coordination_client=None,
-            workflow_engine=(getattr(nx, "workflow_engine", None) if nx else None),
+            workflow_engine=(
+                (nx.service("workflow_engine") if hasattr(nx, "service") else None)
+                or getattr(nx, "workflow_engine", None)
+                if nx
+                else None
+            ),
             snapshot_service=_svc("snapshot_service"),
             namespace_manager=_svc("async_namespace_manager"),
             nexus_config=getattr(nx, "config", None) if nx else None,

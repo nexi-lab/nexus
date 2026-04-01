@@ -4,7 +4,9 @@
  *
  * Key bindings:
  *   j/k or up/down : navigate within lists
+ *   g / Shift+G    : jump to start / end of list
  *   Tab            : cycle tabs
+ *   Escape         : close overlay
  *   Enter          : manifests -> fetch detail (tuple entries)
  *   p              : open permission checker (+ governance edge check)
  *   Shift+R        : (alerts tab) resolve selected
@@ -23,6 +25,7 @@ import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
+import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -164,88 +167,43 @@ export default function AccessPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, client]);
 
+  // Shared list navigation (j/k/up/down/g/G) — switches per active tab
+  const listNav = listNavigationBindings({
+    getIndex: () => {
+      if (activeTab === "manifests") return selectedManifestIndex;
+      if (activeTab === "alerts") return selectedAlertIndex;
+      if (activeTab === "credentials") return selectedCredentialIndex;
+      if (activeTab === "fraud") return fraudFocus === "scores" ? selectedFraudIndex : selectedConstraintIndex;
+      if (activeTab === "delegations") return selectedDelegationIndex;
+      return 0;
+    },
+    setIndex: (i) => {
+      if (activeTab === "manifests") setSelectedManifestIndex(i);
+      else if (activeTab === "alerts") setSelectedAlertIndex(i);
+      else if (activeTab === "credentials") setSelectedCredentialIndex(i);
+      else if (activeTab === "fraud") {
+        if (fraudFocus === "scores") setSelectedFraudIndex(i);
+        else setSelectedConstraintIndex(i);
+      } else if (activeTab === "delegations") setSelectedDelegationIndex(i);
+    },
+    getLength: () => {
+      if (activeTab === "manifests") return manifests.length;
+      if (activeTab === "alerts") return alerts.length;
+      if (activeTab === "credentials") return credentials.length;
+      if (activeTab === "fraud") return fraudFocus === "scores" ? fraudScores.length : constraints.length;
+      if (activeTab === "delegations") return delegations.length;
+      return 0;
+    },
+  });
+
   useKeyboard(overlayActive ? {} : {
-    j: () => {
-      if (activeTab === "manifests") {
-        if (manifests.length === 0) return;
-        setSelectedManifestIndex(Math.max(0, Math.min(selectedManifestIndex + 1, manifests.length - 1)));
-      } else if (activeTab === "alerts") {
-        if (alerts.length === 0) return;
-        setSelectedAlertIndex(Math.max(0, Math.min(selectedAlertIndex + 1, alerts.length - 1)));
-      } else if (activeTab === "credentials") {
-        if (credentials.length === 0) return;
-        setSelectedCredentialIndex(Math.max(0, Math.min(selectedCredentialIndex + 1, credentials.length - 1)));
-      } else if (activeTab === "fraud") {
-        if (fraudFocus === "scores") {
-          if (fraudScores.length === 0) return;
-          setSelectedFraudIndex(Math.max(0, Math.min(selectedFraudIndex + 1, fraudScores.length - 1)));
-        } else {
-          if (constraints.length === 0) return;
-          setSelectedConstraintIndex(Math.max(0, Math.min(selectedConstraintIndex + 1, constraints.length - 1)));
-        }
-      } else if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)));
-      }
-    },
-    down: () => {
-      if (activeTab === "manifests") {
-        if (manifests.length === 0) return;
-        setSelectedManifestIndex(Math.max(0, Math.min(selectedManifestIndex + 1, manifests.length - 1)));
-      } else if (activeTab === "alerts") {
-        if (alerts.length === 0) return;
-        setSelectedAlertIndex(Math.max(0, Math.min(selectedAlertIndex + 1, alerts.length - 1)));
-      } else if (activeTab === "credentials") {
-        if (credentials.length === 0) return;
-        setSelectedCredentialIndex(Math.max(0, Math.min(selectedCredentialIndex + 1, credentials.length - 1)));
-      } else if (activeTab === "fraud") {
-        if (fraudFocus === "scores") {
-          if (fraudScores.length === 0) return;
-          setSelectedFraudIndex(Math.max(0, Math.min(selectedFraudIndex + 1, fraudScores.length - 1)));
-        } else {
-          if (constraints.length === 0) return;
-          setSelectedConstraintIndex(Math.max(0, Math.min(selectedConstraintIndex + 1, constraints.length - 1)));
-        }
-      } else if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)));
-      }
-    },
-    k: () => {
-      if (activeTab === "manifests") {
-        setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
-      } else if (activeTab === "alerts") {
-        setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
-      } else if (activeTab === "credentials") {
-        setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
-      } else if (activeTab === "fraud") {
-        if (fraudFocus === "scores") {
-          setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
-        } else {
-          setSelectedConstraintIndex(Math.max(selectedConstraintIndex - 1, 0));
-        }
-      } else if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      }
-    },
-    up: () => {
-      if (activeTab === "manifests") {
-        setSelectedManifestIndex(Math.max(selectedManifestIndex - 1, 0));
-      } else if (activeTab === "alerts") {
-        setSelectedAlertIndex(Math.max(selectedAlertIndex - 1, 0));
-      } else if (activeTab === "credentials") {
-        setSelectedCredentialIndex(Math.max(selectedCredentialIndex - 1, 0));
-      } else if (activeTab === "fraud") {
-        if (fraudFocus === "scores") {
-          setSelectedFraudIndex(Math.max(selectedFraudIndex - 1, 0));
-        } else {
-          setSelectedConstraintIndex(Math.max(selectedConstraintIndex - 1, 0));
-        }
-      } else if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      }
-    },
+    ...listNav,
     ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
+    escape: () => {
+      if (overlay !== "none") {
+        setOverlay("none");
+      }
+    },
     tab: () => {
       if (activeTab === "fraud") {
         setFraudFocus((f) => f === "scores" ? "constraints" : "scores");
@@ -477,11 +435,11 @@ export default function AccessPanel(): React.ReactNode {
   // Tab-specific help text
   const delegationFilterLabel = delegationFilter ? ` [${delegationFilter}]` : "";
   const HELP: Readonly<Record<AccessTab, string>> = {
-    manifests: "j/k:navigate  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  y:copy  Tab:tab  r:refresh  q:quit",
-    alerts: "j/k:navigate  Shift+R:resolve  Tab:tab  r:refresh  q:quit",
-    credentials: "j/k:navigate  i:issue  x:revoke  Tab:tab  r:refresh  q:quit",
-    fraud: "j/k:navigate  c:compute  Shift+C:collusion  s:suspend  n:new constraint  d:delete constraint  Tab:focus  Shift+Tab:tab  r:refresh  q:quit",
-    delegations: `j/k:navigate  n:new  x:revoke  o:complete  v:chain  w:namespace  y:copy  f:filter${delegationFilterLabel}  Tab:tab  r:refresh  q:quit`,
+    manifests: "j/k:navigate  g/G:jump  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  y:copy  Esc:close  Tab:tab  r:refresh  q:quit",
+    alerts: "j/k:navigate  g/G:jump  Shift+R:resolve  Esc:close  Tab:tab  r:refresh  q:quit",
+    credentials: "j/k:navigate  g/G:jump  i:issue  x:revoke  Esc:close  Tab:tab  r:refresh  q:quit",
+    fraud: "j/k:navigate  g/G:jump  c:compute  Shift+C:collusion  s:suspend  n:new constraint  d:delete  Tab:focus  Shift+Tab:tab  Esc:close  r:refresh  q:quit",
+    delegations: `j/k:navigate  g/G:jump  n:new  x:revoke  o:complete  v:chain  w:namespace  y:copy  f:filter${delegationFilterLabel}  Esc:close  Tab:tab  r:refresh  q:quit`,
   };
 
   return (
@@ -551,7 +509,7 @@ export default function AccessPanel(): React.ReactNode {
               ) : (
                 (collusionRings as { confidence: number; members: string[]; ring_type?: string }[]).map((ring, i) => {
                   const conf = ring.confidence;
-                  const confColor = conf > 0.7 ? "red" : conf >= 0.4 ? "yellow" : undefined;
+                  const confColor = conf > 0.7 ? statusColor.error : conf >= 0.4 ? statusColor.warning : undefined;
                   const confStr = conf.toFixed(3);
                   const members = ring.members.join(", ");
                   const ringType = ring.ring_type ?? "unknown";

@@ -7,10 +7,10 @@ import React, { useEffect, useState, useCallback } from "react";
 import { useWorkflowsStore } from "../../stores/workflows-store.js";
 import type { WorkflowTab } from "../../stores/workflows-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
-import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
+import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
@@ -22,6 +22,12 @@ import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
 import { WORKFLOW_TABS } from "../../shared/navigation.js";
+
+const HELP_TEXT: Readonly<Record<string, string>> = {
+  workflows: "j/k:navigate  Tab:switch tab  e:execute  d:delete  p:enable/disable  r:refresh  Enter:detail  q:quit",
+  executions: "j/k:navigate  Tab:switch tab  Enter:detail  Esc:close  r:refresh  q:quit",
+  scheduler: "Tab:switch tab  r:refresh  q:quit",
+};
 
 export default function WorkflowsPanel(): React.ReactNode {
   const client = useApi();
@@ -128,24 +134,11 @@ export default function WorkflowsPanel(): React.ReactNode {
       : confirmDelete
       ? {} // ConfirmDialog handles its own keys when visible
       : {
-          j: () => {
-            const maxIndex = currentListLength() - 1;
-            if (maxIndex >= 0) {
-              setCurrentIndex(Math.min(currentIndex() + 1, maxIndex));
-            }
-          },
-          down: () => {
-            const maxIndex = currentListLength() - 1;
-            if (maxIndex >= 0) {
-              setCurrentIndex(Math.min(currentIndex() + 1, maxIndex));
-            }
-          },
-          k: () => {
-            setCurrentIndex(Math.max(currentIndex() - 1, 0));
-          },
-          up: () => {
-            setCurrentIndex(Math.max(currentIndex() - 1, 0));
-          },
+          ...listNavigationBindings({
+            getIndex: currentIndex,
+            setIndex: setCurrentIndex,
+            getLength: currentListLength,
+          }),
           ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
           r: () => refreshCurrentView(),
           e: () => {
@@ -194,12 +187,6 @@ export default function WorkflowsPanel(): React.ReactNode {
             if (activeTab === "executions" && selectedExecution) {
               clearExecutionDetail();
             }
-          },
-          g: () => {
-            setCurrentIndex(jumpToStart());
-          },
-          "shift+g": () => {
-            setCurrentIndex(jumpToEnd(currentListLength()));
           },
         },
   );
@@ -287,11 +274,7 @@ export default function WorkflowsPanel(): React.ReactNode {
 
         {/* Help bar */}
         <box height={1} width="100%">
-          <text>
-            {activeTab === "executions"
-              ? "j/k:navigate  Tab:switch tab  Enter:detail  Esc:close  r:refresh  q:quit"
-              : "j/k:navigate  Tab:switch tab  e:execute  d:delete  p:enable/disable  r:refresh  Enter:detail  q:quit"}
-          </text>
+          <text>{HELP_TEXT[activeTab] ?? ""}</text>
         </box>
 
         {/* Delete confirmation dialog */}

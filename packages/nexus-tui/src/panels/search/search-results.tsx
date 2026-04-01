@@ -2,11 +2,14 @@
  * Search results list: path, chunk_text (truncated), score, line range.
  */
 
-import React from "react";
+import React, { useCallback } from "react";
 import type { SearchResult } from "../../stores/search-store.js";
 import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { VirtualList } from "../../shared/components/virtual-list.js";
 import { truncateText } from "../../shared/utils/format-text.js";
+
+const VIEWPORT_HEIGHT = 20;
 
 interface SearchResultsProps {
   readonly results: readonly SearchResult[];
@@ -25,9 +28,18 @@ function scoreColor(score: number): string {
   return statusColor.dim;
 }
 
-function formatLineRange(start: number, end: number): string {
-  if (start === end) return `L${start}`;
+function formatLineRange(start: number | null, end: number | null): string {
+  if (start == null) return "—";
+  if (start === end || end == null) return `L${start}`;
   return `L${start}-${end}`;
+}
+
+function formatScoreBreakdown(result: SearchResult): string {
+  const parts: string[] = [];
+  if (result.keyword_score != null) parts.push(`bm25:${result.keyword_score.toFixed(2)}`);
+  if (result.vector_score != null) parts.push(`vec:${result.vector_score.toFixed(2)}`);
+  if (result.reranker_score != null) parts.push(`rerank:${result.reranker_score.toFixed(2)}`);
+  return parts.length > 0 ? parts.join(" ") : "";
 }
 
 export function SearchResults({
@@ -53,6 +65,31 @@ export function SearchResults({
     );
   }
 
+  const renderResult = useCallback(
+    (result: SearchResult, i: number) => {
+      const isSelected = i === selectedIndex;
+      const prefix = isSelected ? "> " : "  ";
+      const score = formatScore(result.score).padEnd(5);
+      const lines = formatLineRange(result.line_start, result.line_end).padEnd(9);
+      const path = truncateText(result.path, 29).padEnd(29);
+      const breakdown = formatScoreBreakdown(result);
+      const chunk = truncateText(result.chunk_text.replace(/\n/g, " "), 30);
+
+      return (
+        <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
+          <text>
+            <span>{prefix}</span>
+            <span foregroundColor={scoreColor(result.score)}>{score}</span>
+            <span>{`  ${lines}  ${path}  `}</span>
+            <span dimColor>{breakdown ? `[${breakdown}]  ` : ""}</span>
+            <span>{chunk}</span>
+          </text>
+        </box>
+      );
+    },
+    [selectedIndex],
+  );
+
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Header */}
@@ -67,24 +104,12 @@ export function SearchResults({
       </box>
 
       {/* Result rows */}
-      <scrollbox flexGrow={1} width="100%">
-        {results.map((result, i) => {
-          const isSelected = i === selectedIndex;
-          const prefix = isSelected ? "> " : "  ";
-          const score = formatScore(result.score).padEnd(5);
-          const lines = formatLineRange(result.line_start, result.line_end).padEnd(9);
-          const path = truncateText(result.path, 29).padEnd(29);
-          const chunk = truncateText(result.chunk_text, 32);
-
-          return (
-            <box key={`${result.path}:${result.chunk_index}`} height={1} width="100%">
-              <text>{prefix}</text>
-              <text foregroundColor={scoreColor(result.score)}>{score}</text>
-              <text>{`  ${lines}  ${path}  ${chunk}`}</text>
-            </box>
-          );
-        })}
-      </scrollbox>
+      <VirtualList
+        items={results}
+        renderItem={renderResult}
+        viewportHeight={VIEWPORT_HEIGHT}
+        selectedIndex={selectedIndex}
+      />
     </box>
   );
 }

@@ -36,48 +36,97 @@ export function SchedulerView({ metrics, loading }: SchedulerViewProps): React.R
 
   return (
     <scrollbox height="100%" width="100%">
-      {/* Task counts */}
+      {/* Scheduler type */}
       <box height={1} width="100%">
-        <text>--- Task Counts ---</text>
+        <text>{`--- Astraea Scheduler (${metrics.use_hrrn ? "HRRN" : "FIFO"}) ---`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`  Queued:     ${metrics.queued_tasks}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Running:    ${metrics.running_tasks}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Completed:  ${metrics.completed_tasks}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Failed:     ${metrics.failed_tasks}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Total:      ${total}`}</text>
+        <text>{""}</text>
       </box>
 
+      {/* Task counts */}
+      <box height={1} width="100%">
+        <text>{"  Task Counts:"}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`    Queued:     ${metrics.queued_tasks}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`    Running:    ${metrics.running_tasks}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`    Completed:  ${metrics.completed_tasks}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`    Failed:     ${metrics.failed_tasks}`}</text>
+      </box>
+      <box height={1} width="100%">
+        <text>{`    Total:      ${total}`}</text>
+      </box>
+
+      {/* Queue by priority class */}
+      {metrics.queue_by_class && metrics.queue_by_class.length > 0 && (
+        <>
+          <box height={1} width="100%">
+            <text>{""}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{"  Queue by Priority:"}</text>
+          </box>
+          {metrics.queue_by_class.map((c, i) => (
+            <box key={i} height={1} width="100%">
+              <text>{`    ${(c.priority_class ?? "unknown").padEnd(12)} ${c.count} tasks`}</text>
+            </box>
+          ))}
+        </>
+      )}
+
+      {/* Fair share */}
+      {metrics.fair_share && Object.keys(metrics.fair_share).length > 0 && (
+        <>
+          <box height={1} width="100%">
+            <text>{""}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{"  Fair Share Allocation:"}</text>
+          </box>
+          {Object.entries(metrics.fair_share).map(([agent, share], i) => (
+            <box key={i} height={1} width="100%">
+              <text>{`    ${agent.padEnd(20)} ${JSON.stringify(share)}`}</text>
+            </box>
+          ))}
+        </>
+      )}
+
       {/* Performance */}
-      <box height={1} width="100%" marginTop={1}>
-        <text>--- Performance ---</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Avg wait time:     ${formatMs(metrics.avg_wait_ms)}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Avg duration:      ${formatMs(metrics.avg_duration_ms)}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`  Throughput:        ${metrics.throughput_per_minute.toFixed(1)}/min`}</text>
-      </box>
+      {(metrics.avg_wait_ms > 0 || metrics.throughput_per_minute > 0) && (
+        <>
+          <box height={1} width="100%">
+            <text>{""}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{"  Performance:"}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{`    Avg wait:       ${formatMs(metrics.avg_wait_ms)}`}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{`    Avg duration:   ${formatMs(metrics.avg_duration_ms)}`}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>{`    Throughput:     ${metrics.throughput_per_minute.toFixed(1)}/min`}</text>
+          </box>
+        </>
+      )}
 
       {/* Success rate */}
       {total > 0 && (
         <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Success Rate ---</text>
+          <box height={1} width="100%">
+            <text>{""}</text>
           </box>
           <box height={1} width="100%">
-            <text>{`  ${((metrics.completed_tasks / total) * 100).toFixed(1)}% completed  |  ${((metrics.failed_tasks / total) * 100).toFixed(1)}% failed`}</text>
+            <text>{`  Success: ${((metrics.completed_tasks / total) * 100).toFixed(1)}%  |  Failed: ${((metrics.failed_tasks / total) * 100).toFixed(1)}%`}</text>
           </box>
         </>
       )}

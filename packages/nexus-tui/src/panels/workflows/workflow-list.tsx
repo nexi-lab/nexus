@@ -2,10 +2,13 @@
  * Workflow list view: name, version, enabled, triggers count, actions count, description.
  */
 
-import React from "react";
+import React, { useCallback } from "react";
 import type { WorkflowSummary } from "../../stores/workflows-store.js";
 import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { VirtualList } from "../../shared/components/virtual-list.js";
+
+const VIEWPORT_HEIGHT = 20;
 
 interface WorkflowListProps {
   readonly workflows: readonly WorkflowSummary[];
@@ -40,8 +43,30 @@ export function WorkflowList({
     );
   }
 
+  const renderWorkflow = useCallback(
+    (w: WorkflowSummary, i: number) => {
+      const isSelected = i === selectedIndex;
+      const enabledBadge = w.enabled ? "[ON]" : "[--]";
+      const name = truncate(w.name, 19);
+      const version = truncate(w.version, 8);
+      const desc = w.description ? truncate(w.description, 30) : "";
+      const prefix = isSelected ? "> " : "  ";
+
+      return (
+        <box key={w.name} height={1} width="100%">
+          <text>
+            <span>{prefix}</span>
+            <span foregroundColor={w.enabled ? statusColor.healthy : statusColor.dim}>{enabledBadge.padEnd(5)}</span>
+            <span>{`${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}</span>
+          </text>
+        </box>
+      );
+    },
+    [selectedIndex],
+  );
+
   return (
-    <scrollbox height="100%" width="100%">
+    <box height="100%" width="100%" flexDirection="column">
       {/* Header */}
       <box height={1} width="100%">
         <text>{"  EN   NAME                 VERSION   TRIG  ACT  DESCRIPTION"}</text>
@@ -51,22 +76,12 @@ export function WorkflowList({
       </box>
 
       {/* Rows */}
-      {workflows.map((w, i) => {
-        const isSelected = i === selectedIndex;
-        const enabledBadge = w.enabled ? "[ON]" : "[--]";
-        const name = truncate(w.name, 19);
-        const version = truncate(w.version, 8);
-        const desc = w.description ? truncate(w.description, 30) : "";
-        const prefix = isSelected ? "> " : "  ";
-
-        return (
-          <box key={w.name} height={1} width="100%">
-            <text>{prefix}</text>
-            <text foregroundColor={w.enabled ? statusColor.healthy : statusColor.dim}>{enabledBadge.padEnd(3)}</text>
-            <text>{`  ${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}</text>
-          </box>
-        );
-      })}
-    </scrollbox>
+      <VirtualList
+        items={workflows}
+        renderItem={renderWorkflow}
+        viewportHeight={VIEWPORT_HEIGHT}
+        selectedIndex={selectedIndex}
+      />
+    </box>
   );
 }

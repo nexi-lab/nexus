@@ -308,13 +308,18 @@ describe("WorkflowsStore", () => {
     it("fetches and stores scheduler metrics", async () => {
       const client = mockClient({
         "/api/v2/scheduler/metrics": {
-          queued_tasks: 10,
+          queue_by_class: [
+            { priority_class: "normal", count: 7 },
+            { priority_class: "high", count: 3 },
+          ],
           running_tasks: 5,
           completed_tasks: 100,
           failed_tasks: 3,
           avg_wait_ms: 250,
           avg_duration_ms: 5000,
           throughput_per_minute: 12.5,
+          fair_share: {},
+          use_hrrn: true,
         },
       });
 
@@ -329,6 +334,7 @@ describe("WorkflowsStore", () => {
       expect(state.schedulerMetrics!.avg_wait_ms).toBe(250);
       expect(state.schedulerMetrics!.avg_duration_ms).toBe(5000);
       expect(state.schedulerMetrics!.throughput_per_minute).toBe(12.5);
+      expect(state.schedulerMetrics!.use_hrrn).toBe(true);
       expect(state.schedulerLoading).toBe(false);
       expect(state.error).toBeNull();
     });
@@ -395,13 +401,9 @@ describe("WorkflowsStore", () => {
 
       const client = mockClient({
         "/api/v2/scheduler/metrics": {
-          queued_tasks: 0,
-          running_tasks: 0,
-          completed_tasks: 0,
-          failed_tasks: 0,
-          avg_wait_ms: 0,
-          avg_duration_ms: 0,
-          throughput_per_minute: 0,
+          queue_by_class: [],
+          fair_share: {},
+          use_hrrn: true,
         },
       });
 

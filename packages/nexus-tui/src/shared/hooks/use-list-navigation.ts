@@ -87,7 +87,8 @@ export function listNavigationBindings(
     up: move(-1),
   };
 
-  // G (shift+g) = jump to end
+  // g = jump to start, G (shift+g) = jump to end
+  bindings["g"] = () => setIndex(jumpToStart());
   bindings["shift+g"] = () => setIndex(jumpToEnd(getLength()));
 
   if (onSelect) {

@@ -197,9 +197,20 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     errorMessage: "Failed to fetch connectors",
     action: async (client) => {
       const response = await client.get<{
-        readonly connectors: readonly Connector[];
+        readonly connectors: readonly any[];
       }>("/api/v2/connectors");
-      return { connectors: response.connectors ?? [] };
+      // Normalize: API returns category/name, store expects type/connector_id/status
+      const connectors: Connector[] = (response.connectors ?? []).map((c: any) => ({
+        connector_id: c.connector_id ?? c.name ?? "",
+        name: c.name ?? "",
+        type: c.type ?? c.category ?? "",
+        status: c.status ?? "active",
+        capabilities: c.capabilities ?? [],
+        config: c.config ?? {},
+        created_at: c.created_at ?? "",
+        last_seen: c.last_seen ?? null,
+      }));
+      return { connectors };
     },
   }),
 
@@ -253,10 +264,19 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     errorMessage: "Failed to fetch operations",
     action: async (client) => {
       const response = await client.get<{
-        readonly operations: readonly OperationItem[];
+        readonly operations: readonly any[];
       }>("/api/v2/operations?limit=20");
+      // Normalize API fields (id → operation_id, operation_type → type)
+      const ops: OperationItem[] = (response.operations ?? []).map((op: any) => ({
+        operation_id: op.operation_id ?? op.id ?? "",
+        agent_id: op.agent_id ?? null,
+        type: op.type ?? op.operation_type ?? "",
+        status: op.status ?? "",
+        started_at: op.started_at ?? op.timestamp ?? null,
+        completed_at: op.completed_at ?? null,
+      }));
       return {
-        operations: response.operations ?? [],
+        operations: ops,
         selectedOperationIndex: 0,
       };
     },

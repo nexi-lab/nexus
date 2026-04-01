@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/catalog", tags=["catalog"])
 
+# In-memory URN → path mapping (populated during schema extraction)
+_urn_to_path: dict[str, str] = {}
+
 
 @router.get("/schema/{path:path}")
 async def get_catalog_schema(
@@ -57,11 +60,12 @@ async def get_catalog_schema(
                 raise HTTPException(
                     status_code=404, detail=f"File not found: {full_path}"
                 ) from stat_err
+            _urn_to_path[urn] = full_path
             return CatalogSchemaResponse(entity_urn=urn, path=full_path, schema=schema)
 
         # Extract on-the-fly
         try:
-            content = nexus_fs.read(full_path)
+            content = await nexus_fs.read(full_path)
             if isinstance(content, str):
                 content = content.encode()
         except Exception as read_err:
@@ -84,6 +88,8 @@ async def get_catalog_schema(
             return CatalogSchemaResponse(entity_urn=urn, path=full_path, schema=None)
 
         stored = catalog_svc.get_schema(urn)
+        # Cache URN → path for column search resolution
+        _urn_to_path[urn] = full_path
         return CatalogSchemaResponse(entity_urn=urn, path=full_path, schema=stored)
 
     except HTTPException:
@@ -129,15 +135,28 @@ async def search_by_column(
             else:
                 # No path aspect — include with zone-scoping as fallback
                 results.append(r)
-        items = [
-            ColumnSearchResult(
-                entity_urn=r["entity_urn"],
-                column_name=r["column_name"],
-                column_type=r["column_type"],
-                schema=r.get("schema", {}),
+        items = []
+        for r in results:
+            # Resolve path: check aspect store, then fall back to schema metadata
+            file_path = None
+            try:
+                path_payload = catalog_svc._aspect_service.get_aspect(r["entity_urn"], "path")
+                if path_payload and path_payload.get("virtual_path"):
+                    file_path = path_payload["virtual_path"]
+            except Exception:
+                pass
+            # Fallback: check in-memory URN → path cache
+            if file_path is None:
+                file_path = _urn_to_path.get(r["entity_urn"])
+            items.append(
+                ColumnSearchResult(
+                    entity_urn=r["entity_urn"],
+                    column_name=r["column_name"],
+                    column_type=r["column_type"],
+                    path=file_path,
+                    schema=r.get("schema", {}),
+                )
             )
-            for r in results
-        ]
         return ColumnSearchResponse(
             results=items,
             total=len(items),

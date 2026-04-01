@@ -88,7 +88,7 @@ def _get_manifest_service(request: Request) -> Any:
     if nx is not None:
         _svc_fn = getattr(nx, "service", None)
         if _svc_fn is not None:
-            svc = _svc_fn("manifest_resolver")
+            svc = _svc_fn("access_manifest_service")
             if svc is not None:
                 return svc
 

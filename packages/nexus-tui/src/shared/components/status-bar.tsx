@@ -7,7 +7,7 @@
  * inline styled segments inside a <text>.
  */
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useAccessStore } from "../../stores/access-store.js";
@@ -17,8 +17,11 @@ import { useSearchStore } from "../../stores/search-store.js";
 import { useWorkflowsStore } from "../../stores/workflows-store.js";
 import { useZonesStore } from "../../stores/zones-store.js";
 import { useInfraStore } from "../../stores/infra-store.js";
-import { connectionColor, palette, statusColor } from "../theme.js";
+import { connectionColor, statusColor } from "../theme.js";
 import { deriveStatusBreadcrumb } from "../status-breadcrumb.js";
+
+const MIN_COLS = 80;
+const MIN_ROWS = 24;
 
 const STATUS_ICONS: Record<string, string> = {
   connected: "●",
@@ -48,6 +51,19 @@ export function StatusBar(): React.ReactNode {
   // Check if events panel has active filters
   const eventFilters = useEventsStore((s) => s.filters);
   const hasActiveFilter = eventFilters.eventType !== null || eventFilters.search !== null;
+
+  // Terminal size guard (#3245)
+  const [terminalTooSmall, setTerminalTooSmall] = useState(false);
+  useEffect(() => {
+    const check = () => {
+      const cols = process.stdout.columns ?? 80;
+      const rows = process.stdout.rows ?? 24;
+      setTerminalTooSmall(cols < MIN_COLS || rows < MIN_ROWS);
+    };
+    check();
+    process.stdout.on("resize", check);
+    return () => { process.stdout.off("resize", check); };
+  }, []);
 
   const icon = STATUS_ICONS[status] ?? "?";
   const baseUrl = config.baseUrl ?? "localhost:2026";
@@ -84,6 +100,9 @@ export function StatusBar(): React.ReactNode {
       flexDirection="row"
     >
       <text>
+        {terminalTooSmall ? (
+          <span foregroundColor={statusColor.warning}>{`⚠ Terminal too small (need ${MIN_COLS}×${MIN_ROWS}) `}</span>
+        ) : ""}
         <span foregroundColor={connectionColor[status]}>{icon}</span>
         <span dimColor>{` ${status} │ `}</span>
         <span>{baseUrl}</span>

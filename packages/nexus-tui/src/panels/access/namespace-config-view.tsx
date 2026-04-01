@@ -15,6 +15,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useAccessStore } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
+import { statusColor } from "../../shared/theme.js";
+import type { FetchClient } from "@nexus/api-client";
 
 type EditField = "scopePrefix" | "addGrant" | "removeGrant" | "readonlyPath";
 
@@ -53,11 +55,83 @@ export function NamespaceConfigView({
   const [editAddedGrants, setEditAddedGrants] = useState<readonly string[]>([]);
   const [editReadonlyPaths, setEditReadonlyPaths] = useState<readonly string[]>([]);
 
+  // Resolved access: actual files + manifest permissions for this agent
+  interface ResolvedFile {
+    path: string;
+    isDirectory: boolean;
+    canRead: boolean;
+    canWrite: boolean;
+    blocked: boolean;
+  }
+  const [resolvedFiles, setResolvedFiles] = useState<readonly ResolvedFile[]>([]);
+  const [manifestEntries, setManifestEntries] = useState<readonly { tool_pattern: string; permission: string }[]>([]);
+
   useEffect(() => {
     if (client && delegationId) {
       fetchNamespaceDetail(delegationId, client);
     }
   }, [client, delegationId, fetchNamespaceDetail]);
+
+  // Fetch resolved files and manifest when namespace loads
+  useEffect(() => {
+    if (!client || !namespaceDetail) return;
+    const agentId = namespaceDetail.agent_id;
+    const scopePath = namespaceDetail.scope_prefix || "/";
+    const removedGrants = namespaceDetail.removed_grants ?? [];
+
+    // Fetch files under scope
+    const filesPromise = (client as FetchClient).get<{
+      items: readonly { path: string; isDirectory: boolean; name: string }[];
+    }>(`/api/v2/files/list?path=${encodeURIComponent(scopePath)}`).catch(() => ({ items: [] as any[] }));
+
+    // Fetch manifest list for this agent, then fetch detail to get entries
+    const manifestPromise = (client as FetchClient).get<{
+      manifests: readonly { manifest_id: string }[];
+    }>(`/api/v2/access-manifests?agent_id=${encodeURIComponent(agentId)}`)
+      .then((listResp) => {
+        const firstId = listResp.manifests?.[0]?.manifest_id;
+        if (!firstId) return { entries: [] as any[] };
+        return (client as FetchClient).get<{
+          entries: readonly { tool_pattern: string; permission: string }[];
+        }>(`/api/v2/access-manifests/${encodeURIComponent(firstId)}`);
+      })
+      .catch(() => ({ entries: [] as any[] }));
+
+    Promise.all([filesPromise, manifestPromise]).then(([filesResp, manifestResp]) => {
+      // Determine read/write from manifest entries
+      const entries = manifestResp.entries ?? [];
+      setManifestEntries(entries);
+
+      const hasPermission = (tool: string): boolean =>
+        entries.some((e) => {
+          const pattern = e.tool_pattern.replace(/\*/g, ".*");
+          return new RegExp(`^${pattern}$`).test(tool) && e.permission === "allow";
+        });
+      const isDenied = (tool: string): boolean =>
+        entries.some((e) => {
+          const pattern = e.tool_pattern.replace(/\*/g, ".*");
+          return new RegExp(`^${pattern}$`).test(tool) && e.permission === "deny";
+        });
+
+      const canRead = hasPermission("file.read") || hasPermission("file.list");
+      const canWrite = hasPermission("file.write") && !isDenied("file.write");
+
+      const resolved: ResolvedFile[] = (filesResp.items ?? []).map((f) => {
+        const isBlocked = removedGrants.some((g) => {
+          const gPattern = g.replace(/\*/g, ".*");
+          return new RegExp(`^${gPattern}`).test(f.path);
+        });
+        return {
+          path: f.path,
+          isDirectory: f.isDirectory,
+          canRead: !isBlocked && canRead,
+          canWrite: !isBlocked && canWrite,
+          blocked: isBlocked,
+        };
+      });
+      setResolvedFiles(resolved);
+    });
+  }, [client, namespaceDetail]);
 
   // Populate edit fields from fetched data
   useEffect(() => {
@@ -233,6 +307,111 @@ export function NamespaceConfigView({
 
       {ns && !namespaceDetailLoading && (
         <>
+          {/* Plain-English summary */}
+          <box height={1} width="100%">
+            <text bold foregroundColor={statusColor.info}>{"  What can this agent access?"}</text>
+          </box>
+          <box height={1} width="100%">
+            <text>
+              {ns.delegation_mode === "clean"
+                ? ns.scope_prefix
+                  ? `  ✓ Files under ${ns.scope_prefix}/* only (clean namespace)`
+                  : "  ✓ Empty namespace — no inherited files (clean mode)"
+                : ns.delegation_mode === "copy"
+                  ? "  ✓ Independent copy of parent's files (changes don't sync)"
+                  : "  ✓ Same files as parent agent (shared, changes sync both ways)"}
+            </text>
+          </box>
+          {displayRemovedGrants.length > 0 && (
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.error}>{`  ✗ BLOCKED: ${displayRemovedGrants.join(", ")}`}</text>
+            </box>
+          )}
+          {displayReadonlyPaths.length > 0 && (
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.warning}>{`  ◐ READ-ONLY: ${displayReadonlyPaths.join(", ")}`}</text>
+            </box>
+          )}
+          {/* Tool permissions from manifest */}
+          {manifestEntries.length > 0 && (
+            <>
+              <box height={1} width="100%"><text>{""}</text></box>
+              <box height={1} width="100%">
+                <text bold foregroundColor={statusColor.info}>{"  Tool permissions (from manifest):"}</text>
+              </box>
+              {manifestEntries.map((e, i) => (
+                <box key={`me-${i}`} height={1} width="100%">
+                  <text>
+                    <span foregroundColor={e.permission === "allow" ? statusColor.success : statusColor.error}>
+                      {e.permission === "allow" ? "    ✓ " : "    ✗ "}
+                    </span>
+                    <span>{`${e.tool_pattern}`}</span>
+                    <span dimColor>{` (${e.permission})`}</span>
+                  </text>
+                </box>
+              ))}
+            </>
+          )}
+
+          {/* Scope access summary */}
+          <box height={1} width="100%"><text>{""}</text></box>
+          <box height={1} width="100%">
+            <text bold foregroundColor={statusColor.info}>{"  File access scope:"}</text>
+          </box>
+          {(() => {
+            const scope = ns.scope_prefix || "(all paths)";
+            const canRead = manifestEntries.some((e) => e.permission === "allow" && /^file\.\*$|^file\.read$|^file\.list$/.test(e.tool_pattern));
+            const canWrite = manifestEntries.some((e) => e.permission === "allow" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
+            const writeDenied = manifestEntries.some((e) => e.permission === "deny" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
+            const effectiveWrite = canWrite && !writeDenied;
+            const badge = effectiveWrite ? "[RW]" : canRead ? "[R-]" : "[--]";
+            const badgeColor = effectiveWrite ? statusColor.success : canRead ? statusColor.info : statusColor.dim;
+            const fileCount = resolvedFiles.filter((f) => !f.blocked).length;
+            const dirCount = resolvedFiles.filter((f) => f.isDirectory && !f.blocked).length;
+            const blockedCount = resolvedFiles.filter((f) => f.blocked).length;
+
+            return (
+              <>
+                <box height={1} width="100%">
+                  <text>
+                    <span foregroundColor={badgeColor}>{`    ${badge} `}</span>
+                    <span>{scope === "(all paths)" ? scope : `${scope}/*`}</span>
+                    <span dimColor>{fileCount > 0 ? ` (${fileCount} files${dirCount > 0 ? `, ${dirCount} dirs` : ""})` : ""}</span>
+                  </text>
+                </box>
+                {displayRemovedGrants.map((g, i) => (
+                  <box key={`blocked-${i}`} height={1} width="100%">
+                    <text>
+                      <span foregroundColor={statusColor.error}>{"    [--] "}</span>
+                      <span>{`${g}`}</span>
+                      <span foregroundColor={statusColor.error}>{" BLOCKED"}</span>
+                    </text>
+                  </box>
+                ))}
+                {displayReadonlyPaths.map((p, i) => (
+                  <box key={`ro-scope-${i}`} height={1} width="100%">
+                    <text>
+                      <span foregroundColor={statusColor.warning}>{"    [R-] "}</span>
+                      <span>{`${p}`}</span>
+                      <span foregroundColor={statusColor.warning}>{" READ-ONLY"}</span>
+                    </text>
+                  </box>
+                ))}
+                {blockedCount > 0 && (
+                  <box height={1} width="100%">
+                    <text dimColor>{`    ${blockedCount} path(s) blocked by removed grants`}</text>
+                  </box>
+                )}
+              </>
+            );
+          })()}
+
+          <box height={1} width="100%"><text>{""}</text></box>
+
+          {/* Technical details */}
+          <box height={1} width="100%">
+            <text dimColor>{"  ─── Technical Details ───"}</text>
+          </box>
           <box height={1} width="100%">
             <text>{`  Agent:    ${ns.agent_id}`}</text>
           </box>

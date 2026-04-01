@@ -51,17 +51,23 @@ function DelegationDetail({ delegation }: { delegation: DelegationItem }): React
       <text>{`  Created:  ${delegation.created_at}`}</text>
       <text>{`  Expires:  ${formatExpiry(delegation.lease_expires_at)}`}</text>
       <text>{""}</text>
-      <text bold foregroundColor={statusColor.info}>{"  Granted Permissions:"}</text>
+      <text bold foregroundColor={statusColor.info}>{"  Granted Capabilities:"}</text>
       {perms.length === 0 ? (
         <text dimColor>{"    (none or loading...)"}</text>
       ) : (
-        perms.map((p, i) => (
-          <text key={`perm-${i}`}>
-            <span foregroundColor={statusColor.healthy}>{`    ${p.relation}`}</span>
-            <span dimColor>{" on "}</span>
-            <span foregroundColor={statusColor.reference}>{`${p.object_type}:${p.object_id}`}</span>
-          </text>
-        ))
+        perms.map((p, i) => {
+          const tool = p.object_id.replace("/tools/", "");
+          const accessLevel = p.relation.replace("direct_", "");
+          const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
+          const color = icon === "R" ? statusColor.info : icon === "W" ? statusColor.warning : statusColor.dim;
+          return (
+            <text key={`perm-${i}`}>
+              <span foregroundColor={color}>{`    [${icon}] `}</span>
+              <span>{tool}</span>
+              <span dimColor>{` (${accessLevel})`}</span>
+            </text>
+          );
+        })
       )}
     </box>
   );

@@ -379,18 +379,27 @@ export default function AgentsPanel(): React.ReactNode {
                     <text><span foregroundColor={statusColor.info}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
                     <text><span foregroundColor={statusColor.info}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
                     <text>{""}</text>
-                    <text bold foregroundColor={statusColor.info}>{"Permissions:"}</text>
+                    <text bold foregroundColor={statusColor.info}>{"Effective Permissions:"}</text>
                     {perms.length === 0 ? (
                       <text dimColor>{"  No permissions assigned"}</text>
                     ) : (
-                      perms.map((p, i) => (
-                        <text key={`perm-${i}`}>
-                          <span foregroundColor={statusColor.healthy}>{`  ${p.relation}`}</span>
-                          <span dimColor>{" on "}</span>
-                          <span foregroundColor={statusColor.reference}>{`${p.object_type}:${p.object_id}`}</span>
-                        </text>
-                      ))
+                      perms.map((p, i) => {
+                        // Translate ReBAC tuples into human-readable capabilities
+                        const tool = p.object_id.replace("/tools/", "");
+                        const accessLevel = p.relation.replace("direct_", "");
+                        const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
+                        const color = icon === "R" ? statusColor.info : icon === "W" ? statusColor.warning : statusColor.dim;
+                        return (
+                          <text key={`perm-${i}`}>
+                            <span foregroundColor={color}>{`  [${icon}] `}</span>
+                            <span>{tool}</span>
+                            <span dimColor>{` (${accessLevel})`}</span>
+                          </text>
+                        );
+                      })
                     )}
+                    <text>{""}</text>
+                    <text dimColor>{"  View Access panel (5) for manifests & delegations"}</text>
                     <text>{""}</text>
                     <text dimColor>{"Agent is registered but not running."}</text>
                   </box>

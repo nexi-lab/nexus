@@ -4,6 +4,7 @@
 
 import React, { useCallback } from "react";
 import type { WorkflowSummary } from "../../stores/workflows-store.js";
+import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
@@ -56,7 +57,7 @@ export function WorkflowList({
         <box key={w.name} height={1} width="100%">
           <text>
             <span>{prefix}</span>
-            <span foregroundColor={w.enabled ? statusColor.healthy : statusColor.dim}>{enabledBadge.padEnd(5)}</span>
+            <span style={textStyle({ fg: w.enabled ? statusColor.healthy : statusColor.dim })}>{enabledBadge.padEnd(5)}</span>
             <span>{`${name.padEnd(19)}  ${version.padEnd(8)}  ${String(w.triggers).padEnd(4)}  ${String(w.actions).padEnd(3)}  ${desc}`}</span>
           </text>
         </box>

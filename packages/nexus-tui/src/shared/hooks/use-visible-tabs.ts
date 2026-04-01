@@ -6,9 +6,7 @@
  */
 
 import { useMemo } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { useGlobalStore } from "../../stores/global-store.js";
-import { filterVisibleTabs } from "../tab-visibility.js";
 
 /**
  * Definition of a sub-tab within a panel.
@@ -30,6 +28,20 @@ export interface TabDef<T extends string = string> {
   readonly brick: string | readonly string[] | null;
 }
 
+export function filterTabs<T extends string>(
+  allTabs: readonly TabDef<T>[],
+  enabledBricks: readonly string[],
+  featuresLoaded: boolean,
+): readonly TabDef<T>[] {
+  if (!featuresLoaded) return allTabs;
+
+  return allTabs.filter((tab) => {
+    if (tab.brick === null) return true;
+    if (typeof tab.brick === "string") return enabledBricks.includes(tab.brick);
+    return tab.brick.some((b) => enabledBricks.includes(b));
+  });
+}
+
 /**
  * Filter a panel's tab definitions to only those whose required bricks
  * are currently enabled.
@@ -40,11 +52,10 @@ export interface TabDef<T extends string = string> {
 export function useVisibleTabs<T extends string>(
   allTabs: readonly TabDef<T>[],
 ): readonly TabDef<T>[] {
-  const enabledBricks = useGlobalStore(useShallow((s) => s.enabledBricks));
+  const enabledBricks = useGlobalStore((s) => s.enabledBricks);
   const featuresLoaded = useGlobalStore((s) => s.featuresLoaded);
 
-  return useMemo(
-    () => filterVisibleTabs(allTabs, enabledBricks, featuresLoaded),
-    [allTabs, enabledBricks, featuresLoaded],
-  );
+  return useMemo(() => {
+    return filterTabs(allTabs, enabledBricks, featuresLoaded);
+  }, [allTabs, enabledBricks, featuresLoaded]);
 }

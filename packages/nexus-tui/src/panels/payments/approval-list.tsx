@@ -5,8 +5,8 @@
 import React from "react";
 import type { ApprovalRequest } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface ApprovalListProps {
   readonly approvals: readonly ApprovalRequest[];
@@ -43,7 +43,11 @@ export function ApprovalList({
   }
 
   if (approvals.length === 0) {
-    return <EmptyState message="No approvals yet." hint="Press n to request approval." />;
+    return (
+      <box height="100%" width="100%" justifyContent="center" alignItems="center">
+        <text style={textStyle({ dim: true })}>No approval requests found</text>
+      </box>
+    );
   }
 
   return (
@@ -68,7 +72,7 @@ export function ApprovalList({
           <box key={a.id} height={1} width="100%">
             <text>
               {`${prefix}${shortId(a.id).padEnd(10)}  ${amount}  ${purpose}  `}
-              <span foregroundColor={color}>{a.status.padEnd(9)}</span>
+              <span style={color ? textStyle({ fg: color }) : undefined}>{a.status.padEnd(9)}</span>
               {`  ${shortId(a.requester_id).padEnd(12)}  ${formatTime(a.created_at)}`}
             </text>
           </box>

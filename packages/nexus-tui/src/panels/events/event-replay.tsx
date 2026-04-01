@@ -10,6 +10,7 @@ import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import type { EventReplayEntry } from "../../stores/knowledge-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
+import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
 
 export interface EventReplayProps {
@@ -49,7 +50,7 @@ export function EventReplay({ typeFilter }: EventReplayProps): React.ReactNode {
     <box flexDirection="column" height="100%" width="100%">
       {/* Summary */}
       <box height={1} width="100%">
-        <text dimColor>
+        <text style={textStyle({ dim: true })}>
           {`  ${filtered.length} event${filtered.length !== 1 ? "s" : ""}${needle ? ` matching "${typeFilter}"` : ""}`}
         </text>
       </box>
@@ -72,7 +73,7 @@ export function EventReplay({ typeFilter }: EventReplayProps): React.ReactNode {
             </box>
           );
         })}
-        {hasMore && <text dimColor>{"  ... more events available"}</text>}
+        {hasMore && <text style={textStyle({ dim: true })}>{"  ... more events available"}</text>}
       </scrollbox>
     </box>
   );

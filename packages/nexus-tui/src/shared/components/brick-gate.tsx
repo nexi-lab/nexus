@@ -9,6 +9,7 @@ import React from "react";
 import { useBrickAvailable, useAnyBrickAvailable } from "../hooks/use-brick-available.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { Spinner } from "./spinner.js";
+import { textStyle } from "../text-style.js";
 
 interface BrickGateProps {
   /** Brick name or array of brick names (any-of semantics). */
@@ -27,10 +28,10 @@ function BrickUnavailableMessage({ names }: { names: readonly string[] }): React
     <box height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
       <text>{`Feature not available`}</text>
       <text> </text>
-      <text dimColor>{`Required brick${names.length > 1 ? "s" : ""}: ${brickList}`}</text>
-      {profile && <text dimColor>{`Current profile: ${profile}`}</text>}
+      <text style={textStyle({ dim: true })}>{`Required brick${names.length > 1 ? "s" : ""}: ${brickList}`}</text>
+      {profile && <text style={textStyle({ dim: true })}>{`Current profile: ${profile}`}</text>}
       <text> </text>
-      <text dimColor>{`To enable: mount the brick via Zones > Bricks`}</text>
+      <text style={textStyle({ dim: true })}>{`To enable: mount the brick via Zones > Bricks`}</text>
     </box>
   );
 }

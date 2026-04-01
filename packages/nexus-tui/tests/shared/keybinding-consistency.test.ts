@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { PANEL_BINDINGS, type KeyBinding } from "../../src/shared/components/help-overlay.js";
+import { PANEL_BINDINGS, type KeyBinding } from "../../src/shared/action-registry.js";
 import {
   jumpToStart,
   jumpToEnd,

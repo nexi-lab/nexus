@@ -21,7 +21,7 @@ import { WorkflowList } from "./workflow-list.js";
 import { ExecutionList } from "./execution-list.js";
 import { SchedulerView } from "./scheduler-view.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
-import { WORKFLOW_TABS } from "../../shared/navigation.js";
+import { textStyle } from "../../shared/text-style.js";
 
 const HELP_TEXT: Readonly<Record<string, string>> = {
   workflows: "j/k:navigate  Tab:switch tab  e:execute  d:delete  p:enable/disable  r:refresh  Enter:detail  q:quit",
@@ -62,9 +62,6 @@ export default function WorkflowsPanel(): React.ReactNode {
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
 
   const overlayActive = useUiStore((s) => s.overlayActive);
-
-  const visibleTabs = useVisibleTabs(WORKFLOW_TABS);
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight workflow execution
   const [executing, setExecuting] = useState(false);
@@ -196,7 +193,14 @@ export default function WorkflowsPanel(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+        <box height={1} width="100%">
+          <text>
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
+          </text>
+        </box>
 
         {/* Error display */}
         {error && (
@@ -258,7 +262,7 @@ export default function WorkflowsPanel(): React.ReactNode {
                 ))}
               </scrollbox>
             ) : (
-              <text dimColor>  No steps recorded</text>
+              <text style={textStyle({ dim: true })}>  No steps recorded</text>
             )}
           </box>
         )}

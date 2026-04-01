@@ -6,6 +6,7 @@
 import React from "react";
 import type { GovernanceConstraint } from "../../stores/access-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { textStyle } from "../../shared/text-style.js";
 
 interface ConstraintListProps {
   readonly constraints: readonly GovernanceConstraint[];
@@ -38,7 +39,7 @@ export function ConstraintList({
   if (constraints.length === 0) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text dimColor>No governance constraints found</text>
+        <text style={textStyle({ dim: true })}>No governance constraints found</text>
       </box>
     );
   }

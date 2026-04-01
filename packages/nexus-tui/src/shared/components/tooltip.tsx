@@ -15,6 +15,7 @@ import React from "react";
 import { useFirstRunStore } from "../../stores/first-run-store.js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 interface TooltipProps {
   /** Unique key for this tooltip (e.g. "search-panel", "events-panel"). */
@@ -44,7 +45,7 @@ export function Tooltip({ tooltipKey, message }: TooltipProps): React.ReactNode 
 
   return (
     <box height={1} width="100%">
-      <text foregroundColor={statusColor.info}>
+      <text style={textStyle({ fg: statusColor.info })}>
         {`${message}  (press any key to dismiss)`}
       </text>
     </box>

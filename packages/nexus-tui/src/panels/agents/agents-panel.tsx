@@ -4,14 +4,14 @@
 
 import React, { useEffect, useState } from "react";
 import { useAgentsStore } from "../../stores/agents-store.js";
-import type { DelegationItem } from "../../stores/agents-store.js";
+import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { jumpToStart, jumpToEnd } from "../../shared/hooks/use-list-navigation.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
-import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { AgentStatusView } from "./agent-status-view.js";
 import { DelegationList } from "./delegation-list.js";
 import { InboxView } from "./inbox-view.js";
@@ -24,15 +24,25 @@ import { useCommandRunnerStore, executeLocalCommand } from "../../services/comma
 import { useUiStore } from "../../stores/ui-store.js";
 import { agentStateColor, focusColor, statusColor } from "../../shared/theme.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
-import { AGENT_TABS } from "../../shared/navigation.js";
-import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
-import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
+import { textStyle } from "../../shared/text-style.js";
+
+const ALL_TABS: readonly TabDef<AgentTab>[] = [
+  { id: "status", label: "Status", brick: "agent_runtime" },
+  { id: "delegations", label: "Delegations", brick: "delegation" },
+  { id: "inbox", label: "Inbox", brick: "ipc" },
+  { id: "trajectories", label: "Trajectories", brick: "agent_runtime" },
+];
+const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
+  status: "Status",
+  delegations: "Delegations",
+  inbox: "Inbox",
+  trajectories: "Trajectories",
+};
 
 export default function AgentsPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
-  const visibleTabs = useVisibleTabs(AGENT_TABS);
+  const visibleTabs = useVisibleTabs(ALL_TABS);
 
   // Reactive subscription to command runner status (Codex finding 2)
   const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
@@ -110,7 +120,13 @@ export default function AgentsPanel(): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, effectiveZoneId]);
 
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -200,7 +216,15 @@ export default function AgentsPanel(): React.ReactNode {
         if (agentId) setSelectedAgentId(agentId);
       }
     },
-    ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
+    tab: () => {
+      const ids = visibleTabs.map((t) => t.id);
+      const currentIdx = ids.indexOf(activeTab);
+      const nextIdx = (currentIdx + 1) % ids.length;
+      const nextTab = ids[nextIdx];
+      if (nextTab) {
+        setActiveTab(nextTab);
+      }
+    },
     "shift+tab": () => toggleFocus("agents"),
     r: () => refreshCurrentView(),
     d: async () => {
@@ -333,9 +357,9 @@ export default function AgentsPanel(): React.ReactNode {
                     <box key={agentId} height={1} width="100%">
                       <text>
                         <span>{prefix}</span>
-                        <span bold={isActive}>{agentId}</span>
-                        {state ? <span foregroundColor={stateColor}>{` [${state}]`}</span> : ""}
-                        <span dimColor>{suffix}</span>
+                        <span style={textStyle({ bold: isActive })}>{agentId}</span>
+                        {state ? <span style={textStyle({ fg: stateColor })}>{` [${state}]`}</span> : ""}
+                        <span style={textStyle({ dim: true })}>{suffix}</span>
                       </text>
                     </box>
                   );
@@ -348,7 +372,13 @@ export default function AgentsPanel(): React.ReactNode {
         {/* Right pane: detail views (70%) */}
         <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           {/* Tab bar */}
-          <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+          <box height={1} width="100%">
+            <text>
+              {visibleTabs.map((tab) => {
+                return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
+              }).join(" ")}
+            </text>
+          </box>
 
           {/* Operation in-progress feedback */}
           {operationLoading && (
@@ -372,36 +402,36 @@ export default function AgentsPanel(): React.ReactNode {
                 const perms = useAgentsStore.getState().agentPermissions;
                 return (
                   <box height="100%" width="100%" flexDirection="column" padding={1}>
-                    <text bold>{`Agent: ${selectedAgent.agent_id}`}</text>
+                    <text style={textStyle({ bold: true })}>{`Agent: ${selectedAgent.agent_id}`}</text>
                     <text>{""}</text>
-                    <text><span foregroundColor={statusColor.info}>{"State:  "}</span><span>{"registered"}</span></text>
-                    <text><span foregroundColor={statusColor.info}>{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
-                    <text><span foregroundColor={statusColor.info}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
-                    <text><span foregroundColor={statusColor.info}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
+                    <text><span style={textStyle({ fg: "cyan" })}>{"State:  "}</span><span>{"registered"}</span></text>
+                    <text><span style={textStyle({ fg: "cyan" })}>{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
+                    <text><span style={textStyle({ fg: "cyan" })}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
+                    <text><span style={textStyle({ fg: "cyan" })}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
                     <text>{""}</text>
-                    <text bold foregroundColor={statusColor.info}>{"Effective Permissions:"}</text>
+                    <text style={textStyle({ fg: "cyan", bold: true })}>{"Effective Permissions:"}</text>
                     {perms.length === 0 ? (
-                      <text dimColor>{"  No permissions assigned"}</text>
+                      <text style={textStyle({ dim: true })}>{"  No permissions assigned"}</text>
                     ) : (
                       perms.map((p, i) => {
                         // Translate ReBAC tuples into human-readable capabilities
                         const tool = p.object_id.replace("/tools/", "");
                         const accessLevel = p.relation.replace("direct_", "");
                         const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
-                        const color = icon === "R" ? statusColor.info : icon === "W" ? statusColor.warning : statusColor.dim;
+                        const color = icon === "R" ? "cyan" : icon === "W" ? "yellow" : "gray";
                         return (
                           <text key={`perm-${i}`}>
-                            <span foregroundColor={color}>{`  [${icon}] `}</span>
+                            <span style={textStyle({ fg: color })}>{`  [${icon}] `}</span>
                             <span>{tool}</span>
-                            <span dimColor>{` (${accessLevel})`}</span>
+                            <span style={textStyle({ dim: true })}>{` (${accessLevel})`}</span>
                           </text>
                         );
                       })
                     )}
                     <text>{""}</text>
-                    <text dimColor>{"  View Access panel (5) for manifests & delegations"}</text>
+                    <text style={textStyle({ dim: true })}>{"  View Access panel (5) for manifests & delegations"}</text>
                     <text>{""}</text>
-                    <text dimColor>{"Agent is registered but not running."}</text>
+                    <text style={textStyle({ dim: true })}>{"Agent is registered but not running."}</text>
                   </box>
                 );
               }
@@ -453,7 +483,7 @@ export default function AgentsPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
+          ? <text style={textStyle({ fg: "green" })}>Copied!</text>
           : <text>
           {"j/k:navigate  Tab:switch tab  r:refresh  n:spawn agent  Enter:detail  d:revoke  Shift+W:warmup  Shift+E:evict  y:copy  q:quit"}
         </text>}

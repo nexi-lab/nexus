@@ -52,8 +52,8 @@ describe("Pre-connection screen", () => {
       await session.waitForText("NEXUS", 8000);
       const content = await session.capturePane();
 
-      // Status bar should show "? Help" prominently (Issue #3245 fix)
-      expect(content).toContain("? Help");
+      // Status bar should show help hint prominently (Issue #3245 fix)
+      expect(content).toContain("?:help");
     } finally {
       await session.destroy();
     }

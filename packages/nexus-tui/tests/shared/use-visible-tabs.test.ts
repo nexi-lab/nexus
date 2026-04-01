@@ -12,8 +12,7 @@
 
 import { describe, it, expect, beforeEach } from "bun:test";
 import { useGlobalStore } from "../../src/stores/global-store.js";
-import type { TabDef } from "../../src/shared/hooks/use-visible-tabs.js";
-import { filterVisibleTabs } from "../../src/shared/tab-visibility.js";
+import { filterTabs, type TabDef } from "../../src/shared/hooks/use-visible-tabs.js";
 
 // =============================================================================
 // Test data: tab definitions matching actual panel mappings from #2981
@@ -63,69 +62,36 @@ const EVENT_TABS: readonly TabDef<EventTab>[] = [
   { id: "secrets", label: "Secrets", brick: "auth" },
 ];
 
-// Migrated panels: previously used TAB_ORDER, now use TabDef (#3498)
-
-type ConnectorsTab = "available" | "mounted" | "skills" | "write";
-const CONNECTORS_TABS: readonly TabDef<ConnectorsTab>[] = [
-  { id: "available", label: "Available", brick: null },
-  { id: "mounted", label: "Mounted", brick: null },
-  { id: "skills", label: "Skills", brick: null },
-  { id: "write", label: "Write", brick: null },
-];
-
-type PaymentsTab = "balance" | "reservations" | "transactions" | "policies" | "approvals";
-const PAYMENTS_TABS: readonly TabDef<PaymentsTab>[] = [
-  { id: "balance", label: "Balance", brick: null },
-  { id: "reservations", label: "Reservations", brick: null },
-  { id: "transactions", label: "Transactions", brick: null },
-  { id: "policies", label: "Policies", brick: null },
-  { id: "approvals", label: "Approvals", brick: null },
-];
-
-type WorkflowTab = "workflows" | "executions" | "scheduler";
-const WORKFLOW_TABS: readonly TabDef<WorkflowTab>[] = [
-  { id: "workflows", label: "Workflows", brick: null },
-  { id: "executions", label: "Executions", brick: null },
-  { id: "scheduler", label: "Scheduler", brick: null },
-];
-
-type FilesTab = "explorer" | "shareLinks" | "uploads";
-const FILES_TABS: readonly TabDef<FilesTab>[] = [
-  { id: "explorer", label: "Explorer", brick: null },
-  { id: "shareLinks", label: "Share Links", brick: "share_link" },
-  { id: "uploads", label: "Uploads", brick: "uploads" },
-];
-
 // =============================================================================
 // Tests
 // =============================================================================
 
-describe("filterVisibleTabs", () => {
+describe("filterTabs", () => {
   describe("loading state", () => {
     it("returns all tabs when features are not yet loaded", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, [], false);
+      const result = filterTabs(ACCESS_TABS, [], false);
       expect(result).toEqual(ACCESS_TABS);
     });
 
     it("returns all tabs when features not loaded even with some bricks", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, ["access_manifest"], false);
+      const result = filterTabs(ACCESS_TABS, ["access_manifest"], false);
       expect(result).toEqual(ACCESS_TABS);
     });
   });
 
   describe("single brick dependency", () => {
     it("shows tab when its brick is enabled", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, ["access_manifest"], true);
+      const result = filterTabs(ACCESS_TABS, ["access_manifest"], true);
       expect(result.map((t) => t.id)).toEqual(["manifests"]);
     });
 
     it("hides tab when its brick is disabled", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, ["governance", "auth", "delegation"], true);
+      const result = filterTabs(ACCESS_TABS, ["governance", "auth", "delegation"], true);
       expect(result.map((t) => t.id)).toEqual(["alerts", "credentials", "fraud", "delegations"]);
     });
 
     it("shows multiple tabs sharing the same brick", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, ["governance"], true);
+      const result = filterTabs(ACCESS_TABS, ["governance"], true);
       // Both alerts and fraud depend on governance
       expect(result.map((t) => t.id)).toEqual(["alerts", "fraud"]);
     });
@@ -133,38 +99,38 @@ describe("filterVisibleTabs", () => {
 
   describe("null brick (always visible)", () => {
     it("shows tabs with null brick regardless of enabled bricks", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, [], true);
+      const result = filterTabs(SEARCH_TABS, [], true);
       // Only playbooks has null brick
       expect(result.map((t) => t.id)).toEqual(["playbooks"]);
     });
 
     it("shows null-brick tabs alongside enabled-brick tabs", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, ["search"], true);
+      const result = filterTabs(SEARCH_TABS, ["search"], true);
       expect(result.map((t) => t.id)).toEqual(["search", "playbooks"]);
     });
   });
 
   describe("multi-brick dependency (any-of semantics)", () => {
     it("shows tab when any of its bricks is enabled", () => {
-      const result = filterVisibleTabs(ZONE_TABS, ["search"], true);
+      const result = filterTabs(ZONE_TABS, ["search"], true);
       // zones, bricks, drift are always visible; reindex needs search OR versioning
       expect(result.map((t) => t.id)).toContain("reindex");
     });
 
     it("shows tab when the other brick is enabled", () => {
-      const result = filterVisibleTabs(ZONE_TABS, ["versioning"], true);
+      const result = filterTabs(ZONE_TABS, ["versioning"], true);
       expect(result.map((t) => t.id)).toContain("reindex");
     });
 
     it("hides tab when none of its bricks are enabled", () => {
-      const result = filterVisibleTabs(ZONE_TABS, ["catalog"], true);
+      const result = filterTabs(ZONE_TABS, ["catalog"], true);
       expect(result.map((t) => t.id)).not.toContain("reindex");
     });
   });
 
   describe("edge cases", () => {
     it("returns empty array when all bricks disabled and no null-brick tabs", () => {
-      const result = filterVisibleTabs(AGENT_TABS, [], true);
+      const result = filterTabs(AGENT_TABS, [], true);
       expect(result).toEqual([]);
     });
 
@@ -174,17 +140,17 @@ describe("filterVisibleTabs", () => {
         "search", "catalog", "memory", "rlm",
         "agent_runtime", "ipc", "eventlog", "versioning",
       ];
-      const result = filterVisibleTabs(ACCESS_TABS, allBricks, true);
+      const result = filterTabs(ACCESS_TABS, allBricks, true);
       expect(result).toEqual(ACCESS_TABS);
     });
 
     it("handles empty tab list", () => {
-      const result = filterVisibleTabs([], ["search"], true);
+      const result = filterTabs([], ["search"], true);
       expect(result).toEqual([]);
     });
 
     it("ignores unknown brick names in enabledBricks", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, ["unknown_brick", "nonexistent"], true);
+      const result = filterTabs(ACCESS_TABS, ["unknown_brick", "nonexistent"], true);
       expect(result).toEqual([]);
     });
   });
@@ -224,33 +190,33 @@ describe("profile-based tab visibility snapshots", () => {
     const bricks = PROFILE_BRICKS.full;
 
     it("access panel shows all tabs", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, bricks, true);
+      const result = filterTabs(ACCESS_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "manifests", "alerts", "credentials", "fraud", "delegations",
       ]);
     });
 
     it("search panel shows all tabs", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, bricks, true);
+      const result = filterTabs(SEARCH_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "search", "knowledge", "memories", "playbooks", "ask", "columns",
       ]);
     });
 
     it("agents panel shows all tabs", () => {
-      const result = filterVisibleTabs(AGENT_TABS, bricks, true);
+      const result = filterTabs(AGENT_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["status", "delegations", "inbox"]);
     });
 
     it("events panel shows all tabs", () => {
-      const result = filterVisibleTabs(EVENT_TABS, bricks, true);
+      const result = filterTabs(EVENT_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "events", "mcl", "connectors", "subscriptions", "locks", "secrets",
       ]);
     });
 
     it("zones panel shows all tabs including reindex", () => {
-      const result = filterVisibleTabs(ZONE_TABS, bricks, true);
+      const result = filterTabs(ZONE_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["zones", "bricks", "drift", "reindex"]);
     });
   });
@@ -259,26 +225,26 @@ describe("profile-based tab visibility snapshots", () => {
     const bricks = PROFILE_BRICKS.lite;
 
     it("access panel hides governance tabs (alerts, fraud)", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, bricks, true);
+      const result = filterTabs(ACCESS_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "manifests", "credentials", "delegations",
       ]);
     });
 
     it("search panel hides memory and rlm tabs", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, bricks, true);
+      const result = filterTabs(SEARCH_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "search", "knowledge", "playbooks", "columns",
       ]);
     });
 
     it("agents panel shows all tabs", () => {
-      const result = filterVisibleTabs(AGENT_TABS, bricks, true);
+      const result = filterTabs(AGENT_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["status", "delegations", "inbox"]);
     });
 
     it("events panel hides mcl (needs catalog), keeps secrets (auth enabled)", () => {
-      const result = filterVisibleTabs(EVENT_TABS, bricks, true);
+      const result = filterTabs(EVENT_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "events", "mcl", "connectors", "subscriptions", "locks", "secrets",
       ]);
@@ -289,24 +255,24 @@ describe("profile-based tab visibility snapshots", () => {
     const bricks = PROFILE_BRICKS.embedded;
 
     it("access panel shows no tabs (no access_manifest, governance, auth, delegation)", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, bricks, true);
+      const result = filterTabs(ACCESS_TABS, bricks, true);
       expect(result).toEqual([]);
     });
 
     it("search panel shows search, knowledge, playbooks, columns", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, bricks, true);
+      const result = filterTabs(SEARCH_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual([
         "search", "knowledge", "playbooks", "columns",
       ]);
     });
 
     it("agents panel shows no tabs", () => {
-      const result = filterVisibleTabs(AGENT_TABS, bricks, true);
+      const result = filterTabs(AGENT_TABS, bricks, true);
       expect(result).toEqual([]);
     });
 
     it("zones panel shows reindex (versioning enabled)", () => {
-      const result = filterVisibleTabs(ZONE_TABS, bricks, true);
+      const result = filterTabs(ZONE_TABS, bricks, true);
       expect(result.map((t) => t.id)).toContain("reindex");
     });
   });
@@ -315,27 +281,27 @@ describe("profile-based tab visibility snapshots", () => {
     const bricks = PROFILE_BRICKS.minimal;
 
     it("access panel shows no tabs", () => {
-      const result = filterVisibleTabs(ACCESS_TABS, bricks, true);
+      const result = filterTabs(ACCESS_TABS, bricks, true);
       expect(result).toEqual([]);
     });
 
     it("search panel shows only playbooks (null brick)", () => {
-      const result = filterVisibleTabs(SEARCH_TABS, bricks, true);
+      const result = filterTabs(SEARCH_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["playbooks"]);
     });
 
     it("agents panel shows no tabs", () => {
-      const result = filterVisibleTabs(AGENT_TABS, bricks, true);
+      const result = filterTabs(AGENT_TABS, bricks, true);
       expect(result).toEqual([]);
     });
 
     it("zones panel shows only always-visible tabs (no reindex)", () => {
-      const result = filterVisibleTabs(ZONE_TABS, bricks, true);
+      const result = filterTabs(ZONE_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["zones", "bricks", "drift"]);
     });
 
     it("events panel shows only always-visible tabs", () => {
-      const result = filterVisibleTabs(EVENT_TABS, bricks, true);
+      const result = filterTabs(EVENT_TABS, bricks, true);
       expect(result.map((t) => t.id)).toEqual(["connectors", "locks"]);
     });
   });
@@ -400,78 +366,7 @@ describe("global store features integration", () => {
     });
 
     const { enabledBricks, featuresLoaded } = useGlobalStore.getState();
-    const result = filterVisibleTabs(ACCESS_TABS, enabledBricks, featuresLoaded);
+    const result = filterTabs(ACCESS_TABS, enabledBricks, featuresLoaded);
     expect(result.map((t) => t.id)).toEqual(["credentials", "delegations"]);
-  });
-});
-
-// =============================================================================
-// Migrated panel regression tests (#3498)
-// =============================================================================
-
-describe("migrated TAB_ORDER panels", () => {
-  const bricks = PROFILE_BRICKS.full;
-  const minimalBricks = PROFILE_BRICKS.minimal;
-
-  describe("connectors (all brick: null)", () => {
-    it("shows all tabs regardless of enabled bricks", () => {
-      const result = filterVisibleTabs(CONNECTORS_TABS, [], true);
-      expect(result.map((t) => t.id)).toEqual(["available", "mounted", "skills", "write"]);
-    });
-
-    it("shows all tabs under minimal profile", () => {
-      const result = filterVisibleTabs(CONNECTORS_TABS, minimalBricks, true);
-      expect(result.map((t) => t.id)).toEqual(["available", "mounted", "skills", "write"]);
-    });
-  });
-
-  describe("payments (all brick: null)", () => {
-    it("shows all tabs regardless of enabled bricks", () => {
-      const result = filterVisibleTabs(PAYMENTS_TABS, [], true);
-      expect(result.map((t) => t.id)).toEqual([
-        "balance", "reservations", "transactions", "policies", "approvals",
-      ]);
-    });
-
-    it("shows all tabs under minimal profile", () => {
-      const result = filterVisibleTabs(PAYMENTS_TABS, minimalBricks, true);
-      expect(result.map((t) => t.id)).toEqual([
-        "balance", "reservations", "transactions", "policies", "approvals",
-      ]);
-    });
-  });
-
-  describe("workflows (all brick: null)", () => {
-    it("shows all tabs regardless of enabled bricks", () => {
-      const result = filterVisibleTabs(WORKFLOW_TABS, [], true);
-      expect(result.map((t) => t.id)).toEqual(["workflows", "executions", "scheduler"]);
-    });
-  });
-
-  describe("files (mixed: explorer always visible, shareLinks/uploads gated)", () => {
-    it("shows only explorer under full profile (share_link/uploads not in full)", () => {
-      const result = filterVisibleTabs(FILES_TABS, bricks, true);
-      expect(result.map((t) => t.id)).toEqual(["explorer"]);
-    });
-
-    it("shows all tabs when share_link and uploads bricks enabled", () => {
-      const result = filterVisibleTabs(FILES_TABS, [...bricks, "share_link", "uploads"], true);
-      expect(result.map((t) => t.id)).toEqual(["explorer", "shareLinks", "uploads"]);
-    });
-
-    it("shows only explorer under minimal profile", () => {
-      const result = filterVisibleTabs(FILES_TABS, minimalBricks, true);
-      expect(result.map((t) => t.id)).toEqual(["explorer"]);
-    });
-
-    it("shows explorer + shareLinks when share_link brick enabled", () => {
-      const result = filterVisibleTabs(FILES_TABS, ["share_link"], true);
-      expect(result.map((t) => t.id)).toEqual(["explorer", "shareLinks"]);
-    });
-
-    it("shows explorer + uploads when uploads brick enabled", () => {
-      const result = filterVisibleTabs(FILES_TABS, ["uploads"], true);
-      expect(result.map((t) => t.id)).toEqual(["explorer", "uploads"]);
-    });
   });
 });

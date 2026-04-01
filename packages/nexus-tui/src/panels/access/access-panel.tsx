@@ -30,12 +30,10 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
-import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabCycleBindings, subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
-import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
+import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
+import { textStyle } from "../../shared/text-style.js";
 import { ManifestList } from "./manifest-list.js";
 import { AlertList } from "./alert-list.js";
 import { CredentialList } from "./credential-list.js";
@@ -49,7 +47,22 @@ import { NamespaceConfigView } from "./namespace-config-view.js";
 import { ManifestCreator } from "./manifest-creator.js";
 import { ConstraintList } from "./constraint-list.js";
 import { ConstraintCreator } from "./constraint-creator.js";
-import { ACCESS_TABS } from "../../shared/navigation.js";
+
+const ALL_TABS: readonly TabDef<AccessTab>[] = [
+  { id: "manifests", label: "Manifests", brick: "access_manifest" },
+  { id: "alerts", label: "Alerts", brick: "governance" },
+  { id: "credentials", label: "Credentials", brick: "auth" },
+  { id: "fraud", label: "Fraud", brick: "governance" },
+  { id: "delegations", label: "Delegations", brick: "delegation" },
+];
+const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
+  manifests: "Manifests",
+  alerts: "Alerts",
+  credentials: "Credentials",
+  fraud: "Fraud",
+  delegations: "Delegations",
+};
+
 type OverlayMode =
   | "none"
   | "permissionChecker"
@@ -64,7 +77,7 @@ export default function AccessPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
-  const visibleTabs = useVisibleTabs(ACCESS_TABS);
+  const visibleTabs = useVisibleTabs(ALL_TABS);
   const { copy, copied } = useCopy();
   const [overlay, setOverlay] = useState<OverlayMode>("none");
 
@@ -138,7 +151,13 @@ export default function AccessPanel(): React.ReactNode {
   // Delegation status filter
   const [delegationFilter, setDelegationFilter] = useState<string | null>(null);
 
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  // Fall back to first visible tab if the active tab becomes hidden
+  const visibleIds = visibleTabs.map((t) => t.id);
+  useEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+      setActiveTab(visibleIds[0]!);
+    }
+  }, [visibleIds.join(","), activeTab, setActiveTab]);
 
   // Refresh current view based on active tab
   const refreshCurrentView = useCallback((): void => {
@@ -209,7 +228,22 @@ export default function AccessPanel(): React.ReactNode {
         setFraudFocus((f) => f === "scores" ? "constraints" : "scores");
         return;
       }
-      subTabForward(visibleTabs, activeTab, setActiveTab);
+      const ids = visibleTabs.map((t) => t.id);
+      const currentIdx = ids.indexOf(activeTab);
+      const nextIdx = (currentIdx + 1) % ids.length;
+      const nextTab = ids[nextIdx];
+      if (nextTab) {
+        setActiveTab(nextTab);
+      }
+    },
+    "shift+tab": () => {
+      const ids = visibleTabs.map((t) => t.id);
+      const currentIdx = ids.indexOf(activeTab);
+      const nextIdx = (currentIdx + 1) % ids.length;
+      const nextTab = ids[nextIdx];
+      if (nextTab) {
+        setActiveTab(nextTab);
+      }
     },
     return: () => {
       // Manifests: fetch detail to load tuple entries
@@ -445,12 +479,18 @@ export default function AccessPanel(): React.ReactNode {
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <box height={1} width="100%">
+        <text>
+          {visibleTabs.map((tab) => {
+            return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
+          }).join(" ")}
+        </text>
+      </box>
 
       {/* Permission evaluation result */}
       {lastPermissionCheck && (
         <box height={3} width="100%" borderStyle="single" borderColor={lastPermissionCheck.permission === "allow" ? statusColor.healthy : statusColor.error}>
-          <text foregroundColor={lastPermissionCheck.permission === "allow" ? statusColor.healthy : statusColor.error}>
+          <text style={textStyle({ fg: lastPermissionCheck.permission === "allow" ? statusColor.healthy : statusColor.error })}>
             {`  ${lastPermissionCheck.permission === "allow" ? "[ALLOW]" : "[DENY] "} tool=${lastPermissionCheck.tool_name}  agent=${lastPermissionCheck.agent_id}  manifest=${lastPermissionCheck.manifest_id}`}
           </text>
         </box>
@@ -504,7 +544,7 @@ export default function AccessPanel(): React.ReactNode {
                 </box>
               ) : (collusionRings as { confidence: number; members: string[]; ring_type?: string }[]).length === 0 ? (
                 <box height={1} width="100%">
-                  <text dimColor>No collusion rings detected</text>
+                  <text style={textStyle({ dim: true })}>No collusion rings detected</text>
                 </box>
               ) : (
                 (collusionRings as { confidence: number; members: string[]; ring_type?: string }[]).map((ring, i) => {
@@ -517,7 +557,7 @@ export default function AccessPanel(): React.ReactNode {
                     <box key={`ring-${i}`} height={1} width="100%">
                       <text>
                         {"  "}
-                        <span foregroundColor={confColor} dimColor={conf < 0.4}>{confStr}</span>
+                        <span style={textStyle({ fg: confColor, dim: conf < 0.4 })}>{confStr}</span>
                         {`  [${ringType}]  ${members}`}
                       </text>
                     </box>
@@ -549,7 +589,7 @@ export default function AccessPanel(): React.ReactNode {
       {/* Help bar */}
       <box height={1} width="100%">
         {copied
-          ? <text foregroundColor={statusColor.healthy}>Copied!</text>
+          ? <text style={textStyle({ fg: "green" })}>Copied!</text>
           : <text>{HELP[activeTab]}</text>}
       </box>
     </box>

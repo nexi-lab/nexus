@@ -6,6 +6,7 @@
 
 import React from "react";
 import { statusColor } from "../theme.js";
+import { textStyle } from "../text-style.js";
 
 interface ScrollIndicatorProps {
   /** Currently selected/focused index */
@@ -31,13 +32,13 @@ export function ScrollIndicator({
     <box flexDirection="column" height="100%" width="100%">
       {showTop && (
         <box height={1} width="100%" justifyContent="center">
-          <text foregroundColor={statusColor.dim}>{"▲ more above"}</text>
+          <text style={textStyle({ fg: statusColor.dim })}>{"▲ more above"}</text>
         </box>
       )}
       <box flexGrow={1}>{children}</box>
       {showBottom && (
         <box height={1} width="100%" justifyContent="center">
-          <text foregroundColor={statusColor.dim}>{"▼ more below"}</text>
+          <text style={textStyle({ fg: statusColor.dim })}>{"▼ more below"}</text>
         </box>
       )}
     </box>

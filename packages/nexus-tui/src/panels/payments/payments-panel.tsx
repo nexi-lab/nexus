@@ -13,10 +13,6 @@ import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
-import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
-import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
-import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { statusColor } from "../../shared/theme.js";
 import { BalanceCard } from "./balance-card.js";
@@ -27,6 +23,7 @@ import { PolicyList } from "./policy-list.js";
 import { BudgetCard } from "./budget-card.js";
 import { ApprovalList } from "./approval-list.js";
 import { PAYMENTS_TABS } from "../../shared/navigation.js";
+import { textStyle } from "../../shared/text-style.js";
 
 const HELP_TEXT: Readonly<Record<string, string>> = {
   balance: "Tab:switch tab  t:transfer  a:afford check  r:refresh  q:quit",
@@ -88,10 +85,6 @@ export default function PaymentsPanel(): React.ReactNode {
   const rejectRequest = usePaymentsStore((s) => s.rejectRequest);
   const setSelectedApprovalIndex = usePaymentsStore((s) => s.setSelectedApprovalIndex);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
-
-  const visibleTabs = useVisibleTabs(PAYMENTS_TABS);
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
-
   const setSelectedReservationIndex = usePaymentsStore(
     (s) => s.setSelectedReservationIndex,
   );
@@ -339,7 +332,14 @@ export default function PaymentsPanel(): React.ReactNode {
     <BrickGate brick="pay">
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+        <box height={1} width="100%">
+          <text>
+            {TAB_ORDER.map((tab) => {
+              const label = TAB_LABELS[tab];
+              return tab === activeTab ? `[${label}]` : ` ${label} `;
+            }).join(" ")}
+          </text>
+        </box>
 
         {/* Afford check input */}
         {affordInput.active && (
@@ -438,7 +438,7 @@ export default function PaymentsPanel(): React.ReactNode {
         {/* Help bar */}
         <box height={1} width="100%">
           {copied
-            ? <text foregroundColor={statusColor.healthy}>Copied!</text>
+            ? <text style={textStyle({ fg: "green" })}>Copied!</text>
             : <text>
             {showTransfer
               ? "Tab:next field  Enter:submit  Escape:cancel"

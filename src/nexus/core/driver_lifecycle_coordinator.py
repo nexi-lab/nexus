@@ -24,13 +24,16 @@ Issue #1811, #1320.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
     from nexus.core.kernel_dispatch import KernelDispatch
+    from nexus.core.metastore import MetastoreABC
+    from nexus.core.object_store import ObjectStoreABC
     from nexus.core.router import PathRouter
+    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +62,16 @@ class DriverLifecycleCoordinator:
         dispatch: "KernelDispatch",
         *,
         self_address: str | None = None,
-        transport_pool: Any = None,
+        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._router = router
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
-        self._backend_pool: dict[str, Any] = {}
+        self._backend_pool: dict[str, ObjectStoreABC] = {}
         self._self_address: str | None = self_address
-        self._transport_pool: Any = transport_pool  # RPCTransportPool
+        self._transport_pool: RPCTransportPool | None = transport_pool
 
-    def backend_key(self, backend: Any) -> str:
+    def backend_key(self, backend: "ObjectStoreABC") -> str:
         """Canonical pool key for a backend: ``name@self_address`` or just ``name``.
 
         Used by kernel write path to store the correct ``backend_name`` in
@@ -76,7 +79,7 @@ class DriverLifecycleCoordinator:
         """
         return f"{backend.name}@{self._self_address}" if self._self_address else backend.name
 
-    def register_backend(self, backend: Any) -> str:
+    def register_backend(self, backend: "ObjectStoreABC") -> str:
         """Register a backend in the driver pool. Returns the pool key.
 
         Key = backend_key(backend). Called automatically on mount().
@@ -85,7 +88,7 @@ class DriverLifecycleCoordinator:
         self._backend_pool[key] = backend
         return key
 
-    def resolve_backend(self, backend_name: str) -> Any:
+    def resolve_backend(self, backend_name: str) -> "ObjectStoreABC":
         """Resolve backend from pool by backend_name.
 
         Pool hit → cached backend (local or RemoteBackend).
@@ -116,9 +119,9 @@ class DriverLifecycleCoordinator:
     def mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: "ObjectStoreABC",
         *,
-        metastore: Any = None,
+        metastore: "MetastoreABC | None" = None,
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
@@ -173,7 +176,7 @@ class DriverLifecycleCoordinator:
     # Internal hook registration (mirrors ServiceRegistry lifecycle)
     # ------------------------------------------------------------------
 
-    def _register_backend_hooks(self, mount_point: str, backend: Any) -> None:
+    def _register_backend_hooks(self, mount_point: str, backend: "ObjectStoreABC") -> None:
         """Extract and register hook_spec from backend."""
         if not hasattr(backend, "hook_spec"):
             return

@@ -16,7 +16,7 @@ See: core/stream.py for StreamBuffer, federation-memo.md §7j
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.stream import (
@@ -31,6 +31,7 @@ from nexus.core.stream import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ class StreamManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        transport_pool: Any = None,
+        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address

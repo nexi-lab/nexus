@@ -24,7 +24,7 @@ import asyncio
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.lock_fast import (
@@ -45,6 +45,7 @@ from nexus.core.pipe import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
+    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class PipeManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        transport_pool: Any = None,
+        transport_pool: "RPCTransportPool | None" = None,
         vfs_lock_manager: "RustVFSLockManager | PythonVFSLockManager | None" = None,
     ) -> None:
         self._metastore = metastore

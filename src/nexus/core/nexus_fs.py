@@ -899,7 +899,7 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
             metadata = FileMetadata(
                 path=path,
-                backend_name=route.backend.name,
+                backend_name=self._driver_coordinator.backend_key(route.backend),
                 physical_path=empty_hash,
                 size=0,
                 etag=empty_hash,
@@ -1161,7 +1161,9 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag or "", context=read_context)
+            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+                meta.etag or "", context=read_context
+            )
 
         # Post-read hooks
         if self._dispatch.read_hook_count > 0:
@@ -1340,7 +1342,9 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            content = route.backend.read_content(meta.etag or "", context=read_context)
+            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+                meta.etag or "", context=read_context
+            )
 
         # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
 
@@ -1587,9 +1591,9 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(
-                                meta.etag or "", context=read_context
-                            )
+                            content = self._driver_coordinator.resolve_backend(
+                                meta.backend_name
+                            ).read_content(meta.etag or "", context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1622,9 +1626,9 @@ class NexusFS(  # type: ignore[misc]
                                 from dataclasses import replace
 
                                 read_context = replace(context, backend_path=route.backend_path)
-                            content = route.backend.read_content(
-                                meta.etag or "", context=read_context
-                            )
+                            content = self._driver_coordinator.resolve_backend(
+                                meta.backend_name
+                            ).read_content(meta.etag or "", context=read_context)
                             if return_metadata:
                                 results[path] = {
                                     "content": content,
@@ -1780,13 +1784,14 @@ class NexusFS(  # type: ignore[misc]
             ):
                 raise NexusFileNotFoundError(path)
 
-            if hasattr(route.backend, "read_content_range"):
+            _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
+            if hasattr(_rb, "read_content_range"):
                 from dataclasses import replace as _replace
 
                 read_context = (
                     _replace(context, backend_path=route.backend_path) if context else None
                 )
-                return route.backend.read_content_range(meta.etag, start, end, context=read_context)
+                return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
         # FALLBACK: full read via _resolve_and_read + slice
         content, _meta, _route, _zone_id, _agent_id = await self._resolve_and_read(path, context)
@@ -1985,7 +1990,7 @@ class NexusFS(  # type: ignore[misc]
         new_version = (meta.version + 1) if meta else 1
         new_meta = FileMetadata(
             path=path,
-            backend_name=route.backend.name,
+            backend_name=self._driver_coordinator.backend_key(route.backend),
             physical_path=content_hash,  # CAS: hash is the "physical" location
             etag=content_hash,
             size=size,
@@ -2438,7 +2443,7 @@ class NexusFS(  # type: ignore[misc]
                 content_hash = wr.content_id
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=route.backend.name,
+                    backend_name=self._driver_coordinator.backend_key(route.backend),
                     content_hash=content_hash,
                     size=wr.size if offset > 0 else len(content),
                     existing_meta=meta,
@@ -2468,7 +2473,7 @@ class NexusFS(  # type: ignore[misc]
                 # after backend.write_content(). Drivers only manage content.
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=route.backend.name,
+                    backend_name=self._driver_coordinator.backend_key(route.backend),
                     content_hash=content_hash,
                     # _wr.size is the total file size after splice (not bytes written)
                     size=_wr.size if offset > 0 else len(content),
@@ -3055,7 +3060,7 @@ class NexusFS(  # type: ignore[misc]
             # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
-                backend_name=route.backend.name,  # FIX: Use routed backend name, not default backend
+                backend_name=self._driver_coordinator.backend_key(route.backend),
                 physical_path=content_hash,  # CAS: hash is the "physical" location
                 size=len(content),
                 etag=content_hash,  # SHA-256 hash for integrity
@@ -3692,7 +3697,9 @@ class NexusFS(  # type: ignore[misc]
                             if context
                             else context
                         )
-                        content = src_route.backend.read_content(
+                        content = self._driver_coordinator.resolve_backend(
+                            src_meta.backend_name
+                        ).read_content(
                             src_meta.physical_path or src_route.backend_path,
                             context=src_ctx,
                         )

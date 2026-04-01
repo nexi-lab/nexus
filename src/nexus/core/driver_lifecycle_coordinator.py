@@ -68,13 +68,20 @@ class DriverLifecycleCoordinator:
         self._self_address: str | None = self_address
         self._channel_pool: Any = channel_pool  # PeerChannelPool
 
+    def backend_key(self, backend: Any) -> str:
+        """Canonical pool key for a backend: ``name@self_address`` or just ``name``.
+
+        Used by kernel write path to store the correct ``backend_name`` in
+        metadata so that read path can resolve it back via ``resolve_backend()``.
+        """
+        return f"{backend.name}@{self._self_address}" if self._self_address else backend.name
+
     def register_backend(self, backend: Any) -> str:
         """Register a backend in the driver pool. Returns the pool key.
 
-        Key = backend.name + @self_address (if set). Called automatically
-        on mount().
+        Key = backend_key(backend). Called automatically on mount().
         """
-        key = f"{backend.name}@{self._self_address}" if self._self_address else backend.name
+        key = self.backend_key(backend)
         self._backend_pool[key] = backend
         return key
 

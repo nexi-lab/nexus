@@ -284,11 +284,13 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_read_success(self, servicer, mock_nexus_fs) -> None:
-        """Read returns content, etag, size from read()."""
-        mock_nexus_fs.read = AsyncMock(
-            return_value={"content": b"hello world", "etag": "sha256-abc", "size": 11}
+        """Read returns content via route.backend.read_content(content_id)."""
+        mock_route = MagicMock()
+        mock_route.backend.read_content.return_value = b"hello world"
+        mock_nexus_fs.router.route.return_value = mock_route
+        request = _make_typed_request(
+            "ReadRequest", path="/test.txt", auth_token="", content_id="sha256-abc"
         )
-        request = _make_typed_request("ReadRequest", path="/test.txt", auth_token="")
         context = MagicMock()
 
         response = await servicer.Read(request, context)
@@ -301,8 +303,12 @@ class TestVFSServicerTypedRPCs:
     @pytest.mark.anyio
     async def test_read_not_found(self, servicer, mock_nexus_fs) -> None:
         """Read returns is_error=True with FILE_NOT_FOUND on missing file."""
-        mock_nexus_fs.read = AsyncMock(side_effect=NexusFileNotFoundError("/missing.txt"))
-        request = _make_typed_request("ReadRequest", path="/missing.txt", auth_token="")
+        mock_route = MagicMock()
+        mock_route.backend.read_content.side_effect = NexusFileNotFoundError("/missing.txt")
+        mock_nexus_fs.router.route.return_value = mock_route
+        request = _make_typed_request(
+            "ReadRequest", path="/missing.txt", auth_token="", content_id="sha256-xyz"
+        )
         context = MagicMock()
 
         response = await servicer.Read(request, context)

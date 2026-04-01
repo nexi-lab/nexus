@@ -198,7 +198,9 @@ pub fn normalize_path(path: &str) -> PyResult<String> {
 pub fn path_matches_pattern(path: &str, pattern: &str) -> bool {
     match compile_glob(pattern) {
         Some(re) => re.is_match(path),
-        None => false,
+        // Regex compilation failed (e.g., non-UTF8 chars) — fall back to
+        // exact string equality (matches Python re behavior for literals).
+        None => path == pattern,
     }
 }
 

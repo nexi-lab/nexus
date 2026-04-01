@@ -37,6 +37,8 @@ Lifecycle:
 Issue #900, #889, #1665.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging

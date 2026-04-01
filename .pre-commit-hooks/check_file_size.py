@@ -78,12 +78,17 @@ def main() -> int:
     for file_path_str in sys.argv[1:]:
         file_path = Path(file_path_str)
 
-        # Only check Python files
-        if file_path.suffix != ".py":
+        # Only check Python and TypeScript files
+        if file_path.suffix not in (".py", ".ts", ".tsx"):
             continue
 
         # Skip test files (tests can be longer)
-        if "tests/" in str(file_path) or "test_" in file_path.name:
+        if (
+            "tests/" in str(file_path)
+            or "test_" in file_path.name
+            or file_path.name.endswith(".test.ts")
+            or file_path.name.endswith(".test.tsx")
+        ):
             continue
 
         passes, line_count = check_file_size(file_path)
@@ -98,7 +103,7 @@ def main() -> int:
         for file_path, line_count in failed_files:
             print(f"  {file_path}: {line_count} lines (exceeds by {line_count - MAX_LINES})")
 
-        print(f"\n📏 Standard: Python files should not exceed {MAX_LINES} lines")
+        print(f"\n📏 Standard: Source files should not exceed {MAX_LINES} lines")
         print("💡 Tip: Break large files into smaller, focused modules")
         print("\nIf this is a legacy file being refactored:")
         print("  1. Add it to EXCEPTIONS in .pre-commit-hooks/check_file_size.py")

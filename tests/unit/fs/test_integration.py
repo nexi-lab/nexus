@@ -44,12 +44,8 @@ def slim_fs(tmp_path: Path):
     data_dir.mkdir()
     backend = CASLocalBackend(root_path=data_dir)
 
-    # Router with mount
+    # Router (empty — mounts added via coordinator)
     router = PathRouter(metastore)
-    router.add_mount("/local", backend)
-
-    # Create DT_MOUNT entry so stat("/local") works
-    metastore.put(_make_mount_entry("/local", backend.name))
 
     # Kernel
     kernel = NexusFS(
@@ -63,6 +59,12 @@ def slim_fs(tmp_path: Path):
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
+
+    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    kernel._driver_coordinator.mount("/local", backend)
+
+    # Create DT_MOUNT entry so stat("/local") works
+    metastore.put(_make_mount_entry("/local", backend.name))
 
     return SlimNexusFS(kernel)
 
@@ -83,13 +85,24 @@ def dual_fs(tmp_path: Path):
     backend_a = CASLocalBackend(root_path=data_a)
     backend_b = CASLocalBackend(root_path=data_b)
 
-    router = PathRouter(metastore)
-    router.add_mount("/a", backend_a)
-    router.add_mount("/b", backend_b)
+    # Give each backend a unique name to avoid pool key collision.
+    # CASLocalBackend.name hardcodes "local"; when two instances share
+    # the same pool key, resolve_backend() returns whichever was last
+    # registered. Creating thin subclasses gives distinct pool keys.
+    class _BackendA(CASLocalBackend):
+        @property
+        def name(self) -> str:
+            return "local_a"
 
-    # Create DT_MOUNT entries
-    for mp, be in [("/a", backend_a), ("/b", backend_b)]:
-        metastore.put(_make_mount_entry(mp, be.name))
+    class _BackendB(CASLocalBackend):
+        @property
+        def name(self) -> str:
+            return "local_b"
+
+    backend_a.__class__ = _BackendA
+    backend_b.__class__ = _BackendB
+
+    router = PathRouter(metastore)
 
     kernel = NexusFS(
         metadata_store=metastore,
@@ -102,6 +115,14 @@ def dual_fs(tmp_path: Path):
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
+
+    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    kernel._driver_coordinator.mount("/a", backend_a)
+    kernel._driver_coordinator.mount("/b", backend_b)
+
+    # Create DT_MOUNT entries
+    for mp, be in [("/a", backend_a), ("/b", backend_b)]:
+        metastore.put(_make_mount_entry(mp, be.name))
 
     return SlimNexusFS(kernel)
 

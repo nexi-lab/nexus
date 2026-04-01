@@ -37,8 +37,6 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
     backend = CASLocalBackend(root_path=data_dir)
 
     router = PathRouter(metastore)
-    router.add_mount("/local", backend)
-    metastore.put(_make_mount_entry("/local", backend.name))
 
     kernel = NexusFS(
         metadata_store=metastore,
@@ -51,6 +49,11 @@ def _build_fs(tmp_path: Path) -> SlimNexusFS:
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
+
+    # Mount via coordinator (registers in backend pool + routing table + hooks)
+    kernel._driver_coordinator.mount("/local", backend)
+    metastore.put(_make_mount_entry("/local", backend.name))
+
     return SlimNexusFS(kernel)
 
 

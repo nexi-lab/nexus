@@ -1,6 +1,6 @@
 {
   "name": "@nexus-ai-fs/tui",
-  "version": "0.9.18",
+  "version": "0.9.19",
   "description": "Terminal UI for Nexus — file explorer, API inspector, and monitoring dashboard",
   "type": "module",
   "bin": {

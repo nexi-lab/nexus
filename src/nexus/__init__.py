@@ -48,7 +48,7 @@ import logging
 import os as _os
 from typing import TYPE_CHECKING, Any, cast
 
-__version__ = "0.9.18"  # release version
+__version__ = "0.9.19"  # release version
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

@@ -244,8 +244,13 @@ class NexusFS(  # type: ignore[misc]
             _rust_dcache = getattr(metadata_store, "_rust_dcache", None)
             _rust_router = getattr(self._mount_table, "_rust", None)
             _rust_trie = getattr(self._dispatch, "_trie", None)
+            _rust_vfs_lock = getattr(self._vfs_lock_manager, "_rust", None)
             if _rust_dcache is not None and _rust_router is not None and _rust_trie is not None:
-                self._syscall_engine = _SyscallEngine(_rust_dcache, _rust_router, _rust_trie)
+                self._syscall_engine = _SyscallEngine(
+                    _rust_dcache, _rust_router, _rust_trie, _rust_vfs_lock
+                )
+                # Wire hook count sync (Phase G): dispatch pushes counts to Rust
+                self._dispatch._syscall_engine = self._syscall_engine
                 logger.info("SyscallEngine initialized (Rust fast path enabled)")
         except (ImportError, TypeError):
             pass  # nexus_fast not installed or mock objects in tests
@@ -636,6 +641,22 @@ class NexusFS(  # type: ignore[misc]
         When include_lock=True, appends a "lock" field with advisory lock
         state from _lock_manager (zero cost when False — default).
         """
+        # ── Rust fast path (Phase H): dcache hit → dict from Rust ──────
+        # Skipped when include_lock=True (needs Python _lock_manager).
+        if self._syscall_engine is not None and not include_lock:
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            _stat = self._syscall_engine.sys_stat(path, self._zone_id, _is_admin)
+            if _stat is not None:
+                # Rust returns dict without owner/group (context-dependent)
+                ctx = self._resolve_cred(context)
+                _stat["owner"] = ctx.user_id
+                _stat["group"] = ctx.user_id
+                return _stat
+
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 
@@ -1266,17 +1287,17 @@ class NexusFS(  # type: ignore[misc]
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
-        # ── Rust execute_read fast path (Issue #1817 Phase E) ─────────────
-        # Hot path: dcache hit + local CAS + no hooks → pure Rust I/O.
-        # One FFI call replaces: validate + trie + route + dcache + CAS read.
-        # Falls back to Python path below on dcache miss or non-local backend.
-        if self._syscall_engine is not None and self._dispatch.read_hook_count == 0:
+        # ── Rust sys_read fast path (Issue #1817 Phase G) ─────────────────
+        # Hot path: hook check + dcache hit + VFS lock + CAS/backend I/O.
+        # One FFI call replaces: validate + trie + route + dcache + lock + read.
+        # Falls back to Python path below on hook presence, dcache miss, or lock contention.
+        if self._syscall_engine is not None:
             _is_admin = (
                 getattr(context, "is_admin", False)
                 if context is not None and not isinstance(context, dict)
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
-            _data = self._syscall_engine.execute_read(path, self._zone_id, _is_admin)
+            _data = self._syscall_engine.sys_read(path, self._zone_id, _is_admin)
             # CDC chunked manifests must be reassembled by Python — skip Rust fast path.
             if _data is not None and not _data[:30].startswith(b'{"type":"chunked_manifest'):
                 if offset or count is not None:

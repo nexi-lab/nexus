@@ -116,10 +116,13 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<router::RustRouteResult>()?;
     // DCache (Issue #1838 — Rust dentry cache for MetastoreABC)
     m.add_class::<dcache::RustDCache>()?;
-    // SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write planner)
+    // SyscallEngine (Issue #1817 — single-FFI syscall planner + executor)
     m.add_class::<syscall::SyscallEngine>()?;
     m.add_class::<syscall::ReadPlan>()?;
     m.add_class::<syscall::WritePlan>()?;
+    // Phase H: stat/rename plan types
+    m.add_class::<syscall::StatPlan>()?;
+    m.add_class::<syscall::RenamePlan>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

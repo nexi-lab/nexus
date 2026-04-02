@@ -191,6 +191,7 @@ class KernelDispatch:
         "_mount_hooks",
         "_unmount_hooks",
         "_background_tasks",
+        "_syscall_engine",
     )
 
     def __init__(self) -> None:
@@ -220,6 +221,10 @@ class KernelDispatch:
         # Issue #3391: tracked background tasks for deferred OBSERVE dispatch.
         # Strong references prevent GC of in-flight tasks (CPython #91887).
         self._background_tasks: set[asyncio.Task] = set()
+
+        # Phase G temporary: SyscallEngine ref for hook count sync.
+        # Deleted in §7 Collapse (hooks become Rust middleware).
+        self._syscall_engine: Any = None
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
@@ -343,10 +348,18 @@ class KernelDispatch:
 
     def _mark_hook(self, op: str) -> None:
         self._hooks_nonempty.add(op)
+        self._sync_hook_count(op)
 
     def _unmark_hook(self, op: str) -> None:
         if self._registry.count(op) == 0:
             self._hooks_nonempty.discard(op)
+        self._sync_hook_count(op)
+
+    def _sync_hook_count(self, op: str) -> None:
+        """Push hook count to Rust SyscallEngine (Phase G)."""
+        engine = getattr(self, "_syscall_engine", None)
+        if engine is not None:
+            engine.set_hook_count(op, int(self._registry.count(op)))
 
     def register_intercept_read(self, hook: VFSReadHook) -> None:
         self._registry.register("read", hook)

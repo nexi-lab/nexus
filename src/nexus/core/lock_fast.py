@@ -264,6 +264,8 @@ class RustVFSLockManager:
         from nexus_fast import VFSLockManager
 
         self._inner = VFSLockManager()
+        # Expose Rust PyO3 object for Arc sharing with SyscallEngine (Phase G)
+        self._rust = self._inner
 
     def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int:
         return self._inner.acquire(path, mode, timeout_ms)

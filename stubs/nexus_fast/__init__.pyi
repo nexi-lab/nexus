@@ -325,6 +325,7 @@ class RustDCache:
         version: int = 1,
         etag: str | None = None,
         zone_id: str | None = None,
+        mime_type: str | None = None,
     ) -> None: ...
     def get(self, path: str) -> tuple[str, str, int] | None: ...
     def get_full(self, path: str) -> dict[str, Any] | None: ...
@@ -348,6 +349,7 @@ class RustPathRouter:
         backend_name: str = "",
         local_root: str | None = None,
         fsync: bool = False,
+        backend: Any = None,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(
@@ -399,12 +401,51 @@ class WritePlan:
     error_msg: str | None
     version: int
 
+class StatPlan:
+    action: int
+    validated_path: str
+    backend_name: str
+    physical_path: str
+    size: int
+    etag: str | None
+    mime_type: str | None
+    entry_type: int
+    version: int
+    zone_id: str | None
+    is_directory: bool
+    resolver_idx: int
+    error_msg: str | None
+
+class RenamePlan:
+    action: int
+    old_path: str
+    new_path: str
+    old_mount_point: str
+    old_backend_path: str
+    new_mount_point: str
+    new_backend_path: str
+    old_readonly: bool
+    new_readonly: bool
+    entry_type: int
+    error_msg: str | None
+
 class SyscallEngine:
-    def __init__(self, dcache: RustDCache, router: RustPathRouter, trie: PathTrie) -> None: ...
+    def __init__(
+        self,
+        dcache: RustDCache,
+        router: RustPathRouter,
+        trie: PathTrie,
+        vfs_lock: VFSLockManager | None = None,
+    ) -> None: ...
     def plan_read(self, path: str, zone_id: str, is_admin: bool) -> ReadPlan: ...
     def plan_write(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
-    def execute_read(self, path: str, zone_id: str, is_admin: bool) -> bytes | None: ...
-    def execute_write(
-        self, path: str, zone_id: str, content: bytes, is_admin: bool
-    ) -> str | None: ...
+    def plan_stat(self, path: str, zone_id: str, is_admin: bool) -> StatPlan: ...
+    def plan_unlink(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
+    def plan_rename(
+        self, old_path: str, new_path: str, zone_id: str, is_admin: bool
+    ) -> RenamePlan: ...
+    def sys_read(self, path: str, zone_id: str, is_admin: bool) -> bytes | None: ...
+    def sys_write(self, path: str, zone_id: str, content: bytes, is_admin: bool) -> str | None: ...
+    def sys_stat(self, path: str, zone_id: str, is_admin: bool) -> dict[str, Any] | None: ...
+    def set_hook_count(self, op: str, count: int) -> None: ...
     def __repr__(self) -> str: ...

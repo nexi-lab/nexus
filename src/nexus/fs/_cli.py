@@ -28,6 +28,7 @@ import asyncio
 import contextlib
 import sys
 from dataclasses import asdict
+from typing import Any
 
 import click
 
@@ -440,7 +441,7 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
     )
 
 
-def _boot_fs():
+def _boot_fs() -> Any:
     """Boot a SlimNexusFS from persisted mounts only.
 
     Shared by ls, cat, write, edit, rm, mkdir, stat.
@@ -449,7 +450,7 @@ def _boot_fs():
     commands.  Users should run ``nexus-fs mount <uri>`` first.
     """
 
-    async def _run():
+    async def _run() -> Any:
         from nexus.fs import mount
         from nexus.fs._paths import build_mount_args, load_persisted_mounts
 
@@ -530,7 +531,7 @@ def cat(path: str) -> None:
 
     async def _run() -> bytes:
         fs = await _boot_fs()
-        content = await fs.read(path)
+        content: bytes = await fs.read(path)
         await fs.close()
         return content
 
@@ -779,9 +780,9 @@ def stat(path: str, output_opts: OutputOptions) -> None:
     """
     from nexus.fs._sync import run_sync
 
-    async def _run() -> dict:
+    async def _run() -> dict[str, Any]:
         fs = await _boot_fs()
-        info = await fs.stat(path)
+        info: dict[str, Any] | None = await fs.stat(path)
         await fs.close()
         if info is None:
             raise FileNotFoundError(f"Not found: {path}")

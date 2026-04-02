@@ -237,13 +237,18 @@ class NexusFS(  # type: ignore[misc]
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
         # ── SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write) ──
-        from nexus_fast import SyscallEngine as _SyscallEngine
+        self._syscall_engine = None
+        try:
+            from nexus_fast import SyscallEngine as _SyscallEngine
 
-        self._syscall_engine: _SyscallEngine = _SyscallEngine(
-            self.metadata._rust_dcache,  # Arc<RustDCacheInner>
-            self._mount_table._rust,  # Arc<RustPathRouterInner>
-            self._dispatch._trie,  # Arc<PathTrieInner>
-        )
+            _rust_dcache = getattr(metadata_store, "_rust_dcache", None)
+            _rust_router = getattr(self._mount_table, "_rust", None)
+            _rust_trie = getattr(self._dispatch, "_trie", None)
+            if _rust_dcache is not None and _rust_router is not None and _rust_trie is not None:
+                self._syscall_engine = _SyscallEngine(_rust_dcache, _rust_router, _rust_trie)
+                logger.info("SyscallEngine initialized (Rust fast path enabled)")
+        except (ImportError, TypeError):
+            pass  # nexus_fast not installed or mock objects in tests
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.

@@ -1277,7 +1277,8 @@ class NexusFS(  # type: ignore[misc]
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
             _data = self._syscall_engine.execute_read(path, self._zone_id, _is_admin)
-            if _data is not None:
+            # CDC chunked manifests must be reassembled by Python — skip Rust fast path.
+            if _data is not None and not _data[:30].startswith(b'{"type":"chunked_manifest'):
                 if offset or count is not None:
                     _data = _data[offset : offset + count] if count is not None else _data[offset:]
                 return _data

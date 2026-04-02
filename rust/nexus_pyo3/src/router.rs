@@ -11,17 +11,23 @@
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
+
+use crate::cas_engine::CASEngine;
+use crate::cas_transport::LocalCASTransport;
 
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct MountEntry {
     readonly: bool,
     admin_only: bool,
     io_profile: String,
+    backend_name: String,
+    cas: Option<CASEngine>,
 }
 
 #[derive(Debug)]
@@ -123,6 +129,24 @@ impl RustPathRouterInner {
             path
         )))
     }
+
+    /// Read content from the CAS engine attached to a mount (Phase E.1).
+    ///
+    /// `mount_point` must be a zone-canonical key (from route result).
+    pub(crate) fn read_cas(&self, mount_point: &str, etag: &str) -> Option<Vec<u8>> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.cas.as_ref()?.read_content(etag).ok()
+    }
+
+    /// Write content to the CAS engine attached to a mount (Phase E.1).
+    ///
+    /// Returns BLAKE3 hex hash on success.
+    pub(crate) fn write_cas(&self, mount_point: &str, content: &[u8]) -> Option<String> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.cas.as_ref()?.write_content(content).ok()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -144,6 +168,11 @@ impl RustPathRouter {
     }
 
     /// Register a mount at a zone-canonical key.
+    ///
+    /// When `local_root` is provided, a `CASEngine` is auto-created for the
+    /// mount point, enabling full Rust I/O via `SyscallEngine.execute_read/write`.
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]
+    #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
         mount_point: &str,
@@ -151,16 +180,30 @@ impl RustPathRouter {
         readonly: bool,
         admin_only: bool,
         io_profile: &str,
-    ) {
+        backend_name: &str,
+        local_root: Option<&str>,
+        fsync: bool,
+    ) -> PyResult<()> {
         let canonical = canonicalize(mount_point, zone_id);
+        let cas = match local_root {
+            Some(root) => {
+                let transport = LocalCASTransport::new(Path::new(root), fsync)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(CASEngine::new(transport))
+            }
+            None => None,
+        };
         self.inner.mounts.write().insert(
             canonical,
             MountEntry {
                 readonly,
                 admin_only,
                 io_profile: io_profile.to_string(),
+                backend_name: backend_name.to_string(),
+                cas,
             },
         );
+        Ok(())
     }
 
     /// Remove a mount.
@@ -316,6 +359,8 @@ mod tests {
                     readonly: false,
                     admin_only: false,
                     io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
                 },
             );
             m.insert(
@@ -324,6 +369,8 @@ mod tests {
                     readonly: false,
                     admin_only: false,
                     io_profile: "fast".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
                 },
             );
         }
@@ -345,6 +392,8 @@ mod tests {
                 readonly: false,
                 admin_only: false,
                 io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
             },
         );
 
@@ -364,6 +413,8 @@ mod tests {
                 readonly: true,
                 admin_only: false,
                 io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
             },
         );
 
@@ -382,6 +433,8 @@ mod tests {
                 readonly: false,
                 admin_only: true,
                 io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
             },
         );
 
@@ -407,6 +460,8 @@ mod tests {
                     readonly: false,
                     admin_only: false,
                     io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
                 },
             );
             m.insert(
@@ -415,6 +470,8 @@ mod tests {
                     readonly: false,
                     admin_only: false,
                     io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
                 },
             );
         }

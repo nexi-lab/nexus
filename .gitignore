@@ -223,3 +223,4 @@ deploy/
 tools/
 tls/
 nexus.yaml
+scripts/nexus-ai-fs-demo/.env.scenarios

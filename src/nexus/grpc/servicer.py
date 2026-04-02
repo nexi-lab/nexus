@@ -318,8 +318,15 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
             route = self._nexus_fs.router.route(request.path, zone_id=op_context.zone_id)
-            content = route.backend.read_content(request.content_id, context=op_context)
-            return vfs_pb2.ReadResponse(content=content, etag=request.content_id, size=len(content))
+            # Backward-compat: when client supplies content_id, read directly
+            # from backend by hash/id.  When empty (older clients, version skew),
+            # fall back to full VFS sys_read which resolves metadata → content.
+            cid = request.content_id
+            if cid:
+                content = route.backend.read_content(cid, context=op_context)
+                return vfs_pb2.ReadResponse(content=content, etag=cid, size=len(content))
+            content = await self._nexus_fs.sys_read(request.path, context=op_context)
+            return vfs_pb2.ReadResponse(content=content, size=len(content))
         except ZoneScopingError as e:
             return vfs_pb2.ReadResponse(
                 is_error=True,

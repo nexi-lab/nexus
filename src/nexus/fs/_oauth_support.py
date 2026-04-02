@@ -159,7 +159,8 @@ def get_google_auth_url(
         scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
         provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
     )
-    return provider.get_authorization_url()
+    result: str = provider.get_authorization_url()
+    return result
 
 
 def get_x_auth_url(
@@ -209,7 +210,8 @@ def get_x_auth_url(
         provider_name="x",
         client_secret=client_secret,
     )
-    return provider.get_authorization_url_with_pkce()
+    result: tuple[str, dict[str, str]] = provider.get_authorization_url_with_pkce()
+    return result
 
 
 def run_google_oauth_setup(

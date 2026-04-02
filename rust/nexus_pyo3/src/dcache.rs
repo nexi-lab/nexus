@@ -34,6 +34,8 @@ pub(crate) const DT_STREAM: u8 = 4;
 pub(crate) const DT_EXTERNAL: u8 = 5;
 
 /// Hot-path projection of FileMetadata.
+///
+/// Phase H: added `mime_type` to support full `sys_stat` from Rust dcache hit.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedEntry {
     pub(crate) backend_name: String,
@@ -43,6 +45,7 @@ pub(crate) struct CachedEntry {
     pub(crate) version: u32,
     pub(crate) entry_type: u8,
     pub(crate) zone_id: Option<String>,
+    pub(crate) mime_type: Option<String>,
 }
 
 /// Inner state shared via Arc with SyscallEngine (#1817).
@@ -111,7 +114,9 @@ impl RustDCache {
     }
 
     /// Insert or update a cache entry.
-    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None))]
+    ///
+    /// Phase H: added `mime_type` for sys_stat acceleration.
+    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
     #[allow(clippy::too_many_arguments)]
     fn put(
         &self,
@@ -123,6 +128,7 @@ impl RustDCache {
         version: u32,
         etag: Option<&str>,
         zone_id: Option<&str>,
+        mime_type: Option<&str>,
     ) {
         let entry = CachedEntry {
             backend_name: backend_name.to_string(),
@@ -132,6 +138,7 @@ impl RustDCache {
             version,
             entry_type,
             zone_id: zone_id.map(|s| s.to_string()),
+            mime_type: mime_type.map(|s| s.to_string()),
         };
         self.inner.cache.insert(path.to_string(), entry);
     }
@@ -171,6 +178,7 @@ impl RustDCache {
                 dict.set_item("version", e.version)?;
                 dict.set_item("entry_type", e.entry_type)?;
                 dict.set_item("zone_id", e.zone_id.as_deref())?;
+                dict.set_item("mime_type", e.mime_type.as_deref())?;
                 Ok(Some(dict.into()))
             }
             None => {
@@ -272,6 +280,7 @@ mod tests {
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: Some("root".to_string()),
+                mime_type: Some("text/markdown".to_string()),
             },
         );
 
@@ -283,6 +292,7 @@ mod tests {
         assert_eq!(entry.version, 1);
         assert_eq!(entry.entry_type, DT_REG);
         assert_eq!(entry.zone_id.as_deref(), Some("root"));
+        assert_eq!(entry.mime_type.as_deref(), Some("text/markdown"));
     }
 
     #[test]
@@ -305,6 +315,7 @@ mod tests {
                 version: 1,
                 entry_type: DT_MOUNT,
                 zone_id: None,
+                mime_type: None,
             },
         );
         assert_eq!(inner.get_entry_type("/mnt/remote"), Some(DT_MOUNT));
@@ -324,6 +335,7 @@ mod tests {
                 version: 2,
                 entry_type: DT_REG,
                 zone_id: None,
+                mime_type: None,
             },
         );
         assert_eq!(
@@ -346,6 +358,7 @@ mod tests {
                 version: 1,
                 entry_type: DT_DIR,
                 zone_id: None,
+                mime_type: None,
             },
         );
         assert!(inner.contains("/a"));
@@ -365,6 +378,7 @@ mod tests {
                 version: 1,
                 entry_type: DT_REG,
                 zone_id: None,
+                mime_type: None,
             },
         );
 
@@ -404,6 +418,7 @@ mod tests {
                     version: 1,
                     entry_type: DT_REG,
                     zone_id: None,
+                    mime_type: None,
                 },
             );
         }

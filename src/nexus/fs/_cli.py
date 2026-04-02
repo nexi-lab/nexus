@@ -550,11 +550,18 @@ def cat(path: str, mount_uris: tuple[str, ...]) -> None:
     default=None,
     help="Content string to write. If omitted, reads from stdin.",
 )
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help="Allow writing empty content (e.g., truncating a file to zero bytes).",
+)
 @add_output_options
 def write(
     path: str,
     mount_uris: tuple[str, ...],
     data: str | None,
+    allow_empty: bool,
     output_opts: OutputOptions,
 ) -> None:
     """Write content to a file (creates or overwrites).
@@ -575,6 +582,14 @@ def write(
         content = sys.stdin.buffer.read()
     else:
         click.echo("Error: provide --data or pipe content via stdin.", err=True)
+        sys.exit(1)
+
+    if not content and not allow_empty:
+        click.echo(
+            "Error: refusing to write empty content (would truncate file). "
+            "Use --allow-empty to override.",
+            err=True,
+        )
         sys.exit(1)
 
     async def _run() -> dict:
@@ -613,12 +628,6 @@ def write(
     default=0.85,
     help="Fuzzy match threshold (0.0-1.0). Use 1.0 for exact only.",
 )
-@click.option(
-    "--if-match",
-    type=str,
-    default=None,
-    help="ETag for optimistic concurrency. Edit fails if file changed since this ETag.",
-)
 @click.argument("mount_uris", nargs=-1)
 @add_output_options
 def edit(
@@ -626,7 +635,6 @@ def edit(
     edits: tuple[str, ...],
     preview: bool,
     fuzzy: float,
-    if_match: str | None,
     mount_uris: tuple[str, ...],
     output_opts: OutputOptions,
 ) -> None:
@@ -639,7 +647,6 @@ def edit(
       nexus-fs edit /local/src/main.py -e 'def foo():>>>def bar():'
       nexus-fs edit /local/src/main.py -e 'old>>>new' --preview
       nexus-fs edit /local/src/main.py -e 'typo>>>fix' --fuzzy 0.8
-      nexus-fs edit /s3/bucket/f.py -e 'old>>>new' --if-match abc123
     """
     from nexus.fs._sync import run_sync
 
@@ -658,7 +665,6 @@ def edit(
             parsed_edits,
             preview=preview,
             fuzzy_threshold=fuzzy,
-            if_match=if_match,
         )
         await fs.close()
         # Strip new_content from result to prevent leaking full file body
@@ -672,6 +678,10 @@ def edit(
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
+    # Check success before rendering — ensures non-zero exit in ALL output
+    # modes (human, JSON, auto-JSON) so CI/agents don't treat failures as ok.
+    edit_failed = not result_data.get("success", True)
+
     def _human_display(d: dict) -> None:
         if d.get("success"):
             status = "preview" if preview else "applied"
@@ -682,9 +692,11 @@ def edit(
             click.echo("Edit failed:", err=True)
             for err in d.get("errors", []):
                 click.echo(f"  {err}", err=True)
-            sys.exit(1)
 
     render_output(data=result_data, output_opts=output_opts, human_formatter=_human_display)
+
+    if edit_failed:
+        sys.exit(1)
 
 
 @main.command()

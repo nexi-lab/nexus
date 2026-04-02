@@ -15,7 +15,7 @@ name: Build Standalone Binary (profile=cluster)
 #   3. Build nexus_raft  → _nexus_raft     (Raft consensus + embedded storage)
 #   4. Build nexus_tasks → _nexus_tasks    (durable task queue)
 #   5. pip install all three wheels
-#   6. Patch pyinstaller_spec_cluster.py pathex using $GITHUB_WORKSPACE
+#   6. Patch pyinstaller_spec_cluster.py hardcoded paths using importlib
 #   7. PyInstaller → single-file nexus-cluster binary
 #   8. Smoke test + upload artifact
 
@@ -39,32 +39,50 @@ permissions:
   contents: write
 
 jobs:
+  # ── Dynamic matrix generation ─────────────────────────────────────────────
+  # Generates the build matrix based on the platform_filter input.
+  # On tag push all three platforms are always built.
+  # matrix context is not available in job-level `if`, so we use a setup job.
+  setup:
+    name: Generate build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          ALL='{"include":[
+            {"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},
+            {"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"},
+            {"os":"ubuntu-latest","artifact_name":"nexus-cluster-linux-x86_64"}
+          ]}'
+          MACOS='{"include":[
+            {"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},
+            {"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"}
+          ]}'
+          LINUX='{"include":[
+            {"os":"ubuntu-latest","artifact_name":"nexus-cluster-linux-x86_64"}
+          ]}'
+
+          FILTER="${{ inputs.platform_filter }}"
+          # On tag push inputs.platform_filter is empty — default to all
+          if [ "$FILTER" = "linux" ]; then
+            echo "matrix=$LINUX" >> "$GITHUB_OUTPUT"
+          elif [ "$FILTER" = "macos" ]; then
+            echo "matrix=$MACOS" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$ALL" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Per-platform build ────────────────────────────────────────────────────
   build-binary:
     name: pyinstaller-cluster / ${{ matrix.artifact_name }}
+    needs: setup
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15-intel
-            artifact_name: nexus-cluster-macos-x86_64
-
-          - os: macos-14
-            artifact_name: nexus-cluster-macos-arm64
-
-          # nexus_pyo3 uses POSIX-only APIs (fcntl, pipe, O_NONBLOCK).
-          # Linux build is included; Windows is skipped like conda-pack.yml.
-          - os: ubuntu-latest
-            artifact_name: nexus-cluster-linux-x86_64
-
-    # On tag push → build all platforms.
-    # On workflow_dispatch → filter by platform_filter input (default: macos).
-    if: |
-      github.event_name == 'push' ||
-      inputs.platform_filter == 'all' ||
-      (inputs.platform_filter == 'macos' && contains(matrix.artifact_name, 'macos')) ||
-      (inputs.platform_filter == 'linux' && contains(matrix.artifact_name, 'linux'))
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
       - name: Checkout code

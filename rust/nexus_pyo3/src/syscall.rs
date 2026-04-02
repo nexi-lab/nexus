@@ -121,10 +121,11 @@ impl SyscallEngine {
         }
     }
 
-    /// Execute read entirely in Rust if possible (Phase E / E.1).
+    /// Execute read entirely in Rust if possible (Phase E / E.1 / F).
     ///
-    /// DCached hit + local CAS (from MountEntry) → returns bytes.
-    /// Otherwise returns None and Python falls through to the full Python path.
+    /// Priority: CAS (pure Rust) → Python backend callback → None (Python fallback).
+    /// Phase F: on CAS miss, calls Python backend.read_content() via PyO3 callback,
+    /// avoiding the full Python validate+route+dcache overhead (~15-20μs savings).
     fn execute_read<'py>(
         &self,
         py: Python<'py>,
@@ -140,17 +141,29 @@ impl SyscallEngine {
             Some(e) if !e.is_empty() => e.as_str(),
             _ => return Ok(None),
         };
-        match self.router.read_cas(&plan.mount_point, etag) {
-            Some(data) => Ok(Some(PyBytes::new(py, &data))),
-            None => Ok(None),
+        // 1. CAS fast path (pure Rust, ~2μs)
+        if let Some(data) = self.router.read_cas(&plan.mount_point, etag) {
+            return Ok(Some(PyBytes::new(py, &data)));
         }
+        // 2. Python backend callback (Phase F, ~12-15μs)
+        if let Some(py_result) = self.router.read_backend(py, &plan.mount_point, etag) {
+            // Backend returns bytes — extract to PyBytes
+            if let Ok(data) = py_result.extract::<Vec<u8>>(py) {
+                return Ok(Some(PyBytes::new(py, &data)));
+            }
+        }
+        // 3. Both failed → None → Python full path fallback
+        Ok(None)
     }
 
-    /// Execute write's CAS portion in Rust (Phase E / E.1).
+    /// Execute write's CAS / backend portion (Phase E / E.1 / F).
     ///
-    /// Returns BLAKE3 hash if local CAS write succeeded, else None.
+    /// Priority: CAS (pure Rust) → Python backend callback → None (Python fallback).
+    /// Phase F: on CAS miss, calls Python backend.write_content() via PyO3 callback.
+    /// Returns content_id (hash) on success.
     fn execute_write(
         &self,
+        py: Python<'_>,
         path: &str,
         zone_id: &str,
         content: &[u8],
@@ -165,7 +178,21 @@ impl SyscallEngine {
         if plan.action != ACTION_DCACHE_HIT {
             return Ok(None);
         }
-        Ok(self.router.write_cas(&plan.mount_point, content))
+        // 1. CAS fast path (pure Rust)
+        if let Some(hash) = self.router.write_cas(&plan.mount_point, content) {
+            return Ok(Some(hash));
+        }
+        // 2. Python backend callback (Phase F)
+        if let Some(write_result) = self.router.write_backend(py, &plan.mount_point, content) {
+            // WriteResult.content_id → String
+            if let Ok(content_id) = write_result.getattr(py, "content_id") {
+                if let Ok(s) = content_id.extract::<String>(py) {
+                    return Ok(Some(s));
+                }
+            }
+        }
+        // 3. Both failed → None → Python full path fallback
+        Ok(None)
     }
 
     /// Plan a read operation in a single FFI call.

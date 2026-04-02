@@ -28,6 +28,7 @@ struct MountEntry {
     io_profile: String,
     backend_name: String,
     cas: Option<CASEngine>,
+    backend_obj: Option<Py<PyAny>>,
 }
 
 #[derive(Debug)]
@@ -147,6 +148,50 @@ impl RustPathRouterInner {
         let entry = mounts.get(mount_point)?;
         entry.cas.as_ref()?.write_content(content).ok()
     }
+
+    /// Read content via the Python backend object (Phase F).
+    ///
+    /// GIL safety: clone `Py<PyAny>` under RwLock, release lock, then call Python.
+    /// Same pattern as dispatch.rs HookEntry.
+    ///
+    /// CAS backends: `read_content(etag)` — no context needed.
+    /// PAS backends: `read_content(etag, context=OperationContext(backend_path=...))`.
+    /// For simplicity, we always call `read_content(content_id)` without context —
+    /// PAS backends that need context will raise, and Python fallback handles it.
+    pub(crate) fn read_backend(
+        &self,
+        py: Python<'_>,
+        mount_point: &str,
+        etag: &str,
+    ) -> Option<Py<PyAny>> {
+        // 1. Hold RwLock → clone Py<PyAny> → release RwLock
+        let backend_ref = {
+            let mounts = self.mounts.read();
+            mounts.get(mount_point)?.backend_obj.as_ref()?.clone_ref(py)
+        };
+        // 2. RwLock released — safe to call Python
+        backend_ref.call_method1(py, "read_content", (etag,)).ok()
+    }
+
+    /// Write content via the Python backend object (Phase F).
+    ///
+    /// Returns the Python WriteResult object on success.
+    /// GIL safety: same clone-then-call pattern as read_backend.
+    pub(crate) fn write_backend(
+        &self,
+        py: Python<'_>,
+        mount_point: &str,
+        content: &[u8],
+    ) -> Option<Py<PyAny>> {
+        let backend_ref = {
+            let mounts = self.mounts.read();
+            mounts.get(mount_point)?.backend_obj.as_ref()?.clone_ref(py)
+        };
+        let py_bytes = pyo3::types::PyBytes::new(py, content);
+        backend_ref
+            .call_method1(py, "write_content", (py_bytes,))
+            .ok()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +216,7 @@ impl RustPathRouter {
     ///
     /// When `local_root` is provided, a `CASEngine` is auto-created for the
     /// mount point, enabling full Rust I/O via `SyscallEngine.execute_read/write`.
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, backend=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -183,6 +228,7 @@ impl RustPathRouter {
         backend_name: &str,
         local_root: Option<&str>,
         fsync: bool,
+        backend: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         let canonical = canonicalize(mount_point, zone_id);
         let cas = match local_root {
@@ -201,6 +247,7 @@ impl RustPathRouter {
                 io_profile: io_profile.to_string(),
                 backend_name: backend_name.to_string(),
                 cas,
+                backend_obj: backend,
             },
         );
         Ok(())
@@ -361,6 +408,7 @@ mod tests {
                     io_profile: "balanced".to_string(),
                     backend_name: String::new(),
                     cas: None,
+                    backend_obj: None,
                 },
             );
             m.insert(
@@ -371,6 +419,7 @@ mod tests {
                     io_profile: "fast".to_string(),
                     backend_name: String::new(),
                     cas: None,
+                    backend_obj: None,
                 },
             );
         }
@@ -394,6 +443,7 @@ mod tests {
                 io_profile: "balanced".to_string(),
                 backend_name: String::new(),
                 cas: None,
+                backend_obj: None,
             },
         );
 
@@ -415,6 +465,7 @@ mod tests {
                 io_profile: "balanced".to_string(),
                 backend_name: String::new(),
                 cas: None,
+                backend_obj: None,
             },
         );
 
@@ -435,6 +486,7 @@ mod tests {
                 io_profile: "balanced".to_string(),
                 backend_name: String::new(),
                 cas: None,
+                backend_obj: None,
             },
         );
 
@@ -462,6 +514,7 @@ mod tests {
                     io_profile: "balanced".to_string(),
                     backend_name: String::new(),
                     cas: None,
+                    backend_obj: None,
                 },
             );
             m.insert(
@@ -472,6 +525,7 @@ mod tests {
                     io_profile: "balanced".to_string(),
                     backend_name: String::new(),
                     cas: None,
+                    backend_obj: None,
                 },
             );
         }

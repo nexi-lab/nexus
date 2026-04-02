@@ -560,6 +560,8 @@ jobs:
 
   migration-test:
     name: Migration Tests (SQLite)
+    needs: [detect-changes, build-rust]
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -579,6 +581,15 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-wheels-ubuntu-latest
+          path: dist
+
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
+
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -588,6 +599,8 @@ jobs:
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
+    needs: [detect-changes, build-rust]
+    if: needs.detect-changes.outputs.code_changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -622,6 +635,15 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.13
+
+      - name: Download Rust wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-wheels-ubuntu-latest
+          path: dist
+
+      - name: Install Rust extensions from wheels
+        run: uv pip install dist/*.whl
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
@@ -706,3 +728,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: echo "No code changes — skipping E2E NATS tests"
+
+  migration-test-skip:
+    name: Migration Tests (SQLite)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping migration tests"
+
+  migration-test-pg-skip:
+    name: Migration Tests (PostgreSQL)
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code_changed != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No code changes — skipping migration tests"

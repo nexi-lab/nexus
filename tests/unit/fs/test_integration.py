@@ -245,6 +245,182 @@ class TestSingleBackendLifecycle:
 
 
 # ---------------------------------------------------------------------------
+# Edit operations
+# ---------------------------------------------------------------------------
+
+
+class TestEditOperations:
+    """Test the edit() method on SlimNexusFS facade."""
+
+    @pytest.mark.asyncio
+    async def test_edit_simple_replacement(self, slim_fs: SlimNexusFS):
+        """Simple search/replace edit."""
+        await slim_fs.write("/local/code.py", b"def foo():\n    return 1\n")
+
+        result = await slim_fs.edit("/local/code.py", [("def foo():", "def bar():")])
+
+        assert result["success"] is True
+        assert result["applied_count"] == 1
+        content = await slim_fs.read("/local/code.py")
+        assert b"def bar():" in content
+        assert b"def foo():" not in content
+
+    @pytest.mark.asyncio
+    async def test_edit_multiple_replacements(self, slim_fs: SlimNexusFS):
+        """Multiple edits applied in sequence."""
+        await slim_fs.write("/local/multi.py", b"x = 1\ny = 2\nz = 3\n")
+
+        result = await slim_fs.edit(
+            "/local/multi.py",
+            [("x = 1", "x = 10"), ("y = 2", "y = 20")],
+        )
+
+        assert result["success"] is True
+        assert result["applied_count"] == 2
+        content = await slim_fs.read("/local/multi.py")
+        assert content == b"x = 10\ny = 20\nz = 3\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_returns_diff(self, slim_fs: SlimNexusFS):
+        """Edit result includes a unified diff."""
+        await slim_fs.write("/local/diff.txt", b"hello world\n")
+
+        result = await slim_fs.edit("/local/diff.txt", [("hello", "goodbye")])
+
+        assert result["success"] is True
+        assert "-hello world" in result["diff"]
+        assert "+goodbye world" in result["diff"]
+
+    @pytest.mark.asyncio
+    async def test_edit_preview_does_not_modify(self, slim_fs: SlimNexusFS):
+        """Preview mode returns diff but doesn't write."""
+        original = b"keep me unchanged\n"
+        await slim_fs.write("/local/preview.txt", original)
+
+        result = await slim_fs.edit(
+            "/local/preview.txt",
+            [("keep me unchanged", "I was changed")],
+            preview=True,
+        )
+
+        assert result["success"] is True
+        assert "+I was changed" in result["diff"]
+        # File should NOT have changed
+        content = await slim_fs.read("/local/preview.txt")
+        assert content == original
+
+    @pytest.mark.asyncio
+    async def test_edit_no_match_fails(self, slim_fs: SlimNexusFS):
+        """Edit fails when search string not found."""
+        await slim_fs.write("/local/nomatch.txt", b"actual content\n")
+
+        result = await slim_fs.edit(
+            "/local/nomatch.txt",
+            [("nonexistent text", "replacement")],
+            fuzzy_threshold=1.0,
+        )
+
+        assert result["success"] is False
+        assert len(result["errors"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_edit_with_dict_format(self, slim_fs: SlimNexusFS):
+        """Edit accepts dict format with old_str/new_str keys."""
+        await slim_fs.write("/local/dict.txt", b"old value\n")
+
+        result = await slim_fs.edit(
+            "/local/dict.txt",
+            [{"old_str": "old value", "new_str": "new value"}],
+        )
+
+        assert result["success"] is True
+        content = await slim_fs.read("/local/dict.txt")
+        assert content == b"new value\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy_match(self, slim_fs: SlimNexusFS):
+        """Fuzzy matching handles minor differences."""
+        await slim_fs.write(
+            "/local/fuzzy.py",
+            b"def calculate_total(items):\n    return sum(items)\n",
+        )
+
+        result = await slim_fs.edit(
+            "/local/fuzzy.py",
+            [("def calcuate_total(items):", "def compute_sum(items):")],
+            fuzzy_threshold=0.8,
+        )
+
+        assert result["success"] is True
+        assert result["matches"][0]["match_type"] == "fuzzy"
+        content = await slim_fs.read("/local/fuzzy.py")
+        assert b"def compute_sum(items):" in content
+
+    @pytest.mark.asyncio
+    async def test_edit_etag_concurrency(self, slim_fs: SlimNexusFS):
+        """Optimistic concurrency: edit with correct etag succeeds."""
+        write_result = await slim_fs.write("/local/etag.txt", b"version 1\n")
+        etag = write_result["etag"]
+
+        result = await slim_fs.edit(
+            "/local/etag.txt",
+            [("version 1", "version 2")],
+            if_match=etag,
+        )
+
+        assert result["success"] is True
+        content = await slim_fs.read("/local/etag.txt")
+        assert content == b"version 2\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_stale_etag_fails(self, slim_fs: SlimNexusFS):
+        """Optimistic concurrency: stale etag is rejected."""
+        write_result = await slim_fs.write("/local/stale.txt", b"version 1\n")
+        old_etag = write_result["etag"]
+
+        # Overwrite to change the etag
+        await slim_fs.write("/local/stale.txt", b"version 2\n")
+
+        from nexus.contracts.exceptions import ConflictError
+
+        with pytest.raises(ConflictError):
+            await slim_fs.edit(
+                "/local/stale.txt",
+                [("version 2", "version 3")],
+                if_match=old_etag,
+            )
+
+    @pytest.mark.asyncio
+    async def test_edit_delete_text(self, slim_fs: SlimNexusFS):
+        """Replace with empty string to delete text."""
+        await slim_fs.write("/local/del.txt", b"keep\nremove me\nkeep too\n")
+
+        result = await slim_fs.edit("/local/del.txt", [("remove me\n", "")])
+
+        assert result["success"] is True
+        content = await slim_fs.read("/local/del.txt")
+        assert content == b"keep\nkeep too\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_multiline_block(self, slim_fs: SlimNexusFS):
+        """Edit a multiline block."""
+        await slim_fs.write(
+            "/local/block.py",
+            b"def old():\n    pass\n\ndef other():\n    pass\n",
+        )
+
+        result = await slim_fs.edit(
+            "/local/block.py",
+            [("def old():\n    pass", "def new():\n    return 42")],
+        )
+
+        assert result["success"] is True
+        content = await slim_fs.read("/local/block.py")
+        assert b"def new():\n    return 42" in content
+        assert b"def other():\n    pass" in content
+
+
+# ---------------------------------------------------------------------------
 # Multi-backend
 # ---------------------------------------------------------------------------
 

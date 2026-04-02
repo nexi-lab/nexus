@@ -226,6 +226,49 @@ class SlimNexusFS:
         """
         return await self._kernel.sys_copy(src, dst, context=self._ctx)
 
+    async def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]],
+        *,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """Apply surgical search/replace edits to a file.
+
+        Uses a layered matching strategy (exact -> whitespace-normalized -> fuzzy)
+        to find and replace text without rewriting the entire file.
+
+        Args:
+            path: Virtual file path.
+            edits: List of edit operations. Each can be:
+                - Tuple: (old_str, new_str)
+                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
+                         "allow_multiple": bool}
+            if_match: Optional etag for optimistic concurrency control.
+            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
+            preview: If True, return preview without writing.
+
+        Returns:
+            Dict with success, diff, matches, applied_count, etag, version, errors.
+
+        Note:
+            The underlying kernel edit is NOT atomic — there is a TOCTOU window
+            between the read and the final write.  ``if_match`` catches stale
+            reads but cannot prevent a concurrent writer from updating the file
+            between the ETag check and the write.  For concurrent-writer safety,
+            use an external lock or wait for kernel-level OCC-aware writes.
+        """
+        return await self._kernel.edit(
+            path,
+            edits,
+            context=self._ctx,
+            if_match=if_match,
+            fuzzy_threshold=fuzzy_threshold,
+            preview=preview,
+        )
+
     # -- Metadata (optimized single-lookup) --
 
     async def stat(self, path: str) -> dict[str, Any] | None:

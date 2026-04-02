@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Script 2: File Operations (Write, Read, Copy, Verify)
+# Script 2: File Operations (Write, Read, Copy, Edit, Verify)
 # =============================================================================
-# Tests: Python API write/read, nexus-fs cp, cross-directory copy, --json,
-#        cp with trailing mount URIs (inline mounts)
+# Tests: nexus-fs write/cat/ls/stat/edit/rm/cp/mkdir CLI commands
 #
 # Prereq: Run script 1 first (creates /tmp/nexus-fs-demo and mounts)
 #
@@ -16,7 +15,7 @@ set -euo pipefail
 
 PYTHON="${NEXUS_FS_PYTHON:-/Users/tafeng/nexus/.venv/bin/python}"
 TESTROOT="/tmp/nexus-fs-demo"
-nexus_fs() { "$PYTHON" -c "from nexus.fs._cli import main; main()" -- "$@"; }
+nfs() { "$PYTHON" -c "from nexus.fs._cli import main; main()" "$@"; }
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 step()   { echo -e "\n${CYAN}[$1]${NC} $2"; }
@@ -32,212 +31,149 @@ if [ ! -d "$TESTROOT/projects" ] || [ ! -d "$TESTROOT/datasets" ]; then
 fi
 
 # ── Step 1: Create workspace backend ─────────────────────────────────────────
-step "1/10" "Creating workspace backend for copy targets..."
+step "1/13" "Creating workspace backend for copy targets..."
 mkdir -p "$TESTROOT/workspace"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['unmount', 'local://$TESTROOT/workspace'])" 2>/dev/null || true
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'local://$TESTROOT/workspace'])" 2>&1
+nfs unmount "local://$TESTROOT/workspace" 2>/dev/null || true
+nfs mount "local://$TESTROOT/workspace" 2>&1
 ok "Workspace backend mounted"
 
-# ── Step 2: Seed files via NexusFS API ───────────────────────────────────────
-step "2/10" "Seeding files into CAS via NexusFS API..."
-"$PYTHON" << PYEOF
-import asyncio, contextlib
-from nexus.fs import mount
+# ── Step 2: Seed files via CLI ──────────────────────────────────────────────
+step "2/13" "Seeding files into CAS via nexus-fs write..."
+# Clean stale entries from previous runs
+for stale in \
+    /local/nexus-fs-demo-datasets/users_backup.csv \
+    /local/nexus-fs-demo-workspace/metrics.csv \
+    /local/nexus-fs-demo-workspace/main.py \
+    /local/nexus-fs-demo-workspace/config.json \
+    /local/nexus-fs-demo-workspace/inline_test.txt \
+    /local/nexus-fs-demo-workspace/main_edit.py; do
+    nfs rm "$stale" 2>/dev/null || true
+done
 
-async def seed():
-    fs = await mount(
-        'local://$TESTROOT/projects',
-        'local://$TESTROOT/datasets',
-        'local://$TESTROOT/workspace',
-    )
+# Seed project files
+nfs write /local/nexus-fs-demo-projects/README.md < "$TESTROOT/projects/README.md"
+nfs write /local/nexus-fs-demo-projects/src/main.py < "$TESTROOT/projects/src/main.py"
 
-    # Clean stale CAS entries from previous runs
-    for stale in [
-        '/local/nexus-fs-demo-datasets/users_backup.csv',
-        '/local/nexus-fs-demo-workspace/metrics.csv',
-        '/local/nexus-fs-demo-workspace/main.py',
-        '/local/nexus-fs-demo-workspace/config.json',
-        '/local/nexus-fs-demo-workspace/inline_test.txt',
-    ]:
-        with contextlib.suppress(Exception):
-            await fs.delete(stale)
+# Seed dataset files
+nfs write /local/nexus-fs-demo-datasets/users.csv < "$TESTROOT/datasets/users.csv"
+nfs write /local/nexus-fs-demo-datasets/config.json < "$TESTROOT/datasets/config.json"
+nfs write /local/nexus-fs-demo-datasets/metrics.csv < "$TESTROOT/datasets/metrics.csv"
 
-    # Seed project files into CAS
-    await fs.write('/local/nexus-fs-demo-projects/README.md', open('$TESTROOT/projects/README.md', 'rb').read())
-    await fs.write('/local/nexus-fs-demo-projects/src/main.py', open('$TESTROOT/projects/src/main.py', 'rb').read())
-
-    # Seed dataset files into CAS
-    await fs.write('/local/nexus-fs-demo-datasets/users.csv', open('$TESTROOT/datasets/users.csv', 'rb').read())
-    await fs.write('/local/nexus-fs-demo-datasets/config.json', open('$TESTROOT/datasets/config.json', 'rb').read())
-    await fs.write('/local/nexus-fs-demo-datasets/metrics.csv', open('$TESTROOT/datasets/metrics.csv', 'rb').read())
-
-    # List what we have
-    proj_files = await fs.ls('/local/nexus-fs-demo-projects/')
-    data_files = await fs.ls('/local/nexus-fs-demo-datasets/')
-    print(f"  Seeded {len(proj_files)} project files: {[f.split('/')[-1] for f in proj_files]}")
-    print(f"  Seeded {len(data_files)} dataset files: {[f.split('/')[-1] for f in data_files]}")
-
-    await fs.close()
-
-asyncio.run(seed())
-PYEOF
-ok "CAS seeded"
+# List what we have
+echo "  Projects:"
+nfs ls /local/nexus-fs-demo-projects/ 2>&1 | sed 's/^/    /'
+echo "  Datasets:"
+nfs ls /local/nexus-fs-demo-datasets/ 2>&1 | sed 's/^/    /'
+ok "CAS seeded via CLI"
 
 # ── Step 3: Copy file within same backend ────────────────────────────────────
-step "3/10" "Copying file within same backend (datasets -> datasets)..."
+step "3/13" "Copying file within same backend (datasets -> datasets)..."
 echo "  > nexus-fs cp /local/.../users.csv /local/.../users_backup.csv"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-datasets/users.csv', '/local/nexus-fs-demo-datasets/users_backup.csv'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-datasets/users.csv /local/nexus-fs-demo-datasets/users_backup.csv 2>&1
 ok "Same-backend copy"
 
 # ── Step 4: Copy across backends ─────────────────────────────────────────────
-step "4/10" "Copying across backends (datasets -> workspace)..."
+step "4/13" "Copying across backends (datasets -> workspace)..."
 echo "  > nexus-fs cp /local/.../metrics.csv /local/.../metrics.csv"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-datasets/metrics.csv', '/local/nexus-fs-demo-workspace/metrics.csv'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-datasets/metrics.csv /local/nexus-fs-demo-workspace/metrics.csv 2>&1
 ok "Cross-backend copy"
 
 # ── Step 5: Copy project file to workspace ───────────────────────────────────
-step "5/10" "Copying project source to workspace..."
+step "5/13" "Copying project source to workspace..."
 echo "  > nexus-fs cp /local/.../src/main.py /local/.../main.py"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-projects/src/main.py', '/local/nexus-fs-demo-workspace/main.py'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-projects/src/main.py /local/nexus-fs-demo-workspace/main.py 2>&1
 ok "Project -> workspace copy"
 
 # ── Step 6: Copy config to workspace ─────────────────────────────────────────
-step "6/10" "Copying config.json to workspace..."
+step "6/13" "Copying config.json to workspace..."
 echo "  > nexus-fs cp /local/.../config.json /local/.../config.json --json"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-datasets/config.json', '/local/nexus-fs-demo-workspace/config.json', '--json'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-datasets/config.json /local/nexus-fs-demo-workspace/config.json --json 2>&1
 ok "Config copied with --json output"
 
-# ── Step 7: Copy with trailing inline mount URIs (no persisted mounts) ───────
-step "7/10" "Copying with trailing inline mount URIs..."
+# ── Step 7: Surgical edit via CLI ────────────────────────────────────────────
+step "7/13" "Testing surgical edit (search/replace) on workspace file..."
+# Copy main.py to workspace for editing
+nfs cp /local/nexus-fs-demo-projects/src/main.py /local/nexus-fs-demo-workspace/main_edit.py 2>&1
+
+# Surgical edit: rename function without rewriting the whole file
+echo "  > nexus-fs edit ... -e 'def hello>>>def greet'"
+nfs edit /local/nexus-fs-demo-workspace/main_edit.py -e 'def hello>>>def greet' 2>&1
+
+# Preview mode: see diff without writing
+echo "  > nexus-fs edit ... -e 'def greet>>>def salute' --preview"
+nfs edit /local/nexus-fs-demo-workspace/main_edit.py -e 'def greet>>>def salute' --preview 2>&1
+
+# Verify original edit stuck and preview didn't modify
+CONTENT=$(nfs cat /local/nexus-fs-demo-workspace/main_edit.py 2>&1)
+echo "$CONTENT" | grep -q "def greet" || fail "Edit was not persisted"
+echo "$CONTENT" | grep -q "def salute" && fail "Preview should not have written"
+echo "  Verified: file contains 'def greet', not 'def salute'"
+ok "Surgical edit (search/replace)"
+
+# ── Step 8: Copy with trailing inline mount URIs (no persisted mounts) ───────
+step "8/13" "Copying with trailing inline mount URIs..."
 mkdir -p "$TESTROOT/scratch"
-"$PYTHON" << PYEOF
-import asyncio
-from nexus.fs import mount
-async def go():
-    fs = await mount('local://$TESTROOT/workspace', 'local://$TESTROOT/scratch')
-    # Seed a file in scratch via kernel for the next cp
-    await fs.write('/local/nexus-fs-demo-scratch/inline_test.txt', b'Copied via inline trailing URIs')
-    await fs.close()
-asyncio.run(go())
-PYEOF
+nfs mount "local://$TESTROOT/scratch" 2>/dev/null || true
+echo "Seeded via inline trailing URIs" | nfs write /local/nexus-fs-demo-scratch/inline_test.txt
 echo "  > nexus-fs cp ... inline_test.txt -> workspace (with trailing URIs)"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-scratch/inline_test.txt', '/local/nexus-fs-demo-workspace/inline_test.txt',
-      'local://$TESTROOT/scratch', 'local://$TESTROOT/workspace'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-scratch/inline_test.txt /local/nexus-fs-demo-workspace/inline_test.txt \
+    "local://$TESTROOT/scratch" "local://$TESTROOT/workspace" 2>&1
 ok "cp with trailing mount URIs"
 
-# ── Step 8: Verify all copies via API ────────────────────────────────────────
-step "8/10" "Verifying all copies..."
-"$PYTHON" << 'PYEOF'
-import asyncio
-from nexus.fs import mount
+# ── Step 9: Verify all copies via CLI ────────────────────────────────────────
+step "9/13" "Verifying all copies..."
+ALL_OK=true
+verify_file() {
+    local path="$1" expected="$2" label="$3"
+    CONTENT=$(nfs cat "$path" 2>&1) || { echo "  FAIL  $label (read error)"; ALL_OK=false; return; }
+    if echo "$CONTENT" | grep -q "$expected"; then
+        printf "  PASS  %-30s contains '%s'\n" "$label" "$expected"
+    else
+        printf "  FAIL  %-30s missing '%s'\n" "$label" "$expected"
+        ALL_OK=false
+    fi
+}
+verify_file /local/nexus-fs-demo-datasets/users_backup.csv "name,email,role" "users_backup.csv"
+verify_file /local/nexus-fs-demo-workspace/metrics.csv     "date,requests"   "metrics.csv"
+verify_file /local/nexus-fs-demo-workspace/main.py         "def hello"       "main.py"
+verify_file /local/nexus-fs-demo-workspace/config.json     "nexus-fs-demo"   "config.json"
+verify_file /local/nexus-fs-demo-workspace/inline_test.txt "inline trailing" "inline_test.txt"
 
-async def verify():
-    fs = await mount(
-        'local:///tmp/nexus-fs-demo/projects',
-        'local:///tmp/nexus-fs-demo/datasets',
-        'local:///tmp/nexus-fs-demo/workspace',
-        'local:///tmp/nexus-fs-demo/scratch',
-    )
-
-    checks = [
-        ("/local/nexus-fs-demo-datasets/users_backup.csv", "name,email,role"),
-        ("/local/nexus-fs-demo-workspace/metrics.csv", "date,requests"),
-        ("/local/nexus-fs-demo-workspace/main.py", "def hello"),
-        ("/local/nexus-fs-demo-workspace/config.json", "nexus-fs-demo"),
-        ("/local/nexus-fs-demo-workspace/inline_test.txt", "inline trailing URIs"),
-    ]
-
-    all_ok = True
-    for path, expected_substr in checks:
-        try:
-            content = await fs.read(path)
-            text = content.decode()
-            if expected_substr in text:
-                print(f"  PASS  {path.split('/')[-1]:30s} contains '{expected_substr}'")
-            else:
-                print(f"  FAIL  {path.split('/')[-1]:30s} missing '{expected_substr}'")
-                all_ok = False
-        except Exception as e:
-            print(f"  FAIL  {path.split('/')[-1]:30s} error: {e}")
-            all_ok = False
-
-    # Show workspace contents
-    ws_files = await fs.ls('/local/nexus-fs-demo-workspace/')
-    print(f"\n  Workspace files: {[f.split('/')[-1] for f in ws_files]}")
-
-    await fs.close()
-    return all_ok
-
-ok = asyncio.run(verify())
-if not ok:
-    raise SystemExit(1)
-PYEOF
+echo ""
+echo "  Workspace contents:"
+nfs ls /local/nexus-fs-demo-workspace/ 2>&1 | sed 's/^/    /'
+$ALL_OK || fail "Verification failed"
 ok "All copies verified"
 
-# ── Step 9: Sync CAS data to raw filesystem for playground visibility ────────
-step "9/12" "Syncing CAS data to filesystem (for playground)..."
-"$PYTHON" << 'PYEOF'
-import asyncio
-from pathlib import Path
-from nexus.fs import mount
-
-TESTROOT = Path("/tmp/nexus-fs-demo")
-
-async def sync_to_playground():
-    fs = await mount(
-        'local:///tmp/nexus-fs-demo/projects',
-        'local:///tmp/nexus-fs-demo/datasets',
-        'local:///tmp/nexus-fs-demo/workspace',
-    )
-
-    # Export CAS files to raw directories so playground can see them
-    exports = [
-        ("/local/nexus-fs-demo-datasets/users_backup.csv", TESTROOT / "datasets" / "users_backup.csv"),
-        ("/local/nexus-fs-demo-workspace/metrics.csv",     TESTROOT / "workspace" / "metrics.csv"),
-        ("/local/nexus-fs-demo-workspace/main.py",         TESTROOT / "workspace" / "main.py"),
-        ("/local/nexus-fs-demo-workspace/config.json",     TESTROOT / "workspace" / "config.json"),
-        ("/local/nexus-fs-demo-workspace/inline_test.txt", TESTROOT / "workspace" / "inline_test.txt"),
-    ]
-
-    for cas_path, raw_path in exports:
-        content = await fs.read(cas_path)
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_path.write_bytes(content)
-        print(f"  Synced {raw_path.name:30s} -> {raw_path.parent.name}/ ({len(content)} bytes)")
-
-    await fs.close()
-
-asyncio.run(sync_to_playground())
-PYEOF
+# ── Step 10: Sync CAS data to raw filesystem for playground visibility ───────
+step "10/13" "Syncing CAS data to filesystem (for playground)..."
+for pair in \
+    "/local/nexus-fs-demo-datasets/users_backup.csv:$TESTROOT/datasets/users_backup.csv" \
+    "/local/nexus-fs-demo-workspace/metrics.csv:$TESTROOT/workspace/metrics.csv" \
+    "/local/nexus-fs-demo-workspace/main.py:$TESTROOT/workspace/main.py" \
+    "/local/nexus-fs-demo-workspace/config.json:$TESTROOT/workspace/config.json" \
+    "/local/nexus-fs-demo-workspace/inline_test.txt:$TESTROOT/workspace/inline_test.txt"; do
+    CAS_PATH="${pair%%:*}"
+    RAW_PATH="${pair##*:}"
+    mkdir -p "$(dirname "$RAW_PATH")"
+    nfs cat "$CAS_PATH" > "$RAW_PATH" 2>/dev/null
+    SIZE=$(wc -c < "$RAW_PATH" | tr -d ' ')
+    printf "  Synced %-30s -> %s/ (%s bytes)\n" "$(basename "$RAW_PATH")" "$(basename "$(dirname "$RAW_PATH")")" "$SIZE"
+done
 ok "CAS -> filesystem sync for playground"
 
-# ── Step 10: Cleanup scratch ─────────────────────────────────────────────────
-step "10/12" "Cleaning up scratch backend..."
-"$PYTHON" -c "from nexus.fs._cli import main; main(['unmount', 'local://$TESTROOT/scratch'])" 2>/dev/null || true
+# ── Step 11: Cleanup scratch ─────────────────────────────────────────────────
+step "11/13" "Cleaning up scratch backend..."
+nfs unmount "local://$TESTROOT/scratch" 2>/dev/null || true
 rm -rf "$TESTROOT/scratch"
 ok "Scratch cleaned"
 
-# ── Step 11: Show mount list ─────────────────────────────────────────────────
-step "11/12" "Final mount state..."
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'list'])" 2>&1
+# ── Step 12: Show mount list ─────────────────────────────────────────────────
+step "12/13" "Final mount state..."
+nfs mount list 2>&1
 
-# ── Step 12: Validate playground visibility ──────────────────────────────────
-step "12/12" "Validating playground visibility..."
+# ── Step 13: Validate playground visibility ──────────────────────────────────
+step "13/13" "Validating playground visibility..."
 "$PYTHON" << 'PYEOF'
 from pathlib import Path
 
@@ -260,18 +196,24 @@ for mount_name, expected_files in [
 
 if not all_ok:
     raise SystemExit(1)
-print(f"\n  All {sum(len(v) for v in [['README.md','src/main.py','src/utils.py','docs/setup.md'],['users.csv','config.json','metrics.csv','users_backup.csv'],['metrics.csv','main.py','config.json','inline_test.txt']])} files visible in playground")
+total = sum(len(v) for v in [
+    ["README.md", "src/main.py", "src/utils.py", "docs/setup.md"],
+    ["users.csv", "config.json", "metrics.csv", "users_backup.csv"],
+    ["metrics.csv", "main.py", "config.json", "inline_test.txt"],
+])
+print(f"\n  All {total} files visible in playground")
 PYEOF
 ok "Playground validation passed"
 
 banner "File Operations Complete!"
 echo ""
 echo "  Operations performed:"
-echo "    - Seeded 5 files via API"
+echo "    - Seeded 5 files via nexus-fs write"
 echo "    - Copied within same backend (users.csv backup)"
 echo "    - Copied across 3 backends (datasets/projects -> workspace)"
+echo "    - Surgical edit (search/replace) with preview mode"
 echo "    - Copied with trailing inline mount URIs"
-echo "    - Verified all copies match"
+echo "    - Verified all copies via nexus-fs cat"
 echo ""
 echo "  Open playground to see all 3 backends:"
 echo "    nexus-fs playground local://$TESTROOT/projects local://$TESTROOT/datasets local://$TESTROOT/workspace"

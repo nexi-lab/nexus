@@ -20,6 +20,7 @@ step()   { echo -e "\n${CYAN}[$1]${NC} $2"; }
 ok()     { echo -e "  ${GREEN}OK${NC} $1"; }
 fail()   { echo -e "  ${RED}FAIL${NC} $1"; exit 1; }
 banner() { echo -e "\n${YELLOW}════════════════════════════════════════════════${NC}"; echo -e "${YELLOW}  $1${NC}"; echo -e "${YELLOW}════════════════════════════════════════════════${NC}"; }
+nfs() { "$PYTHON" -c "from nexus.fs._cli import main; main()" "$@"; }
 
 banner "Script 0: S3 Integration"
 echo "  S3 bucket: $S3_BUCKET"
@@ -27,7 +28,7 @@ echo "  S3 bucket: $S3_BUCKET"
 # ── Step 1: Verify S3 auth ───────────────────────────────────────────────────
 step "1/8" "Verifying S3 credentials..."
 echo "  > nexus-fs auth test s3"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['auth', 'test', 's3'])" 2>&1 || fail "S3 auth failed"
+nfs auth test s3 2>&1 || fail "S3 auth failed"
 ok "S3 credentials valid"
 
 # ── Step 2: Create local test data ───────────────────────────────────────────
@@ -48,20 +49,20 @@ ok "Local test files created"
 
 # ── Step 3: Mount local + S3 ─────────────────────────────────────────────────
 step "3/8" "Mounting local and S3 backends..."
-"$PYTHON" -c "from nexus.fs._cli import main; main(['unmount', 'local://$TESTROOT/s3test'])" 2>/dev/null || true
-"$PYTHON" -c "from nexus.fs._cli import main; main(['unmount', '$S3_URI'])" 2>/dev/null || true
+nfs unmount "local://$TESTROOT/s3test" 2>/dev/null || true
+nfs unmount "$S3_URI" 2>/dev/null || true
 
 echo "  > nexus-fs mount local://$TESTROOT/s3test"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'local://$TESTROOT/s3test'])" 2>&1
+nfs mount "local://$TESTROOT/s3test" 2>&1
 echo ""
 echo "  > nexus-fs mount $S3_URI"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', '$S3_URI'])" 2>&1
+nfs mount "$S3_URI" 2>&1
 ok "Both backends mounted"
 
 # ── Step 4: Test S3 mount connectivity ───────────────────────────────────────
 step "4/8" "Testing S3 mount connectivity..."
 echo "  > nexus-fs mount test $S3_URI"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'test', '$S3_URI'])" 2>&1
+nfs mount test "$S3_URI" 2>&1
 ok "S3 connectivity confirmed"
 
 # ── Step 5: Seed local files into CAS and upload to S3 ──────────────────────
@@ -87,26 +88,17 @@ PYEOF
 
 echo ""
 echo "  > nexus-fs cp local -> S3 (upload.txt)"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-s3test/upload.txt', '/s3/$S3_BUCKET/nexus-fs-test/upload.txt'])
-" 2>&1
+nfs cp "/local/nexus-fs-demo-s3test/upload.txt" "/s3/$S3_BUCKET/nexus-fs-test/upload.txt" 2>&1
 
 echo ""
 echo "  > nexus-fs cp local -> S3 (data.json)"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-s3test/data.json', '/s3/$S3_BUCKET/nexus-fs-test/data.json'])
-" 2>&1
+nfs cp "/local/nexus-fs-demo-s3test/data.json" "/s3/$S3_BUCKET/nexus-fs-test/data.json" 2>&1
 ok "Files uploaded to S3"
 
 # ── Step 6: Copy back from S3 ───────────────────────────────────────────────
 step "6/8" "Copying S3 -> local (round-trip)..."
 echo "  > nexus-fs cp S3 -> local (upload.txt)"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/s3/$S3_BUCKET/nexus-fs-test/upload.txt', '/local/nexus-fs-demo-s3test/downloaded.txt'])
-" 2>&1
+nfs cp "/s3/$S3_BUCKET/nexus-fs-test/upload.txt" "/local/nexus-fs-demo-s3test/downloaded.txt" 2>&1
 ok "Round-trip complete"
 
 # ── Step 7: Verify round-trip ────────────────────────────────────────────────
@@ -140,7 +132,7 @@ ok "Data integrity verified"
 # ── Step 8: Doctor with both mounts ──────────────────────────────────────────
 step "8/8" "Doctor with local + S3 mounts..."
 echo "  > nexus-fs doctor --mount local://$TESTROOT/s3test --mount $S3_URI"
-"$PYTHON" -c "from nexus.fs._cli import main; main(['doctor', '--mount', 'local://$TESTROOT/s3test', '--mount', '$S3_URI'])" 2>&1
+nfs doctor --mount "local://$TESTROOT/s3test" --mount "$S3_URI" 2>&1
 ok "Doctor passed for both backends"
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────

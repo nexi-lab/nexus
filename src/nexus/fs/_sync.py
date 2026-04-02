@@ -144,6 +144,28 @@ class SyncNexusFS:
     def copy(self, src: str, dst: str) -> dict[str, Any]:
         return cast(dict[str, Any], self._runner(self._async.copy(src, dst)))
 
+    def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]],
+        *,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        return cast(
+            dict[str, Any],
+            self._runner(
+                self._async.edit(
+                    path,
+                    edits,
+                    if_match=if_match,
+                    fuzzy_threshold=fuzzy_threshold,
+                    preview=preview,
+                )
+            ),
+        )
+
     def read_range(self, path: str, start: int, end: int) -> bytes:
         return cast(bytes, self._runner(self._async.read_range(path, start, end)))
 

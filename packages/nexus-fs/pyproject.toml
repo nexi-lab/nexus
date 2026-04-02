@@ -52,10 +52,11 @@ gdrive = [
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
 ]
+edit = ["rapidfuzz>=3.0"]
 fsspec = ["fsspec>=2024.0"]
 tui = ["textual>=1.0"]
 all = [
-    "nexus-fs[s3,gcs,gdrive,fsspec,tui]",
+    "nexus-fs[s3,gcs,gdrive,fsspec,tui,edit]",
 ]
 dev = [
     "nexus-fs[all]",
@@ -93,6 +94,8 @@ include = [
     "nexus/backends/**",
     "nexus/lib/**",
     "nexus/storage/**",
+    "nexus/utils/__init__.py",
+    "nexus/utils/edit_engine.py",
     "nexus/config.py",
 ]
 exclude = [

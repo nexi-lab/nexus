@@ -327,7 +327,9 @@ class TestMountPersistence:
             runner.invoke(main, ["cp", "/data/a.txt", "/data/b.txt"])
 
         mock_mount.assert_awaited_once_with(
-            "s3://my-bucket", mount_overrides={"s3://my-bucket": "/data"}
+            "s3://my-bucket",
+            mount_overrides={"s3://my-bucket": "/data"},
+            skip_unavailable=True,
         )
 
     def test_at_restored_by_cp_multiple_mounts(self, tmp_path, monkeypatch) -> None:
@@ -354,6 +356,7 @@ class TestMountPersistence:
             "s3://my-bucket",
             "local:///tmp/b",
             mount_overrides={"s3://my-bucket": "/data"},
+            skip_unavailable=True,
         )
 
     def test_backward_compat_legacy_format(self, tmp_path, monkeypatch) -> None:
@@ -369,4 +372,8 @@ class TestMountPersistence:
             runner = CliRunner(env=_env_no_auto_json())
             runner.invoke(main, ["cp", "/s3/old-bucket/a", "/s3/old-bucket/b"])
 
-        mock_mount.assert_awaited_once_with("s3://old-bucket", mount_overrides=None)
+        mock_mount.assert_awaited_once_with(
+            "s3://old-bucket",
+            mount_overrides=None,
+            skip_unavailable=True,
+        )

@@ -18,6 +18,8 @@ set -euo pipefail
 PYTHON="${NEXUS_FS_PYTHON:-/Users/tafeng/nexus/.venv/bin/python}"
 TESTROOT="/tmp/nexus-fs-demo"
 
+nfs() { "$PYTHON" -c "from nexus.fs._cli import main; main()" "$@"; }
+
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 step()   { echo -e "\n${CYAN}[$1]${NC} $2"; }
 ok()     { echo -e "  ${GREEN}OK${NC} $1"; }
@@ -30,7 +32,7 @@ banner "Script 4: Multi-Backend Workspace"
 step "1/9" "Creating 4 backend directories..."
 for dir in inbox processed archive reports; do
     mkdir -p "$TESTROOT/$dir"
-    "$PYTHON" -c "from nexus.fs._cli import main; main(['unmount', 'local://$TESTROOT/$dir'])" 2>/dev/null || true
+    nfs unmount "local://$TESTROOT/$dir" 2>/dev/null || true
 done
 
 # Populate inbox with raw data files
@@ -64,7 +66,7 @@ ok "Created 4 backends, 3 inbox files"
 step "2/9" "Mounting all 4 backends..."
 for dir in inbox processed archive reports; do
     echo "  > nexus-fs mount local://$TESTROOT/$dir"
-    "$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'local://$TESTROOT/$dir'])" 2>&1
+    nfs mount "local://$TESTROOT/$dir" 2>&1
 done
 ok "4 backends mounted"
 
@@ -126,25 +128,16 @@ ok "Inbox files seeded into CAS"
 # ── Step 4: Process - copy from inbox to processed ───────────────────────────
 step "4/9" "Processing: inbox -> processed (via nexus-fs cp)..."
 echo "  > nexus-fs cp .../sales_2026_q1.csv -> processed"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-inbox/sales_2026_q1.csv', '/local/nexus-fs-demo-processed/sales_2026_q1.csv'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-inbox/sales_2026_q1.csv /local/nexus-fs-demo-processed/sales_2026_q1.csv 2>&1
 echo ""
 echo "  > nexus-fs cp .../events_march.json -> processed"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-inbox/events_march.json', '/local/nexus-fs-demo-processed/events_march.json'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-inbox/events_march.json /local/nexus-fs-demo-processed/events_march.json 2>&1
 ok "2 files processed"
 
 # ── Step 5: Archive - copy processed to archive ──────────────────────────────
 step "5/9" "Archiving: processed -> archive (via nexus-fs cp)..."
 echo "  > nexus-fs cp .../sales_2026_q1.csv -> archive"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-processed/sales_2026_q1.csv', '/local/nexus-fs-demo-archive/sales_2026_q1.csv'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-processed/sales_2026_q1.csv /local/nexus-fs-demo-archive/sales_2026_q1.csv 2>&1
 ok "Archived sales data"
 
 # ── Step 6: Generate reports via API (write, mkdir, stat) ────────────────────
@@ -256,10 +249,7 @@ ok "Pipeline verified"
 # ── Step 8: Copy large binary file ───────────────────────────────────────────
 step "8/9" "Copying binary file (model weights) to archive..."
 echo "  > nexus-fs cp .../model_weights.bin -> archive"
-"$PYTHON" -c "
-from nexus.fs._cli import main
-main(['cp', '/local/nexus-fs-demo-inbox/model_weights.bin', '/local/nexus-fs-demo-archive/model_weights.bin'])
-" 2>&1
+nfs cp /local/nexus-fs-demo-inbox/model_weights.bin /local/nexus-fs-demo-archive/model_weights.bin 2>&1
 ok "Binary file archived"
 
 # ── Step 9: Sync CAS data to filesystem for playground ───────────────────────
@@ -331,7 +321,7 @@ ok "Playground validation passed"
 
 # ── Step 11: Final mount list ────────────────────────────────────────────────
 step "11/11" "Final mount state..."
-"$PYTHON" -c "from nexus.fs._cli import main; main(['mount', 'list'])" 2>&1
+nfs mount list 2>&1
 
 banner "Multi-Backend Workflow Complete!"
 echo ""

@@ -114,6 +114,104 @@ def get_token_manager(db_path: str | None = None) -> Any:
     return _get_token_manager_cls()(db_path=db_path, encryption_key=encryption_key)
 
 
+def get_google_auth_url(
+    *,
+    service_name: str = "gws",
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    redirect_uri: str = "http://localhost",
+) -> str:
+    """Generate a Google OAuth authorization URL programmatically.
+
+    Returns the URL that the user (or agent) should visit to authorize.
+    No CLI interaction — suitable for embedding in web flows, agent
+    orchestration, or headless automation.
+
+    Args:
+        service_name: Google service scope set (gws, google-drive, gmail, google-calendar).
+        client_id: OAuth client ID. Falls back to NEXUS_OAUTH_GOOGLE_CLIENT_ID env var.
+        client_secret: OAuth client secret. Falls back to NEXUS_OAUTH_GOOGLE_CLIENT_SECRET env var.
+        redirect_uri: OAuth redirect URI. Defaults to http://localhost.
+
+    Returns:
+        The authorization URL string.
+
+    Raises:
+        ValueError: If client_id or client_secret is missing.
+    """
+    GoogleOAuthProvider = _il.import_module(
+        "nexus.bricks.auth.oauth.providers.google"
+    ).GoogleOAuthProvider
+
+    client_id = client_id or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
+    client_secret = client_secret or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
+    if not client_id:
+        raise ValueError("Google OAuth client ID not provided. Set NEXUS_OAUTH_GOOGLE_CLIENT_ID.")
+    if not client_secret:
+        raise ValueError(
+            "Google OAuth client secret not provided. Set NEXUS_OAUTH_GOOGLE_CLIENT_SECRET."
+        )
+
+    provider = GoogleOAuthProvider(
+        client_id=client_id,
+        client_secret=client_secret,
+        redirect_uri=redirect_uri,
+        scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
+        provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
+    )
+    return provider.get_authorization_url()
+
+
+def get_x_auth_url(
+    *,
+    client_id: str | None = None,
+    client_secret: str | None = None,
+    redirect_uri: str = "http://localhost",
+) -> tuple[str, dict[str, str]]:
+    """Generate an X (Twitter) OAuth authorization URL programmatically.
+
+    Returns the URL and PKCE data needed for the code exchange step.
+    No CLI interaction — suitable for embedding in web flows, agent
+    orchestration, or headless automation.
+
+    Args:
+        client_id: OAuth client ID. Falls back to NEXUS_OAUTH_X_CLIENT_ID env var.
+        client_secret: Optional OAuth client secret. Falls back to NEXUS_OAUTH_X_CLIENT_SECRET env var.
+        redirect_uri: OAuth redirect URI. Defaults to http://localhost.
+
+    Returns:
+        Tuple of (auth_url, pkce_data) where pkce_data contains 'code_verifier'.
+
+    Raises:
+        ValueError: If client_id is missing.
+    """
+    client_id = client_id or os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
+    client_secret = client_secret or os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
+    if not client_id:
+        raise ValueError("X OAuth client ID not provided. Set NEXUS_OAUTH_X_CLIENT_ID.")
+
+    provider = _get_x_oauth_provider_cls()(
+        client_id=client_id,
+        redirect_uri=redirect_uri,
+        scopes=[
+            "tweet.read",
+            "tweet.write",
+            "tweet.moderate.write",
+            "users.read",
+            "follows.read",
+            "offline.access",
+            "bookmark.read",
+            "bookmark.write",
+            "list.read",
+            "like.read",
+            "like.write",
+        ],
+        provider_name="x",
+        client_secret=client_secret,
+    )
+    return provider.get_authorization_url_with_pkce()
+
+
 def run_google_oauth_setup(
     *,
     user_email: str,
@@ -124,29 +222,17 @@ def run_google_oauth_setup(
     zone_id: str | None = None,
 ) -> None:
     """Run the Google OAuth browser/code flow for nexus-fs."""
-    GoogleOAuthProvider = _il.import_module(
-        "nexus.bricks.auth.oauth.providers.google"
-    ).GoogleOAuthProvider
-
-    client_id = client_id or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
-    client_secret = client_secret or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
-    if not client_id:
-        raise click.ClickException(
-            "Google OAuth client ID not provided. Set NEXUS_OAUTH_GOOGLE_CLIENT_ID first."
+    try:
+        auth_url = get_google_auth_url(
+            service_name=service_name,
+            client_id=client_id,
+            client_secret=client_secret,
         )
-    if not client_secret:
-        raise click.ClickException(
-            "Google OAuth client secret not provided. Set NEXUS_OAUTH_GOOGLE_CLIENT_SECRET first."
-        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    provider = GoogleOAuthProvider(
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri="http://localhost",
-        scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
-        provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
-    )
-    auth_url = provider.get_authorization_url()
+    # Resolve actual client_id for display (may have come from env var)
+    client_id = client_id or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID", "")
 
     console.print("\n[bold green]Google OAuth Setup[/bold green]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
@@ -160,6 +246,17 @@ def run_google_oauth_setup(
     auth_code = click.prompt("\nEnter authorization code")
 
     async def _exchange_and_store() -> str:
+        GoogleOAuthProvider = _il.import_module(
+            "nexus.bricks.auth.oauth.providers.google"
+        ).GoogleOAuthProvider
+        client_secret_resolved = client_secret or os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET", "")
+        provider = GoogleOAuthProvider(
+            client_id=client_id or "",
+            client_secret=client_secret_resolved,
+            redirect_uri="http://localhost",
+            scopes=_GOOGLE_SERVICE_SCOPES.get(service_name, _GOOGLE_SERVICE_SCOPES["gws"]),
+            provider_name=_GOOGLE_SERVICE_PROVIDER_NAMES.get(service_name, "google"),
+        )
         credential = await provider.exchange_code(auth_code)
         manager = get_token_manager(db_path)
         cred_id = await manager.store_credential(
@@ -190,32 +287,16 @@ def run_x_oauth_setup(
     zone_id: str | None = None,
 ) -> None:
     """Run the X OAuth browser/code flow for nexus-fs."""
-    client_id = client_id or os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
-    client_secret = client_secret or os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
-    if not client_id:
-        raise click.ClickException("X OAuth client ID not provided. Set NEXUS_OAUTH_X_CLIENT_ID.")
+    try:
+        auth_url, pkce_data = get_x_auth_url(
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    provider = _get_x_oauth_provider_cls()(
-        client_id=client_id,
-        redirect_uri="http://localhost",
-        scopes=[
-            "tweet.read",
-            "tweet.write",
-            "tweet.moderate.write",
-            "users.read",
-            "follows.read",
-            "offline.access",
-            "bookmark.read",
-            "bookmark.write",
-            "list.read",
-            "like.read",
-            "like.write",
-        ],
-        provider_name="x",
-        client_secret=client_secret,
-    )
-    auth_url, pkce_data = provider.get_authorization_url_with_pkce()
     code_verifier = pkce_data["code_verifier"]
+    client_id = client_id or os.getenv("NEXUS_OAUTH_X_CLIENT_ID", "")
 
     console.print("\n[bold green]X OAuth Setup[/bold green]")
     console.print(f"\n[bold]User:[/bold] {user_email}")
@@ -228,6 +309,26 @@ def run_x_oauth_setup(
     auth_code = click.prompt("\nEnter authorization code")
 
     async def _exchange_and_store() -> str:
+        client_secret_resolved = client_secret or os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
+        provider = _get_x_oauth_provider_cls()(
+            client_id=client_id or "",
+            redirect_uri="http://localhost",
+            scopes=[
+                "tweet.read",
+                "tweet.write",
+                "tweet.moderate.write",
+                "users.read",
+                "follows.read",
+                "offline.access",
+                "bookmark.read",
+                "bookmark.write",
+                "list.read",
+                "like.read",
+                "like.write",
+            ],
+            provider_name="x",
+            client_secret=client_secret_resolved,
+        )
         credential = await provider.exchange_code_pkce(auth_code, code_verifier)
         manager = get_token_manager(db_path)
         cred_id = await manager.store_credential(

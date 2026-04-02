@@ -349,9 +349,9 @@ Migration phases (incremental, each a PR):
 | Phase | Status | Relationship to §7 |
 |-------|--------|-------------------|
 | A-G | Done | Logic **reused verbatim** in `kernel::sys_read/write` |
-| H (all Tier 1 syscalls) | Pending | Adds `sys_stat/setattr/...` to SyscallEngine. These become `kernel::sys_*` functions directly. |
-| I (io_uring) | Pending | Orthogonal — applies to the kernel I/O layer regardless of boundary. |
-| **§7 collapse** | **Future** | Happens after H. Deletes SyscallEngine + NexusFilesystemABC, promotes kernel functions to top-level. |
+| H (all Tier 1 syscalls) | Done | `sys_stat` + `plan_stat/unlink/rename` in SyscallEngine. These become `kernel::sys_*` functions directly. |
+| I (io_uring) | **Deferred indefinitely** | Evaluated: ~1-2μs per syscall (negligible). After §7 collapse, Rust-native async I/O (tokio/rayon) covers batch workloads without Linux-only branching. |
+| **§7 collapse** | **Next** | Deletes SyscallEngine + NexusFilesystemABC, promotes kernel functions to top-level. |
 
 The key insight: **Phase H is the last phase that adds logic.** The §7
 collapse is a **refactoring** that changes the boundary, not the logic.

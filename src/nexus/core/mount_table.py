@@ -143,6 +143,9 @@ class MountTable:
             stream_backend_factory=stream_backend_factory,
         )
         if self._rust is not None:
+            _backend_name = backend.name
+            if not isinstance(_backend_name, str):
+                _backend_name = str(_backend_name)
             _local_root = (
                 str(getattr(backend, "root_path", None))
                 if getattr(backend, "has_root_path", False)
@@ -154,7 +157,7 @@ class MountTable:
                 readonly,
                 admin_only,
                 io_profile,
-                backend.name,
+                _backend_name,
                 _local_root,
                 True,  # fsync
             )

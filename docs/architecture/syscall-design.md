@@ -34,14 +34,14 @@ All path-addressed. No hash-addressing (CAS is driver detail, not kernel concern
 |---|-------|---------|-----------|-----------|
 | 1 | Content | `sys_read` | `(path, count=None, offset=0) → bytes` | `pread(2)` |
 | 2 | Content | `sys_write` | `(path, buf, count=None, offset=0) → dict` | `write(2)` |
-| 3 | Metadata | `sys_stat` | `(path) → dict \| None` | `stat(2)` |
+| 3 | Metadata | `sys_stat` | `(path, include_lock=False) → dict \| None` | `stat(2)` — include_lock=True appends advisory lock state (zero cost when False) |
 | 4 | Metadata | `sys_setattr` | `(path, **attrs) → dict` | `chmod/chown/utimes` + `mknod` (DT_DIR, DT_PIPE, DT_STREAM, DT_MOUNT) |
 | 5 | Namespace | `sys_unlink` | `(path, recursive=False) → dict` | `unlink(2)` |
 | 6 | Namespace | `sys_rename` | `(old, new) → dict` | `rename(2)` |
 | 7 | Namespace | `sys_copy` | `(src, dst) → dict` | — (server-side copy, Issue #3329) |
-| 8 | Directory | `sys_readdir` | `(path, recursive=True, limit=None) → list` | `readdir(3)` |
-| 9 | Locking | `sys_lock` | `(path, mode, ttl, max_holders) → str \| None` | `flock(2)` |
-| 10 | Locking | `sys_unlock` | `(path, lock_id) → bool` | `flock(LOCK_UN)` |
+| 8 | Directory | `sys_readdir` | `(path, recursive=True, limit=None) → list` | `readdir(3)` — `/__sys__/locks/` returns active locks (like `/proc/locks`) |
+| 9 | Locking | `sys_lock` | `(path, mode, ttl, max_holders, lock_id=None) → str \| None` | `fcntl(F_SETLK)` — acquire (lock_id=None) or extend TTL (lock_id=existing) |
+| 10 | Locking | `sys_unlock` | `(path, lock_id=None, force=False) → bool` | `flock(LOCK_UN)` — release by lock_id, or force-release all holders |
 | 11 | Watch | `sys_watch` | `(path, timeout, recursive) → dict \| None` | `inotify(7)` |
 
 ### Tier 2 — Concrete Convenience (not abstract, composing Tier 1)
@@ -89,6 +89,7 @@ NexusFS inherits them — callers use `nx.read(path)` directly.
 | `write_batch(files)` | N × `write()` | Batch file writes |
 | `access(path)` | `sys_stat` | Existence check |
 | `is_directory(path)` | `sys_stat` | Directory check |
+| `lock_acquire(path, mode, ttl)` | `sys_lock` | Dict wrapper for gRPC Call RPC (sys_lock returns raw str) |
 | `lock(path, mode, timeout)` | `sys_lock` (retry loop) | Blocking lock (like `fcntl(F_SETLKW)`) |
 | `unlock(lock_id, path)` | `sys_unlock` | Release lock |
 | `locked(path)` | `lock` + `unlock` | Async context manager |
@@ -138,11 +139,21 @@ inode types all flow through it:
 - **Idempotent open**: Same `entry_type` on existing path recovers the buffer (pipes/streams)
 - **`/__sys__/`**: Kernel management namespace (service register, config, etc.)
 
-### 4.4 sys_lock / sys_unlock: Advisory locks (POSIX flock)
+### 4.4 sys_lock / sys_unlock: Advisory locks (POSIX fcntl)
 
-Exposed as kernel syscalls (not service-layer). `sys_lock` is non-blocking
-(`F_SETLK`); Tier 2 `lock()` provides blocking retry (`F_SETLKW`); Tier 2
-`locked()` provides async context manager. See `lock-architecture.md` §3.
+Exposed as kernel syscalls (not service-layer). Two syscalls cover all lock
+operations (POSIX `fcntl(F_SETLK)` pattern — same syscall for acquire and extend):
+
+- `sys_lock(path, lock_id=None)` — acquire (lock_id=None) or extend TTL (lock_id=existing)
+- `sys_unlock(path, lock_id=None, force=False)` — release by lock_id or force-release all holders
+
+Lock state query via existing syscalls (no dedicated lock-query syscall):
+- `sys_stat(path, include_lock=True)` — appends lock info to stat result (zero cost when False)
+- `sys_readdir("/__sys__/locks/")` — list all active locks (virtual namespace, like `/proc/locks`)
+
+Tier 2: `lock_acquire()` wraps sys_lock with dict return for gRPC; `lock()`
+provides blocking retry (`F_SETLKW`); `locked()` provides async context manager.
+See `lock-architecture.md` §3.
 
 ### 4.5 sys_copy: Server-side copy (Issue #3329)
 
@@ -181,8 +192,8 @@ between DataNodes — separate from NameNode API).
 | `sys_copy` | ✅ | No direct POSIX equivalent; server-side optimization |
 | `sys_read` | ✅ | count/offset (pread semantics) |
 | `sys_write` | ✅ | count/offset, content-only (SRP) |
-| `sys_lock` | ✅ | Non-blocking flock(F_SETLK) |
-| `sys_unlock` | ✅ | flock(LOCK_UN) |
+| `sys_lock` | ✅ | fcntl(F_SETLK) — acquire + extend (lock_id param) |
+| `sys_unlock` | ✅ | flock(LOCK_UN) — release + force (force param) |
 | `sys_watch` | ✅ | inotify(7) equivalent |
 
 Tier 2 demotions (no longer Tier 1):

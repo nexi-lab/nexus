@@ -11,6 +11,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -18,7 +19,7 @@ use std::time::{Duration, Instant};
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LockMode {
+pub(crate) enum LockMode {
     Read,
     Write,
 }
@@ -118,14 +119,13 @@ fn ancestors(path: &str) -> Vec<&str> {
 // VFSLockManager
 // ---------------------------------------------------------------------------
 
-/// Rust-accelerated VFS lock manager with read/write semantics and hierarchical
-/// path awareness (ancestor walk).
-///
-/// All mutations (acquire, release) are serialized through a `parking_lot::Mutex`
-/// to eliminate TOCTOU race conditions between conflict checks and state updates.
-/// A `Condvar` wakes blocked threads immediately when a lock is released.
-#[pyclass]
-pub struct VFSLockManager {
+// ---------------------------------------------------------------------------
+// Inner (shared via Arc with SyscallEngine)
+// ---------------------------------------------------------------------------
+
+/// Core VFS lock state — shared via `Arc` with SyscallEngine for zero-cost
+/// lock acquire/release in the Rust fast path (Phase G).
+pub(crate) struct VFSLockManagerInner {
     state: Mutex<LockState>,
     notify: Condvar,
     next_handle: AtomicU64,
@@ -138,7 +138,81 @@ pub struct VFSLockManager {
     timeout_count: AtomicU64,
 }
 
-impl VFSLockManager {
+impl VFSLockManagerInner {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(LockState {
+                locks: BTreeMap::new(),
+                handles: HashMap::new(),
+            }),
+            notify: Condvar::new(),
+            next_handle: AtomicU64::new(0),
+            acquire_count: AtomicU64::new(0),
+            release_count: AtomicU64::new(0),
+            contention_count: AtomicU64::new(0),
+            total_acquire_ns: AtomicU64::new(0),
+            timeout_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Non-blocking try-acquire (for Rust-internal callers like SyscallEngine).
+    /// Returns non-zero handle on success, 0 on conflict.
+    pub(crate) fn try_acquire(&self, path: &str, mode: LockMode) -> u64 {
+        let norm_path = normalize_path(path);
+        let start = Instant::now();
+        let mut state = self.state.lock();
+        match Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode) {
+            Some(handle) => {
+                let elapsed = start.elapsed().as_nanos() as u64;
+                self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                handle
+            }
+            None => {
+                self.contention_count.fetch_add(1, Ordering::Relaxed);
+                0
+            }
+        }
+    }
+
+    /// Release a previously acquired lock by handle (for Rust-internal callers).
+    pub(crate) fn do_release(&self, handle: u64) -> bool {
+        let released = {
+            let mut state = self.state.lock();
+
+            let info = match state.handles.remove(&handle) {
+                Some(info) => info,
+                None => return false,
+            };
+
+            if let Some(entry) = state.locks.get_mut(&info.path) {
+                match info.mode {
+                    LockMode::Read => {
+                        entry.readers = entry.readers.saturating_sub(1);
+                    }
+                    LockMode::Write => {
+                        if entry.writer == Some(handle) {
+                            entry.writer = None;
+                        }
+                    }
+                }
+
+                if entry.is_idle() {
+                    state.locks.remove(&info.path);
+                }
+            }
+
+            true
+        };
+
+        if released {
+            self.notify.notify_all();
+            self.release_count.fetch_add(1, Ordering::Relaxed);
+        }
+
+        released
+    }
+
     /// Check whether `path` in `mode` conflicts with any *ancestor* locks.
     fn ancestor_conflict(locks: &BTreeMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
         for anc in ancestors(path) {
@@ -160,15 +234,7 @@ impl VFSLockManager {
         false
     }
 
-    /// Check whether any *descendant* path is locked in a way that conflicts.
-    ///
-    /// Uses BTreeMap range scan for O(log n + m) where m = matching descendants,
-    /// instead of O(n) full iteration over all locks.
-    ///
-    /// The range `prefix.."upper"` captures exactly keys starting with `prefix`,
-    /// where `upper` replaces the trailing '/' (0x2F) with '0' (0x30, the next
-    /// ASCII codepoint). Since '/' and '0' are adjacent in ASCII, no valid path
-    /// character falls between them.
+    /// Check whether any *descendant* path is locked in a conflicting way.
     fn descendant_conflict(
         locks: &BTreeMap<String, LockEntry>,
         path: &str,
@@ -180,7 +246,6 @@ impl VFSLockManager {
             format!("{}/", path)
         };
 
-        // Exclusive upper bound: replace trailing '/' with '0' (next ASCII char).
         let mut upper = prefix.clone();
         upper.pop();
         upper.push('0');
@@ -203,24 +268,19 @@ impl VFSLockManager {
     }
 
     /// Attempt a single non-blocking acquire under the lock.
-    /// Caller must hold `self.state`.
     fn try_acquire_locked(
         state: &mut LockState,
         next_handle: &AtomicU64,
         path: &str,
         mode: LockMode,
     ) -> Option<u64> {
-        // 1. Ancestor conflicts.
         if Self::ancestor_conflict(&state.locks, path, mode) {
             return None;
         }
-
-        // 2. Descendant conflicts.
         if Self::descendant_conflict(&state.locks, path, mode) {
             return None;
         }
 
-        // 3. Target path.
         let entry = state
             .locks
             .entry(path.to_string())
@@ -231,7 +291,6 @@ impl VFSLockManager {
                 if entry.writer.is_some() {
                     return None;
                 }
-                // fetch_add is unique regardless of Ordering (monotonic counter).
                 let handle = next_handle.fetch_add(1, Ordering::Relaxed) + 1;
                 entry.readers += 1;
                 state.handles.insert(
@@ -262,22 +321,27 @@ impl VFSLockManager {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VFSLockManager (PyO3 class)
+// ---------------------------------------------------------------------------
+
+/// Rust-accelerated VFS lock manager with read/write semantics and hierarchical
+/// path awareness (ancestor walk).
+///
+/// Arc<VFSLockManagerInner> enables zero-cost sharing with SyscallEngine (Phase G).
+#[pyclass]
+pub struct VFSLockManager {
+    pub(crate) inner: Arc<VFSLockManagerInner>,
+}
+
+// Note: conflict checks, try_acquire_locked moved to VFSLockManagerInner above.
+
 #[pymethods]
 impl VFSLockManager {
     #[new]
     fn new() -> Self {
         Self {
-            state: Mutex::new(LockState {
-                locks: BTreeMap::new(),
-                handles: HashMap::new(),
-            }),
-            notify: Condvar::new(),
-            next_handle: AtomicU64::new(0),
-            acquire_count: AtomicU64::new(0),
-            release_count: AtomicU64::new(0),
-            contention_count: AtomicU64::new(0),
-            total_acquire_ns: AtomicU64::new(0),
-            timeout_count: AtomicU64::new(0),
+            inner: Arc::new(VFSLockManagerInner::new()),
         }
     }
 
@@ -301,6 +365,7 @@ impl VFSLockManager {
         };
 
         let norm_path = normalize_path(path);
+        let inner = &self.inner;
 
         // Release the GIL for the (potentially blocking) acquire loop.
         let result = py.detach(|| {
@@ -308,21 +373,24 @@ impl VFSLockManager {
 
             // Fast path: non-blocking try under mutex.
             {
-                let mut state = self.state.lock();
-                if let Some(handle) =
-                    Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, lock_mode)
-                {
+                let mut state = inner.state.lock();
+                if let Some(handle) = VFSLockManagerInner::try_acquire_locked(
+                    &mut state,
+                    &inner.next_handle,
+                    &norm_path,
+                    lock_mode,
+                ) {
                     let elapsed = start.elapsed().as_nanos() as u64;
-                    self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
-                    self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                    inner.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                    inner.acquire_count.fetch_add(1, Ordering::Relaxed);
                     return handle;
                 }
             }
 
             // If timeout == 0 (try-acquire), return immediately.
             if timeout_ms == 0 {
-                self.contention_count.fetch_add(1, Ordering::Relaxed);
-                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                inner.contention_count.fetch_add(1, Ordering::Relaxed);
+                inner.timeout_count.fetch_add(1, Ordering::Relaxed);
                 return 0;
             }
 
@@ -330,30 +398,31 @@ impl VFSLockManager {
             let deadline = start + Duration::from_millis(timeout_ms);
 
             loop {
-                self.contention_count.fetch_add(1, Ordering::Relaxed);
+                inner.contention_count.fetch_add(1, Ordering::Relaxed);
 
-                let mut state = self.state.lock();
+                let mut state = inner.state.lock();
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
-                    self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                    inner.timeout_count.fetch_add(1, Ordering::Relaxed);
                     return 0;
                 }
 
-                // Wait for a release signal, up to remaining time.
-                let wait_result = self.notify.wait_for(&mut state, remaining);
+                let wait_result = inner.notify.wait_for(&mut state, remaining);
 
-                // Try to acquire regardless of spurious wakeup or timeout.
-                if let Some(handle) =
-                    Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, lock_mode)
-                {
+                if let Some(handle) = VFSLockManagerInner::try_acquire_locked(
+                    &mut state,
+                    &inner.next_handle,
+                    &norm_path,
+                    lock_mode,
+                ) {
                     let elapsed = start.elapsed().as_nanos() as u64;
-                    self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
-                    self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                    inner.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                    inner.acquire_count.fetch_add(1, Ordering::Relaxed);
                     return handle;
                 }
 
                 if wait_result.timed_out() {
-                    self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                    inner.timeout_count.fetch_add(1, Ordering::Relaxed);
                     return 0;
                 }
             }
@@ -363,58 +432,21 @@ impl VFSLockManager {
     }
 
     /// Release a previously acquired lock by handle.
-    ///
-    /// Returns `true` if the handle was valid and released, `false` otherwise.
     fn release(&self, handle: u64) -> bool {
-        let released = {
-            let mut state = self.state.lock();
-
-            let info = match state.handles.remove(&handle) {
-                Some(info) => info,
-                None => return false,
-            };
-
-            if let Some(entry) = state.locks.get_mut(&info.path) {
-                match info.mode {
-                    LockMode::Read => {
-                        entry.readers = entry.readers.saturating_sub(1);
-                    }
-                    LockMode::Write => {
-                        if entry.writer == Some(handle) {
-                            entry.writer = None;
-                        }
-                    }
-                }
-
-                if entry.is_idle() {
-                    state.locks.remove(&info.path);
-                }
-            }
-
-            true
-        };
-        // Guard dropped here.
-
-        if released {
-            // Wake all waiters so they can re-check.
-            self.notify.notify_all();
-            self.release_count.fetch_add(1, Ordering::Relaxed);
-        }
-
-        released
+        self.inner.do_release(handle)
     }
 
     /// Check whether `path` currently has any active lock (read or write).
     fn is_locked(&self, path: &str) -> bool {
         let norm = normalize_path(path);
-        let state = self.state.lock();
+        let state = self.inner.state.lock();
         state.locks.get(&norm).is_some_and(|entry| !entry.is_idle())
     }
 
     /// Return lock-holder information for `path`, or `None` if unlocked.
     fn holders(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
         let norm = normalize_path(path);
-        let state = self.state.lock();
+        let state = self.inner.state.lock();
         match state.locks.get(&norm) {
             Some(entry) if !entry.is_idle() => {
                 let dict = PyDict::new(py);
@@ -429,23 +461,29 @@ impl VFSLockManager {
 
     /// Return a dict of aggregate metrics.
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let acquires = self.acquire_count.load(Ordering::Relaxed);
-        let total_ns = self.total_acquire_ns.load(Ordering::Relaxed);
+        let acquires = self.inner.acquire_count.load(Ordering::Relaxed);
+        let total_ns = self.inner.total_acquire_ns.load(Ordering::Relaxed);
         let avg_ns = if acquires > 0 { total_ns / acquires } else { 0 };
 
-        let state = self.state.lock();
+        let state = self.inner.state.lock();
         let active_locks = state.locks.len();
         let active_handles = state.handles.len();
         drop(state);
 
         let dict = PyDict::new(py);
         dict.set_item("acquire_count", acquires)?;
-        dict.set_item("release_count", self.release_count.load(Ordering::Relaxed))?;
+        dict.set_item(
+            "release_count",
+            self.inner.release_count.load(Ordering::Relaxed),
+        )?;
         dict.set_item(
             "contention_count",
-            self.contention_count.load(Ordering::Relaxed),
+            self.inner.contention_count.load(Ordering::Relaxed),
         )?;
-        dict.set_item("timeout_count", self.timeout_count.load(Ordering::Relaxed))?;
+        dict.set_item(
+            "timeout_count",
+            self.inner.timeout_count.load(Ordering::Relaxed),
+        )?;
         dict.set_item("active_locks", active_locks)?;
         dict.set_item("active_handles", active_handles)?;
         dict.set_item("avg_acquire_ns", avg_ns)?;
@@ -456,13 +494,13 @@ impl VFSLockManager {
     /// Number of actively locked paths.
     #[getter]
     fn active_locks(&self) -> usize {
-        self.state.lock().locks.len()
+        self.inner.state.lock().locks.len()
     }
 
     /// Number of active handles.
     #[getter]
     fn active_handles(&self) -> usize {
-        self.state.lock().handles.len()
+        self.inner.state.lock().handles.len()
     }
 }
 
@@ -478,11 +516,14 @@ mod tests {
         VFSLockManager::new()
     }
 
-    /// Helper: acquire directly through the mutex (bypasses PyO3 / GIL).
+    /// Helper: acquire directly through the inner (bypasses PyO3 / GIL).
     fn acquire(mgr: &VFSLockManager, path: &str, mode: LockMode) -> Option<u64> {
-        let norm = normalize_path(path);
-        let mut state = mgr.state.lock();
-        VFSLockManager::try_acquire_locked(&mut state, &mgr.next_handle, &norm, mode)
+        let handle = mgr.inner.try_acquire(path, mode);
+        if handle > 0 {
+            Some(handle)
+        } else {
+            None
+        }
     }
 
     // -- path normalization ------------------------------------------------
@@ -692,7 +733,7 @@ mod tests {
         let h2 = acquire(&mgr, "/y", LockMode::Write).unwrap();
         mgr.release(h1);
         mgr.release(h2);
-        assert_eq!(mgr.release_count.load(Ordering::Relaxed), 2);
+        assert_eq!(mgr.inner.release_count.load(Ordering::Relaxed), 2);
     }
 
     // -- unicode path -------------------------------------------------------

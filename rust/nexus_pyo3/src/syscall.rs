@@ -11,9 +11,11 @@
 
 use crate::dcache::{RustDCache, RustDCacheInner, DT_EXTERNAL, DT_PIPE, DT_STREAM};
 use crate::dispatch::{PathTrie, PathTrieInner};
+use crate::lock::{LockMode, VFSLockManager, VFSLockManagerInner};
 use crate::router::{RustPathRouter, RustPathRouterInner};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // ── Action constants ────────────────────────────────────────────────────
@@ -97,42 +99,72 @@ pub struct WritePlan {
 
 // ── SyscallEngine ───────────────────────────────────────────────────────
 
-/// Single-FFI syscall planner holding shared refs to DCache, Router, and Trie.
+/// Single-FFI syscall facade holding shared refs to DCache, Router, Trie, and VFS Lock.
 ///
 /// Constructed once during NexusFS initialization, reused for every syscall.
-/// All three inner Arcs point to the same live data as the Python-facing
-/// RustDCache, RustPathRouter, and PathTrie objects.
+/// All inner Arcs point to the same live data as the Python-facing objects.
+///
+/// Phase G: gains VFS lock integration + hook counters. `sys_read`/`sys_write`
+/// now have complete syscall semantics (validate → route → dcache → lock → I/O).
 #[pyclass]
 pub struct SyscallEngine {
     dcache: Arc<RustDCacheInner>,
     router: Arc<RustPathRouterInner>,
     trie: Arc<PathTrieInner>,
+    vfs_lock: Option<Arc<VFSLockManagerInner>>,
+    read_hook_count: AtomicU64,
+    write_hook_count: AtomicU64,
 }
 
 #[pymethods]
 impl SyscallEngine {
     /// Construct from existing Python objects.  Extracts Arc refs from each.
+    ///
+    /// `vfs_lock` is optional for backward compatibility (tests without lock manager).
     #[new]
-    fn new(dcache: &RustDCache, router: &RustPathRouter, trie: &PathTrie) -> Self {
+    #[pyo3(signature = (dcache, router, trie, vfs_lock=None))]
+    fn new(
+        dcache: &RustDCache,
+        router: &RustPathRouter,
+        trie: &PathTrie,
+        vfs_lock: Option<&VFSLockManager>,
+    ) -> Self {
         Self {
             dcache: Arc::clone(&dcache.inner),
             router: Arc::clone(&router.inner),
             trie: Arc::clone(&trie.inner),
+            vfs_lock: vfs_lock.map(|lm| Arc::clone(&lm.inner)),
+            read_hook_count: AtomicU64::new(0),
+            write_hook_count: AtomicU64::new(0),
         }
     }
 
-    /// Execute read entirely in Rust if possible (Phase E / E.1 / F).
+    /// Update hook count for an operation (Phase G).
+    /// Called by Python KernelDispatch when hooks are registered/unregistered.
+    fn set_hook_count(&self, op: &str, count: u64) {
+        match op {
+            "read" => self.read_hook_count.store(count, Ordering::Relaxed),
+            "write" => self.write_hook_count.store(count, Ordering::Relaxed),
+            _ => {}
+        }
+    }
+
+    /// Rust syscall: read file content (Phase G — complete syscall semantics).
     ///
-    /// Priority: CAS (pure Rust) → Python backend callback → None (Python fallback).
-    /// Phase F: on CAS miss, calls Python backend.read_content() via PyO3 callback,
-    /// avoiding the full Python validate+route+dcache overhead (~15-20μs savings).
-    fn execute_read<'py>(
+    /// Checks hook count → plans → acquires VFS read lock → CAS / backend I/O → releases lock.
+    /// Returns None if hooks are present, dcache miss, or I/O fails → Python fallback.
+    fn sys_read<'py>(
         &self,
         py: Python<'py>,
         path: &str,
         zone_id: &str,
         is_admin: bool,
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        // 0. Hook check — if hooks registered, Python must run them
+        if self.read_hook_count.load(Ordering::Relaxed) > 0 {
+            return Ok(None);
+        }
+
         let plan = self.plan_read(path, zone_id, is_admin);
         if plan.action != ACTION_DCACHE_HIT {
             return Ok(None);
@@ -141,27 +173,49 @@ impl SyscallEngine {
             Some(e) if !e.is_empty() => e.as_str(),
             _ => return Ok(None),
         };
-        // 1. CAS fast path (pure Rust, ~2μs)
-        if let Some(data) = self.router.read_cas(&plan.mount_point, etag) {
-            return Ok(Some(PyBytes::new(py, &data)));
+
+        // 1. VFS read lock (non-blocking try-acquire)
+        let lock_handle = self
+            .vfs_lock
+            .as_ref()
+            .map(|lm| lm.try_acquire(path, LockMode::Read));
+        if let Some(0) = lock_handle {
+            // Lock contention — fall back to Python (which has blocking/timeout)
+            return Ok(None);
         }
-        // 2. Python backend callback (Phase F, ~12-15μs)
-        if let Some(py_result) = self.router.read_backend(py, &plan.mount_point, etag) {
-            // Backend returns bytes — extract to PyBytes
+
+        // 2. CAS fast path (pure Rust, ~2μs)
+        let result = if let Some(data) = self.router.read_cas(&plan.mount_point, etag) {
+            Ok(Some(PyBytes::new(py, &data)))
+        } else if let Some(py_result) = self.router.read_backend(py, &plan.mount_point, etag) {
+            // 3. Python backend callback (Phase F, ~12-15μs)
             if let Ok(data) = py_result.extract::<Vec<u8>>(py) {
-                return Ok(Some(PyBytes::new(py, &data)));
+                Ok(Some(PyBytes::new(py, &data)))
+            } else {
+                Ok(None)
+            }
+        } else {
+            // 4. Both failed → None → Python full path fallback
+            Ok(None)
+        };
+
+        // 5. Release VFS lock
+        if let Some(handle) = lock_handle {
+            if handle > 0 {
+                if let Some(lm) = &self.vfs_lock {
+                    lm.do_release(handle);
+                }
             }
         }
-        // 3. Both failed → None → Python full path fallback
-        Ok(None)
+
+        result
     }
 
-    /// Execute write's CAS / backend portion (Phase E / E.1 / F).
+    /// Rust syscall: write file content (Phase G — complete syscall semantics).
     ///
-    /// Priority: CAS (pure Rust) → Python backend callback → None (Python fallback).
-    /// Phase F: on CAS miss, calls Python backend.write_content() via PyO3 callback.
-    /// Returns content_id (hash) on success.
-    fn execute_write(
+    /// Checks hook count → plans → acquires VFS write lock → CAS / backend I/O → releases lock.
+    /// Returns content_id on success, None for Python fallback.
+    fn sys_write(
         &self,
         py: Python<'_>,
         path: &str,
@@ -169,6 +223,11 @@ impl SyscallEngine {
         content: &[u8],
         is_admin: bool,
     ) -> PyResult<Option<String>> {
+        // 0. Hook check
+        if self.write_hook_count.load(Ordering::Relaxed) > 0 {
+            return Ok(None);
+        }
+
         let plan = self.plan_write(path, zone_id, is_admin);
         if plan.action == ACTION_ERROR {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -178,21 +237,45 @@ impl SyscallEngine {
         if plan.action != ACTION_DCACHE_HIT {
             return Ok(None);
         }
-        // 1. CAS fast path (pure Rust)
-        if let Some(hash) = self.router.write_cas(&plan.mount_point, content) {
-            return Ok(Some(hash));
+
+        // 1. VFS write lock (non-blocking try-acquire)
+        let lock_handle = self
+            .vfs_lock
+            .as_ref()
+            .map(|lm| lm.try_acquire(path, LockMode::Write));
+        if let Some(0) = lock_handle {
+            return Ok(None);
         }
-        // 2. Python backend callback (Phase F)
-        if let Some(write_result) = self.router.write_backend(py, &plan.mount_point, content) {
-            // WriteResult.content_id → String
+
+        // 2. CAS fast path (pure Rust)
+        let result = if let Some(hash) = self.router.write_cas(&plan.mount_point, content) {
+            Ok(Some(hash))
+        } else if let Some(write_result) = self.router.write_backend(py, &plan.mount_point, content)
+        {
+            // 3. Python backend callback (Phase F)
             if let Ok(content_id) = write_result.getattr(py, "content_id") {
                 if let Ok(s) = content_id.extract::<String>(py) {
-                    return Ok(Some(s));
+                    Ok(Some(s))
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        };
+
+        // 4. Release VFS lock
+        if let Some(handle) = lock_handle {
+            if handle > 0 {
+                if let Some(lm) = &self.vfs_lock {
+                    lm.do_release(handle);
                 }
             }
         }
-        // 3. Both failed → None → Python full path fallback
-        Ok(None)
+
+        result
     }
 
     /// Plan a read operation in a single FFI call.

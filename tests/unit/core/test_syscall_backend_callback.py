@@ -71,7 +71,7 @@ class TestExecuteReadBackendCallback:
         engine, dcache, backend = engine_with_backend
         dcache.put("/workspace/test.txt", "mock-s3", "test.txt", 100, DT_REG, etag="hash123")
 
-        result = engine.execute_read("/workspace/test.txt", "root", False)
+        result = engine.sys_read("/workspace/test.txt", "root", False)
         assert result is not None
         assert result == b"data from python backend"
         backend.read_content.assert_called_once_with("hash123")
@@ -82,13 +82,13 @@ class TestExecuteReadBackendCallback:
         backend.read_content.return_value = b"\x00\x01\x02binary"
         dcache.put("/workspace/bin.dat", "mock-s3", "", 7, DT_REG, etag="binhash")
 
-        result = engine.execute_read("/workspace/bin.dat", "root", False)
+        result = engine.sys_read("/workspace/bin.dat", "root", False)
         assert result == b"\x00\x01\x02binary"
 
     def test_dcache_miss_returns_none(self, engine_with_backend):
         """DCache miss → None (backend not called)."""
         engine, _, backend = engine_with_backend
-        result = engine.execute_read("/workspace/missing.txt", "root", False)
+        result = engine.sys_read("/workspace/missing.txt", "root", False)
         assert result is None
         backend.read_content.assert_not_called()
 
@@ -96,7 +96,7 @@ class TestExecuteReadBackendCallback:
         """Entry without etag → None (backend not called)."""
         engine, dcache, backend = engine_with_backend
         dcache.put("/workspace/new.txt", "mock-s3", "", 0, DT_REG)
-        result = engine.execute_read("/workspace/new.txt", "root", False)
+        result = engine.sys_read("/workspace/new.txt", "root", False)
         assert result is None
         backend.read_content.assert_not_called()
 
@@ -112,7 +112,7 @@ class TestExecuteWriteBackendCallback:
         engine, dcache, backend = engine_with_backend
         dcache.put("/workspace/test.txt", "mock-s3", "test.txt", 100, DT_REG, etag="oldhash")
 
-        result = engine.execute_write("/workspace/test.txt", "root", b"new content", False)
+        result = engine.sys_write("/workspace/test.txt", "root", b"new content", False)
         assert result is not None
         assert result == "abc123hash"
         backend.write_content.assert_called_once_with(b"new content")
@@ -123,13 +123,13 @@ class TestExecuteWriteBackendCallback:
         backend.write_content.return_value = WriteResult(content_id="sha256hexhash")
         dcache.put("/workspace/f.txt", "mock-s3", "", 0, DT_REG, etag="old")
 
-        result = engine.execute_write("/workspace/f.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
         assert result == "sha256hexhash"
 
     def test_dcache_miss_returns_none(self, engine_with_backend):
         """DCache miss → None (backend not called)."""
         engine, _, backend = engine_with_backend
-        result = engine.execute_write("/workspace/missing.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/missing.txt", "root", b"data", False)
         assert result is None
         backend.write_content.assert_not_called()
 
@@ -169,7 +169,7 @@ class TestCASPreferredOverBackend:
                 "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
             )
 
-            result = engine.execute_read("/workspace/f.txt", "root", False)
+            result = engine.sys_read("/workspace/f.txt", "root", False)
             assert result == content
             # Backend should NOT be called — CAS served it
             mock_backend.read_content.assert_not_called()
@@ -188,7 +188,7 @@ class TestCASPreferredOverBackend:
             engine = SyscallEngine(dcache, router, trie)
 
             dcache.put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
-            result = engine.execute_write("/workspace/f.txt", "root", b"new data", False)
+            result = engine.sys_write("/workspace/f.txt", "root", b"new data", False)
             assert result is not None
             assert len(result) == 64  # BLAKE3 hex
             mock_backend.write_content.assert_not_called()
@@ -206,7 +206,7 @@ class TestBackendExceptionReturnsNone:
         backend.read_content.side_effect = RuntimeError("S3 timeout")
         dcache.put("/workspace/test.txt", "mock-s3", "test.txt", 100, DT_REG, etag="hash123")
 
-        result = engine.execute_read("/workspace/test.txt", "root", False)
+        result = engine.sys_read("/workspace/test.txt", "root", False)
         assert result is None  # Not an exception — just None for fallback
 
     def test_write_exception_returns_none(self, engine_with_backend):
@@ -215,7 +215,7 @@ class TestBackendExceptionReturnsNone:
         backend.write_content.side_effect = OSError("write failed")
         dcache.put("/workspace/test.txt", "mock-s3", "test.txt", 100, DT_REG, etag="hash123")
 
-        result = engine.execute_write("/workspace/test.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/test.txt", "root", b"data", False)
         assert result is None
 
 
@@ -234,7 +234,7 @@ class TestNoBackendFallback:
         engine = SyscallEngine(dcache, router, trie)
         dcache.put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
-        result = engine.execute_read("/workspace/test.txt", "root", False)
+        result = engine.sys_read("/workspace/test.txt", "root", False)
         assert result is None
 
     def test_no_backend_write_returns_none(self):
@@ -246,5 +246,5 @@ class TestNoBackendFallback:
         engine = SyscallEngine(dcache, router, trie)
         dcache.put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
-        result = engine.execute_write("/workspace/test.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/test.txt", "root", b"data", False)
         assert result is None

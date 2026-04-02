@@ -436,11 +436,13 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
     )
 
 
-def _boot_fs(*extra_uris: str):
-    """Boot a SlimNexusFS from persisted mounts + optional extra URIs.
+def _boot_fs():
+    """Boot a SlimNexusFS from persisted mounts only.
 
     Shared by ls, cat, write, edit, rm, mkdir, stat.
-    Returns an async coroutine that yields the facade.
+    Uses only previously persisted mounts — does not accept ad-hoc URIs
+    to avoid mutating global mount state as a side effect of one-shot
+    commands.  Users should run ``nexus-fs mount <uri>`` first.
     """
 
     async def _run():
@@ -449,9 +451,6 @@ def _boot_fs(*extra_uris: str):
 
         persisted = load_persisted_mounts()
         uris, overrides = build_mount_args(persisted)
-        for uri in extra_uris:
-            if uri not in uris:
-                uris.append(uri)
         if not uris:
             raise click.UsageError("No mounts found. Run 'nexus-fs mount <uri>' first.")
         return await mount(*uris, mount_overrides=overrides or None)
@@ -466,13 +465,11 @@ def _boot_fs(*extra_uris: str):
 @click.argument("path", default="/")
 @click.option("-l", "--long", "detail", is_flag=True, help="Show detailed metadata.")
 @click.option("-r", "--recursive", is_flag=True, help="List recursively.")
-@click.argument("mount_uris", nargs=-1)
 @add_output_options
 def ls(
     path: str,
     detail: bool,
     recursive: bool,
-    mount_uris: tuple[str, ...],
     output_opts: OutputOptions,
 ) -> None:
     """List directory contents.
@@ -486,7 +483,7 @@ def ls(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         entries = await fs.ls(path, detail=detail, recursive=recursive)
         await fs.close()
         return {"path": path, "entries": entries}
@@ -513,8 +510,7 @@ def ls(
 
 @main.command()
 @click.argument("path", type=str)
-@click.argument("mount_uris", nargs=-1)
-def cat(path: str, mount_uris: tuple[str, ...]) -> None:
+def cat(path: str) -> None:
     """Read file contents to stdout.
 
     \b
@@ -525,7 +521,7 @@ def cat(path: str, mount_uris: tuple[str, ...]) -> None:
     from nexus.fs._sync import run_sync
 
     async def _run() -> bytes:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         content = await fs.read(path)
         await fs.close()
         return content
@@ -542,7 +538,6 @@ def cat(path: str, mount_uris: tuple[str, ...]) -> None:
 
 @main.command()
 @click.argument("path", type=str)
-@click.argument("mount_uris", nargs=-1)
 @click.option(
     "--data",
     "-d",
@@ -559,7 +554,6 @@ def cat(path: str, mount_uris: tuple[str, ...]) -> None:
 @add_output_options
 def write(
     path: str,
-    mount_uris: tuple[str, ...],
     data: str | None,
     allow_empty: bool,
     output_opts: OutputOptions,
@@ -593,7 +587,7 @@ def write(
         sys.exit(1)
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         result = await fs.write(path, content)
         await fs.close()
         return {"path": path, **result}
@@ -628,14 +622,12 @@ def write(
     default=0.85,
     help="Fuzzy match threshold (0.0-1.0). Use 1.0 for exact only.",
 )
-@click.argument("mount_uris", nargs=-1)
 @add_output_options
 def edit(
     path: str,
     edits: tuple[str, ...],
     preview: bool,
     fuzzy: float,
-    mount_uris: tuple[str, ...],
     output_opts: OutputOptions,
 ) -> None:
     """Surgical search/replace edit on a file.
@@ -659,7 +651,7 @@ def edit(
         parsed_edits.append({"old_str": old, "new_str": new})
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         result = await fs.edit(
             path,
             parsed_edits,
@@ -701,9 +693,8 @@ def edit(
 
 @main.command()
 @click.argument("path", type=str)
-@click.argument("mount_uris", nargs=-1)
 @add_output_options
-def rm(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
+def rm(path: str, output_opts: OutputOptions) -> None:
     """Delete a file.
 
     \b
@@ -714,7 +705,7 @@ def rm(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> No
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         await fs.delete(path)
         await fs.close()
         return {"path": path, "deleted": True}
@@ -734,12 +725,10 @@ def rm(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> No
 @main.command()
 @click.argument("path", type=str)
 @click.option("-p", "--parents", is_flag=True, default=True, help="Create parent dirs.")
-@click.argument("mount_uris", nargs=-1)
 @add_output_options
 def mkdir(
     path: str,
     parents: bool,
-    mount_uris: tuple[str, ...],
     output_opts: OutputOptions,
 ) -> None:
     """Create a directory.
@@ -752,7 +741,7 @@ def mkdir(
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         await fs.mkdir(path, parents=parents)
         await fs.close()
         return {"path": path, "created": True}
@@ -771,9 +760,8 @@ def mkdir(
 
 @main.command()
 @click.argument("path", type=str)
-@click.argument("mount_uris", nargs=-1)
 @add_output_options
-def stat(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
+def stat(path: str, output_opts: OutputOptions) -> None:
     """Show file or directory metadata.
 
     \b
@@ -784,7 +772,7 @@ def stat(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> 
     from nexus.fs._sync import run_sync
 
     async def _run() -> dict:
-        fs = await _boot_fs(*mount_uris)
+        fs = await _boot_fs()
         info = await fs.stat(path)
         await fs.close()
         if info is None:

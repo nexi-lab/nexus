@@ -252,6 +252,13 @@ class SlimNexusFS:
 
         Returns:
             Dict with success, diff, matches, applied_count, etag, version, errors.
+
+        Note:
+            The underlying kernel edit is NOT atomic — there is a TOCTOU window
+            between the read and the final write.  ``if_match`` catches stale
+            reads but cannot prevent a concurrent writer from updating the file
+            between the ETag check and the write.  For concurrent-writer safety,
+            use an external lock or wait for kernel-level OCC-aware writes.
         """
         return await self._kernel.edit(
             path,

@@ -7,6 +7,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod bitmap;
 mod bloom;
 mod cache;
+mod dcache;
 mod dispatch;
 mod glob;
 mod hash;
@@ -110,6 +111,8 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // PathRouter (zone-aware LPM routing)
     m.add_class::<router::RustPathRouter>()?;
     m.add_class::<router::RustRouteResult>()?;
+    // DCache (Issue #1838 — Rust dentry cache for MetastoreABC)
+    m.add_class::<dcache::RustDCache>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

@@ -105,6 +105,35 @@ jobs:
           pip install .
           pip install -r requirements-minimal.txt
 
+      # ── protoc (required by nexus_raft build.rs) ─────────────────────────
+      # Mirrors the protoc install pattern from conda-pack.yml.
+      # The wrapper script reports "libprotoc 3.20.3" to satisfy the >= 3.1.0
+      # version check in protobuf-build, while delegating to the real binary.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install protobuf
+          REAL_PROTOC="$(brew --prefix protobuf)/bin/protoc"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'if [ "${1:-}" = "--version" ]; then' \
+            '  echo "libprotoc 3.20.3"' \
+            '  exit 0' \
+            'fi' \
+            "exec \"${REAL_PROTOC}\" \"\$@\"" \
+            > "${RUNNER_TEMP}/bin/protoc"
+          chmod +x "${RUNNER_TEMP}/bin/protoc"
+          echo "NEXUS_PROTOC=${RUNNER_TEMP}/bin/protoc" >> "${GITHUB_ENV}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          protoc --version
+
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y protobuf-compiler
+
       # ── maturin builds ───────────────────────────────────────────────────
       - name: Install maturin
         run: pip install maturin
@@ -117,6 +146,8 @@ jobs:
             -m rust/nexus_pyo3/Cargo.toml
 
       - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+        env:
+          PROTOC: ${{ env.NEXUS_PROTOC }}
         run: |
           maturin build --release \
             --features full \

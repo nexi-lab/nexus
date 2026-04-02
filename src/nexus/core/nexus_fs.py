@@ -236,6 +236,15 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
+        # ── SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write) ──
+        from nexus_fast import SyscallEngine as _SyscallEngine
+
+        self._syscall_engine: _SyscallEngine = _SyscallEngine(
+            self.metadata._rust_dcache,  # Arc<RustDCacheInner>
+            self._mount_table._rust,  # Arc<RustPathRouterInner>
+            self._dispatch._trie,  # Arc<PathTrieInner>
+        )
+
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).

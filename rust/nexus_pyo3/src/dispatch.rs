@@ -4,11 +4,16 @@
 //! replacing O(N) linear regex scan.  `{}` segments match any single
 //! path component (wildcard).
 //!
+//! Arc<PathTrieInner> enables zero-cost sharing with SyscallEngine (#1817).
+//!
 //! Related: Issue #1317
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 // ── TrieNode ──────────────────────────────────────────────────────────
 
@@ -115,6 +120,30 @@ impl TrieNode {
     }
 }
 
+// ── PathTrieInner (shared via Arc with SyscallEngine) ────────────────
+
+pub(crate) struct PathTrieInner {
+    root: RwLock<TrieNode>,
+    count: AtomicUsize,
+    patterns: RwLock<HashMap<usize, String>>,
+}
+
+impl PathTrieInner {
+    fn new() -> Self {
+        Self {
+            root: RwLock::new(TrieNode::new()),
+            count: AtomicUsize::new(0),
+            patterns: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// Lookup a concrete path.  Returns resolver index or None.
+    pub(crate) fn lookup(&self, path: &str) -> Option<usize> {
+        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        self.root.read().lookup(&segments)
+    }
+}
+
 // ── PathTrie (PyO3 class) ─────────────────────────────────────────────
 
 /// Segment-based trie for O(path_depth) VFS resolver routing.
@@ -131,10 +160,7 @@ impl TrieNode {
 ///     assert trie.lookup("/other/path") is None
 #[pyclass]
 pub struct PathTrie {
-    root: TrieNode,
-    count: usize,
-    /// resolver_idx → pattern string (for unregister).
-    patterns: HashMap<usize, String>,
+    pub(crate) inner: Arc<PathTrieInner>,
 }
 
 #[pymethods]
@@ -142,9 +168,7 @@ impl PathTrie {
     #[new]
     fn new() -> Self {
         Self {
-            root: TrieNode::new(),
-            count: 0,
-            patterns: HashMap::new(),
+            inner: Arc::new(PathTrieInner::new()),
         }
     }
 
@@ -152,44 +176,47 @@ impl PathTrie {
     ///
     /// Pattern segments are split by ``/``.  ``{}`` matches any single segment.
     /// Raises ``ValueError`` if ``resolver_idx`` is already registered.
-    fn register(&mut self, pattern: &str, resolver_idx: usize) -> PyResult<()> {
-        if self.patterns.contains_key(&resolver_idx) {
+    fn register(&self, pattern: &str, resolver_idx: usize) -> PyResult<()> {
+        let mut patterns = self.inner.patterns.write();
+        if patterns.contains_key(&resolver_idx) {
             return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "resolver_idx {} already registered",
                 resolver_idx
             )));
         }
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        self.root.insert(&segments, resolver_idx);
-        self.patterns.insert(resolver_idx, pattern.to_string());
-        self.count += 1;
+        self.inner.root.write().insert(&segments, resolver_idx);
+        patterns.insert(resolver_idx, pattern.to_string());
+        self.inner.count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
     /// Remove a resolver by index.  Returns ``True`` if found.
-    fn unregister(&mut self, resolver_idx: usize) -> bool {
-        let pattern = match self.patterns.remove(&resolver_idx) {
+    fn unregister(&self, resolver_idx: usize) -> bool {
+        let pattern = match self.inner.patterns.write().remove(&resolver_idx) {
             Some(p) => p,
             None => return false,
         };
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        self.root.remove(&segments);
-        self.count -= 1;
+        self.inner.root.write().remove(&segments);
+        self.inner.count.fetch_sub(1, Ordering::Relaxed);
         true
     }
 
     /// Lookup a concrete path.  Returns resolver index or ``None``.
     fn lookup(&self, path: &str) -> Option<usize> {
-        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        self.root.lookup(&segments)
+        self.inner.lookup(path)
     }
 
     fn __len__(&self) -> usize {
-        self.count
+        self.inner.count.load(Ordering::Relaxed)
     }
 
     fn __repr__(&self) -> String {
-        format!("PathTrie(count={})", self.count)
+        format!(
+            "PathTrie(count={})",
+            self.inner.count.load(Ordering::Relaxed)
+        )
     }
 }
 
@@ -588,9 +615,6 @@ mod tests {
 
     #[test]
     fn test_wildcard_backtrack() {
-        // /{}/proc/{}/status and /.tasks/tasks/{}/agent/status
-        // Path /.tasks/proc/123/status should match the wildcard pattern
-        // because .tasks literal child has no "proc" subtree.
         let mut root = TrieNode::new();
         insert(&mut root, "/{}/proc/{}/status", 0);
         insert(&mut root, "/.tasks/tasks/{}/agent/status", 1);
@@ -612,5 +636,22 @@ mod tests {
         assert_eq!(find(&root, "/a/b/c"), Some(0));
         assert_eq!(find(&root, "/a/b"), None);
         assert_eq!(find(&root, "/a/b/c/d"), None);
+    }
+
+    // -- PathTrieInner tests --
+
+    #[test]
+    fn test_inner_lookup() {
+        let inner = PathTrieInner::new();
+        {
+            let mut root = inner.root.write();
+            let segs: Vec<&str> = "/{}/proc/{}/status"
+                .split('/')
+                .filter(|s| !s.is_empty())
+                .collect();
+            root.insert(&segs, 42);
+        }
+        assert_eq!(inner.lookup("/zone/proc/123/status"), Some(42));
+        assert_eq!(inner.lookup("/missing"), None);
     }
 }

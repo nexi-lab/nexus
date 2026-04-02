@@ -368,3 +368,35 @@ class RustRouteResult:
     def readonly(self) -> bool: ...
     @property
     def io_profile(self) -> str: ...
+
+class ReadPlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+
+class WritePlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+    version: int
+
+class SyscallEngine:
+    def __init__(self, dcache: RustDCache, router: RustPathRouter, trie: PathTrie) -> None: ...
+    def plan_read(self, path: str, zone_id: str, is_admin: bool) -> ReadPlan: ...
+    def plan_write(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...

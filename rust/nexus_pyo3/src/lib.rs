@@ -7,6 +7,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod bitmap;
 mod bloom;
 mod cache;
+mod cas_engine;
+mod cas_transport;
+mod dcache;
 mod dispatch;
 mod glob;
 mod hash;
@@ -25,6 +28,7 @@ mod shm_pipe;
 mod shm_stream;
 mod simd;
 mod stream;
+mod syscall;
 mod trigram;
 mod volume_engine;
 mod volume_index;
@@ -110,6 +114,12 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // PathRouter (zone-aware LPM routing)
     m.add_class::<router::RustPathRouter>()?;
     m.add_class::<router::RustRouteResult>()?;
+    // DCache (Issue #1838 — Rust dentry cache for MetastoreABC)
+    m.add_class::<dcache::RustDCache>()?;
+    // SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write planner)
+    m.add_class::<syscall::SyscallEngine>()?;
+    m.add_class::<syscall::ReadPlan>()?;
+    m.add_class::<syscall::WritePlan>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

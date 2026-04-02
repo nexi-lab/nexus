@@ -236,6 +236,20 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
+        # ── SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write) ──
+        self._syscall_engine = None
+        try:
+            from nexus_fast import SyscallEngine as _SyscallEngine
+
+            _rust_dcache = getattr(metadata_store, "_rust_dcache", None)
+            _rust_router = getattr(self._mount_table, "_rust", None)
+            _rust_trie = getattr(self._dispatch, "_trie", None)
+            if _rust_dcache is not None and _rust_router is not None and _rust_trie is not None:
+                self._syscall_engine = _SyscallEngine(_rust_dcache, _rust_router, _rust_trie)
+                logger.info("SyscallEngine initialized (Rust fast path enabled)")
+        except (ImportError, TypeError):
+            pass  # nexus_fast not installed or mock objects in tests
+
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
@@ -904,7 +918,7 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
             metadata = FileMetadata(
                 path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend),
+                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
                 physical_path=empty_hash,
                 size=0,
                 etag=empty_hash,
@@ -1251,6 +1265,23 @@ class NexusFS(  # type: ignore[misc]
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+
+        # ── Rust execute_read fast path (Issue #1817 Phase E) ─────────────
+        # Hot path: dcache hit + local CAS + no hooks → pure Rust I/O.
+        # One FFI call replaces: validate + trie + route + dcache + CAS read.
+        # Falls back to Python path below on dcache miss or non-local backend.
+        if self._syscall_engine is not None and self._dispatch.read_hook_count == 0:
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            _data = self._syscall_engine.execute_read(path, self._zone_id, _is_admin)
+            # CDC chunked manifests must be reassembled by Python — skip Rust fast path.
+            if _data is not None and not _data[:30].startswith(b'{"type":"chunked_manifest'):
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return _data
 
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
@@ -1995,7 +2026,7 @@ class NexusFS(  # type: ignore[misc]
         new_version = (meta.version + 1) if meta else 1
         new_meta = FileMetadata(
             path=path,
-            backend_name=self._driver_coordinator.backend_key(route.backend),
+            backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
             physical_path=content_hash,  # CAS: hash is the "physical" location
             etag=content_hash,
             size=size,
@@ -2448,7 +2479,9 @@ class NexusFS(  # type: ignore[misc]
                 content_hash = wr.content_id
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=self._driver_coordinator.backend_key(route.backend),
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
                     content_hash=content_hash,
                     size=wr.size if offset > 0 else len(content),
                     existing_meta=meta,
@@ -2478,7 +2511,9 @@ class NexusFS(  # type: ignore[misc]
                 # after backend.write_content(). Drivers only manage content.
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=self._driver_coordinator.backend_key(route.backend),
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
                     content_hash=content_hash,
                     # _wr.size is the total file size after splice (not bytes written)
                     size=_wr.size if offset > 0 else len(content),
@@ -3065,7 +3100,7 @@ class NexusFS(  # type: ignore[misc]
             # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend),
+                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
                 physical_path=content_hash,  # CAS: hash is the "physical" location
                 size=len(content),
                 etag=content_hash,  # SHA-256 hash for integrity

@@ -313,6 +313,29 @@ class VolumeEngine:
     def blob_exists(self, content_hash: str) -> bool: ...
     def blob_path(self, content_hash: str) -> str: ...
 
+class RustDCache:
+    def __init__(self) -> None: ...
+    def put(
+        self,
+        path: str,
+        backend_name: str,
+        physical_path: str,
+        size: int,
+        entry_type: int,
+        version: int = 1,
+        etag: str | None = None,
+        zone_id: str | None = None,
+    ) -> None: ...
+    def get(self, path: str) -> tuple[str, str, int] | None: ...
+    def get_full(self, path: str) -> dict[str, Any] | None: ...
+    def evict(self, path: str) -> bool: ...
+    def evict_prefix(self, prefix: str) -> int: ...
+    def contains(self, path: str) -> bool: ...
+    def stats(self) -> dict[str, Any]: ...
+    def clear(self) -> None: ...
+    def __len__(self) -> int: ...
+    def __repr__(self) -> str: ...
+
 class RustPathRouter:
     def __init__(self) -> None: ...
     def add_mount(
@@ -322,6 +345,9 @@ class RustPathRouter:
         readonly: bool,
         admin_only: bool,
         io_profile: str,
+        backend_name: str = "",
+        local_root: str | None = None,
+        fsync: bool = False,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(
@@ -345,3 +371,40 @@ class RustRouteResult:
     def readonly(self) -> bool: ...
     @property
     def io_profile(self) -> str: ...
+
+class ReadPlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+
+class WritePlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+    version: int
+
+class SyscallEngine:
+    def __init__(self, dcache: RustDCache, router: RustPathRouter, trie: PathTrie) -> None: ...
+    def plan_read(self, path: str, zone_id: str, is_admin: bool) -> ReadPlan: ...
+    def plan_write(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
+    def execute_read(self, path: str, zone_id: str, is_admin: bool) -> bytes | None: ...
+    def execute_write(
+        self, path: str, zone_id: str, content: bytes, is_admin: bool
+    ) -> str | None: ...
+    def __repr__(self) -> str: ...

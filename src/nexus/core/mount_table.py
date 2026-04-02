@@ -143,7 +143,24 @@ class MountTable:
             stream_backend_factory=stream_backend_factory,
         )
         if self._rust is not None:
-            self._rust.add_mount(mount_point, zone_id, readonly, admin_only, io_profile)
+            _backend_name = backend.name
+            if not isinstance(_backend_name, str):
+                _backend_name = str(_backend_name)
+            _local_root = (
+                str(getattr(backend, "root_path", None))
+                if getattr(backend, "has_root_path", False)
+                else None
+            )
+            self._rust.add_mount(
+                mount_point,
+                zone_id,
+                readonly,
+                admin_only,
+                io_profile,
+                _backend_name,
+                _local_root,
+                True,  # fsync
+            )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount entry. Called by coordinator.unmount().

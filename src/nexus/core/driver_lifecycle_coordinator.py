@@ -71,20 +71,29 @@ class DriverLifecycleCoordinator:
         self._self_address: str | None = self_address
         self._transport_pool: RPCTransportPool | None = transport_pool
 
-    def backend_key(self, backend: "ObjectStoreABC") -> str:
-        """Canonical pool key for a backend: ``name@self_address`` or just ``name``.
+    def backend_key(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
+        """Canonical pool key for a backend.
 
-        Used by kernel write path to store the correct ``backend_name`` in
-        metadata so that read path can resolve it back via ``resolve_backend()``.
+        Format: ``name`` for single-mount, ``name:mount_point`` when a
+        mount_point is given and differs from ``/`` (avoids collision when
+        multiple backends share the same name).  Federated nodes append
+        ``@self_address``.
+
+        The root mount (``/``) uses plain ``name`` for backward
+        compatibility — existing metadata stores ``backend_name="local"``
+        and ``resolve_backend("local")`` must still work.
         """
-        return f"{backend.name}@{self._self_address}" if self._self_address else backend.name
+        base = backend.name
+        if mount_point and mount_point != "/":
+            base = f"{backend.name}:{mount_point}"
+        return f"{base}@{self._self_address}" if self._self_address else base
 
-    def register_backend(self, backend: "ObjectStoreABC") -> str:
+    def register_backend(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
         """Register a backend in the driver pool. Returns the pool key.
 
-        Key = backend_key(backend). Called automatically on mount().
+        Key = backend_key(backend, mount_point). Called automatically on mount().
         """
-        key = self.backend_key(backend)
+        key = self.backend_key(backend, mount_point)
         self._backend_pool[key] = backend
         return key
 
@@ -110,8 +119,12 @@ class DriverLifecycleCoordinator:
             # matches.  This covers the case where a backend was added to the
             # mount table directly (e.g. in tests) without going through
             # coordinator.mount(), so it was never registered in the pool.
+            #
+            # Handle both plain names ("local") and qualified names
+            # ("local:/mount_point") from backend_key().
+            bare_name = backend_name.split(":")[0] if ":" in backend_name else backend_name
             for entry in self._mount_table._entries.values():
-                if entry.backend.name == backend_name:
+                if entry.backend.name == bare_name:
                     self._backend_pool[backend_name] = entry.backend
                     return entry.backend
             raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
@@ -137,6 +150,8 @@ class DriverLifecycleCoordinator:
     ) -> None:
         """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
         # 1. Add to mount table (kernel mount_hashtable)
+        #    Phase E.1: MountTable.add() now passes backend_name + local_root
+        #    to Rust add_mount(), which auto-creates CASEngine for local backends.
         self._mount_table.add(
             mount_point,
             backend,
@@ -146,8 +161,8 @@ class DriverLifecycleCoordinator:
             io_profile=io_profile,
         )
 
-        # 2. Register in backend pool
-        self.register_backend(backend)
+        # 2. Register in backend pool (keyed by name:mount_point to avoid collision)
+        self.register_backend(backend, mount_point)
 
         # 3. Register hook_spec
         self._register_backend_hooks(mount_point, backend)
@@ -257,6 +272,3 @@ class DriverLifecycleCoordinator:
             d.unregister_mount_hook(h)
         for h in spec.unmount_hooks:
             d.unregister_unmount_hook(h)
-
-
-# trigger CI

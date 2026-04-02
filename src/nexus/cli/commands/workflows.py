@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from typing import Any
 
 import click
 from rich.table import Table
@@ -11,7 +12,7 @@ from nexus.cli.theme import console
 from nexus.cli.utils import handle_error
 
 
-def _get_engine_with_storage():  # type: ignore[no-untyped-def]
+async def _get_engine_with_storage() -> Any:
     """Get workflow engine from NexusFS (factory-created, no private access).
 
     Uses the public ``workflow_engine`` attribute already wired by the factory
@@ -24,7 +25,7 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     data_dir = os.getenv("NEXUS_DATA_DIR", os.path.join(os.path.expanduser("~"), ".nexus", "data"))
 
     # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
-    nx = nexus.connect(config={"data_dir": str(data_dir)})
+    nx = await nexus.connect(config={"data_dir": str(data_dir)})
 
     engine = getattr(nx, "workflow_engine", None)
     if engine is None:
@@ -34,7 +35,7 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
         )
 
     # Load workflows from persistent storage (async startup)
-    asyncio.run(engine.startup())
+    await engine.startup()
 
     return engine
 
@@ -71,14 +72,15 @@ def workflows() -> None:
 @click.option("--enabled/--disabled", default=True, help="Enable workflow after loading")
 def workflows_load(file_path: str, enabled: bool) -> None:
     """Load a workflow from a YAML file."""
-    try:
+
+    async def _impl() -> None:
         from nexus.bricks.workflows import WorkflowLoader
 
         # Load workflow definition
         definition = WorkflowLoader.load_from_file(file_path)
 
         # Get workflow engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
 
         # Load into engine (will persist to database)
         success = engine.load_workflow(definition, enabled=enabled)
@@ -94,6 +96,8 @@ def workflows_load(file_path: str, enabled: bool) -> None:
         else:
             console.print(f"[nexus.error]✗[/nexus.error] Failed to load workflow from {file_path}")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -101,9 +105,10 @@ def workflows_load(file_path: str, enabled: bool) -> None:
 @workflows.command(name="list")
 def workflows_list() -> None:
     """List all loaded workflows."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         workflow_list = engine.list_workflows()
 
         if not workflow_list:
@@ -134,6 +139,8 @@ def workflows_list() -> None:
 
         console.print(table)
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -148,7 +155,8 @@ def workflows_list() -> None:
 )
 def workflows_test(workflow_name: str, file_path: str | None, context: str) -> None:
     """Test a workflow execution."""
-    try:
+
+    async def _impl() -> None:
         # Parse context
         event_context = json.loads(context)
 
@@ -157,14 +165,14 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
             event_context["file_path"] = file_path
 
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
 
         # Execute workflow
         console.print(f"[nexus.value]Testing workflow:[/nexus.value] {workflow_name}")
         if file_path:
             console.print(f"[nexus.path]File:[/nexus.path] {file_path}")
 
-        execution = asyncio.run(engine.trigger_workflow(workflow_name, event_context))
+        execution = await engine.trigger_workflow(workflow_name, event_context)
 
         if not execution:
             console.print(
@@ -196,6 +204,8 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
         if execution.error_message:
             console.print(f"\n[nexus.error]Error:[/nexus.error] {execution.error_message}")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -220,15 +230,18 @@ def workflows_runs(workflow_name: str, limit: int) -> None:
 @click.argument("workflow_name")
 def workflows_enable(workflow_name: str) -> None:
     """Enable a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         engine.enable_workflow(workflow_name)
 
         console.print(
             f"[nexus.success]✓[/nexus.success] Enabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
         )
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -237,15 +250,18 @@ def workflows_enable(workflow_name: str) -> None:
 @click.argument("workflow_name")
 def workflows_disable(workflow_name: str) -> None:
     """Disable a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         engine.disable_workflow(workflow_name)
 
         console.print(
             f"[nexus.warning]✓[/nexus.warning] Disabled workflow: [nexus.value]{workflow_name}[/nexus.value]"
         )
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -254,9 +270,10 @@ def workflows_disable(workflow_name: str) -> None:
 @click.argument("workflow_name")
 def workflows_unload(workflow_name: str) -> None:
     """Unload a workflow."""
-    try:
+
+    async def _impl() -> None:
         # Get engine with persistent storage
-        engine = _get_engine_with_storage()
+        engine = await _get_engine_with_storage()
         success = engine.unload_workflow(workflow_name)
 
         if success:
@@ -266,6 +283,8 @@ def workflows_unload(workflow_name: str) -> None:
         else:
             console.print(f"[nexus.error]✗[/nexus.error] Workflow '{workflow_name}' not found")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -275,7 +294,8 @@ def workflows_unload(workflow_name: str) -> None:
 @click.option("--load", is_flag=True, help="Load discovered workflows")
 def workflows_discover(directory: str, load: bool) -> None:
     """Discover workflows in a directory."""
-    try:
+
+    async def _impl() -> None:
         from nexus.bricks.workflows import WorkflowLoader
 
         # Discover workflows
@@ -309,7 +329,7 @@ def workflows_discover(directory: str, load: bool) -> None:
         # Load workflows if requested
         if load:
             # Get engine with persistent storage
-            engine = _get_engine_with_storage()
+            engine = await _get_engine_with_storage()
             loaded_count = 0
             for workflow in workflows_found:
                 if engine.load_workflow(workflow, enabled=True):
@@ -317,5 +337,7 @@ def workflows_discover(directory: str, load: bool) -> None:
 
             console.print(f"\n[nexus.success]✓[/nexus.success] Loaded {loaded_count} workflow(s)")
 
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)

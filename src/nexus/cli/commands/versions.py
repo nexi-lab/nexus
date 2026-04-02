@@ -4,8 +4,9 @@ CAS-backed version tracking for files and skills with full history.
 Every file write creates a new version, preserving all previous versions.
 """
 
+import asyncio
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import click
 from rich.table import Table
@@ -77,8 +78,16 @@ async def _async_version_history(
 
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
-        _nx: Any = nx
-        versions = _nx.version_service.list_versions(path)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        result = version_svc.list_versions(path)
+        versions = (await result) if asyncio.iscoroutine(result) else result
 
         if not versions:
             console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
@@ -145,8 +154,16 @@ async def _async_version_get(
 ) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
-        _nx: Any = nx
-        content = _nx.version_service.get_version(path, version)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        _r = version_svc.get_version(path, version)
+        content = (await _r) if asyncio.iscoroutine(_r) else _r
 
         if output:
             # Write to file
@@ -204,8 +221,16 @@ async def _async_version_diff(
 
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
-        _nx: Any = nx
-        diff = _nx.version_service.diff_versions(path, v1, v2, mode=mode)
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
+
+        _r = version_svc.diff_versions(path, v1, v2, mode=mode)
+        diff = (await _r) if asyncio.iscoroutine(_r) else _r
 
         if mode == "metadata":
             # diff is a dict in metadata mode
@@ -288,7 +313,13 @@ async def _async_version_rollback(
 ) -> None:
     try:
         nx = await get_filesystem(remote_url, remote_api_key)
-        _nx: Any = nx
+        version_svc = nx.service("version_service")
+        if version_svc is None:
+            console.print(
+                "[nexus.error]Error:[/nexus.error] Version service not available on this server"
+            )
+            nx.close()
+            return
 
         # Get current version for confirmation
         # Check if file exists
@@ -298,7 +329,8 @@ async def _async_version_rollback(
             return
 
         # Get version history to determine current version
-        versions = _nx.version_service.list_versions(path)
+        _r2 = version_svc.list_versions(path)
+        versions = (await _r2) if asyncio.iscoroutine(_r2) else _r2
         if not versions:
             console.print(f"[nexus.warning]No version history found for: {path}[/nexus.warning]")
             nx.close()
@@ -314,7 +346,9 @@ async def _async_version_rollback(
                 return
 
         # Perform rollback
-        _nx.version_service.rollback(path, version)
+        _r = version_svc.rollback(path, version)
+        if asyncio.iscoroutine(_r):
+            await _r
 
         console.print(f"[nexus.success]✓[/nexus.success] Rolled back {path} to version {version}")
         console.print(f"[nexus.muted]New version: {current_version + 1}[/nexus.muted]")

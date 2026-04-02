@@ -5,23 +5,33 @@
 //!
 //! Design: HashMap<String, MountEntry> keyed by zone-canonical mount points.
 //! `route(path, zone_id)` canonicalizes, then walks from deepest to shallowest.
+//!
+//! Arc<RustPathRouterInner> enables zero-cost sharing with SyscallEngine (#1817).
 
+use parking_lot::RwLock;
 use pyo3::prelude::*;
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Arc;
+
+use crate::cas_engine::CASEngine;
+use crate::cas_transport::LocalCASTransport;
 
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct MountEntry {
     readonly: bool,
     admin_only: bool,
     io_profile: String,
+    backend_name: String,
+    cas: Option<CASEngine>,
 }
 
 #[derive(Debug)]
-enum RouteError {
+pub(crate) enum RouteError {
     NotMounted(String),
     AccessDenied(String),
 }
@@ -55,97 +65,22 @@ pub struct RustRouteResult {
 }
 
 // ---------------------------------------------------------------------------
-// PathRouter
+// Inner (shared via Arc with SyscallEngine)
 // ---------------------------------------------------------------------------
 
-#[pyclass]
-pub struct RustPathRouter {
-    mounts: HashMap<String, MountEntry>,
+pub(crate) struct RustPathRouterInner {
+    mounts: RwLock<HashMap<String, MountEntry>>,
 }
 
-#[pymethods]
-impl RustPathRouter {
-    #[new]
+impl RustPathRouterInner {
     fn new() -> Self {
         Self {
-            mounts: HashMap::new(),
+            mounts: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Register a mount at a zone-canonical key.
-    fn add_mount(
-        &mut self,
-        mount_point: &str,
-        zone_id: &str,
-        readonly: bool,
-        admin_only: bool,
-        io_profile: &str,
-    ) {
-        let canonical = canonicalize(mount_point, zone_id);
-        self.mounts.insert(
-            canonical,
-            MountEntry {
-                readonly,
-                admin_only,
-                io_profile: io_profile.to_string(),
-            },
-        );
-    }
-
-    /// Remove a mount.
-    fn remove_mount(&mut self, mount_point: &str, zone_id: &str) -> bool {
-        let canonical = canonicalize(mount_point, zone_id);
-        self.mounts.remove(&canonical).is_some()
-    }
-
-    /// Zone-canonical LPM routing. Raises ValueError/PermissionError.
-    fn route(
-        &self,
-        path: &str,
-        zone_id: &str,
-        is_admin: bool,
-        check_write: bool,
-    ) -> PyResult<RustRouteResult> {
-        self.route_impl(path, zone_id, is_admin, check_write)
-            .map_err(Into::into)
-    }
-
-    /// Canonicalize a path with zone prefix.
-    #[staticmethod]
-    fn canonicalize(path: &str, zone_id: &str) -> String {
-        canonicalize(path, zone_id)
-    }
-
-    /// Strip zone prefix to get metastore-relative path.
-    #[staticmethod]
-    fn strip_zone(canonical_path: &str, zone_id: &str) -> String {
-        strip_zone(canonical_path, zone_id)
-    }
-
-    /// Extract (zone_id, relative_path) from canonical path.
-    #[staticmethod]
-    fn extract_zone(canonical_path: &str) -> (String, String) {
-        extract_zone(canonical_path)
-    }
-
-    /// Check if a mount exists.
-    fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
-        let canonical = canonicalize(mount_point, zone_id);
-        self.mounts.contains_key(&canonical)
-    }
-
-    /// List all mount points (zone-canonical).
-    fn get_mount_points(&self) -> Vec<String> {
-        let mut points: Vec<String> = self.mounts.keys().cloned().collect();
-        points.sort();
-        points
-    }
-}
-
-// Core routing logic — testable without Python runtime.
-// Compiler inlines route_impl into route() — zero overhead.
-impl RustPathRouter {
-    fn route_impl(
+    /// Core routing logic — used by both PyO3 methods and SyscallEngine.
+    pub(crate) fn route_impl(
         &self,
         path: &str,
         zone_id: &str,
@@ -153,10 +88,11 @@ impl RustPathRouter {
         check_write: bool,
     ) -> Result<RustRouteResult, RouteError> {
         let canonical = canonicalize(path, zone_id);
+        let mounts = self.mounts.read();
         let mut current = canonical.as_str();
 
         loop {
-            if let Some(entry) = self.mounts.get(current) {
+            if let Some(entry) = mounts.get(current) {
                 if entry.admin_only && !is_admin {
                     return Err(RouteError::AccessDenied(format!(
                         "Mount '{}' requires admin privileges",
@@ -192,6 +128,132 @@ impl RustPathRouter {
             "No mount found for path: {}",
             path
         )))
+    }
+
+    /// Read content from the CAS engine attached to a mount (Phase E.1).
+    ///
+    /// `mount_point` must be a zone-canonical key (from route result).
+    pub(crate) fn read_cas(&self, mount_point: &str, etag: &str) -> Option<Vec<u8>> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.cas.as_ref()?.read_content(etag).ok()
+    }
+
+    /// Write content to the CAS engine attached to a mount (Phase E.1).
+    ///
+    /// Returns BLAKE3 hex hash on success.
+    pub(crate) fn write_cas(&self, mount_point: &str, content: &[u8]) -> Option<String> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.cas.as_ref()?.write_content(content).ok()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PathRouter (PyO3 class)
+// ---------------------------------------------------------------------------
+
+#[pyclass]
+pub struct RustPathRouter {
+    pub(crate) inner: Arc<RustPathRouterInner>,
+}
+
+#[pymethods]
+impl RustPathRouter {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(RustPathRouterInner::new()),
+        }
+    }
+
+    /// Register a mount at a zone-canonical key.
+    ///
+    /// When `local_root` is provided, a `CASEngine` is auto-created for the
+    /// mount point, enabling full Rust I/O via `SyscallEngine.execute_read/write`.
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]
+    #[allow(clippy::too_many_arguments)]
+    fn add_mount(
+        &self,
+        mount_point: &str,
+        zone_id: &str,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: &str,
+        backend_name: &str,
+        local_root: Option<&str>,
+        fsync: bool,
+    ) -> PyResult<()> {
+        let canonical = canonicalize(mount_point, zone_id);
+        let cas = match local_root {
+            Some(root) => {
+                let transport = LocalCASTransport::new(Path::new(root), fsync)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(CASEngine::new(transport))
+            }
+            None => None,
+        };
+        self.inner.mounts.write().insert(
+            canonical,
+            MountEntry {
+                readonly,
+                admin_only,
+                io_profile: io_profile.to_string(),
+                backend_name: backend_name.to_string(),
+                cas,
+            },
+        );
+        Ok(())
+    }
+
+    /// Remove a mount.
+    fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
+        let canonical = canonicalize(mount_point, zone_id);
+        self.inner.mounts.write().remove(&canonical).is_some()
+    }
+
+    /// Zone-canonical LPM routing. Raises ValueError/PermissionError.
+    fn route(
+        &self,
+        path: &str,
+        zone_id: &str,
+        is_admin: bool,
+        check_write: bool,
+    ) -> PyResult<RustRouteResult> {
+        self.inner
+            .route_impl(path, zone_id, is_admin, check_write)
+            .map_err(Into::into)
+    }
+
+    /// Canonicalize a path with zone prefix.
+    #[staticmethod]
+    fn canonicalize(path: &str, zone_id: &str) -> String {
+        canonicalize(path, zone_id)
+    }
+
+    /// Strip zone prefix to get metastore-relative path.
+    #[staticmethod]
+    fn strip_zone(canonical_path: &str, zone_id: &str) -> String {
+        strip_zone(canonical_path, zone_id)
+    }
+
+    /// Extract (zone_id, relative_path) from canonical path.
+    #[staticmethod]
+    fn extract_zone(canonical_path: &str) -> (String, String) {
+        extract_zone(canonical_path)
+    }
+
+    /// Check if a mount exists.
+    fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
+        let canonical = canonicalize(mount_point, zone_id);
+        self.inner.mounts.read().contains_key(&canonical)
+    }
+
+    /// List all mount points (zone-canonical).
+    fn get_mount_points(&self) -> Vec<String> {
+        let mut points: Vec<String> = self.inner.mounts.read().keys().cloned().collect();
+        points.sort();
+        points
     }
 }
 
@@ -288,11 +350,32 @@ mod tests {
 
     #[test]
     fn test_route_basic() {
-        let mut router = RustPathRouter::new();
-        router.add_mount("/", "root", false, false, "balanced");
-        router.add_mount("/workspace", "root", false, false, "fast");
+        let inner = RustPathRouterInner::new();
+        {
+            let mut m = inner.mounts.write();
+            m.insert(
+                canonicalize("/", "root"),
+                MountEntry {
+                    readonly: false,
+                    admin_only: false,
+                    io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
+                },
+            );
+            m.insert(
+                canonicalize("/workspace", "root"),
+                MountEntry {
+                    readonly: false,
+                    admin_only: false,
+                    io_profile: "fast".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
+                },
+            );
+        }
 
-        let result = router
+        let result = inner
             .route_impl("/workspace/file.txt", "root", false, false)
             .unwrap();
         assert_eq!(result.mount_point, "/root/workspace");
@@ -302,10 +385,19 @@ mod tests {
 
     #[test]
     fn test_route_root_fallback() {
-        let mut router = RustPathRouter::new();
-        router.add_mount("/", "root", false, false, "balanced");
+        let inner = RustPathRouterInner::new();
+        inner.mounts.write().insert(
+            canonicalize("/", "root"),
+            MountEntry {
+                readonly: false,
+                admin_only: false,
+                io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
+            },
+        );
 
-        let result = router
+        let result = inner
             .route_impl("/unknown/path", "root", false, false)
             .unwrap();
         assert_eq!(result.mount_point, "/root");
@@ -314,10 +406,19 @@ mod tests {
 
     #[test]
     fn test_route_readonly() {
-        let mut router = RustPathRouter::new();
-        router.add_mount("/system", "root", true, false, "balanced");
+        let inner = RustPathRouterInner::new();
+        inner.mounts.write().insert(
+            canonicalize("/system", "root"),
+            MountEntry {
+                readonly: true,
+                admin_only: false,
+                io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
+            },
+        );
 
-        let err = router
+        let err = inner
             .route_impl("/system/config", "root", false, true)
             .unwrap_err();
         assert!(matches!(err, RouteError::AccessDenied(_)));
@@ -325,15 +426,24 @@ mod tests {
 
     #[test]
     fn test_route_admin_only() {
-        let mut router = RustPathRouter::new();
-        router.add_mount("/admin", "root", false, true, "balanced");
+        let inner = RustPathRouterInner::new();
+        inner.mounts.write().insert(
+            canonicalize("/admin", "root"),
+            MountEntry {
+                readonly: false,
+                admin_only: true,
+                io_profile: "balanced".to_string(),
+                backend_name: String::new(),
+                cas: None,
+            },
+        );
 
-        let err = router
+        let err = inner
             .route_impl("/admin/secrets", "root", false, false)
             .unwrap_err();
         assert!(matches!(err, RouteError::AccessDenied(_)));
 
-        let result = router
+        let result = inner
             .route_impl("/admin/secrets", "root", true, false)
             .unwrap();
         assert_eq!(result.mount_point, "/root/admin");
@@ -341,16 +451,37 @@ mod tests {
 
     #[test]
     fn test_cross_zone() {
-        let mut router = RustPathRouter::new();
-        router.add_mount("/", "root", false, false, "balanced");
-        router.add_mount("/shared", "zone-beta", false, false, "balanced");
+        let inner = RustPathRouterInner::new();
+        {
+            let mut m = inner.mounts.write();
+            m.insert(
+                canonicalize("/", "root"),
+                MountEntry {
+                    readonly: false,
+                    admin_only: false,
+                    io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
+                },
+            );
+            m.insert(
+                canonicalize("/shared", "zone-beta"),
+                MountEntry {
+                    readonly: false,
+                    admin_only: false,
+                    io_profile: "balanced".to_string(),
+                    backend_name: String::new(),
+                    cas: None,
+                },
+            );
+        }
 
-        let result = router
+        let result = inner
             .route_impl("/workspace/file.txt", "root", false, false)
             .unwrap();
         assert_eq!(result.mount_point, "/root");
 
-        let result = router
+        let result = inner
             .route_impl("/shared/doc.txt", "zone-beta", false, false)
             .unwrap();
         assert_eq!(result.mount_point, "/zone-beta/shared");

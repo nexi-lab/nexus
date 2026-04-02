@@ -191,6 +191,7 @@ class KernelDispatch:
         "_mount_hooks",
         "_unmount_hooks",
         "_background_tasks",
+        "_syscall_engine",
     )
 
     def __init__(self) -> None:
@@ -220,6 +221,10 @@ class KernelDispatch:
         # Issue #3391: tracked background tasks for deferred OBSERVE dispatch.
         # Strong references prevent GC of in-flight tasks (CPython #91887).
         self._background_tasks: set[asyncio.Task] = set()
+
+        # Phase G temporary: SyscallEngine ref for hook count sync.
+        # Deleted in §7 Collapse (hooks become Rust middleware).
+        self._syscall_engine: Any = None
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 

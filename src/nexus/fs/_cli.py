@@ -408,7 +408,11 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
                 "  nexus-fs cp /src /dst s3://bucket gcs://project/bucket"
             )
 
-        fs = await mount(*uris, mount_overrides=overrides or None)
+        fs = await mount(
+            *uris,
+            mount_overrides=overrides or None,
+            skip_unavailable=True,
+        )
 
         result = await fs.copy(source, dest)
         return {"source": source, "dest": dest, **result}
@@ -453,7 +457,11 @@ def _boot_fs():
         uris, overrides = build_mount_args(persisted)
         if not uris:
             raise click.UsageError("No mounts found. Run 'nexus-fs mount <uri>' first.")
-        return await mount(*uris, mount_overrides=overrides or None)
+        return await mount(
+            *uris,
+            mount_overrides=overrides or None,
+            skip_unavailable=True,
+        )
 
     return _run()
 
@@ -619,8 +627,8 @@ def write(
 @click.option(
     "--fuzzy",
     type=float,
-    default=0.85,
-    help="Fuzzy match threshold (0.0-1.0). Use 1.0 for exact only.",
+    default=1.0,
+    help="Fuzzy match threshold (0.0-1.0). Default 1.0 (exact only). Use 0.85 for typo tolerance.",
 )
 @add_output_options
 def edit(

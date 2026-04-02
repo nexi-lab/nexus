@@ -56,6 +56,7 @@ async def mount(
     *uris: str,
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
+    skip_unavailable: bool = False,
 ) -> Any:
     """Mount one or more backends and return a SlimNexusFS facade.
 
@@ -65,6 +66,10 @@ async def mount(
         mount_overrides: Optional mapping of URI → custom mount point.
             Allows per-URI mount points when mounting multiple backends.
             Takes precedence over ``at``.
+        skip_unavailable: If True, backends that fail to connect (expired
+            credentials, missing bucket, network error) are skipped with a
+            warning instead of aborting the entire mount.  Useful for CLI
+            commands that should not fail because of an unrelated broken mount.
 
     Returns:
         SlimNexusFS facade with all backends mounted.
@@ -128,16 +133,31 @@ async def mount(
 
     # Create all backends with cleanup on partial failure
     backends: list[tuple[str, Any]] = []
+    skipped: list[tuple[str, str]] = []  # (uri, error_msg)
     try:
-        for spec, mp in resolved_mounts:
-            backend = create_backend(spec)
-            backends.append((mp, backend))
+        for (spec, mp), uri in zip(resolved_mounts, uris, strict=True):
+            try:
+                backend = create_backend(spec)
+                backends.append((mp, backend))
+            except Exception as exc:
+                if skip_unavailable:
+                    skipped.append((uri, str(exc)))
+                    logger.warning("Skipping unavailable backend %s: %s", uri, exc)
+                else:
+                    raise
     except Exception:
         # Clean up any already-created backends and the metastore
         for _, be in backends:
             _close_backend(be)
         metastore.close()
         raise
+
+    if not backends:
+        metastore.close()
+        skipped_summary = "; ".join(f"{u}: {e}" for u, e in skipped)
+        raise ValueError(
+            f"All mounts failed. Run 'nexus-fs doctor' to diagnose.\n{skipped_summary}"
+        )
 
     # Slim kernel boot — direct construction, no factory dependency.
     # Wrapped in try/except so backends and metastore are cleaned up if
@@ -167,12 +187,15 @@ async def mount(
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
         # Merges with existing entries so repeated `mount` calls accumulate.
+        # Only persist URIs whose backends were successfully created.
+        skipped_uris = {u for u, _ in skipped}
         try:
             from nexus.fs._paths import save_persisted_mounts
 
             new_entries = [
                 {"uri": uri, "at": overrides.get(uri) or (at if i == 0 else None)}
                 for i, uri in enumerate(uris)
+                if uri not in skipped_uris
             ]
             save_persisted_mounts(new_entries)
         except OSError as exc:
@@ -198,6 +221,7 @@ def mount_sync(
     *uris: str,
     at: str | None = None,
     mount_overrides: dict[str, str] | None = None,
+    skip_unavailable: bool = False,
 ) -> Any:
     """Synchronous version of mount().
 
@@ -209,7 +233,14 @@ def mount_sync(
     """
     from nexus.fs._sync import SyncNexusFS, run_sync
 
-    async_fs = run_sync(mount(*uris, at=at, mount_overrides=mount_overrides))
+    async_fs = run_sync(
+        mount(
+            *uris,
+            at=at,
+            mount_overrides=mount_overrides,
+            skip_unavailable=skip_unavailable,
+        )
+    )
     return SyncNexusFS(async_fs)
 
 

@@ -4,6 +4,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod backend;
 mod bitmap;
 mod bloom;
 mod cache;
@@ -123,6 +124,9 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // Phase H: stat/rename plan types
     m.add_class::<syscall::StatPlan>()?;
     m.add_class::<syscall::RenamePlan>()?;
+    // Kernel boundary collapse: strong-typed syscall results
+    m.add_class::<syscall::SysReadResult>()?;
+    m.add_class::<syscall::SysWriteResult>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

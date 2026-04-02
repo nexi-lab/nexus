@@ -30,24 +30,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.contracts.metadata import FileMetadata
+from nexus_fast import RustDCache as _RustDCache
 
-# RUST_FALLBACK: RustDCache — DashMap dentry cache (Issue #1838)
-_RustDCache: type | None
-try:
-    from nexus_fast import RustDCache as _RustDCache
-except ImportError:
-    _RustDCache = None
+from nexus.contracts.metadata import FileMetadata
 
 
 def _sync_to_rust(rust_dc: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
-    No-op when RustDCache is unavailable (nexus_fast not installed).
     Phase H: added mime_type for sys_stat acceleration.
     """
-    if rust_dc is None:
-        return
     rust_dc.put(
         meta.path,
         meta.backend_name,
@@ -89,7 +81,7 @@ class MetastoreABC(ABC):
         self._dcache: dict[str, FileMetadata] = {}
         self._dcache_hits: int = 0
         self._dcache_misses: int = 0
-        self._rust_dcache: Any = _RustDCache() if _RustDCache is not None else None
+        self._rust_dcache = _RustDCache()
 
     # ── Cached public API (signatures unchanged) ──────────────────────
 
@@ -134,8 +126,7 @@ class MetastoreABC(ABC):
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata (evicts dcache entry)."""
         self._dcache.pop(path, None)
-        if self._rust_dcache is not None:
-            self._rust_dcache.evict(path)
+        self._rust_dcache.evict(path)
         return self._delete_raw(path, consistency=consistency)
 
     def dcache_evict_prefix(self, prefix: str) -> int:
@@ -149,8 +140,7 @@ class MetastoreABC(ABC):
         keys = [k for k in self._dcache if k.startswith(prefix)]
         for k in keys:
             del self._dcache[k]
-        if self._rust_dcache is not None:
-            self._rust_dcache.evict_prefix(prefix)
+        self._rust_dcache.evict_prefix(prefix)
         return len(keys)
 
     def exists(self, path: str) -> bool:
@@ -216,8 +206,7 @@ class MetastoreABC(ABC):
         rust_dc = self._rust_dcache
         for p in paths:
             self._dcache.pop(p, None)
-            if rust_dc is not None:
-                rust_dc.evict(p)
+            rust_dc.evict(p)
         self._delete_batch_raw(paths)
 
     def put_batch(
@@ -273,7 +262,7 @@ class MetastoreABC(ABC):
             "hits": self._dcache_hits,
             "misses": self._dcache_misses,
             "size": len(self._dcache),
-            "rust": self._rust_dcache.stats() if self._rust_dcache is not None else {},
+            "rust": self._rust_dcache.stats(),
         }
 
     # ── Abstract raw methods (subclasses implement these) ─────────────

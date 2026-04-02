@@ -2813,7 +2813,7 @@ mod tests {
         // Write enough data to trigger multiple volume seals
         for i in 0..10u8 {
             let hash = hash_hex(i);
-            engine.put(&hash, &vec![i; 100]).unwrap();
+            engine.put(&hash, &[i; 100]).unwrap();
         }
 
         // Should have sealed some volumes
@@ -2863,7 +2863,7 @@ mod tests {
 
         // Write 10 entries
         for i in 0..10u8 {
-            engine.put(&hash_hex(i), &vec![i; 50]).unwrap();
+            engine.put(&hash_hex(i), &[i; 50]).unwrap();
         }
         engine.do_seal_active().unwrap();
 

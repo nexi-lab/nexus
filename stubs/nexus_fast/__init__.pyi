@@ -349,7 +349,6 @@ class RustPathRouter:
         backend_name: str = "",
         local_root: str | None = None,
         fsync: bool = False,
-        backend: Any = None,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(
@@ -429,6 +428,14 @@ class RenamePlan:
     entry_type: int
     error_msg: str | None
 
+class SysReadResult:
+    hit: bool
+    data: bytes | None
+
+class SysWriteResult:
+    hit: bool
+    content_id: str | None
+
 class SyscallEngine:
     def __init__(
         self,
@@ -444,8 +451,10 @@ class SyscallEngine:
     def plan_rename(
         self, old_path: str, new_path: str, zone_id: str, is_admin: bool
     ) -> RenamePlan: ...
-    def sys_read(self, path: str, zone_id: str, is_admin: bool) -> bytes | None: ...
-    def sys_write(self, path: str, zone_id: str, content: bytes, is_admin: bool) -> str | None: ...
+    def sys_read(self, path: str, zone_id: str, is_admin: bool) -> SysReadResult: ...
+    def sys_write(
+        self, path: str, zone_id: str, content: bytes, is_admin: bool
+    ) -> SysWriteResult: ...
     def sys_stat(self, path: str, zone_id: str, is_admin: bool) -> dict[str, Any] | None: ...
     def set_hook_count(self, op: str, count: int) -> None: ...
     def __repr__(self) -> str: ...

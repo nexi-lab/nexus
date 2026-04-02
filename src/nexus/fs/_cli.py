@@ -613,6 +613,12 @@ def write(
     default=0.85,
     help="Fuzzy match threshold (0.0-1.0). Use 1.0 for exact only.",
 )
+@click.option(
+    "--if-match",
+    type=str,
+    default=None,
+    help="ETag for optimistic concurrency. Edit fails if file changed since this ETag.",
+)
 @click.argument("mount_uris", nargs=-1)
 @add_output_options
 def edit(
@@ -620,6 +626,7 @@ def edit(
     edits: tuple[str, ...],
     preview: bool,
     fuzzy: float,
+    if_match: str | None,
     mount_uris: tuple[str, ...],
     output_opts: OutputOptions,
 ) -> None:
@@ -632,6 +639,7 @@ def edit(
       nexus-fs edit /local/src/main.py -e 'def foo():>>>def bar():'
       nexus-fs edit /local/src/main.py -e 'old>>>new' --preview
       nexus-fs edit /local/src/main.py -e 'typo>>>fix' --fuzzy 0.8
+      nexus-fs edit /s3/bucket/f.py -e 'old>>>new' --if-match abc123
     """
     from nexus.fs._sync import run_sync
 
@@ -650,8 +658,12 @@ def edit(
             parsed_edits,
             preview=preview,
             fuzzy_threshold=fuzzy,
+            if_match=if_match,
         )
         await fs.close()
+        # Strip new_content from result to prevent leaking full file body
+        # into JSON output (auto-JSON in piped/CI contexts).
+        result.pop("new_content", None)
         return {"path": path, **result}
 
     try:

@@ -182,6 +182,7 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     store._dcache = {}
     store._dcache_hits = 0
     store._dcache_misses = 0
+    store._rust_dcache = None  # RustDCache fallback (Issue #1838)
     store._engine = fake
     store._client = None
     store._zone_id = None
@@ -648,6 +649,7 @@ class TestMultiZoneIsolation:
         fake_a = FakeLocalRaft()
         store_a = object.__new__(RaftMetadataStore)
         store_a._dcache, store_a._dcache_hits, store_a._dcache_misses = {}, 0, 0
+        store_a._rust_dcache = None
         store_a._engine = fake_a
         store_a._client = None
         store_a._zone_id = "zone_a"
@@ -655,6 +657,7 @@ class TestMultiZoneIsolation:
         fake_b = FakeLocalRaft()
         store_b = object.__new__(RaftMetadataStore)
         store_b._dcache, store_b._dcache_hits, store_b._dcache_misses = {}, 0, 0
+        store_b._rust_dcache = None
         store_b._engine = fake_b
         store_b._client = None
         store_b._zone_id = "zone_b"
@@ -678,6 +681,7 @@ class TestMultiZoneIsolation:
         fake = FakeLocalRaft()
         store = object.__new__(RaftMetadataStore)
         store._dcache, store._dcache_hits, store._dcache_misses = {}, 0, 0
+        store._rust_dcache = None
         store._engine = fake
         store._client = None
         store._zone_id = "zone_a"

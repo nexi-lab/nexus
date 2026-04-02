@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{CasLocalBackend, StorageBackend};
+use crate::backend::{CasLocalBackend, ObjectStore};
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -26,7 +26,7 @@ struct MountEntry {
     admin_only: bool,
     io_profile: String,
     backend_name: String,
-    backend: Option<Box<dyn StorageBackend>>,
+    backend: Option<Box<dyn ObjectStore>>,
 }
 
 #[derive(Debug)]
@@ -188,7 +188,7 @@ impl RustPathRouter {
         fsync: bool,
     ) -> PyResult<()> {
         let canonical = canonicalize(mount_point, zone_id);
-        let backend: Option<Box<dyn StorageBackend>> = match local_root {
+        let backend: Option<Box<dyn ObjectStore>> = match local_root {
             Some(root) => {
                 let b = CasLocalBackend::new(Path::new(root), fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;

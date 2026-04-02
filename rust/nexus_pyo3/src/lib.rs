@@ -7,6 +7,8 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod bitmap;
 mod bloom;
 mod cache;
+mod cas_engine;
+mod cas_transport;
 mod dcache;
 mod dispatch;
 mod glob;

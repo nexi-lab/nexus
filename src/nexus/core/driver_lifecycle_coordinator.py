@@ -24,7 +24,7 @@ Issue #1811, #1320.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 
@@ -147,6 +147,7 @@ class DriverLifecycleCoordinator:
         readonly: bool = False,
         admin_only: bool = False,
         io_profile: str = "balanced",
+        syscall_engine: Any = None,
     ) -> None:
         """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
         # 1. Add to mount table (kernel mount_hashtable)
@@ -160,13 +161,27 @@ class DriverLifecycleCoordinator:
         )
 
         # 2. Register in backend pool (keyed by name:mount_point to avoid collision)
-        self.register_backend(backend, mount_point)
+        backend_key = self.register_backend(backend, mount_point)
 
         # 3. Register hook_spec
         self._register_backend_hooks(mount_point, backend)
 
         # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
+
+        # 5. Register local CAS in SyscallEngine for Rust fast path (Issue #1817)
+        if syscall_engine is not None and getattr(backend, "has_root_path", False):
+            try:
+                root_path = str(getattr(backend, "root_path", None))
+                if root_path and root_path != "None":
+                    syscall_engine.register_local_cas(backend_key, root_path, True)
+                    logger.info(
+                        "[DRIVER] Registered Rust CAS for '%s' at %s", backend_key, root_path
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[DRIVER] Failed to register Rust CAS for '%s': %s", backend_key, exc
+                )
 
     def unmount(self, mount_point: str) -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.

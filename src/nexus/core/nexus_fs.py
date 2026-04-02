@@ -1261,6 +1261,22 @@ class NexusFS(  # type: ignore[misc]
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
+        # ── Rust execute_read fast path (Issue #1817 Phase E) ─────────────
+        # Hot path: dcache hit + local CAS + no hooks → pure Rust I/O.
+        # One FFI call replaces: validate + trie + route + dcache + CAS read.
+        # Falls back to Python path below on dcache miss or non-local backend.
+        if self._syscall_engine is not None and self._dispatch.read_hook_count == 0:
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            _data = self._syscall_engine.execute_read(path, self._zone_id, _is_admin)
+            if _data is not None:
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return _data
+
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)
         context = self._parse_context(context)

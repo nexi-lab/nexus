@@ -44,6 +44,7 @@ def _sync_to_rust(rust_dc: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
     No-op when RustDCache is unavailable (nexus_fast not installed).
+    Phase H: added mime_type for sys_stat acceleration.
     """
     if rust_dc is None:
         return
@@ -56,6 +57,7 @@ def _sync_to_rust(rust_dc: Any, meta: FileMetadata) -> None:
         meta.version,
         meta.etag,
         meta.zone_id,
+        meta.mime_type,
     )
 
 

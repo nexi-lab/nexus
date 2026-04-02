@@ -641,6 +641,22 @@ class NexusFS(  # type: ignore[misc]
         When include_lock=True, appends a "lock" field with advisory lock
         state from _lock_manager (zero cost when False — default).
         """
+        # ── Rust fast path (Phase H): dcache hit → dict from Rust ──────
+        # Skipped when include_lock=True (needs Python _lock_manager).
+        if self._syscall_engine is not None and not include_lock:
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            _stat = self._syscall_engine.sys_stat(path, self._zone_id, _is_admin)
+            if _stat is not None:
+                # Rust returns dict without owner/group (context-dependent)
+                ctx = self._resolve_cred(context)
+                _stat["owner"] = ctx.user_id
+                _stat["group"] = ctx.user_id
+                return _stat
+
         ctx = self._resolve_cred(context)
         normalized = self._validate_path(path, allow_root=True)
 

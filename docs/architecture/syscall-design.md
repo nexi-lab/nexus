@@ -200,3 +200,158 @@ uv run mypy src/nexus/contracts/filesystem/ src/nexus/core/nexus_fs.py
 uv run ruff check src/
 PYTHONPATH=src uv run lint-imports
 ```
+
+---
+
+## 7. Long-term Architecture: Collapse to RPC Boundary (decided 2026-04-02)
+
+### 7.1 Problem: NexusFilesystemABC is a redundant boundary
+
+The current kernel boundary (`NexusFilesystemABC`) is a Python ABC whose
+`sys_*` methods mirror the gRPC proto RPC definitions almost 1:1. This
+means the ABC is not a real abstraction — it's just the wire protocol's
+Python projection. All transport adapters converge on the same methods:
+
+```
+gRPC servicer        ──┐
+HTTP/FastAPI routers  ──┤
+FUSE operations       ──┼──→  NexusFilesystemABC.sys_read/write/...
+Python SDK (nexus-fs)  ──┤
+MCP                   ──┘
+Future: driver API    ──┘
+```
+
+This creates several problems:
+
+| Problem | Root cause |
+|---------|-----------|
+| SyscallEngine FFI facade exists | Bypassing ABC's Python call overhead |
+| `Arc<Inner>` on 5+ structs | Sharing state across FFI boundary |
+| GIL safety clone-then-call pattern | Rust calling Python callbacks |
+| Dual code paths (Rust fast + Python fallback) | Every feature maintained in two places |
+| Hook count sync via `AtomicU64` | Kernel straddles two languages |
+| 6 files to touch per new feature | ABC → impl → SyscallEngine → stubs → proto → servicer |
+
+No production storage system puts an internal ABC below its wire protocol:
+
+| System | Kernel boundary |
+|--------|----------------|
+| Linux | syscall ABI |
+| PostgreSQL | wire protocol |
+| Redis | RESP protocol |
+| CockroachDB | SQL / gRPC |
+| etcd | gRPC |
+
+### 7.2 Target: RPC as kernel boundary (transport-agnostic)
+
+The boundary should be at the **RPC abstraction level** — not gRPC
+specifically (which mandates HTTP/2 + protobuf + network), but the
+procedure call contract itself: "given an operation name + arguments,
+return a result." This is the common ancestor of all transports.
+
+```
+Transport adapters (thin, many):
+┌─────────────────────────┐
+│ gRPC    (tonic / grpcio) │──┐
+│ HTTP    (axum / FastAPI)  │──┤       ┌───────────────────────────┐
+│ FUSE    (fuse3)           │──┼──────→│  Rust kernel (pub fn)      │
+│ PyO3    (in-process)      │──┤       │  sys_read(ctx, path, ...)  │
+│ Driver  (OS syscall hook) │──┤       │  sys_write(ctx, path, ...) │
+│ MCP                       │──┘       │  sys_stat(ctx, path, ...)  │
+└─────────────────────────┘       └───────────────────────────┘
+                                           │
+                                      ┌────┴────┐
+                                      │Backends │
+                                      │ CAS: pure Rust              │
+                                      │ S3/GCS: PyO3 → Python       │
+                                      └─────────┘
+```
+
+Key design decisions:
+
+1. **Kernel = Rust `pub fn`**, not ABC, not trait. One implementation, not
+   an interface-with-one-impl pattern.
+2. **Transport adapters are thin**: gRPC adapter deserializes → calls
+   `kernel::sys_read` → serializes response. ~20 lines per RPC.
+3. **In-process calls use PyO3** (for `nexus-fs` Python package, FUSE
+   mount, unit tests). ~100ns FFI overhead, no network, no serialization.
+4. **Hooks/observers** become Rust middleware/interceptors on the kernel
+   functions, not a cross-language callback dance.
+5. **Python backends** continue to exist, called via PyO3 embedded
+   interpreter (same pattern as Phase F's backend callback — already
+   proven to work).
+
+### 7.3 What this eliminates
+
+| Artifact | Status after collapse |
+|----------|----------------------|
+| `NexusFilesystemABC` | **Deleted** — kernel is `pub fn`, not ABC |
+| `SyscallEngine` (FFI facade) | **Deleted** — no FFI boundary to bridge |
+| `Arc<Inner>` on 5+ structs | **Gone** — all structs are fields of one kernel struct |
+| GIL safety clone-then-call | **Gone** — only for Python backend calls (unchanged) |
+| Dual Rust/Python code paths | **Gone** — one Rust path, Python fallback only for backends |
+| `stubs/nexus_fast/__init__.pyi` | **Simplified** — only PyO3 bindings, not internal types |
+| Per-feature 6-file updates | **2 files** — proto + Rust impl (or just Rust for non-network) |
+
+### 7.4 Concrete code shape
+
+```rust
+// kernel/mod.rs — THE kernel. Not a trait, just functions.
+pub fn sys_read(ctx: &KernelCtx, path: &str, offset: u64, count: Option<u64>) -> Result<Bytes> {
+    // validate → route → dcache → vfs_lock → CAS/backend read → unlock
+    // This is what SyscallEngine.sys_read() does today, minus the FFI wrapper.
+}
+
+// grpc/vfs_service.rs — thin tonic adapter
+async fn read(&self, req: Request<ReadRequest>) -> Result<Response<ReadResponse>> {
+    let data = kernel::sys_read(&self.ctx, &req.path, req.offset, req.count)?;
+    Ok(Response::new(ReadResponse { data }))
+}
+
+// python/mod.rs — thin PyO3 adapter (for nexus-fs embed, FUSE, tests)
+#[pyfunction]
+fn sys_read(ctx: &PyKernelCtx, path: &str, offset: u64, count: Option<u64>) -> PyResult<Py<PyBytes>> {
+    let data = kernel::sys_read(&ctx.inner, path, offset, count)?;
+    Ok(PyBytes::new(py, &data))
+}
+```
+
+One implementation. Two thin bindings (gRPC + PyO3). Zero ABCs.
+
+### 7.5 Migration path from current state
+
+All work done in Phases A-G is directly reusable:
+
+| Current (Phase G) | Target |
+|-------------------|--------|
+| `SyscallEngine.sys_read` logic | `kernel::sys_read()` body (identical) |
+| `RustPathRouterInner` | `kernel::Router` (struct field, no Arc) |
+| `RustDCacheInner` | `kernel::DCache` (struct field, no Arc) |
+| `VFSLockManagerInner` | `kernel::VfsLock` (struct field, no Arc) |
+| `CASEngine` | `kernel::CasEngine` (unchanged) |
+| `read_backend` PyO3 callback | `kernel::call_python_backend()` (unchanged) |
+
+Migration phases (incremental, each a PR):
+
+1. **Rust kernel crate**: Extract `kernel/mod.rs` with `pub fn sys_read/write`
+   from current `SyscallEngine` logic. SyscallEngine becomes a thin
+   delegation layer.
+2. **PyO3 binding adapter**: Replace `SyscallEngine` pyclass with thin
+   `#[pyfunction]` bindings to `kernel::sys_*`. NexusFS calls these
+   directly instead of through SyscallEngine.
+3. **Delete NexusFilesystemABC**: Move Tier 2 methods to a standalone
+   Python module that calls the PyO3 `sys_*` functions.
+4. **tonic adapter** (optional, parallel): Add gRPC serving via tonic,
+   calling the same `kernel::sys_*` functions.
+
+### 7.6 Relationship to current plan phases
+
+| Phase | Status | Relationship to §7 |
+|-------|--------|-------------------|
+| A-G | Done | Logic **reused verbatim** in `kernel::sys_read/write` |
+| H (all Tier 1 syscalls) | Pending | Adds `sys_stat/setattr/...` to SyscallEngine. These become `kernel::sys_*` functions directly. |
+| I (io_uring) | Pending | Orthogonal — applies to the kernel I/O layer regardless of boundary. |
+| **§7 collapse** | **Future** | Happens after H. Deletes SyscallEngine + NexusFilesystemABC, promotes kernel functions to top-level. |
+
+The key insight: **Phase H is the last phase that adds logic.** The §7
+collapse is a **refactoring** that changes the boundary, not the logic.

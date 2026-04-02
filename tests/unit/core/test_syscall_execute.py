@@ -1,6 +1,9 @@
-"""Tests for SyscallEngine execute_read / execute_write (Phase E).
+"""Tests for SyscallEngine execute_read / execute_write (Phase E / E.1).
 
 Verifies the full Rust data path: validate → route → dcache → CAS read/write.
+
+Phase E.1: CAS engines are now owned by MountEntry (via add_mount's local_root
+parameter), not registered separately on SyscallEngine.
 """
 
 import tempfile
@@ -38,11 +41,11 @@ DT_EXTERNAL = 5
 
 @pytest.fixture
 def components():
-    """Create shared components for SyscallEngine."""
+    """Create shared components for SyscallEngine (no CAS)."""
     dcache = RustDCache()
     router = RustPathRouter()
     trie = PathTrie()
-    # Add root mount
+    # Add root mount without CAS
     router.add_mount("/", "root", False, False, "balanced")
     return dcache, router, trie
 
@@ -62,11 +65,14 @@ def cas_dir():
 
 
 @pytest.fixture
-def engine_with_cas(components, cas_dir):
-    """Create SyscallEngine with local CAS backend registered."""
-    dcache, router, trie = components
+def engine_with_cas(cas_dir):
+    """Create SyscallEngine with local CAS on root mount (Phase E.1)."""
+    dcache = RustDCache()
+    router = RustPathRouter()
+    trie = PathTrie()
+    # Root mount with CAS backend
+    router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
     engine = SyscallEngine(dcache, router, trie)
-    engine.register_local_cas("local", cas_dir, False)
     return engine, dcache, cas_dir
 
 
@@ -77,36 +83,11 @@ class TestSyscallEngineConstruction:
     def test_basic_construction(self, components):
         dcache, router, trie = components
         engine = SyscallEngine(dcache, router, trie)
-        assert engine.cas_backend_count() == 0
-        assert engine.cas_backend_names() == []
+        assert engine is not None
 
     def test_repr(self, engine):
         r = repr(engine)
         assert "SyscallEngine" in r
-
-    def test_register_local_cas(self, components, cas_dir):
-        dcache, router, trie = components
-        engine = SyscallEngine(dcache, router, trie)
-        engine.register_local_cas("local", cas_dir, False)
-        assert engine.cas_backend_count() == 1
-        assert "local" in engine.cas_backend_names()
-
-    def test_unregister_cas(self, engine_with_cas):
-        engine, _, _ = engine_with_cas
-        assert engine.cas_backend_count() == 1
-        assert engine.unregister_cas("local")
-        assert engine.cas_backend_count() == 0
-        assert not engine.unregister_cas("nonexistent")
-
-    def test_register_multiple_cas(self, components):
-        dcache, router, trie = components
-        engine = SyscallEngine(dcache, router, trie)
-        with tempfile.TemporaryDirectory() as d1, tempfile.TemporaryDirectory() as d2:
-            engine.register_local_cas("backend-a", d1, False)
-            engine.register_local_cas("backend-b", d2, True)
-            assert engine.cas_backend_count() == 2
-            names = sorted(engine.cas_backend_names())
-            assert names == ["backend-a", "backend-b"]
 
 
 # ── plan_read ─────────────────────────────────────────────────────────
@@ -213,7 +194,7 @@ class TestExecuteRead:
         assert result is None
 
     def test_no_cas_backend_returns_none(self, components):
-        """No CAS engine for backend → None (Python fallback)."""
+        """Mount without CAS (no local_root) → None (Python fallback)."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-backend", "test.txt", 100, DT_REG, etag="hash123")
         engine = SyscallEngine(dcache, router, trie)
@@ -292,20 +273,22 @@ class TestExecuteWrite:
         assert result is None
 
     def test_no_cas_backend_returns_none(self, components):
-        """Non-local backend → None."""
+        """Mount without CAS → None."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-remote", "", 0, DT_REG, etag="hash")
         engine = SyscallEngine(dcache, router, trie)
         result = engine.execute_write("/workspace/test.txt", "root", b"data", False)
         assert result is None
 
-    def test_readonly_returns_none(self, components, cas_dir):
+    def test_readonly_returns_none(self, cas_dir):
         """Write to readonly mount → None (Python handles error)."""
-        dcache, router, trie = components
-        router.add_mount("/readonly", "root", True, False, "balanced")
+        dcache = RustDCache()
+        router = RustPathRouter()
+        trie = PathTrie()
+        router.add_mount("/", "root", False, False, "balanced")
+        router.add_mount("/readonly", "root", True, False, "balanced", "local", cas_dir, False)
         dcache.put("/readonly/file.txt", "local", "", 0, DT_REG, etag="hash")
         engine = SyscallEngine(dcache, router, trie)
-        engine.register_local_cas("local", cas_dir, False)
         # PR B returns cache miss on route failure → execute_write returns None
         result = engine.execute_write("/readonly/file.txt", "root", b"data", False)
         assert result is None
@@ -349,11 +332,13 @@ class TestArcSharing:
         result = engine.execute_read("/workspace/late.txt", "root", False)
         assert result == content
 
-    def test_mount_updates_visible(self, components, cas_dir):
+    def test_mount_updates_visible(self, cas_dir):
         """Mounts added after engine creation are visible."""
-        dcache, router, trie = components
+        dcache = RustDCache()
+        router = RustPathRouter()
+        trie = PathTrie()
+        router.add_mount("/", "root", False, False, "balanced")
         engine = SyscallEngine(dcache, router, trie)
-        engine.register_local_cas("local", cas_dir, False)
 
         content = b"mount test"
         content_hash = hash_bytes(content)
@@ -361,8 +346,8 @@ class TestArcSharing:
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
 
-        # Add mount for /workspace
-        router.add_mount("/workspace", "root", False, False, "fast")
+        # Add mount for /workspace with CAS
+        router.add_mount("/workspace", "root", False, False, "fast", "local", cas_dir, False)
         dcache.put(
             "/workspace/file.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )

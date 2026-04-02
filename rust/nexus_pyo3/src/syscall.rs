@@ -9,15 +9,11 @@
 //!
 //! Performance target: execute_read() < 2μs (dcache hit, page-cache-hot CAS).
 
-use crate::cas_engine::CASEngine;
-use crate::cas_transport::LocalCASTransport;
 use crate::dcache::{RustDCache, RustDCacheInner, DT_EXTERNAL, DT_PIPE, DT_STREAM};
 use crate::dispatch::{PathTrie, PathTrieInner};
 use crate::router::{RustPathRouter, RustPathRouterInner};
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
-use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 
 // ── Action constants ────────────────────────────────────────────────────
@@ -111,8 +107,6 @@ pub struct SyscallEngine {
     dcache: Arc<RustDCacheInner>,
     router: Arc<RustPathRouterInner>,
     trie: Arc<PathTrieInner>,
-    /// backend_name → CASEngine for local CAS backends (Phase E).
-    cas_engines: HashMap<String, CASEngine>,
 }
 
 #[pymethods]
@@ -124,33 +118,13 @@ impl SyscallEngine {
             dcache: Arc::clone(&dcache.inner),
             router: Arc::clone(&router.inner),
             trie: Arc::clone(&trie.inner),
-            cas_engines: HashMap::new(),
         }
     }
 
-    /// Register a local CAS backend for full Rust I/O (Phase E).
-    fn register_local_cas(
-        &mut self,
-        backend_name: &str,
-        root_path: &str,
-        fsync: bool,
-    ) -> PyResult<()> {
-        let transport = LocalCASTransport::new(Path::new(root_path), fsync)
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-        self.cas_engines
-            .insert(backend_name.to_string(), CASEngine::new(transport));
-        Ok(())
-    }
-
-    /// Unregister a CAS backend (for unmount).
-    fn unregister_cas(&mut self, backend_name: &str) -> bool {
-        self.cas_engines.remove(backend_name).is_some()
-    }
-
-    /// Execute read entirely in Rust if possible (Phase E).
+    /// Execute read entirely in Rust if possible (Phase E / E.1).
     ///
-    /// DCached hit + local CAS → returns bytes. Otherwise returns None
-    /// and Python falls through to the full Python path.
+    /// DCached hit + local CAS (from MountEntry) → returns bytes.
+    /// Otherwise returns None and Python falls through to the full Python path.
     fn execute_read<'py>(
         &self,
         py: Python<'py>,
@@ -166,17 +140,13 @@ impl SyscallEngine {
             Some(e) if !e.is_empty() => e.as_str(),
             _ => return Ok(None),
         };
-        let cas = match self.cas_engines.get(&plan.backend_name) {
-            Some(cas) => cas,
-            None => return Ok(None),
-        };
-        match cas.read_content(etag) {
-            Ok(data) => Ok(Some(PyBytes::new(py, &data))),
-            Err(_) => Ok(None),
+        match self.router.read_cas(&plan.mount_point, etag) {
+            Some(data) => Ok(Some(PyBytes::new(py, &data))),
+            None => Ok(None),
         }
     }
 
-    /// Execute write's CAS portion in Rust (Phase E).
+    /// Execute write's CAS portion in Rust (Phase E / E.1).
     ///
     /// Returns BLAKE3 hash if local CAS write succeeded, else None.
     fn execute_write(
@@ -195,24 +165,7 @@ impl SyscallEngine {
         if plan.action != ACTION_DCACHE_HIT {
             return Ok(None);
         }
-        let cas = match self.cas_engines.get(&plan.backend_name) {
-            Some(cas) => cas,
-            None => return Ok(None),
-        };
-        match cas.write_content(content) {
-            Ok(hash) => Ok(Some(hash)),
-            Err(_) => Ok(None),
-        }
-    }
-
-    /// Number of registered CAS backends.
-    fn cas_backend_count(&self) -> usize {
-        self.cas_engines.len()
-    }
-
-    /// List registered CAS backend names.
-    fn cas_backend_names(&self) -> Vec<String> {
-        self.cas_engines.keys().cloned().collect()
+        Ok(self.router.write_cas(&plan.mount_point, content))
     }
 
     /// Plan a read operation in a single FFI call.

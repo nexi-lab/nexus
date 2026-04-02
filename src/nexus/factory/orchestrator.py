@@ -293,7 +293,7 @@ async def create_nexus_fs(
     )
 
     # Root mount — through coordinator (unified lifecycle: pool + hooks + notify)
-    nx._driver_coordinator.mount("/", backend, syscall_engine=nx._syscall_engine)
+    nx._driver_coordinator.mount("/", backend)
 
     # Linearized lifecycle — no partial injection (PR #3371 Phase 2)
     init_ctx = await _wire_services(

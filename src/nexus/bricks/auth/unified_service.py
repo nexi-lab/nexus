@@ -875,7 +875,7 @@ class UnifiedAuthService:
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
                 )
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=15)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=3)
             except BaseException as exc:
                 if proc is not None and proc.returncode is None:
                     proc.kill()

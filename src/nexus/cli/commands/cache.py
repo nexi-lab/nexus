@@ -10,8 +10,8 @@ from nexus.cli.timing import CommandTiming
 from nexus.cli.utils import (
     add_backend_options,
     console,
-    get_filesystem,
     handle_error,
+    open_filesystem,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -82,84 +82,86 @@ def warmup(
         nexus cache warmup /workspace --metadata-only --max-files 10000
     """
     timing = CommandTiming()
-    try:
-        nx = get_filesystem(remote_url, remote_api_key)
 
-        # Import here to avoid circular imports
-        from nexus.server.cache_warmer import (
-            CacheWarmer,
-            WarmupConfig,
-            get_file_access_tracker,
-        )
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            # Import here to avoid circular imports
+            from nexus.server.cache_warmer import (
+                CacheWarmer,
+                WarmupConfig,
+                get_file_access_tracker,
+            )
 
-        # Create config
-        config = WarmupConfig(
-            max_files=max_files,
-            depth=depth,
-            include_content=include_content and not metadata_only,
-        )
+            # Create config
+            config = WarmupConfig(
+                max_files=max_files,
+                depth=depth,
+                include_content=include_content and not metadata_only,
+            )
 
-        # Get or create file tracker for history-based warmup
-        file_tracker = get_file_access_tracker() if user else None
+            # Get or create file tracker for history-based warmup
+            file_tracker = get_file_access_tracker() if user else None
 
-        # Create warmer
-        warmer = CacheWarmer(
-            nexus_fs=nx,  # type: ignore[arg-type]
-            config=config,
-            file_tracker=file_tracker,
-        )
+            # Create warmer
+            warmer = CacheWarmer(
+                nexus_fs=nx,  # type: ignore[arg-type]
+                config=config,
+                file_tracker=file_tracker,
+            )
 
-        # Run warmup
-        async def run_warmup() -> dict[str, Any]:
-            if user:
-                # History-based warmup
-                if not output_opts.quiet and not output_opts.json_output:
-                    console.print(
-                        f"[nexus.reference]Warming cache based on {user}'s access history...[/nexus.reference]"
+            # Run warmup
+            async def run_warmup() -> dict[str, Any]:
+                if user:
+                    # History-based warmup
+                    if not output_opts.quiet and not output_opts.json_output:
+                        console.print(
+                            f"[nexus.reference]Warming cache based on {user}'s access history...[/nexus.reference]"
+                        )
+                    warmup_stats = await warmer.warmup_from_history(
+                        user=user,
+                        hours=hours,
+                        max_files=max_files,
+                        zone_id=zone_id,
                     )
-                warmup_stats = await warmer.warmup_from_history(
-                    user=user,
-                    hours=hours,
-                    max_files=max_files,
-                    zone_id=zone_id,
-                )
-            else:
-                # Directory-based warmup
-                if not output_opts.quiet and not output_opts.json_output:
-                    console.print(f"[nexus.reference]Warming cache for {path}...[/nexus.reference]")
-                warmup_stats = await warmer.warmup_directory(
-                    path=path,
-                    depth=depth,
-                    include_content=include_content and not metadata_only,
-                    max_files=max_files,
-                    zone_id=zone_id,
-                )
-            return warmup_stats.to_dict()
+                else:
+                    # Directory-based warmup
+                    if not output_opts.quiet and not output_opts.json_output:
+                        console.print(
+                            f"[nexus.reference]Warming cache for {path}...[/nexus.reference]"
+                        )
+                    warmup_stats = await warmer.warmup_directory(
+                        path=path,
+                        depth=depth,
+                        include_content=include_content and not metadata_only,
+                        max_files=max_files,
+                        zone_id=zone_id,
+                    )
+                return warmup_stats.to_dict()
 
-        with timing.phase("server"):
-            warmup_data = asyncio.run(run_warmup())
+            with timing.phase("server"):
+                warmup_data = await run_warmup()
 
-        def _render(data: dict[str, Any]) -> None:
-            console.print("\n[nexus.success]Cache warmup complete![/nexus.success]")
-            console.print(f"  Files warmed: {data['files_warmed']}")
-            console.print(f"  Metadata warmed: {data['metadata_warmed']}")
-            console.print(f"  Content warmed: {data['content_warmed']}")
-            console.print(f"  Bytes warmed: {data['bytes_warmed_mb']} MB")
-            console.print(f"  Duration: {data['duration_seconds']}s")
-            if data["errors"] > 0:
-                console.print(f"  [nexus.warning]Errors: {data['errors']}[/nexus.warning]")
-            if data["skipped"] > 0:
-                console.print(f"  Skipped: {data['skipped']}")
+            def _render(data: dict[str, Any]) -> None:
+                console.print("\n[nexus.success]Cache warmup complete![/nexus.success]")
+                console.print(f"  Files warmed: {data['files_warmed']}")
+                console.print(f"  Metadata warmed: {data['metadata_warmed']}")
+                console.print(f"  Content warmed: {data['content_warmed']}")
+                console.print(f"  Bytes warmed: {data['bytes_warmed_mb']} MB")
+                console.print(f"  Duration: {data['duration_seconds']}s")
+                if data["errors"] > 0:
+                    console.print(f"  [nexus.warning]Errors: {data['errors']}[/nexus.warning]")
+                if data["skipped"] > 0:
+                    console.print(f"  Skipped: {data['skipped']}")
 
-        render_output(
-            data=warmup_data,
-            output_opts=output_opts,
-            timing=timing,
-            human_formatter=_render,
-        )
+            render_output(
+                data=warmup_data,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_render,
+            )
 
-        nx.close()
-
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -181,69 +183,69 @@ def stats(
         nexus cache stats --json
     """
     timing = CommandTiming()
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            with timing.phase("server"):
+                # Collect stats from various cache layers
+                cache_stats: dict[str, Any] = {}
+
+                # Content cache stats
+                if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
+                    cc = nx.backend.content_cache
+                    if cc and hasattr(cc, "get_stats"):
+                        cache_stats["content_cache"] = cc.get_stats()
+
+                # Permission cache stats
+                rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
+                if rm is not None:
+                    if hasattr(rm, "_permission_cache") and rm._permission_cache:
+                        pc = rm._permission_cache
+                        if hasattr(pc, "get_stats"):
+                            cache_stats["permission_cache"] = pc.get_stats()
+
+                    # Tiger cache stats
+                    if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
+                        tc = rm._tiger_cache
+                        if hasattr(tc, "get_stats"):
+                            cache_stats["tiger_cache"] = tc.get_stats()
+
+                # Directory visibility cache
+                if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
+                    dvc = nx._dir_visibility_cache
+                    if hasattr(dvc, "get_metrics"):
+                        cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+
+                # File access tracker stats
+                from nexus.server.cache_warmer import get_file_access_tracker
+
+                tracker = get_file_access_tracker()
+                cache_stats["file_access_tracker"] = tracker.get_stats()
+
+            def _render(data: dict[str, Any]) -> None:
+                console.print("\n[bold]Cache Statistics[/bold]")
+                console.print("=" * 40)
+
+                for cache_name, stats_data in data.items():
+                    console.print(f"\n[nexus.value]{cache_name}:[/nexus.value]")
+                    if isinstance(stats_data, dict):
+                        for key, value in stats_data.items():
+                            if isinstance(value, float):
+                                console.print(f"  {key}: {value:.4f}")
+                            else:
+                                console.print(f"  {key}: {value}")
+                    else:
+                        console.print(f"  {stats_data}")
+
+            render_output(
+                data=cache_stats,
+                output_opts=output_opts,
+                timing=timing,
+                human_formatter=_render,
+            )
+
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
-
-        with timing.phase("server"):
-            # Collect stats from various cache layers
-            cache_stats: dict[str, Any] = {}
-
-            # Content cache stats
-            if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
-                cc = nx.backend.content_cache
-                if cc and hasattr(cc, "get_stats"):
-                    cache_stats["content_cache"] = cc.get_stats()
-
-            # Permission cache stats
-            rm = nx.service("rebac_manager") if hasattr(nx, "service") else None
-            if rm is not None:
-                if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                    pc = rm._permission_cache
-                    if hasattr(pc, "get_stats"):
-                        cache_stats["permission_cache"] = pc.get_stats()
-
-                # Tiger cache stats
-                if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                    tc = rm._tiger_cache
-                    if hasattr(tc, "get_stats"):
-                        cache_stats["tiger_cache"] = tc.get_stats()
-
-            # Directory visibility cache
-            if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-                dvc = nx._dir_visibility_cache
-                if hasattr(dvc, "get_metrics"):
-                    cache_stats["dir_visibility_cache"] = dvc.get_metrics()
-
-            # File access tracker stats
-            from nexus.server.cache_warmer import get_file_access_tracker
-
-            tracker = get_file_access_tracker()
-            cache_stats["file_access_tracker"] = tracker.get_stats()
-
-        def _render(data: dict[str, Any]) -> None:
-            console.print("\n[bold]Cache Statistics[/bold]")
-            console.print("=" * 40)
-
-            for cache_name, stats_data in data.items():
-                console.print(f"\n[nexus.value]{cache_name}:[/nexus.value]")
-                if isinstance(stats_data, dict):
-                    for key, value in stats_data.items():
-                        if isinstance(value, float):
-                            console.print(f"  {key}: {value:.4f}")
-                        else:
-                            console.print(f"  {key}: {value}")
-                else:
-                    console.print(f"  {stats_data}")
-
-        render_output(
-            data=cache_stats,
-            output_opts=output_opts,
-            timing=timing,
-            human_formatter=_render,
-        )
-
-        nx.close()
-
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -296,60 +298,60 @@ def clear(
             console.print("[nexus.warning]Cancelled[/nexus.warning]")
             return
 
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as nx:
+            cleared: list[str] = []
+
+            # Clear content cache
+            if (
+                (content or clear_all)
+                and hasattr(nx, "backend")
+                and hasattr(nx.backend, "content_cache")
+            ):
+                cc = nx.backend.content_cache
+                if cc and hasattr(cc, "clear"):
+                    cc.clear()
+                    cleared.append("content")
+
+            # Clear permission cache
+            if permissions or clear_all:
+                rm = nx.service("rebac_manager") if hasattr(nx, "service") else None  # Issue #1771
+                if rm is not None:
+                    if hasattr(rm, "_permission_cache") and rm._permission_cache:
+                        pc = rm._permission_cache
+                        if hasattr(pc, "clear"):
+                            pc.clear()
+                        cleared.append("permission")
+
+                    # Also clear tiger cache
+                    if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
+                        tc = rm._tiger_cache
+                        if hasattr(tc, "invalidate_all"):
+                            tc.invalidate_all()
+                        cleared.append("tiger")
+
+                # Clear directory visibility cache
+                if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
+                    dvc = nx._dir_visibility_cache
+                    if hasattr(dvc, "clear"):
+                        dvc.clear()
+                    cleared.append("dir_visibility")
+
+            # Clear file access tracker
+            if clear_all:
+                from nexus.server.cache_warmer import get_file_access_tracker
+
+                tracker = get_file_access_tracker()
+                tracker.clear()
+                cleared.append("file_access_tracker")
+
+            if cleared:
+                console.print(f"[nexus.success]Cleared: {', '.join(cleared)}[/nexus.success]")
+            else:
+                console.print("[nexus.warning]No caches were cleared[/nexus.warning]")
+
     try:
-        nx = get_filesystem(remote_url, remote_api_key)
-        cleared: list[str] = []
-
-        # Clear content cache
-        if (
-            (content or clear_all)
-            and hasattr(nx, "backend")
-            and hasattr(nx.backend, "content_cache")
-        ):
-            cc = nx.backend.content_cache
-            if cc and hasattr(cc, "clear"):
-                cc.clear()
-                cleared.append("content")
-
-        # Clear permission cache
-        if permissions or clear_all:
-            rm = nx.service("rebac_manager") if hasattr(nx, "service") else None  # Issue #1771
-            if rm is not None:
-                if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                    pc = rm._permission_cache
-                    if hasattr(pc, "clear"):
-                        pc.clear()
-                    cleared.append("permission")
-
-                # Also clear tiger cache
-                if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                    tc = rm._tiger_cache
-                    if hasattr(tc, "invalidate_all"):
-                        tc.invalidate_all()
-                    cleared.append("tiger")
-
-            # Clear directory visibility cache
-            if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-                dvc = nx._dir_visibility_cache
-                if hasattr(dvc, "clear"):
-                    dvc.clear()
-                cleared.append("dir_visibility")
-
-        # Clear file access tracker
-        if clear_all:
-            from nexus.server.cache_warmer import get_file_access_tracker
-
-            tracker = get_file_access_tracker()
-            tracker.clear()
-            cleared.append("file_access_tracker")
-
-        if cleared:
-            console.print(f"[nexus.success]Cleared: {', '.join(cleared)}[/nexus.success]")
-        else:
-            console.print("[nexus.warning]No caches were cleared[/nexus.warning]")
-
-        nx.close()
-
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 

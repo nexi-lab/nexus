@@ -132,6 +132,7 @@ features:
   memory: true
   mcp: true
   skills: true
+  pay: true
 
   scheduler: true
   sandbox: true

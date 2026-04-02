@@ -3,6 +3,7 @@
 Manage AI agents for delegation and multi-agent workflows.
 """
 
+import asyncio
 from typing import Any
 
 import click
@@ -16,8 +17,8 @@ from nexus.cli.utils import (
     REMOTE_API_KEY_OPTION,
     REMOTE_URL_OPTION,
     add_backend_options,
-    get_filesystem,
     handle_error,
+    open_filesystem,
 )
 
 
@@ -86,50 +87,51 @@ def register_cmd(
         # Legacy: Register with API key
         nexus agent register alice "Data Analyst Agent" --with-api-key
     """
-    try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
 
-        try:
-            result = nx.service("agent_rpc").register_agent(
-                agent_id=agent_id,
-                name=name,
-                description=description,
-                generate_api_key=with_api_key,
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            try:
+                result = nx.service("agent_rpc").register_agent(
+                    agent_id=agent_id,
+                    name=name,
+                    description=description,
+                    generate_api_key=with_api_key,
+                )
+            except Exception as reg_err:
+                if if_not_exists and "already exists" in str(reg_err).lower():
+                    try:
+                        existing = nx.service("agent_rpc").get_agent(agent_id)
+                        console.print(
+                            f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
+                        )
+                        console.print(f"  Name: {existing.get('name', name)}")
+                        console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
+                    except Exception:
+                        console.print(
+                            f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
+                        )
+                    return
+                raise
+
+            console.print(
+                f"[nexus.success]✓[/nexus.success] Registered agent: {result['agent_id']}"
             )
-        except Exception as reg_err:
-            if if_not_exists and "already exists" in str(reg_err).lower():
-                try:
-                    existing = nx.service("agent_rpc").get_agent(agent_id)
-                    console.print(
-                        f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
-                    )
-                    console.print(f"  Name: {existing.get('name', name)}")
-                    console.print(f"  Owner: {existing.get('user_id', 'unknown')}")
-                except Exception:
-                    console.print(
-                        f"[nexus.success]✓[/nexus.success] Agent already exists: {agent_id}"
-                    )
-                nx.close()
-                return
-            nx.close()
-            raise
+            console.print(f"  Name: {result.get('name', name)}")
+            if description:
+                console.print(f"  Description: {description}")
+            console.print(f"  Owner: {result.get('user_id', 'unknown')}")
 
-        console.print(f"[nexus.success]✓[/nexus.success] Registered agent: {result['agent_id']}")
-        console.print(f"  Name: {result.get('name', name)}")
-        if description:
-            console.print(f"  Description: {description}")
-        console.print(f"  Owner: {result.get('user_id', 'unknown')}")
+            if with_api_key and result.get("api_key"):
+                console.print("\n[nexus.warning]⚠[/nexus.warning] API Key (save securely):")
+                console.print(f"  {result['api_key']}")
+                console.print("\n[nexus.muted]Note: API key will not be shown again[/nexus.muted]")
+            else:
+                console.print("\n[nexus.value]ℹ[/nexus.value] No API key generated (recommended)")
+                console.print("  Agent uses owner's auth + X-Agent-ID header")
 
-        if with_api_key and result.get("api_key"):
-            console.print("\n[nexus.warning]⚠[/nexus.warning] API Key (save securely):")
-            console.print(f"  {result['api_key']}")
-            console.print("\n[nexus.muted]Note: API key will not be shown again[/nexus.muted]")
-        else:
-            console.print("\n[nexus.value]ℹ[/nexus.value] No API key generated (recommended)")
-            console.print("  Agent uses owner's auth + X-Agent-ID header")
-
-        nx.close()
-
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -145,46 +147,44 @@ def list_cmd(
     Examples:
         nexus agent list
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            agents = nx.service("agent_rpc").list_agents()
+
+            if not agents:
+                console.print("[nexus.warning]No agents registered[/nexus.warning]")
+                return
+
+            table = Table(title="Registered Agents")
+            table.add_column("Agent ID", style="nexus.value")
+            table.add_column("Name", style="nexus.success")
+            table.add_column("Description", style="nexus.muted", no_wrap=False)
+            table.add_column("Owner", style="nexus.muted")
+            table.add_column("Created", style="nexus.muted")
+
+            for ag in agents:
+                created = ag.get("created_at", "")
+                if created and isinstance(created, str):
+                    created = created.split("T")[0] if "T" in created else created
+
+                desc = ag.get("description", "")
+                if desc and len(desc) > 50:
+                    desc = desc[:47] + "..."
+
+                table.add_row(
+                    ag["agent_id"],
+                    ag.get("name", ag["agent_id"]),
+                    desc,
+                    ag.get("user_id", ""),
+                    created,
+                )
+
+            console.print(table)
+
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-
-        agents = nx.service("agent_rpc").list_agents()
-
-        if not agents:
-            console.print("[nexus.warning]No agents registered[/nexus.warning]")
-            nx.close()
-            return
-
-        # Create table
-        table = Table(title="Registered Agents")
-        table.add_column("Agent ID", style="nexus.value")
-        table.add_column("Name", style="nexus.success")
-        table.add_column("Description", style="nexus.muted", no_wrap=False)
-        table.add_column("Owner", style="nexus.muted")
-        table.add_column("Created", style="nexus.muted")
-
-        for agent in agents:
-            created = agent.get("created_at", "")
-            if created and isinstance(created, str):
-                # Shorten ISO timestamp
-                created = created.split("T")[0] if "T" in created else created
-
-            # Truncate description if too long
-            description = agent.get("description", "")
-            if description and len(description) > 50:
-                description = description[:47] + "..."
-
-            table.add_row(
-                agent["agent_id"],
-                agent.get("name", agent["agent_id"]),
-                description,
-                agent.get("user_id", ""),
-                created,
-            )
-
-        console.print(table)
-        nx.close()
-
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -202,28 +202,27 @@ def info_cmd(
     Examples:
         nexus agent info alice
     """
+
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            ag = nx.service("agent_rpc").get_agent(agent_id)
+
+            if not ag:
+                console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
+                return
+
+            console.print(f"[bold]Agent: {ag['agent_id']}[/bold]\n")
+            console.print(f"  Name: {ag.get('name', ag['agent_id'])}")
+
+            if "description" in ag and ag["description"]:
+                console.print(f"  Description: {ag['description']}")
+
+            console.print(f"  Owner: {ag.get('user_id', 'unknown')}")
+            console.print(f"  Created: {ag.get('created_at', 'unknown')}")
+
     try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-
-        agent = nx.service("agent_rpc").get_agent(agent_id)
-
-        if not agent:
-            console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
-            nx.close()
-            return
-
-        console.print(f"[bold]Agent: {agent['agent_id']}[/bold]\n")
-        console.print(f"  Name: {agent.get('name', agent['agent_id'])}")
-
-        # Show description if available
-        if "description" in agent and agent["description"]:
-            console.print(f"  Description: {agent['description']}")
-
-        console.print(f"  Owner: {agent.get('user_id', 'unknown')}")
-        console.print(f"  Created: {agent.get('created_at', 'unknown')}")
-
-        nx.close()
-
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 
@@ -246,31 +245,28 @@ def delete_cmd(
         nexus agent delete alice
         nexus agent delete alice --yes
     """
-    try:
-        nx: Any = get_filesystem(remote_url, remote_api_key)
-
-        # Confirm deletion
-        if not yes:
-            try:
-                confirm = input(f"Delete agent '{agent_id}'? [y/N]: ")
-                if confirm.lower() not in ("y", "yes"):
-                    console.print("[nexus.warning]Cancelled[/nexus.warning]")
-                    nx.close()
-                    return
-            except (EOFError, KeyboardInterrupt):
-                console.print("\n[nexus.warning]Cancelled[/nexus.warning]")
-                nx.close()
+    if not yes:
+        try:
+            confirm = input(f"Delete agent '{agent_id}'? [y/N]: ")
+            if confirm.lower() not in ("y", "yes"):
+                console.print("[nexus.warning]Cancelled[/nexus.warning]")
                 return
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[nexus.warning]Cancelled[/nexus.warning]")
+            return
 
-        result = nx.service("agent_rpc").delete_agent(agent_id)
+    async def _impl() -> None:
+        async with open_filesystem(remote_url, remote_api_key) as _nx:
+            nx: Any = _nx
+            result = nx.service("agent_rpc").delete_agent(agent_id)
 
-        if result:
-            console.print(f"[nexus.success]✓[/nexus.success] Deleted agent: {agent_id}")
-        else:
-            console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
+            if result:
+                console.print(f"[nexus.success]✓[/nexus.success] Deleted agent: {agent_id}")
+            else:
+                console.print(f"[nexus.error]✗[/nexus.error] Agent not found: {agent_id}")
 
-        nx.close()
-
+    try:
+        asyncio.run(_impl())
     except Exception as e:
         handle_error(e)
 

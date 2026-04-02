@@ -904,7 +904,7 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(path, is_admin=True, zone_id=self._zone_id)
             metadata = FileMetadata(
                 path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend),
+                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
                 physical_path=empty_hash,
                 size=0,
                 etag=empty_hash,
@@ -1995,7 +1995,7 @@ class NexusFS(  # type: ignore[misc]
         new_version = (meta.version + 1) if meta else 1
         new_meta = FileMetadata(
             path=path,
-            backend_name=self._driver_coordinator.backend_key(route.backend),
+            backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
             physical_path=content_hash,  # CAS: hash is the "physical" location
             etag=content_hash,
             size=size,
@@ -2448,7 +2448,9 @@ class NexusFS(  # type: ignore[misc]
                 content_hash = wr.content_id
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=self._driver_coordinator.backend_key(route.backend),
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
                     content_hash=content_hash,
                     size=wr.size if offset > 0 else len(content),
                     existing_meta=meta,
@@ -2478,7 +2480,9 @@ class NexusFS(  # type: ignore[misc]
                 # after backend.write_content(). Drivers only manage content.
                 metadata = self._build_write_metadata(
                     path=path,
-                    backend_name=self._driver_coordinator.backend_key(route.backend),
+                    backend_name=self._driver_coordinator.backend_key(
+                        route.backend, route.mount_point
+                    ),
                     content_hash=content_hash,
                     # _wr.size is the total file size after splice (not bytes written)
                     size=_wr.size if offset > 0 else len(content),
@@ -3065,7 +3069,7 @@ class NexusFS(  # type: ignore[misc]
             # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
             metadata = FileMetadata(
                 path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend),
+                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
                 physical_path=content_hash,  # CAS: hash is the "physical" location
                 size=len(content),
                 etag=content_hash,  # SHA-256 hash for integrity

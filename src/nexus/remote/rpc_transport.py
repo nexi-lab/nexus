@@ -277,6 +277,12 @@ class RPCTransport:
             self._handle_typed_error(response.error_payload)
         return bool(response.success)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((grpc.RpcError, RemoteConnectionError)),
+        reraise=True,
+    )
     def ping(self) -> dict[str, Any]:
         """Ping server — returns version, zone_id, uptime."""
         request = vfs_pb2.PingRequest(auth_token=self._auth_token)

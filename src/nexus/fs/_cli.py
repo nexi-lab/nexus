@@ -5,9 +5,16 @@ Provides the `nexus-fs` console command with subcommands:
 - nexus-fs mount list  — show persisted mounts
 - nexus-fs mount test  — test backend connectivity without persisting
 - nexus-fs unmount     — remove persisted mounts
+- nexus-fs ls          — list directory contents
+- nexus-fs cat         — read file contents to stdout
+- nexus-fs write       — write content to a file
+- nexus-fs edit        — surgical search/replace edit
+- nexus-fs rm          — delete a file
+- nexus-fs mkdir       — create a directory
+- nexus-fs stat        — show file/directory metadata
+- nexus-fs cp          — copy files between mounted backends
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
 - nexus-fs playground  — interactive TUI file browser
-- nexus-fs cp          — copy files between mounted backends
 - nexus-fs auth        — credential management
 
 This module is referenced by pyproject.toml [project.scripts].
@@ -427,6 +434,358 @@ def cp(source: str, dest: str, mount_uris: tuple[str, ...], output_opts: OutputO
         output_opts=output_opts,
         human_formatter=_human_display,
     )
+
+
+def _boot_fs(*extra_uris: str):
+    """Boot a SlimNexusFS from persisted mounts + optional extra URIs.
+
+    Shared by ls, cat, write, edit, rm, mkdir, stat.
+    Returns an async coroutine that yields the facade.
+    """
+
+    async def _run():
+        from nexus.fs import mount
+        from nexus.fs._paths import build_mount_args, load_persisted_mounts
+
+        persisted = load_persisted_mounts()
+        uris, overrides = build_mount_args(persisted)
+        for uri in extra_uris:
+            if uri not in uris:
+                uris.append(uri)
+        if not uris:
+            raise click.UsageError("No mounts found. Run 'nexus-fs mount <uri>' first.")
+        return await mount(*uris, mount_overrides=overrides or None)
+
+    return _run()
+
+
+# ── Basic filesystem primitives ──────────────────────────────────────────────
+
+
+@main.command()
+@click.argument("path", default="/")
+@click.option("-l", "--long", "detail", is_flag=True, help="Show detailed metadata.")
+@click.option("-r", "--recursive", is_flag=True, help="List recursively.")
+@click.argument("mount_uris", nargs=-1)
+@add_output_options
+def ls(
+    path: str,
+    detail: bool,
+    recursive: bool,
+    mount_uris: tuple[str, ...],
+    output_opts: OutputOptions,
+) -> None:
+    """List directory contents.
+
+    \b
+    Examples:
+      nexus-fs ls /s3/my-bucket/
+      nexus-fs ls /local/data/ -l
+      nexus-fs ls /s3/my-bucket/ -r
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        entries = await fs.ls(path, detail=detail, recursive=recursive)
+        await fs.close()
+        return {"path": path, "entries": entries}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        for entry in d["entries"]:
+            if isinstance(entry, dict):
+                size = entry.get("size", 0)
+                is_dir = entry.get("is_directory", False)
+                kind = "d" if is_dir else "-"
+                name = entry.get("path", entry.get("name", "?"))
+                click.echo(f"{kind} {size:>10}  {name}")
+            else:
+                click.echo(entry)
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.argument("mount_uris", nargs=-1)
+def cat(path: str, mount_uris: tuple[str, ...]) -> None:
+    """Read file contents to stdout.
+
+    \b
+    Examples:
+      nexus-fs cat /s3/my-bucket/README.md
+      nexus-fs cat /local/data/config.json
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> bytes:
+        fs = await _boot_fs(*mount_uris)
+        content = await fs.read(path)
+        await fs.close()
+        return content
+
+    try:
+        content = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    # Write raw bytes to stdout (handles binary gracefully)
+    sys.stdout.buffer.write(content)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.argument("mount_uris", nargs=-1)
+@click.option(
+    "--data",
+    "-d",
+    type=str,
+    default=None,
+    help="Content string to write. If omitted, reads from stdin.",
+)
+@add_output_options
+def write(
+    path: str,
+    mount_uris: tuple[str, ...],
+    data: str | None,
+    output_opts: OutputOptions,
+) -> None:
+    """Write content to a file (creates or overwrites).
+
+    Content can come from --data or stdin (piped).
+
+    \b
+    Examples:
+      nexus-fs write /local/data/hello.txt -d "Hello, world!"
+      echo "piped content" | nexus-fs write /s3/bucket/file.txt
+      nexus-fs write /local/data/config.json -d '{"key": "value"}'
+    """
+    from nexus.fs._sync import run_sync
+
+    if data is not None:
+        content = data.encode("utf-8")
+    elif not sys.stdin.isatty():
+        content = sys.stdin.buffer.read()
+    else:
+        click.echo("Error: provide --data or pipe content via stdin.", err=True)
+        sys.exit(1)
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        result = await fs.write(path, content)
+        await fs.close()
+        return {"path": path, **result}
+
+    try:
+        result_data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        size = d.get("size", len(content))
+        click.echo(f"Wrote {size} bytes to {d['path']}")
+
+    render_output(data=result_data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.option(
+    "-e",
+    "--edit-spec",
+    "edits",
+    multiple=True,
+    required=True,
+    help="Edit spec as 'old_str>>>new_str'. Repeat for multiple edits.",
+)
+@click.option("--preview", is_flag=True, help="Show diff without writing.")
+@click.option(
+    "--fuzzy",
+    type=float,
+    default=0.85,
+    help="Fuzzy match threshold (0.0-1.0). Use 1.0 for exact only.",
+)
+@click.argument("mount_uris", nargs=-1)
+@add_output_options
+def edit(
+    path: str,
+    edits: tuple[str, ...],
+    preview: bool,
+    fuzzy: float,
+    mount_uris: tuple[str, ...],
+    output_opts: OutputOptions,
+) -> None:
+    """Surgical search/replace edit on a file.
+
+    Each -e flag takes 'old_str>>>new_str' (triple angle bracket separator).
+
+    \b
+    Examples:
+      nexus-fs edit /local/src/main.py -e 'def foo():>>>def bar():'
+      nexus-fs edit /local/src/main.py -e 'old>>>new' --preview
+      nexus-fs edit /local/src/main.py -e 'typo>>>fix' --fuzzy 0.8
+    """
+    from nexus.fs._sync import run_sync
+
+    parsed_edits = []
+    for spec in edits:
+        if ">>>" not in spec:
+            click.echo(f"Error: invalid edit spec (missing '>>>'): {spec}", err=True)
+            sys.exit(1)
+        old, new = spec.split(">>>", 1)
+        parsed_edits.append({"old_str": old, "new_str": new})
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        result = await fs.edit(
+            path,
+            parsed_edits,
+            preview=preview,
+            fuzzy_threshold=fuzzy,
+        )
+        await fs.close()
+        return {"path": path, **result}
+
+    try:
+        result_data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        if d.get("success"):
+            status = "preview" if preview else "applied"
+            click.echo(f"Edit {status}: {d.get('applied_count', 0)} replacement(s)")
+            if d.get("diff"):
+                click.echo(d["diff"])
+        else:
+            click.echo("Edit failed:", err=True)
+            for err in d.get("errors", []):
+                click.echo(f"  {err}", err=True)
+            sys.exit(1)
+
+    render_output(data=result_data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.argument("mount_uris", nargs=-1)
+@add_output_options
+def rm(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
+    """Delete a file.
+
+    \b
+    Examples:
+      nexus-fs rm /s3/my-bucket/old-file.txt
+      nexus-fs rm /local/data/temp.csv
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        await fs.delete(path)
+        await fs.close()
+        return {"path": path, "deleted": True}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        click.echo(f"Deleted {d['path']}")
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.option("-p", "--parents", is_flag=True, default=True, help="Create parent dirs.")
+@click.argument("mount_uris", nargs=-1)
+@add_output_options
+def mkdir(
+    path: str,
+    parents: bool,
+    mount_uris: tuple[str, ...],
+    output_opts: OutputOptions,
+) -> None:
+    """Create a directory.
+
+    \b
+    Examples:
+      nexus-fs mkdir /local/data/new-dir
+      nexus-fs mkdir /s3/bucket/path/to/dir
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        await fs.mkdir(path, parents=parents)
+        await fs.close()
+        return {"path": path, "created": True}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        click.echo(f"Created {d['path']}")
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("path", type=str)
+@click.argument("mount_uris", nargs=-1)
+@add_output_options
+def stat(path: str, mount_uris: tuple[str, ...], output_opts: OutputOptions) -> None:
+    """Show file or directory metadata.
+
+    \b
+    Examples:
+      nexus-fs stat /s3/my-bucket/file.txt
+      nexus-fs stat /local/data/ --json
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs(*mount_uris)
+        info = await fs.stat(path)
+        await fs.close()
+        if info is None:
+            raise FileNotFoundError(f"Not found: {path}")
+        return info
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        click.echo(f"  Path:     {d.get('path')}")
+        click.echo(f"  Size:     {d.get('size', 0)}")
+        click.echo(f"  Type:     {'directory' if d.get('is_directory') else 'file'}")
+        click.echo(f"  MIME:     {d.get('mime_type', '?')}")
+        click.echo(f"  ETag:     {d.get('etag', '?')}")
+        click.echo(f"  Version:  {d.get('version', '?')}")
+        if d.get("created_at"):
+            click.echo(f"  Created:  {d['created_at']}")
+        if d.get("modified_at"):
+            click.echo(f"  Modified: {d['modified_at']}")
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
 
 
 main.add_command(auth_group)

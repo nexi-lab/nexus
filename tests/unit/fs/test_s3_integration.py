@@ -174,3 +174,56 @@ class TestS3BackendLifecycle:
         await fs.write(f"{mp}/empty.txt", b"")
         result = await fs.read(f"{mp}/empty.txt")
         assert result == b""
+
+    @pytest.mark.asyncio
+    async def test_edit_simple(self, s3_fs):
+        fs, mp = s3_fs
+        await fs.write(f"{mp}/code.py", b"def foo():\n    return 1\n")
+        result = await fs.edit(f"{mp}/code.py", [("def foo():", "def bar():")])
+        assert result["success"] is True
+        assert result["applied_count"] == 1
+        content = await fs.read(f"{mp}/code.py")
+        assert b"def bar():" in content
+
+    @pytest.mark.asyncio
+    async def test_edit_preview(self, s3_fs):
+        fs, mp = s3_fs
+        original = b"keep this\n"
+        await fs.write(f"{mp}/preview.txt", original)
+        result = await fs.edit(f"{mp}/preview.txt", [("keep", "change")], preview=True)
+        assert result["success"] is True
+        content = await fs.read(f"{mp}/preview.txt")
+        assert content == original  # unchanged
+
+    @pytest.mark.asyncio
+    async def test_edit_multiple(self, s3_fs):
+        fs, mp = s3_fs
+        await fs.write(f"{mp}/multi.py", b"x = 1\ny = 2\n")
+        result = await fs.edit(f"{mp}/multi.py", [("x = 1", "x = 10"), ("y = 2", "y = 20")])
+        assert result["success"] is True
+        assert result["applied_count"] == 2
+        content = await fs.read(f"{mp}/multi.py")
+        assert content == b"x = 10\ny = 20\n"
+
+    @pytest.mark.asyncio
+    async def test_edit_fuzzy(self, s3_fs):
+        fs, mp = s3_fs
+        await fs.write(f"{mp}/fuzzy.py", b"def calculate_total(items):\n    pass\n")
+        result = await fs.edit(
+            f"{mp}/fuzzy.py",
+            [("def calcuate_total(items):", "def compute(items):")],
+            fuzzy_threshold=0.8,
+        )
+        assert result["success"] is True
+        assert result["matches"][0]["match_type"] == "fuzzy"
+
+    @pytest.mark.asyncio
+    async def test_edit_no_match(self, s3_fs):
+        fs, mp = s3_fs
+        await fs.write(f"{mp}/nomatch.txt", b"actual content\n")
+        result = await fs.edit(
+            f"{mp}/nomatch.txt",
+            [("nonexistent", "x")],
+            fuzzy_threshold=1.0,
+        )
+        assert result["success"] is False

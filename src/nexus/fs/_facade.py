@@ -226,6 +226,42 @@ class SlimNexusFS:
         """
         return await self._kernel.sys_copy(src, dst, context=self._ctx)
 
+    async def edit(
+        self,
+        path: str,
+        edits: list[tuple[str, str]] | list[dict[str, Any]],
+        *,
+        if_match: str | None = None,
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> dict[str, Any]:
+        """Apply surgical search/replace edits to a file.
+
+        Uses a layered matching strategy (exact -> whitespace-normalized -> fuzzy)
+        to find and replace text without rewriting the entire file.
+
+        Args:
+            path: Virtual file path.
+            edits: List of edit operations. Each can be:
+                - Tuple: (old_str, new_str)
+                - Dict: {"old_str": str, "new_str": str, "hint_line": int | None,
+                         "allow_multiple": bool}
+            if_match: Optional etag for optimistic concurrency control.
+            fuzzy_threshold: Similarity threshold (0.0-1.0) for fuzzy matching.
+            preview: If True, return preview without writing.
+
+        Returns:
+            Dict with success, diff, matches, applied_count, etag, version, errors.
+        """
+        return await self._kernel.edit(
+            path,
+            edits,
+            context=self._ctx,
+            if_match=if_match,
+            fuzzy_threshold=fuzzy_threshold,
+            preview=preview,
+        )
+
     # -- Metadata (optimized single-lookup) --
 
     async def stat(self, path: str) -> dict[str, Any] | None:

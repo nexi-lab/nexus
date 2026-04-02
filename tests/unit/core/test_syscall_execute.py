@@ -185,39 +185,39 @@ class TestExecuteRead:
 
         # Execute read
         result = engine.sys_read("/workspace/test.txt", "root", False)
-        assert result is not None
-        assert result == content
+        assert result.hit is True
+        assert result.data == content
 
-    def test_dcache_miss_returns_none(self, engine_with_cas):
-        """DCache miss → None (Python fallback)."""
+    def test_dcache_miss_returns_miss(self, engine_with_cas):
+        """DCache miss → hit=false (Python fallback)."""
         engine, _, _ = engine_with_cas
         result = engine.sys_read("/workspace/missing.txt", "root", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_no_cas_backend_returns_none(self, components):
-        """Mount without CAS (no local_root) → None (Python fallback)."""
+    def test_no_cas_backend_returns_miss(self, components):
+        """Mount without CAS (no local_root) → hit=false (Python fallback)."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-backend", "test.txt", 100, DT_REG, etag="hash123")
         engine = SyscallEngine(dcache, router, trie)
         result = engine.sys_read("/workspace/test.txt", "root", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_no_etag_returns_none(self, engine_with_cas):
-        """Entry without etag (e.g. new file) → None."""
+    def test_no_etag_returns_miss(self, engine_with_cas):
+        """Entry without etag (e.g. new file) → hit=false."""
         engine, dcache, _ = engine_with_cas
         dcache.put("/workspace/new.txt", "local", "", 0, DT_REG)
         result = engine.sys_read("/workspace/new.txt", "root", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_pipe_entry_returns_none(self, engine_with_cas):
+    def test_pipe_entry_returns_miss(self, engine_with_cas):
         """DT_PIPE entries are handled by Python PipeManager."""
         engine, dcache, _ = engine_with_cas
         dcache.put("/pipes/fifo", "local", "", 0, DT_PIPE)
         result = engine.sys_read("/pipes/fifo", "root", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_cas_read_failure_returns_none(self, engine_with_cas):
-        """CAS blob not on disk → None (Python fallback)."""
+    def test_cas_read_failure_returns_miss(self, engine_with_cas):
+        """CAS blob not on disk → hit=false (Python fallback)."""
         engine, dcache, _ = engine_with_cas
         dcache.put(
             "/workspace/test.txt",
@@ -228,7 +228,7 @@ class TestExecuteRead:
             etag="nonexistenthash0000000000000000000000000000000000000000000000",
         )
         result = engine.sys_read("/workspace/test.txt", "root", False)
-        assert result is None
+        assert result.hit is False
 
     def test_large_file(self, engine_with_cas):
         """Verify large file read works."""
@@ -244,8 +244,8 @@ class TestExecuteRead:
             "/workspace/big.bin", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
         result = engine.sys_read("/workspace/big.bin", "root", False)
-        assert result is not None
-        assert len(result) == 512 * 1024
+        assert result.hit is True
+        assert len(result.data) == 512 * 1024
 
 
 # ── execute_write ─────────────────────────────────────────────────────
@@ -259,30 +259,31 @@ class TestExecuteWrite:
 
         content = b"new content from Rust execute_write"
         result = engine.sys_write("/workspace/test.txt", "root", content, False)
-        assert result is not None
-        assert len(result) == 64  # BLAKE3 hex
+        assert result.hit is True
+        assert len(result.content_id) == 64  # BLAKE3 hex
 
         # Verify content was actually written to CAS
-        cas_path = Path(cas_dir) / "cas" / result[:2] / result[2:4] / result
+        cid = result.content_id
+        cas_path = Path(cas_dir) / "cas" / cid[:2] / cid[2:4] / cid
         assert cas_path.exists()
         assert cas_path.read_bytes() == content
 
-    def test_dcache_miss_returns_none(self, engine_with_cas):
-        """DCache miss → None (Python handles new file)."""
+    def test_dcache_miss_returns_miss(self, engine_with_cas):
+        """DCache miss → hit=false (Python handles new file)."""
         engine, _, _ = engine_with_cas
         result = engine.sys_write("/workspace/new.txt", "root", b"data", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_no_cas_backend_returns_none(self, components):
-        """Mount without CAS → None."""
+    def test_no_cas_backend_returns_miss(self, components):
+        """Mount without CAS → hit=false."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-remote", "", 0, DT_REG, etag="hash")
         engine = SyscallEngine(dcache, router, trie)
         result = engine.sys_write("/workspace/test.txt", "root", b"data", False)
-        assert result is None
+        assert result.hit is False
 
-    def test_readonly_returns_none(self, cas_dir):
-        """Write to readonly mount → None (Python handles error)."""
+    def test_readonly_returns_miss(self, cas_dir):
+        """Write to readonly mount → hit=false (Python handles error)."""
         dcache = RustDCache()
         router = RustPathRouter()
         trie = PathTrie()
@@ -290,9 +291,9 @@ class TestExecuteWrite:
         router.add_mount("/readonly", "root", True, False, "balanced", "local", cas_dir, False)
         dcache.put("/readonly/file.txt", "local", "", 0, DT_REG, etag="hash")
         engine = SyscallEngine(dcache, router, trie)
-        # PR B returns cache miss on route failure → execute_write returns None
+        # PR B returns cache miss on route failure → returns hit=false
         result = engine.sys_write("/readonly/file.txt", "root", b"data", False)
-        assert result is None
+        assert result.hit is False
 
     def test_write_dedup(self, engine_with_cas):
         """Writing same content twice returns same hash (CAS dedup)."""
@@ -301,9 +302,9 @@ class TestExecuteWrite:
         dcache.put("/workspace/b.txt", "local", "", 0, DT_REG, etag="old2")
 
         content = b"deduplicated content"
-        hash1 = engine.sys_write("/workspace/a.txt", "root", content, False)
-        hash2 = engine.sys_write("/workspace/b.txt", "root", content, False)
-        assert hash1 == hash2
+        r1 = engine.sys_write("/workspace/a.txt", "root", content, False)
+        r2 = engine.sys_write("/workspace/b.txt", "root", content, False)
+        assert r1.content_id == r2.content_id
 
 
 # ── Arc sharing ───────────────────────────────────────────────────────
@@ -322,7 +323,7 @@ class TestArcSharing:
         cas_path.write_bytes(content)
 
         # Initially miss
-        assert engine.sys_read("/workspace/late.txt", "root", False) is None
+        assert engine.sys_read("/workspace/late.txt", "root", False).hit is False
 
         # Add to dcache (simulating metastore.put dual-write)
         dcache.put(
@@ -331,7 +332,8 @@ class TestArcSharing:
 
         # Now should hit
         result = engine.sys_read("/workspace/late.txt", "root", False)
-        assert result == content
+        assert result.hit is True
+        assert result.data == content
 
     def test_mount_updates_visible(self, cas_dir):
         """Mounts added after engine creation are visible."""
@@ -358,7 +360,8 @@ class TestArcSharing:
         assert plan.io_profile == "fast"  # Uses /workspace mount, not /
 
         result = engine.sys_read("/workspace/file.txt", "root", False)
-        assert result == content
+        assert result.hit is True
+        assert result.data == content
 
 
 # ── ReadPlan / WritePlan types ────────────────────────────────────────

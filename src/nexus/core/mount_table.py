@@ -160,7 +160,6 @@ class MountTable:
                 _backend_name,
                 _local_root,
                 True,  # fsync
-                backend,
             )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:

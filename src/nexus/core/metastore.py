@@ -30,24 +30,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus.contracts.metadata import FileMetadata
+from nexus_fast import RustDCache as _RustDCache
 
-# RUST_FALLBACK: RustDCache — DashMap dentry cache (Issue #1838)
-_RustDCache: type | None
-try:
-    from nexus_fast import RustDCache as _RustDCache
-except ImportError:
-    _RustDCache = None
+from nexus.contracts.metadata import FileMetadata
 
 
 def _sync_to_rust(rust_dc: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
-    No-op when RustDCache is unavailable (nexus_fast not installed).
     Phase H: added mime_type for sys_stat acceleration.
     """
-    if rust_dc is None:
-        return
     rust_dc.put(
         meta.path,
         meta.backend_name,

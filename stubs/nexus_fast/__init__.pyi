@@ -368,3 +368,44 @@ class RustRouteResult:
     def readonly(self) -> bool: ...
     @property
     def io_profile(self) -> str: ...
+
+class ReadPlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+
+class WritePlan:
+    action: int
+    mount_point: str
+    backend_path: str
+    etag: str | None
+    backend_name: str
+    readonly: bool
+    io_profile: str
+    entry_type: int
+    validated_path: str
+    resolver_idx: int
+    error_msg: str | None
+    version: int
+
+class SyscallEngine:
+    def __init__(self, dcache: RustDCache, router: RustPathRouter, trie: PathTrie) -> None: ...
+    def plan_read(self, path: str, zone_id: str, is_admin: bool) -> ReadPlan: ...
+    def plan_write(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
+    def register_local_cas(self, backend_name: str, root_path: str, fsync: bool) -> None: ...
+    def unregister_cas(self, backend_name: str) -> bool: ...
+    def execute_read(self, path: str, zone_id: str, is_admin: bool) -> bytes | None: ...
+    def execute_write(
+        self, path: str, zone_id: str, content: bytes, is_admin: bool
+    ) -> str | None: ...
+    def cas_backend_count(self) -> int: ...
+    def cas_backend_names(self) -> list[str]: ...
+    def __repr__(self) -> str: ...

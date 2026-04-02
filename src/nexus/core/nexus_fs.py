@@ -236,6 +236,20 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
+        # ── SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write) ──
+        self._syscall_engine = None
+        try:
+            from nexus_fast import SyscallEngine as _SyscallEngine
+
+            _rust_dcache = getattr(metadata_store, "_rust_dcache", None)
+            _rust_router = getattr(self._mount_table, "_rust", None)
+            _rust_trie = getattr(self._dispatch, "_trie", None)
+            if _rust_dcache is not None and _rust_router is not None and _rust_trie is not None:
+                self._syscall_engine = _SyscallEngine(_rust_dcache, _rust_router, _rust_trie)
+                logger.info("SyscallEngine initialized (Rust fast path enabled)")
+        except (ImportError, TypeError):
+            pass  # nexus_fast not installed or mock objects in tests
+
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
@@ -1251,6 +1265,22 @@ class NexusFS(  # type: ignore[misc]
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+
+        # ── Rust execute_read fast path (Issue #1817 Phase E) ─────────────
+        # Hot path: dcache hit + local CAS + no hooks → pure Rust I/O.
+        # One FFI call replaces: validate + trie + route + dcache + CAS read.
+        # Falls back to Python path below on dcache miss or non-local backend.
+        if self._syscall_engine is not None and self._dispatch.read_hook_count == 0:
+            _is_admin = (
+                getattr(context, "is_admin", False)
+                if context is not None and not isinstance(context, dict)
+                else (context.get("is_admin", False) if isinstance(context, dict) else False)
+            )
+            _data = self._syscall_engine.execute_read(path, self._zone_id, _is_admin)
+            if _data is not None:
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return _data
 
         path = self._validate_path(path)
         # Normalize context dict to OperationContext dataclass (CLI passes dicts)

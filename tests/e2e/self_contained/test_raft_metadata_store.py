@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from nexus_fast import RustDCache
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -182,7 +183,7 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     store._dcache = {}
     store._dcache_hits = 0
     store._dcache_misses = 0
-    store._rust_dcache = None  # RustDCache fallback (Issue #1838)
+    store._rust_dcache = RustDCache()
     store._engine = fake
     store._client = None
     store._zone_id = None

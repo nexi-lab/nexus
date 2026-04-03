@@ -26,7 +26,8 @@ from typing import Any
 
 # RUST_FALLBACK: hash_content_py, hash_content_smart_py
 # Priority 1: Rust-accelerated BLAKE3
-from nexus_fast import hash_content_py, hash_content_smart_py
+from nexus._rust_compat import RUST_EXTENSION_INSTALLED as _RUST_EXT_INSTALLED
+from nexus._rust_compat import RUST_HASH_AVAILABLE, hash_content_py, hash_content_smart_py
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +38,8 @@ _python_blake3: Any = None
 
 _rust_hash_content: Any = hash_content_py
 _rust_hash_content_smart: Any = hash_content_smart_py
-_RUST_AVAILABLE = True
+# Uses capability-group flag — hash stays on Rust even if unrelated groups are stale
+_RUST_AVAILABLE = RUST_HASH_AVAILABLE
 
 # Priority 2: Python blake3 package (Issue #582, #833)
 try:
@@ -77,6 +79,14 @@ def hash_content(content: bytes) -> str:
         result = _python_blake3.blake3(content).hexdigest()
         return result
 
+    # If nexus_fast was detected at all (even degraded), refuse SHA-256.
+    # A stale Rust extension with incomplete hash support must not silently
+    # produce incompatible content IDs — fail closed instead.
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_fast is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
     logger.warning(
         "BLAKE3 unavailable — using SHA-256 fallback. "
         "Hashes will be INCOMPATIBLE with BLAKE3 nodes. Install: pip install blake3"
@@ -127,6 +137,13 @@ def hash_content_smart(content: bytes) -> str:
         blake3_hasher.update(len(content).to_bytes(8, byteorder="little"))
         result = blake3_hasher.hexdigest()
         return result
+
+    # Fail closed under version skew — same guard as hash_content().
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_fast is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
 
     # SHA-256 fallback (WARNING: incompatible hashes!)
     if len(content) < threshold:
@@ -204,4 +221,10 @@ def create_hasher() -> Any:
         return _python_blake3.blake3()
     if _RUST_AVAILABLE:
         return _RustOnePassHasher()
+    # Fail closed: stale nexus_fast must not silently produce SHA-256 CAS blobs.
+    if _RUST_EXT_INSTALLED:
+        raise RuntimeError(
+            "nexus_fast is installed but BLAKE3 hashing is unavailable (stale build?). "
+            "Rebuild with: pip install -e rust/nexus_pyo3  — or: pip install blake3"
+        )
     return hashlib.sha256()

@@ -327,6 +327,8 @@ class KernelDispatch:
     # ── register_intercept: per-operation INTERCEPT hooks ─────────────
 
     def _mark_hook(self, op: str) -> None:
+        if self._kernel is None:
+            return  # No kernel = no dispatch; don't mark active to avoid misleading state
         self._hooks_nonempty.add(op)
         self._sync_hook_count(op)
 
@@ -368,6 +370,7 @@ class KernelDispatch:
     def register_intercept_copy(self, hook: VFSCopyHook) -> None:
         if self._kernel is not None:
             self._kernel.register_hook("copy", hook)
+        self._mark_hook("copy")
 
     def register_intercept_mkdir(self, hook: VFSMkdirHook) -> None:
         if self._kernel is not None:
@@ -508,12 +511,16 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for read — hooks may abort by raising."""
         if "read" not in self._hooks_nonempty:
             return
+        if self._kernel is None:
+            return
         for hook in self._kernel.get_pre_hooks("read"):
             hook.on_pre_read(ctx)
 
     def intercept_pre_write(self, ctx: WriteHookContext) -> None:
         """PRE-INTERCEPT phase for write — hooks may abort by raising."""
         if "write" not in self._hooks_nonempty:
+            return
+        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("write"):
             hook.on_pre_write(ctx)
@@ -522,6 +529,8 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for delete — hooks may abort by raising."""
         if "delete" not in self._hooks_nonempty:
             return
+        if self._kernel is None:
+            return
         for hook in self._kernel.get_pre_hooks("delete"):
             hook.on_pre_delete(ctx)
 
@@ -529,11 +538,15 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for rename — hooks may abort by raising."""
         if "rename" not in self._hooks_nonempty:
             return
+        if self._kernel is None:
+            return
         for hook in self._kernel.get_pre_hooks("rename"):
             hook.on_pre_rename(ctx)
 
     def intercept_pre_copy(self, ctx: CopyHookContext) -> None:
         """PRE-INTERCEPT phase for copy — hooks may abort by raising."""
+        if self._kernel is None:
+            return
         if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("copy"):
@@ -543,12 +556,16 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for mkdir — hooks may abort by raising."""
         if "mkdir" not in self._hooks_nonempty:
             return
+        if self._kernel is None:
+            return
         for hook in self._kernel.get_pre_hooks("mkdir"):
             hook.on_pre_mkdir(ctx)
 
     def intercept_pre_rmdir(self, ctx: RmdirHookContext) -> None:
         """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
         if "rmdir" not in self._hooks_nonempty:
+            return
+        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("rmdir"):
             hook.on_pre_rmdir(ctx)
@@ -557,12 +574,16 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for stat — hooks may abort by raising."""
         if "stat" not in self._hooks_nonempty:
             return
+        if self._kernel is None:
+            return
         for hook in self._kernel.get_pre_hooks("stat"):
             hook.on_pre_stat(ctx)
 
     def intercept_pre_access(self, ctx: AccessHookContext) -> None:
         """PRE-INTERCEPT phase for access — hooks may abort by raising."""
         if "access" not in self._hooks_nonempty:
+            return
+        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("access"):
             hook.on_pre_access(ctx)
@@ -577,6 +598,8 @@ class KernelDispatch:
         Only ``AuditLogError`` aborts; other exceptions become warnings.
         """
         if op not in self._hooks_nonempty:
+            return
+        if self._kernel is None:
             return
         sync_hooks, async_hooks = self._kernel.get_post_hooks(op)
 
@@ -629,7 +652,7 @@ class KernelDispatch:
         agent_id: str | None = None,
     ) -> None:
         """INTERCEPT phase for batch write."""
-        if self._kernel.hook_count("write_batch") == 0:
+        if self._kernel is None or self._kernel.hook_count("write_batch") == 0:
             return
         ctx = WriteBatchHookContext(
             items=items, context=context, zone_id=zone_id, agent_id=agent_id
@@ -672,6 +695,8 @@ class KernelDispatch:
         event_type = event.type if isinstance(event.type, FileEventType) else None
         bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
         if not bit:
+            return
+        if self._kernel is None:
             return
         observers = self._kernel.get_matching_observers(bit)
         if not observers:

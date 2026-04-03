@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     pass
 
 # RUST_FALLBACK: StreamBufferCore
-from nexus_fast import StreamBufferCore as _StreamBufferCoreType
+from nexus._rust_compat import StreamBufferCore as _StreamBufferCoreType
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,11 @@ class StreamBuffer:
     def __init__(self, capacity: int = 65_536) -> None:
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
+        if _StreamBufferCoreType is None:
+            raise RuntimeError(
+                "Stream requires the nexus-fast Rust extension. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
         self._core = _StreamBufferCoreType(capacity)
         self._not_empty = asyncio.Event()
         # _not_empty starts unset — no data yet

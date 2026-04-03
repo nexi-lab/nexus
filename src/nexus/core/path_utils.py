@@ -17,19 +17,18 @@ import re
 # ---------------------------------------------------------------------------
 # Rust acceleration (optional — falls back to Python below)
 # ---------------------------------------------------------------------------
-from nexus_fast import get_ancestors as _rust_get_ancestors
-from nexus_fast import get_parent as _rust_get_parent
-from nexus_fast import get_parent_chain as _rust_get_parent_chain
-from nexus_fast import normalize_path as _rust_normalize_path
-from nexus_fast import parent_path as _rust_parent_path
-from nexus_fast import path_matches_pattern as _rust_path_matches_pattern
-from nexus_fast import split_path as _rust_split_path
-from nexus_fast import unscope_internal_path as _rust_unscope_internal_path
-from nexus_fast import validate_path as _rust_validate_path
-
+from nexus._rust_compat import get_ancestors as _rust_get_ancestors
+from nexus._rust_compat import get_parent as _rust_get_parent
+from nexus._rust_compat import get_parent_chain as _rust_get_parent_chain
+from nexus._rust_compat import normalize_path as _rust_normalize_path
+from nexus._rust_compat import parent_path as _rust_parent_path
+from nexus._rust_compat import path_matches_pattern as _rust_path_matches_pattern
+from nexus._rust_compat import split_path as _rust_split_path
+from nexus._rust_compat import unscope_internal_path as _rust_unscope_internal_path
+from nexus._rust_compat import validate_path as _rust_validate_path
 from nexus.contracts.exceptions import InvalidPathError
 
-_RUST_AVAILABLE = True
+_RUST_AVAILABLE = _rust_normalize_path is not None
 
 # Pre-compiled regex for normalizing consecutive slashes
 _MULTI_SLASH = re.compile(r"/+")
@@ -75,7 +74,7 @@ def get_parent(path: str) -> str | None:
     """
     # RUST_FALLBACK: get_parent
     if _RUST_AVAILABLE:
-        return _rust_get_parent(path)
+        return str(_rust_get_parent(path))
     parts = split_path(path)
     if not parts:
         return None
@@ -173,7 +172,7 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
     # RUST_FALLBACK: validate_path
     if _RUST_AVAILABLE:
         try:
-            return _rust_validate_path(path, allow_root)
+            return str(_rust_validate_path(path, allow_root))
         except ValueError as e:
             raise InvalidPathError(path, str(e)) from None
 
@@ -239,7 +238,7 @@ def normalize_path(path: str) -> str:
     """
     # RUST_FALLBACK: normalize_path
     if _RUST_AVAILABLE:
-        return _rust_normalize_path(path)
+        return str(_rust_normalize_path(path))
     import posixpath
 
     if not path.startswith("/"):
@@ -292,7 +291,7 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
     # Skip Rust for patterns with non-ASCII chars — the Rust regex crate
     # may reject valid Unicode codepoints that Python re handles fine.
     if _RUST_AVAILABLE and pattern.isascii():
-        return _rust_path_matches_pattern(path, pattern)
+        return bool(_rust_path_matches_pattern(path, pattern))
     compiled = _compile_glob_pattern(pattern)
     if compiled is None:
         return False
@@ -303,7 +302,8 @@ def parent_path(path: str) -> str | None:
     """Return the parent directory of *path*, or ``None`` for root."""
     # RUST_FALLBACK: parent_path
     if _RUST_AVAILABLE:
-        return _rust_parent_path(path)
+        result = _rust_parent_path(path)
+        return str(result) if result is not None else None
     if path == "/":
         return None
     path = path.rstrip("/")
@@ -317,7 +317,7 @@ def unscope_internal_path(path: str) -> str:
     """Strip internal zone/tenant/user prefix from a storage path."""
     # RUST_FALLBACK: unscope_internal_path
     if _RUST_AVAILABLE:
-        return _rust_unscope_internal_path(path)
+        return str(_rust_unscope_internal_path(path))
     parts = path.lstrip("/").split("/")
     skip = 0
     if parts and parts[0].startswith("tenant:"):

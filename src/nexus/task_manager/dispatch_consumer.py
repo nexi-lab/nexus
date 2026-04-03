@@ -142,7 +142,7 @@ class TaskDispatchPipeConsumer:
         if self._pipe_manager is None:
             return
 
-        from nexus.core.pipe import PipeExistsError
+        from nexus.core.pipe import PipeError, PipeExistsError
 
         try:
             self._pipe_manager.create(
@@ -152,6 +152,10 @@ class TaskDispatchPipeConsumer:
             )
         except PipeExistsError:
             self._pipe_manager.open(_TASK_DISPATCH_PIPE_PATH, capacity=_TASK_DISPATCH_PIPE_CAPACITY)
+        except PipeError as exc:
+            # Rust IPC unavailable (broken/missing extension) — degrade gracefully.
+            logger.warning("[TASK-DISPATCH] pipe unavailable, dispatch disabled: %s", exc)
+            return
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

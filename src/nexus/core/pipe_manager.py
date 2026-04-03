@@ -180,10 +180,21 @@ class PipeManager:
         # Validate before allocating buffer — avoids unnecessary RingBuffer
         # construction on duplicate paths, and prevents ValueError from
         # RingBuffer(capacity=0) masking PipeExistsError in ensure().
+        # Existence checks BEFORE Rust check so ensure() can still fall through
+        # to open() for remote pipes on no-Rust nodes.
         if path in self._buffers:
             raise PipeExistsError(f"pipe already exists: {path}")
         if self._metastore.get(path) is not None:
             raise PipeExistsError(f"path already exists: {path}")
+
+        # Rust IPC check — after existence so ensure() idempotency is preserved.
+        from nexus._rust_compat import RingBufferCore as _RBC
+
+        if _RBC is None:
+            raise PipeError(
+                "Pipe creation requires the nexus-fast Rust extension. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
         buf = RingBuffer(capacity=capacity)
         self._register_pipe(path, buf, size=capacity, owner_id=owner_id, zone_id=zone_id)
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
@@ -269,6 +280,10 @@ class PipeManager:
                 return backend
 
         # Local: recreate buffer (restart recovery)
+        from nexus._rust_compat import RingBufferCore as _RBC
+
+        if _RBC is None:
+            raise PipeError(f"Cannot reopen pipe at {path}: nexus-fast Rust extension required.")
         buf = RingBuffer(capacity=capacity)
         self._buffers[path] = buf
 

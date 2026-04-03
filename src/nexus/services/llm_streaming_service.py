@@ -36,6 +36,8 @@ import logging
 import queue
 from typing import TYPE_CHECKING, Any, cast
 
+from nexus.contracts.exceptions import BackendError
+
 if TYPE_CHECKING:
     from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
     from nexus.core.stream_manager import StreamManager
@@ -96,7 +98,12 @@ class LLMStreamingService:
         Raises:
             BackendError: If StreamManager is not available.
         """
-        self._stream_manager.create(stream_path, capacity=capacity, owner_id=owner_id)
+        from nexus.core.stream import StreamError
+
+        try:
+            self._stream_manager.create(stream_path, capacity=capacity, owner_id=owner_id)
+        except StreamError as exc:
+            raise BackendError(f"LLM streaming unavailable: {exc}") from exc
 
         task = asyncio.create_task(
             self._run_stream(request_bytes, stream_path),

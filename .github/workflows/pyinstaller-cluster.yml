@@ -311,11 +311,11 @@ jobs:
           with open(spec_path, "w") as f:
               f.write(spec)
 
-          print(f"Patched NEXUS_RAFT_SO → {nexus_raft_so}")
-          print(f"Patched NEXUS_FAST_SO → {nexus_fast_so}")
-          print(f"Patched pathex        → {src_path}")
-          print(f"Patched entry point   → {src_path}/nexus/daemon/main.py")
-          print(f"Injected runtime_hook → {hook_path} (NEXUS_PROFILE=cluster)")
+          print(f"Patched NEXUS_RAFT_SO -> {nexus_raft_so}")
+          print(f"Patched NEXUS_FAST_SO -> {nexus_fast_so}")
+          print(f"Patched pathex        -> {src_path}")
+          print(f"Patched entry point   -> {src_path}/nexus/daemon/main.py")
+          print(f"Injected runtime_hook -> {hook_path} (NEXUS_PROFILE=cluster)")
           EOF
 
       - name: Build PyInstaller binary (profile=cluster)

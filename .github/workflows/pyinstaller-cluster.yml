@@ -249,6 +249,16 @@ jobs:
               spec,
           )
 
+          # Inject runtime_hook so the binary always runs with NEXUS_PROFILE=cluster
+          hook_path = "pyi_rthook_cluster_profile.py"
+          with open(hook_path, "w") as fh:
+              fh.write('import os\nos.environ.setdefault("NEXUS_PROFILE", "cluster")\n')
+          spec = re.sub(
+              r"runtime_hooks=\[\]",
+              f"runtime_hooks=['{hook_path}']",
+              spec,
+          )
+
           with open(spec_path, "w") as f:
               f.write(spec)
 
@@ -256,6 +266,7 @@ jobs:
           print(f"Patched NEXUS_FAST_SO → {nexus_fast_so}")
           print(f"Patched pathex        → {src_path}")
           print(f"Patched entry point   → {src_path}/nexus/daemon/main.py")
+          print(f"Injected runtime_hook → {hook_path} (NEXUS_PROFILE=cluster)")
           EOF
 
       - name: Build PyInstaller binary (profile=cluster)

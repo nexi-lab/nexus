@@ -52,9 +52,9 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          ALL='{"include":[{"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},{"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"},{"os":"ubuntu-latest","artifact_name":"nexus-cluster-linux-x86_64"},{"os":"windows-latest","artifact_name":"nexus-cluster-windows-x86_64"}]}'
+          ALL='{"include":[{"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},{"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"},{"os":"windows-latest","artifact_name":"nexus-cluster-windows-x86_64"}]}'
           MACOS='{"include":[{"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},{"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"}]}'
-          LINUX='{"include":[{"os":"ubuntu-latest","artifact_name":"nexus-cluster-linux-x86_64"}]}'
+          LINUX='{"include":[]}'
           WINDOWS='{"include":[{"os":"windows-latest","artifact_name":"nexus-cluster-windows-x86_64"}]}'
 
           FILTER="${{ inputs.platform_filter }}"

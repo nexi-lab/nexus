@@ -1323,8 +1323,10 @@ class NexusFS(  # type: ignore[misc]
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        # [INTERMEDIATE] DLC fallback for non-Rust backends — deleted in PR 7
-        data = (result.data or b"") if result.hit else self._read_via_dlc(path, _is_admin, context)
+        # [INTERMEDIATE] DLC fallback: non-Rust backends + CDC chunked manifests — deleted in PR 7
+        _raw = result.data or b""
+        _needs_dlc = not result.hit or (_raw[:30].startswith(b'{"type":"chunked_manifest'))
+        data = self._read_via_dlc(path, _is_admin, context) if _needs_dlc else _raw
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]

@@ -242,10 +242,16 @@ jobs:
                         f"NEXUS_FAST_SO = '{nexus_fast_so}'", spec)
           spec = re.sub(r"pathex=\[.*?\]",
                         f"pathex=['{src_path}']", spec)
-          # Patch entry point: the binary bundles nexusd (daemon), not nexus CLI
+          # Patch entry point: the binary bundles nexusd (daemon), not nexus CLI.
+          # nexus/daemon/main.py only defines main() but never calls it, so we
+          # create a tiny wrapper that calls it (mirrors the pyproject.toml
+          # console_scripts entry: nexusd = "nexus.daemon:main").
+          entrypoint_path = f"{workspace}/_nexusd_entrypoint.py"
+          with open(entrypoint_path, "w") as ep:
+              ep.write("from nexus.daemon import main\nmain()\n")
           spec = re.sub(
               r"Analysis\(\s*\['[^']*'\]",
-              f"Analysis(\n    ['{src_path}/nexus/daemon/main.py']",
+              f"Analysis(\n    ['{entrypoint_path}']",
               spec,
           )
 

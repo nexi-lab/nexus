@@ -13,6 +13,8 @@ Provides the `nexus-fs` console command with subcommands:
 - nexus-fs mkdir       — create a directory
 - nexus-fs stat        — show file/directory metadata
 - nexus-fs cp          — copy files between mounted backends
+- nexus-fs grep        — search file contents for a regex pattern
+- nexus-fs glob        — find files matching a glob pattern
 - nexus-fs doctor      — diagnostic checks (environment, backends, mounts)
 - nexus-fs playground  — interactive TUI file browser
 - nexus-fs auth        — credential management
@@ -805,6 +807,100 @@ def stat(path: str, output_opts: OutputOptions) -> None:
             click.echo(f"  Created:  {d['created_at']}")
         if d.get("modified_at"):
             click.echo(f"  Modified: {d['modified_at']}")
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command()
+@click.argument("pattern", type=str)
+@click.argument("path", default="/")
+@click.option("-i", "--ignore-case", is_flag=True, help="Case-insensitive matching.")
+@click.option("-n", "--max-results", type=int, default=100, help="Max matches to return.")
+@add_output_options
+def grep(
+    pattern: str,
+    path: str,
+    ignore_case: bool,
+    max_results: int,
+    output_opts: OutputOptions,
+) -> None:
+    """Search file contents for a regex pattern.
+
+    Recursively searches files under PATH for lines matching PATTERN.
+    Uses Rust-accelerated regex when available.
+
+    \b
+    Examples:
+      nexus-fs grep "TODO" /local/src/
+      nexus-fs grep "def .*test" /s3/bucket/code/ -i
+      nexus-fs grep "error" / -n 50
+      nexus-fs grep "import os" /local/project/ --json
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs()
+        matches = await fs.grep(
+            pattern,
+            path,
+            ignore_case=ignore_case,
+            max_results=max_results,
+        )
+        await fs.close()
+        return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        for m in d["matches"]:
+            click.echo(f"{m['file']}:{m['line']}: {m['content']}")
+        click.echo(f"\n{d['count']} match(es) found.")
+
+    render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
+
+
+@main.command("glob")
+@click.argument("pattern", type=str)
+@click.argument("path", default="/")
+@add_output_options
+def glob_cmd(
+    pattern: str,
+    path: str,
+    output_opts: OutputOptions,
+) -> None:
+    """Find files matching a glob pattern.
+
+    Recursively lists files under PATH and filters by PATTERN.
+    Uses Rust-accelerated glob matching when available.
+
+    \b
+    Examples:
+      nexus-fs glob "**/*.py" /local/src/
+      nexus-fs glob "*.csv" /s3/bucket/data/
+      nexus-fs glob "**/*.json" / --json
+    """
+    from nexus.fs._sync import run_sync
+
+    async def _run() -> dict:
+        fs = await _boot_fs()
+        matches = await fs.glob(pattern, path)
+        await fs.close()
+        return {"pattern": pattern, "path": path, "matches": matches, "count": len(matches)}
+
+    try:
+        data = run_sync(_run())
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+    def _human_display(d: dict) -> None:
+        for m in d["matches"]:
+            click.echo(m)
+        click.echo(f"\n{d['count']} file(s) matched.")
 
     render_output(data=data, output_opts=output_opts, human_formatter=_human_display)
 

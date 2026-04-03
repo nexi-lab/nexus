@@ -239,13 +239,17 @@ class NexusFS(  # type: ignore[misc]
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
         from nexus_fast import Kernel as _Kernel
 
-        self._kernel = _Kernel(
-            metadata_store._rust_dcache,
-            self._mount_table._rust,
-            self._dispatch._trie,
-            getattr(self._vfs_lock_manager, "_rust", None),
-        )
+        self._kernel = _Kernel()  # Empty kernel — owns all state internally
+
+        # Wire kernel to components (late-binding)
+        metadata_store._kernel = self._kernel
+        self._mount_table._kernel = self._kernel
         self._dispatch._kernel = self._kernel
+
+        # Wire VFS lock (Arc-shared with Python VFSLockManager)
+        _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+        if _vfs_rust is not None:
+            self._kernel.set_vfs_lock(_vfs_rust)
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.

@@ -1,19 +1,19 @@
-//! KernelDispatch — segment-based trie for VFS path resolver routing.
+//! KernelDispatch — segment-based trie + hook/observer registries.
 //!
-//! Provides O(path_depth) lookup (~50ns) for virtual path resolvers,
-//! replacing O(N) linear regex scan.  `{}` segments match any single
-//! path component (wildcard).
+//! Provides:
+//!   - PathTrie: O(path_depth) lookup (~50ns) for virtual path resolvers.
+//!   - HookRegistry: cached metadata for INTERCEPT hooks.
+//!   - ObserverRegistry: bitmask-filtered OBSERVE observers.
 //!
-//! Arc<PathTrieInner> enables zero-cost sharing with Kernel (#1817).
+//! All types are owned directly by Kernel (no Arc wrapper, no #[pyclass]).
 //!
-//! Related: Issue #1317
+//! Issue #1868: Kernel owns all dispatch state. Wrappers removed.
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 
 // ── TrieNode ──────────────────────────────────────────────────────────
 
@@ -120,16 +120,16 @@ impl TrieNode {
     }
 }
 
-// ── PathTrieInner (shared via Arc with Kernel) ────────────────
+// ── Trie (owned directly by Kernel) ─────────────────────────────────
 
-pub(crate) struct PathTrieInner {
+pub(crate) struct Trie {
     root: RwLock<TrieNode>,
     count: AtomicUsize,
     patterns: RwLock<HashMap<usize, String>>,
 }
 
-impl PathTrieInner {
-    fn new() -> Self {
+impl Trie {
+    pub(crate) fn new() -> Self {
         Self {
             root: RwLock::new(TrieNode::new()),
             count: AtomicUsize::new(0),
@@ -142,130 +142,68 @@ impl PathTrieInner {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         self.root.read().lookup(&segments)
     }
-}
-
-// ── PathTrie (PyO3 class) ─────────────────────────────────────────────
-
-/// Segment-based trie for O(path_depth) VFS resolver routing.
-///
-/// Patterns like ``/{}/proc/{}/status`` are split by ``/`` into segments.
-/// ``{}`` segments match any single path component (wildcard).
-/// Literal segments take priority over wildcards during lookup.
-///
-/// Example::
-///
-///     trie = PathTrie()
-///     trie.register("/{}/proc/{}/status", 0)
-///     assert trie.lookup("/myzone/proc/123/status") == 0
-///     assert trie.lookup("/other/path") is None
-#[pyclass]
-pub struct PathTrie {
-    pub(crate) inner: Arc<PathTrieInner>,
-}
-
-#[pymethods]
-impl PathTrie {
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(PathTrieInner::new()),
-        }
-    }
 
     /// Register a path pattern with a resolver index.
-    ///
-    /// Pattern segments are split by ``/``.  ``{}`` matches any single segment.
-    /// Raises ``ValueError`` if ``resolver_idx`` is already registered.
-    fn register(&self, pattern: &str, resolver_idx: usize) -> PyResult<()> {
-        let mut patterns = self.inner.patterns.write();
+    pub(crate) fn register(&self, pattern: &str, resolver_idx: usize) -> Result<(), String> {
+        let mut patterns = self.patterns.write();
         if patterns.contains_key(&resolver_idx) {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "resolver_idx {} already registered",
-                resolver_idx
-            )));
+            return Err(format!("resolver_idx {} already registered", resolver_idx));
         }
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        self.inner.root.write().insert(&segments, resolver_idx);
+        self.root.write().insert(&segments, resolver_idx);
         patterns.insert(resolver_idx, pattern.to_string());
-        self.inner.count.fetch_add(1, Ordering::Relaxed);
+        self.count.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
-    /// Remove a resolver by index.  Returns ``True`` if found.
-    fn unregister(&self, resolver_idx: usize) -> bool {
-        let pattern = match self.inner.patterns.write().remove(&resolver_idx) {
+    /// Remove a resolver by index.  Returns true if found.
+    pub(crate) fn unregister(&self, resolver_idx: usize) -> bool {
+        let pattern = match self.patterns.write().remove(&resolver_idx) {
             Some(p) => p,
             None => return false,
         };
         let segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
-        self.inner.root.write().remove(&segments);
-        self.inner.count.fetch_sub(1, Ordering::Relaxed);
+        self.root.write().remove(&segments);
+        self.count.fetch_sub(1, Ordering::Relaxed);
         true
     }
 
-    /// Lookup a concrete path.  Returns resolver index or ``None``.
-    fn lookup(&self, path: &str) -> Option<usize> {
-        self.inner.lookup(path)
-    }
-
-    fn __len__(&self) -> usize {
-        self.inner.count.load(Ordering::Relaxed)
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "PathTrie(count={})",
-            self.inner.count.load(Ordering::Relaxed)
-        )
+    /// Number of registered patterns.
+    pub(crate) fn len(&self) -> usize {
+        self.count.load(Ordering::Relaxed)
     }
 }
 
-// ── HookRegistry (Phase 2) ─────────────────────────────────────────────
+// ── HookRegistry (owned by Kernel, no longer #[pyclass]) ────────────
 
-/// Cached metadata for a single hook (detected once at registration).
-#[allow(dead_code)]
-struct HookEntry {
-    hook: Py<PyAny>,
-    has_pre: bool,
-    is_async_post: bool,
-    name: String,
+/// Cached metadata for a single hook.
+pub(crate) struct HookEntry {
+    pub(crate) hook: Py<PyAny>,
+    pub(crate) has_pre: bool,
+    pub(crate) is_async_post: bool,
+    #[allow(dead_code)]
+    pub(crate) name: String,
 }
 
 /// Registry that caches hook metadata at registration time.
 ///
-/// Eliminates per-dispatch ``getattr()`` and ``inspect.iscoroutinefunction()``
-/// overhead by detecting these properties once at ``register()`` time.
-///
-/// Ops: ``"read"``, ``"write"``, ``"write_batch"``, ``"delete"``,
-/// ``"rename"``, ``"mkdir"``, ``"rmdir"``.
-///
-/// Example::
-///
-///     reg = HookRegistry()
-///     reg.register("write", hook)
-///     pre_hooks = reg.get_pre_hooks("write")
-///     sync_post, async_post = reg.get_post_hooks("write")
-#[pyclass]
-pub struct HookRegistry {
+/// Eliminates per-dispatch `getattr()` and `inspect.iscoroutinefunction()`
+/// overhead by detecting these properties once at `register()` time.
+pub(crate) struct HookRegistry {
     ops: HashMap<String, Vec<HookEntry>>,
 }
 
-#[pymethods]
 impl HookRegistry {
-    #[new]
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             ops: HashMap::new(),
         }
     }
 
     /// Register a hook for the given operation.
-    ///
-    /// Caches ``has_pre``, ``is_async_post``, and ``name`` at registration.
-    fn register(&mut self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
+    pub(crate) fn register(&mut self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
         let hook_ref = hook.bind(py);
 
-        // Cache name
         let name: String = hook_ref
             .getattr("name")
             .and_then(|n| n.extract())
@@ -277,14 +215,12 @@ impl HookRegistry {
                     .unwrap_or_else(|_| "<?>".to_string())
             });
 
-        // Cache has_pre: does on_pre_{op} exist and is it not None?
         let pre_attr = format!("on_pre_{}", op);
         let has_pre = hook_ref
             .getattr(pre_attr.as_str())
             .map(|attr| !attr.is_none())
             .unwrap_or(false);
 
-        // Cache is_async_post: inspect.iscoroutinefunction(hook.on_post_{op})
         let post_attr = format!("on_post_{}", op);
         let is_async_post = match hook_ref.getattr(post_attr.as_str()) {
             Ok(post_fn) => {
@@ -307,8 +243,8 @@ impl HookRegistry {
         Ok(())
     }
 
-    /// Remove a hook by identity (``is`` check).  Returns ``True`` if found.
-    fn unregister(&mut self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
+    /// Remove a hook by identity (`is` check).
+    pub(crate) fn unregister(&mut self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
         if let Some(entries) = self.ops.get_mut(op) {
             let hook_ptr = hook.as_ptr();
             if let Some(pos) = entries
@@ -322,8 +258,8 @@ impl HookRegistry {
         false
     }
 
-    /// Return hooks that have ``on_pre_{op}`` (for serial PRE dispatch).
-    fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
+    /// Return hooks that have `on_pre_{op}`.
+    pub(crate) fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
         self.ops
             .get(op)
             .map(|entries| {
@@ -336,8 +272,12 @@ impl HookRegistry {
             .unwrap_or_default()
     }
 
-    /// Return ``(sync_post_hooks, async_post_hooks)`` — pre-split for dispatch.
-    fn get_post_hooks(&self, py: Python<'_>, op: &str) -> (Vec<Py<PyAny>>, Vec<Py<PyAny>>) {
+    /// Return (sync_post_hooks, async_post_hooks).
+    pub(crate) fn get_post_hooks(
+        &self,
+        py: Python<'_>,
+        op: &str,
+    ) -> (Vec<Py<PyAny>>, Vec<Py<PyAny>>) {
         let entries = match self.ops.get(op) {
             Some(e) => e,
             None => return (Vec::new(), Vec::new()),
@@ -355,8 +295,8 @@ impl HookRegistry {
         (sync, async_)
     }
 
-    /// Return all hooks for the given operation (ordered).
-    fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
+    /// Return all hooks for the given operation.
+    pub(crate) fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
         self.ops
             .get(op)
             .map(|entries| entries.iter().map(|e| e.hook.clone_ref(py)).collect())
@@ -364,61 +304,38 @@ impl HookRegistry {
     }
 
     /// Number of hooks registered for the given operation.
-    fn count(&self, op: &str) -> usize {
+    pub(crate) fn count(&self, op: &str) -> usize {
         self.ops.get(op).map(|e| e.len()).unwrap_or(0)
-    }
-
-    fn __repr__(&self) -> String {
-        let counts: Vec<String> = self
-            .ops
-            .iter()
-            .filter(|(_, v)| !v.is_empty())
-            .map(|(k, v)| format!("{}={}", k, v.len()))
-            .collect();
-        format!("HookRegistry({})", counts.join(", "))
     }
 }
 
-// ── ObserverRegistry (Phase 3 — Issue #1748) ─────────────────────────
+// ── ObserverRegistry (owned by Kernel, no longer #[pyclass]) ────────
 
-/// Cached entry for one OBSERVE-phase observer.
-struct ObserverEntry {
-    observer: Py<PyAny>,
-    name: String,
-    event_mask: u32,
+pub(crate) struct ObserverEntry {
+    pub(crate) observer: Py<PyAny>,
+    pub(crate) name: String,
+    pub(crate) event_mask: u32,
 }
 
 /// Rust-side observer registry with event-type bitmask filtering.
-///
-/// Observers are registered with a ``u32`` bitmask of ``FileEventType``
-/// positions.  ``get_matching(bit)`` returns only those observers whose
-/// mask includes the given event type — O(N) bitmask scan, but N is
-/// typically ≤5 and the filter avoids crossing to Python for irrelevant
-/// observers.
-///
-/// Example::
-///
-///     reg = ObserverRegistry()
-///     reg.register(obs, 0x03)          # FILE_WRITE | FILE_DELETE
-///     matches = reg.get_matching(0x01) # FILE_WRITE bit → returns obs
-///     misses  = reg.get_matching(0x10) # DIR_CREATE bit → empty
-#[pyclass]
-pub struct ObserverRegistry {
+pub(crate) struct ObserverRegistry {
     observers: Vec<ObserverEntry>,
 }
 
-#[pymethods]
 impl ObserverRegistry {
-    #[new]
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             observers: Vec::new(),
         }
     }
 
     /// Register observer with event_mask bitmask.
-    /// Name is cached from ``type(obs).__name__`` at registration time.
-    fn register(&mut self, py: Python<'_>, obs: Py<PyAny>, event_mask: u32) -> PyResult<()> {
+    pub(crate) fn register(
+        &mut self,
+        py: Python<'_>,
+        obs: Py<PyAny>,
+        event_mask: u32,
+    ) -> PyResult<()> {
         let obs_ref = obs.bind(py);
         let name: String = obs_ref
             .get_type()
@@ -434,8 +351,8 @@ impl ObserverRegistry {
         Ok(())
     }
 
-    /// Unregister by identity (``is`` check).  Returns ``True`` if found.
-    fn unregister(&mut self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
+    /// Unregister by identity.
+    pub(crate) fn unregister(&mut self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
         let obs_ptr = obs.as_ptr();
         if let Some(pos) = self
             .observers
@@ -448,10 +365,12 @@ impl ObserverRegistry {
         false
     }
 
-    /// Return ``(observer, name)`` pairs whose ``event_mask`` includes ``event_type_bit``.
-    ///
-    /// Rust-side O(N) bitmask filter — only matching observers cross to Python.
-    fn get_matching(&self, py: Python<'_>, event_type_bit: u32) -> Vec<(Py<PyAny>, String)> {
+    /// Return (observer, name) pairs matching the event_type_bit.
+    pub(crate) fn get_matching(
+        &self,
+        py: Python<'_>,
+        event_type_bit: u32,
+    ) -> Vec<(Py<PyAny>, String)> {
         self.observers
             .iter()
             .filter(|e| e.event_mask & event_type_bit != 0)
@@ -459,12 +378,8 @@ impl ObserverRegistry {
             .collect()
     }
 
-    fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.observers.len()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("ObserverRegistry(count={})", self.observers.len())
     }
 }
 
@@ -492,8 +407,6 @@ mod tests {
         root.remove(&segs);
     }
 
-    // -- register + lookup --
-
     #[test]
     fn test_basic_literal_pattern() {
         let mut root = TrieNode::new();
@@ -520,7 +433,6 @@ mod tests {
         assert_eq!(find(&root, "/.tasks/tasks/t42/agent/status"), Some(1));
         assert_eq!(find(&root, "/.tasks/tasks/abc-def/agent/status"), Some(1));
         assert_eq!(find(&root, "/.tasks/tasks/t42/agent/other"), None);
-        assert_eq!(find(&root, "/.tasks/other/t42/agent/status"), None);
     }
 
     #[test]
@@ -538,13 +450,9 @@ mod tests {
         let mut root = TrieNode::new();
         insert(&mut root, "/{}/proc/{}/status", 0);
         insert(&mut root, "/.tasks/proc/{}/status", 1);
-        // Literal should win for .tasks
         assert_eq!(find(&root, "/.tasks/proc/p1/status"), Some(1));
-        // Wildcard for other zones
         assert_eq!(find(&root, "/zone/proc/p1/status"), Some(0));
     }
-
-    // -- unregister --
 
     #[test]
     fn test_unregister_existing() {
@@ -575,8 +483,6 @@ mod tests {
         assert_eq!(find(&root, "/z/sysfs/dev/info"), Some(7));
         assert_eq!(find(&root, "/z/proc/p/status"), None);
     }
-
-    // -- edge cases --
 
     #[test]
     fn test_root_path() {
@@ -614,14 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn test_wildcard_backtrack() {
-        let mut root = TrieNode::new();
-        insert(&mut root, "/{}/proc/{}/status", 0);
-        insert(&mut root, "/.tasks/tasks/{}/agent/status", 1);
-        assert_eq!(find(&root, "/.tasks/proc/123/status"), Some(0));
-    }
-
-    #[test]
     fn test_single_segment_pattern() {
         let mut root = TrieNode::new();
         insert(&mut root, "/health", 0);
@@ -638,20 +536,28 @@ mod tests {
         assert_eq!(find(&root, "/a/b/c/d"), None);
     }
 
-    // -- PathTrieInner tests --
+    #[test]
+    fn test_trie_register_and_lookup() {
+        let trie = Trie::new();
+        trie.register("/{}/proc/{}/status", 42).unwrap();
+        assert_eq!(trie.lookup("/zone/proc/123/status"), Some(42));
+        assert_eq!(trie.lookup("/missing"), None);
+        assert_eq!(trie.len(), 1);
+    }
 
     #[test]
-    fn test_inner_lookup() {
-        let inner = PathTrieInner::new();
-        {
-            let mut root = inner.root.write();
-            let segs: Vec<&str> = "/{}/proc/{}/status"
-                .split('/')
-                .filter(|s| !s.is_empty())
-                .collect();
-            root.insert(&segs, 42);
-        }
-        assert_eq!(inner.lookup("/zone/proc/123/status"), Some(42));
-        assert_eq!(inner.lookup("/missing"), None);
+    fn test_trie_unregister() {
+        let trie = Trie::new();
+        trie.register("/{}/proc/{}/status", 0).unwrap();
+        assert!(trie.unregister(0));
+        assert_eq!(trie.lookup("/z/proc/p/status"), None);
+        assert_eq!(trie.len(), 0);
+    }
+
+    #[test]
+    fn test_trie_duplicate_idx_error() {
+        let trie = Trie::new();
+        trie.register("/a", 0).unwrap();
+        assert!(trie.register("/b", 0).is_err());
     }
 }

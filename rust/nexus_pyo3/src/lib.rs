@@ -17,6 +17,7 @@ mod hash;
 mod io;
 mod kernel;
 mod lock;
+mod metastore;
 mod path_utils;
 mod pipe;
 mod prefix;
@@ -106,18 +107,11 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     #[cfg(unix)]
     m.add_class::<shm_stream::SharedStreamBufferCore>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
-    // Dispatch (Issue #1317)
-    m.add_class::<dispatch::PathTrie>()?;
-    m.add_class::<dispatch::HookRegistry>()?;
-    m.add_class::<dispatch::ObserverRegistry>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
-    // PathRouter (zone-aware LPM routing)
-    m.add_class::<router::RustPathRouter>()?;
+    // Route result (returned from Kernel.route())
     m.add_class::<router::RustRouteResult>()?;
-    // DCache (Issue #1838 — Rust dentry cache for MetastoreABC)
-    m.add_class::<dcache::RustDCache>()?;
-    // Kernel (Issue #1817 — single-FFI syscall executor)
+    // Kernel (Issue #1868 — owns all core state: dcache, router, trie, hooks, observers)
     m.add_class::<kernel::Kernel>()?;
     m.add_class::<kernel::SysReadResult>()?;
     m.add_class::<kernel::SysWriteResult>()?;

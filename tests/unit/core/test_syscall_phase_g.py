@@ -1,9 +1,9 @@
 """Tests for Phase G: Hook count + VFS lock integration in Kernel.
 
 Verifies:
-- Hook count > 0 → sys_read/sys_write returns hit=false (Python handles hooks)
+- Hook count > 0 -> sys_read/sys_write returns hit=false (Python handles hooks)
 - VFS lock is acquired/released around I/O
-- VFS lock contention → returns hit=false (Python handles with blocking/timeout)
+- VFS lock contention -> returns hit=false (Python handles with blocking/timeout)
 """
 
 import tempfile
@@ -12,9 +12,6 @@ from pathlib import Path
 import pytest
 from nexus_fast import (
     Kernel,
-    PathTrie,
-    RustDCache,
-    RustPathRouter,
     VFSLockManager,
     hash_bytes,
 )
@@ -36,13 +33,11 @@ def cas_dir():
 @pytest.fixture
 def engine_with_lock(cas_dir):
     """Kernel with CAS + VFS lock manager."""
-    dcache = RustDCache()
-    router = RustPathRouter()
-    trie = PathTrie()
+    kernel = Kernel()
     lock = VFSLockManager()
-    router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-    engine = Kernel(dcache, router, trie, lock)
-    return engine, dcache, cas_dir, lock
+    kernel.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
+    kernel.set_vfs_lock(lock)
+    return kernel, cas_dir, lock
 
 
 # ---------------------------------------------------------------------------
@@ -53,13 +48,13 @@ def engine_with_lock(cas_dir):
 class TestHookCountBypass:
     def test_read_hooks_present_returns_miss(self, engine_with_lock):
         """When read hooks are registered, sys_read returns hit=false."""
-        engine, dcache, cas_dir, _ = engine_with_lock
+        engine, cas_dir, _ = engine_with_lock
         content = b"hook test data"
         content_hash = hash_bytes(content)
         cas_path = Path(cas_dir) / "cas" / content_hash[:2] / content_hash[2:4] / content_hash
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
-        dcache.put(
+        engine.dcache_put(
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
@@ -77,8 +72,8 @@ class TestHookCountBypass:
 
     def test_write_hooks_present_returns_miss(self, engine_with_lock):
         """When write hooks are registered, sys_write returns hit=false."""
-        engine, dcache, _, _ = engine_with_lock
-        dcache.put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
+        engine, _, _ = engine_with_lock
+        engine.dcache_put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
 
         # Without hooks: should return hit=true
         result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
@@ -91,7 +86,7 @@ class TestHookCountBypass:
 
     def test_set_hook_count_unknown_op_ignored(self, engine_with_lock):
         """Unknown operation names are silently ignored."""
-        engine, _, _, _ = engine_with_lock
+        engine, _, _ = engine_with_lock
         engine.set_hook_count("delete", 5)  # No crash
 
 
@@ -103,13 +98,13 @@ class TestHookCountBypass:
 class TestVFSLockIntegration:
     def test_read_with_lock(self, engine_with_lock):
         """sys_read acquires and releases VFS read lock."""
-        engine, dcache, cas_dir, lock = engine_with_lock
+        engine, cas_dir, lock = engine_with_lock
         content = b"locked read"
         content_hash = hash_bytes(content)
         cas_path = Path(cas_dir) / "cas" / content_hash[:2] / content_hash[2:4] / content_hash
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
-        dcache.put(
+        engine.dcache_put(
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
@@ -121,13 +116,13 @@ class TestVFSLockIntegration:
 
     def test_write_lock_contention_returns_miss(self, engine_with_lock):
         """If a write lock is already held, sys_read returns hit=false."""
-        engine, dcache, cas_dir, lock = engine_with_lock
+        engine, cas_dir, lock = engine_with_lock
         content = b"contention test"
         content_hash = hash_bytes(content)
         cas_path = Path(cas_dir) / "cas" / content_hash[:2] / content_hash[2:4] / content_hash
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
-        dcache.put(
+        engine.dcache_put(
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
@@ -149,15 +144,12 @@ class TestVFSLockIntegration:
 
     def test_no_lock_manager_still_works(self):
         """Kernel without VFS lock manager still works."""
-        dcache = RustDCache()
-        router = RustPathRouter()
-        trie = PathTrie()
-        router.add_mount("/", "root", False, False, "balanced")
-        engine = Kernel(dcache, router, trie)  # No lock manager
-        dcache.put("/workspace/f.txt", "remote", "", 0, DT_REG, etag="hash")
+        kernel = Kernel()
+        kernel.add_mount("/", "root", False, False, "balanced")
+        kernel.dcache_put("/workspace/f.txt", "remote", "", 0, DT_REG, etag="hash")
 
-        # Should not crash — returns hit=false (no Rust backend)
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        # Should not crash -- returns hit=false (no Rust backend)
+        result = kernel.sys_read("/workspace/f.txt", "root", False)
         assert result.hit is False
 
 
@@ -175,12 +167,10 @@ class TestCASBackendWithLock:
         from nexus_fast import hash_bytes
 
         with tempfile.TemporaryDirectory() as cas_dir:
-            dcache = RustDCache()
-            router = RustPathRouter()
-            trie = PathTrie()
+            kernel = Kernel()
             lock = VFSLockManager()
-            router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-            engine = Kernel(dcache, router, trie, lock)
+            kernel.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
+            kernel.set_vfs_lock(lock)
 
             content = b"locked cas data"
             content_hash = hash_bytes(content)
@@ -188,11 +178,11 @@ class TestCASBackendWithLock:
             cas_path.parent.mkdir(parents=True, exist_ok=True)
             cas_path.write_bytes(content)
 
-            dcache.put(
+            kernel.dcache_put(
                 "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
             )
 
-            result = engine.sys_read("/workspace/f.txt", "root", False)
+            result = kernel.sys_read("/workspace/f.txt", "root", False)
             assert result.hit is True
             assert result.data == content
             # Lock released after read

@@ -1,6 +1,6 @@
-"""Unit tests for RustDCache (Rust DashMap-backed dentry cache).
+"""Unit tests for Kernel DCache proxy methods (Rust DashMap-backed dentry cache).
 
-Tests the PyO3 RustDCache class exposed from rust/nexus_pyo3/src/dcache.rs.
+Tests the Kernel dcache_* proxy methods exposed from kernel.rs.
 Also verifies MetastoreABC dual-write integration.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from nexus_fast import RustDCache
+    from nexus_fast import Kernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -29,36 +29,38 @@ DT_EXTERNAL = 5
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCachePut(unittest.TestCase):
     def setUp(self) -> None:
-        self.dc = RustDCache()
+        self.kernel = Kernel()
 
     def test_put_and_len(self) -> None:
-        assert len(self.dc) == 0
-        self.dc.put("/a", "local", "/data/a", 100, DT_REG)
-        assert len(self.dc) == 1
+        assert self.kernel.dcache_len() == 0
+        self.kernel.dcache_put("/a", "local", "/data/a", 100, DT_REG)
+        assert self.kernel.dcache_len() == 1
 
     def test_put_overwrite(self) -> None:
-        self.dc.put("/a", "local", "/data/a", 100, DT_REG)
-        self.dc.put("/a", "s3", "/bucket/a", 200, DT_REG, version=2, etag="abc")
-        assert len(self.dc) == 1
-        result = self.dc.get("/a")
+        self.kernel.dcache_put("/a", "local", "/data/a", 100, DT_REG)
+        self.kernel.dcache_put("/a", "s3", "/bucket/a", 200, DT_REG, version=2, etag="abc")
+        assert self.kernel.dcache_len() == 1
+        result = self.kernel.dcache_get("/a")
         assert result is not None
         assert result[0] == "s3"  # backend_name
         assert result[1] == "/bucket/a"  # physical_path
 
     def test_put_all_entry_types(self) -> None:
         for et in (DT_REG, DT_DIR, DT_MOUNT, DT_PIPE, DT_STREAM, DT_EXTERNAL):
-            self.dc.put(f"/type/{et}", "local", f"/data/{et}", 0, et)
-        assert len(self.dc) == 6
+            self.kernel.dcache_put(f"/type/{et}", "local", f"/data/{et}", 0, et)
+        assert self.kernel.dcache_len() == 6
 
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheGet(unittest.TestCase):
     def setUp(self) -> None:
-        self.dc = RustDCache()
-        self.dc.put("/docs/readme.md", "local", "/data/readme.md", 1024, DT_REG, etag="hash1")
+        self.kernel = Kernel()
+        self.kernel.dcache_put(
+            "/docs/readme.md", "local", "/data/readme.md", 1024, DT_REG, etag="hash1"
+        )
 
     def test_get_hit(self) -> None:
-        result = self.dc.get("/docs/readme.md")
+        result = self.kernel.dcache_get("/docs/readme.md")
         assert result is not None
         backend_name, physical_path, entry_type = result
         assert backend_name == "local"
@@ -66,11 +68,11 @@ class TestRustDCacheGet(unittest.TestCase):
         assert entry_type == DT_REG
 
     def test_get_miss(self) -> None:
-        result = self.dc.get("/nonexistent")
+        result = self.kernel.dcache_get("/nonexistent")
         assert result is None
 
     def test_get_full_hit(self) -> None:
-        result = self.dc.get_full("/docs/readme.md")
+        result = self.kernel.dcache_get_full("/docs/readme.md")
         assert result is not None
         assert result["backend_name"] == "local"
         assert result["physical_path"] == "/data/readme.md"
@@ -80,18 +82,18 @@ class TestRustDCacheGet(unittest.TestCase):
         assert result["entry_type"] == DT_REG
 
     def test_get_full_miss(self) -> None:
-        assert self.dc.get_full("/nonexistent") is None
+        assert self.kernel.dcache_get_full("/nonexistent") is None
 
     def test_get_full_optional_fields(self) -> None:
-        self.dc.put("/minimal", "s3", "/bucket/min", 0, DT_DIR)
-        result = self.dc.get_full("/minimal")
+        self.kernel.dcache_put("/minimal", "s3", "/bucket/min", 0, DT_DIR)
+        result = self.kernel.dcache_get_full("/minimal")
         assert result is not None
         assert result["etag"] is None
         assert result["zone_id"] is None
 
     def test_get_full_with_zone_id(self) -> None:
-        self.dc.put("/zoned", "local", "/data/z", 512, DT_REG, zone_id="corp")
-        result = self.dc.get_full("/zoned")
+        self.kernel.dcache_put("/zoned", "local", "/data/z", 512, DT_REG, zone_id="corp")
+        result = self.kernel.dcache_get_full("/zoned")
         assert result is not None
         assert result["zone_id"] == "corp"
 
@@ -99,58 +101,60 @@ class TestRustDCacheGet(unittest.TestCase):
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheEvict(unittest.TestCase):
     def setUp(self) -> None:
-        self.dc = RustDCache()
+        self.kernel = Kernel()
         for i in range(5):
-            self.dc.put(f"/docs/file{i}.md", "local", f"/data/file{i}.md", i * 100, DT_REG)
-        self.dc.put("/src/main.rs", "local", "/data/main.rs", 2048, DT_REG)
+            self.kernel.dcache_put(
+                f"/docs/file{i}.md", "local", f"/data/file{i}.md", i * 100, DT_REG
+            )
+        self.kernel.dcache_put("/src/main.rs", "local", "/data/main.rs", 2048, DT_REG)
 
     def test_evict_existing(self) -> None:
-        assert self.dc.evict("/docs/file0.md") is True
-        assert len(self.dc) == 5
+        assert self.kernel.dcache_evict("/docs/file0.md") is True
+        assert self.kernel.dcache_len() == 5
 
     def test_evict_nonexistent(self) -> None:
-        assert self.dc.evict("/nonexistent") is False
-        assert len(self.dc) == 6
+        assert self.kernel.dcache_evict("/nonexistent") is False
+        assert self.kernel.dcache_len() == 6
 
     def test_evict_prefix(self) -> None:
-        count = self.dc.evict_prefix("/docs/")
+        count = self.kernel.dcache_evict_prefix("/docs/")
         assert count == 5
-        assert len(self.dc) == 1
-        assert self.dc.contains("/src/main.rs")
+        assert self.kernel.dcache_len() == 1
+        assert self.kernel.dcache_contains("/src/main.rs")
 
     def test_evict_prefix_empty(self) -> None:
-        count = self.dc.evict_prefix("/nonexistent/")
+        count = self.kernel.dcache_evict_prefix("/nonexistent/")
         assert count == 0
-        assert len(self.dc) == 6
+        assert self.kernel.dcache_len() == 6
 
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheContains(unittest.TestCase):
     def test_contains(self) -> None:
-        dc = RustDCache()
-        dc.put("/a", "local", "/a", 0, DT_REG)
-        assert dc.contains("/a") is True
-        assert dc.contains("/b") is False
+        kernel = Kernel()
+        kernel.dcache_put("/a", "local", "/a", 0, DT_REG)
+        assert kernel.dcache_contains("/a") is True
+        assert kernel.dcache_contains("/b") is False
 
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheStats(unittest.TestCase):
     def test_stats_empty(self) -> None:
-        dc = RustDCache()
-        stats = dc.stats()
+        kernel = Kernel()
+        stats = kernel.dcache_stats()
         assert stats["hits"] == 0
         assert stats["misses"] == 0
         assert stats["size"] == 0
         assert stats["hit_rate"] == 0.0
 
     def test_stats_with_activity(self) -> None:
-        dc = RustDCache()
-        dc.put("/a", "local", "/a", 0, DT_REG)
-        dc.get("/a")  # hit
-        dc.get("/a")  # hit
-        dc.get("/miss")  # miss
+        kernel = Kernel()
+        kernel.dcache_put("/a", "local", "/a", 0, DT_REG)
+        kernel.dcache_get("/a")  # hit
+        kernel.dcache_get("/a")  # hit
+        kernel.dcache_get("/miss")  # miss
 
-        stats = dc.stats()
+        stats = kernel.dcache_stats()
         assert stats["hits"] == 2
         assert stats["misses"] == 1
         assert stats["size"] == 1
@@ -160,15 +164,15 @@ class TestRustDCacheStats(unittest.TestCase):
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheClear(unittest.TestCase):
     def test_clear(self) -> None:
-        dc = RustDCache()
-        dc.put("/a", "local", "/a", 0, DT_REG)
-        dc.put("/b", "local", "/b", 0, DT_REG)
-        dc.get("/a")  # hit counter
-        assert len(dc) == 2
+        kernel = Kernel()
+        kernel.dcache_put("/a", "local", "/a", 0, DT_REG)
+        kernel.dcache_put("/b", "local", "/b", 0, DT_REG)
+        kernel.dcache_get("/a")  # hit counter
+        assert kernel.dcache_len() == 2
 
-        dc.clear()
-        assert len(dc) == 0
-        stats = dc.stats()
+        kernel.dcache_clear()
+        assert kernel.dcache_len() == 0
+        stats = kernel.dcache_stats()
         assert stats["hits"] == 0
         assert stats["misses"] == 0
 
@@ -176,16 +180,15 @@ class TestRustDCacheClear(unittest.TestCase):
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheRepr(unittest.TestCase):
     def test_repr(self) -> None:
-        dc = RustDCache()
-        dc.put("/a", "local", "/a", 0, DT_REG)
-        r = repr(dc)
-        assert "RustDCache" in r
-        assert "size=1" in r
+        kernel = Kernel()
+        kernel.dcache_put("/a", "local", "/a", 0, DT_REG)
+        r = repr(kernel)
+        assert "Kernel" in r
 
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestRustDCacheMetastoreIntegration(unittest.TestCase):
-    """Verify MetastoreABC dual-write keeps Python dict and RustDCache in sync."""
+    """Verify MetastoreABC dual-write keeps Python dict and Kernel dcache in sync."""
 
     def _make_store(self):
         """Create a minimal MetastoreABC implementation for testing."""
@@ -216,7 +219,9 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
             def close(self):
                 pass
 
-        return InMemoryStore()
+        store = InMemoryStore()
+        store._kernel = Kernel()
+        return store
 
     def test_get_populates_rust_dcache(self) -> None:
         from nexus.contracts.metadata import FileMetadata
@@ -233,12 +238,12 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         )
         store._store["/test/file.txt"] = meta
 
-        # First get — dcache miss → populates both caches
+        # First get -- dcache miss -> populates both caches
         result = store.get("/test/file.txt")
         assert result is not None
-        assert store._rust_dcache.contains("/test/file.txt")
+        assert store._kernel.dcache_contains("/test/file.txt")
 
-        rust_entry = store._rust_dcache.get_full("/test/file.txt")
+        rust_entry = store._kernel.dcache_get_full("/test/file.txt")
         assert rust_entry["backend_name"] == "local"
         assert rust_entry["etag"] == "abc"
 
@@ -257,8 +262,8 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         )
         store.put(meta)
 
-        assert store._rust_dcache.contains("/new/file.txt")
-        rust_entry = store._rust_dcache.get_full("/new/file.txt")
+        assert store._kernel.dcache_contains("/new/file.txt")
+        rust_entry = store._kernel.dcache_get_full("/new/file.txt")
         assert rust_entry["backend_name"] == "s3"
         assert rust_entry["size"] == 1024
         assert rust_entry["version"] == 3
@@ -276,10 +281,10 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
             entry_type=DT_REG,
         )
         store.put(meta)
-        assert store._rust_dcache.contains("/del/me.txt")
+        assert store._kernel.dcache_contains("/del/me.txt")
 
         store.delete("/del/me.txt")
-        assert not store._rust_dcache.contains("/del/me.txt")
+        assert not store._kernel.dcache_contains("/del/me.txt")
 
     def test_dcache_evict_prefix_syncs(self) -> None:
         from nexus.contracts.metadata import FileMetadata
@@ -308,8 +313,8 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
 
         evicted = store.dcache_evict_prefix("/mount/")
         assert evicted == 3
-        assert not store._rust_dcache.contains("/mount/file0")
-        assert store._rust_dcache.contains("/other/keep")
+        assert not store._kernel.dcache_contains("/mount/file0")
+        assert store._kernel.dcache_contains("/other/keep")
 
     def test_list_populates_rust_dcache(self) -> None:
         from nexus.contracts.metadata import FileMetadata
@@ -328,7 +333,7 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         results = store.list("/list/")
         assert len(results) == 3
         for i in range(3):
-            assert store._rust_dcache.contains(f"/list/file{i}")
+            assert store._kernel.dcache_contains(f"/list/file{i}")
 
     def test_put_batch_syncs_rust_dcache(self) -> None:
         from nexus.contracts.metadata import FileMetadata
@@ -347,9 +352,9 @@ class TestRustDCacheMetastoreIntegration(unittest.TestCase):
         ]
         store.put_batch(metas)
 
-        assert len(store._rust_dcache) == 5
+        assert store._kernel.dcache_len() == 5
         for i in range(5):
-            assert store._rust_dcache.contains(f"/batch/{i}")
+            assert store._kernel.dcache_contains(f"/batch/{i}")
 
     def test_cache_stats_includes_rust(self) -> None:
         store = self._make_store()

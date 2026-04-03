@@ -10,12 +10,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from nexus_fast import (
-        Kernel,
-        PathTrie,
-        RustDCache,
-        RustPathRouter,
-    )
+    from nexus_fast import Kernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -42,23 +37,21 @@ def _make_kernel(
         entries: {path: (backend_name, physical_path, entry_type, version, etag)}
         patterns: {pattern: resolver_idx}
     """
-    dcache = RustDCache()
-    router = RustPathRouter()
-    trie = PathTrie()
+    kernel = Kernel()
 
     if mounts:
         for mp, (ro, admin, profile) in mounts.items():
-            router.add_mount(mp, "root", ro, admin, profile)
+            kernel.add_mount(mp, "root", ro, admin, profile)
 
     if entries:
         for path, (bn, pp, et, ver, etag) in entries.items():
-            dcache.put(path, bn, pp, 0, et, ver, etag)
+            kernel.dcache_put(path, bn, pp, 0, et, ver, etag)
 
     if patterns:
         for pat, idx in patterns.items():
-            trie.register(pat, idx)
+            kernel.trie_register(pat, idx)
 
-    return Kernel(dcache, router, trie)
+    return kernel
 
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
@@ -70,65 +63,53 @@ class TestKernelConstruction(unittest.TestCase):
 
 @unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
 class TestArcSharing(unittest.TestCase):
-    """Verify that Kernel shares state with the original objects."""
+    """Verify that Kernel internal state is mutable after construction."""
 
     def test_dcache_mutations_visible(self) -> None:
         """DCache entries added after Kernel creation are visible via sys_stat."""
-        dcache = RustDCache()
-        router = RustPathRouter()
-        trie = PathTrie()
-
-        router.add_mount("/", "root", False, False, "balanced")
-        kernel = Kernel(dcache, router, trie)
+        kernel = Kernel()
+        kernel.add_mount("/", "root", False, False, "balanced")
 
         # Before: cache miss
         assert kernel.sys_stat("/test.txt", "root", False) is None
 
         # Mutate dcache after kernel creation
-        dcache.put("/test.txt", "local", "/data/test.txt", 100, DT_REG, 1, "etag-new")
+        kernel.dcache_put("/test.txt", "local", "/data/test.txt", 100, DT_REG, 1, "etag-new")
 
-        # After: should see the new entry (Arc sharing)
+        # After: should see the new entry
         result = kernel.sys_stat("/test.txt", "root", False)
         assert result is not None
         assert result["etag"] == "etag-new"
 
     def test_router_mutations_visible(self) -> None:
         """Mounts added after Kernel creation are visible via sys_stat."""
-        dcache = RustDCache()
-        router = RustPathRouter()
-        trie = PathTrie()
+        kernel = Kernel()
 
-        kernel = Kernel(dcache, router, trie)
-
-        # Before: no mount → None
-        dcache.put("/test.txt", "local", "/data/test.txt", 100, DT_REG)
+        # Before: no mount -> None
+        kernel.dcache_put("/test.txt", "local", "/data/test.txt", 100, DT_REG)
         assert kernel.sys_stat("/test.txt", "root", False) is None
 
         # Add mount after kernel creation
-        router.add_mount("/", "root", False, False, "balanced")
+        kernel.add_mount("/", "root", False, False, "balanced")
 
-        # After: mount exists → sys_stat returns result
+        # After: mount exists -> sys_stat returns result
         result = kernel.sys_stat("/test.txt", "root", False)
         assert result is not None
 
     def test_trie_mutations_visible(self) -> None:
         """PathTrie patterns added after Kernel creation are visible."""
-        dcache = RustDCache()
-        router = RustPathRouter()
-        trie = PathTrie()
+        kernel = Kernel()
+        kernel.add_mount("/", "root", False, False, "balanced")
+        kernel.dcache_put("/zone/proc/123/status", "local", "status", 100, DT_REG)
 
-        router.add_mount("/", "root", False, False, "balanced")
-        dcache.put("/zone/proc/123/status", "local", "status", 100, DT_REG)
-        kernel = Kernel(dcache, router, trie)
-
-        # Before: no resolver → sys_stat returns dcache hit
+        # Before: no resolver -> sys_stat returns dcache hit
         result = kernel.sys_stat("/zone/proc/123/status", "root", False)
         assert result is not None
 
         # Register trie pattern after kernel creation
-        trie.register("/{}/proc/{}/status", 99)
+        kernel.trie_register("/{}/proc/{}/status", 99)
 
-        # After: resolver matches → sys_stat returns None (virtual path)
+        # After: resolver matches -> sys_stat returns None (virtual path)
         result = kernel.sys_stat("/zone/proc/123/status", "root", False)
         assert result is None
 

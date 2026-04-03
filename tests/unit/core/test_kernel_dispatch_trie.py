@@ -27,59 +27,59 @@ def dispatch() -> KernelDispatch:
     return KernelDispatch()
 
 
-# ── PathTrie Rust class (standalone) ──────────────────────────────────
+# ── PathTrie via Kernel proxy methods (standalone) ──────────────────────
 
 
-class TestPathTrieRust:
-    """Direct tests on the Rust PathTrie (skip if extension not built)."""
+class TestPathTrieViaKernel:
+    """Direct tests on the Kernel trie proxy methods (skip if extension not built)."""
 
     @pytest.fixture()
-    def trie(self):
-        from nexus_fast import PathTrie
+    def kernel(self):
+        from nexus_fast import Kernel
 
-        return PathTrie()
+        return Kernel()
 
-    def test_register_and_lookup(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        assert trie.lookup("/zone/proc/123/status") == 0
+    def test_register_and_lookup(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        assert kernel.trie_lookup("/zone/proc/123/status") == 0
 
-    def test_no_match_returns_none(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        assert trie.lookup("/zone/other/123/status") is None
+    def test_no_match_returns_none(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        assert kernel.trie_lookup("/zone/other/123/status") is None
 
-    def test_unregister(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        assert trie.unregister(0) is True
-        assert trie.lookup("/zone/proc/123/status") is None
+    def test_unregister(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        assert kernel.trie_unregister(0) is True
+        assert kernel.trie_lookup("/zone/proc/123/status") is None
 
-    def test_multiple_patterns(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        trie.register("/.tasks/tasks/{}/agent/status", 1)
-        assert trie.lookup("/z/proc/p/status") == 0
-        assert trie.lookup("/.tasks/tasks/t1/agent/status") == 1
+    def test_multiple_patterns(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        kernel.trie_register("/.tasks/tasks/{}/agent/status", 1)
+        assert kernel.trie_lookup("/z/proc/p/status") == 0
+        assert kernel.trie_lookup("/.tasks/tasks/t1/agent/status") == 1
 
-    def test_literal_priority(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        trie.register("/.tasks/proc/{}/status", 1)
-        assert trie.lookup("/.tasks/proc/p/status") == 1
-        assert trie.lookup("/other/proc/p/status") == 0
+    def test_literal_priority(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        kernel.trie_register("/.tasks/proc/{}/status", 1)
+        assert kernel.trie_lookup("/.tasks/proc/p/status") == 1
+        assert kernel.trie_lookup("/other/proc/p/status") == 0
 
-    def test_duplicate_idx_raises(self, trie) -> None:
-        trie.register("/a", 0)
+    def test_duplicate_idx_raises(self, kernel) -> None:
+        kernel.trie_register("/a", 0)
         with pytest.raises(ValueError, match="already registered"):
-            trie.register("/b", 0)
+            kernel.trie_register("/b", 0)
 
-    def test_len(self, trie) -> None:
-        assert len(trie) == 0
-        trie.register("/a", 0)
-        assert len(trie) == 1
-        trie.unregister(0)
-        assert len(trie) == 0
+    def test_len(self, kernel) -> None:
+        assert kernel.trie_len() == 0
+        kernel.trie_register("/a", 0)
+        assert kernel.trie_len() == 1
+        kernel.trie_unregister(0)
+        assert kernel.trie_len() == 0
 
-    def test_segment_count_mismatch(self, trie) -> None:
-        trie.register("/{}/proc/{}/status", 0)
-        assert trie.lookup("/zone/proc") is None
-        assert trie.lookup("/zone/proc/pid/status/extra") is None
+    def test_segment_count_mismatch(self, kernel) -> None:
+        kernel.trie_register("/{}/proc/{}/status", 0)
+        assert kernel.trie_lookup("/zone/proc") is None
+        assert kernel.trie_lookup("/zone/proc/pid/status/extra") is None
 
 
 # ── KernelDispatch trie integration ───────────────────────────────────

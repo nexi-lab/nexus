@@ -155,6 +155,64 @@ impl VFSLockManagerInner {
         }
     }
 
+    /// Blocking acquire with timeout (for Rust-internal callers like Kernel).
+    /// Returns non-zero handle on success, 0 on timeout.
+    /// Does NOT require GIL — safe to call from within py.allow_threads().
+    pub(crate) fn blocking_acquire(&self, path: &str, mode: LockMode, timeout_ms: u64) -> u64 {
+        let norm_path = normalize_path(path);
+        let start = Instant::now();
+
+        // Fast path: non-blocking try under mutex.
+        {
+            let mut state = self.state.lock();
+            if let Some(handle) =
+                Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode)
+            {
+                let elapsed = start.elapsed().as_nanos() as u64;
+                self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                return handle;
+            }
+        }
+
+        // If timeout == 0 (try-acquire), return immediately.
+        if timeout_ms == 0 {
+            self.contention_count.fetch_add(1, Ordering::Relaxed);
+            self.timeout_count.fetch_add(1, Ordering::Relaxed);
+            return 0;
+        }
+
+        // Blocking wait with Condvar — woken on every release().
+        let deadline = start + Duration::from_millis(timeout_ms);
+
+        loop {
+            self.contention_count.fetch_add(1, Ordering::Relaxed);
+
+            let mut state = self.state.lock();
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                return 0;
+            }
+
+            let wait_result = self.notify.wait_for(&mut state, remaining);
+
+            if let Some(handle) =
+                Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode)
+            {
+                let elapsed = start.elapsed().as_nanos() as u64;
+                self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
+                self.acquire_count.fetch_add(1, Ordering::Relaxed);
+                return handle;
+            }
+
+            if wait_result.timed_out() {
+                self.timeout_count.fetch_add(1, Ordering::Relaxed);
+                return 0;
+            }
+        }
+    }
+
     /// Non-blocking try-acquire (for Rust-internal callers like Kernel).
     /// Returns non-zero handle on success, 0 on conflict.
     pub(crate) fn try_acquire(&self, path: &str, mode: LockMode) -> u64 {
@@ -364,69 +422,10 @@ impl VFSLockManager {
             }
         };
 
-        let norm_path = normalize_path(path);
         let inner = &self.inner;
 
         // Release the GIL for the (potentially blocking) acquire loop.
-        let result = py.detach(|| {
-            let start = Instant::now();
-
-            // Fast path: non-blocking try under mutex.
-            {
-                let mut state = inner.state.lock();
-                if let Some(handle) = VFSLockManagerInner::try_acquire_locked(
-                    &mut state,
-                    &inner.next_handle,
-                    &norm_path,
-                    lock_mode,
-                ) {
-                    let elapsed = start.elapsed().as_nanos() as u64;
-                    inner.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
-                    inner.acquire_count.fetch_add(1, Ordering::Relaxed);
-                    return handle;
-                }
-            }
-
-            // If timeout == 0 (try-acquire), return immediately.
-            if timeout_ms == 0 {
-                inner.contention_count.fetch_add(1, Ordering::Relaxed);
-                inner.timeout_count.fetch_add(1, Ordering::Relaxed);
-                return 0;
-            }
-
-            // Blocking wait with Condvar — woken on every release().
-            let deadline = start + Duration::from_millis(timeout_ms);
-
-            loop {
-                inner.contention_count.fetch_add(1, Ordering::Relaxed);
-
-                let mut state = inner.state.lock();
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    inner.timeout_count.fetch_add(1, Ordering::Relaxed);
-                    return 0;
-                }
-
-                let wait_result = inner.notify.wait_for(&mut state, remaining);
-
-                if let Some(handle) = VFSLockManagerInner::try_acquire_locked(
-                    &mut state,
-                    &inner.next_handle,
-                    &norm_path,
-                    lock_mode,
-                ) {
-                    let elapsed = start.elapsed().as_nanos() as u64;
-                    inner.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
-                    inner.acquire_count.fetch_add(1, Ordering::Relaxed);
-                    return handle;
-                }
-
-                if wait_result.timed_out() {
-                    inner.timeout_count.fetch_add(1, Ordering::Relaxed);
-                    return 0;
-                }
-            }
-        });
+        let result = py.detach(|| inner.blocking_acquire(path, lock_mode, timeout_ms));
 
         Ok(result)
     }

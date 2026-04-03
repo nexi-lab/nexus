@@ -305,6 +305,8 @@ class RustRouteResult:
 class SysReadResult:
     hit: bool
     data: bytes | None
+    post_hook_needed: bool
+    content_hash: str | None
 
 class SysWriteResult:
     hit: bool
@@ -314,6 +316,7 @@ class Kernel:
     def __init__(self) -> None: ...
     # VFS Lock wiring
     def set_vfs_lock(self, vfs_lock: VFSLockManager) -> None: ...
+    def set_vfs_lock_timeout(self, timeout_ms: int) -> None: ...
     # DCache proxy
     def dcache_put(
         self,

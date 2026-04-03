@@ -96,11 +96,13 @@ class TestExecuteRead:
         assert result.hit is True
         assert result.data == content
 
-    def test_dcache_miss_returns_miss(self, kernel_with_cas):
-        """DCache miss -> hit=false (Python fallback)."""
+    def test_dcache_miss_raises_not_found(self, kernel_with_cas):
+        """DCache is authoritative — miss raises NexusFileNotFoundError."""
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
         engine, _ = kernel_with_cas
-        result = engine.sys_read("/workspace/missing.txt", "root", False)
-        assert result.hit is False
+        with pytest.raises(NexusFileNotFoundError):
+            engine.sys_read("/workspace/missing.txt", "root", False)
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS (no local_root) -> hit=false (Python fallback)."""
@@ -225,8 +227,11 @@ class TestArcSharing:
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
 
-        # Initially miss
-        assert engine.sys_read("/workspace/late.txt", "root", False).hit is False
+        # Initially miss — dcache is authoritative, miss raises
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        with pytest.raises(NexusFileNotFoundError):
+            engine.sys_read("/workspace/late.txt", "root", False)
 
         # Add to dcache (simulating metastore.put dual-write)
         engine.dcache_put(

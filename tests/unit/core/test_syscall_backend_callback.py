@@ -90,12 +90,15 @@ class TestCASBackendWorks:
         assert read_result.hit is True
         assert read_result.data == content
 
-    def test_dcache_miss_returns_miss(self, engine_with_cas):
-        """DCache miss -> hit=false (engine doesn't know the file)."""
+    def test_dcache_miss_raises_not_found(self, engine_with_cas):
+        """DCache is authoritative — miss raises NexusFileNotFoundError."""
+        import pytest
+
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
         engine, _ = engine_with_cas
-        result = engine.sys_read("/workspace/missing.txt", "root", False)
-        assert result.hit is False
-        assert result.data is None
+        with pytest.raises(NexusFileNotFoundError):
+            engine.sys_read("/workspace/missing.txt", "root", False)
 
     def test_no_etag_returns_miss(self, engine_with_cas):
         """Entry without etag -> hit=false (no content hash to read)."""

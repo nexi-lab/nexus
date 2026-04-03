@@ -27,10 +27,14 @@ use std::sync::Arc;
 /// Result of sys_read(): concrete type instead of Option<bytes>.
 #[pyclass(get_all)]
 pub struct SysReadResult {
-    /// True if Rust backend served the read.
+    /// True if Rust kernel handled the read (no Python fallback needed).
     pub hit: bool,
     /// Content bytes (only when hit=true).
     pub data: Option<Py<PyBytes>>,
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+    /// Content hash (etag) for post-hook context.
+    pub content_hash: Option<String>,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -145,9 +149,11 @@ pub struct Kernel {
     // Hook/Observer registries (Mutex for interior mutability)
     hooks: Mutex<HookRegistry>,
     observers: Mutex<ObserverRegistry>,
-    // Metastore trait (reserved for PR 4+)
+    // Metastore trait (Rust-native, used when available)
     #[allow(dead_code)]
     metastore: Option<Box<dyn Metastore>>,
+    // VFS lock timeout for blocking acquire (ms)
+    vfs_lock_timeout_ms: u64,
     // Hook counts (atomics for lock-free hot-path check)
     read_hook_count: AtomicU64,
     write_hook_count: AtomicU64,
@@ -171,6 +177,7 @@ impl Kernel {
             hooks: Mutex::new(HookRegistry::new()),
             observers: Mutex::new(ObserverRegistry::new()),
             metastore: None,
+            vfs_lock_timeout_ms: 5000,
             read_hook_count: AtomicU64::new(0),
             write_hook_count: AtomicU64::new(0),
             stat_hook_count: AtomicU64::new(0),
@@ -184,6 +191,11 @@ impl Kernel {
     /// Wire VFS lock manager (shares Arc with Python VFSLockManager).
     fn set_vfs_lock(&mut self, vfs_lock: &VFSLockManager) {
         self.vfs_lock = Some(Arc::clone(&vfs_lock.inner));
+    }
+
+    /// Set VFS lock timeout in milliseconds (default 5000).
+    fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
+        self.vfs_lock_timeout_ms = timeout_ms;
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────
@@ -440,57 +452,103 @@ impl Kernel {
 
     // ── sys_read ───────────────────────────────────────────────────────
 
-    /// Rust syscall: read file content.
+    /// Rust syscall: read file content — pure Rust path (zero GIL).
+    ///
+    /// validate → route → dcache (authoritative) → VFS lock → CAS read → return.
+    ///
+    /// DCache is authoritative: miss = FileNotFoundError (no metastore fallback).
+    /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
+    /// or when no Rust backend is available (e.g. remote backends).
+    /// Raises `InvalidPathError`, `NexusFileNotFoundError` on errors.
+    ///
+    /// Resolve, pre-hooks, and post-hooks are handled by the Python wrapper
+    /// (intermediate state — migrates to Rust dispatch middleware in PR 7).
+    #[pyo3(signature = (path, zone_id, is_admin))]
     fn sys_read<'py>(
         &self,
         py: Python<'py>,
         path: &str,
         zone_id: &str,
         is_admin: bool,
-    ) -> SysReadResult {
-        let miss = || SysReadResult {
-            hit: false,
-            data: None,
+    ) -> PyResult<SysReadResult> {
+        let miss = || {
+            Ok(SysReadResult {
+                hit: false,
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+            })
         };
 
-        if self.read_hook_count.load(Ordering::Relaxed) > 0 {
+        // 1. Validate
+        if let Err(msg) = validate_path_fast(path) {
+            return Err(Self::raise_invalid_path(py, &msg));
+        }
+
+        // 2. Route (pure Rust LPM)
+        let route = match self.router.route_impl(path, zone_id, is_admin, false) {
+            Ok(r) => r,
+            Err(_) => return miss(),
+        };
+
+        // 3. DCache lookup (authoritative — miss = FileNotFoundError)
+        let entry = match self.dcache.get_entry(path) {
+            Some(e) => e,
+            None => return Err(Self::raise_file_not_found(py, path)),
+        };
+
+        // DT_PIPE/DT_STREAM → wrapper handles async IPC
+        match entry.entry_type {
+            DT_PIPE | DT_STREAM => return miss(),
+            _ => {}
+        }
+
+        // Path-based backend: no etag → use backend_path
+        let etag = entry.etag.as_deref().unwrap_or("");
+        if etag.is_empty() && route.backend_path.is_empty() {
+            return Err(Self::raise_file_not_found(py, path));
+        }
+
+        // 4. VFS lock (blocking, GIL released during wait)
+        let lock_handle = if let Some(ref lm) = self.vfs_lock {
+            let timeout = self.vfs_lock_timeout_ms;
+            let lm = Arc::clone(lm);
+            let p = path.to_string();
+            py.detach(move || lm.blocking_acquire(&p, LockMode::Read, timeout))
+        } else {
+            0
+        };
+
+        // Lock timeout → miss (unsafe to read without lock)
+        if self.vfs_lock.is_some() && lock_handle == 0 {
             return miss();
         }
 
-        let plan = self.plan_read(path, zone_id, is_admin);
-        if plan.action != ACTION_DCACHE_HIT {
-            return miss();
-        }
-        let etag = match &plan.etag {
-            Some(e) if !e.is_empty() => e.as_str(),
-            _ => return miss(),
+        // 5. Backend read (CasLocal — pure Rust, zero GIL)
+        let content = if !etag.is_empty() {
+            self.router.read_content(&route.mount_point, etag)
+        } else {
+            None
         };
 
-        let lock_handle = self
-            .vfs_lock
-            .as_ref()
-            .map(|lm| lm.try_acquire(path, LockMode::Read));
-        if let Some(0) = lock_handle {
-            return miss();
-        }
-
-        let result = match self.router.read_content(&plan.mount_point, etag) {
-            Some(data) => SysReadResult {
-                hit: true,
-                data: Some(PyBytes::new(py, &data).into()),
-            },
-            None => miss(),
-        };
-
-        if let Some(handle) = lock_handle {
-            if handle > 0 {
-                if let Some(lm) = &self.vfs_lock {
-                    lm.do_release(handle);
-                }
+        // 6. Release VFS lock (always, even on miss)
+        if lock_handle > 0 {
+            if let Some(ref lm) = self.vfs_lock {
+                lm.do_release(lock_handle);
             }
         }
 
-        result
+        // 7. Return result
+        match content {
+            Some(data) => Ok(SysReadResult {
+                hit: true,
+                data: Some(PyBytes::new(py, &data).into()),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_hash: entry.etag,
+            }),
+            // No Rust backend available (e.g. remote) — wrapper handles
+            None => miss(),
+        }
     }
 
     // ── sys_write ──────────────────────────────────────────────────────
@@ -630,50 +688,28 @@ impl Kernel {
     }
 }
 
-// ── Private planning methods (kernel-internal) ─────────────────────────
+// ── Private helpers (kernel-internal) ────────────────────────────────────
 
 impl Kernel {
-    fn plan_read(&self, path: &str, zone_id: &str, is_admin: bool) -> ReadPlan {
-        if let Err(msg) = validate_path_fast(path) {
-            return ReadPlan::error(msg);
-        }
+    // ── Error constructors ──
 
-        if let Some(idx) = self.trie.lookup(path) {
-            return ReadPlan::resolved(path, idx);
-        }
-
-        let route = match self.router.route_impl(path, zone_id, is_admin, false) {
-            Ok(r) => r,
-            Err(_) => {
-                return ReadPlan::cache_miss(path);
-            }
-        };
-
-        match self.dcache.get_entry(path) {
-            Some(entry) => {
-                let action = match entry.entry_type {
-                    DT_PIPE => ACTION_PIPE,
-                    DT_STREAM => ACTION_STREAM,
-                    DT_EXTERNAL => ACTION_EXTERNAL,
-                    _ => ACTION_DCACHE_HIT,
-                };
-                ReadPlan {
-                    action,
-                    mount_point: route.mount_point,
-                    backend_path: route.backend_path,
-                    etag: entry.etag,
-                    backend_name: entry.backend_name,
-                    readonly: route.readonly,
-                    io_profile: route.io_profile,
-                    entry_type: entry.entry_type,
-                    validated_path: path.to_string(),
-                    resolver_idx: -1,
-                    error_msg: None,
-                }
-            }
-            None => ReadPlan::cache_miss(path),
-        }
+    fn raise_invalid_path(py: Python<'_>, msg: &str) -> PyErr {
+        py.import("nexus.contracts.exceptions")
+            .and_then(|m| m.getattr("InvalidPathError"))
+            .and_then(|cls| cls.call1((msg,)))
+            .map(PyErr::from_value)
+            .unwrap_or_else(|e| e)
     }
+
+    fn raise_file_not_found(py: Python<'_>, path: &str) -> PyErr {
+        py.import("nexus.contracts.exceptions")
+            .and_then(|m| m.getattr("NexusFileNotFoundError"))
+            .and_then(|cls| cls.call1((path,)))
+            .map(PyErr::from_value)
+            .unwrap_or_else(|e| e)
+    }
+
+    // ── Planning methods ──
 
     fn plan_write(&self, path: &str, zone_id: &str, is_admin: bool) -> WritePlan {
         if let Err(msg) = validate_path_fast(path) {
@@ -820,6 +856,7 @@ impl Kernel {
 
 // ── Plan constructors ──────────────────────────────────────────────────
 
+#[allow(dead_code)]
 impl ReadPlan {
     fn error(msg: String) -> Self {
         Self {

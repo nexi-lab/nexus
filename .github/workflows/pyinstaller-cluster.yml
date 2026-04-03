@@ -75,6 +75,7 @@ jobs:
     needs: setup
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -386,7 +387,7 @@ jobs:
     name: Attach binaries to GitHub Release
     needs: build-binary
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') && !cancelled()
     steps:
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4

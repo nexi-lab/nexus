@@ -236,12 +236,12 @@ This creates several problems:
 
 | Problem | Root cause |
 |---------|-----------|
-| SyscallEngine FFI facade exists | Bypassing ABC's Python call overhead |
+| Kernel FFI facade exists | Bypassing ABC's Python call overhead |
 | `Arc<Inner>` on 5+ structs | Sharing state across FFI boundary |
 | GIL safety clone-then-call pattern | Rust calling Python callbacks |
 | Dual code paths (Rust fast + Python fallback) | Every feature maintained in two places |
 | Hook count sync via `AtomicU64` | Kernel straddles two languages |
-| 6 files to touch per new feature | ABC → impl → SyscallEngine → stubs → proto → servicer |
+| 6 files to touch per new feature | ABC → impl → Kernel → stubs → proto → servicer |
 
 No production storage system puts an internal ABC below its wire protocol:
 
@@ -297,7 +297,7 @@ Key design decisions:
 | Artifact | Status after collapse |
 |----------|----------------------|
 | `NexusFilesystemABC` | **Deleted** — kernel is `pub fn`, not ABC |
-| `SyscallEngine` (FFI facade) | **Deleted** — no FFI boundary to bridge |
+| `Kernel` (FFI facade) | **Deleted** — no FFI boundary to bridge |
 | `Arc<Inner>` on 5+ structs | **Gone** — all structs are fields of one kernel struct |
 | GIL safety clone-then-call | **Gone** — only for Python backend calls (unchanged) |
 | Dual Rust/Python code paths | **Gone** — one Rust path, Python fallback only for backends |
@@ -310,7 +310,7 @@ Key design decisions:
 // kernel/mod.rs — THE kernel. Not a trait, just functions.
 pub fn sys_read(ctx: &KernelCtx, path: &str, offset: u64, count: Option<u64>) -> Result<Bytes> {
     // validate → route → dcache → vfs_lock → CAS/backend read → unlock
-    // This is what SyscallEngine.sys_read() does today, minus the FFI wrapper.
+    // This is what Kernel.sys_read() does today, minus the FFI wrapper.
 }
 
 // grpc/vfs_service.rs — thin tonic adapter
@@ -335,7 +335,7 @@ All work done in Phases A-G is directly reusable:
 
 | Current (Phase G) | Target |
 |-------------------|--------|
-| `SyscallEngine.sys_read` logic | `kernel::sys_read()` body (identical) |
+| `Kernel.sys_read` logic | `kernel::sys_read()` body (identical) |
 | `RustPathRouterInner` | `kernel::Router` (struct field, no Arc) |
 | `RustDCacheInner` | `kernel::DCache` (struct field, no Arc) |
 | `VFSLockManagerInner` | `kernel::VfsLock` (struct field, no Arc) |
@@ -345,11 +345,11 @@ All work done in Phases A-G is directly reusable:
 Migration phases (incremental, each a PR):
 
 1. **Rust kernel crate**: Extract `kernel/mod.rs` with `pub fn sys_read/write`
-   from current `SyscallEngine` logic. SyscallEngine becomes a thin
-   delegation layer.
-2. **PyO3 binding adapter**: Replace `SyscallEngine` pyclass with thin
+   from current `Kernel` logic. Kernel struct becomes the single
+   kernel entry point.
+2. **PyO3 binding adapter**: Replace `Kernel` pyclass with thin
    `#[pyfunction]` bindings to `kernel::sys_*`. NexusFS calls these
-   directly instead of through SyscallEngine.
+   directly instead of through Kernel.
 3. **Delete NexusFilesystemABC**: Move Tier 2 methods to a standalone
    Python module that calls the PyO3 `sys_*` functions.
 4. **tonic adapter** (optional, parallel): Add gRPC serving via tonic,
@@ -360,9 +360,10 @@ Migration phases (incremental, each a PR):
 | Phase | Status | Relationship to §7 |
 |-------|--------|-------------------|
 | A-G | Done | Logic **reused verbatim** in `kernel::sys_read/write` |
-| H (all Tier 1 syscalls) | Done | `sys_stat` + `plan_stat/unlink/rename` in SyscallEngine. These become `kernel::sys_*` functions directly. |
+| H (all Tier 1 syscalls) | Done | `sys_stat` + plan methods in Kernel (now private). These become `kernel::sys_*` functions directly. |
 | I (io_uring) | **Deferred indefinitely** | Evaluated: ~1-2μs per syscall (negligible). After §7 collapse, Rust-native async I/O (tokio/rayon) covers batch workloads without Linux-only branching. |
-| **§7 collapse** | **Next** | Deletes SyscallEngine + NexusFilesystemABC, promotes kernel functions to top-level. |
+| §7 PR 2 (rename + flatten) | Done | `SyscallEngine` → `Kernel`. Plan types → kernel-internal. |
+| **§7 collapse (remaining)** | **Next** | Kernel owns all state, deletes NexusFilesystemABC, promotes kernel functions to top-level. |
 
 The key insight: **Phase H is the last phase that adds logic.** The §7
 collapse is a **refactoring** that changes the boundary, not the logic.

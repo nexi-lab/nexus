@@ -1,9 +1,9 @@
 //! CAS Engine — content-addressable read/write combining Transport + BLAKE3 hash.
 //!
 //! Reimplements the hot-path subset of Python `CASAddressingEngine.read_content()`
-//! and `write_content()`, eliminating FFI overhead for the SyscallEngine fast path.
+//! and `write_content()`, eliminating FFI overhead for the Kernel fast path.
 //!
-//! This module is `pub(crate)` — consumed only by `SyscallEngine`, never exposed
+//! This module is `pub(crate)` — consumed only by `Kernel`, never exposed
 //! as a PyO3 class. External callers (Python) still use `CASAddressingEngine`.
 //!
 //! Not included (stays in Python):
@@ -112,7 +112,7 @@ impl CASEngine {
             })
     }
 
-    /// Expose transport for direct access (used by SyscallEngine for
+    /// Expose transport for direct access (used by Kernel for
     /// pre-hashed writes where the hash is already known from dcache).
     pub fn transport(&self) -> &LocalCASTransport {
         &self.transport

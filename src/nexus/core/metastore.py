@@ -67,7 +67,7 @@ class MetastoreABC(ABC):
     The Rust DashMap (``_rust_dcache``) mirrors the Python dict for hot-path
     fields only (backend_name, physical_path, size, etag, version, entry_type,
     zone_id).  It is dual-written on every mutation and consumed by
-    SyscallEngine (#1817) for single-FFI sys_read/sys_write.
+    Kernel (#1817) for single-FFI sys_read/sys_write.
 
     Abstract methods (must override):
         _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close

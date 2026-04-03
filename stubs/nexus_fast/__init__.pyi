@@ -373,61 +373,6 @@ class RustRouteResult:
     @property
     def io_profile(self) -> str: ...
 
-class ReadPlan:
-    action: int
-    mount_point: str
-    backend_path: str
-    etag: str | None
-    backend_name: str
-    readonly: bool
-    io_profile: str
-    entry_type: int
-    validated_path: str
-    resolver_idx: int
-    error_msg: str | None
-
-class WritePlan:
-    action: int
-    mount_point: str
-    backend_path: str
-    etag: str | None
-    backend_name: str
-    readonly: bool
-    io_profile: str
-    entry_type: int
-    validated_path: str
-    resolver_idx: int
-    error_msg: str | None
-    version: int
-
-class StatPlan:
-    action: int
-    validated_path: str
-    backend_name: str
-    physical_path: str
-    size: int
-    etag: str | None
-    mime_type: str | None
-    entry_type: int
-    version: int
-    zone_id: str | None
-    is_directory: bool
-    resolver_idx: int
-    error_msg: str | None
-
-class RenamePlan:
-    action: int
-    old_path: str
-    new_path: str
-    old_mount_point: str
-    old_backend_path: str
-    new_mount_point: str
-    new_backend_path: str
-    old_readonly: bool
-    new_readonly: bool
-    entry_type: int
-    error_msg: str | None
-
 class SysReadResult:
     hit: bool
     data: bytes | None
@@ -436,7 +381,7 @@ class SysWriteResult:
     hit: bool
     content_id: str | None
 
-class SyscallEngine:
+class Kernel:
     def __init__(
         self,
         dcache: RustDCache,
@@ -444,13 +389,6 @@ class SyscallEngine:
         trie: PathTrie,
         vfs_lock: VFSLockManager | None = None,
     ) -> None: ...
-    def plan_read(self, path: str, zone_id: str, is_admin: bool) -> ReadPlan: ...
-    def plan_write(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
-    def plan_stat(self, path: str, zone_id: str, is_admin: bool) -> StatPlan: ...
-    def plan_unlink(self, path: str, zone_id: str, is_admin: bool) -> WritePlan: ...
-    def plan_rename(
-        self, old_path: str, new_path: str, zone_id: str, is_admin: bool
-    ) -> RenamePlan: ...
     def sys_read(self, path: str, zone_id: str, is_admin: bool) -> SysReadResult: ...
     def sys_write(
         self, path: str, zone_id: str, content: bytes, is_admin: bool

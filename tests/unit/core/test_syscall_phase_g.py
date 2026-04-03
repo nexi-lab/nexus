@@ -1,4 +1,4 @@
-"""Tests for Phase G: Hook count + VFS lock integration in SyscallEngine.
+"""Tests for Phase G: Hook count + VFS lock integration in Kernel.
 
 Verifies:
 - Hook count > 0 → sys_read/sys_write returns hit=false (Python handles hooks)
@@ -11,10 +11,10 @@ from pathlib import Path
 
 import pytest
 from nexus_fast import (
+    Kernel,
     PathTrie,
     RustDCache,
     RustPathRouter,
-    SyscallEngine,
     VFSLockManager,
     hash_bytes,
 )
@@ -35,13 +35,13 @@ def cas_dir():
 
 @pytest.fixture
 def engine_with_lock(cas_dir):
-    """SyscallEngine with CAS + VFS lock manager."""
+    """Kernel with CAS + VFS lock manager."""
     dcache = RustDCache()
     router = RustPathRouter()
     trie = PathTrie()
     lock = VFSLockManager()
     router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-    engine = SyscallEngine(dcache, router, trie, lock)
+    engine = Kernel(dcache, router, trie, lock)
     return engine, dcache, cas_dir, lock
 
 
@@ -148,12 +148,12 @@ class TestVFSLockIntegration:
         assert result.data == content
 
     def test_no_lock_manager_still_works(self):
-        """SyscallEngine without VFS lock manager still works."""
+        """Kernel without VFS lock manager still works."""
         dcache = RustDCache()
         router = RustPathRouter()
         trie = PathTrie()
         router.add_mount("/", "root", False, False, "balanced")
-        engine = SyscallEngine(dcache, router, trie)  # No lock manager
+        engine = Kernel(dcache, router, trie)  # No lock manager
         dcache.put("/workspace/f.txt", "remote", "", 0, DT_REG, etag="hash")
 
         # Should not crash — returns hit=false (no Rust backend)
@@ -180,7 +180,7 @@ class TestCASBackendWithLock:
             trie = PathTrie()
             lock = VFSLockManager()
             router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-            engine = SyscallEngine(dcache, router, trie, lock)
+            engine = Kernel(dcache, router, trie, lock)
 
             content = b"locked cas data"
             content_hash = hash_bytes(content)

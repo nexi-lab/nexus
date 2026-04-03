@@ -1,4 +1,4 @@
-"""Tests for SyscallEngine backend I/O — Kernel Boundary Collapse (§7 PR 1).
+"""Tests for Kernel backend I/O — Kernel Boundary Collapse (§7 PR 1).
 
 After the boundary collapse, Python backends are removed from Rust.
 Mounts with local_root get a CasLocalBackend (pure Rust CAS + local transport).
@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pytest
 from nexus_fast import (
+    Kernel,
     PathTrie,
     RustDCache,
     RustPathRouter,
-    SyscallEngine,
     hash_bytes,
 )
 
@@ -28,13 +28,13 @@ DT_REG = 0
 
 @pytest.fixture
 def engine_with_cas():
-    """SyscallEngine with a CAS-backed mount (local_root present)."""
+    """Kernel with a CAS-backed mount (local_root present)."""
     with tempfile.TemporaryDirectory() as cas_dir:
         dcache = RustDCache()
         router = RustPathRouter()
         trie = PathTrie()
         router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         yield engine, dcache, cas_dir
 
 
@@ -123,7 +123,7 @@ class TestNoBackendFallback:
         router = RustPathRouter()
         trie = PathTrie()
         router.add_mount("/", "root", False, False, "balanced")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         dcache.put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
         result = engine.sys_read("/workspace/test.txt", "root", False)
@@ -136,7 +136,7 @@ class TestNoBackendFallback:
         router = RustPathRouter()
         trie = PathTrie()
         router.add_mount("/", "root", False, False, "balanced")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         dcache.put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
         result = engine.sys_write("/workspace/test.txt", "root", b"data", False)

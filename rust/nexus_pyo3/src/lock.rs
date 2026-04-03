@@ -120,10 +120,10 @@ fn ancestors(path: &str) -> Vec<&str> {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Inner (shared via Arc with SyscallEngine)
+// Inner (shared via Arc with Kernel)
 // ---------------------------------------------------------------------------
 
-/// Core VFS lock state — shared via `Arc` with SyscallEngine for zero-cost
+/// Core VFS lock state — shared via `Arc` with Kernel for zero-cost
 /// lock acquire/release in the Rust fast path (Phase G).
 pub(crate) struct VFSLockManagerInner {
     state: Mutex<LockState>,
@@ -155,7 +155,7 @@ impl VFSLockManagerInner {
         }
     }
 
-    /// Non-blocking try-acquire (for Rust-internal callers like SyscallEngine).
+    /// Non-blocking try-acquire (for Rust-internal callers like Kernel).
     /// Returns non-zero handle on success, 0 on conflict.
     pub(crate) fn try_acquire(&self, path: &str, mode: LockMode) -> u64 {
         let norm_path = normalize_path(path);
@@ -328,7 +328,7 @@ impl VFSLockManagerInner {
 /// Rust-accelerated VFS lock manager with read/write semantics and hierarchical
 /// path awareness (ancestor walk).
 ///
-/// Arc<VFSLockManagerInner> enables zero-cost sharing with SyscallEngine (Phase G).
+/// Arc<VFSLockManagerInner> enables zero-cost sharing with Kernel (Phase G).
 #[pyclass]
 pub struct VFSLockManager {
     pub(crate) inner: Arc<VFSLockManagerInner>,

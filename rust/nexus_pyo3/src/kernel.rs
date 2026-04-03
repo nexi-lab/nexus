@@ -1,4 +1,4 @@
-//! SyscallEngine — single-FFI syscall planner + executor.
+//! Kernel — single-FFI syscall planner + executor.
 //!
 //! Holds Arc references to DCache, PathRouter, PathTrie, and VFSLockManager.
 //! A single `plan_read()` or `plan_write()` FFI call replaces 4 separate
@@ -58,142 +58,89 @@ pub const ACTION_CACHE_MISS: u8 = 5;
 /// Validation or routing error.
 pub const ACTION_ERROR: u8 = 6;
 
-// ── ReadPlan ────────────────────────────────────────────────────────────
+// ── ReadPlan (kernel-internal) ─────────────────────────────────────────
 
-/// Result of plan_read(): tells Python what to do next without additional FFI.
-#[pyclass(get_all)]
+/// Result of plan_read(): kernel-internal routing plan.
 #[derive(Debug, Clone)]
-pub struct ReadPlan {
-    /// Action type (ACTION_* constants).
-    pub action: u8,
-    /// Zone-canonical mount point (from router).
-    pub mount_point: String,
-    /// Backend-relative path (from router).
-    pub backend_path: String,
-    /// Content hash for CAS lookup (from dcache).
-    pub etag: Option<String>,
-    /// Backend name for driver coordinator lookup.
-    pub backend_name: String,
-    /// Whether mount is read-only.
-    pub readonly: bool,
-    /// I/O profile hint ("fast", "balanced", etc.).
-    pub io_profile: String,
-    /// Entry type from dcache (DT_REG, DT_PIPE, etc.).
-    pub entry_type: u8,
-    /// Validated/normalized path.
-    pub validated_path: String,
-    /// Resolver index (only for ACTION_RESOLVED).
-    pub resolver_idx: i64,
-    /// Error message (only for ACTION_ERROR).
-    pub error_msg: Option<String>,
+#[allow(dead_code)] // Fields used by sys_read; remaining reserved for PR 4-6
+pub(crate) struct ReadPlan {
+    pub(crate) action: u8,
+    pub(crate) mount_point: String,
+    pub(crate) backend_path: String,
+    pub(crate) etag: Option<String>,
+    pub(crate) backend_name: String,
+    pub(crate) readonly: bool,
+    pub(crate) io_profile: String,
+    pub(crate) entry_type: u8,
+    pub(crate) validated_path: String,
+    pub(crate) resolver_idx: i64,
+    pub(crate) error_msg: Option<String>,
 }
 
-// ── WritePlan ───────────────────────────────────────────────────────────
+// ── WritePlan (kernel-internal) ────────────────────────────────────────
 
-/// Result of plan_write(): tells Python what to do next.
-#[pyclass(get_all)]
+/// Result of plan_write(): kernel-internal routing plan.
 #[derive(Debug, Clone)]
-pub struct WritePlan {
-    /// Action type (ACTION_* constants).
-    pub action: u8,
-    /// Zone-canonical mount point.
-    pub mount_point: String,
-    /// Backend-relative path.
-    pub backend_path: String,
-    /// Existing content hash (for CAS update).
-    pub etag: Option<String>,
-    /// Backend name.
-    pub backend_name: String,
-    /// Whether mount is read-only (should always be false for write plans).
-    pub readonly: bool,
-    /// I/O profile hint.
-    pub io_profile: String,
-    /// Entry type from dcache.
-    pub entry_type: u8,
-    /// Validated/normalized path.
-    pub validated_path: String,
-    /// Resolver index (only for ACTION_RESOLVED).
-    pub resolver_idx: i64,
-    /// Error message (only for ACTION_ERROR).
-    pub error_msg: Option<String>,
-    /// Metadata version from dcache (for optimistic concurrency).
-    pub version: u32,
+#[allow(dead_code)] // Fields used by sys_write; remaining reserved for PR 4-6
+pub(crate) struct WritePlan {
+    pub(crate) action: u8,
+    pub(crate) mount_point: String,
+    pub(crate) backend_path: String,
+    pub(crate) etag: Option<String>,
+    pub(crate) backend_name: String,
+    pub(crate) readonly: bool,
+    pub(crate) io_profile: String,
+    pub(crate) entry_type: u8,
+    pub(crate) validated_path: String,
+    pub(crate) resolver_idx: i64,
+    pub(crate) error_msg: Option<String>,
+    pub(crate) version: u32,
 }
 
-// ── StatPlan (Phase H) ─────────────────────────────────────────────────
+// ── StatPlan (kernel-internal, Phase H) ────────────────────────────────
 
-/// Result of plan_stat(): single-FFI stat planning.
-///
-/// When action == ACTION_DCACHE_HIT, all metadata fields are populated
-/// from the Rust dcache — Python can construct the response dict without
-/// any additional lookups.
-#[pyclass(get_all)]
+/// Result of plan_stat(): kernel-internal stat routing plan.
 #[derive(Debug, Clone)]
-pub struct StatPlan {
-    /// Action type (ACTION_* constants).
-    pub action: u8,
-    /// Validated/normalized path.
-    pub validated_path: String,
-    /// Backend name (from dcache).
-    pub backend_name: String,
-    /// Physical path (from dcache).
-    pub physical_path: String,
-    /// File size (from dcache).
-    pub size: u64,
-    /// Content hash (from dcache).
-    pub etag: Option<String>,
-    /// MIME type (from dcache).
-    pub mime_type: Option<String>,
-    /// Entry type (DT_REG, DT_DIR, etc.).
-    pub entry_type: u8,
-    /// Metadata version.
-    pub version: u32,
-    /// Zone ID.
-    pub zone_id: Option<String>,
-    /// Whether path is a directory (entry_type == DT_DIR).
-    pub is_directory: bool,
-    /// Resolver index (only for ACTION_RESOLVED).
-    pub resolver_idx: i64,
-    /// Error message (only for ACTION_ERROR).
-    pub error_msg: Option<String>,
+#[allow(dead_code)] // Reserved for PR 5 (sys_unlink/sys_rename)
+pub(crate) struct StatPlan {
+    pub(crate) action: u8,
+    pub(crate) validated_path: String,
+    pub(crate) backend_name: String,
+    pub(crate) physical_path: String,
+    pub(crate) size: u64,
+    pub(crate) etag: Option<String>,
+    pub(crate) mime_type: Option<String>,
+    pub(crate) entry_type: u8,
+    pub(crate) version: u32,
+    pub(crate) zone_id: Option<String>,
+    pub(crate) is_directory: bool,
+    pub(crate) resolver_idx: i64,
+    pub(crate) error_msg: Option<String>,
 }
 
-// ── RenamePlan (Phase H) ───────────────────────────────────────────────
+// ── RenamePlan (kernel-internal, Phase H) ──────────────────────────────
 
-/// Result of plan_rename(): validates + routes both paths in a single FFI call.
-///
-/// Provides routing info for both old and new paths. Python uses these
-/// to perform the actual metastore rename under VFS lock.
-#[pyclass(get_all)]
+/// Result of plan_rename(): kernel-internal dual-path routing plan.
 #[derive(Debug, Clone)]
-pub struct RenamePlan {
-    /// Action type (ACTION_* constants).
-    pub action: u8,
-    /// Validated old path.
-    pub old_path: String,
-    /// Validated new path.
-    pub new_path: String,
-    /// Route result for old path: zone-canonical mount point.
-    pub old_mount_point: String,
-    /// Route result for old path: backend-relative path.
-    pub old_backend_path: String,
-    /// Route result for new path: zone-canonical mount point.
-    pub new_mount_point: String,
-    /// Route result for new path: backend-relative path.
-    pub new_backend_path: String,
-    /// Whether old path mount is read-only.
-    pub old_readonly: bool,
-    /// Whether new path mount is read-only.
-    pub new_readonly: bool,
-    /// Entry type of source (from dcache, 0 if miss).
-    pub entry_type: u8,
-    /// Error message (only for ACTION_ERROR).
-    pub error_msg: Option<String>,
+#[allow(dead_code)] // Reserved for PR 5 (sys_rename)
+pub(crate) struct RenamePlan {
+    pub(crate) action: u8,
+    pub(crate) old_path: String,
+    pub(crate) new_path: String,
+    pub(crate) old_mount_point: String,
+    pub(crate) old_backend_path: String,
+    pub(crate) new_mount_point: String,
+    pub(crate) new_backend_path: String,
+    pub(crate) old_readonly: bool,
+    pub(crate) new_readonly: bool,
+    pub(crate) entry_type: u8,
+    pub(crate) error_msg: Option<String>,
 }
 
-// ── SyscallEngine ───────────────────────────────────────────────────────
+// ── Kernel ──────────────────────────────────────────────────────────────
 
-/// Single-FFI syscall facade holding shared refs to DCache, Router, Trie, and VFS Lock.
+/// Rust kernel: single-FFI syscall facade holding shared refs to DCache,
+/// Router, Trie, and VFS Lock.
 ///
 /// Constructed once during NexusFS initialization, reused for every syscall.
 /// All inner Arcs point to the same live data as the Python-facing objects.
@@ -202,7 +149,7 @@ pub struct RenamePlan {
 /// Phase H: sys_stat + plan_stat/plan_unlink/plan_rename + hook counters
 ///          for stat/delete/rename.
 #[pyclass]
-pub struct SyscallEngine {
+pub struct Kernel {
     dcache: Arc<RustDCacheInner>,
     router: Arc<RustPathRouterInner>,
     trie: Arc<PathTrieInner>,
@@ -215,7 +162,7 @@ pub struct SyscallEngine {
 }
 
 #[pymethods]
-impl SyscallEngine {
+impl Kernel {
     /// Construct from existing Python objects.  Extracts Arc refs from each.
     ///
     /// `vfs_lock` is optional for backward compatibility (tests without lock manager).
@@ -472,13 +419,14 @@ impl SyscallEngine {
 
         Ok(Some(dict))
     }
+}
 
-    // ── plan_read ───────────────────────────────────────────────────────
+// ── Private planning methods (kernel-internal) ─────────────────────────
 
-    /// Plan a read operation in a single FFI call.
+impl Kernel {
+    /// Plan a read operation.
     ///
     /// Performs: validate → trie lookup → router LPM → dcache lookup.
-    /// Returns a ReadPlan telling Python what to do next.
     fn plan_read(&self, path: &str, zone_id: &str, is_admin: bool) -> ReadPlan {
         // 1. Basic validation
         if let Err(msg) = validate_path_fast(path) {
@@ -526,12 +474,9 @@ impl SyscallEngine {
         }
     }
 
-    // ── plan_write ──────────────────────────────────────────────────────
-
-    /// Plan a write operation in a single FFI call.
+    /// Plan a write operation.
     ///
     /// Performs: validate → trie lookup → router LPM (check_write=true) → dcache lookup.
-    /// Returns a WritePlan telling Python what to do next.
     fn plan_write(&self, path: &str, zone_id: &str, is_admin: bool) -> WritePlan {
         // 1. Basic validation
         if let Err(msg) = validate_path_fast(path) {
@@ -579,12 +524,11 @@ impl SyscallEngine {
         }
     }
 
-    // ── plan_stat (Phase H) ─────────────────────────────────────────────
-
-    /// Plan a stat operation in a single FFI call.
+    /// Plan a stat operation.
     ///
     /// Returns metadata from dcache if available. Python uses this to
     /// skip metadata.get() on dcache hit.
+    #[allow(dead_code)] // Reserved for PR 5 (sys_stat full path)
     fn plan_stat(&self, path: &str, zone_id: &str, is_admin: bool) -> StatPlan {
         // 1. Validate (allow root — stat("/") is valid)
         if path.is_empty() || path.contains('\0') {
@@ -636,23 +580,20 @@ impl SyscallEngine {
         }
     }
 
-    // ── plan_unlink (Phase H) ───────────────────────────────────────────
-
-    /// Plan an unlink (delete) operation in a single FFI call.
+    /// Plan an unlink (delete) operation.
     ///
     /// Validates path → router LPM (check_write=true) → dcache entry_type.
     /// Reuses WritePlan since the fields are identical.
+    #[allow(dead_code)] // Reserved for PR 5 (sys_unlink)
     fn plan_unlink(&self, path: &str, zone_id: &str, is_admin: bool) -> WritePlan {
         // Delegate to plan_write — same validation + routing + dcache needs
         self.plan_write(path, zone_id, is_admin)
     }
 
-    // ── plan_rename (Phase H) ───────────────────────────────────────────
-
-    /// Plan a rename operation in a single FFI call.
+    /// Plan a rename operation.
     ///
     /// Validates and routes BOTH paths. Returns RenamePlan with dual routing info.
-    /// Python uses this to avoid 2 separate route() calls + 2 validations.
+    #[allow(dead_code)] // Reserved for PR 5 (sys_rename)
     fn plan_rename(
         &self,
         old_path: &str,

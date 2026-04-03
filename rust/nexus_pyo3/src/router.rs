@@ -6,7 +6,7 @@
 //! Design: HashMap<String, MountEntry> keyed by zone-canonical mount points.
 //! `route(path, zone_id)` canonicalizes, then walks from deepest to shallowest.
 //!
-//! Arc<RustPathRouterInner> enables zero-cost sharing with SyscallEngine (#1817).
+//! Arc<RustPathRouterInner> enables zero-cost sharing with Kernel (#1817).
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
@@ -64,7 +64,7 @@ pub struct RustRouteResult {
 }
 
 // ---------------------------------------------------------------------------
-// Inner (shared via Arc with SyscallEngine)
+// Inner (shared via Arc with Kernel)
 // ---------------------------------------------------------------------------
 
 pub(crate) struct RustPathRouterInner {
@@ -78,7 +78,7 @@ impl RustPathRouterInner {
         }
     }
 
-    /// Core routing logic — used by both PyO3 methods and SyscallEngine.
+    /// Core routing logic — used by both PyO3 methods and Kernel.
     pub(crate) fn route_impl(
         &self,
         path: &str,
@@ -171,7 +171,7 @@ impl RustPathRouter {
     /// Register a mount at a zone-canonical key.
     ///
     /// When `local_root` is provided, a `CasLocalBackend` is auto-created for
-    /// the mount point, enabling full Rust I/O via `SyscallEngine.sys_read/write`.
+    /// the mount point, enabling full Rust I/O via `Kernel.sys_read/write`.
     /// No Python backend — mounts without `local_root` return `None` from
     /// `sys_read`/`sys_write`, and the Python full path handles them.
     #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]

@@ -4,7 +4,7 @@
 //! replacing O(N) linear regex scan.  `{}` segments match any single
 //! path component (wildcard).
 //!
-//! Arc<PathTrieInner> enables zero-cost sharing with SyscallEngine (#1817).
+//! Arc<PathTrieInner> enables zero-cost sharing with Kernel (#1817).
 //!
 //! Related: Issue #1317
 
@@ -120,7 +120,7 @@ impl TrieNode {
     }
 }
 
-// ── PathTrieInner (shared via Arc with SyscallEngine) ────────────────
+// ── PathTrieInner (shared via Arc with Kernel) ────────────────
 
 pub(crate) struct PathTrieInner {
     root: RwLock<TrieNode>,

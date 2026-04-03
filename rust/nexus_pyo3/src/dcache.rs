@@ -5,11 +5,11 @@
 //!
 //! The Python dcache (dict[str, FileMetadata]) is retained for non-hot-path callers
 //! that need full FileMetadata objects (sys_stat, list, etc.).  RustDCache is dual-written
-//! alongside the Python dict, and is the source of truth for the Rust SyscallEngine (#1817).
+//! alongside the Python dict, and is the source of truth for the Rust Kernel (#1817).
 //!
 //! Design:
 //!   - DashMap<String, CachedEntry> for lock-free concurrent reads (~30ns).
-//!   - Arc<RustDCacheInner> enables zero-cost sharing with SyscallEngine (#1817).
+//!   - Arc<RustDCacheInner> enables zero-cost sharing with Kernel (#1817).
 //!   - No TTL/LRU — write-through, authoritative (single-process, single-writer).
 
 use dashmap::DashMap;
@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 // ── Entry type constants (mirror proto/nexus/core/metadata.proto) ───────────
-// Used by #[cfg(test)] and reserved for SyscallEngine (#1817).
+// Used by #[cfg(test)] and reserved for Kernel (#1817).
 #[allow(dead_code)]
 pub(crate) const DT_REG: u8 = 0;
 #[allow(dead_code)]
@@ -48,14 +48,14 @@ pub(crate) struct CachedEntry {
     pub(crate) mime_type: Option<String>,
 }
 
-/// Inner state shared via Arc with SyscallEngine (#1817).
+/// Inner state shared via Arc with Kernel (#1817).
 pub(crate) struct RustDCacheInner {
     cache: DashMap<String, CachedEntry>,
     hits: AtomicU64,
     misses: AtomicU64,
 }
 
-#[allow(dead_code)] // pub(crate) API reserved for SyscallEngine (#1817)
+#[allow(dead_code)] // pub(crate) API reserved for Kernel (#1817)
 impl RustDCacheInner {
     fn new() -> Self {
         Self {
@@ -65,7 +65,7 @@ impl RustDCacheInner {
         }
     }
 
-    /// Get a full CachedEntry clone (pub(crate) for SyscallEngine).
+    /// Get a full CachedEntry clone (pub(crate) for Kernel).
     pub(crate) fn get_entry(&self, path: &str) -> Option<CachedEntry> {
         match self.cache.get(path) {
             Some(entry) => {
@@ -79,12 +79,12 @@ impl RustDCacheInner {
         }
     }
 
-    /// Get just the entry_type (pub(crate) for SyscallEngine).
+    /// Get just the entry_type (pub(crate) for Kernel).
     pub(crate) fn get_entry_type(&self, path: &str) -> Option<u8> {
         self.cache.get(path).map(|e| e.value().entry_type)
     }
 
-    /// Get just the etag (pub(crate) for SyscallEngine).
+    /// Get just the etag (pub(crate) for Kernel).
     pub(crate) fn get_etag(&self, path: &str) -> Option<Option<String>> {
         self.cache.get(path).map(|e| e.value().etag.clone())
     }

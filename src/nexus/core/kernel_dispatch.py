@@ -191,7 +191,7 @@ class KernelDispatch:
         "_mount_hooks",
         "_unmount_hooks",
         "_background_tasks",
-        "_syscall_engine",
+        "_kernel",
     )
 
     def __init__(self) -> None:
@@ -222,9 +222,9 @@ class KernelDispatch:
         # Strong references prevent GC of in-flight tasks (CPython #91887).
         self._background_tasks: set[asyncio.Task] = set()
 
-        # Phase G temporary: SyscallEngine ref for hook count sync.
+        # Phase G temporary: Kernel ref for hook count sync.
         # Deleted in §7 Collapse (hooks become Rust middleware).
-        self._syscall_engine: Any = None
+        self._kernel: Any = None
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
@@ -356,8 +356,8 @@ class KernelDispatch:
         self._sync_hook_count(op)
 
     def _sync_hook_count(self, op: str) -> None:
-        """Push hook count to Rust SyscallEngine (Phase G)."""
-        engine = getattr(self, "_syscall_engine", None)
+        """Push hook count to Rust Kernel (Phase G)."""
+        engine = getattr(self, "_kernel", None)
         if engine is not None:
             engine.set_hook_count(op, int(self._registry.count(op)))
 

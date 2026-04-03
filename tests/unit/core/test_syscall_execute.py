@@ -1,9 +1,9 @@
-"""Tests for SyscallEngine sys_read / sys_write (Phase E / E.1 / G).
+"""Tests for Kernel sys_read / sys_write (Phase E / E.1 / G).
 
 Verifies the full Rust data path: validate → route → dcache → CAS read/write.
 
 Phase E.1: CAS engines are now owned by MountEntry (via add_mount's local_root
-parameter), not registered separately on SyscallEngine.
+parameter), not registered separately on Kernel.
 Phase G: renamed execute_read → sys_read, execute_write → sys_write.
 """
 
@@ -12,18 +12,16 @@ from pathlib import Path
 
 import pytest
 from nexus_fast import (
+    Kernel,
     PathTrie,
-    ReadPlan,
     RustDCache,
     RustPathRouter,
-    SyscallEngine,
-    WritePlan,
     hash_bytes,
 )
 
-# ── Action constants (mirror syscall.rs) ──────────────────────────────
+# ── Action constants (mirror kernel.rs) ──────────────────────────────
 
-# Must match syscall.rs ACTION_* constants
+# Must match kernel.rs ACTION_* constants
 ACTION_DCACHE_HIT = 0
 ACTION_RESOLVED = 1
 ACTION_PIPE = 2
@@ -42,7 +40,7 @@ DT_EXTERNAL = 5
 
 @pytest.fixture
 def components():
-    """Create shared components for SyscallEngine (no CAS)."""
+    """Create shared components for Kernel (no CAS)."""
     dcache = RustDCache()
     router = RustPathRouter()
     trie = PathTrie()
@@ -53,9 +51,9 @@ def components():
 
 @pytest.fixture
 def engine(components):
-    """Create SyscallEngine without CAS backends."""
+    """Create Kernel without CAS backends."""
     dcache, router, trie = components
-    return SyscallEngine(dcache, router, trie)
+    return Kernel(dcache, router, trie)
 
 
 @pytest.fixture
@@ -67,103 +65,31 @@ def cas_dir():
 
 @pytest.fixture
 def engine_with_cas(cas_dir):
-    """Create SyscallEngine with local CAS on root mount (Phase E.1)."""
+    """Create Kernel with local CAS on root mount (Phase E.1)."""
     dcache = RustDCache()
     router = RustPathRouter()
     trie = PathTrie()
     # Root mount with CAS backend
     router.add_mount("/", "root", False, False, "balanced", "local", cas_dir, False)
-    engine = SyscallEngine(dcache, router, trie)
+    engine = Kernel(dcache, router, trie)
     return engine, dcache, cas_dir
 
 
-# ── SyscallEngine construction ────────────────────────────────────────
+# ── Kernel construction ──────────────────────────────────────────────
 
 
-class TestSyscallEngineConstruction:
+class TestKernelConstruction:
     def test_basic_construction(self, components):
         dcache, router, trie = components
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         assert engine is not None
 
     def test_repr(self, engine):
         r = repr(engine)
-        assert "SyscallEngine" in r
+        assert "Kernel" in r
 
 
-# ── plan_read ─────────────────────────────────────────────────────────
-
-
-class TestPlanRead:
-    def test_dcache_hit(self, components):
-        dcache, router, trie = components
-        engine = SyscallEngine(dcache, router, trie)
-        dcache.put("/workspace/test.txt", "local", "test.txt", 100, DT_REG, etag="hash123")
-        plan = engine.plan_read("/workspace/test.txt", "root", False)
-        assert plan.action == ACTION_DCACHE_HIT
-        assert plan.etag == "hash123"
-        assert plan.backend_name == "local"
-        assert plan.validated_path == "/workspace/test.txt"
-
-    def test_dcache_miss(self, engine):
-        plan = engine.plan_read("/workspace/missing.txt", "root", False)
-        assert plan.action == ACTION_CACHE_MISS
-
-    def test_resolved_virtual_path(self, components):
-        dcache, router, trie = components
-        trie.register("/{}/proc/{}/status", 42)
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_read("/zone/proc/123/status", "root", False)
-        assert plan.action == ACTION_RESOLVED
-        assert plan.resolver_idx == 42
-
-    def test_pipe_entry(self, components):
-        dcache, router, trie = components
-        dcache.put("/pipes/fifo1", "local", "", 0, DT_PIPE)
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_read("/pipes/fifo1", "root", False)
-        assert plan.action == ACTION_PIPE
-
-    def test_stream_entry(self, components):
-        dcache, router, trie = components
-        dcache.put("/streams/s1", "local", "", 0, DT_STREAM)
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_read("/streams/s1", "root", False)
-        assert plan.action == ACTION_STREAM
-
-    def test_validation_error_empty(self, engine):
-        plan = engine.plan_read("", "root", False)
-        assert plan.action == ACTION_ERROR
-        assert plan.error_msg is not None
-
-    def test_root_path_returns_cache_miss(self, engine):
-        plan = engine.plan_read("/", "root", False)
-        # Root "/" is valid but typically not in dcache → cache miss
-        assert plan.action in (ACTION_DCACHE_HIT, ACTION_CACHE_MISS)
-
-
-# ── plan_write ────────────────────────────────────────────────────────
-
-
-class TestPlanWrite:
-    def test_dcache_hit(self, components):
-        dcache, router, trie = components
-        dcache.put("/workspace/test.txt", "local", "test.txt", 100, DT_REG, etag="hash")
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_write("/workspace/test.txt", "root", False)
-        assert plan.action == ACTION_DCACHE_HIT
-        assert plan.backend_name == "local"
-
-    def test_readonly_mount_returns_cache_miss(self, components):
-        dcache, router, trie = components
-        router.add_mount("/readonly", "root", True, False, "balanced")
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_write("/readonly/file.txt", "root", False)
-        # PR B returns ACTION_CACHE_MISS on route failure (Python handles error)
-        assert plan.action == ACTION_CACHE_MISS
-
-
-# ── execute_read ──────────────────────────────────────────────────────
+# ── sys_read ─────────────────────────────────────────────────────────
 
 
 class TestExecuteRead:
@@ -198,7 +124,7 @@ class TestExecuteRead:
         """Mount without CAS (no local_root) → hit=false (Python fallback)."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-backend", "test.txt", 100, DT_REG, etag="hash123")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         result = engine.sys_read("/workspace/test.txt", "root", False)
         assert result.hit is False
 
@@ -248,7 +174,7 @@ class TestExecuteRead:
         assert len(result.data) == 512 * 1024
 
 
-# ── execute_write ─────────────────────────────────────────────────────
+# ── sys_write ────────────────────────────────────────────────────────
 
 
 class TestExecuteWrite:
@@ -278,7 +204,7 @@ class TestExecuteWrite:
         """Mount without CAS → hit=false."""
         dcache, router, trie = components
         dcache.put("/workspace/test.txt", "s3-remote", "", 0, DT_REG, etag="hash")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         result = engine.sys_write("/workspace/test.txt", "root", b"data", False)
         assert result.hit is False
 
@@ -290,7 +216,7 @@ class TestExecuteWrite:
         router.add_mount("/", "root", False, False, "balanced")
         router.add_mount("/readonly", "root", True, False, "balanced", "local", cas_dir, False)
         dcache.put("/readonly/file.txt", "local", "", 0, DT_REG, etag="hash")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
         # PR B returns cache miss on route failure → returns hit=false
         result = engine.sys_write("/readonly/file.txt", "root", b"data", False)
         assert result.hit is False
@@ -341,7 +267,7 @@ class TestArcSharing:
         router = RustPathRouter()
         trie = PathTrie()
         router.add_mount("/", "root", False, False, "balanced")
-        engine = SyscallEngine(dcache, router, trie)
+        engine = Kernel(dcache, router, trie)
 
         content = b"mount test"
         content_hash = hash_bytes(content)
@@ -355,37 +281,6 @@ class TestArcSharing:
             "/workspace/file.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
-        plan = engine.plan_read("/workspace/file.txt", "root", False)
-        assert plan.action == ACTION_DCACHE_HIT
-        assert plan.io_profile == "fast"  # Uses /workspace mount, not /
-
         result = engine.sys_read("/workspace/file.txt", "root", False)
         assert result.hit is True
         assert result.data == content
-
-
-# ── ReadPlan / WritePlan types ────────────────────────────────────────
-
-
-class TestPlanTypes:
-    def test_read_plan_fields(self, components):
-        dcache, router, trie = components
-        dcache.put("/workspace/f.txt", "local", "f.txt", 42, DT_REG, etag="etag1", zone_id="root")
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_read("/workspace/f.txt", "root", False)
-        assert isinstance(plan, ReadPlan)
-        assert plan.action == ACTION_DCACHE_HIT
-        assert plan.etag == "etag1"
-        assert plan.backend_name == "local"
-        assert plan.entry_type == DT_REG
-        assert plan.readonly is False
-        assert plan.error_msg is None
-
-    def test_write_plan_fields(self, components):
-        dcache, router, trie = components
-        dcache.put("/workspace/f.txt", "local", "f.txt", 42, DT_REG, etag="etag1")
-        engine = SyscallEngine(dcache, router, trie)
-        plan = engine.plan_write("/workspace/f.txt", "root", False)
-        assert isinstance(plan, WritePlan)
-        assert plan.action == ACTION_DCACHE_HIT
-        assert plan.backend_name == "local"

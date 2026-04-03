@@ -220,6 +220,7 @@ jobs:
       # Uses importlib.util.find_spec() which honours the Python env used by
       # PyInstaller, so the paths are guaranteed to match what PyInstaller sees.
       - name: Patch spec hardcoded paths for CI environment
+        shell: bash
         run: |
           python - << 'EOF'
           import re, os, glob, site

@@ -71,8 +71,11 @@ class _BackendWithHookSpec:
 
 def _make_coordinator() -> tuple[MagicMock, KernelDispatch, DriverLifecycleCoordinator]:
     """Create a coordinator with a mock mount_table and real KernelDispatch."""
+    from nexus_fast import Kernel
+
     mount_table = MagicMock()
     dispatch = KernelDispatch()
+    dispatch._kernel = Kernel()  # Wire kernel for hook/observer registration
     coord = DriverLifecycleCoordinator(mount_table, dispatch)
     return mount_table, dispatch, coord
 

@@ -397,10 +397,10 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_fast import RustDCache
+        from nexus_fast import Kernel
 
         metadata_store = MagicMock()
-        metadata_store._rust_dcache = RustDCache()
+        metadata_store._kernel = Kernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"
@@ -449,10 +449,10 @@ class TestBrickServicesFieldCompleteness:
         record_store.database_url = "sqlite://"
         record_store.async_session_factory = MagicMock()
 
-        from nexus_fast import RustDCache
+        from nexus_fast import Kernel
 
         metadata_store = MagicMock()
-        metadata_store._rust_dcache = RustDCache()
+        metadata_store._kernel = Kernel()
 
         backend = MagicMock()
         backend.root_path = "/tmp/test"

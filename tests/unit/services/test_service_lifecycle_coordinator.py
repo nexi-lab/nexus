@@ -30,7 +30,11 @@ def registry() -> ServiceRegistry:
 
 @pytest.fixture()
 def dispatch() -> KernelDispatch:
-    return KernelDispatch()
+    from nexus_fast import Kernel
+
+    d = KernelDispatch()
+    d._kernel = Kernel()
+    return d
 
 
 @pytest.fixture()

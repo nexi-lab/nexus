@@ -38,8 +38,6 @@ def slim_fs(tmp_path: Path):
 
     mount_table = MountTable(metastore)
     router = PathRouter(mount_table)
-    mount_table.add("/local", backend)
-    metastore.put(_make_mount_entry("/local", backend.name))
 
     kernel = NexusFS(
         metadata_store=metastore,
@@ -52,6 +50,12 @@ def slim_fs(tmp_path: Path):
         zone_id=ROOT_ZONE_ID,
         is_admin=True,
     )
+
+    # Add mount AFTER NexusFS init so it registers in the Rust Kernel
+    # that NexusFS wired to mount_table._kernel.
+    mount_table.add("/local", backend)
+    metastore.put(_make_mount_entry("/local", backend.name))
+
     return SlimNexusFS(kernel)
 
 

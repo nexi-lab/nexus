@@ -30,17 +30,17 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from typing import Any
 
-from nexus_fast import RustDCache as _RustDCache
-
 from nexus.contracts.metadata import FileMetadata
 
 
-def _sync_to_rust(rust_dc: Any, meta: FileMetadata) -> None:
+def _sync_to_rust(kernel: Any, meta: FileMetadata) -> None:
     """Push a FileMetadata into the Rust DashMap (hot-path projection).
 
     Phase H: added mime_type for sys_stat acceleration.
     """
-    rust_dc.put(
+    if kernel is None:
+        return
+    kernel.dcache_put(
         meta.path,
         meta.backend_name,
         meta.physical_path,
@@ -64,10 +64,10 @@ class MetastoreABC(ABC):
     (``get``, ``put``, ``delete``, etc.) adds an in-process dcache layer
     that eliminates repeated deserialization overhead.
 
-    The Rust DashMap (``_rust_dcache``) mirrors the Python dict for hot-path
-    fields only (backend_name, physical_path, size, etag, version, entry_type,
-    zone_id).  It is dual-written on every mutation and consumed by
-    SyscallEngine (#1817) for single-FFI sys_read/sys_write.
+    The Rust DashMap (accessed via ``_kernel.dcache_*``) mirrors the Python
+    dict for hot-path fields only (backend_name, physical_path, size, etag,
+    version, entry_type, zone_id).  It is dual-written on every mutation and
+    consumed by Kernel (#1817) for single-FFI sys_read/sys_write.
 
     Abstract methods (must override):
         _get_raw, _put_raw, _delete_raw, _exists_raw, _list_raw, close
@@ -81,7 +81,7 @@ class MetastoreABC(ABC):
         self._dcache: dict[str, FileMetadata] = {}
         self._dcache_hits: int = 0
         self._dcache_misses: int = 0
-        self._rust_dcache = _RustDCache()
+        self._kernel: Any = None  # late-bound; set after Kernel is created
 
     # ── Cached public API (signatures unchanged) ──────────────────────
 
@@ -95,7 +95,7 @@ class MetastoreABC(ABC):
         result = self._get_raw(path)
         if result is not None:
             self._dcache[path] = result
-            _sync_to_rust(self._rust_dcache, result)
+            _sync_to_rust(self._kernel, result)
         return result
 
     def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
@@ -120,13 +120,14 @@ class MetastoreABC(ABC):
             ``"sc"`` for durability.
         """
         self._dcache[metadata.path] = metadata
-        _sync_to_rust(self._rust_dcache, metadata)
+        _sync_to_rust(self._kernel, metadata)
         return self._put_raw(metadata, consistency=consistency)
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata (evicts dcache entry)."""
         self._dcache.pop(path, None)
-        self._rust_dcache.evict(path)
+        if self._kernel is not None:
+            self._kernel.dcache_evict(path)
         return self._delete_raw(path, consistency=consistency)
 
     def dcache_evict_prefix(self, prefix: str) -> int:
@@ -140,7 +141,8 @@ class MetastoreABC(ABC):
         keys = [k for k in self._dcache if k.startswith(prefix)]
         for k in keys:
             del self._dcache[k]
-        self._rust_dcache.evict_prefix(prefix)
+        if self._kernel is not None:
+            self._kernel.dcache_evict_prefix(prefix)
         return len(keys)
 
     def exists(self, path: str) -> bool:
@@ -154,10 +156,10 @@ class MetastoreABC(ABC):
     ) -> builtins.list[FileMetadata]:
         """List all files with given path prefix (populates dcache)."""
         results = self._list_raw(prefix, recursive, **kwargs)
-        rust_dc = self._rust_dcache
+        kernel = self._kernel
         for meta in results:
             self._dcache[meta.path] = meta
-            _sync_to_rust(rust_dc, meta)
+            _sync_to_rust(kernel, meta)
         return results
 
     def list_iter(
@@ -171,10 +173,10 @@ class MetastoreABC(ABC):
         Memory-efficient alternative to list(). Yields results one at a time.
         Subclasses may override ``_list_raw`` for true streaming.
         """
-        rust_dc = self._rust_dcache
+        kernel = self._kernel
         for meta in self._list_raw(prefix, recursive, **kwargs):
             self._dcache[meta.path] = meta
-            _sync_to_rust(rust_dc, meta)
+            _sync_to_rust(kernel, meta)
             yield meta
 
     # ── Batch operations (dcache-aware) ───────────────────────────────
@@ -193,20 +195,21 @@ class MetastoreABC(ABC):
                 self._dcache_misses += 1
         if misses:
             raw = self._get_batch_raw(misses)
-            rust_dc = self._rust_dcache
+            kernel = self._kernel
             for p, meta in raw.items():
                 if meta is not None:
                     self._dcache[p] = meta
-                    _sync_to_rust(rust_dc, meta)
+                    _sync_to_rust(kernel, meta)
                 result[p] = meta
         return result
 
     def delete_batch(self, paths: Sequence[str]) -> None:
         """Delete multiple files (evicts dcache entries)."""
-        rust_dc = self._rust_dcache
+        kernel = self._kernel
         for p in paths:
             self._dcache.pop(p, None)
-            rust_dc.evict(p)
+            if kernel is not None:
+                kernel.dcache_evict(p)
         self._delete_batch_raw(paths)
 
     def put_batch(
@@ -224,10 +227,10 @@ class MetastoreABC(ABC):
             skip_snapshot: Skip pre-write snapshot for rollback. Use when
                 the caller has its own retry logic (e.g., deferred buffer).
         """
-        rust_dc = self._rust_dcache
+        kernel = self._kernel
         for meta in metadata_list:
             self._dcache[meta.path] = meta
-            _sync_to_rust(rust_dc, meta)
+            _sync_to_rust(kernel, meta)
         self._put_batch_raw(metadata_list, consistency=consistency, skip_snapshot=skip_snapshot)
 
     def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
@@ -262,7 +265,7 @@ class MetastoreABC(ABC):
             "hits": self._dcache_hits,
             "misses": self._dcache_misses,
             "size": len(self._dcache),
-            "rust": self._rust_dcache.stats(),
+            "rust": self._kernel.dcache_stats() if self._kernel is not None else {},
         }
 
     # ── Abstract raw methods (subclasses implement these) ─────────────

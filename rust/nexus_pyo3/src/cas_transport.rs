@@ -2,9 +2,9 @@
 //!
 //! Reimplements the hot-path subset of Python `LocalTransport.fetch/store/exists`
 //! combined with `CASAddressingEngine._blob_key()`, eliminating FFI overhead for
-//! the SyscallEngine fast path (Phase E).
+//! the Kernel fast path (Phase E).
 //!
-//! This module is `pub(crate)` — consumed only by `CASEngine` and `SyscallEngine`,
+//! This module is `pub(crate)` — consumed only by `CASEngine` and `Kernel`,
 //! never exposed as a PyO3 class.
 //!
 //! Storage layout:
@@ -41,7 +41,7 @@ pub(crate) fn blob_key(content_hash: &str) -> String {
 /// Pure Rust CAS transport for local filesystem blob I/O.
 ///
 /// Thread-safe: all mutable state is behind `Mutex`. Designed to be shared
-/// via `Arc` inside `SyscallEngine`.
+/// via `Arc` inside `Kernel`.
 #[allow(dead_code)]
 pub(crate) struct LocalCASTransport {
     root: PathBuf,

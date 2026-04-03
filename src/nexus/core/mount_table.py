@@ -17,10 +17,7 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-# RUST_FALLBACK: canonicalize_path, extract_zone_id, RustPathRouter
-from nexus_fast import (
-    RustPathRouter,
-)
+# RUST_FALLBACK: canonicalize_path, extract_zone_id
 from nexus_fast import (
     canonicalize_path as _rust_canonicalize_path,
 )
@@ -109,13 +106,13 @@ class MountTable:
     distinguishes zones.
     """
 
-    __slots__ = ("_entries", "_rust", "_default_metastore")
+    __slots__ = ("_entries", "_kernel", "_default_metastore")
 
     def __init__(self, default_metastore: "MetastoreABC") -> None:
         self._entries: dict[str, MountEntry] = {}
         self._default_metastore: MetastoreABC = default_metastore
-        # RUST_FALLBACK: RustPathRouter — LPM acceleration
-        self._rust: Any = RustPathRouter()
+        # Late-bound: set after Kernel is created
+        self._kernel: Any = None
 
     # -- Write operations (called by coordinator) ---------------------------
 
@@ -142,7 +139,7 @@ class MountTable:
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
         )
-        if self._rust is not None:
+        if self._kernel is not None:
             _backend_name = backend.name
             if not isinstance(_backend_name, str):
                 _backend_name = str(_backend_name)
@@ -151,7 +148,7 @@ class MountTable:
                 if getattr(backend, "has_root_path", False)
                 else None
             )
-            self._rust.add_mount(
+            self._kernel.add_mount(
                 mount_point,
                 zone_id,
                 readonly,
@@ -175,8 +172,8 @@ class MountTable:
         if canonical not in self._entries:
             return False
         del self._entries[canonical]
-        if self._rust is not None:
-            self._rust.remove_mount(normalized, zone_id)
+        if self._kernel is not None:
+            self._kernel.remove_mount(normalized, zone_id)
         return True
 
     # -- Read operations (called by router, kernel) -------------------------
@@ -227,4 +224,4 @@ class MountTable:
     @property
     def rust(self) -> Any:
         """Rust LPM engine (if available). Used by PathRouter for fast routing."""
-        return self._rust
+        return self._kernel

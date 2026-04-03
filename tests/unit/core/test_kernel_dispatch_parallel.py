@@ -22,7 +22,11 @@ from nexus.core.kernel_dispatch import KernelDispatch, _PythonObserverRegistry
 
 @pytest.fixture()
 def dispatch() -> KernelDispatch:
-    return KernelDispatch()
+    from nexus_fast import Kernel
+
+    d = KernelDispatch()
+    d._kernel = Kernel()
+    return d
 
 
 def _make_sync_hook(*, name: str = "sync_hook", side_effect: Exception | None = None):

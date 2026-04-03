@@ -15,7 +15,9 @@ mod dispatch;
 mod glob;
 mod hash;
 mod io;
+mod kernel;
 mod lock;
+mod metastore;
 mod path_utils;
 mod pipe;
 mod prefix;
@@ -29,7 +31,6 @@ mod shm_pipe;
 mod shm_stream;
 mod simd;
 mod stream;
-mod syscall;
 mod trigram;
 mod volume_engine;
 mod volume_index;
@@ -106,27 +107,14 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     #[cfg(unix)]
     m.add_class::<shm_stream::SharedStreamBufferCore>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
-    // Dispatch (Issue #1317)
-    m.add_class::<dispatch::PathTrie>()?;
-    m.add_class::<dispatch::HookRegistry>()?;
-    m.add_class::<dispatch::ObserverRegistry>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
-    // PathRouter (zone-aware LPM routing)
-    m.add_class::<router::RustPathRouter>()?;
+    // Route result (returned from Kernel.route())
     m.add_class::<router::RustRouteResult>()?;
-    // DCache (Issue #1838 — Rust dentry cache for MetastoreABC)
-    m.add_class::<dcache::RustDCache>()?;
-    // SyscallEngine (Issue #1817 — single-FFI syscall planner + executor)
-    m.add_class::<syscall::SyscallEngine>()?;
-    m.add_class::<syscall::ReadPlan>()?;
-    m.add_class::<syscall::WritePlan>()?;
-    // Phase H: stat/rename plan types
-    m.add_class::<syscall::StatPlan>()?;
-    m.add_class::<syscall::RenamePlan>()?;
-    // Kernel boundary collapse: strong-typed syscall results
-    m.add_class::<syscall::SysReadResult>()?;
-    m.add_class::<syscall::SysWriteResult>()?;
+    // Kernel (Issue #1868 — owns all core state: dcache, router, trie, hooks, observers)
+    m.add_class::<kernel::Kernel>()?;
+    m.add_class::<kernel::SysReadResult>()?;
+    m.add_class::<kernel::SysWriteResult>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

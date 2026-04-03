@@ -1,41 +1,29 @@
-//! RustDCache — lock-free in-memory dentry cache for MetastoreABC hot-path.
+//! DCache — lock-free in-memory dentry cache for kernel hot-path.
 //!
 //! Stores a hot-path projection of FileMetadata fields needed by sys_read/sys_write:
 //! backend_name, physical_path, size, etag, version, entry_type, zone_id.
 //!
-//! The Python dcache (dict[str, FileMetadata]) is retained for non-hot-path callers
-//! that need full FileMetadata objects (sys_stat, list, etc.).  RustDCache is dual-written
-//! alongside the Python dict, and is the source of truth for the Rust SyscallEngine (#1817).
-//!
 //! Design:
 //!   - DashMap<String, CachedEntry> for lock-free concurrent reads (~30ns).
-//!   - Arc<RustDCacheInner> enables zero-cost sharing with SyscallEngine (#1817).
+//!   - Owned directly by Kernel (no Arc wrapper needed).
 //!   - No TTL/LRU — write-through, authoritative (single-process, single-writer).
+//!
+//! Issue #1868: Kernel owns DCache directly. RustDCache wrapper removed.
 
 use dashmap::DashMap;
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
 // ── Entry type constants (mirror proto/nexus/core/metadata.proto) ───────────
-// Used by #[cfg(test)] and reserved for SyscallEngine (#1817).
 #[allow(dead_code)]
 pub(crate) const DT_REG: u8 = 0;
-#[allow(dead_code)]
 pub(crate) const DT_DIR: u8 = 1;
 #[allow(dead_code)]
 pub(crate) const DT_MOUNT: u8 = 2;
-#[allow(dead_code)]
 pub(crate) const DT_PIPE: u8 = 3;
-#[allow(dead_code)]
 pub(crate) const DT_STREAM: u8 = 4;
-#[allow(dead_code)]
 pub(crate) const DT_EXTERNAL: u8 = 5;
 
 /// Hot-path projection of FileMetadata.
-///
-/// Phase H: added `mime_type` to support full `sys_stat` from Rust dcache hit.
 #[derive(Clone, Debug)]
 pub(crate) struct CachedEntry {
     pub(crate) backend_name: String,
@@ -48,16 +36,17 @@ pub(crate) struct CachedEntry {
     pub(crate) mime_type: Option<String>,
 }
 
-/// Inner state shared via Arc with SyscallEngine (#1817).
-pub(crate) struct RustDCacheInner {
+/// Dentry cache — owned directly by Kernel.
+///
+/// All methods take `&self` (DashMap provides interior mutability).
+pub(crate) struct DCache {
     cache: DashMap<String, CachedEntry>,
     hits: AtomicU64,
     misses: AtomicU64,
 }
 
-#[allow(dead_code)] // pub(crate) API reserved for SyscallEngine (#1817)
-impl RustDCacheInner {
-    fn new() -> Self {
+impl DCache {
+    pub(crate) fn new() -> Self {
         Self {
             cache: DashMap::new(),
             hits: AtomicU64::new(0),
@@ -65,7 +54,9 @@ impl RustDCacheInner {
         }
     }
 
-    /// Get a full CachedEntry clone (pub(crate) for SyscallEngine).
+    // ── Read methods (used by Kernel plan_*/sys_*) ────────────────────────
+
+    /// Get a full CachedEntry clone (updates hit/miss counters).
     pub(crate) fn get_entry(&self, path: &str) -> Option<CachedEntry> {
         match self.cache.get(path) {
             Some(entry) => {
@@ -79,12 +70,13 @@ impl RustDCacheInner {
         }
     }
 
-    /// Get just the entry_type (pub(crate) for SyscallEngine).
+    /// Get just the entry_type (no hit/miss counting).
     pub(crate) fn get_entry_type(&self, path: &str) -> Option<u8> {
         self.cache.get(path).map(|e| e.value().entry_type)
     }
 
-    /// Get just the etag (pub(crate) for SyscallEngine).
+    /// Get just the etag (no hit/miss counting).
+    #[allow(dead_code)]
     pub(crate) fn get_etag(&self, path: &str) -> Option<Option<String>> {
         self.cache.get(path).map(|e| e.value().etag.clone())
     }
@@ -93,63 +85,41 @@ impl RustDCacheInner {
     pub(crate) fn contains(&self, path: &str) -> bool {
         self.cache.contains_key(path)
     }
-}
 
-/// Python-facing dentry cache backed by DashMap.
-///
-/// Mirrors the Python ``_dcache: dict[str, FileMetadata]`` in MetastoreABC,
-/// storing only the hot-path fields needed by sys_read/sys_write.
-#[pyclass]
-pub struct RustDCache {
-    pub(crate) inner: Arc<RustDCacheInner>,
-}
-
-#[pymethods]
-impl RustDCache {
-    #[new]
-    fn new() -> Self {
-        Self {
-            inner: Arc::new(RustDCacheInner::new()),
-        }
-    }
+    // ── Write methods (called via Kernel proxy #[pymethods]) ─────────────
 
     /// Insert or update a cache entry.
-    ///
-    /// Phase H: added `mime_type` for sys_stat acceleration.
-    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn put(
-        &self,
-        path: &str,
-        backend_name: &str,
-        physical_path: &str,
-        size: u64,
-        entry_type: u8,
-        version: u32,
-        etag: Option<&str>,
-        zone_id: Option<&str>,
-        mime_type: Option<&str>,
-    ) {
-        let entry = CachedEntry {
-            backend_name: backend_name.to_string(),
-            physical_path: physical_path.to_string(),
-            size,
-            etag: etag.map(|s| s.to_string()),
-            version,
-            entry_type,
-            zone_id: zone_id.map(|s| s.to_string()),
-            mime_type: mime_type.map(|s| s.to_string()),
-        };
-        self.inner.cache.insert(path.to_string(), entry);
+    pub(crate) fn put(&self, path: &str, entry: CachedEntry) {
+        self.cache.insert(path.to_string(), entry);
+    }
+
+    /// Evict a single path. Returns true if the entry existed.
+    pub(crate) fn evict(&self, path: &str) -> bool {
+        self.cache.remove(path).is_some()
+    }
+
+    /// Evict all entries whose path starts with the given prefix.
+    /// Returns the number of entries evicted.
+    pub(crate) fn evict_prefix(&self, prefix: &str) -> usize {
+        let keys: Vec<String> = self
+            .cache
+            .iter()
+            .filter(|entry| entry.key().starts_with(prefix))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let count = keys.len();
+        for k in keys {
+            self.cache.remove(&k);
+        }
+        count
     }
 
     /// Get hot-path tuple: (backend_name, physical_path, entry_type).
-    ///
-    /// Returns None on miss.  This is the fast path for sys_read routing.
-    fn get(&self, path: &str) -> Option<(String, String, u8)> {
-        match self.inner.cache.get(path) {
+    /// Updates hit/miss counters.
+    pub(crate) fn get_hot(&self, path: &str) -> Option<(String, String, u8)> {
+        match self.cache.get(path) {
             Some(entry) => {
-                self.inner.hits.fetch_add(1, Ordering::Relaxed);
+                self.hits.fetch_add(1, Ordering::Relaxed);
                 let e = entry.value();
                 Some((
                     e.backend_name.clone(),
@@ -158,102 +128,31 @@ impl RustDCache {
                 ))
             }
             None => {
-                self.inner.misses.fetch_add(1, Ordering::Relaxed);
+                self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
         }
     }
 
-    /// Get full entry as dict (for Python callers needing all fields).
-    fn get_full(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
-        match self.inner.cache.get(path) {
-            Some(entry) => {
-                self.inner.hits.fetch_add(1, Ordering::Relaxed);
-                let e = entry.value();
-                let dict = PyDict::new(py);
-                dict.set_item("backend_name", &e.backend_name)?;
-                dict.set_item("physical_path", &e.physical_path)?;
-                dict.set_item("size", e.size)?;
-                dict.set_item("etag", e.etag.as_deref())?;
-                dict.set_item("version", e.version)?;
-                dict.set_item("entry_type", e.entry_type)?;
-                dict.set_item("zone_id", e.zone_id.as_deref())?;
-                dict.set_item("mime_type", e.mime_type.as_deref())?;
-                Ok(Some(dict.into()))
-            }
-            None => {
-                self.inner.misses.fetch_add(1, Ordering::Relaxed);
-                Ok(None)
-            }
-        }
-    }
-
-    /// Evict a single path. Returns True if the entry existed.
-    fn evict(&self, path: &str) -> bool {
-        self.inner.cache.remove(path).is_some()
-    }
-
-    /// Evict all entries whose path starts with the given prefix.
-    ///
-    /// Used by mount/unmount to invalidate stale cross-zone entries.
-    /// Returns the number of entries evicted.
-    fn evict_prefix(&self, prefix: &str) -> usize {
-        let keys: Vec<String> = self
-            .inner
-            .cache
-            .iter()
-            .filter(|entry| entry.key().starts_with(prefix))
-            .map(|entry| entry.key().clone())
-            .collect();
-        let count = keys.len();
-        for k in keys {
-            self.inner.cache.remove(&k);
-        }
-        count
-    }
-
-    /// Check if path exists in cache (no hit/miss counting).
-    fn contains(&self, path: &str) -> bool {
-        self.inner.cache.contains_key(path)
-    }
-
-    /// Return cache statistics as a dict.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let hits = self.inner.hits.load(Ordering::Relaxed);
-        let misses = self.inner.misses.load(Ordering::Relaxed);
-        let total = hits + misses;
-        let hit_rate = if total > 0 {
-            hits as f64 / total as f64
-        } else {
-            0.0
-        };
-
-        let dict = PyDict::new(py);
-        dict.set_item("hits", hits)?;
-        dict.set_item("misses", misses)?;
-        dict.set_item("size", self.inner.cache.len())?;
-        dict.set_item("hit_rate", hit_rate)?;
-        Ok(dict.into())
+    /// Return cache statistics: (hits, misses, size).
+    pub(crate) fn stats(&self) -> (u64, u64, usize) {
+        (
+            self.hits.load(Ordering::Relaxed),
+            self.misses.load(Ordering::Relaxed),
+            self.cache.len(),
+        )
     }
 
     /// Clear all entries and reset counters.
-    fn clear(&self) {
-        self.inner.cache.clear();
-        self.inner.hits.store(0, Ordering::Relaxed);
-        self.inner.misses.store(0, Ordering::Relaxed);
+    pub(crate) fn clear(&self) {
+        self.cache.clear();
+        self.hits.store(0, Ordering::Relaxed);
+        self.misses.store(0, Ordering::Relaxed);
     }
 
-    fn __len__(&self) -> usize {
-        self.inner.cache.len()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "RustDCache(size={}, hits={}, misses={})",
-            self.inner.cache.len(),
-            self.inner.hits.load(Ordering::Relaxed),
-            self.inner.misses.load(Ordering::Relaxed),
-        )
+    /// Number of entries.
+    pub(crate) fn len(&self) -> usize {
+        self.cache.len()
     }
 }
 
@@ -263,15 +162,15 @@ impl RustDCache {
 mod tests {
     use super::*;
 
-    fn make_inner() -> RustDCacheInner {
-        RustDCacheInner::new()
+    fn make_dcache() -> DCache {
+        DCache::new()
     }
 
     #[test]
     fn test_put_and_get_entry() {
-        let inner = make_inner();
-        inner.cache.insert(
-            "/docs/readme.md".to_string(),
+        let dc = make_dcache();
+        dc.put(
+            "/docs/readme.md",
             CachedEntry {
                 backend_name: "local".to_string(),
                 physical_path: "/data/readme.md".to_string(),
@@ -284,7 +183,7 @@ mod tests {
             },
         );
 
-        let entry = inner.get_entry("/docs/readme.md").unwrap();
+        let entry = dc.get_entry("/docs/readme.md").unwrap();
         assert_eq!(entry.backend_name, "local");
         assert_eq!(entry.physical_path, "/data/readme.md");
         assert_eq!(entry.size, 1024);
@@ -297,16 +196,16 @@ mod tests {
 
     #[test]
     fn test_get_entry_miss() {
-        let inner = make_inner();
-        assert!(inner.get_entry("/nonexistent").is_none());
-        assert_eq!(inner.misses.load(Ordering::Relaxed), 1);
+        let dc = make_dcache();
+        assert!(dc.get_entry("/nonexistent").is_none());
+        assert_eq!(dc.misses.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn test_get_entry_type() {
-        let inner = make_inner();
-        inner.cache.insert(
-            "/mnt/remote".to_string(),
+        let dc = make_dcache();
+        dc.put(
+            "/mnt/remote",
             CachedEntry {
                 backend_name: "gcs".to_string(),
                 physical_path: "/bucket/remote".to_string(),
@@ -318,15 +217,15 @@ mod tests {
                 mime_type: None,
             },
         );
-        assert_eq!(inner.get_entry_type("/mnt/remote"), Some(DT_MOUNT));
-        assert_eq!(inner.get_entry_type("/nonexistent"), None);
+        assert_eq!(dc.get_entry_type("/mnt/remote"), Some(DT_MOUNT));
+        assert_eq!(dc.get_entry_type("/nonexistent"), None);
     }
 
     #[test]
     fn test_get_etag() {
-        let inner = make_inner();
-        inner.cache.insert(
-            "/file.txt".to_string(),
+        let dc = make_dcache();
+        dc.put(
+            "/file.txt",
             CachedEntry {
                 backend_name: "s3".to_string(),
                 physical_path: "/bucket/file.txt".to_string(),
@@ -338,18 +237,15 @@ mod tests {
                 mime_type: None,
             },
         );
-        assert_eq!(
-            inner.get_etag("/file.txt"),
-            Some(Some("hash456".to_string()))
-        );
-        assert_eq!(inner.get_etag("/missing"), None);
+        assert_eq!(dc.get_etag("/file.txt"), Some(Some("hash456".to_string())));
+        assert_eq!(dc.get_etag("/missing"), None);
     }
 
     #[test]
     fn test_contains() {
-        let inner = make_inner();
-        inner.cache.insert(
-            "/a".to_string(),
+        let dc = make_dcache();
+        dc.put(
+            "/a",
             CachedEntry {
                 backend_name: "local".to_string(),
                 physical_path: "/a".to_string(),
@@ -361,15 +257,15 @@ mod tests {
                 mime_type: None,
             },
         );
-        assert!(inner.contains("/a"));
-        assert!(!inner.contains("/b"));
+        assert!(dc.contains("/a"));
+        assert!(!dc.contains("/b"));
     }
 
     #[test]
     fn test_hit_miss_counters() {
-        let inner = make_inner();
-        inner.cache.insert(
-            "/hit".to_string(),
+        let dc = make_dcache();
+        dc.put(
+            "/hit",
             CachedEntry {
                 backend_name: "local".to_string(),
                 physical_path: "/hit".to_string(),
@@ -383,18 +279,17 @@ mod tests {
         );
 
         // 2 hits
-        inner.get_entry("/hit");
-        inner.get_entry("/hit");
+        dc.get_entry("/hit");
+        dc.get_entry("/hit");
         // 1 miss
-        inner.get_entry("/miss");
+        dc.get_entry("/miss");
 
-        assert_eq!(inner.hits.load(Ordering::Relaxed), 2);
-        assert_eq!(inner.misses.load(Ordering::Relaxed), 1);
+        assert_eq!(dc.hits.load(Ordering::Relaxed), 2);
+        assert_eq!(dc.misses.load(Ordering::Relaxed), 1);
     }
 
     #[test]
     fn test_entry_types() {
-        // Verify constants match proto values
         assert_eq!(DT_REG, 0);
         assert_eq!(DT_DIR, 1);
         assert_eq!(DT_MOUNT, 2);
@@ -404,12 +299,33 @@ mod tests {
     }
 
     #[test]
-    fn test_evict_prefix_via_dashmap() {
-        let inner = make_inner();
+    fn test_evict() {
+        let dc = make_dcache();
+        dc.put(
+            "/tmp",
+            CachedEntry {
+                backend_name: "local".to_string(),
+                physical_path: "/tmp".to_string(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_REG,
+                zone_id: None,
+                mime_type: None,
+            },
+        );
+        assert!(dc.evict("/tmp"));
+        assert!(!dc.evict("/tmp"));
+        assert!(!dc.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_evict_prefix() {
+        let dc = make_dcache();
         let paths = ["/docs/a.md", "/docs/b.md", "/src/main.rs"];
         for p in &paths {
-            inner.cache.insert(
-                p.to_string(),
+            dc.put(
+                p,
                 CachedEntry {
                     backend_name: "local".to_string(),
                     physical_path: p.to_string(),
@@ -423,19 +339,80 @@ mod tests {
             );
         }
 
-        // Evict /docs/ prefix
-        let keys: Vec<String> = inner
-            .cache
-            .iter()
-            .filter(|e| e.key().starts_with("/docs/"))
-            .map(|e| e.key().clone())
-            .collect();
-        for k in &keys {
-            inner.cache.remove(k);
-        }
+        let count = dc.evict_prefix("/docs/");
+        assert_eq!(count, 2);
+        assert_eq!(dc.len(), 1);
+        assert!(dc.contains("/src/main.rs"));
+    }
 
-        assert_eq!(keys.len(), 2);
-        assert_eq!(inner.cache.len(), 1);
-        assert!(inner.contains("/src/main.rs"));
+    #[test]
+    fn test_get_hot() {
+        let dc = make_dcache();
+        dc.put(
+            "/file",
+            CachedEntry {
+                backend_name: "local".to_string(),
+                physical_path: "/data/file".to_string(),
+                size: 100,
+                etag: Some("hash".to_string()),
+                version: 1,
+                entry_type: DT_REG,
+                zone_id: None,
+                mime_type: None,
+            },
+        );
+        let (bn, pp, et) = dc.get_hot("/file").unwrap();
+        assert_eq!(bn, "local");
+        assert_eq!(pp, "/data/file");
+        assert_eq!(et, DT_REG);
+        assert!(dc.get_hot("/missing").is_none());
+    }
+
+    #[test]
+    fn test_stats() {
+        let dc = make_dcache();
+        dc.put(
+            "/a",
+            CachedEntry {
+                backend_name: "local".to_string(),
+                physical_path: "/a".to_string(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_REG,
+                zone_id: None,
+                mime_type: None,
+            },
+        );
+        dc.get_entry("/a"); // hit
+        dc.get_entry("/b"); // miss
+        let (hits, misses, size) = dc.stats();
+        assert_eq!(hits, 1);
+        assert_eq!(misses, 1);
+        assert_eq!(size, 1);
+    }
+
+    #[test]
+    fn test_clear() {
+        let dc = make_dcache();
+        dc.put(
+            "/a",
+            CachedEntry {
+                backend_name: "local".to_string(),
+                physical_path: "/a".to_string(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_REG,
+                zone_id: None,
+                mime_type: None,
+            },
+        );
+        dc.get_entry("/a"); // hit
+        dc.clear();
+        assert_eq!(dc.len(), 0);
+        let (hits, misses, _) = dc.stats();
+        assert_eq!(hits, 0);
+        assert_eq!(misses, 0);
     }
 }

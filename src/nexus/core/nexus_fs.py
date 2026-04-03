@@ -236,16 +236,20 @@ class NexusFS(  # type: ignore[misc]
 
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
-        # ── SyscallEngine (Issue #1817 — single-FFI sys_read/sys_write) ──
-        from nexus_fast import SyscallEngine as _SyscallEngine
+        # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
+        from nexus_fast import Kernel as _Kernel
 
-        self._syscall_engine = _SyscallEngine(
-            metadata_store._rust_dcache,
-            self._mount_table._rust,
-            self._dispatch._trie,
-            getattr(self._vfs_lock_manager, "_rust", None),
-        )
-        self._dispatch._syscall_engine = self._syscall_engine
+        self._kernel = _Kernel()  # Empty kernel — owns all state internally
+
+        # Wire kernel to components (late-binding)
+        metadata_store._kernel = self._kernel
+        self._mount_table._kernel = self._kernel
+        self._dispatch._kernel = self._kernel
+
+        # Wire VFS lock (Arc-shared with Python VFSLockManager)
+        _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+        if _vfs_rust is not None:
+            self._kernel.set_vfs_lock(_vfs_rust)
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
@@ -641,7 +645,7 @@ class NexusFS(  # type: ignore[misc]
                 if context is not None and not isinstance(context, dict)
                 else (context.get("is_admin", False) if isinstance(context, dict) else False)
             )
-            _stat = self._syscall_engine.sys_stat(path, self._zone_id, _is_admin)
+            _stat = self._kernel.sys_stat(path, self._zone_id, _is_admin)
             if _stat is not None:
                 # Rust returns dict without owner/group (context-dependent)
                 ctx = self._resolve_cred(context)
@@ -1288,7 +1292,7 @@ class NexusFS(  # type: ignore[misc]
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        _result = self._syscall_engine.sys_read(path, self._zone_id, _is_admin)
+        _result = self._kernel.sys_read(path, self._zone_id, _is_admin)
         if _result.hit:
             _data = _result.data
             # CDC chunked manifests must be reassembled by Python — skip Rust fast path.

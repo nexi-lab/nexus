@@ -259,16 +259,32 @@ jobs:
             --distpath dist-binary \
             --workpath build-pyinstaller \
             --noconfirm
+          echo "=== dist-binary contents after PyInstaller ==="
+          ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
 
       - name: Rename binary with platform suffix
         shell: bash
         run: |
           ARTIFACT="${{ matrix.artifact_name }}"
+          echo "=== dist-binary contents ==="
+          ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
+
+          # Locate the produced binary — PyInstaller may output a file or a
+          # one-dir folder depending on the spec; handle both.
           if [ -f "dist-binary/nexus-cluster.exe" ]; then
             mv dist-binary/nexus-cluster.exe "dist-binary/${ARTIFACT}.exe"
-          else
+          elif [ -f "dist-binary/nexus-cluster" ]; then
             mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
             chmod +x "dist-binary/${ARTIFACT}"
+          elif [ -d "dist-binary/nexus-cluster" ]; then
+            # one-dir mode: rename the directory
+            mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
+            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster" 2>/dev/null || true
+          else
+            echo "ERROR: dist-binary/nexus-cluster not found."
+            echo "Files present in dist-binary/:"
+            find dist-binary/ -maxdepth 3 2>/dev/null || true
+            exit 1
           fi
           echo "ARTIFACT=${ARTIFACT}" >> "$GITHUB_ENV"
           echo "Binary staged:"

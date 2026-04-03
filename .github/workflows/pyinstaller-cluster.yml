@@ -107,10 +107,13 @@ jobs:
       - name: Install nexus and cluster dependencies
         shell: bash
         run: |
-          pip install .
+          # --no-deps skips pyproject.toml transitive deps (e.g. fastbloom-rs>=0.5.0
+          # which doesn't exist on PyPI). requirements-minimal.txt covers what we need.
+          pip install --no-deps .
           if [ "$RUNNER_OS" = "Windows" ]; then
-            # uvloop is Unix-only — skip it on Windows
-            grep -v "^uvloop" requirements-minimal.txt | pip install -r /dev/stdin
+            # uvloop is Unix-only — skip it on Windows; /dev/stdin unavailable so use temp file
+            grep -v "^uvloop" requirements-minimal.txt > /tmp/req-no-uvloop.txt
+            pip install -r /tmp/req-no-uvloop.txt
           else
             pip install -r requirements-minimal.txt
           fi

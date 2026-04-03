@@ -11,7 +11,7 @@
 //!
 //! Issue #1868: PR 3 — Kernel owns state, 4-pillar traits, dispatch registration.
 
-use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_EXTERNAL, DT_PIPE, DT_STREAM};
+use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{HookRegistry, ObserverRegistry, Trie};
 use crate::lock::{LockMode, VFSLockManager, VFSLockManagerInner};
 use crate::metastore::Metastore;
@@ -46,85 +46,6 @@ pub struct SysWriteResult {
     pub content_id: Option<String>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
-}
-
-// ── Action constants ────────────────────────────────────────────────────
-
-pub const ACTION_DCACHE_HIT: u8 = 0;
-pub const ACTION_RESOLVED: u8 = 1;
-pub const ACTION_PIPE: u8 = 2;
-pub const ACTION_STREAM: u8 = 3;
-pub const ACTION_EXTERNAL: u8 = 4;
-pub const ACTION_CACHE_MISS: u8 = 5;
-pub const ACTION_ERROR: u8 = 6;
-
-// ── Plan types (kernel-internal) ──────────────────────────────────────
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct ReadPlan {
-    pub(crate) action: u8,
-    pub(crate) mount_point: String,
-    pub(crate) backend_path: String,
-    pub(crate) etag: Option<String>,
-    pub(crate) backend_name: String,
-    pub(crate) readonly: bool,
-    pub(crate) io_profile: String,
-    pub(crate) entry_type: u8,
-    pub(crate) validated_path: String,
-    pub(crate) resolver_idx: i64,
-    pub(crate) error_msg: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct WritePlan {
-    pub(crate) action: u8,
-    pub(crate) mount_point: String,
-    pub(crate) backend_path: String,
-    pub(crate) etag: Option<String>,
-    pub(crate) backend_name: String,
-    pub(crate) readonly: bool,
-    pub(crate) io_profile: String,
-    pub(crate) entry_type: u8,
-    pub(crate) validated_path: String,
-    pub(crate) resolver_idx: i64,
-    pub(crate) error_msg: Option<String>,
-    pub(crate) version: u32,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct StatPlan {
-    pub(crate) action: u8,
-    pub(crate) validated_path: String,
-    pub(crate) backend_name: String,
-    pub(crate) physical_path: String,
-    pub(crate) size: u64,
-    pub(crate) etag: Option<String>,
-    pub(crate) mime_type: Option<String>,
-    pub(crate) entry_type: u8,
-    pub(crate) version: u32,
-    pub(crate) zone_id: Option<String>,
-    pub(crate) is_directory: bool,
-    pub(crate) resolver_idx: i64,
-    pub(crate) error_msg: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub(crate) struct RenamePlan {
-    pub(crate) action: u8,
-    pub(crate) old_path: String,
-    pub(crate) new_path: String,
-    pub(crate) old_mount_point: String,
-    pub(crate) old_backend_path: String,
-    pub(crate) new_mount_point: String,
-    pub(crate) new_backend_path: String,
-    pub(crate) old_readonly: bool,
-    pub(crate) new_readonly: bool,
-    pub(crate) entry_type: u8,
-    pub(crate) error_msg: Option<String>,
 }
 
 // ── Kernel ──────────────────────────────────────────────────────────────
@@ -639,7 +560,10 @@ impl Kernel {
 
     // ── sys_stat ───────────────────────────────────────────────────────
 
-    /// Rust syscall: get file metadata (FUSE getattr hot path).
+    /// Rust syscall: get file metadata (FUSE getattr hot path, zero GIL).
+    ///
+    /// validate → route → dcache lookup → return dict.
+    /// Returns None on dcache miss or trie-resolved paths (wrapper handles).
     fn sys_stat<'py>(
         &self,
         py: Python<'py>,
@@ -647,26 +571,17 @@ impl Kernel {
         zone_id: &str,
         is_admin: bool,
     ) -> PyResult<Option<Bound<'py, PyDict>>> {
-        if self.stat_hook_count.load(Ordering::Relaxed) > 0 {
+        // 1. Validate
+        if validate_path_fast(path).is_err() {
             return Ok(None);
         }
 
-        if path.is_empty() || path.contains('\0') {
-            return Ok(None);
-        }
-        if !path.starts_with('/') {
-            return Ok(None);
-        }
-        for segment in path.split('/') {
-            if segment == ".." {
-                return Ok(None);
-            }
-        }
-
+        // 2. Trie-resolved paths → wrapper handles
         if self.trie.lookup(path).is_some() {
             return Ok(None);
         }
 
+        // 3. Route
         if self
             .router
             .route_impl(path, zone_id, is_admin, false)
@@ -675,6 +590,7 @@ impl Kernel {
             return Ok(None);
         }
 
+        // 4. DCache lookup (miss → wrapper handles via metastore)
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => return Ok(None),
@@ -716,6 +632,106 @@ impl Kernel {
 
         Ok(Some(dict))
     }
+
+    // ── sys_unlink ────────────────────────────────────────────────────────
+
+    /// Rust syscall: validate + route + dcache evict for unlink.
+    ///
+    /// Returns entry_type of the evicted entry (0 if not in dcache).
+    /// Metastore.delete stays in Python wrapper [INTERMEDIATE].
+    /// DT_PIPE/DT_STREAM → returns entry_type for wrapper dispatch.
+    #[pyo3(signature = (path, zone_id, is_admin))]
+    fn sys_unlink(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        zone_id: &str,
+        is_admin: bool,
+    ) -> PyResult<u8> {
+        // 1. Validate
+        if let Err(msg) = validate_path_fast(path) {
+            return Err(Self::raise_invalid_path(py, &msg));
+        }
+
+        // 2. Route (check write access)
+        if self
+            .router
+            .route_impl(path, zone_id, is_admin, true)
+            .is_err()
+        {
+            return Ok(0);
+        }
+
+        // 3. DCache: get entry_type then evict
+        let entry_type = self
+            .dcache
+            .get_entry(path)
+            .map(|e| e.entry_type)
+            .unwrap_or(DT_REG);
+        self.dcache.evict(path);
+
+        Ok(entry_type)
+    }
+
+    // ── sys_rename ────────────────────────────────────────────────────────
+
+    /// Rust syscall: validate + route both + dcache move for rename.
+    ///
+    /// Returns true if both paths validated and routed successfully.
+    /// Metastore.rename stays in Python wrapper [INTERMEDIATE].
+    #[pyo3(signature = (old_path, new_path, zone_id, is_admin))]
+    fn sys_rename(
+        &self,
+        py: Python<'_>,
+        old_path: &str,
+        new_path: &str,
+        zone_id: &str,
+        is_admin: bool,
+    ) -> PyResult<bool> {
+        // 1. Validate both
+        if let Err(msg) = validate_path_fast(old_path) {
+            return Err(Self::raise_invalid_path(py, &msg));
+        }
+        if let Err(msg) = validate_path_fast(new_path) {
+            return Err(Self::raise_invalid_path(py, &msg));
+        }
+
+        // 2. Route both (check write access)
+        if self
+            .router
+            .route_impl(old_path, zone_id, is_admin, true)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        if self
+            .router
+            .route_impl(new_path, zone_id, is_admin, true)
+            .is_err()
+        {
+            return Ok(false);
+        }
+
+        // 3. DCache: move entry from old to new
+        if let Some(entry) = self.dcache.get_entry(old_path) {
+            self.dcache.evict(old_path);
+            self.dcache.put(
+                new_path,
+                CachedEntry {
+                    backend_name: entry.backend_name,
+                    physical_path: entry.physical_path,
+                    size: entry.size,
+                    etag: entry.etag,
+                    version: entry.version,
+                    entry_type: entry.entry_type,
+                    zone_id: entry.zone_id,
+                    mime_type: entry.mime_type,
+                },
+            );
+        }
+
+        Ok(true)
+    }
 }
 
 // ── Private helpers (kernel-internal) ────────────────────────────────────
@@ -737,330 +753,6 @@ impl Kernel {
             .and_then(|cls| cls.call1((path,)))
             .map(PyErr::from_value)
             .unwrap_or_else(|e| e)
-    }
-
-    // ── Planning methods ──
-
-    fn plan_write(&self, path: &str, zone_id: &str, is_admin: bool) -> WritePlan {
-        if let Err(msg) = validate_path_fast(path) {
-            return WritePlan::error(msg);
-        }
-
-        if let Some(idx) = self.trie.lookup(path) {
-            return WritePlan::resolved(path, idx);
-        }
-
-        let route = match self.router.route_impl(path, zone_id, is_admin, true) {
-            Ok(r) => r,
-            Err(_) => {
-                return WritePlan::cache_miss(path);
-            }
-        };
-
-        match self.dcache.get_entry(path) {
-            Some(entry) => {
-                let action = match entry.entry_type {
-                    DT_PIPE => ACTION_PIPE,
-                    DT_STREAM => ACTION_STREAM,
-                    DT_EXTERNAL => ACTION_EXTERNAL,
-                    _ => ACTION_DCACHE_HIT,
-                };
-                WritePlan {
-                    action,
-                    mount_point: route.mount_point,
-                    backend_path: route.backend_path,
-                    etag: entry.etag,
-                    backend_name: entry.backend_name,
-                    readonly: route.readonly,
-                    io_profile: route.io_profile,
-                    entry_type: entry.entry_type,
-                    validated_path: path.to_string(),
-                    resolver_idx: -1,
-                    error_msg: None,
-                    version: entry.version,
-                }
-            }
-            None => WritePlan::cache_miss(path),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn plan_stat(&self, path: &str, zone_id: &str, is_admin: bool) -> StatPlan {
-        if path.is_empty() || path.contains('\0') {
-            return StatPlan::error("Invalid path".to_string());
-        }
-        if !path.starts_with('/') {
-            return StatPlan::error("Path must start with /".to_string());
-        }
-        for segment in path.split('/') {
-            if segment == ".." {
-                return StatPlan::error(
-                    "Path contains parent directory reference (..)".to_string(),
-                );
-            }
-        }
-
-        if let Some(idx) = self.trie.lookup(path) {
-            return StatPlan::resolved(path, idx);
-        }
-
-        if self
-            .router
-            .route_impl(path, zone_id, is_admin, false)
-            .is_err()
-        {
-            return StatPlan::cache_miss(path);
-        }
-
-        match self.dcache.get_entry(path) {
-            Some(entry) => StatPlan {
-                action: ACTION_DCACHE_HIT,
-                validated_path: path.to_string(),
-                backend_name: entry.backend_name,
-                physical_path: entry.physical_path,
-                size: entry.size,
-                etag: entry.etag,
-                mime_type: entry.mime_type,
-                entry_type: entry.entry_type,
-                version: entry.version,
-                zone_id: entry.zone_id,
-                is_directory: entry.entry_type == DT_DIR,
-                resolver_idx: -1,
-                error_msg: None,
-            },
-            None => StatPlan::cache_miss(path),
-        }
-    }
-
-    #[allow(dead_code)]
-    fn plan_unlink(&self, path: &str, zone_id: &str, is_admin: bool) -> WritePlan {
-        self.plan_write(path, zone_id, is_admin)
-    }
-
-    #[allow(dead_code)]
-    fn plan_rename(
-        &self,
-        old_path: &str,
-        new_path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> RenamePlan {
-        if let Err(msg) = validate_path_fast(old_path) {
-            return RenamePlan::error(msg);
-        }
-        if let Err(msg) = validate_path_fast(new_path) {
-            return RenamePlan::error(msg);
-        }
-
-        let old_route = match self.router.route_impl(old_path, zone_id, is_admin, true) {
-            Ok(r) => r,
-            Err(e) => {
-                return RenamePlan::error(format!("Old path routing failed: {e:?}"));
-            }
-        };
-
-        let new_route = match self.router.route_impl(new_path, zone_id, is_admin, true) {
-            Ok(r) => r,
-            Err(e) => {
-                return RenamePlan::error(format!("New path routing failed: {e:?}"));
-            }
-        };
-
-        let entry_type = self.dcache.get_entry_type(old_path).unwrap_or(0);
-
-        RenamePlan {
-            action: ACTION_DCACHE_HIT,
-            old_path: old_path.to_string(),
-            new_path: new_path.to_string(),
-            old_mount_point: old_route.mount_point,
-            old_backend_path: old_route.backend_path,
-            new_mount_point: new_route.mount_point,
-            new_backend_path: new_route.backend_path,
-            old_readonly: old_route.readonly,
-            new_readonly: new_route.readonly,
-            entry_type,
-            error_msg: None,
-        }
-    }
-}
-
-// ── Plan constructors ──────────────────────────────────────────────────
-
-#[allow(dead_code)]
-impl ReadPlan {
-    fn error(msg: String) -> Self {
-        Self {
-            action: ACTION_ERROR,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: String::new(),
-            resolver_idx: -1,
-            error_msg: Some(msg),
-        }
-    }
-
-    fn resolved(path: &str, idx: usize) -> Self {
-        Self {
-            action: ACTION_RESOLVED,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: path.to_string(),
-            resolver_idx: idx as i64,
-            error_msg: None,
-        }
-    }
-
-    fn cache_miss(path: &str) -> Self {
-        Self {
-            action: ACTION_CACHE_MISS,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: path.to_string(),
-            resolver_idx: -1,
-            error_msg: None,
-        }
-    }
-}
-
-impl WritePlan {
-    fn error(msg: String) -> Self {
-        Self {
-            action: ACTION_ERROR,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: String::new(),
-            resolver_idx: -1,
-            error_msg: Some(msg),
-            version: 0,
-        }
-    }
-
-    fn resolved(path: &str, idx: usize) -> Self {
-        Self {
-            action: ACTION_RESOLVED,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: path.to_string(),
-            resolver_idx: idx as i64,
-            error_msg: None,
-            version: 0,
-        }
-    }
-
-    fn cache_miss(path: &str) -> Self {
-        Self {
-            action: ACTION_CACHE_MISS,
-            mount_point: String::new(),
-            backend_path: String::new(),
-            etag: None,
-            backend_name: String::new(),
-            readonly: false,
-            io_profile: String::new(),
-            entry_type: 0,
-            validated_path: path.to_string(),
-            resolver_idx: -1,
-            error_msg: None,
-            version: 0,
-        }
-    }
-}
-
-impl StatPlan {
-    fn error(msg: String) -> Self {
-        Self {
-            action: ACTION_ERROR,
-            validated_path: String::new(),
-            backend_name: String::new(),
-            physical_path: String::new(),
-            size: 0,
-            etag: None,
-            mime_type: None,
-            entry_type: 0,
-            version: 0,
-            zone_id: None,
-            is_directory: false,
-            resolver_idx: -1,
-            error_msg: Some(msg),
-        }
-    }
-
-    fn resolved(path: &str, idx: usize) -> Self {
-        Self {
-            action: ACTION_RESOLVED,
-            validated_path: path.to_string(),
-            backend_name: String::new(),
-            physical_path: String::new(),
-            size: 0,
-            etag: None,
-            mime_type: None,
-            entry_type: 0,
-            version: 0,
-            zone_id: None,
-            is_directory: false,
-            resolver_idx: idx as i64,
-            error_msg: None,
-        }
-    }
-
-    fn cache_miss(path: &str) -> Self {
-        Self {
-            action: ACTION_CACHE_MISS,
-            validated_path: path.to_string(),
-            backend_name: String::new(),
-            physical_path: String::new(),
-            size: 0,
-            etag: None,
-            mime_type: None,
-            entry_type: 0,
-            version: 0,
-            zone_id: None,
-            is_directory: false,
-            resolver_idx: -1,
-            error_msg: None,
-        }
-    }
-}
-
-impl RenamePlan {
-    fn error(msg: String) -> Self {
-        Self {
-            action: ACTION_ERROR,
-            old_path: String::new(),
-            new_path: String::new(),
-            old_mount_point: String::new(),
-            old_backend_path: String::new(),
-            new_mount_point: String::new(),
-            new_backend_path: String::new(),
-            old_readonly: false,
-            new_readonly: false,
-            entry_type: 0,
-            error_msg: Some(msg),
-        }
     }
 }
 
@@ -1101,38 +793,5 @@ mod tests {
         assert!(validate_path_fast("/has\0null").is_err());
         assert!(validate_path_fast("/has/../traversal").is_err());
         assert!(validate_path_fast("/..").is_err());
-    }
-
-    #[test]
-    fn test_action_constants() {
-        assert_eq!(ACTION_DCACHE_HIT, 0);
-        assert_eq!(ACTION_RESOLVED, 1);
-        assert_eq!(ACTION_PIPE, 2);
-        assert_eq!(ACTION_STREAM, 3);
-        assert_eq!(ACTION_EXTERNAL, 4);
-        assert_eq!(ACTION_CACHE_MISS, 5);
-        assert_eq!(ACTION_ERROR, 6);
-    }
-
-    #[test]
-    fn test_stat_plan_constructors() {
-        let err = StatPlan::error("bad path".to_string());
-        assert_eq!(err.action, ACTION_ERROR);
-        assert_eq!(err.error_msg.as_deref(), Some("bad path"));
-
-        let miss = StatPlan::cache_miss("/foo");
-        assert_eq!(miss.action, ACTION_CACHE_MISS);
-        assert_eq!(miss.validated_path, "/foo");
-
-        let resolved = StatPlan::resolved("/bar", 7);
-        assert_eq!(resolved.action, ACTION_RESOLVED);
-        assert_eq!(resolved.resolver_idx, 7);
-    }
-
-    #[test]
-    fn test_rename_plan_error() {
-        let err = RenamePlan::error("readonly".to_string());
-        assert_eq!(err.action, ACTION_ERROR);
-        assert_eq!(err.error_msg.as_deref(), Some("readonly"));
     }
 }

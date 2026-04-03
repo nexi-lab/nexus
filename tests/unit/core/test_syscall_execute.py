@@ -16,17 +16,6 @@ from nexus_fast import (
     hash_bytes,
 )
 
-# ── Action constants (mirror kernel.rs) ──────────────────────────────
-
-# Must match kernel.rs ACTION_* constants
-ACTION_DCACHE_HIT = 0
-ACTION_RESOLVED = 1
-ACTION_PIPE = 2
-ACTION_STREAM = 3
-ACTION_EXTERNAL = 4
-ACTION_CACHE_MISS = 5
-ACTION_ERROR = 6
-
 # Entry type constants
 DT_REG = 0
 DT_DIR = 1

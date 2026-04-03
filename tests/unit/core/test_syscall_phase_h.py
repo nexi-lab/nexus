@@ -16,16 +16,6 @@ from nexus_fast import (
     VFSLockManager,
 )
 
-# ── Action constants (mirror kernel.rs) ──────────────────────────────
-
-ACTION_DCACHE_HIT = 0
-ACTION_RESOLVED = 1
-ACTION_PIPE = 2
-ACTION_STREAM = 3
-ACTION_EXTERNAL = 4
-ACTION_CACHE_MISS = 5
-ACTION_ERROR = 6
-
 # Entry type constants
 DT_REG = 0
 DT_DIR = 1
@@ -117,8 +107,8 @@ class TestSysStat:
         result = kernel.sys_stat("/zone/proc/123/status", "root", False)
         assert result is None
 
-    def test_hook_bypass(self):
-        """Stat hooks present -> return None."""
+    def test_hooks_no_longer_bypass(self):
+        """Stat hooks no longer bypass kernel — always returns dcache result."""
         kernel = Kernel()
         vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
@@ -126,7 +116,7 @@ class TestSysStat:
         kernel.dcache_put("/workspace/test.txt", "local", "test.txt", 100, DT_REG)
         kernel.set_hook_count("stat", 1)
         result = kernel.sys_stat("/workspace/test.txt", "root", False)
-        assert result is None
+        assert result is not None  # hooks handled by wrapper, not kernel
 
     def test_default_mime_type_file(self):
         """File without mime_type gets application/octet-stream."""
@@ -172,8 +162,8 @@ class TestSysStat:
 
 
 class TestHookCounts:
-    def test_stat_hook_bypass(self):
-        """Stat hooks bypass sys_stat."""
+    def test_stat_always_returns_dcache_hit(self):
+        """Hooks no longer bypass sys_stat — kernel always returns dcache result."""
         kernel = Kernel()
         vfs_lock = VFSLockManager()
         kernel.add_mount("/", "root", False, False, "balanced")
@@ -181,10 +171,10 @@ class TestHookCounts:
         kernel.dcache_put("/workspace/f.txt", "local", "f.txt", 100, DT_REG)
         # Without hooks -> returns result
         assert kernel.sys_stat("/workspace/f.txt", "root", False) is not None
-        # With hooks -> returns None
+        # With hooks -> still returns result (hooks handled by wrapper)
         kernel.set_hook_count("stat", 1)
-        assert kernel.sys_stat("/workspace/f.txt", "root", False) is None
-        # Clear hooks -> returns result again
+        assert kernel.sys_stat("/workspace/f.txt", "root", False) is not None
+        # Clear hooks -> still returns result
         kernel.set_hook_count("stat", 0)
         assert kernel.sys_stat("/workspace/f.txt", "root", False) is not None
 

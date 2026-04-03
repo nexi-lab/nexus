@@ -1333,7 +1333,14 @@ class NexusFS(  # type: ignore[misc]
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        result = self._kernel.sys_read(path, self._zone_id, _is_admin)
+        try:
+            result = self._kernel.sys_read(path, self._zone_id, _is_admin)
+        except NexusFileNotFoundError:
+            # [INTERMEDIATE] dcache miss (e.g. overlay base layer) — DLC fallback
+            data = self._read_via_dlc(path, _is_admin, context)
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
         # [INTERMEDIATE] DLC fallback: non-Rust backends + CDC chunked manifests — deleted in PR 7
         _raw = result.data or b""
         _needs_dlc = not result.hit or (_raw[:30].startswith(b'{"type":"chunked_manifest'))

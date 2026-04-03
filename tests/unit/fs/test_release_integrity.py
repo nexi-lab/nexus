@@ -461,8 +461,6 @@ class TestSlimNexusFSLifecycle:
 
         mount_table = MountTable(metastore)
         router = PathRouter(mount_table)
-        mount_table.add("/local", backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
 
         kernel = NexusFS(
             metadata_store=metastore,
@@ -475,6 +473,10 @@ class TestSlimNexusFSLifecycle:
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
+
+        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
+        mount_table.add("/local", backend)
+        metastore.put(_make_mount_entry("/local", backend.name))
 
         fs = SlimNexusFS(kernel)
         await fs.close()
@@ -500,8 +502,6 @@ class TestSlimNexusFSLifecycle:
 
         mount_table = MountTable(metastore)
         router = PathRouter(mount_table)
-        mount_table.add("/local", backend)
-        metastore.put(_make_mount_entry("/local", backend.name))
 
         kernel = NexusFS(
             metadata_store=metastore,
@@ -514,6 +514,10 @@ class TestSlimNexusFSLifecycle:
             zone_id=ROOT_ZONE_ID,
             is_admin=True,
         )
+
+        # Add mount AFTER NexusFS init so it registers in the Rust Kernel.
+        mount_table.add("/local", backend)
+        metastore.put(_make_mount_entry("/local", backend.name))
 
         async with SlimNexusFS(kernel) as fs:
             await fs.write("/local/ctx.txt", b"context manager")

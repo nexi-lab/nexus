@@ -107,16 +107,12 @@ jobs:
       - name: Install nexus and cluster dependencies
         shell: bash
         run: |
-          # --no-deps skips pyproject.toml transitive deps (e.g. fastbloom-rs>=0.5.0
-          # which doesn't exist on PyPI). requirements-minimal.txt covers what we need.
-          pip install --no-deps .
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            # uvloop is Unix-only — skip it on Windows; /dev/stdin unavailable so use temp file
-            grep -v "^uvloop" requirements-minimal.txt > /tmp/req-no-uvloop.txt
-            pip install -r /tmp/req-no-uvloop.txt
-          else
-            pip install -r requirements-minimal.txt
-          fi
+          # fastbloom-rs>=0.5.0 doesn't exist on PyPI (highest available: 0.3.0).
+          # It's only used in rebac/cache bricks excluded from the cluster profile.
+          # Relax the constraint so pip resolves to 0.3.0 and proceeds normally.
+          # pyproject.toml already gates uvloop with sys_platform != 'win32'.
+          sed -i 's/fastbloom-rs>=0.5.0/fastbloom-rs>=0.1.0/' pyproject.toml
+          pip install .
 
       # ── protoc (required by nexus_raft build.rs) ─────────────────────────
       # Mirrors the protoc install pattern from conda-pack.yml.

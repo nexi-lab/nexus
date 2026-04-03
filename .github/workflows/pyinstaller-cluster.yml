@@ -147,13 +147,30 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y protobuf-compiler
 
+      - name: Pre-install binary wheels (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # cryptography and other Rust/C extensions must come from binary wheels
+          # on Windows ARM64 — no OpenSSL dev headers available in CI.
+          pip install --only-binary :all: cryptography pyopenssl bcrypt cffi
+
       - name: Install protoc (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install protoc --yes --no-progress
-          $protoc = (Get-Command protoc).Source
-          echo "NEXUS_PROTOC=$protoc" >> $env:GITHUB_ENV
+          # protobuf-build 0.14.1 only accepts protoc 3.x.
+          # choco installs 34.x which fails version parsing.
+          # Download protoc 3.20.3 win64 directly; runs on ARM64 via x86 emulation.
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip"
+          $zip = "$env:RUNNER_TEMP\protoc.zip"
+          $dir = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $protoc = "$dir\bin\protoc.exe"
+          echo "NEXUS_PROTOC=$protoc" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          echo "$dir\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+          & $protoc --version
 
       # ── maturin builds ───────────────────────────────────────────────────
       - name: Install maturin

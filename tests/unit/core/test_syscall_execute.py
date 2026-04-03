@@ -178,11 +178,12 @@ class TestExecuteWrite:
         assert cas_path.exists()
         assert cas_path.read_bytes() == content
 
-    def test_dcache_miss_returns_miss(self, kernel_with_cas):
-        """DCache miss -> hit=false (Python handles new file)."""
+    def test_dcache_miss_write_succeeds(self, kernel_with_cas):
+        """DCache miss is OK for writes — CAS write creates the blob."""
         engine, _ = kernel_with_cas
         result = engine.sys_write("/workspace/new.txt", "root", b"data", False)
-        assert result.hit is False
+        assert result.hit is True
+        assert result.content_id is not None
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS -> hit=false."""

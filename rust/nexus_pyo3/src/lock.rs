@@ -213,26 +213,6 @@ impl VFSLockManagerInner {
         }
     }
 
-    /// Non-blocking try-acquire (for Rust-internal callers like Kernel).
-    /// Returns non-zero handle on success, 0 on conflict.
-    pub(crate) fn try_acquire(&self, path: &str, mode: LockMode) -> u64 {
-        let norm_path = normalize_path(path);
-        let start = Instant::now();
-        let mut state = self.state.lock();
-        match Self::try_acquire_locked(&mut state, &self.next_handle, &norm_path, mode) {
-            Some(handle) => {
-                let elapsed = start.elapsed().as_nanos() as u64;
-                self.total_acquire_ns.fetch_add(elapsed, Ordering::Relaxed);
-                self.acquire_count.fetch_add(1, Ordering::Relaxed);
-                handle
-            }
-            None => {
-                self.contention_count.fetch_add(1, Ordering::Relaxed);
-                0
-            }
-        }
-    }
-
     /// Release a previously acquired lock by handle (for Rust-internal callers).
     pub(crate) fn do_release(&self, handle: u64) -> bool {
         let released = {
@@ -517,7 +497,7 @@ mod tests {
 
     /// Helper: acquire directly through the inner (bypasses PyO3 / GIL).
     fn acquire(mgr: &VFSLockManager, path: &str, mode: LockMode) -> Option<u64> {
-        let handle = mgr.inner.try_acquire(path, mode);
+        let handle = mgr.inner.blocking_acquire(path, mode, 0);
         if handle > 0 {
             Some(handle)
         } else {

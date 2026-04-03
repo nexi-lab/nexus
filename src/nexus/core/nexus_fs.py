@@ -1997,80 +1997,77 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Tier 1 kernel primitive — POSIX write(2) with implicit metadata side
-        effects (mtime, size, version, etag). Kernel updates metadata in VFS
-        lock after backend.write_content(). File must exist.
-
-        Args:
-            path: Virtual path to write.
-            buf: File content as bytes or str (str will be UTF-8 encoded).
-            count: Max bytes to write (None = len(buf)).
-            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
-            context: Optional operation context for permission checks.
-
-        Returns:
-            Dict with path and bytes_written.
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist.
-            InvalidPathError: If path is invalid.
-            BackendError: If write operation fails.
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace).
-            PermissionError: If path is read-only or user doesn't have write permission.
+        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
+        zero GIL). Metastore.put stays in Python [INTERMEDIATE] — migrates to
+        Rust metastore in PR 7.
         """
-        # DT_PIPE fast-path: skip ALL preprocessing + validate/metastore/dispatch.
-        # Pipe is a byte FIFO — callers always pass bytes, count/offset are file concepts.
-        # Fully inlined: single dict lookup → Rust write_nowait. No wrapper calls.
+        # [INTERMEDIATE] DT_PIPE fast-path
         _pm = self._pipe_manager
         if _pm is not None:
             _buf = _pm._buffers.get(path)
             if _buf is not None:
                 n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
                 return {"path": path, "bytes_written": n}
-        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        # Fully inlined: single dict.get → buffer.write_nowait (Rust). No wrapper calls.
-        _sbuf = self._stream_manager._buffers.get(path)
+
+        # [INTERMEDIATE] DT_STREAM fast-path
+        _sbuf = (
+            self._stream_manager._buffers.get(path) if self._stream_manager is not None else None
+        )
         if _sbuf is not None:
             if isinstance(buf, str):
                 buf = buf.encode("utf-8")
             _off = _sbuf.write_nowait(buf)
             return {"path": path, "bytes_written": len(buf), "offset": _off}
 
-        # Auto-convert str to bytes for convenience
+        # Normalize input
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
-
-        # Apply count slicing if specified
         if count is not None:
             buf = buf[:count]
 
-        path = self._validate_path(path)
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
+        context = self._parse_context(context)
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
-            base = {"path": path, "bytes_written": len(buf)}
+            base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
             if isinstance(_result, dict):
                 base.update(_result)
             return base
 
-        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
+        # [INTERMEDIATE] File-exists check via metastore (migrates to Rust in PR 7)
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
-            # Fallback for pipes not in PipeManager (e.g. federation remote pipes)
             n = self._pipe_write(path, buf)
             return {"path": path, "bytes_written": n}
         if _meta is not None and _meta.is_stream:
-            offset = self._stream_write(path, buf)
-            return {"path": path, "bytes_written": len(buf), "offset": offset}
-
+            _off = self._stream_write(path, buf)
+            return {"path": path, "bytes_written": len(buf), "offset": _off}
         if _meta is None:
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
-        await self._write_internal(
-            path=path, content=buf, offset=offset, context=context, _meta=_meta
+
+        # ── KERNEL (pure Rust CAS write, zero GIL) ──
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
+        result = self._kernel.sys_write(path, self._zone_id, buf, _is_admin)
+
+        if result.hit:
+            # Rust wrote to CAS — now update metadata + dispatch events [INTERMEDIATE]
+            # _write_internal will re-call backend.write_content (CAS dedup = no-op)
+            # and handle metastore.put + event dispatch atomically.
+            await self._write_internal(
+                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            )
+        else:
+            # [INTERMEDIATE] DLC fallback for non-Rust backends — deleted in PR 7
+            await self._write_internal(
+                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            )
+
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────

@@ -44,6 +44,8 @@ pub struct SysWriteResult {
     pub hit: bool,
     /// BLAKE3 content hash (only when hit=true).
     pub content_id: Option<String>,
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
 }
 
 // ── Action constants ────────────────────────────────────────────────────
@@ -553,58 +555,86 @@ impl Kernel {
 
     // ── sys_write ──────────────────────────────────────────────────────
 
-    /// Rust syscall: write file content.
-    fn sys_write(
+    /// Rust syscall: write file content — pure Rust path (zero GIL).
+    ///
+    /// validate → route → VFS lock (blocking, GIL released) → CAS write → return.
+    ///
+    /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
+    /// or when no Rust backend is available (e.g. remote backends).
+    /// Raises `InvalidPathError` on invalid paths.
+    ///
+    /// Metastore.put (metadata update) is handled by the Python wrapper
+    /// (intermediate state — migrates to Rust metastore in PR 7).
+    #[pyo3(signature = (path, zone_id, content, is_admin))]
+    fn sys_write<'py>(
         &self,
+        py: Python<'py>,
         path: &str,
         zone_id: &str,
         content: &[u8],
         is_admin: bool,
     ) -> PyResult<SysWriteResult> {
-        let miss = || SysWriteResult {
-            hit: false,
-            content_id: None,
+        let miss = || {
+            Ok(SysWriteResult {
+                hit: false,
+                content_id: None,
+                post_hook_needed: false,
+            })
         };
 
-        if self.write_hook_count.load(Ordering::Relaxed) > 0 {
-            return Ok(miss());
+        // 1. Validate
+        if let Err(msg) = validate_path_fast(path) {
+            return Err(Self::raise_invalid_path(py, &msg));
         }
 
-        let plan = self.plan_write(path, zone_id, is_admin);
-        if plan.action == ACTION_ERROR {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                plan.error_msg.unwrap_or_default(),
-            ));
-        }
-        if plan.action != ACTION_DCACHE_HIT {
-            return Ok(miss());
-        }
-
-        let lock_handle = self
-            .vfs_lock
-            .as_ref()
-            .map(|lm| lm.try_acquire(path, LockMode::Write));
-        if let Some(0) = lock_handle {
-            return Ok(miss());
-        }
-
-        let result = match self.router.write_content(&plan.mount_point, content) {
-            Some(hash) => SysWriteResult {
-                hit: true,
-                content_id: Some(hash),
-            },
-            None => miss(),
+        // 2. Route (check write access)
+        let route = match self.router.route_impl(path, zone_id, is_admin, true) {
+            Ok(r) => r,
+            Err(_) => return miss(),
         };
 
-        if let Some(handle) = lock_handle {
-            if handle > 0 {
-                if let Some(lm) = &self.vfs_lock {
-                    lm.do_release(handle);
-                }
+        // 3. DCache check — DT_PIPE/DT_STREAM → wrapper handles
+        if let Some(entry) = self.dcache.get_entry(path) {
+            match entry.entry_type {
+                DT_PIPE | DT_STREAM => return miss(),
+                _ => {}
             }
         }
 
-        Ok(result)
+        // 4. VFS lock (blocking write lock, GIL released during wait)
+        let lock_handle = if let Some(ref lm) = self.vfs_lock {
+            let timeout = self.vfs_lock_timeout_ms;
+            let lm = Arc::clone(lm);
+            let p = path.to_string();
+            py.detach(move || lm.blocking_acquire(&p, LockMode::Write, timeout))
+        } else {
+            0
+        };
+
+        // Lock timeout → miss (unsafe to write without lock)
+        if self.vfs_lock.is_some() && lock_handle == 0 {
+            return miss();
+        }
+
+        // 5. Backend write (CasLocal — pure Rust, zero GIL)
+        let result = match self.router.write_content(&route.mount_point, content) {
+            Some(hash) => Ok(SysWriteResult {
+                hit: true,
+                content_id: Some(hash),
+                post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
+            }),
+            // No Rust backend available (e.g. remote) — wrapper handles
+            None => miss(),
+        };
+
+        // 6. Release VFS lock (always, even on miss)
+        if lock_handle > 0 {
+            if let Some(ref lm) = self.vfs_lock {
+                lm.do_release(lock_handle);
+            }
+        }
+
+        result
     }
 
     // ── sys_stat ───────────────────────────────────────────────────────

@@ -311,6 +311,7 @@ class SysReadResult:
 class SysWriteResult:
     hit: bool
     content_id: str | None
+    post_hook_needed: bool
 
 class Kernel:
     def __init__(self) -> None: ...

@@ -80,19 +80,25 @@ class TestHookCountBypass:
         assert result.hit is True
         assert result.post_hook_needed is False
 
-    def test_write_hooks_present_returns_miss(self, engine_with_lock):
-        """When write hooks are registered, sys_write returns hit=false."""
+    def test_write_hooks_set_post_hook_needed(self, engine_with_lock):
+        """When write hooks are registered, sys_write returns post_hook_needed=true.
+
+        PR 5: hooks no longer bypass the kernel. The kernel always writes.
+        post_hook_needed flag tells the Python wrapper to fire post-hooks.
+        """
         engine, _, _ = engine_with_lock
         engine.dcache_put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
 
-        # Without hooks: should return hit=true
+        # Without hooks: hit=true, post_hook_needed=false
         result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
         assert result.hit is True
+        assert result.post_hook_needed is False
 
-        # Set write hook count > 0
+        # Set write hook count > 0: hit=true, post_hook_needed=true
         engine.set_hook_count("write", 1)
         result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
-        assert result.hit is False
+        assert result.hit is True
+        assert result.post_hook_needed is True
 
     def test_set_hook_count_unknown_op_ignored(self, engine_with_lock):
         """Unknown operation names are silently ignored."""

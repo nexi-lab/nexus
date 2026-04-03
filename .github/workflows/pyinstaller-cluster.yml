@@ -255,7 +255,11 @@ jobs:
         env:
           NEXUS_PROFILE: cluster
         run: |
-          pyinstaller pyinstaller_spec_cluster.py \
+          # PyInstaller only treats files with a .spec extension as spec files.
+          # A .py extension causes it to analyse the file as a script instead,
+          # ignoring the EXE name / one-file settings defined inside.
+          cp pyinstaller_spec_cluster.py pyinstaller_spec_cluster.spec
+          pyinstaller pyinstaller_spec_cluster.spec \
             --distpath dist-binary \
             --workpath build-pyinstaller \
             --noconfirm

@@ -319,6 +319,7 @@ jobs:
           EOF
 
       - name: Build PyInstaller binary (profile=cluster)
+        shell: bash
         env:
           NEXUS_PROFILE: cluster
         run: |

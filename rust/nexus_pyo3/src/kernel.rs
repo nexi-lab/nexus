@@ -732,6 +732,54 @@ impl Kernel {
 
         Ok(true)
     }
+
+    // ── Tier 2 convenience methods ────────────────────────────────────
+
+    /// Fast access check: validate + route + dcache existence (~100ns).
+    ///
+    /// Returns true if file exists in dcache and path is routable.
+    /// Does NOT check metastore (dcache authoritative for hot-path).
+    #[pyo3(signature = (path, zone_id, is_admin))]
+    fn access(&self, path: &str, zone_id: &str, is_admin: bool) -> bool {
+        if validate_path_fast(path).is_err() {
+            return false;
+        }
+        if self
+            .router
+            .route_impl(path, zone_id, is_admin, false)
+            .is_err()
+        {
+            return false;
+        }
+        self.dcache.contains(path)
+    }
+
+    /// List immediate children of a directory path from dcache.
+    ///
+    /// Returns Vec of (child_name, entry_type) tuples.
+    /// Only returns entries with `parent_path/child_name` pattern.
+    /// Does NOT recurse into subdirectories.
+    #[pyo3(signature = (parent_path, zone_id, is_admin))]
+    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+        if validate_path_fast(parent_path).is_err() {
+            return Vec::new();
+        }
+        if self
+            .router
+            .route_impl(parent_path, zone_id, is_admin, false)
+            .is_err()
+        {
+            return Vec::new();
+        }
+
+        let prefix = if parent_path == "/" {
+            "/".to_string()
+        } else {
+            format!("{}/", parent_path)
+        };
+
+        self.dcache.list_children(&prefix)
+    }
 }
 
 // ── Private helpers (kernel-internal) ────────────────────────────────────

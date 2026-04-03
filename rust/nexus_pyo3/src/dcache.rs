@@ -99,6 +99,27 @@ impl DCache {
         count
     }
 
+    /// List immediate children under a prefix path.
+    /// Returns Vec of (child_name, entry_type).
+    /// Only returns direct children (no nested paths).
+    pub(crate) fn list_children(&self, prefix: &str) -> Vec<(String, u8)> {
+        self.cache
+            .iter()
+            .filter_map(|entry| {
+                let path = entry.key();
+                if !path.starts_with(prefix) || path.len() <= prefix.len() {
+                    return None;
+                }
+                let rest = &path[prefix.len()..];
+                // Only immediate children (no '/' in the remainder)
+                if rest.contains('/') {
+                    return None;
+                }
+                Some((rest.to_string(), entry.value().entry_type))
+            })
+            .collect()
+    }
+
     /// Get hot-path tuple: (backend_name, physical_path, entry_type).
     /// Updates hit/miss counters.
     pub(crate) fn get_hot(&self, path: &str) -> Option<(String, String, u8)> {

@@ -46,8 +46,12 @@ def engine_with_lock(cas_dir):
 
 
 class TestHookCountBypass:
-    def test_read_hooks_present_returns_miss(self, engine_with_lock):
-        """When read hooks are registered, sys_read returns hit=false."""
+    def test_read_hooks_set_post_hook_needed(self, engine_with_lock):
+        """When read hooks are registered, sys_read returns post_hook_needed=true.
+
+        PR 4: hooks no longer bypass the kernel. The kernel always reads.
+        post_hook_needed flag tells the Python wrapper to fire post-hooks.
+        """
         engine, cas_dir, _ = engine_with_lock
         content = b"hook test data"
         content_hash = hash_bytes(content)
@@ -58,31 +62,43 @@ class TestHookCountBypass:
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
-        # Without hooks: should return hit=true
-        assert engine.sys_read("/workspace/f.txt", "root", False).hit is True
+        # Without hooks: hit=true, post_hook_needed=false
+        result = engine.sys_read("/workspace/f.txt", "root", False)
+        assert result.hit is True
+        assert result.post_hook_needed is False
 
-        # Set read hook count > 0
+        # Set read hook count > 0: hit=true, post_hook_needed=true
         engine.set_hook_count("read", 1)
-        # Now sys_read should return hit=false (Python handles hooks)
-        assert engine.sys_read("/workspace/f.txt", "root", False).hit is False
+        result = engine.sys_read("/workspace/f.txt", "root", False)
+        assert result.hit is True
+        assert result.post_hook_needed is True
+        assert result.data == content
 
         # Reset hook count
         engine.set_hook_count("read", 0)
-        assert engine.sys_read("/workspace/f.txt", "root", False).hit is True
+        result = engine.sys_read("/workspace/f.txt", "root", False)
+        assert result.hit is True
+        assert result.post_hook_needed is False
 
-    def test_write_hooks_present_returns_miss(self, engine_with_lock):
-        """When write hooks are registered, sys_write returns hit=false."""
+    def test_write_hooks_set_post_hook_needed(self, engine_with_lock):
+        """When write hooks are registered, sys_write returns post_hook_needed=true.
+
+        PR 5: hooks no longer bypass the kernel. The kernel always writes.
+        post_hook_needed flag tells the Python wrapper to fire post-hooks.
+        """
         engine, _, _ = engine_with_lock
         engine.dcache_put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
 
-        # Without hooks: should return hit=true
+        # Without hooks: hit=true, post_hook_needed=false
         result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
         assert result.hit is True
+        assert result.post_hook_needed is False
 
-        # Set write hook count > 0
+        # Set write hook count > 0: hit=true, post_hook_needed=true
         engine.set_hook_count("write", 1)
         result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
-        assert result.hit is False
+        assert result.hit is True
+        assert result.post_hook_needed is True
 
     def test_set_hook_count_unknown_op_ignored(self, engine_with_lock):
         """Unknown operation names are silently ignored."""
@@ -115,8 +131,11 @@ class TestVFSLockIntegration:
         assert not lock.is_locked("/workspace/f.txt")
 
     def test_write_lock_contention_returns_miss(self, engine_with_lock):
-        """If a write lock is already held, sys_read returns hit=false."""
+        """If a write lock is already held, sys_read returns hit=false after timeout."""
         engine, cas_dir, lock = engine_with_lock
+        # Use short timeout so test doesn't hang
+        engine.set_vfs_lock_timeout(50)
+
         content = b"contention test"
         content_hash = hash_bytes(content)
         cas_path = Path(cas_dir) / "cas" / content_hash[:2] / content_hash[2:4] / content_hash
@@ -130,7 +149,7 @@ class TestVFSLockIntegration:
         handle = lock.acquire("/workspace/f.txt", "write")
         assert handle > 0
 
-        # sys_read should return hit=false (read blocked by write lock)
+        # sys_read should return hit=false (read blocked by write lock, times out)
         result = engine.sys_read("/workspace/f.txt", "root", False)
         assert result.hit is False
 

@@ -1087,6 +1087,49 @@ class NexusFS(  # type: ignore[misc]
         mark_acquired(L1_VFS)
         return handle
 
+    def _read_via_dlc(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
+        """[INTERMEDIATE] DLC fallback read for non-Rust backends — deleted in PR 7."""
+        from dataclasses import replace as _dc_replace
+
+        route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
+
+        # DT_EXTERNAL_STORAGE: backend manages own content
+        from nexus.core.router import ExternalRouteResult
+
+        if isinstance(route, ExternalRouteResult):
+            _ctx = (
+                _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+                if context
+                else None
+            )
+            return route.backend.read_content("", context=_ctx)
+
+        _ctx = (
+            _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+            if context
+            else OperationContext(
+                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
+            )
+        )
+        with self._vfs_locked(path, "read"):
+            meta = route.metastore.get(path)
+            # Overlay resolution: check base layer if upper has no entry
+            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+                overlay_config = self._get_overlay_config(path)
+                if overlay_config:
+                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
+            if meta is None:
+                raise NexusFileNotFoundError(path)
+            if meta.etag is None and not (_ctx and _ctx.backend_path):
+                raise NexusFileNotFoundError(path)
+            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
+                meta
+            ):
+                raise NexusFileNotFoundError(path)
+            return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+                meta.etag or "", context=_ctx
+            )
+
     @contextlib.contextmanager
     def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
         """Context manager for VFS I/O lock — symmetric acquire/release.
@@ -1230,28 +1273,11 @@ class NexusFS(  # type: ignore[misc]
     ) -> bytes:
         """Read file content as bytes (POSIX pread(2)).
 
-        Kernel primitive — always returns raw bytes. For metadata or parsed
-        content, use the convenience ``read()`` method.
-
-        Args:
-            path: Virtual path to read (supports memory virtual paths).
-            count: Max bytes to read (None = entire file).
-            offset: Byte offset to start reading from.
-            context: Optional operation context for permission checks.
-
-        Returns:
-            File content as bytes.
-
-        Raises:
-            NexusFileNotFoundError: If file doesn't exist
-            InvalidPathError: If path is invalid
-            BackendError: If read operation fails
-            AccessDeniedError: If access is denied based on zone isolation
-            PermissionError: If user doesn't have read permission
+        Thin async wrapper around Rust Kernel.sys_read (pure Rust, zero GIL).
+        DT_PIPE/DT_STREAM, resolve, and hooks are [INTERMEDIATE] — migrates
+        to Rust dispatch middleware in PR 7.
         """
-        # DT_PIPE fast-path: skip validate/resolve/intercept/route (~400ns vs ~20+μs)
-        # Hot path: try sync read_nowait (no Lock, no await) — matches sys_write perf.
-        # Cold path (empty pipe): fall through to async _pipe_read for blocking wait.
+        # [INTERMEDIATE] DT_PIPE fast-path (~400ns vs ~20+μs)
         _pbuf = self._pipe_manager._buffers.get(path) if self._pipe_manager is not None else None
         if _pbuf is not None:
             from nexus.core.pipe import PipeClosedError, PipeEmptyError
@@ -1265,9 +1291,11 @@ class NexusFS(  # type: ignore[misc]
             if offset or count is not None:
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
-        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        # Fully inlined: single dict.get → buffer.read_at (Rust). No wrapper calls.
-        _sbuf = self._stream_manager._buffers.get(path)
+
+        # [INTERMEDIATE] DT_STREAM fast-path
+        _sbuf = (
+            self._stream_manager._buffers.get(path) if self._stream_manager is not None else None
+        )
         if _sbuf is not None:
             from nexus.core.stream import StreamClosedError, StreamEmptyError
 
@@ -1278,34 +1306,12 @@ class NexusFS(  # type: ignore[misc]
                 data, _ = await _sbuf.read(offset, blocking=True)
                 return data
             except StreamEmptyError:
-                # Blocking read handles this internally; only non-blocking raises
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
-        # ── Rust sys_read fast path (Issue #1817 Phase G) ─────────────────
-        # Hot path: hook check + dcache hit + VFS lock + Rust backend I/O.
-        # One FFI call replaces: validate + trie + route + dcache + lock + read.
-        # Falls back to Python path below on hook presence, dcache miss, or no Rust backend.
-        _is_admin = (
-            getattr(context, "is_admin", False)
-            if context is not None and not isinstance(context, dict)
-            else (context.get("is_admin", False) if isinstance(context, dict) else False)
-        )
-        _result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        if _result.hit:
-            _data = _result.data
-            # CDC chunked manifests must be reassembled by Python — skip Rust fast path.
-            if _data is not None and not _data[:30].startswith(b'{"type":"chunked_manifest'):
-                if offset or count is not None:
-                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
-                return _data
-
-        path = self._validate_path(path)
-        # Normalize context dict to OperationContext dataclass (CLI passes dicts)
+        # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
         _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
         if _handled:
             content = _resolve_hint or b""
@@ -1315,95 +1321,37 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        perm_check_start = time.time()
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-        perm_check_elapsed = time.time() - perm_check_start
-
-        # Log slow pre-intercept
-        if perm_check_elapsed > 0.010:  # >10ms
-            logger.warning(
-                f"[READ-PERF] SLOW pre-intercept for {path}: {perm_check_elapsed * 1000:.1f}ms"
-            )
-
-        # Normal file path - proceed with regular read
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(
-            path,
-            is_admin=is_admin,
-            check_write=False,
-            zone_id=self._zone_id,
-        )
-
-        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
-        from nexus.core.router import ExternalRouteResult, PipeRouteResult, StreamRouteResult
-
-        if isinstance(route, PipeRouteResult):
-            return await self._pipe_read(path, count=count, offset=offset)
-        if isinstance(route, StreamRouteResult):
-            return await self._stream_read(path, count=count, offset=offset)
-
-        # Add backend_path to context for path-based connectors
-        from dataclasses import replace
-
-        if context:
-            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
-        else:
-            # Create minimal context with just backend_path for connectors
-            from nexus.contracts.types import OperationContext
-
-            read_context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-
-        # DT_EXTERNAL_STORAGE: backend manages own content — skip metastore lookup
-        if isinstance(route, ExternalRouteResult):
-            content = route.backend.read_content("", context=read_context)
-            if offset or count is not None:
-                content = (
-                    content[offset : offset + count] if count is not None else content[offset:]
-                )
-            return content
-
-        # VFS I/O Lock: shared read lock around metadata check + backend read.
-        # Prevents reading while a concurrent writer mutates the same path.
-        # Like Linux i_rwsem: held for I/O duration only, released before observers.
-        with self._vfs_locked(path, "read"):
-            # Check if file exists in metadata (for regular backends)
-            # _resolve_hint may carry prefetched metadata from a resolver
-            meta = _resolve_hint if _resolve_hint is not None else route.metastore.get(path)
-
-            # Issue #1264: Overlay resolution — check base layer if upper layer has no entry
-            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-                overlay_config = self._get_overlay_config(path)
-                if overlay_config:
-                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
-
-            if meta is None:
-                raise NexusFileNotFoundError(path)
-
-            # Issue #3194: Path-based backends (path_local, path_gcs, path_s3)
-            # store metadata without content_hash/etag. Reads go through
-            # backend_path in the OperationContext, not CAS.
-            if meta.etag is None and not (read_context and read_context.backend_path):
-                raise NexusFileNotFoundError(path)
-
-            # Issue #1264: Reject whiteout markers (file was deleted in overlay)
-            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
-                meta
-            ):
-                raise NexusFileNotFoundError(path)
-
-            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-                meta.etag or "", context=read_context
-            )
-
-        # --- Lock released — post-read processing (like Linux inotify after i_rwsem) ---
-
-        # Issue #900: Unified INTERCEPT for read (dynamic viewer, tracking, etc.)
+        # [INTERMEDIATE] PRE-INTERCEPT: hooks — migrates to Rust dispatch middleware in PR 7
         if self._dispatch.read_hook_count > 0:
+            from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
+
+            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+
+        # ── KERNEL (pure Rust, zero GIL) ──
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
+        )
+        try:
+            result = self._kernel.sys_read(path, self._zone_id, _is_admin)
+        except NexusFileNotFoundError:
+            # [INTERMEDIATE] dcache miss (e.g. overlay base layer) — DLC fallback
+            data = self._read_via_dlc(path, _is_admin, context)
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
+        # [INTERMEDIATE] DLC fallback: non-Rust backends + CDC chunked manifests — deleted in PR 7
+        _raw = result.data or b""
+        _needs_dlc = not result.hit or (_raw[:30].startswith(b'{"type":"chunked_manifest'))
+        data = self._read_via_dlc(path, _is_admin, context) if _needs_dlc else _raw
+
+        if offset or count is not None:
+            data = data[offset : offset + count] if count is not None else data[offset:]
+
+        # [INTERMEDIATE] POST-INTERCEPT: hooks — migrates to Rust thread::spawn in PR 7
+        if result.post_hook_needed or (not result.hit and self._dispatch.read_hook_count > 0):
+            zone_id, agent_id, _ = self._get_context_identity(context)
             from nexus.contracts.vfs_hooks import ReadHookContext
 
             _read_ctx = ReadHookContext(
@@ -1411,47 +1359,13 @@ class NexusFS(  # type: ignore[misc]
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                metadata=meta,
-                content=content,
-                content_hash=meta.etag,
+                content=data,
+                content_hash=result.content_hash,
             )
             await self._dispatch.intercept_post_read(_read_ctx)
-            content = _read_ctx.content or content  # hooks may have filtered content
+            data = _read_ctx.content or data
 
-        # --- Agent lineage: record read into session accumulator (Issue #3417) ---
-        # Non-blocking, in-memory only. Records path + version + etag so the
-        # lineage hook can attribute this read to the agent's next write.
-        # Gates:
-        #   1. Registered agent only (subject_type="agent", via agent API key)
-        #   2. Explicit scope must be active (agent called POST /scope/begin)
-        #      No default capture — if no scope is active, reads are not tracked.
-        _is_registered_agent = (
-            agent_id and context is not None and getattr(context, "subject_type", "user") == "agent"
-        )
-        if _is_registered_agent and meta is not None:
-            try:
-                from nexus.storage.session_read_accumulator import DEFAULT_SCOPE, get_accumulator
-
-                _acc = get_accumulator()
-                _gen = getattr(context, "agent_generation", None) if context else None
-                # Only record if agent has an explicit scope active (not default)
-                if _acc.get_active_scope(agent_id, _gen) != DEFAULT_SCOPE:
-                    _acc.record_read(
-                        agent_id,
-                        _gen,
-                        path,
-                        version=getattr(meta, "version", 0) or 0,
-                        etag=getattr(meta, "etag", "") or "",
-                        access_type="content",
-                    )
-            except Exception:
-                logger.debug("Lineage read tracking failed (non-critical)", exc_info=True)
-
-        # Apply count/offset slicing (POSIX pread semantics)
-        if offset or count is not None:
-            content = content[offset : offset + count] if count is not None else content[offset:]
-
-        return content
+        return data
 
     @rpc_expose(description="Read multiple files in a single RPC call")
     def read_bulk(
@@ -2103,80 +2017,77 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Write content to a file (POSIX write(2)).
 
-        Tier 1 kernel primitive — POSIX write(2) with implicit metadata side
-        effects (mtime, size, version, etag). Kernel updates metadata in VFS
-        lock after backend.write_content(). File must exist.
-
-        Args:
-            path: Virtual path to write.
-            buf: File content as bytes or str (str will be UTF-8 encoded).
-            count: Max bytes to write (None = len(buf)).
-            offset: Byte offset for partial write (POSIX pwrite semantics, 0=whole-file).
-            context: Optional operation context for permission checks.
-
-        Returns:
-            Dict with path and bytes_written.
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist.
-            InvalidPathError: If path is invalid.
-            BackendError: If write operation fails.
-            AccessDeniedError: If access is denied (zone isolation or read-only namespace).
-            PermissionError: If path is read-only or user doesn't have write permission.
+        Thin async wrapper around Rust Kernel.sys_write (CAS I/O is pure Rust,
+        zero GIL). Metastore.put stays in Python [INTERMEDIATE] — migrates to
+        Rust metastore in PR 7.
         """
-        # DT_PIPE fast-path: skip ALL preprocessing + validate/metastore/dispatch.
-        # Pipe is a byte FIFO — callers always pass bytes, count/offset are file concepts.
-        # Fully inlined: single dict lookup → Rust write_nowait. No wrapper calls.
+        # [INTERMEDIATE] DT_PIPE fast-path
         _pm = self._pipe_manager
         if _pm is not None:
             _buf = _pm._buffers.get(path)
             if _buf is not None:
                 n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
                 return {"path": path, "bytes_written": n}
-        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        # Fully inlined: single dict.get → buffer.write_nowait (Rust). No wrapper calls.
-        _sbuf = self._stream_manager._buffers.get(path)
+
+        # [INTERMEDIATE] DT_STREAM fast-path
+        _sbuf = (
+            self._stream_manager._buffers.get(path) if self._stream_manager is not None else None
+        )
         if _sbuf is not None:
             if isinstance(buf, str):
                 buf = buf.encode("utf-8")
             _off = _sbuf.write_nowait(buf)
             return {"path": path, "bytes_written": len(buf), "offset": _off}
 
-        # Auto-convert str to bytes for convenience
+        # Normalize input
         if isinstance(buf, str):
             buf = buf.encode("utf-8")
-
-        # Apply count slicing if specified
         if count is not None:
             buf = buf[:count]
 
-        path = self._validate_path(path)
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
+        # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
+        context = self._parse_context(context)
         _handled, _result = self._dispatch.resolve_write(path, buf)
         if _handled:
-            base = {"path": path, "bytes_written": len(buf)}
+            base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
             if isinstance(_result, dict):
                 base.update(_result)
             return base
 
-        # DT_PIPE / DT_STREAM: kernel-native IPC dispatch (§4.2)
+        # [INTERMEDIATE] File-exists check via metastore (migrates to Rust in PR 7)
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
-            # Fallback for pipes not in PipeManager (e.g. federation remote pipes)
             n = self._pipe_write(path, buf)
             return {"path": path, "bytes_written": n}
         if _meta is not None and _meta.is_stream:
-            offset = self._stream_write(path, buf)
-            return {"path": path, "bytes_written": len(buf), "offset": offset}
-
+            _off = self._stream_write(path, buf)
+            return {"path": path, "bytes_written": len(buf), "offset": _off}
         if _meta is None:
             raise NexusFileNotFoundError(
                 path, "sys_write requires existing file — use write() for create-on-write"
             )
-        await self._write_internal(
-            path=path, content=buf, offset=offset, context=context, _meta=_meta
+
+        # ── KERNEL (pure Rust CAS write, zero GIL) ──
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
+        result = self._kernel.sys_write(path, self._zone_id, buf, _is_admin)
+
+        if result.hit:
+            # Rust wrote to CAS — now update metadata + dispatch events [INTERMEDIATE]
+            # _write_internal will re-call backend.write_content (CAS dedup = no-op)
+            # and handle metastore.put + event dispatch atomically.
+            await self._write_internal(
+                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            )
+        else:
+            # [INTERMEDIATE] DLC fallback for non-Rust backends — deleted in PR 7
+            await self._write_internal(
+                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            )
+
         return {"path": path, "bytes_written": len(buf)}
 
     # ── Tier 2 overrides (NexusFS-specific) ───────────────────────

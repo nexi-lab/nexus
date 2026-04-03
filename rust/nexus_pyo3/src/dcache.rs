@@ -14,14 +14,10 @@ use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 // ── Entry type constants (mirror proto/nexus/core/metadata.proto) ───────────
-#[allow(dead_code)]
 pub(crate) const DT_REG: u8 = 0;
 pub(crate) const DT_DIR: u8 = 1;
-#[allow(dead_code)]
-pub(crate) const DT_MOUNT: u8 = 2;
 pub(crate) const DT_PIPE: u8 = 3;
 pub(crate) const DT_STREAM: u8 = 4;
-pub(crate) const DT_EXTERNAL: u8 = 5;
 
 /// Hot-path projection of FileMetadata.
 #[derive(Clone, Debug)]
@@ -70,17 +66,6 @@ impl DCache {
         }
     }
 
-    /// Get just the entry_type (no hit/miss counting).
-    pub(crate) fn get_entry_type(&self, path: &str) -> Option<u8> {
-        self.cache.get(path).map(|e| e.value().entry_type)
-    }
-
-    /// Get just the etag (no hit/miss counting).
-    #[allow(dead_code)]
-    pub(crate) fn get_etag(&self, path: &str) -> Option<Option<String>> {
-        self.cache.get(path).map(|e| e.value().etag.clone())
-    }
-
     /// Check if path exists without updating hit/miss counters.
     pub(crate) fn contains(&self, path: &str) -> bool {
         self.cache.contains_key(path)
@@ -112,6 +97,27 @@ impl DCache {
             self.cache.remove(&k);
         }
         count
+    }
+
+    /// List immediate children under a prefix path.
+    /// Returns Vec of (child_name, entry_type).
+    /// Only returns direct children (no nested paths).
+    pub(crate) fn list_children(&self, prefix: &str) -> Vec<(String, u8)> {
+        self.cache
+            .iter()
+            .filter_map(|entry| {
+                let path = entry.key();
+                if !path.starts_with(prefix) || path.len() <= prefix.len() {
+                    return None;
+                }
+                let rest = &path[prefix.len()..];
+                // Only immediate children (no '/' in the remainder)
+                if rest.contains('/') {
+                    return None;
+                }
+                Some((rest.to_string(), entry.value().entry_type))
+            })
+            .collect()
     }
 
     /// Get hot-path tuple: (backend_name, physical_path, entry_type).
@@ -202,46 +208,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_entry_type() {
-        let dc = make_dcache();
-        dc.put(
-            "/mnt/remote",
-            CachedEntry {
-                backend_name: "gcs".to_string(),
-                physical_path: "/bucket/remote".to_string(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: DT_MOUNT,
-                zone_id: None,
-                mime_type: None,
-            },
-        );
-        assert_eq!(dc.get_entry_type("/mnt/remote"), Some(DT_MOUNT));
-        assert_eq!(dc.get_entry_type("/nonexistent"), None);
-    }
-
-    #[test]
-    fn test_get_etag() {
-        let dc = make_dcache();
-        dc.put(
-            "/file.txt",
-            CachedEntry {
-                backend_name: "s3".to_string(),
-                physical_path: "/bucket/file.txt".to_string(),
-                size: 512,
-                etag: Some("hash456".to_string()),
-                version: 2,
-                entry_type: DT_REG,
-                zone_id: None,
-                mime_type: None,
-            },
-        );
-        assert_eq!(dc.get_etag("/file.txt"), Some(Some("hash456".to_string())));
-        assert_eq!(dc.get_etag("/missing"), None);
-    }
-
-    #[test]
     fn test_contains() {
         let dc = make_dcache();
         dc.put(
@@ -292,10 +258,8 @@ mod tests {
     fn test_entry_types() {
         assert_eq!(DT_REG, 0);
         assert_eq!(DT_DIR, 1);
-        assert_eq!(DT_MOUNT, 2);
         assert_eq!(DT_PIPE, 3);
         assert_eq!(DT_STREAM, 4);
-        assert_eq!(DT_EXTERNAL, 5);
     }
 
     #[test]

@@ -16,17 +16,6 @@ from nexus_fast import (
     hash_bytes,
 )
 
-# ── Action constants (mirror kernel.rs) ──────────────────────────────
-
-# Must match kernel.rs ACTION_* constants
-ACTION_DCACHE_HIT = 0
-ACTION_RESOLVED = 1
-ACTION_PIPE = 2
-ACTION_STREAM = 3
-ACTION_EXTERNAL = 4
-ACTION_CACHE_MISS = 5
-ACTION_ERROR = 6
-
 # Entry type constants
 DT_REG = 0
 DT_DIR = 1
@@ -96,11 +85,13 @@ class TestExecuteRead:
         assert result.hit is True
         assert result.data == content
 
-    def test_dcache_miss_returns_miss(self, kernel_with_cas):
-        """DCache miss -> hit=false (Python fallback)."""
+    def test_dcache_miss_raises_not_found(self, kernel_with_cas):
+        """DCache is authoritative — miss raises NexusFileNotFoundError."""
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
         engine, _ = kernel_with_cas
-        result = engine.sys_read("/workspace/missing.txt", "root", False)
-        assert result.hit is False
+        with pytest.raises(NexusFileNotFoundError):
+            engine.sys_read("/workspace/missing.txt", "root", False)
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS (no local_root) -> hit=false (Python fallback)."""
@@ -176,11 +167,12 @@ class TestExecuteWrite:
         assert cas_path.exists()
         assert cas_path.read_bytes() == content
 
-    def test_dcache_miss_returns_miss(self, kernel_with_cas):
-        """DCache miss -> hit=false (Python handles new file)."""
+    def test_dcache_miss_write_succeeds(self, kernel_with_cas):
+        """DCache miss is OK for writes — CAS write creates the blob."""
         engine, _ = kernel_with_cas
         result = engine.sys_write("/workspace/new.txt", "root", b"data", False)
-        assert result.hit is False
+        assert result.hit is True
+        assert result.content_id is not None
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS -> hit=false."""
@@ -225,8 +217,11 @@ class TestArcSharing:
         cas_path.parent.mkdir(parents=True, exist_ok=True)
         cas_path.write_bytes(content)
 
-        # Initially miss
-        assert engine.sys_read("/workspace/late.txt", "root", False).hit is False
+        # Initially miss — dcache is authoritative, miss raises
+        from nexus.contracts.exceptions import NexusFileNotFoundError
+
+        with pytest.raises(NexusFileNotFoundError):
+            engine.sys_read("/workspace/late.txt", "root", False)
 
         # Add to dcache (simulating metastore.put dual-write)
         engine.dcache_put(

@@ -116,7 +116,7 @@ jobs:
           # Its sdist has a broken Cargo.toml structure that fails to build from source
           # on any platform without pre-built wheels (which don't exist for >=0.5.0).
           # Remove it entirely so pip install . proceeds cleanly.
-          sed -i '/fastbloom-rs/d' pyproject.toml
+          sed -i '' '/fastbloom-rs/d' pyproject.toml
           pip install .
 
       # ── protoc (required by nexus_raft build.rs) ─────────────────────────

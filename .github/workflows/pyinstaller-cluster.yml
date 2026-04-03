@@ -180,19 +180,57 @@ jobs:
       - name: Patch spec hardcoded paths for CI environment
         run: |
           python - << 'EOF'
-          import re, os, importlib.util
+          import re, os, glob, site
+          import importlib.util
 
           spec_path = "pyinstaller_spec_cluster.py"
           workspace = os.environ["GITHUB_WORKSPACE"].replace("\\", "/")
 
           def find_so(module_name):
-              spec = importlib.util.find_spec(module_name)
-              if spec and spec.origin:
-                  return spec.origin.replace("\\", "/")
-              raise RuntimeError(f"Cannot locate installed module: {module_name}")
+              """Locate the .so/.dylib for a native extension.
+              Tries both flat (nexus_fast) and nested (nexus_fast.nexus_fast)
+              importlib lookups, then falls back to a site-packages glob.
+              """
+              base = module_name.split(".")[-1]
 
-          nexus_raft_so = find_so("_nexus_raft._nexus_raft")
-          nexus_fast_so = find_so("nexus_fast.nexus_fast")
+              # 1) importlib — flat module (maturin default for simple module-name)
+              for candidate in (module_name, f"{base}.{base}"):
+                  try:
+                      sp = importlib.util.find_spec(candidate)
+                      if sp and sp.origin and os.path.exists(sp.origin):
+                          return sp.origin.replace("\\", "/")
+                  except (ModuleNotFoundError, ValueError):
+                      pass
+
+              # 2) glob fallback — search site-packages by filename
+              search_dirs = []
+              try:
+                  search_dirs = list(site.getsitepackages())
+              except Exception:
+                  pass
+              try:
+                  search_dirs.append(site.getusersitepackages())
+              except Exception:
+                  pass
+
+              for sp_dir in search_dirs:
+                  for pattern in (
+                      f"{base}.cpython-*.so",
+                      f"**/{base}.cpython-*.so",
+                      f"{base}.cpython-*.dylib",
+                      f"**/{base}.cpython-*.dylib",
+                  ):
+                      matches = glob.glob(os.path.join(sp_dir, pattern), recursive=True)
+                      if matches:
+                          return matches[0].replace("\\", "/")
+
+              raise RuntimeError(
+                  f"Cannot locate .so for '{module_name}'. "
+                  f"Site-packages searched: {search_dirs}"
+              )
+
+          nexus_raft_so = find_so("_nexus_raft")
+          nexus_fast_so = find_so("nexus_fast")
           src_path      = f"{workspace}/src"
 
           with open(spec_path) as f:

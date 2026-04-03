@@ -327,6 +327,138 @@ class SlimNexusFS:
 
         return None
 
+    # -- Search operations --
+
+    async def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Search file contents for a regex pattern.
+
+        Recursively lists files under *path*, reads their contents, and
+        searches using Rust-accelerated regex (nexus_fast) when available,
+        falling back to Python ``re`` otherwise.
+
+        Args:
+            pattern: Regex pattern to search for.
+            path: Directory to search under (default root).
+            ignore_case: Case-insensitive matching.
+            max_results: Cap on returned matches.
+
+        Returns:
+            List of match dicts with keys: file, line, content, match.
+        """
+        # List all files recursively
+        entries = await self._kernel.sys_readdir(
+            path,
+            recursive=True,
+            details=True,
+            context=self._ctx,
+        )
+        file_paths = [
+            e["path"] for e in entries if isinstance(e, dict) and not e.get("is_directory", False)
+        ]
+        if not file_paths:
+            return []
+
+        # Read contents (batch)
+        file_contents: dict[str, bytes] = {}
+        for fp in file_paths:
+            try:
+                file_contents[fp] = await self._kernel.sys_read(fp, context=self._ctx)
+            except Exception:
+                continue  # skip unreadable files
+
+        if not file_contents:
+            return []
+
+        # Try Rust-accelerated grep
+        try:
+            from nexus_fast import grep_bulk as _rust_grep
+
+            results = _rust_grep(pattern, file_contents, ignore_case, max_results)
+            if results is not None:
+                return results
+        except (ImportError, OSError, ValueError, RuntimeError):
+            pass
+
+        # Python fallback
+        import re
+
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex pattern: {exc}") from exc
+
+        matches: list[dict[str, Any]] = []
+        for fp, content in file_contents.items():
+            try:
+                text = content.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            for line_no, line in enumerate(text.splitlines(), 1):
+                m = compiled.search(line)
+                if m:
+                    matches.append(
+                        {
+                            "file": fp,
+                            "line": line_no,
+                            "content": line,
+                            "match": m.group(0),
+                        }
+                    )
+                    if len(matches) >= max_results:
+                        return matches
+        return matches
+
+    async def glob(
+        self,
+        pattern: str,
+        path: str = "/",
+    ) -> list[str]:
+        """Find files matching a glob pattern.
+
+        Recursively lists files under *path* and filters them using
+        Rust-accelerated glob matching (nexus_fast) when available,
+        falling back to Python ``fnmatch`` otherwise.
+
+        Args:
+            pattern: Glob pattern (e.g., ``"**/*.py"``, ``"*.txt"``).
+            path: Directory to search under (default root).
+
+        Returns:
+            List of matching file paths.
+        """
+        entries = await self._kernel.sys_readdir(
+            path,
+            recursive=True,
+            details=False,
+            context=self._ctx,
+        )
+        all_paths = [e for e in entries if isinstance(e, str)]
+        if not all_paths:
+            return []
+
+        # Try Rust-accelerated glob
+        try:
+            from nexus_fast import glob_match_bulk as _rust_glob
+
+            results = _rust_glob([pattern], all_paths)
+            if results is not None:
+                return list(results)
+        except (ImportError, OSError, ValueError, RuntimeError):
+            pass
+
+        # Python fallback
+        import fnmatch
+
+        return [p for p in all_paths if fnmatch.fnmatch(p, pattern)]
+
     # -- Mount management (delegated to kernel router) --
 
     def list_mounts(self) -> list[str]:

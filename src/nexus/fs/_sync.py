@@ -169,6 +169,29 @@ class SyncNexusFS:
     def read_range(self, path: str, start: int, end: int) -> bytes:
         return cast(bytes, self._runner(self._async.read_range(path, start, end)))
 
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        *,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+    ) -> list[dict[str, Any]]:
+        return cast(
+            list[dict[str, Any]],
+            self._runner(
+                self._async.grep(
+                    pattern,
+                    path,
+                    ignore_case=ignore_case,
+                    max_results=max_results,
+                )
+            ),
+        )
+
+    def glob(self, pattern: str, path: str = "/") -> list[str]:
+        return cast(list[str], self._runner(self._async.glob(pattern, path)))
+
     def list_mounts(self) -> list[str]:
         """List all mount points (synchronous -- no portal needed)."""
         return cast(list[str], self._async.list_mounts())

@@ -242,6 +242,12 @@ jobs:
                         f"NEXUS_FAST_SO = '{nexus_fast_so}'", spec)
           spec = re.sub(r"pathex=\[.*?\]",
                         f"pathex=['{src_path}']", spec)
+          # Patch entry point: the binary bundles nexusd (daemon), not nexus CLI
+          spec = re.sub(
+              r"Analysis\(\s*\['[^']*'\]",
+              f"Analysis(\n    ['{src_path}/nexus/daemon/main.py']",
+              spec,
+          )
 
           with open(spec_path, "w") as f:
               f.write(spec)
@@ -249,6 +255,7 @@ jobs:
           print(f"Patched NEXUS_RAFT_SO → {nexus_raft_so}")
           print(f"Patched NEXUS_FAST_SO → {nexus_fast_so}")
           print(f"Patched pathex        → {src_path}")
+          print(f"Patched entry point   → {src_path}/nexus/daemon/main.py")
           EOF
 
       - name: Build PyInstaller binary (profile=cluster)

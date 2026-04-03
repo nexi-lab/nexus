@@ -111,7 +111,11 @@ jobs:
           # It's only used in rebac/cache bricks excluded from the cluster profile.
           # Relax the constraint so pip resolves to 0.3.0 and proceeds normally.
           # pyproject.toml already gates uvloop with sys_platform != 'win32'.
-          sed -i 's/fastbloom-rs>=0.5.0/fastbloom-rs>=0.1.0/' pyproject.toml
+          # fastbloom-rs: only used in rebac/cache bricks excluded from cluster profile.
+          # Its sdist has a broken Cargo.toml structure that fails to build from source
+          # on any platform without pre-built wheels (which don't exist for >=0.5.0).
+          # Remove it entirely so pip install . proceeds cleanly.
+          sed -i '/fastbloom-rs/d' pyproject.toml
           pip install .
 
       # ── protoc (required by nexus_raft build.rs) ─────────────────────────
@@ -156,6 +160,7 @@ jobs:
         run: pip install maturin
 
       - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+        shell: bash
         run: |
           mkdir -p build/dist
           maturin build --release \
@@ -163,6 +168,7 @@ jobs:
             -m rust/nexus_pyo3/Cargo.toml
 
       - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+        shell: bash
         env:
           PROTOC: ${{ env.NEXUS_PROTOC }}
         run: |
@@ -172,12 +178,14 @@ jobs:
             -m rust/nexus_raft/Cargo.toml
 
       - name: Build nexus_tasks wheel  (rust/nexus_tasks)
+        shell: bash
         run: |
           maturin build --release \
             --out build/dist \
             -m rust/nexus_tasks/Cargo.toml
 
       - name: Install Rust wheels
+        shell: bash
         run: |
           echo "=== Built wheels ==="
           ls -lh build/dist/

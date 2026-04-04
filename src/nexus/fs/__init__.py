@@ -133,14 +133,17 @@ async def mount(
 
     metastore = SQLiteMetastore(str(metadata_db()))
 
-    # Create all backends with cleanup on partial failure
-    backends: list[tuple[str, Any]] = []
+    # Create all backends with cleanup on partial failure.
+    # Store spec alongside each backend so _resolve_entry_type() can use it
+    # during metadata registration without re-zipping against resolved_mounts
+    # (which would break when backends are skipped via skip_unavailable=True).
+    backends: list[tuple[str, Any, Any]] = []  # (mount_point, backend, spec)
     skipped: list[tuple[str, str]] = []  # (uri, error_msg)
     try:
         for (spec, mp), uri in zip(resolved_mounts, uris, strict=True):
             try:
                 backend = create_backend(spec)
-                backends.append((mp, backend))
+                backends.append((mp, backend, spec))
             except Exception as exc:
                 if skip_unavailable:
                     skipped.append((uri, str(exc)))
@@ -149,7 +152,7 @@ async def mount(
                     raise
     except Exception:
         # Clean up any already-created backends and the metastore
-        for _, be in backends:
+        for _, be, _ in backends:
             _close_backend(be)
         metastore.close()
         raise
@@ -184,7 +187,7 @@ async def mount(
             ),
         )
 
-        for mp, backend in backends:
+        for mp, backend, _ in backends:
             kernel._driver_coordinator.mount(mp, backend)
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
@@ -212,10 +215,10 @@ async def mount(
         # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
         # directly to backend.read_content() instead of through the kernel.
         # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
-        for (spec, _mp), (mp, backend) in zip(resolved_mounts, backends, strict=True):
+        for mp, backend, spec in backends:
             metastore.put(_make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec)))
     except Exception:
-        for _, be in backends:
+        for _, be, _ in backends:
             _close_backend(be)
         metastore.close()
         raise

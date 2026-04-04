@@ -478,10 +478,10 @@ impl Kernel {
                 Some(pp)
             }
         });
-        if content_id.is_none() {
-            return Err(Self::raise_file_not_found(py, path));
-        }
-        let content_id = content_id.unwrap();
+        let content_id = match content_id {
+            Some(id) => id,
+            None => return miss(),
+        };
 
         // 4. VFS lock (blocking, GIL released during wait)
         let lock_handle = if let Some(ref lm) = self.vfs_lock {

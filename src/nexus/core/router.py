@@ -194,7 +194,11 @@ class PathRouter:
             if entry is None:
                 raise PathNotMountedError(virtual_path)
             user_mp = extract_zone_id(rust_result.mount_point)[1]
-            if meta is not None and meta.is_external_storage:
+            # Check file metadata first; fall back to mount-root metadata so
+            # connector files (which have no per-file metadata) still route
+            # through ExternalRouteResult when their mount root is DT_EXTERNAL_STORAGE.
+            _route_meta = meta if meta is not None else self._metastore.get(user_mp)
+            if _route_meta is not None and _route_meta.is_external_storage:
                 return ExternalRouteResult(
                     backend=entry.backend,
                     metastore=entry.metastore,
@@ -227,7 +231,11 @@ class PathRouter:
 
         backend_path = self._strip_mount_prefix(canonical, canonical_key)
 
-        if meta is not None and meta.is_external_storage:
+        # Check file metadata first; fall back to mount-root metadata so
+        # connector files (which have no per-file metadata) still route
+        # through ExternalRouteResult when their mount root is DT_EXTERNAL_STORAGE.
+        _route_meta = meta if meta is not None else self._metastore.get(user_mp)
+        if _route_meta is not None and _route_meta.is_external_storage:
             return ExternalRouteResult(
                 backend=entry.backend,
                 metastore=entry.metastore,

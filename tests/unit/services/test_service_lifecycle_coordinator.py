@@ -15,7 +15,7 @@ import pytest
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.contracts.protocols.service_lifecycle import PersistentService
-from nexus.core.kernel_dispatch import KernelDispatch
+from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.service_registry import ServiceRegistry
 
 # ---------------------------------------------------------------------------
@@ -28,17 +28,21 @@ def registry() -> ServiceRegistry:
     return ServiceRegistry()
 
 
+class _TestDispatch(DispatchMixin):
+    def __init__(self):
+        from nexus_fast import Kernel
+
+        self._kernel = Kernel()
+        self._init_dispatch()
+
+
 @pytest.fixture()
-def dispatch() -> KernelDispatch:
-    from nexus_fast import Kernel
-
-    d = KernelDispatch()
-    d._kernel = Kernel()
-    return d
+def dispatch() -> _TestDispatch:
+    return _TestDispatch()
 
 
 @pytest.fixture()
-def coordinator(dispatch: KernelDispatch) -> ServiceRegistry:
+def coordinator(dispatch: _TestDispatch) -> ServiceRegistry:
     return ServiceRegistry(dispatch=dispatch)
 
 
@@ -169,7 +173,7 @@ class TestRegisterService:
 
     @pytest.mark.asyncio()
     async def test_enlist_ignores_synthetic_hook_spec(
-        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _DynamicProxyLikeService()
 
@@ -188,7 +192,7 @@ class TestRegisterService:
 class TestMountService:
     @pytest.mark.asyncio()
     async def test_mount_registers_hooks(
-        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
         read_hook = MagicMock()
@@ -203,7 +207,7 @@ class TestMountService:
 
     @pytest.mark.asyncio()
     async def test_mount_no_hooks_if_no_spec(
-        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
         coordinator._register_service("search", svc)
@@ -220,7 +224,7 @@ class TestMountService:
 class TestUnmountService:
     @pytest.mark.asyncio()
     async def test_unmount_removes_hooks(
-        self, coordinator: ServiceRegistry, dispatch: KernelDispatch
+        self, coordinator: ServiceRegistry, dispatch: _TestDispatch
     ) -> None:
         svc = _FakeService()
         read_hook = MagicMock()
@@ -264,7 +268,7 @@ class TestSwapService:
     async def test_basic_swap(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         hook1 = MagicMock()
         spec1 = HookSpec(read_hooks=(hook1,))
@@ -327,7 +331,7 @@ class TestSwapService:
     async def test_swap_auto_detects_hook_spec_from_protocol(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """If no explicit hook_spec param, coordinator reads it from duck-typed hook_spec()."""
         hook1 = MagicMock()
@@ -458,7 +462,7 @@ class TestSwapWithFullHookSpec:
     async def test_swap_unregisters_old_hooks_registers_new(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """Multi-channel spec: old hooks removed, new hooks installed on same channels."""
         old_read = MagicMock()
@@ -498,7 +502,7 @@ class TestSwapWithFullHookSpec:
     async def test_swap_with_no_new_spec_clears_old(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """Swap without new hook_spec should unregister old hooks and leave none."""
         old_hook = MagicMock()
@@ -644,7 +648,7 @@ class TestUnregisterAllHooks:
     def test_unregisters_all_hooks(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         hook1 = MagicMock()
         hook2 = MagicMock()
@@ -716,7 +720,7 @@ class TestEnlist:
     async def test_enlist_auto_registers_hooks(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """Service with hook_spec(): enlist registers + captures hooks immediately."""
         hook = MagicMock()
@@ -733,7 +737,7 @@ class TestEnlist:
     async def test_enlist_persistent_with_hooks_pre_bootstrap(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """PersistentService + hook_spec pre-bootstrap: hooks registered, start deferred."""
         hook = MagicMock()
@@ -750,7 +754,7 @@ class TestEnlist:
     async def test_enlist_persistent_with_hooks_post_bootstrap(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """PersistentService + hook_spec post-bootstrap: hooks registered + started."""
         coordinator.mark_bootstrapped()
@@ -899,7 +903,7 @@ class TestSwapWithoutHooks:
     async def test_swap_plain_to_hookspec_registers_new_hooks(
         self,
         coordinator: ServiceRegistry,
-        dispatch: KernelDispatch,
+        dispatch: _TestDispatch,
     ) -> None:
         """Swap plain old → hook_spec new: new hooks get registered."""
         svc1 = _FakeService()

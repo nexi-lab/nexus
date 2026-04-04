@@ -1067,7 +1067,7 @@ async def write_to_connector(
             # overwrite (check WRITE on file) vs create (check WRITE on parent).
             _old_meta = nx.metadata.get(mount_path)
 
-            nx._dispatch.intercept_pre_write(
+            nx.intercept_pre_write(
                 _WHC(path=mount_path, content=data, context=write_context, old_metadata=_old_meta)
             )
 

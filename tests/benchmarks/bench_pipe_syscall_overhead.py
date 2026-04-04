@@ -182,12 +182,12 @@ def _bench_validate_path(nx, path: str) -> list[float]:
 def _bench_resolve_write(nx, path: str, data: bytes) -> list[float]:
     """[3c] Isolated dispatch.resolve_write() — trie lookup."""
     for _ in range(WARMUP):
-        nx._dispatch.resolve_write(path, data)
+        nx.resolve_write(path, data)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        nx._dispatch.resolve_write(path, data)
+        nx.resolve_write(path, data)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times

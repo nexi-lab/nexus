@@ -32,14 +32,11 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.contracts.protocols.service_lifecycle import PersistentService
 from nexus.lib.registry import BaseRegistry
-
-if TYPE_CHECKING:
-    from nexus.core.kernel_dispatch import KernelDispatch
 
 logger = logging.getLogger(__name__)
 
@@ -177,14 +174,14 @@ class ServiceRegistry(BaseRegistry["ServiceInfo"]):
     and integrated lifecycle orchestration (formerly ServiceLifecycleCoordinator).
     """
 
-    def __init__(self, dispatch: KernelDispatch | None = None) -> None:
+    def __init__(self, dispatch: Any = None) -> None:
         super().__init__(name="services")
         # Shared ref-counting state for ServiceRef proxies / drain
         self._refcounts: dict[str, int] = {}
         self._drain_events: dict[str, asyncio.Event] = {}
 
         # Lifecycle orchestration state (formerly SLC)
-        self._dispatch: KernelDispatch | None = dispatch
+        self._dispatch: Any = dispatch
         self._hook_specs: dict[str, HookSpec] = {}
         self._bootstrapped: bool = False
 

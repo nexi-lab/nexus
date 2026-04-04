@@ -417,7 +417,7 @@ class TestSlimIntegrationViaConnect:
         # FileWatcher + EventBusObserver + RevisionTrackingObserver are
         # unconditionally registered (Issue #969, #1382, #162); they
         # degrade gracefully when no bus or version is configured.
-        assert nx._dispatch.observer_count == 3
+        assert nx.observer_count == 3
 
     @pytest.mark.asyncio
     async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:

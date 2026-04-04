@@ -160,19 +160,26 @@ class TestEnlistWiredServices:
     def test_all_canonical_names_registered(self) -> None:
         import asyncio
 
-        from nexus.core.kernel_dispatch import KernelDispatch
+        from nexus.core.nexus_fs_dispatch import DispatchMixin
         from nexus.core.service_registry import ServiceRegistry
         from nexus.factory.service_routing import (
             _CANONICAL_NAMES,
             enlist_wired_services,
         )
 
+        class _TestDispatch(DispatchMixin):
+            def __init__(self):
+                from nexus_fast import Kernel
+
+                self._kernel = Kernel()
+                self._init_dispatch()
+
         # Build a dict with a unique mock per service
         wired_dict: dict[str, Any] = {}
         for src_key in _CANONICAL_NAMES:
             wired_dict[src_key] = MagicMock(name=f"mock_{src_key}")
 
-        dispatch = KernelDispatch()
+        dispatch = _TestDispatch()
         reg = ServiceRegistry(dispatch=dispatch)
         count = asyncio.run(enlist_wired_services(reg, wired_dict))
         assert count == len(_CANONICAL_NAMES)

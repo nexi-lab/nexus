@@ -652,4 +652,4 @@ async def _register_vfs_hooks(
     if os.getenv("NEXUS_TEST_HOOKS") == "true":
         from nexus.core.test_hooks import register_test_hooks
 
-        register_test_hooks(nx._dispatch)
+        register_test_hooks(nx)

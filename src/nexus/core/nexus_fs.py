@@ -30,6 +30,7 @@ from nexus.core.config import (
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
+from nexus.core.nexus_fs_dispatch import DispatchMixin
 from nexus.core.nexus_fs_ipc import IPCMixin
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
@@ -61,6 +62,7 @@ class _WriteContentResult(NamedTuple):
 
 
 class NexusFS(  # type: ignore[misc]
+    DispatchMixin,
     LockMixin,
     IPCMixin,
     WatchMixin,
@@ -184,9 +186,7 @@ class NexusFS(  # type: ignore[misc]
             vfs_lock_manager=self._vfs_lock_manager,
         )
 
-        from nexus.core.kernel_dispatch import KernelDispatch
-
-        self._dispatch: KernelDispatch = KernelDispatch()
+        self._init_dispatch()
 
         import os as _os_ipc
 
@@ -205,7 +205,7 @@ class NexusFS(  # type: ignore[misc]
 
         self._driver_coordinator: DriverLifecycleCoordinator = DriverLifecycleCoordinator(
             self._mount_table,
-            self._dispatch,
+            self,
             self_address=_ipc_self_addr,
             transport_pool=self._transport_pool,
         )
@@ -232,7 +232,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.core.service_registry import ServiceRegistry
 
-        self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
+        self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self)
 
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
         # Optional: requires nexus_fast Rust extension. Falls back to pure
@@ -245,14 +245,12 @@ class NexusFS(  # type: ignore[misc]
                 from nexus_fast import Kernel as _Kernel
 
                 self._kernel = _Kernel()
-                # Wire kernel into subsystems that need Rust fast-path access
                 metadata_store._kernel = self._kernel
                 self._mount_table._kernel = self._kernel
-                self._dispatch._kernel = self._kernel
-                # Wire VFS lock if available
                 _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                 if _vfs_rust is not None:
                     self._kernel.set_vfs_lock(_vfs_rust)
+                self._kernel.set_metastore(metadata_store)
             except Exception as exc:
                 import logging as _logging
 
@@ -260,10 +258,6 @@ class NexusFS(  # type: ignore[misc]
                     "Kernel init failed — falling back to Python path: %s", exc
                 )
                 self._kernel = None
-
-        # Wire metastore (PyMetastoreAdapter wraps Python MetastoreABC → Rust Metastore trait)
-        # After this, sys_read dcache-miss falls back to metastore.get() in Rust.
-        self._kernel.set_metastore(metadata_store)
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
@@ -565,7 +559,7 @@ class NexusFS(  # type: ignore[misc]
             from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
             try:
-                self._dispatch.intercept_pre_stat(
+                self.intercept_pre_stat(
                     _SHC(
                         path=path,
                         context=ctx,
@@ -1203,7 +1197,7 @@ class NexusFS(  # type: ignore[misc]
 
         path = self._validate_path(path)
         context = self._parse_context(context)
-        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
+        _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
             content = _resolve_hint or b""
             if offset or count is not None:
@@ -1213,10 +1207,10 @@ class NexusFS(  # type: ignore[misc]
             return content
 
         # [INTERMEDIATE] PRE-INTERCEPT: hooks — migrates to Rust dispatch middleware in PR 7
-        if self._dispatch.read_hook_count > 0:
+        if self.read_hook_count > 0:
             from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+            self.intercept_pre_read(_RHC(path=path, context=context))
 
         # ── KERNEL (Rust — dcache hit: zero GIL, dcache miss: metastore fallback via GIL) ──
         _is_admin = (
@@ -1238,7 +1232,7 @@ class NexusFS(  # type: ignore[misc]
             data = data[offset : offset + count] if count is not None else data[offset:]
 
         # [INTERMEDIATE] POST-INTERCEPT: hooks — migrates to Rust thread::spawn in PR 7
-        if result.post_hook_needed or (not result.hit and self._dispatch.read_hook_count > 0):
+        if result.post_hook_needed or (not result.hit and self.read_hook_count > 0):
             zone_id, agent_id, _ = self._get_context_identity(context)
             from nexus.contracts.vfs_hooks import ReadHookContext
 
@@ -1250,7 +1244,7 @@ class NexusFS(  # type: ignore[misc]
                 content=data,
                 content_hash=result.content_hash,
             )
-            await self._dispatch.intercept_post_read(_read_ctx)
+            await self.intercept_post_read(_read_ctx)
             data = _read_ctx.content or data
 
         return data
@@ -1332,7 +1326,7 @@ class NexusFS(  # type: ignore[misc]
             allowed: list[str] = []
             for p in validated_paths:
                 try:
-                    self._dispatch.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
+                    self.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
                     allowed.append(p)
                 except PermissionDeniedError:
                     pass
@@ -1607,17 +1601,17 @@ class NexusFS(  # type: ignore[misc]
         context = self._parse_context(context)
 
         # FAST PATH: check virtual path resolvers first
-        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
+        _handled, _resolve_hint = self.resolve_read(path, context=context)
         if _handled:
             return (_resolve_hint or b"")[start:end]
 
         # OPTIMISED PATH: no post-read hooks + backend has read_content_range
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        has_post_hooks = self._dispatch.read_hook_count > 0
+        has_post_hooks = self.read_hook_count > 0
 
         if not has_post_hooks:
-            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+            self.intercept_pre_read(_RHC(path=path, context=context))
 
             zone_id, agent_id, is_admin = self._get_context_identity(context)
             route = self.router.route(
@@ -1692,7 +1686,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT: pre-read hooks (Issue #899)
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+        self.intercept_pre_read(_RHC(path=path, context=context))
 
         # Route to backend with access control
         zone_id, agent_id, is_admin = self._get_context_identity(context)
@@ -1739,7 +1733,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
         from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+        self.intercept_pre_read(_RHC(path=path, context=context))
 
         zone_id, agent_id, is_admin = self._get_context_identity(context)
         route = self.router.route(
@@ -1814,7 +1808,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
-        self._dispatch.intercept_pre_write(_WHC(path=path, content=b"", context=context))
+        self.intercept_pre_write(_WHC(path=path, content=b"", context=context))
 
         # Get existing metadata for version tracking
         now = datetime.now(UTC)
@@ -1858,7 +1852,7 @@ class NexusFS(  # type: ignore[misc]
         route.metastore.put(new_meta)
 
         # Issue #3391: OBSERVE dispatch was missing for write_stream — add it.
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -1883,7 +1877,7 @@ class NexusFS(  # type: ignore[misc]
             is_new_file=(meta is None),
             metadata=new_meta,
         )
-        await self._dispatch.intercept_post_write(_ws_ctx)
+        await self.intercept_post_write(_ws_ctx)
 
         return {
             "etag": content_hash,
@@ -1934,7 +1928,7 @@ class NexusFS(  # type: ignore[misc]
 
         # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
         context = self._parse_context(context)
-        _handled, _result = self._dispatch.resolve_write(path, buf)
+        _handled, _result = self.resolve_write(path, buf)
         if _handled:
             base: dict[str, Any] = {"path": path, "bytes_written": len(buf)}
             if isinstance(_result, dict):
@@ -1999,7 +1993,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
         from nexus.contracts.vfs_hooks import MkdirHookContext
 
-        self._dispatch.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
+        self.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
 
         # Route to backend with write access check
         route = self.router.route(
@@ -2040,7 +2034,7 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # Issue #900/#3391: Unified two-phase dispatch — OBSERVE then INTERCEPT
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.DIR_CREATE,
                 path=path,
@@ -2049,7 +2043,7 @@ class NexusFS(  # type: ignore[misc]
                 user_id=ctx.user_id,
             )
         )
-        await self._dispatch.intercept_post_mkdir(
+        await self.intercept_post_mkdir(
             MkdirHookContext(
                 path=path,
                 context=ctx,
@@ -2164,7 +2158,7 @@ class NexusFS(  # type: ignore[misc]
         _consistency = consistency or "sc"
 
         # PRE-DISPATCH: virtual path resolvers
-        _handled, _result = self._dispatch.resolve_write(path, buf)
+        _handled, _result = self.resolve_write(path, buf)
         if _handled:
             return _result
 
@@ -2251,7 +2245,7 @@ class NexusFS(  # type: ignore[misc]
         # Hook handles existing-file (owner fast-path) vs new-file (parent check)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
-        self._dispatch.intercept_pre_write(
+        self.intercept_pre_write(
             _WHC(
                 path=path,
                 content=content,
@@ -2373,7 +2367,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=path,
@@ -2402,7 +2396,7 @@ class NexusFS(  # type: ignore[misc]
             old_metadata=result.old_metadata,
             new_version=result.new_version,
         )
-        await self._dispatch.intercept_post_write(_write_ctx)
+        await self.intercept_post_write(_write_ctx)
 
         # Return metadata for optimistic concurrency control
         return {
@@ -2875,7 +2869,7 @@ class NexusFS(  # type: ignore[misc]
 
         for path in paths:
             meta = existing_metadata.get(path)
-            self._dispatch.intercept_pre_write(
+            self.intercept_pre_write(
                 _WHC(
                     path=path,
                     content=b"",
@@ -2944,7 +2938,7 @@ class NexusFS(  # type: ignore[misc]
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        await self._dispatch.intercept_post_write_batch(
+        await self.intercept_post_write_batch(
             items,
             context=context,
             zone_id=zone_id,
@@ -2955,7 +2949,7 @@ class NexusFS(  # type: ignore[misc]
         for metadata in metadata_list:
             old_meta = existing_metadata.get(metadata.path)
             is_new = old_meta is None
-            await self._dispatch.notify(
+            await self.notify(
                 FileEvent(
                     type=FileEventType.FILE_WRITE,
                     path=metadata.path,
@@ -3026,7 +3020,7 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _result = self._dispatch.resolve_delete(path, context=context)
+        _handled, _result = self.resolve_delete(path, context=context)
         if _handled:
             return _result
 
@@ -3078,7 +3072,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT: pre-delete hooks (Issue #899)
         from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
 
-        self._dispatch.intercept_pre_delete(_DHC(path=path, context=context))
+        self.intercept_pre_delete(_DHC(path=path, context=context))
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         from nexus.contracts.vfs_hooks import DeleteHookContext
@@ -3090,14 +3084,14 @@ class NexusFS(  # type: ignore[misc]
             agent_id=agent_id,
             metadata=meta,
         )
-        await self._dispatch.intercept_post_delete(_delete_ctx)
+        await self.intercept_post_delete(_delete_ctx)
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         with self._vfs_locked(path, "write"):
             route.metastore.delete(path)
 
         # --- Lock released — event dispatch ---
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.FILE_DELETE,
                 path=path,
@@ -3130,7 +3124,7 @@ class NexusFS(  # type: ignore[misc]
 
         from nexus.contracts.vfs_hooks import RmdirHookContext
 
-        self._dispatch.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
+        self.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
 
         # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
         if meta.is_mount:
@@ -3169,7 +3163,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # OBSERVE then INTERCEPT (Issue #3391)
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.DIR_DELETE,
                 path=path,
@@ -3178,7 +3172,7 @@ class NexusFS(  # type: ignore[misc]
                 user_id=ctx.user_id,
             )
         )
-        await self._dispatch.intercept_post_rmdir(
+        await self.intercept_post_rmdir(
             RmdirHookContext(
                 path=path,
                 context=ctx,
@@ -3273,7 +3267,7 @@ class NexusFS(  # type: ignore[misc]
             is_directory=bool(is_directory),
             metadata=meta,
         )
-        self._dispatch.intercept_pre_rename(_rename_ctx)
+        self.intercept_pre_rename(_rename_ctx)
 
         # ── VFS I/O Lock: exclusive write lock on BOTH paths ──
         # Sorted order = deadlock-free (like Linux i_rwsem on both inodes).
@@ -3343,7 +3337,7 @@ class NexusFS(  # type: ignore[misc]
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.FILE_RENAME,
                 path=old_path,
@@ -3356,7 +3350,7 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1682: ReBAC path update moved to post_rename hooks.
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
-        await self._dispatch.intercept_post_rename(_rename_ctx)
+        await self.intercept_post_rename(_rename_ctx)
 
         return {}
 
@@ -3430,7 +3424,7 @@ class NexusFS(  # type: ignore[misc]
             agent_id=agent_id,
             metadata=src_meta,
         )
-        self._dispatch.intercept_pre_copy(_copy_ctx)
+        self.intercept_pre_copy(_copy_ctx)
 
         # VFS I/O Lock: exclusive write on dst, shared read on src
         _first, _second = sorted([src_path, dst_path])
@@ -3594,7 +3588,7 @@ class NexusFS(  # type: ignore[misc]
             mark_released(L1_VFS)
 
         # Lock released — event dispatch + side effects
-        await self._dispatch.notify(
+        await self.notify(
             FileEvent(
                 type=FileEventType.FILE_COPY,
                 path=src_path,
@@ -3606,7 +3600,7 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        await self._dispatch.intercept_post_copy(_copy_ctx)
+        await self.intercept_post_copy(_copy_ctx)
 
         return result
 
@@ -3701,7 +3695,7 @@ class NexusFS(  # type: ignore[misc]
             from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
             try:
-                self._dispatch.intercept_pre_stat(
+                self.intercept_pre_stat(
                     _SHC(
                         path=path,
                         context=ctx,
@@ -3717,7 +3711,7 @@ class NexusFS(  # type: ignore[misc]
         else:
             from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
-            self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
+            self.intercept_pre_read(_RHC(path=path, context=context))
 
         # Return directory info for implicit directories
         if is_implicit_dir:
@@ -3831,7 +3825,7 @@ class NexusFS(  # type: ignore[misc]
             allowed: list[str] = []
             for p in validated_paths:
                 try:
-                    self._dispatch.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
+                    self.intercept_pre_stat(_SHC(path=p, context=ctx, permission="READ"))
                     allowed.append(p)
                 except PermissionDeniedError:
                     pass
@@ -3920,7 +3914,7 @@ class NexusFS(  # type: ignore[misc]
             from nexus.contracts.vfs_hooks import StatHookContext as _SHC
 
             try:
-                self._dispatch.intercept_pre_stat(
+                self.intercept_pre_stat(
                     _SHC(
                         path=path,
                         context=ctx,
@@ -4039,9 +4033,7 @@ class NexusFS(  # type: ignore[misc]
 
                 ctx = self._resolve_cred(context)
                 try:
-                    self._dispatch.intercept_pre_stat(
-                        _SHC(path=path, context=ctx, permission="READ")
-                    )
+                    self.intercept_pre_stat(_SHC(path=path, context=ctx, permission="READ"))
                 except PermissionDeniedError:
                     results[path] = None
                     continue
@@ -4163,7 +4155,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT: pre-write hooks (Issue #899)
         from nexus.contracts.vfs_hooks import WriteHookContext as _WHC
 
-        self._dispatch.intercept_pre_write(_WHC(path=path, content=b"", context=context))
+        self.intercept_pre_write(_WHC(path=path, content=b"", context=context))
 
         # Check if path exists (explicit or implicit)
         meta = route.metastore.get(path)
@@ -4241,7 +4233,7 @@ class NexusFS(  # type: ignore[misc]
 
     def register_observe(self, observer: Any) -> None:
         """Register a mutation observer (OBSERVE phase, Issue #900)."""
-        self._dispatch.register_observe(observer)
+        self.register_observe(observer)
 
     # ------------------------------------------------------------------
     # Method forwarders — delegate to services.
@@ -4637,7 +4629,7 @@ class NexusFS(  # type: ignore[misc]
         delegates to close() for sync resource cleanup.
         """
         # Issue #3391: drain deferred OBSERVE background tasks before tearing down.
-        await self._dispatch.shutdown()
+        await self.shutdown()
 
         coord = self.service_coordinator
         if coord is not None:

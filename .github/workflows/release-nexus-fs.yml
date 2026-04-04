@@ -103,12 +103,15 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import pathlib
           import urllib.error
           import urllib.request
 
           version = os.environ["NEXUS_FS_VERSION"]
+          local_files = {p.name for p in pathlib.Path("dist-nexus-fs").iterdir()}
+
           url = "https://pypi.org/pypi/nexus-fs/json"
-          exists = False
+          remote_files = set()
 
           try:
               with urllib.request.urlopen(url) as response:
@@ -117,19 +120,35 @@ jobs:
               if exc.code != 404:
                   raise
           else:
-              exists = version in payload.get("releases", {})
+              remote_files = {
+                  f["filename"]
+                  for f in payload.get("releases", {}).get(version, [])
+              }
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
-              fh.write(f"exists={'true' if exists else 'false'}\n")
+          missing = local_files - remote_files
+          already_present = local_files & remote_files
 
-          if exists:
-              print(f"⏭ nexus-fs {version} already on PyPI — skipping publish, continuing post-publish steps")
+          if not missing:
+              # All local artifacts are already on PyPI — safe to skip publish.
+              print(f"⏭ All artifacts for nexus-fs {version} already on PyPI — skipping publish")
+              skip = "true"
+          elif already_present:
+              # Partial upload detected — fail loudly so the state is not silently ignored.
+              print(f"❌ Partial publish detected for nexus-fs {version}:")
+              print(f"   Already on PyPI : {sorted(already_present)}")
+              print(f"   Missing         : {sorted(missing)}")
+              print("   Manual intervention required — cannot safely re-upload partial releases.")
+              raise SystemExit(1)
           else:
               print(f"✅ nexus-fs {version} not yet on PyPI — proceeding with publish")
+              skip = "false"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"skip={skip}\n")
           PY
 
       - name: Publish nexus-fs to PyPI
-        if: steps.pypi-check.outputs.exists != 'true'
+        if: steps.pypi-check.outputs.skip != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}

@@ -96,14 +96,36 @@ repos:
       # Rust clippy (requires compilation, ~10-30s per crate)
       - id: rust-clippy-fast
         name: Rust Clippy (nexus_kernel)
-        entry: bash -c 'cd rust/nexus_kernel && cargo clippy -- -D warnings'
+        entry: bash -c 'cd rust/nexus_kernel && cargo clippy --all-targets -- -D warnings'
         language: system
         pass_filenames: false
         files: ^rust/nexus_kernel/.*\.rs$
 
       - id: rust-clippy-raft
         name: Rust Clippy (nexus_raft)
-        entry: bash -c 'cd rust/nexus_raft && cargo clippy --all-features -- -D warnings'
+        entry: bash -c 'cd rust/nexus_raft && cargo clippy --all-targets --all-features -- -D warnings'
         language: system
         pass_filenames: false
         files: ^rust/nexus_raft/.*\.rs$
+
+      # Codegen sync check — regenerate + ruff format + verify no diff
+      - id: codegen-check
+        name: Codegen Sync Check
+        entry: >-
+          bash -c 'python3 scripts/codegen_kernel_abi.py
+          && python3 -m ruff format stubs/nexus_kernel/__init__.pyi src/nexus/core/kernel_protocols.py src/nexus/core/kernel_exports.py --quiet
+          && git diff --quiet stubs/nexus_kernel/__init__.pyi src/nexus/core/kernel_protocols.py src/nexus/core/kernel_exports.py
+          || (echo "ERROR: codegen output stale — run: python3 scripts/codegen_kernel_abi.py" && exit 1)'
+        language: system
+        pass_filenames: false
+        files: ^(rust/nexus_kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py)$
+
+      # Rust quality: no todo!()/unimplemented!() in committed code
+      - id: rust-no-todo
+        name: "No todo!/unimplemented! in Rust"
+        entry: >-
+          bash -c 'grep -rn "todo!\|unimplemented!" rust/nexus_kernel/src/ --include="*.rs"
+          && echo "ERROR: Remove todo/unimplemented before committing" && exit 1 || exit 0'
+        language: system
+        pass_filenames: false
+        files: ^rust/nexus_kernel/.*\.rs$

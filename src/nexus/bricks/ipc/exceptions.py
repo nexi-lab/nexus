@@ -20,6 +20,7 @@ class DLQReason(StrEnum):
     BACKPRESSURE = "backpressure"
     INVALID_SIGNATURE = "invalid_signature"
     UNSIGNED_MESSAGE = "unsigned_message"
+    STALE_INBOX = "stale_inbox"
 
 
 class IPCError(Exception):

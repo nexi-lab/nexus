@@ -14,7 +14,10 @@ This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.
 """
 
+from __future__ import annotations
+
 from collections.abc import AsyncIterator
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -58,6 +61,18 @@ class VFSOperations(Protocol):
 
     async def access(self, path: str, zone_id: str) -> bool:
         """Check if a path exists."""
+        ...
+
+    async def sys_unlink(self, path: str, zone_id: str) -> None:
+        """Delete a file at the given path."""
+        ...
+
+    async def file_mtime(self, path: str, zone_id: str) -> "datetime | None":
+        """Return the server-observed modification time of a file, or None if unknown.
+
+        Used by retention logic to base age on actual write time rather than
+        sender-controlled envelope timestamps encoded in filenames.
+        """
         ...
 
 

@@ -5,6 +5,7 @@ without any real I/O, enabling fast, isolated unit tests.
 """
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -17,6 +18,7 @@ class InMemoryStorageDriver:
     def __init__(self) -> None:
         self._files: dict[tuple[str, str], bytes] = {}
         self._dirs: set[tuple[str, str]] = set()
+        self._mtimes: dict[tuple[str, str], datetime] = {}
 
     async def sys_read(self, path: str, zone_id: str) -> bytes:
         key = (path, zone_id)
@@ -29,6 +31,7 @@ class InMemoryStorageDriver:
 
     async def write(self, path: str, data: bytes, zone_id: str) -> None:
         self._files[(path, zone_id)] = data
+        self._mtimes[(path, zone_id)] = datetime.now(UTC)
 
     # Alias for backward compatibility
     sys_write = write
@@ -64,6 +67,11 @@ class InMemoryStorageDriver:
             raise FileNotFoundError(f"No such file: {src}")
         data = self._files.pop(key)
         self._files[(dst, zone_id)] = data
+        # Rename resets mtime to now (mirrors NexusFS which sets modified_at=now
+        # on rename). This is important for _recover_claimed_files: a fresh claim
+        # has mtime=now so it won't be treated as a stale orphan.
+        self._mtimes.pop(key, None)
+        self._mtimes[(dst, zone_id)] = datetime.now(UTC)
 
     async def mkdir(self, path: str, zone_id: str) -> None:
         self._dirs.add((path, zone_id))
@@ -78,6 +86,20 @@ class InMemoryStorageDriver:
 
     # Alias for backward compatibility
     exists = access
+
+    async def sys_unlink(self, path: str, zone_id: str) -> None:
+        key = (path, zone_id)
+        if key not in self._files:
+            raise FileNotFoundError(f"No such file: {path}")
+        del self._files[key]
+        self._mtimes.pop(key, None)
+
+    async def file_mtime(self, path: str, zone_id: str) -> datetime | None:
+        return self._mtimes.get((path, zone_id))
+
+    def set_mtime(self, path: str, zone_id: str, mtime: datetime) -> None:
+        """Test helper: override the mtime of an existing file."""
+        self._mtimes[(path, zone_id)] = mtime
 
 
 # Alias for backward compatibility — tests that imported InMemoryVFS

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -124,3 +125,53 @@ class KernelVFSAdapter:
 
     # Alias for backward compatibility
     exists = access
+
+    async def sys_unlink(self, path: str, zone_id: str) -> None:
+        self._require_bound()
+        ctx = self._ctx(zone_id)
+        await self._nx.sys_unlink(path, context=ctx)
+
+    async def file_mtime(self, path: str, zone_id: str) -> "datetime | None":  # noqa: ARG002
+        """Return the server-observed modification time.
+
+        Tries two sources in order:
+        1. Metastore ``modified_at`` — authoritative for all backends but may miss
+           on ``/agents`` mounts where Raft prefix scans are bypassed (see list_dir).
+        2. OS ``stat()`` via the backend's physical path — server-controlled and
+           reliable for LocalConnector; silently skipped for remote/object backends.
+
+        Returns ``None`` when neither source is available. Callers must handle
+        ``None`` as a safe-fail (skip retention action) — never fall back to
+        filename timestamps, which are sender-controlled.
+        """
+        self._require_bound()
+        try:
+            route = self._nx.router.route(path, is_admin=True, check_write=False)
+
+            # Source 1: metastore modified_at
+            meta = route.metastore.get(path)
+            if meta is not None:
+                mtime = getattr(meta, "modified_at", None)
+                if mtime is not None:
+                    return mtime
+
+            # Source 2: OS stat via backend physical path (LocalConnector only)
+            import asyncio
+
+            physical_path = getattr(route, "backend_path", None)
+            if physical_path:
+                # Resolve through backend if it exposes _to_physical
+                to_phys = getattr(route.backend, "_to_physical", None)
+                if to_phys is not None:
+                    try:
+                        phys = to_phys(physical_path)
+                        stat = await asyncio.to_thread(
+                            lambda p=phys: p.stat() if p.exists() else None
+                        )
+                        if stat is not None:
+                            return datetime.fromtimestamp(stat.st_mtime, UTC)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return None

@@ -13,8 +13,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import uuid
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import (
@@ -63,6 +64,13 @@ DEFAULT_MAX_HANDLER_CONCURRENCY = 50
 
 # Maximum consecutive listener failures before stopping reconnection
 _MAX_LISTENER_RETRIES = 5
+
+# Minutes before an orphaned .proc_ claim file is considered stale and recovered.
+# MUST be set to at least 2× the maximum handler execution time for your deployment.
+# The default of 1440 minutes (24 hours) is conservative — set it lower only when
+# you are certain no handler runs longer than half this window.
+# WARNING: Setting this too low allows concurrent replay of non-idempotent handlers.
+PROC_CLAIM_STALE_MINUTES: int = 1440  # 24 hours
 
 
 class MessageSender:
@@ -507,6 +515,36 @@ class MessageProcessor:
             )
             return 0
 
+        # Recover orphaned .proc_{claim_ts}_{id} files from previously crashed processors.
+        # A .proc_ file means the processor claimed the message before handler execution
+        # but crashed before completing. We only recover files whose embedded claim_ts is
+        # older than _PROC_CLAIM_STALE_MINUTES — active handlers are left alone.
+        # Dedup cache prevents double-execution when the handler already succeeded.
+        stale_cutoff = datetime.now(UTC) - timedelta(minutes=PROC_CLAIM_STALE_MINUTES)
+        all_filenames = sorted(filenames)
+        for fn in all_filenames:
+            if ".json.proc_" not in fn:
+                continue
+            proc_path = f"{agent_inbox}/{fn}"
+            # Filename: "{orig_prefix}.json.proc_{claim_ts}_{proc_id}"
+            # Extract orig filename and claim_ts
+            try:
+                pre, proc_suffix = fn.split(".json.proc_", 1)
+                orig_fn = pre + ".json"
+                claim_ts_str = proc_suffix.split("_", 1)[0]
+                claim_dt = datetime.strptime(claim_ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+            except (ValueError, IndexError):
+                continue  # unparseable — leave it alone
+            if claim_dt >= stale_cutoff:
+                continue  # recently claimed — active handler, do not disturb
+            orig_path = f"{agent_inbox}/{orig_fn}"
+            if not await self._storage.access(orig_path, self._zone_id):
+                try:
+                    await self._storage.rename(proc_path, orig_path, self._zone_id)
+                    logger.info("Recovered stale .proc claim: %s → %s", fn, orig_fn)
+                except Exception:
+                    pass
+
         # Sort by filename (timestamp prefix gives chronological order)
         filenames = sorted(f for f in filenames if f.endswith(".json"))
 
@@ -585,6 +623,28 @@ class MessageProcessor:
         # Signature verification (when signing_mode != OFF)
         if not await self._verify_signature(msg_path, envelope):
             return
+
+        # Claim the message before handler execution.
+        # Rename to "{msg_path}.proc_{claim_ts}_{proc_id}" — the embedded claim_ts
+        # lets process_inbox() distinguish active handlers from stale orphans
+        # (only recover files older than _PROC_CLAIM_STALE_MINUTES).
+        # The drain filters for .json files; .proc_ files are invisible to it.
+        claim_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        proc_id = uuid.uuid4().hex[:4]
+        proc_path = f"{msg_path}.proc_{claim_ts}_{proc_id}"
+        try:
+            await self._storage.rename(msg_path, proc_path, self._zone_id)
+            msg_path = proc_path  # use claimed path for all subsequent ops
+        except FileNotFoundError:
+            # Drain or concurrent processor already claimed/moved it — skip.
+            logger.debug(
+                "Message at %s already claimed (drain or concurrent processor), skipping",
+                msg_path,
+            )
+            return
+        except Exception as claim_exc:
+            # Non-fatal: proceed with original path, accepting the unlikely race.
+            logger.debug("Could not claim %s for processing, continuing: %s", msg_path, claim_exc)
 
         # Invoke handler with exponential backoff retry.
         # NonRetryableError skips retry and dead-letters immediately.

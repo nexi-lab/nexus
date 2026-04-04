@@ -171,8 +171,62 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
-        # KernelDispatch OBSERVE registration (Issue #900) - server-side observer registration
-        "register_observe",  # Internal - registers VFS observers for workflow dispatch
+        # DispatchMixin methods (collapsed from KernelDispatch, PR 7c) — server-side only
+        "register_observe",  # Internal - registers VFS observers
+        "unregister_observe",  # Internal - unregisters VFS observers
+        "register_resolver",  # Internal - registers PRE-DISPATCH resolvers
+        "unregister_resolver",  # Internal - unregisters PRE-DISPATCH resolvers
+        "register_intercept",  # Internal - generic hook registration
+        "register_intercept_read",  # Internal - INTERCEPT hook registration
+        "register_intercept_write",  # Internal - INTERCEPT hook registration
+        "register_intercept_write_batch",  # Internal - INTERCEPT hook registration
+        "register_intercept_delete",  # Internal - INTERCEPT hook registration
+        "register_intercept_rename",  # Internal - INTERCEPT hook registration
+        "register_intercept_copy",  # Internal - INTERCEPT hook registration
+        "register_intercept_mkdir",  # Internal - INTERCEPT hook registration
+        "register_intercept_rmdir",  # Internal - INTERCEPT hook registration
+        "register_intercept_stat",  # Internal - INTERCEPT hook registration
+        "register_intercept_access",  # Internal - INTERCEPT hook registration
+        "unregister_intercept",  # Internal - generic hook unregistration
+        "unregister_intercept_read",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_write",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_write_batch",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_delete",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_rename",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_copy",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_mkdir",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_rmdir",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_stat",  # Internal - INTERCEPT hook unregistration
+        "unregister_intercept_access",  # Internal - INTERCEPT hook unregistration
+        "register_mount_hook",  # Internal - mount lifecycle hook
+        "register_unmount_hook",  # Internal - unmount lifecycle hook
+        "unregister_mount_hook",  # Internal - mount lifecycle hook
+        "unregister_unmount_hook",  # Internal - unmount lifecycle hook
+        "resolve_read",  # Internal - PRE-DISPATCH resolver
+        "resolve_write",  # Internal - PRE-DISPATCH resolver
+        "resolve_delete",  # Internal - PRE-DISPATCH resolver
+        "intercept_pre_read",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_write",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_delete",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_rename",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_copy",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_mkdir",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_rmdir",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_stat",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_pre_access",  # Internal - PRE-INTERCEPT dispatch
+        "intercept_post_read",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_write",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_write_batch",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_delete",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_rename",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_copy",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_mkdir",  # Internal - POST-INTERCEPT dispatch
+        "intercept_post_rmdir",  # Internal - POST-INTERCEPT dispatch
+        "notify",  # Internal - OBSERVE dispatch
+        "notify_mount",  # Internal - mount notification
+        "notify_unmount",  # Internal - unmount notification
+        "has_hooks",  # Internal - hook existence check
+        "shutdown",  # Internal - background task drain
         # ABC compliance stubs (Issue #2033 LEGO decomposition)
         # These delegate to extracted services which already have @rpc_expose.
         # NexusFS defines them only to satisfy NexusFilesystem ABC requirements.

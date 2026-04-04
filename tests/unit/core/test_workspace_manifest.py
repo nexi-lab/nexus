@@ -1,6 +1,6 @@
 """Tests for WorkspaceManifest dataclass.
 
-Issue #1264: Extracted manifest format shared between WorkspaceManager and OverlayResolver.
+Issue #1264: Extracted manifest format shared by WorkspaceManager.
 Pattern follows: tests/unit/backends/test_chunked_storage.py (TestChunkInfo, TestChunkedReference)
 """
 

@@ -1,7 +1,7 @@
-"""Workspace manifest for snapshot and overlay operations.
+"""Workspace manifest for snapshot operations.
 
-Provides a shared dataclass for workspace snapshot manifests, used by both
-WorkspaceManager (snapshot/restore/diff) and OverlayResolver (base layer resolution).
+Provides a shared dataclass for workspace snapshot manifests, used by
+WorkspaceManager (snapshot/restore/diff).
 
 The manifest maps relative file paths to their content hashes and metadata.
 It is stored as JSON in CAS, with entries sorted by path for deterministic hashing.
@@ -12,7 +12,7 @@ JSON format (backward-compatible with existing snapshots):
         "rel/path/other.py": {"hash": "def456...", "size": 512, "mime_type": "text/x-python"}
     }
 
-Issue #1264: Extracted from WorkspaceManager to enable DRY sharing with OverlayResolver.
+Issue #1264: Extracted from WorkspaceManager as a shared contract.
 Pattern follows: chunked_storage.py (ChunkInfo + ChunkedReference)
 """
 
@@ -58,9 +58,8 @@ class ManifestEntry:
 class WorkspaceManifest:
     """Manifest of all files in a workspace snapshot.
 
-    Maps relative file paths to their content metadata. Used as:
-    - Snapshot format for WorkspaceManager (create/restore/diff)
-    - Base layer for OverlayResolver (Issue #1264)
+    Maps relative file paths to their content metadata. Used as the
+    snapshot format for WorkspaceManager (create/restore/diff).
 
     Entries are sorted by path for deterministic JSON serialization,
     ensuring the same workspace state produces the same manifest hash.

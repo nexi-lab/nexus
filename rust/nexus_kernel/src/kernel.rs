@@ -497,6 +497,8 @@ impl Kernel {
         }
 
         // 7. Return result
+        // CDC manifests are reassembled by CASEngine.read_content() — no special
+        // handling needed here. Content is always the final assembled bytes.
         match content {
             Some(data) => Ok(SysReadResult {
                 hit: true,
@@ -504,7 +506,6 @@ impl Kernel {
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag,
             }),
-            // No Rust backend available (e.g. remote) — wrapper handles
             None => miss(),
         }
     }

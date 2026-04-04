@@ -264,7 +264,6 @@ class NexusFS(  # type: ignore[misc]
         # None = graceful degrade (like Linux LSM: no module loaded = no check).
 
         self._event_bus: Any = None
-        self._overlay_resolver = None
         # Lifecycle state — set by link() / initialize() / bootstrap()
         self._linked: bool = False
         self._initialized: bool = False
@@ -1035,32 +1034,6 @@ class NexusFS(  # type: ignore[misc]
     # Core VFS File Operations (Issue #899)
     # =================================================================
 
-    def _get_overlay_config(self, path: str) -> Any:
-        """Get overlay config for a path, if overlay is active.
-
-        Issue #1801: Reads workspace_registry from service registry.
-
-        Returns:
-            OverlayConfig if overlay active for this path, None otherwise
-        """
-        ws_reg = self.service("workspace_registry")
-        if ws_reg is None:
-            return None
-        ws_config = ws_reg.find_workspace_for_path(path)
-        if ws_config is None:
-            return None
-        overlay_data = ws_config.metadata.get("overlay_config")
-        if overlay_data is None:
-            return None
-        from nexus.contracts.overlay_config import OverlayConfig
-
-        return OverlayConfig(
-            enabled=overlay_data.get("enabled", False),
-            base_manifest_hash=overlay_data.get("base_manifest_hash"),
-            workspace_path=ws_config.path,
-            agent_id=overlay_data.get("agent_id"),
-        )
-
     # =========================================================================
     # VFS I/O Lock — kernel-internal path-level read/write protection
     # =========================================================================
@@ -1096,14 +1069,12 @@ class NexusFS(  # type: ignore[misc]
         return handle
 
     def _backend_read(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
-        """Read from Python backend (non-Rust backends: GCS, remote, external).
+        """Read from Python backend (non-Rust backends: GCS, remote).
 
         Called when Rust CAS engine returns hit=False (no local blob).
-        Metadata is already in dcache (populated by metastore fallback).
+        ExternalRouteResult is handled by pre-check in sys_read — never reaches here.
         """
         route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
-
-        from nexus.core.router import ExternalRouteResult
 
         _ctx = (
             _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
@@ -1113,18 +1084,8 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        if isinstance(route, ExternalRouteResult):
-            return route.backend.read_content("", context=_ctx)
-
         meta = route.metastore.get(path)
-        # Overlay resolution: check base layer if upper has no entry
-        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-            overlay_config = self._get_overlay_config(path)
-            if overlay_config:
-                meta = self._overlay_resolver.resolve_read(path, overlay_config)
         if meta is None or (meta.etag is None and not route.backend_path):
-            raise NexusFileNotFoundError(path)
-        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
             raise NexusFileNotFoundError(path)
         return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
             meta.etag or "", context=_ctx
@@ -1213,27 +1174,42 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # [INTERMEDIATE] PRE-INTERCEPT: hooks — migrates to Rust dispatch middleware in PR 7
+        # DT_EXTERNAL_STORAGE pre-check — backend manages own namespace, skip kernel
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
+        )
+        from nexus.core.router import ExternalRouteResult
+
+        _route = self.router.route(
+            path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
+        )
+        if isinstance(_route, ExternalRouteResult):
+            _ctx = (
+                _dc_replace(context, backend_path=_route.backend_path, virtual_path=path)
+                if context
+                else OperationContext(
+                    user_id="anonymous",
+                    groups=[],
+                    backend_path=_route.backend_path,
+                    virtual_path=path,
+                )
+            )
+            data = _route.backend.read_content("", context=_ctx)
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
+
+        # PRE-INTERCEPT hooks
         if self.read_hook_count > 0:
             from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
             self.intercept_pre_read(_RHC(path=path, context=context))
 
         # ── KERNEL (Rust — dcache hit: zero GIL, dcache miss: metastore fallback via GIL) ──
-        _is_admin = (
-            getattr(context, "is_admin", False)
-            if context is not None and not isinstance(context, dict)
-            else (context.get("is_admin", False) if isinstance(context, dict) else False)
-        )
         result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        if result.hit:
-            data = result.data or b""
-            # CDC chunked manifest — read from backend instead of returning manifest JSON
-            if data[:30].startswith(b'{"type":"chunked_manifest'):
-                data = self._backend_read(path, _is_admin, context)
-        else:
-            # Non-Rust backend (GCS, remote, external) — read from Python backend
-            data = self._backend_read(path, _is_admin, context)
+        data = result.data or b"" if result.hit else self._backend_read(path, _is_admin, context)
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
@@ -1627,17 +1603,7 @@ class NexusFS(  # type: ignore[misc]
 
             meta = route.metastore.get(path)
 
-            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-                overlay_config = self._get_overlay_config(path)
-                if overlay_config:
-                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
-
             if meta is None or meta.etag is None:
-                raise NexusFileNotFoundError(path)
-
-            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
-                meta
-            ):
                 raise NexusFileNotFoundError(path)
 
             _rb = self._driver_coordinator.resolve_backend(meta.backend_name)
@@ -2995,9 +2961,7 @@ class NexusFS(  # type: ignore[misc]
             context: Optional operation context for permission checks.
 
         Returns:
-            Dict on success. When operating in overlay mode and the file
-            exists only in the base layer, creates a whiteout marker instead
-            of deleting. Returns ``{"overlay_whiteout": True}`` in that case.
+            Dict on success.
 
         Raises:
             NexusFileNotFoundError: If file doesn't exist.
@@ -3055,15 +3019,6 @@ class NexusFS(  # type: ignore[misc]
         # Check if file exists in metadata.
         # Use prefetched hint from resolve_delete() if available (#1311)
         meta = _result if _result is not None else route.metastore.get(path)
-
-        # Issue #1264: If file exists only in base layer, create whiteout instead of deleting
-        if meta is None and getattr(self, "_overlay_resolver", None):
-            overlay_config = self._get_overlay_config(path)
-            if overlay_config:
-                base_meta = self._overlay_resolver.resolve_read(path, overlay_config)
-                if base_meta is not None and not self._overlay_resolver.is_whiteout(base_meta):
-                    self._overlay_resolver.create_whiteout(path, overlay_config)
-                    return {"deleted": path, "overlay_whiteout": True}
 
         if meta is None:
             raise NexusFileNotFoundError(path)

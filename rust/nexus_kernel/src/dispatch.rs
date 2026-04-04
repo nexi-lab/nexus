@@ -1,19 +1,245 @@
-//! KernelDispatch — segment-based trie + hook/observer registries.
+//! KernelDispatch — dispatch traits, trie, hook/observer registries.
 //!
-//! Provides:
+//! Three dispatch trait families (PR 7c, hand-written — PR 8 codegen replaces):
+//!   - InterceptHook: pre/post hooks per syscall (INTERCEPT phase, LSM-style)
+//!   - PathResolver: virtual path short-circuit (PRE-DISPATCH phase, procfs-style)
+//!   - MutationObserver: fire-and-forget event notification (OBSERVE phase, fsnotify-style)
+//!
+//! Infrastructure:
 //!   - PathTrie: O(path_depth) lookup (~50ns) for virtual path resolvers.
 //!   - HookRegistry: cached metadata for INTERCEPT hooks.
 //!   - ObserverRegistry: bitmask-filtered OBSERVE observers.
 //!
 //! All types are owned directly by Kernel (no Arc wrapper, no #[pyclass]).
 //!
-//! Issue #1868: Kernel owns all dispatch state. Wrappers removed.
+//! Issue #1868: Kernel owns all dispatch state.
 
 use parking_lot::RwLock;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+// ── Dispatch Traits (Rust ABI — PR 8 codegen replaces hand-written adapters) ──
+
+/// INTERCEPT hook — called before/after each syscall.
+///
+/// Rust equivalent of Python `VFSReadHook`/`VFSWriteHook`/etc.
+/// Pre-hooks can abort by returning Err. Post-hooks are fire-and-forget.
+///
+/// Each method receives opaque context (PyObject) — kernel never inspects it.
+/// PR 8 codegen will generate per-syscall typed context structs.
+#[allow(dead_code)]
+pub(crate) trait InterceptHook: Send + Sync {
+    fn name(&self) -> &str;
+    fn on_pre_read(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_read(&self, ctx: &Py<PyAny>);
+    fn on_pre_write(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_write(&self, ctx: &Py<PyAny>);
+    fn on_pre_delete(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_delete(&self, ctx: &Py<PyAny>);
+    fn on_pre_rename(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_rename(&self, ctx: &Py<PyAny>);
+}
+
+/// PRE-DISPATCH resolver — virtual path short-circuit.
+///
+/// Rust equivalent of Python `VFSPathResolver`.
+/// Returns Some(content) to claim the path, None to pass through.
+#[allow(dead_code)]
+pub(crate) trait PathResolver: Send + Sync {
+    fn try_read(&self, path: &str) -> Option<Vec<u8>>;
+    fn try_write(&self, path: &str, content: &[u8]) -> Option<()>;
+    fn try_delete(&self, path: &str) -> Option<()>;
+}
+
+/// OBSERVE mutation observer — fire-and-forget event notification.
+///
+/// Rust equivalent of Python `VFSObserver`.
+/// Receives event type + path after each mutation. Never aborts.
+#[allow(dead_code)]
+pub(crate) trait MutationObserver: Send + Sync {
+    fn on_mutation(&self, event_type: u32, path: &str);
+}
+
+// ── PyO3 Adapters (wrap Python impl → Rust trait) ──────────────────────
+
+/// Wraps a Python VFS hook object → impl InterceptHook.
+///
+/// Calls Python methods via GIL. Hand-written for PR 7;
+/// PR 8 codegen replaces with auto-generated adapter.
+#[allow(dead_code)]
+pub(crate) struct PyInterceptHookAdapter {
+    inner: Py<PyAny>,
+    hook_name: String,
+}
+
+unsafe impl Send for PyInterceptHookAdapter {}
+unsafe impl Sync for PyInterceptHookAdapter {}
+
+#[allow(dead_code)]
+impl PyInterceptHookAdapter {
+    pub(crate) fn new(py: Python<'_>, hook: Py<PyAny>) -> Self {
+        let name = hook
+            .bind(py)
+            .getattr("name")
+            .and_then(|n| n.extract::<String>())
+            .unwrap_or_else(|_| "<hook>".to_string());
+        Self {
+            inner: hook,
+            hook_name: name,
+        }
+    }
+}
+
+impl InterceptHook for PyInterceptHookAdapter {
+    fn name(&self) -> &str {
+        &self.hook_name
+    }
+
+    fn on_pre_read(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_read") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_read(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_read") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_write(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_write") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_write(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_write") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_delete(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_delete") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_delete(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_delete") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_rename(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_rename") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_rename(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_rename") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+}
+
+/// Wraps a Python VFSPathResolver → impl PathResolver.
+#[allow(dead_code)]
+pub(crate) struct PyPathResolverAdapter {
+    inner: Py<PyAny>,
+}
+
+unsafe impl Send for PyPathResolverAdapter {}
+unsafe impl Sync for PyPathResolverAdapter {}
+
+#[allow(dead_code)]
+impl PathResolver for PyPathResolverAdapter {
+    fn try_read(&self, path: &str) -> Option<Vec<u8>> {
+        Python::attach(|py| {
+            let result = self.inner.call_method1(py, "try_read", (path,)).ok()?;
+            if result.is_none(py) {
+                return None;
+            }
+            result.extract::<Vec<u8>>(py).ok()
+        })
+    }
+
+    fn try_write(&self, path: &str, content: &[u8]) -> Option<()> {
+        Python::attach(|py| {
+            let result = self
+                .inner
+                .call_method1(py, "try_write", (path, content))
+                .ok()?;
+            if result.is_none(py) {
+                None
+            } else {
+                Some(())
+            }
+        })
+    }
+
+    fn try_delete(&self, path: &str) -> Option<()> {
+        Python::attach(|py| {
+            let result = self.inner.call_method1(py, "try_delete", (path,)).ok()?;
+            if result.is_none(py) {
+                None
+            } else {
+                Some(())
+            }
+        })
+    }
+}
+
+/// Wraps a Python VFSObserver → impl MutationObserver.
+#[allow(dead_code)]
+pub(crate) struct PyMutationObserverAdapter {
+    inner: Py<PyAny>,
+}
+
+unsafe impl Send for PyMutationObserverAdapter {}
+unsafe impl Sync for PyMutationObserverAdapter {}
+
+#[allow(dead_code)]
+impl MutationObserver for PyMutationObserverAdapter {
+    fn on_mutation(&self, event_type: u32, path: &str) {
+        Python::attach(|py| {
+            let _ = self
+                .inner
+                .call_method1(py, "on_mutation", (event_type, path));
+        });
+    }
+}
 
 // ── TrieNode ──────────────────────────────────────────────────────────
 

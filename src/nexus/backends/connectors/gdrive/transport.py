@@ -30,7 +30,7 @@ from collections.abc import Iterator
 from copy import copy
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
+from nexus.contracts.exceptions import AuthenticationError, BackendError, NexusFileNotFoundError
 
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
@@ -166,6 +166,8 @@ class DriveTransport:
                     zone_id=zone_id,
                 )
             )
+        except AuthenticationError:
+            raise
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",

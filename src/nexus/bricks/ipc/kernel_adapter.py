@@ -87,7 +87,7 @@ class KernelVFSAdapter:
             # Rust kernel not initialized (embedded/test mode without full boot).
             # Fall back to the DLC read path which routes directly to the backend
             # without requiring the kernel — same as _read_via_dlc in nexus_fs.py.
-            return self._nx._read_via_dlc(path, True, ctx)
+            return bytes(self._nx._read_via_dlc(path, True, ctx))
 
     async def write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
@@ -204,7 +204,7 @@ class KernelVFSAdapter:
             # Source 1: metastore modified_at
             meta = route.metastore.get(path)
             if meta is not None:
-                mtime = getattr(meta, "modified_at", None)
+                mtime: datetime | None = getattr(meta, "modified_at", None)
                 if mtime is not None:
                     return mtime
 
@@ -218,9 +218,11 @@ class KernelVFSAdapter:
                 if to_phys is not None:
                     try:
                         phys = to_phys(physical_path)
-                        stat = await asyncio.to_thread(
-                            lambda p=phys: p.stat() if p.exists() else None
-                        )
+
+                        def _stat_phys(p: "Any") -> "Any":
+                            return p.stat() if p.exists() else None
+
+                        stat = await asyncio.to_thread(_stat_phys, phys)
                         if stat is not None:
                             return datetime.fromtimestamp(stat.st_mtime, UTC)
                     except Exception:

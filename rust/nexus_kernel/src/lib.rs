@@ -12,8 +12,7 @@ mod cas_engine;
 mod cas_transport;
 mod dcache;
 mod dispatch;
-mod generated_dispatch;
-mod generated_store;
+mod generated_pyo3;
 mod glob;
 mod hash;
 mod io;
@@ -111,13 +110,13 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;
-    // Route result (returned from Kernel.route())
-    m.add_class::<router::RustRouteResult>()?;
-    // Kernel (Issue #1868 — owns all core state: dcache, router, trie, hooks, observers)
-    m.add_class::<kernel::OperationContext>()?;
-    m.add_class::<kernel::Kernel>()?;
-    m.add_class::<kernel::SysReadResult>()?;
-    m.add_class::<kernel::SysWriteResult>()?;
+    // Route result (returned from Kernel.route()) — now PyRustRouteResult
+    m.add_class::<generated_pyo3::PyRustRouteResult>()?;
+    // Kernel (Issue #1868 — PyKernel wraps pure Rust Kernel)
+    m.add_class::<generated_pyo3::PyOperationContext>()?;
+    m.add_class::<generated_pyo3::PyKernel>()?;
+    m.add_class::<generated_pyo3::PySysReadResult>()?;
+    m.add_class::<generated_pyo3::PySysWriteResult>()?;
     // Path utilities (Issue #1817 prerequisite)
     m.add_function(wrap_pyfunction!(path_utils::split_path, m)?)?;
     m.add_function(wrap_pyfunction!(path_utils::get_parent, m)?)?;

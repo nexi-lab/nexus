@@ -120,6 +120,14 @@ export const PANEL_BINDINGS: Record<PanelId, readonly KeyBinding[]> = {
     { key: "Enter", action: "Execute request" },
     { key: "/", action: "Filter endpoints" },
   ],
+  connectors: [
+    { key: "r", action: "Refresh" },
+    { key: "Tab", action: "Switch tab" },
+  ],
+  stack: [
+    { key: "r", action: "Refresh" },
+    { key: "Tab", action: "Switch tab" },
+  ],
 };
 
 interface ClipboardSummary {

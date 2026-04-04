@@ -330,14 +330,29 @@ export default function StackPanel(): React.ReactNode {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
 
+  // Tracks whether any fetch has ever started on this mount.
+  // Set reactively when loading flags first go true — NOT at the call site —
+  // so there is no render cycle where hasLoaded=true but loading=false and
+  // data is still empty (which would flash misleading "no containers" state).
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const anyLoading = containersLoading || configLoading || stateLoading;
+  useEffect(() => {
+    if (!hasLoaded && anyLoading) {
+      setHasLoaded(true);
+    }
+  }, [anyLoading, hasLoaded]);
+
   // Derive project name from state.json
   const projectName = stateJson?.project_name as string | null ?? null;
 
-  // Initial fetch
+  // Auto-fetch on client connect so the panel surfaces real state on entry.
+  // hasLoaded is set by the anyLoading effect above once refreshAll raises
+  // loading flags — do NOT set it here to avoid the pre-load empty-state flash.
   useEffect(() => {
-    refreshAll(client);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client]);
+    if (client) {
+      refreshAll(client);
+    }
+  }, [client, refreshAll]);
 
   // Reset selection/scroll on tab change
   useEffect(() => {
@@ -439,21 +454,26 @@ export default function StackPanel(): React.ReactNode {
 
       {/* Main content */}
       <box flexGrow={1} borderStyle="single">
-        {activeTab === "containers" && (
+        {!hasLoaded && !containersLoading && !configLoading && !stateLoading && (
+          <box height="100%" width="100%" justifyContent="center" alignItems="center">
+            <text dimColor>{"  Press r to load stack info"}</text>
+          </box>
+        )}
+        {(hasLoaded || containersLoading || configLoading || stateLoading) && activeTab === "containers" && (
           <ContainerList
             containers={containers}
             loading={containersLoading}
             selectedIndex={selectedIndex}
           />
         )}
-        {activeTab === "config" && (
+        {(hasLoaded || configLoading) && activeTab === "config" && (
           <ConfigView
             yaml={configYaml}
             loading={configLoading}
             scrollOffset={scrollOffset}
           />
         )}
-        {activeTab === "state" && (
+        {(hasLoaded || stateLoading) && activeTab === "state" && (
           <StateView
             stateJson={stateJson}
             loading={stateLoading}

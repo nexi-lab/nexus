@@ -18,6 +18,7 @@ import { NAV_ITEMS, type NavItem } from "../nav-items.js";
 import { getSideNavMode, STALE_THRESHOLD_MS, type SideNavMode } from "./side-nav-utils.js";
 import type { PanelId } from "../../stores/global-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
+import { useVisibleTabs } from "../hooks/use-visible-tabs.js";
 
 // Per-panel store imports for indicator selectors (Decision 1A)
 import { useFilesStore } from "../../stores/files-store.js";
@@ -151,6 +152,10 @@ export function SideNav({ activePanel, visible }: SideNavProps): React.ReactNode
 
   const indicators = usePanelIndicators(now);
 
+  // Apply same brick filtering as the command palette so disabled panels
+  // are not advertised in the primary navigation.
+  const visibleItems = useVisibleTabs(NAV_ITEMS);
+
   // Spinner animation for loading indicators
   const [spinnerFrame, setSpinnerFrame] = useState(0);
   const hasAnyLoading = Object.values(indicators.loading).some(Boolean);
@@ -173,10 +178,10 @@ export function SideNav({ activePanel, visible }: SideNavProps): React.ReactNode
       borderRight
       borderColor={palette.faint}
     >
-      {NAV_ITEMS.map((item) => (
+      {visibleItems.map((item) => (
         <SideNavItem
           key={item.id}
-          item={item}
+          item={item as NavItem}
           isActive={item.id === activePanel}
           isLoading={indicators.loading[item.id]}
           hasError={indicators.error[item.id]}

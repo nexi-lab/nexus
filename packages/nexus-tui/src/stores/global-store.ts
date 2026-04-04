@@ -20,7 +20,10 @@ export type PanelId =
   | "search"
   | "workflows"
   | "infrastructure"
-  | "console";
+  | "console"
+  | "connectors"
+  | "stack";
+
 
 /** Response from GET /api/v2/features */
 export interface FeaturesResponse {

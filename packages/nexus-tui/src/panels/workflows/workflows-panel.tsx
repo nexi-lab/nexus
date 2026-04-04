@@ -14,6 +14,7 @@ import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
 import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
+import { WORKFLOW_TABS } from "../../shared/navigation.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { ConfirmDialog } from "../../shared/components/confirm-dialog.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
@@ -62,6 +63,8 @@ export default function WorkflowsPanel(): React.ReactNode {
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
 
   const overlayActive = useUiStore((s) => s.overlayActive);
+  const visibleTabs = useVisibleTabs(WORKFLOW_TABS);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight workflow execution
   const [executing, setExecuting] = useState(false);
@@ -82,27 +85,31 @@ export default function WorkflowsPanel(): React.ReactNode {
     setConfirmDelete(false);
   }, []);
 
-  // Refresh current view based on active tab
-  const refreshCurrentView = (): void => {
+  // Refresh current view based on active tab.
+  // 'workflows' is intentionally excluded from deps — it is the fetch result,
+  // not a trigger. Including it would create a loop (fetch updates workflows →
+  // callback identity changes → effect re-fires → fetch again). We read from
+  // the store via getState() at call time so the executions branch always
+  // sees the latest value without making it a dependency.
+  const refreshCurrentView = useCallback((): void => {
     if (!client) return;
 
     if (activeTab === "workflows") {
       fetchWorkflows(client);
     } else if (activeTab === "executions") {
-      const wf = workflows[selectedWorkflowIndex];
-      if (wf) {
-        fetchExecutions(wf.name, client);
-      }
+      const { workflows: currentWorkflows, selectedWorkflowIndex: currentIdx } =
+        useWorkflowsStore.getState();
+      const wf = currentWorkflows[currentIdx];
+      if (wf) fetchExecutions(wf.name, client);
     } else if (activeTab === "scheduler") {
       fetchSchedulerMetrics(client);
     }
-  };
+  }, [client, activeTab, fetchWorkflows, fetchExecutions, fetchSchedulerMetrics]);
 
   // Auto-fetch when tab changes
   useEffect(() => {
     refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, client]);
+  }, [refreshCurrentView]);
 
   // Resolve the list length for current tab navigation
   const currentListLength = (): number => {
@@ -193,14 +200,7 @@ export default function WorkflowsPanel(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Error display */}
         {error && (

@@ -9,8 +9,9 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { NAV_ITEMS, type NavItem } from "../../src/shared/nav-items.js";
+import { NAV_ITEMS, ALL_PANEL_IDS, type NavItem } from "../../src/shared/nav-items.js";
 import type { PanelId } from "../../src/stores/global-store.js";
+import { PANEL_DESCRIPTORS } from "../../src/shared/navigation.js";
 
 // =============================================================================
 // NAV_ITEMS structure
@@ -68,5 +69,45 @@ describe("NAV_ITEMS", () => {
     for (const item of NAV_ITEMS) {
       expect(item.fullLabel.length).toBeGreaterThanOrEqual(item.label.length);
     }
+  });
+
+  it("has a brick field on every item (null or string)", () => {
+    for (const item of NAV_ITEMS) {
+      // brick must be null, a string, or an array of strings — never undefined
+      expect(item.brick === null || typeof item.brick === "string" || Array.isArray(item.brick)).toBe(true);
+    }
+  });
+});
+
+// =============================================================================
+// PANEL_DESCRIPTORS completeness (Issue #3623 — replaces Object.fromEntries + as cast)
+// =============================================================================
+
+describe("PANEL_DESCRIPTORS", () => {
+  it("has an entry for every PanelId", () => {
+    for (const panelId of ALL_PANEL_IDS) {
+      expect(PANEL_DESCRIPTORS[panelId]).toBeDefined();
+    }
+  });
+
+  it("each entry has the correct id", () => {
+    for (const panelId of ALL_PANEL_IDS) {
+      expect(PANEL_DESCRIPTORS[panelId]!.id).toBe(panelId);
+    }
+  });
+
+  it("each entry has non-empty tabLabel, breadcrumbLabel, and shortcut", () => {
+    for (const panelId of ALL_PANEL_IDS) {
+      const desc = PANEL_DESCRIPTORS[panelId]!;
+      expect(desc.tabLabel.length).toBeGreaterThan(0);
+      expect(desc.breadcrumbLabel.length).toBeGreaterThan(0);
+      expect(desc.shortcut.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("PANEL_DESCRIPTORS and ALL_PANEL_IDS cover the same set", () => {
+    const descriptorKeys = Object.keys(PANEL_DESCRIPTORS).sort();
+    const expectedKeys = [...ALL_PANEL_IDS].sort();
+    expect(descriptorKeys).toEqual(expectedKeys);
   });
 });

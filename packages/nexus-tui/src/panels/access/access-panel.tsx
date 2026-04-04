@@ -30,7 +30,8 @@ import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
-import { useVisibleTabs, type TabDef } from "../../shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
+import { subTabCycleBindings, subTabForward } from "../../shared/components/sub-tab-bar-utils.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -47,21 +48,7 @@ import { NamespaceConfigView } from "./namespace-config-view.js";
 import { ManifestCreator } from "./manifest-creator.js";
 import { ConstraintList } from "./constraint-list.js";
 import { ConstraintCreator } from "./constraint-creator.js";
-
-const ALL_TABS: readonly TabDef<AccessTab>[] = [
-  { id: "manifests", label: "Manifests", brick: "access_manifest" },
-  { id: "alerts", label: "Alerts", brick: "governance" },
-  { id: "credentials", label: "Credentials", brick: "auth" },
-  { id: "fraud", label: "Fraud", brick: "governance" },
-  { id: "delegations", label: "Delegations", brick: "delegation" },
-];
-const TAB_LABELS: Readonly<Record<AccessTab, string>> = {
-  manifests: "Manifests",
-  alerts: "Alerts",
-  credentials: "Credentials",
-  fraud: "Fraud",
-  delegations: "Delegations",
-};
+import { ACCESS_TABS } from "../../shared/navigation.js";
 
 type OverlayMode =
   | "none"
@@ -77,7 +64,7 @@ export default function AccessPanel(): React.ReactNode {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
-  const visibleTabs = useVisibleTabs(ALL_TABS);
+  const visibleTabs = useVisibleTabs(ACCESS_TABS);
   const { copy, copied } = useCopy();
   const [overlay, setOverlay] = useState<OverlayMode>("none");
 
@@ -168,23 +155,25 @@ export default function AccessPanel(): React.ReactNode {
     } else if (activeTab === "alerts") {
       fetchAlerts(effectiveZoneId, client);
     } else if (activeTab === "credentials") {
-      const selected = manifests[selectedManifestIndex];
-      if (selected) {
-        fetchCredentials(selected.agent_id, client);
-      }
+      // Read from store at call time — avoids including 'manifests' as a dep,
+      // which would create a loop (fetchManifests updates manifests → callback
+      // identity changes → effect re-fires → fetchManifests runs again).
+      const { manifests: currentManifests, selectedManifestIndex: currentIdx } =
+        useAccessStore.getState();
+      const selected = currentManifests[currentIdx];
+      if (selected) fetchCredentials(selected.agent_id, client);
     } else if (activeTab === "fraud") {
       fetchFraudScores(effectiveZoneId, client);
       if (effectiveZoneId) fetchConstraints(effectiveZoneId, client);
     } else if (activeTab === "delegations") {
       fetchDelegations(client, delegationFilter);
     }
-  }, [client, activeTab, manifests, selectedManifestIndex, effectiveZoneId, delegationFilter, fetchManifests, fetchAlerts, fetchCredentials, fetchFraudScores, fetchDelegations]);
+  }, [client, activeTab, effectiveZoneId, delegationFilter, fetchManifests, fetchAlerts, fetchCredentials, fetchFraudScores, fetchConstraints, fetchDelegations]);
 
   // Auto-fetch when tab changes
   useEffect(() => {
     refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, client]);
+  }, [refreshCurrentView]);
 
   // Shared list navigation (j/k/up/down/g/G) — switches per active tab
   const listNav = listNavigationBindings({
@@ -223,28 +212,17 @@ export default function AccessPanel(): React.ReactNode {
         setOverlay("none");
       }
     },
+    // Fraud tab: Tab toggles focus between scores and constraints sub-panes.
+    // Other tabs: delegate to subTabForward (from subTabCycleBindings spread above).
     tab: () => {
       if (activeTab === "fraud") {
         setFraudFocus((f) => f === "scores" ? "constraints" : "scores");
         return;
       }
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
+      subTabForward(visibleTabs, activeTab, setActiveTab);
     },
-    "shift+tab": () => {
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
+    // shift+tab: subTabCycleBindings spread above provides correct backward cycling.
+    // No override needed here.
     return: () => {
       // Manifests: fetch detail to load tuple entries
       if (activeTab === "manifests" && client) {

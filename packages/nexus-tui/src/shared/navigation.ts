@@ -22,24 +22,27 @@ export interface PanelDescriptor {
   readonly shortcut: string;
 }
 
-function navItemToPanelDescriptor(item: NavItem): PanelDescriptor {
-  return {
-    id: item.id,
-    tabLabel: item.label,
-    breadcrumbLabel: item.fullLabel,
-    shortcut: item.shortcut,
-  };
-}
-
-export const PANEL_DESCRIPTORS: Readonly<Record<PanelId, PanelDescriptor>> = Object.fromEntries(
-  NAV_ITEMS.map((item) => [item.id, navItemToPanelDescriptor(item)]),
-) as Readonly<Record<PanelId, PanelDescriptor>>;
+export const PANEL_DESCRIPTORS: Readonly<Record<PanelId, PanelDescriptor>> = {
+  files:          { id: "files",          tabLabel: "Files",  breadcrumbLabel: "Files",      shortcut: "1" },
+  versions:       { id: "versions",       tabLabel: "Ver",    breadcrumbLabel: "Versions",   shortcut: "2" },
+  agents:         { id: "agents",         tabLabel: "Agent",  breadcrumbLabel: "Agents",     shortcut: "3" },
+  zones:          { id: "zones",          tabLabel: "Zone",   breadcrumbLabel: "Zones",      shortcut: "4" },
+  access:         { id: "access",         tabLabel: "ACL",    breadcrumbLabel: "Access",     shortcut: "5" },
+  payments:       { id: "payments",       tabLabel: "Pay",    breadcrumbLabel: "Payments",   shortcut: "6" },
+  search:         { id: "search",         tabLabel: "Find",   breadcrumbLabel: "Search",     shortcut: "7" },
+  workflows:      { id: "workflows",      tabLabel: "Flow",   breadcrumbLabel: "Workflows",  shortcut: "8" },
+  infrastructure: { id: "infrastructure", tabLabel: "Event",  breadcrumbLabel: "Events",     shortcut: "9" },
+  console:        { id: "console",        tabLabel: "CLI",    breadcrumbLabel: "Console",    shortcut: "0" },
+  connectors:     { id: "connectors",     tabLabel: "Conn",   breadcrumbLabel: "Connectors", shortcut: "·" },
+  stack:          { id: "stack",          tabLabel: "Stack",  breadcrumbLabel: "Stack",      shortcut: "○" },
+};
 
 export const PANEL_TABS: readonly TopLevelTab[] = NAV_ITEMS.map(({ id, label, shortcut }) => ({
   id,
   label,
   shortcut,
 }));
+
 
 export const ACCESS_TABS: readonly TabDef<AccessTab>[] = [
   { id: "manifests", label: "Manifests", brick: "access_manifest" },

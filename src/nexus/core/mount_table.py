@@ -164,7 +164,8 @@ class MountTable:
                 True,  # fsync
             )
         # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
-        # fast path sees live mounts.
+        # fast path sees live mounts.  Pass py_backend= when no local_root
+        # so Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
             with contextlib.suppress(Exception):
                 self._kernel.add_mount(
@@ -176,6 +177,7 @@ class MountTable:
                     _backend_name,
                     _local_root,
                     True,
+                    py_backend=None if _local_root else backend,
                 )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:

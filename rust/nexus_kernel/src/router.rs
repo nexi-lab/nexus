@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::backend::{CasLocalBackend, ObjectStore};
+use crate::generated_adapters::PyObjectStoreAdapter;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -144,6 +145,11 @@ impl PathRouter {
     // ── Mount management (called via Kernel proxy methods) ──────────────
 
     /// Register a mount at a zone-canonical key.
+    ///
+    /// Backend resolution order:
+    ///   1. `local_root` provided → CasLocalBackend (pure Rust, zero GIL)
+    ///   2. `py_backend` provided → PyObjectStoreAdapter (GIL on cold path)
+    ///   3. Neither → no backend (sys_read returns miss)
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_mount(
         &self,
@@ -155,14 +161,16 @@ impl PathRouter {
         backend_name: &str,
         local_root: Option<&str>,
         fsync: bool,
+        py_backend: Option<Py<PyAny>>,
     ) -> Result<(), std::io::Error> {
         let canonical = canonicalize(mount_point, zone_id);
-        let backend: Option<Box<dyn ObjectStore>> = match local_root {
-            Some(root) => {
-                let b = CasLocalBackend::new(Path::new(root), fsync)?;
-                Some(Box::new(b))
-            }
-            None => None,
+        let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {
+            let b = CasLocalBackend::new(Path::new(root), fsync)?;
+            Some(Box::new(b))
+        } else {
+            py_backend.map(|obj| -> Box<dyn ObjectStore> {
+                Python::attach(|py| Box::new(PyObjectStoreAdapter::new(py, obj)))
+            })
         };
         self.mounts.write().insert(
             canonical,
@@ -294,10 +302,20 @@ mod tests {
     fn test_route_basic() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None, false, None)
             .unwrap();
         router
-            .add_mount("/workspace", "root", false, false, "fast", "", None, false)
+            .add_mount(
+                "/workspace",
+                "root",
+                false,
+                false,
+                "fast",
+                "",
+                None,
+                false,
+                None,
+            )
             .unwrap();
 
         let result = router
@@ -312,7 +330,7 @@ mod tests {
     fn test_route_root_fallback() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None, false, None)
             .unwrap();
 
         let result = router
@@ -326,7 +344,9 @@ mod tests {
     fn test_route_readonly() {
         let router = PathRouter::new();
         router
-            .add_mount("/system", "root", true, false, "balanced", "", None, false)
+            .add_mount(
+                "/system", "root", true, false, "balanced", "", None, false, None,
+            )
             .unwrap();
 
         let err = router
@@ -339,7 +359,9 @@ mod tests {
     fn test_route_admin_only() {
         let router = PathRouter::new();
         router
-            .add_mount("/admin", "root", false, true, "balanced", "", None, false)
+            .add_mount(
+                "/admin", "root", false, true, "balanced", "", None, false, None,
+            )
             .unwrap();
 
         let err = router
@@ -357,7 +379,7 @@ mod tests {
     fn test_cross_zone() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None, false, None)
             .unwrap();
         router
             .add_mount(
@@ -369,6 +391,7 @@ mod tests {
                 "",
                 None,
                 false,
+                None,
             )
             .unwrap();
 
@@ -388,7 +411,7 @@ mod tests {
         let router = PathRouter::new();
         router
             .add_mount(
-                "/data", "root", false, false, "balanced", "local", None, false,
+                "/data", "root", false, false, "balanced", "local", None, false, None,
             )
             .unwrap();
         assert!(router.has_mount("/data", "root"));

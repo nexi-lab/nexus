@@ -392,6 +392,7 @@ class Kernel:
         backend_name: str = "",
         local_root: str | None = None,
         fsync: bool = False,
+        py_backend: Any | None = None,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(

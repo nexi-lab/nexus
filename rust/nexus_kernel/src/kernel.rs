@@ -232,7 +232,11 @@ impl Kernel {
     // ── Router proxy methods ───────────────────────────────────────────
 
     /// Register a mount point.
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]
+    ///
+    /// `py_backend`: Optional Python ObjectStoreABC instance. When provided
+    /// and `local_root` is None, wraps it via PyObjectStoreAdapter so Rust
+    /// sys_read/sys_write can call the Python backend directly.
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -244,6 +248,7 @@ impl Kernel {
         backend_name: &str,
         local_root: Option<&str>,
         fsync: bool,
+        py_backend: Option<Py<PyAny>>,
     ) -> PyResult<()> {
         self.router
             .add_mount(
@@ -255,6 +260,7 @@ impl Kernel {
                 backend_name,
                 local_root,
                 fsync,
+                py_backend,
             )
             .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
     }

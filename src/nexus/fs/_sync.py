@@ -196,6 +196,10 @@ class SyncNexusFS:
         """List all mount points (synchronous -- no portal needed)."""
         return cast(list[str], self._async.list_mounts())
 
+    def unmount(self, mount_point: str) -> None:
+        """Remove a mount and clean up all associated state (synchronous wrapper)."""
+        self._runner(self._async.unmount(mount_point))
+
     def close(self) -> None:
         """Clean up resources held by the underlying async facade and portal."""
         if hasattr(self._async, "close"):

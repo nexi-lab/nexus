@@ -186,7 +186,16 @@ class SlimNexusFS:
 
         Raises:
             NexusFileNotFoundError: If file does not exist.
+            ValueError: If path is a mount root — use unmount() instead.
         """
+        from nexus.core.path_utils import validate_path
+
+        normalized = validate_path(path)
+        meta = self._kernel.metadata.get(normalized)
+        if meta is not None and (meta.is_mount or meta.is_external_storage):
+            raise ValueError(
+                f"Cannot delete mount root '{normalized}' — use unmount() to remove a mount."
+            )
         await self._kernel.sys_unlink(path, context=self._ctx)
 
     async def rename(self, old_path: str, new_path: str) -> None:
@@ -292,7 +301,12 @@ class SlimNexusFS:
         meta: FileMetadata | None = self._kernel.metadata.get(normalized)
 
         if meta is not None:
-            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
+            is_dir = (
+                meta.is_dir
+                or meta.is_mount
+                or meta.is_external_storage
+                or meta.mime_type == "inode/directory"
+            )
             return _make_stat_dict(
                 path=meta.path,
                 size=meta.size or (4096 if is_dir else 0),
@@ -484,6 +498,63 @@ class SlimNexusFS:
             Sorted list of mount point paths.
         """
         return sorted(m.mount_point for m in self._kernel.router.list_mounts())
+
+    async def unmount(self, mount_point: str) -> None:
+        """Remove a mount and clean up all associated state.
+
+        Removes the mount from the runtime router, deletes its metadata entry
+        and all cached child metadata, and removes it from the persisted
+        mounts.json so it does not reappear on the next process start.
+
+        Args:
+            mount_point: Mount point path (e.g. "/gdrive/my-drive").
+
+        Raises:
+            ValueError: If mount_point is not a mounted path.
+        """
+        from nexus.core.path_utils import validate_path
+
+        normalized = validate_path(mount_point, allow_root=False)
+        meta = self._kernel.metadata.get(normalized)
+        if meta is None or not (meta.is_mount or meta.is_external_storage):
+            raise ValueError(f"'{normalized}' is not a mount point")
+
+        # 1. Remove from runtime mount table
+        self._kernel._driver_coordinator.unmount(normalized)
+
+        # 2. Delete mount root metadata row + evict dcache
+        self._kernel.metadata.delete(normalized)
+        if hasattr(self._kernel.metadata, "dcache_evict_prefix"):
+            self._kernel.metadata.dcache_evict_prefix(normalized + "/")
+
+        # 3. Sweep cached child metadata (best-effort — connector mounts may
+        #    have populated entries via the sync loop or explicit writes)
+        prefix = normalized.rstrip("/") + "/"
+        children = list(self._kernel.metadata.list(prefix))
+        if children:
+            self._kernel.metadata.delete_batch([c.path for c in children])
+
+        # 4. Remove from mounts.json so the mount does not resurrect on restart
+        import contextlib
+
+        with contextlib.suppress(OSError):
+            from nexus.fs._paths import load_persisted_mounts, save_persisted_mounts
+
+            existing = load_persisted_mounts()
+            # Remove any entry whose derived mount point matches
+            from nexus.fs._uri import derive_mount_point, parse_uri
+
+            filtered = []
+            for entry in existing:
+                try:
+                    spec = parse_uri(entry["uri"])
+                    mp = derive_mount_point(spec, at=entry.get("at"))
+                    if mp != normalized:
+                        filtered.append(entry)
+                except Exception:
+                    filtered.append(entry)
+            if len(filtered) != len(existing):
+                save_persisted_mounts(filtered, merge=False)
 
     # -- Lifecycle --
 

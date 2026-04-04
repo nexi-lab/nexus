@@ -17,7 +17,7 @@ All imports are lazy to keep ``import nexus.fs`` under 200ms.
 
 from __future__ import annotations
 
-__version__ = "0.4.3"
+__version__ = "0.4.4"
 
 # =============================================================================
 # LAZY IMPORTS — everything is deferred for <200ms import time
@@ -133,14 +133,17 @@ async def mount(
 
     metastore = SQLiteMetastore(str(metadata_db()))
 
-    # Create all backends with cleanup on partial failure
-    backends: list[tuple[str, Any]] = []
+    # Create all backends with cleanup on partial failure.
+    # Store spec alongside each backend so _resolve_entry_type() can use it
+    # during metadata registration without re-zipping against resolved_mounts
+    # (which would break when backends are skipped via skip_unavailable=True).
+    backends: list[tuple[str, Any, Any]] = []  # (mount_point, backend, spec)
     skipped: list[tuple[str, str]] = []  # (uri, error_msg)
     try:
         for (spec, mp), uri in zip(resolved_mounts, uris, strict=True):
             try:
                 backend = create_backend(spec)
-                backends.append((mp, backend))
+                backends.append((mp, backend, spec))
             except Exception as exc:
                 if skip_unavailable:
                     skipped.append((uri, str(exc)))
@@ -149,7 +152,7 @@ async def mount(
                     raise
     except Exception:
         # Clean up any already-created backends and the metastore
-        for _, be in backends:
+        for _, be, _ in backends:
             _close_backend(be)
         metastore.close()
         raise
@@ -184,7 +187,7 @@ async def mount(
             ),
         )
 
-        for mp, backend in backends:
+        for mp, backend, _ in backends:
             kernel._driver_coordinator.mount(mp, backend)
 
         # Persist mount entries so playground/fsspec/cp can auto-discover them.
@@ -207,11 +210,15 @@ async def mount(
                 exc,
             )
 
-        # Create DT_MOUNT metadata entries for each mount point
-        for mp, backend in backends:
-            metastore.put(_make_mount_entry(mp, backend.name))
+        # Create DT_MOUNT or DT_EXTERNAL_STORAGE metadata entries for each mount point.
+        # Non-storage connectors (oauth/api backends like gdrive) must be registered as
+        # DT_EXTERNAL_STORAGE so the router returns ExternalRouteResult and reads go
+        # directly to backend.read_content() instead of through the kernel.
+        # Mirrors the logic in nexus.bricks.mount.mount_service (mount_service.py:608).
+        for mp, backend, spec in backends:
+            metastore.put(_make_mount_entry(mp, backend.name, entry_type=_resolve_entry_type(spec)))
     except Exception:
-        for _, be in backends:
+        for _, be, _ in backends:
             _close_backend(be)
         metastore.close()
         raise
@@ -256,10 +263,45 @@ def _close_backend(backend: Any) -> None:
             close()
 
 
-def _make_mount_entry(path: str, backend_name: str) -> Any:
-    """Create a DT_MOUNT FileMetadata entry for a mount point.
+def _resolve_entry_type(spec: Any) -> int:
+    """Return DT_EXTERNAL_STORAGE for non-storage connectors, DT_MOUNT otherwise.
+
+    Built-in storage schemes (s3, gcs, local) are always DT_MOUNT.
+    Connector schemes look up the ConnectorRegistry category — oauth/api/cli
+    connectors (e.g. gdrive) get DT_EXTERNAL_STORAGE so the router bypasses
+    the kernel and dispatches reads directly to backend.read_content().
+    """
+    from nexus.contracts.metadata import DT_EXTERNAL_STORAGE, DT_MOUNT
+
+    if spec.scheme in ("s3", "gcs", "local"):
+        return DT_MOUNT
+
+    try:
+        from nexus.backends.base.registry import ConnectorRegistry
+
+        for candidate in [
+            f"{spec.scheme}_{spec.authority}" if spec.authority else None,
+            f"{spec.scheme}_connector",
+        ]:
+            if candidate is None:
+                continue
+            try:
+                info = ConnectorRegistry.get_info(candidate)
+                return DT_EXTERNAL_STORAGE if info.category != "storage" else DT_MOUNT
+            except KeyError:
+                continue
+    except Exception:
+        pass
+
+    return DT_MOUNT
+
+
+def _make_mount_entry(path: str, backend_name: str, *, entry_type: int | None = None) -> Any:
+    """Create a FileMetadata entry for a mount point.
 
     Shared by mount() and tests to avoid repeating the 13-field construction.
+    entry_type defaults to DT_MOUNT; pass DT_EXTERNAL_STORAGE for non-storage
+    connectors (e.g. gdrive) so the router uses the ExternalRouteResult path.
     """
     from datetime import UTC, datetime
 
@@ -280,5 +322,5 @@ def _make_mount_entry(path: str, backend_name: str) -> Any:
         modified_at=now,
         version=1,
         zone_id=ROOT_ZONE_ID,
-        entry_type=DT_MOUNT,
+        entry_type=entry_type if entry_type is not None else DT_MOUNT,
     )

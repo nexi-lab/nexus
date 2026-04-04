@@ -13,11 +13,15 @@ from pathlib import Path
 import pytest
 from nexus_kernel import (
     Kernel,
+    OperationContext,
     hash_bytes,
 )
 
 # Entry type constants
 DT_REG = 0
+
+# Test helper: default OperationContext for "root" zone
+_ctx = OperationContext(zone_id="root")
 DT_DIR = 1
 DT_PIPE = 3
 DT_STREAM = 4
@@ -81,7 +85,7 @@ class TestExecuteRead:
         )
 
         # Execute read
-        result = engine.sys_read("/workspace/test.txt", "root", False)
+        result = engine.sys_read("/workspace/test.txt", _ctx)
         assert result.hit is True
         assert result.data == content
 
@@ -91,28 +95,28 @@ class TestExecuteRead:
 
         engine, _ = kernel_with_cas
         with pytest.raises(NexusFileNotFoundError):
-            engine.sys_read("/workspace/missing.txt", "root", False)
+            engine.sys_read("/workspace/missing.txt", _ctx)
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS (no local_root) -> hit=false (Python fallback)."""
         kernel.dcache_put(
             "/workspace/test.txt", "s3-backend", "test.txt", 100, DT_REG, etag="hash123"
         )
-        result = kernel.sys_read("/workspace/test.txt", "root", False)
+        result = kernel.sys_read("/workspace/test.txt", _ctx)
         assert result.hit is False
 
     def test_no_etag_returns_miss(self, kernel_with_cas):
         """Entry without etag (e.g. new file) -> hit=false."""
         engine, _ = kernel_with_cas
         engine.dcache_put("/workspace/new.txt", "local", "", 0, DT_REG)
-        result = engine.sys_read("/workspace/new.txt", "root", False)
+        result = engine.sys_read("/workspace/new.txt", _ctx)
         assert result.hit is False
 
     def test_pipe_entry_returns_miss(self, kernel_with_cas):
         """DT_PIPE entries are handled by Python PipeManager."""
         engine, _ = kernel_with_cas
         engine.dcache_put("/pipes/fifo", "local", "", 0, DT_PIPE)
-        result = engine.sys_read("/pipes/fifo", "root", False)
+        result = engine.sys_read("/pipes/fifo", _ctx)
         assert result.hit is False
 
     def test_cas_read_failure_returns_miss(self, kernel_with_cas):
@@ -126,7 +130,7 @@ class TestExecuteRead:
             DT_REG,
             etag="nonexistenthash0000000000000000000000000000000000000000000000",
         )
-        result = engine.sys_read("/workspace/test.txt", "root", False)
+        result = engine.sys_read("/workspace/test.txt", _ctx)
         assert result.hit is False
 
     def test_large_file(self, kernel_with_cas):
@@ -142,7 +146,7 @@ class TestExecuteRead:
         engine.dcache_put(
             "/workspace/big.bin", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
-        result = engine.sys_read("/workspace/big.bin", "root", False)
+        result = engine.sys_read("/workspace/big.bin", _ctx)
         assert result.hit is True
         assert len(result.data) == 512 * 1024
 
@@ -157,7 +161,7 @@ class TestExecuteWrite:
         engine.dcache_put("/workspace/test.txt", "local", "", 0, DT_REG, etag="oldhash")
 
         content = b"new content from Rust execute_write"
-        result = engine.sys_write("/workspace/test.txt", "root", content, False)
+        result = engine.sys_write("/workspace/test.txt", _ctx, content)
         assert result.hit is True
         assert len(result.content_id) == 64  # BLAKE3 hex
 
@@ -170,14 +174,14 @@ class TestExecuteWrite:
     def test_dcache_miss_write_succeeds(self, kernel_with_cas):
         """DCache miss is OK for writes — CAS write creates the blob."""
         engine, _ = kernel_with_cas
-        result = engine.sys_write("/workspace/new.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/new.txt", _ctx, b"data")
         assert result.hit is True
         assert result.content_id is not None
 
     def test_no_cas_backend_returns_miss(self, kernel):
         """Mount without CAS -> hit=false."""
         kernel.dcache_put("/workspace/test.txt", "s3-remote", "", 0, DT_REG, etag="hash")
-        result = kernel.sys_write("/workspace/test.txt", "root", b"data", False)
+        result = kernel.sys_write("/workspace/test.txt", _ctx, b"data")
         assert result.hit is False
 
     def test_readonly_returns_miss(self, cas_dir):
@@ -187,7 +191,7 @@ class TestExecuteWrite:
         kernel.add_mount("/readonly", "root", True, False, "balanced", "local", cas_dir, False)
         kernel.dcache_put("/readonly/file.txt", "local", "", 0, DT_REG, etag="hash")
         # PR B returns cache miss on route failure -> returns hit=false
-        result = kernel.sys_write("/readonly/file.txt", "root", b"data", False)
+        result = kernel.sys_write("/readonly/file.txt", _ctx, b"data")
         assert result.hit is False
 
     def test_write_dedup(self, kernel_with_cas):
@@ -197,8 +201,8 @@ class TestExecuteWrite:
         engine.dcache_put("/workspace/b.txt", "local", "", 0, DT_REG, etag="old2")
 
         content = b"deduplicated content"
-        r1 = engine.sys_write("/workspace/a.txt", "root", content, False)
-        r2 = engine.sys_write("/workspace/b.txt", "root", content, False)
+        r1 = engine.sys_write("/workspace/a.txt", _ctx, content)
+        r2 = engine.sys_write("/workspace/b.txt", _ctx, content)
         assert r1.content_id == r2.content_id
 
 
@@ -221,7 +225,7 @@ class TestArcSharing:
         from nexus.contracts.exceptions import NexusFileNotFoundError
 
         with pytest.raises(NexusFileNotFoundError):
-            engine.sys_read("/workspace/late.txt", "root", False)
+            engine.sys_read("/workspace/late.txt", _ctx)
 
         # Add to dcache (simulating metastore.put dual-write)
         engine.dcache_put(
@@ -229,7 +233,7 @@ class TestArcSharing:
         )
 
         # Now should hit
-        result = engine.sys_read("/workspace/late.txt", "root", False)
+        result = engine.sys_read("/workspace/late.txt", _ctx)
         assert result.hit is True
         assert result.data == content
 
@@ -250,6 +254,6 @@ class TestArcSharing:
             "/workspace/file.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
-        result = kernel.sys_read("/workspace/file.txt", "root", False)
+        result = kernel.sys_read("/workspace/file.txt", _ctx)
         assert result.hit is True
         assert result.data == content

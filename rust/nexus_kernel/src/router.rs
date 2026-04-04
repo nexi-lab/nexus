@@ -6,14 +6,12 @@
 //! Design: HashMap<String, MountEntry> keyed by zone-canonical mount points.
 //! `route(path, zone_id)` canonicalizes, then walks from deepest to shallowest.
 //!
-//! Issue #1868: Kernel owns PathRouter directly. RustPathRouter wrapper removed.
+//! Issue #1868: Kernel owns PathRouter directly. Zero PyO3 dependency.
 
 use parking_lot::RwLock;
-use pyo3::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
 
-use crate::backend::{CasLocalBackend, ObjectStore};
+use crate::backend::ObjectStore;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -29,35 +27,21 @@ pub(crate) struct MountEntry {
 }
 
 #[derive(Debug)]
-pub(crate) enum RouteError {
+pub enum RouteError {
     NotMounted(String),
     AccessDenied(String),
 }
 
-impl From<RouteError> for PyErr {
-    fn from(e: RouteError) -> PyErr {
-        match e {
-            RouteError::NotMounted(msg) => pyo3::exceptions::PyValueError::new_err(msg),
-            RouteError::AccessDenied(msg) => pyo3::exceptions::PyPermissionError::new_err(msg),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Route result (still a #[pyclass] — returned from Kernel.route())
+// Route result — pure Rust struct (wrapper converts to Python)
 // ---------------------------------------------------------------------------
 
-/// Route result returned to Python.
-#[pyclass]
+/// Route result — pure Rust. PyO3 wrapper in generated_pyo3.rs.
 #[derive(Debug, Clone)]
 pub struct RustRouteResult {
-    #[pyo3(get)]
     pub mount_point: String,
-    #[pyo3(get)]
     pub backend_path: String,
-    #[pyo3(get)]
     pub readonly: bool,
-    #[pyo3(get)]
     pub io_profile: String,
 }
 
@@ -128,10 +112,20 @@ impl PathRouter {
     }
 
     /// Read content from the storage backend attached to a mount.
-    pub(crate) fn read_content(&self, mount_point: &str, etag: &str) -> Option<Vec<u8>> {
+    pub(crate) fn read_content(
+        &self,
+        mount_point: &str,
+        content_id: &str,
+        backend_path: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Option<Vec<u8>> {
         let mounts = self.mounts.read();
         let entry = mounts.get(mount_point)?;
-        entry.backend.as_ref()?.read_content(etag).ok()
+        entry
+            .backend
+            .as_ref()?
+            .read_content(content_id, backend_path, ctx)
+            .ok()
     }
 
     /// Write content to the storage backend attached to a mount.
@@ -144,6 +138,10 @@ impl PathRouter {
     // ── Mount management (called via Kernel proxy methods) ──────────────
 
     /// Register a mount at a zone-canonical key.
+    ///
+    /// Backend resolution:
+    ///   - `backend` provided -> uses it directly.
+    ///   - `backend` is None -> no backend (sys_read returns miss).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn add_mount(
         &self,
@@ -153,17 +151,9 @@ impl PathRouter {
         admin_only: bool,
         io_profile: &str,
         backend_name: &str,
-        local_root: Option<&str>,
-        fsync: bool,
+        backend: Option<Box<dyn ObjectStore>>,
     ) -> Result<(), std::io::Error> {
         let canonical = canonicalize(mount_point, zone_id);
-        let backend: Option<Box<dyn ObjectStore>> = match local_root {
-            Some(root) => {
-                let b = CasLocalBackend::new(Path::new(root), fsync)?;
-                Some(Box::new(b))
-            }
-            None => None,
-        };
         self.mounts.write().insert(
             canonical,
             MountEntry {
@@ -294,10 +284,10 @@ mod tests {
     fn test_route_basic() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None)
             .unwrap();
         router
-            .add_mount("/workspace", "root", false, false, "fast", "", None, false)
+            .add_mount("/workspace", "root", false, false, "fast", "", None)
             .unwrap();
 
         let result = router
@@ -312,7 +302,7 @@ mod tests {
     fn test_route_root_fallback() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None)
             .unwrap();
 
         let result = router
@@ -326,7 +316,7 @@ mod tests {
     fn test_route_readonly() {
         let router = PathRouter::new();
         router
-            .add_mount("/system", "root", true, false, "balanced", "", None, false)
+            .add_mount("/system", "root", true, false, "balanced", "", None)
             .unwrap();
 
         let err = router
@@ -339,7 +329,7 @@ mod tests {
     fn test_route_admin_only() {
         let router = PathRouter::new();
         router
-            .add_mount("/admin", "root", false, true, "balanced", "", None, false)
+            .add_mount("/admin", "root", false, true, "balanced", "", None)
             .unwrap();
 
         let err = router
@@ -357,19 +347,10 @@ mod tests {
     fn test_cross_zone() {
         let router = PathRouter::new();
         router
-            .add_mount("/", "root", false, false, "balanced", "", None, false)
+            .add_mount("/", "root", false, false, "balanced", "", None)
             .unwrap();
         router
-            .add_mount(
-                "/shared",
-                "zone-beta",
-                false,
-                false,
-                "balanced",
-                "",
-                None,
-                false,
-            )
+            .add_mount("/shared", "zone-beta", false, false, "balanced", "", None)
             .unwrap();
 
         let result = router
@@ -387,9 +368,7 @@ mod tests {
     fn test_mount_management() {
         let router = PathRouter::new();
         router
-            .add_mount(
-                "/data", "root", false, false, "balanced", "local", None, false,
-            )
+            .add_mount("/data", "root", false, false, "balanced", "local", None)
             .unwrap();
         assert!(router.has_mount("/data", "root"));
         assert!(!router.has_mount("/data", "other"));

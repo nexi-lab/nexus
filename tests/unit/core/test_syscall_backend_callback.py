@@ -11,11 +11,15 @@ from pathlib import Path
 import pytest
 from nexus_kernel import (
     Kernel,
+    OperationContext,
     hash_bytes,
 )
 
 # Entry type constants
 DT_REG = 0
+
+# Test helper: default OperationContext for "root" zone
+_ctx = OperationContext(zone_id="root")
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ class TestCASBackendWorks:
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.data == content
 
@@ -62,7 +66,7 @@ class TestCASBackendWorks:
         engine, cas_dir = engine_with_cas
         engine.dcache_put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
 
-        result = engine.sys_write("/workspace/f.txt", "root", b"new data", False)
+        result = engine.sys_write("/workspace/f.txt", _ctx, b"new data")
         assert result.hit is True
         assert result.content_id is not None
         assert len(result.content_id) == 64  # BLAKE3 hex
@@ -73,7 +77,7 @@ class TestCASBackendWorks:
         content = b"roundtrip content"
         engine.dcache_put("/workspace/rt.txt", "local", "", 0, DT_REG, etag="old")
 
-        write_result = engine.sys_write("/workspace/rt.txt", "root", content, False)
+        write_result = engine.sys_write("/workspace/rt.txt", _ctx, content)
         assert write_result.hit is True
 
         # Update dcache with new etag
@@ -86,7 +90,7 @@ class TestCASBackendWorks:
             etag=write_result.content_id,
         )
 
-        read_result = engine.sys_read("/workspace/rt.txt", "root", False)
+        read_result = engine.sys_read("/workspace/rt.txt", _ctx)
         assert read_result.hit is True
         assert read_result.data == content
 
@@ -98,13 +102,13 @@ class TestCASBackendWorks:
 
         engine, _ = engine_with_cas
         with pytest.raises(NexusFileNotFoundError):
-            engine.sys_read("/workspace/missing.txt", "root", False)
+            engine.sys_read("/workspace/missing.txt", _ctx)
 
     def test_no_etag_returns_miss(self, engine_with_cas):
         """Entry without etag -> hit=false (no content hash to read)."""
         engine, _ = engine_with_cas
         engine.dcache_put("/workspace/new.txt", "local", "", 0, DT_REG)
-        result = engine.sys_read("/workspace/new.txt", "root", False)
+        result = engine.sys_read("/workspace/new.txt", _ctx)
         assert result.hit is False
 
 
@@ -120,7 +124,7 @@ class TestNoBackendFallback:
         kernel.add_mount("/", "root", False, False, "balanced")
         kernel.dcache_put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
-        result = kernel.sys_read("/workspace/test.txt", "root", False)
+        result = kernel.sys_read("/workspace/test.txt", _ctx)
         assert result.hit is False
         assert result.data is None
 
@@ -130,6 +134,6 @@ class TestNoBackendFallback:
         kernel.add_mount("/", "root", False, False, "balanced")
         kernel.dcache_put("/workspace/test.txt", "remote", "test.txt", 100, DT_REG, etag="hash")
 
-        result = kernel.sys_write("/workspace/test.txt", "root", b"data", False)
+        result = kernel.sys_write("/workspace/test.txt", _ctx, b"data")
         assert result.hit is False
         assert result.content_id is None

@@ -409,6 +409,24 @@ class NexusFS(  # type: ignore[misc]
             "Use factory create_nexus_fs(init_cred=...) or pass context= to each syscall."
         )
 
+    def _build_rust_ctx(self, context: "OperationContext | None", is_admin: bool) -> object:
+        """Build Rust OperationContext from Python context with all fields."""
+        from nexus_kernel import OperationContext as _RustCtx
+
+        return _RustCtx(
+            user_id=context.user_id if context else "anonymous",
+            zone_id=self._zone_id,  # routing zone (always set)
+            is_admin=is_admin,
+            agent_id=getattr(context, "agent_id", None) if context else None,
+            is_system=getattr(context, "is_system", False) if context else False,
+            groups=context.groups if context else [],
+            admin_capabilities=list(context.admin_capabilities) if context else [],
+            subject_type=getattr(context, "subject_type", "user") if context else "user",
+            subject_id=getattr(context, "subject_id", None) if context else None,
+            request_id=getattr(context, "request_id", "") if context else "",
+            context_zone_id=context.zone_id if context else None,  # caller's zone
+        )
+
     def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
@@ -1068,28 +1086,8 @@ class NexusFS(  # type: ignore[misc]
         mark_acquired(L1_VFS)
         return handle
 
-    def _backend_read(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
-        """Read from Python backend (non-Rust backends: GCS, remote).
-
-        Called when Rust CAS engine returns hit=False (no local blob).
-        ExternalRouteResult is handled by pre-check in sys_read — never reaches here.
-        """
-        route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
-
-        _ctx = (
-            _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
-            if context
-            else OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-        )
-
-        meta = route.metastore.get(path)
-        if meta is None or (meta.etag is None and not route.backend_path):
-            raise NexusFileNotFoundError(path)
-        return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-            meta.etag or "", context=_ctx
-        )
+    # _backend_read deleted — Rust PyObjectStoreAdapter handles all backends
+    # via OperationContext (Rust-constructed with backend_path from route).
 
     @contextlib.contextmanager
     def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
@@ -1201,21 +1199,20 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        # PRE-INTERCEPT hooks
-        if self.read_hook_count > 0:
-            from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
+        # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
 
-            self.intercept_pre_read(_RHC(path=path, context=context))
-
-        # ── KERNEL (Rust — dcache hit: zero GIL, dcache miss: metastore fallback via GIL) ──
-        result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        data = result.data or b"" if result.hit else self._backend_read(path, _is_admin, context)
+        # ── KERNEL (Rust — pre-hooks + route + backend read) ──
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        result = self._kernel.sys_read(path, _rust_ctx)
+        if not result.hit:
+            raise NexusFileNotFoundError(path)
+        data = result.data or b""
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
 
         # [INTERMEDIATE] POST-INTERCEPT: hooks — migrates to Rust thread::spawn in PR 7
-        if result.post_hook_needed or (not result.hit and self.read_hook_count > 0):
+        if result.post_hook_needed:
             zone_id, agent_id, _ = self._get_context_identity(context)
             from nexus.contracts.vfs_hooks import ReadHookContext
 
@@ -1927,17 +1924,40 @@ class NexusFS(  # type: ignore[misc]
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        result = self._kernel.sys_write(path, self._zone_id, buf, _is_admin)
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
+        result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         if result.hit:
-            # Rust wrote to CAS — now update metadata + dispatch events [INTERMEDIATE]
-            # _write_internal will re-call backend.write_content (CAS dedup = no-op)
-            # and handle metastore.put + event dispatch atomically.
-            await self._write_internal(
-                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            # Rust wrote CAS + metadata + dcache — only dispatch events
+            zone_id, agent_id, _ = self._get_context_identity(context)
+            await self._dispatch_write_events(
+                path,
+                _WriteContentResult(
+                    content_hash=result.content_id or "",
+                    size=result.size,
+                    metadata=FileMetadata(
+                        path=path,
+                        backend_name="",
+                        physical_path=result.content_id or "",
+                        size=result.size,
+                        etag=result.content_id,
+                        version=result.version,
+                        zone_id=zone_id,
+                    ),
+                    new_version=result.version,
+                    is_new=(_meta is None),
+                    old_etag=_meta.etag if _meta else None,
+                    old_metadata=_meta,
+                    context=context or OperationContext(user_id="anonymous", groups=[]),
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_remote=False,
+                    is_external=False,
+                ),
+                buf,
             )
         else:
-            # [INTERMEDIATE] DLC fallback for non-Rust backends — deleted in PR 7
+            # Non-Rust backend fallback
             await self._write_internal(
                 path=path, content=buf, offset=offset, context=context, _meta=_meta
             )

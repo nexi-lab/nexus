@@ -147,11 +147,14 @@ class MountTable:
         _backend_name = backend.name
         if not isinstance(_backend_name, str):
             _backend_name = str(_backend_name)
-        _local_root = (
-            str(getattr(backend, "root_path", None))
-            if getattr(backend, "has_root_path", False)
-            else None
-        )
+        # Only CAS backends with local roots get Rust CasLocalBackend (pure Rust,
+        # zero GIL).  All other backends → PyObjectStoreAdapter (GIL cold path).
+        # Detection: CASLocalBackend has has_root_path=True AND uses CAS addressing
+        # (has _cas_engine or class name starts with "CAS").
+        _is_cas_local = getattr(backend, "has_root_path", False) and type(
+            backend
+        ).__name__.startswith("CAS")
+        _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
         if self._rust is not None:
             self._rust.add_mount(
                 mount_point,
@@ -164,7 +167,8 @@ class MountTable:
                 True,  # fsync
             )
         # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
-        # fast path sees live mounts.
+        # fast path sees live mounts.  Pass py_backend= when no local_root
+        # so Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
             with contextlib.suppress(Exception):
                 self._kernel.add_mount(
@@ -176,6 +180,7 @@ class MountTable:
                     _backend_name,
                     _local_root,
                     True,
+                    py_backend=backend,
                 )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:

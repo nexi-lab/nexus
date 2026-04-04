@@ -57,7 +57,16 @@ pub(crate) trait ObjectStore: Send + Sync {
     fn write_content(&self, content: &[u8]) -> Result<String, StorageError>;
 
     /// Read content by opaque identifier.
-    fn read_content(&self, content_id: &str) -> Result<Vec<u8>, StorageError>;
+    ///
+    /// `backend_path`: mount-relative path (for path-addressed backends).
+    /// `ctx`: operation credential for backends that need identity/auth.
+    /// CAS backends ignore backend_path and ctx.
+    fn read_content(
+        &self,
+        content_id: &str,
+        backend_path: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError>;
 
     /// Delete content by identifier.
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
@@ -101,7 +110,12 @@ impl ObjectStore for CasLocalBackend {
         "local"
     }
 
-    fn read_content(&self, content_id: &str) -> Result<Vec<u8>, StorageError> {
+    fn read_content(
+        &self,
+        content_id: &str,
+        _backend_path: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
         self.0.read_content(content_id).map_err(StorageError::from)
     }
 
@@ -131,6 +145,10 @@ mod tests {
         (tmp, backend)
     }
 
+    fn test_ctx() -> crate::kernel::OperationContext {
+        crate::kernel::OperationContext::new("test", "root", false, None, false)
+    }
+
     #[test]
     fn test_cas_local_backend_write_and_read() {
         let (_tmp, backend) = setup();
@@ -139,15 +157,18 @@ mod tests {
         let hash = backend.write_content(content).unwrap();
         assert_eq!(hash.len(), 64);
 
-        let read_back = backend.read_content(&hash).unwrap();
+        let read_back = backend.read_content(&hash, "", &test_ctx()).unwrap();
         assert_eq!(read_back, content);
     }
 
     #[test]
     fn test_cas_local_backend_not_found() {
         let (_tmp, backend) = setup();
-        let result = backend
-            .read_content("0000000000000000000000000000000000000000000000000000000000000000");
+        let result = backend.read_content(
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            "",
+            &test_ctx(),
+        );
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), StorageError::NotFound(_)));
     }
@@ -174,7 +195,7 @@ mod tests {
         let hash = backend.write_content(b"to delete").unwrap();
         assert!(backend.delete_content(&hash).is_ok());
         assert!(matches!(
-            backend.read_content(&hash).unwrap_err(),
+            backend.read_content(&hash, "", &test_ctx()).unwrap_err(),
             StorageError::NotFound(_)
         ));
     }

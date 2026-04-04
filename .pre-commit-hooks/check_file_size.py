@@ -28,6 +28,7 @@ EXCEPTIONS = [
     "src/nexus/bricks/rebac/manager.py",  # 4,856 lines - actively decomposing (#2179 Steps 2.4-2.6)
     "src/nexus/services/search_service.py",  # 2,290 lines - Issue #954 trigram index additions
     "src/nexus/bricks/search/search_service.py",  # 2,215 lines - moved from services/search/ + semantic mixin inlined
+    "scripts/codegen_kernel_abi.py",  # ~2,300 lines - codegen templates for generated_pyo3.rs (#1868)
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
     "src/nexus/bricks/rebac/cache/tiger/bitmap_cache.py",  # 2,103 lines - Issue #3192 BloomFilter + batch_get additions

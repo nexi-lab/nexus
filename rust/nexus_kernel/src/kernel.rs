@@ -1,44 +1,129 @@
-//! Kernel — Rust kernel owning all core state.
+//! Kernel — pure Rust kernel owning all core state.
 //!
-//! Owns DCache, PathRouter, Trie, VFS Lock, HookRegistry, ObserverRegistry, Metastore.
-//! Exposes proxy #[pymethods] for Python-side mutation and syscall execution.
+//! Zero PyO3 dependency. All Python bridging lives in generated_pyo3.rs.
+//!
+//! Owns DCache, PathRouter, Trie, VFS Lock, Metastore.
+//! Hook/Observer registries live in generated_pyo3::PyKernel (wrapper-only).
 //!
 //! Architecture:
-//!   - Created empty via Kernel(), then components are wired by factory.
-//!   - DCache/Router/Trie/Hooks/Observers use interior mutability (&self methods).
-//!   - VFS Lock is optionally Arc-shared with Python VFSLockManager (blocking acquire).
-//!   - Metastore (PyMetastoreAdapter) wraps Python MetastoreABC via GIL.
+//!   - Created empty via Kernel::new(), then components are wired by wrapper.
+//!   - DCache/Router/Trie use interior mutability (&self methods).
+//!   - VFS Lock is optionally Arc-shared with VFSLockManager (blocking acquire).
+//!   - Metastore (Box<dyn Metastore>) wraps any impl (Python adapter, redb, gRPC).
 //!
-//! Issue #1868: PR 7b — Metastore wired, dcache-miss → metastore fallback.
+//! Issue #1868: Phase H — kernel boundary collapse.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
-use crate::dispatch::{HookRegistry, ObserverRegistry, Trie};
-use crate::lock::{LockMode, VFSLockManager, VFSLockManagerInner};
-use crate::metastore::{Metastore, PyMetastoreAdapter};
-use crate::router::PathRouter;
-use parking_lot::Mutex;
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use crate::dispatch::Trie;
+use crate::lock::{LockMode, VFSLockManagerInner};
+use crate::metastore::Metastore;
+use crate::router::{PathRouter, RouteError, RustRouteResult};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+// ── KernelError ────────────────────────────────────────────────────────────
+
+/// Kernel-level error type — pure Rust, no PyO3 dependency.
+///
+/// Error conversion to PyErr lives in generated_pyo3.rs.
+#[derive(Debug)]
+pub enum KernelError {
+    InvalidPath(String),
+    FileNotFound(String),
+    Route(RouteError),
+    IOError(String),
+    TrieError(String),
+}
+
+impl From<RouteError> for KernelError {
+    fn from(e: RouteError) -> Self {
+        KernelError::Route(e)
+    }
+}
+
+impl From<std::io::Error> for KernelError {
+    fn from(e: std::io::Error) -> Self {
+        KernelError::IOError(e.to_string())
+    }
+}
+
+// ── OperationContext — kernel-internal credential ─────────────────────────
+
+/// Syscall credential — carried through every kernel operation.
+///
+/// Constructed by thin wrapper (Python, gRPC, etc.) with identity fields.
+/// Rust kernel uses `zone_id` for routing; hooks use the full context.
+///
+/// Analogous to Linux `struct cred` — immutable after construction.
+#[derive(Clone, Debug)]
+pub struct OperationContext {
+    /// Subject identity (human user or service account).
+    pub user_id: String,
+    /// Routing zone — NexusFS instance zone for mount lookup (always set).
+    pub zone_id: String,
+    /// Admin privilege flag.
+    pub is_admin: bool,
+    /// Agent identity (optional, for agent-initiated operations).
+    pub agent_id: Option<String>,
+    /// System operation flag (bypasses all checks).
+    pub is_system: bool,
+    /// Group memberships for ReBAC.
+    pub groups: Vec<String>,
+    /// Granted admin capabilities (e.g. "MANAGE_ZONES", "READ_ALL").
+    pub admin_capabilities: Vec<String>,
+    /// Subject type for ReBAC (default: "user").
+    pub subject_type: String,
+    /// Subject ID for ReBAC (defaults to user_id).
+    pub subject_id: Option<String>,
+    /// Audit trail correlation ID.
+    pub request_id: String,
+    /// Caller's zone_id (None = no zone restriction). Distinct from routing zone_id.
+    pub context_zone_id: Option<String>,
+}
+
+impl OperationContext {
+    #[allow(dead_code)]
+    pub fn new(
+        user_id: &str,
+        zone_id: &str,
+        is_admin: bool,
+        agent_id: Option<&str>,
+        is_system: bool,
+    ) -> Self {
+        Self {
+            user_id: user_id.to_string(),
+            zone_id: zone_id.to_string(),
+            is_admin,
+            agent_id: agent_id.map(|s| s.to_string()),
+            is_system,
+            groups: Vec::new(),
+            admin_capabilities: Vec::new(),
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: String::new(),
+            context_zone_id: None,
+        }
+    }
+}
 
 // ── Strong-typed result types ──────────────────────────────────────────
 
 /// Result of sys_read(): concrete type instead of Option<bytes>.
-#[pyclass(get_all)]
 pub struct SysReadResult {
     /// True if Rust kernel handled the read (no Python fallback needed).
     pub hit: bool,
-    /// Content bytes (only when hit=true).
-    pub data: Option<Py<PyBytes>>,
+    /// Content bytes (only when hit=true). Vec<u8> — wrapper converts to PyBytes.
+    pub data: Option<Vec<u8>>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
     /// Content hash (etag) for post-hook context.
     pub content_hash: Option<String>,
+    /// DT_PIPE(3)/DT_STREAM(4) when hit=false — tells wrapper to dispatch IPC.
+    /// 0 = normal miss (not found or no backend).
+    pub entry_type: u8,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
-#[pyclass(get_all)]
 pub struct SysWriteResult {
     /// True if Rust backend completed the write.
     pub hit: bool,
@@ -46,20 +131,49 @@ pub struct SysWriteResult {
     pub content_id: Option<String>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
+    /// Metadata version after write (for event dispatch).
+    pub version: u32,
+    /// Content size in bytes.
+    pub size: u64,
+}
+
+// ── DcacheStats ──────────────────────────────────────────────────────
+
+/// DCache statistics — pure Rust struct returned by dcache_stats().
+pub struct DcacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub size: usize,
+    pub hit_rate: f64,
+}
+
+// ── StatResult ───────────────────────────────────────────────────────
+
+/// Result of sys_stat(): pure Rust struct returned by sys_stat().
+/// Wrapper converts to PyDict for Python callers.
+pub struct StatResult {
+    pub path: String,
+    pub backend_name: String,
+    pub physical_path: String,
+    pub size: u64,
+    pub etag: Option<String>,
+    pub mime_type: String,
+    pub is_directory: bool,
+    pub entry_type: u8,
+    pub mode: u32,
+    pub version: u32,
+    pub zone_id: Option<String>,
 }
 
 // ── Kernel ──────────────────────────────────────────────────────────────
 
 /// Rust kernel — owns all core state directly.
 ///
-/// Created empty via `Kernel()`, then wired by factory:
-///   - `set_vfs_lock(lock)` — share VFS lock with Python VFSLockManager.
+/// Created empty via `Kernel::new()`, then wired by wrapper:
+///   - `set_vfs_lock(lock)` — share VFS lock.
 ///   - `add_mount(...)` — register mount points.
 ///   - `dcache_put(...)` — populate dentry cache.
 ///   - `trie_register(...)` — register path resolvers.
-///   - `register_hook(...)` — register INTERCEPT hooks.
-///   - `register_observer(...)` — register OBSERVE observers.
-#[pyclass]
 pub struct Kernel {
     // DCache (owned)
     dcache: DCache,
@@ -67,12 +181,9 @@ pub struct Kernel {
     router: PathRouter,
     // PathTrie (owned)
     trie: Trie,
-    // VFS Lock (Arc-shared with Python VFSLockManager for blocking acquire)
+    // VFS Lock (Arc-shared with VFSLockManager for blocking acquire)
     vfs_lock: Option<Arc<VFSLockManagerInner>>,
-    // Hook/Observer registries (Mutex for interior mutability)
-    hooks: Mutex<HookRegistry>,
-    observers: Mutex<ObserverRegistry>,
-    // Metastore (PyMetastoreAdapter wrapping Python MetastoreABC)
+    // Metastore (Box<dyn Metastore>)
     metastore: Option<Box<dyn Metastore>>,
     // VFS lock timeout for blocking acquire (ms)
     vfs_lock_timeout_ms: u64,
@@ -84,20 +195,16 @@ pub struct Kernel {
     rename_hook_count: AtomicU64,
 }
 
-#[pymethods]
 impl Kernel {
     // ── Constructor ────────────────────────────────────────────────────
 
-    /// Create an empty kernel. Components wired by factory after construction.
-    #[new]
-    fn new() -> Self {
+    /// Create an empty kernel. Components wired by wrapper after construction.
+    pub fn new() -> Self {
         Self {
             dcache: DCache::new(),
             router: PathRouter::new(),
             trie: Trie::new(),
             vfs_lock: None,
-            hooks: Mutex::new(HookRegistry::new()),
-            observers: Mutex::new(ObserverRegistry::new()),
             metastore: None,
             vfs_lock_timeout_ms: 5000,
             read_hook_count: AtomicU64::new(0),
@@ -110,32 +217,31 @@ impl Kernel {
 
     // ── VFS Lock wiring ────────────────────────────────────────────────
 
-    /// Wire VFS lock manager (shares Arc with Python VFSLockManager).
-    fn set_vfs_lock(&mut self, vfs_lock: &VFSLockManager) {
-        self.vfs_lock = Some(Arc::clone(&vfs_lock.inner));
+    /// Wire VFS lock manager (shares Arc with VFSLockManager).
+    pub fn set_vfs_lock(&mut self, inner: Arc<VFSLockManagerInner>) {
+        self.vfs_lock = Some(inner);
     }
 
     /// Set VFS lock timeout in milliseconds (default 5000).
-    fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
+    pub fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
         self.vfs_lock_timeout_ms = timeout_ms;
     }
 
     // ── Metastore wiring ──────────────────────────────────────────────
 
-    /// Wire Python MetastoreABC → Rust Metastore trait via PyMetastoreAdapter.
+    /// Wire a Metastore impl (PyMetastoreAdapter, redb, gRPC, etc.).
     ///
-    /// Called once from NexusFS.__init__. After this, sys_read dcache-miss
+    /// Called once from wrapper. After this, sys_read dcache-miss
     /// falls back to metastore.get() instead of raising FileNotFoundError.
-    fn set_metastore(&mut self, metastore: Py<PyAny>) {
-        self.metastore = Some(Box::new(PyMetastoreAdapter::new(metastore)));
+    pub fn set_metastore(&mut self, metastore: Box<dyn Metastore>) {
+        self.metastore = Some(metastore);
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────
 
     /// Insert or update a cache entry.
-    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
     #[allow(clippy::too_many_arguments)]
-    fn dcache_put(
+    pub fn dcache_put(
         &self,
         path: &str,
         backend_name: &str,
@@ -163,46 +269,32 @@ impl Kernel {
     }
 
     /// Get hot-path tuple: (backend_name, physical_path, entry_type).
-    fn dcache_get(&self, path: &str) -> Option<(String, String, u8)> {
+    pub fn dcache_get(&self, path: &str) -> Option<(String, String, u8)> {
         self.dcache.get_hot(path)
     }
 
-    /// Get full entry as dict.
-    fn dcache_get_full(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
-        match self.dcache.get_entry(path) {
-            Some(e) => {
-                let dict = PyDict::new(py);
-                dict.set_item("backend_name", &e.backend_name)?;
-                dict.set_item("physical_path", &e.physical_path)?;
-                dict.set_item("size", e.size)?;
-                dict.set_item("etag", e.etag.as_deref())?;
-                dict.set_item("version", e.version)?;
-                dict.set_item("entry_type", e.entry_type)?;
-                dict.set_item("zone_id", e.zone_id.as_deref())?;
-                dict.set_item("mime_type", e.mime_type.as_deref())?;
-                Ok(Some(dict.into()))
-            }
-            None => Ok(None),
-        }
+    /// Get full entry (returns CachedEntry for wrapper to convert).
+    pub fn dcache_get_full(&self, path: &str) -> Option<CachedEntry> {
+        self.dcache.get_entry(path)
     }
 
     /// Evict a single path.
-    fn dcache_evict(&self, path: &str) -> bool {
+    pub fn dcache_evict(&self, path: &str) -> bool {
         self.dcache.evict(path)
     }
 
     /// Evict all entries with given prefix.
-    fn dcache_evict_prefix(&self, prefix: &str) -> usize {
+    pub fn dcache_evict_prefix(&self, prefix: &str) -> usize {
         self.dcache.evict_prefix(prefix)
     }
 
     /// Check if path exists in cache.
-    fn dcache_contains(&self, path: &str) -> bool {
+    pub fn dcache_contains(&self, path: &str) -> bool {
         self.dcache.contains(path)
     }
 
-    /// Return cache statistics as a dict.
-    fn dcache_stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    /// Return cache statistics.
+    pub fn dcache_stats(&self) -> DcacheStats {
         let (hits, misses, size) = self.dcache.stats();
         let total = hits + misses;
         let hit_rate = if total > 0 {
@@ -210,30 +302,33 @@ impl Kernel {
         } else {
             0.0
         };
-        let dict = PyDict::new(py);
-        dict.set_item("hits", hits)?;
-        dict.set_item("misses", misses)?;
-        dict.set_item("size", size)?;
-        dict.set_item("hit_rate", hit_rate)?;
-        Ok(dict.into())
+        DcacheStats {
+            hits,
+            misses,
+            size,
+            hit_rate,
+        }
     }
 
     /// Clear all entries and reset counters.
-    fn dcache_clear(&self) {
+    pub fn dcache_clear(&self) {
         self.dcache.clear();
     }
 
     /// Number of entries in dcache.
-    fn dcache_len(&self) -> usize {
+    pub fn dcache_len(&self) -> usize {
         self.dcache.len()
     }
 
     // ── Router proxy methods ───────────────────────────────────────────
 
     /// Register a mount point.
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false))]
+    ///
+    /// Backend resolution:
+    ///   - `backend` provided → uses it directly.
+    ///   - `backend` is None → no backend (sys_read returns miss).
     #[allow(clippy::too_many_arguments)]
-    fn add_mount(
+    pub fn add_mount(
         &self,
         mount_point: &str,
         zone_id: &str,
@@ -241,9 +336,8 @@ impl Kernel {
         admin_only: bool,
         io_profile: &str,
         backend_name: &str,
-        local_root: Option<&str>,
-        fsync: bool,
-    ) -> PyResult<()> {
+        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+    ) -> Result<(), KernelError> {
         self.router
             .add_mount(
                 mount_point,
@@ -252,126 +346,67 @@ impl Kernel {
                 admin_only,
                 io_profile,
                 backend_name,
-                local_root,
-                fsync,
+                backend,
             )
-            .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))
+            .map_err(KernelError::from)
     }
 
     /// Remove a mount point.
-    fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
+    pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
         self.router.remove_mount(mount_point, zone_id)
     }
 
     /// Zone-canonical LPM routing.
-    fn route(
+    pub fn route(
         &self,
         path: &str,
         zone_id: &str,
         is_admin: bool,
         check_write: bool,
-    ) -> PyResult<crate::router::RustRouteResult> {
+    ) -> Result<RustRouteResult, KernelError> {
         self.router
             .route_impl(path, zone_id, is_admin, check_write)
-            .map_err(Into::into)
+            .map_err(KernelError::from)
     }
 
     /// Check if a mount exists.
-    fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
+    pub fn has_mount(&self, mount_point: &str, zone_id: &str) -> bool {
         self.router.has_mount(mount_point, zone_id)
     }
 
     /// List all mount points.
-    fn get_mount_points(&self) -> Vec<String> {
+    pub fn get_mount_points(&self) -> Vec<String> {
         self.router.get_mount_points()
     }
 
     // ── Trie proxy methods ─────────────────────────────────────────────
 
     /// Register a path pattern with a resolver index.
-    fn trie_register(&self, pattern: &str, resolver_idx: usize) -> PyResult<()> {
+    pub fn trie_register(&self, pattern: &str, resolver_idx: usize) -> Result<(), KernelError> {
         self.trie
             .register(pattern, resolver_idx)
-            .map_err(pyo3::exceptions::PyValueError::new_err)
+            .map_err(KernelError::TrieError)
     }
 
     /// Remove a resolver by index.
-    fn trie_unregister(&self, resolver_idx: usize) -> bool {
+    pub fn trie_unregister(&self, resolver_idx: usize) -> bool {
         self.trie.unregister(resolver_idx)
     }
 
     /// Lookup a concrete path.
-    fn trie_lookup(&self, path: &str) -> Option<usize> {
+    pub fn trie_lookup(&self, path: &str) -> Option<usize> {
         self.trie.lookup(path)
     }
 
     /// Number of registered trie patterns.
-    fn trie_len(&self) -> usize {
+    pub fn trie_len(&self) -> usize {
         self.trie.len()
-    }
-
-    // ── Hook proxy methods ─────────────────────────────────────────────
-
-    /// Register a hook for an operation.
-    fn register_hook(&self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
-        self.hooks.lock().register(py, op, hook)
-    }
-
-    /// Unregister a hook by identity.
-    fn unregister_hook(&self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
-        self.hooks.lock().unregister(py, op, hook)
-    }
-
-    /// Return hooks with on_pre_{op}.
-    fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_pre_hooks(py, op)
-    }
-
-    /// Return (sync_post, async_post) hooks.
-    fn get_post_hooks(&self, py: Python<'_>, op: &str) -> (Vec<Py<PyAny>>, Vec<Py<PyAny>>) {
-        self.hooks.lock().get_post_hooks(py, op)
-    }
-
-    /// Return all hooks for operation.
-    fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
-        self.hooks.lock().get_all_hooks(py, op)
-    }
-
-    /// Number of hooks for operation.
-    fn hook_count(&self, op: &str) -> usize {
-        self.hooks.lock().count(op)
-    }
-
-    // ── Observer proxy methods ─────────────────────────────────────────
-
-    /// Register an observer with event_mask bitmask.
-    fn register_observer(&self, py: Python<'_>, obs: Py<PyAny>, event_mask: u32) -> PyResult<()> {
-        self.observers.lock().register(py, obs, event_mask)
-    }
-
-    /// Unregister an observer by identity.
-    fn unregister_observer(&self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
-        self.observers.lock().unregister(py, obs)
-    }
-
-    /// Return matching observers for event_type_bit.
-    fn get_matching_observers(
-        &self,
-        py: Python<'_>,
-        event_type_bit: u32,
-    ) -> Vec<(Py<PyAny>, String)> {
-        self.observers.lock().get_matching(py, event_type_bit)
-    }
-
-    /// Number of registered observers.
-    fn observer_count(&self) -> usize {
-        self.observers.lock().count()
     }
 
     // ── Hook counts ────────────────────────────────────────────────────
 
     /// Update hook count for an operation.
-    fn set_hook_count(&self, op: &str, count: u64) {
+    pub fn set_hook_count(&self, op: &str, count: u64) {
         match op {
             "read" => self.read_hook_count.store(count, Ordering::Relaxed),
             "write" => self.write_hook_count.store(count, Ordering::Relaxed),
@@ -382,52 +417,63 @@ impl Kernel {
         }
     }
 
+    /// Check if hooks are registered for an operation (lock-free).
+    pub fn has_hooks(&self, op: &str) -> bool {
+        match op {
+            "read" => self.read_hook_count.load(Ordering::Relaxed) > 0,
+            "write" => self.write_hook_count.load(Ordering::Relaxed) > 0,
+            "stat" => self.stat_hook_count.load(Ordering::Relaxed) > 0,
+            "delete" => self.delete_hook_count.load(Ordering::Relaxed) > 0,
+            "rename" => self.rename_hook_count.load(Ordering::Relaxed) > 0,
+            _ => false,
+        }
+    }
+
     // ── sys_read ───────────────────────────────────────────────────────
 
-    /// Rust syscall: read file content.
+    /// Rust syscall: read file content (pure Rust, no GIL).
     ///
-    /// validate → route → dcache → [metastore fallback] → VFS lock → CAS read → return.
+    /// validate -> route -> dcache -> [metastore fallback] -> VFS lock -> CAS read -> return.
     ///
-    /// DCache hit = hot path (zero GIL). DCache miss = cold path: queries
-    /// Python MetastoreABC via PyMetastoreAdapter (GIL), populates dcache,
+    /// DCache hit = hot path. DCache miss = cold path: queries metastore, populates dcache,
     /// then continues with CAS read.
     ///
     /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
     /// or when no Rust backend is available (e.g. remote backends).
-    /// Raises `InvalidPathError`, `NexusFileNotFoundError` on errors.
-    #[pyo3(signature = (path, zone_id, is_admin))]
-    fn sys_read<'py>(
+    ///
+    /// Hooks are NOT dispatched here — wrapper handles PRE-INTERCEPT.
+    pub fn sys_read(
         &self,
-        py: Python<'py>,
         path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> PyResult<SysReadResult> {
+        ctx: &OperationContext,
+    ) -> Result<SysReadResult, KernelError> {
         let miss = || {
             Ok(SysReadResult {
                 hit: false,
                 data: None,
                 post_hook_needed: false,
                 content_hash: None,
+                entry_type: 0,
             })
         };
 
         // 1. Validate
-        if let Err(msg) = validate_path_fast(path) {
-            return Err(Self::raise_invalid_path(py, &msg));
-        }
+        validate_path_fast(path)?;
 
         // 2. Route (pure Rust LPM)
-        let route = match self.router.route_impl(path, zone_id, is_admin, false) {
+        let route = match self
+            .router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, false)
+        {
             Ok(r) => r,
             Err(_) => return miss(),
         };
 
-        // 3. DCache lookup — on miss, fallback to metastore (cold path, GIL)
+        // 3. DCache lookup — on miss, fallback to metastore (cold path)
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                // Metastore fallback: query Python MetastoreABC via PyMetastoreAdapter
+                // Metastore fallback
                 match &self.metastore {
                     Some(ms) => match ms.get(path) {
                         Ok(Some(meta)) => {
@@ -446,48 +492,58 @@ impl Kernel {
                             // Re-fetch from dcache (now populated)
                             self.dcache.get_entry(path).unwrap()
                         }
-                        // Metastore miss — may be overlay base layer; let Python handle
+                        // Metastore miss — may be overlay base layer; let wrapper handle
                         Ok(None) => return miss(),
                         Err(_) => return miss(),
                     },
-                    None => return Err(Self::raise_file_not_found(py, path)),
+                    None => return Err(KernelError::FileNotFound(path.to_string())),
                 }
             }
         };
 
-        // DT_PIPE/DT_STREAM → wrapper handles async IPC
-        match entry.entry_type {
-            DT_PIPE | DT_STREAM => return miss(),
-            _ => {}
+        // DT_PIPE/DT_STREAM -> return entry_type so wrapper dispatches IPC
+        if let dt @ (DT_PIPE | DT_STREAM) = entry.entry_type {
+            return Ok(SysReadResult {
+                hit: false,
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+                entry_type: dt,
+            });
         }
 
-        // Path-based backend: no etag → use backend_path
-        let etag = entry.etag.as_deref().unwrap_or("");
-        if etag.is_empty() && route.backend_path.is_empty() {
-            return Err(Self::raise_file_not_found(py, path));
-        }
+        // Content identifier: CAS backends use etag (hash), path backends
+        // use physical_path. Either must be non-empty to attempt a read.
+        let content_id = entry.etag.as_deref().filter(|s| !s.is_empty()).or_else(|| {
+            let pp = entry.physical_path.as_str();
+            if pp.is_empty() {
+                None
+            } else {
+                Some(pp)
+            }
+        });
+        let content_id = match content_id {
+            Some(id) => id,
+            None => return miss(),
+        };
 
-        // 4. VFS lock (blocking, GIL released during wait)
+        // 4. VFS lock (blocking acquire — wrapper releases GIL before calling this)
         let lock_handle = if let Some(ref lm) = self.vfs_lock {
             let timeout = self.vfs_lock_timeout_ms;
-            let lm = Arc::clone(lm);
-            let p = path.to_string();
-            py.detach(move || lm.blocking_acquire(&p, LockMode::Read, timeout))
+            lm.blocking_acquire(path, LockMode::Read, timeout)
         } else {
             0
         };
 
-        // Lock timeout → miss (unsafe to read without lock)
+        // Lock timeout -> miss (unsafe to read without lock)
         if self.vfs_lock.is_some() && lock_handle == 0 {
             return miss();
         }
 
-        // 5. Backend read (CasLocal — pure Rust, zero GIL)
-        let content = if !etag.is_empty() {
-            self.router.read_content(&route.mount_point, etag)
-        } else {
-            None
-        };
+        // 5. Backend read (CasLocal or PyObjectStoreAdapter)
+        let content =
+            self.router
+                .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
 
         // 6. Release VFS lock (always, even on miss)
         if lock_handle > 0 {
@@ -497,14 +553,13 @@ impl Kernel {
         }
 
         // 7. Return result
-        // CDC manifests are reassembled by CASEngine.read_content() — no special
-        // handling needed here. Content is always the final assembled bytes.
         match content {
             Some(data) => Ok(SysReadResult {
                 hit: true,
-                data: Some(PyBytes::new(py, &data).into()),
+                data: Some(data),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag,
+                entry_type: DT_REG,
             }),
             None => miss(),
         }
@@ -512,45 +567,41 @@ impl Kernel {
 
     // ── sys_write ──────────────────────────────────────────────────────
 
-    /// Rust syscall: write file content — pure Rust path (zero GIL).
+    /// Rust syscall: write file content (pure Rust, no GIL).
     ///
-    /// validate → route → VFS lock (blocking, GIL released) → CAS write → return.
+    /// validate -> route -> VFS lock -> CAS write -> metadata build -> metastore.put
+    /// -> dcache update -> return.
     ///
-    /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
-    /// or when no Rust backend is available (e.g. remote backends).
-    /// Raises `InvalidPathError` on invalid paths.
-    ///
-    /// Metastore.put (metadata update) is handled by the Python wrapper
-    /// (intermediate state — migrates to Rust metastore in PR 7).
-    #[pyo3(signature = (path, zone_id, content, is_admin))]
-    fn sys_write<'py>(
+    /// Hooks are NOT dispatched here — wrapper handles PRE-INTERCEPT.
+    pub fn sys_write(
         &self,
-        py: Python<'py>,
         path: &str,
-        zone_id: &str,
+        ctx: &OperationContext,
         content: &[u8],
-        is_admin: bool,
-    ) -> PyResult<SysWriteResult> {
+    ) -> Result<SysWriteResult, KernelError> {
         let miss = || {
             Ok(SysWriteResult {
                 hit: false,
                 content_id: None,
                 post_hook_needed: false,
+                version: 0,
+                size: 0,
             })
         };
 
         // 1. Validate
-        if let Err(msg) = validate_path_fast(path) {
-            return Err(Self::raise_invalid_path(py, &msg));
-        }
+        validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        let route = match self.router.route_impl(path, zone_id, is_admin, true) {
+        let route = match self
+            .router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+        {
             Ok(r) => r,
             Err(_) => return miss(),
         };
 
-        // 3. DCache check — DT_PIPE/DT_STREAM → wrapper handles
+        // 3. DCache check — DT_PIPE/DT_STREAM -> wrapper handles
         if let Some(entry) = self.dcache.get_entry(path) {
             match entry.entry_type {
                 DT_PIPE | DT_STREAM => return miss(),
@@ -558,33 +609,74 @@ impl Kernel {
             }
         }
 
-        // 4. VFS lock (blocking write lock, GIL released during wait)
+        // 4. VFS lock (blocking write lock)
         let lock_handle = if let Some(ref lm) = self.vfs_lock {
             let timeout = self.vfs_lock_timeout_ms;
-            let lm = Arc::clone(lm);
-            let p = path.to_string();
-            py.detach(move || lm.blocking_acquire(&p, LockMode::Write, timeout))
+            lm.blocking_acquire(path, LockMode::Write, timeout)
         } else {
             0
         };
 
-        // Lock timeout → miss (unsafe to write without lock)
+        // Lock timeout -> miss (unsafe to write without lock)
         if self.vfs_lock.is_some() && lock_handle == 0 {
             return miss();
         }
 
-        // 5. Backend write (CasLocal — pure Rust, zero GIL)
-        let result = match self.router.write_content(&route.mount_point, content) {
-            Some(hash) => Ok(SysWriteResult {
-                hit: true,
-                content_id: Some(hash),
-                post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
-            }),
-            // No Rust backend available (e.g. remote) — wrapper handles
+        // 5. Backend write (CasLocal or PyObjectStoreAdapter)
+        let content_hash = self.router.write_content(&route.mount_point, content);
+
+        // 6. After CAS write -> build metadata + metastore.put + dcache update
+        let result = match content_hash {
+            Some(hash) => {
+                let content_size = content.len() as u64;
+                // Get existing version for increment
+                let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                let new_version = old_version + 1;
+
+                // Build FileMetadata and persist via metastore
+                if let Some(ref ms) = self.metastore {
+                    let meta = crate::metastore::FileMetadata {
+                        path: path.to_string(),
+                        backend_name: route.io_profile.clone(),
+                        physical_path: hash.clone(),
+                        size: content_size,
+                        etag: Some(hash.clone()),
+                        version: new_version,
+                        entry_type: DT_REG,
+                        zone_id: Some(ctx.zone_id.clone()),
+                        mime_type: None,
+                    };
+                    // Best-effort metastore.put -- error logged but doesn't fail write
+                    let _ = ms.put(path, meta);
+                }
+
+                // Update dcache with new metadata
+                self.dcache.put(
+                    path,
+                    CachedEntry {
+                        backend_name: route.io_profile.clone(),
+                        physical_path: hash.clone(),
+                        size: content_size,
+                        etag: Some(hash.clone()),
+                        version: new_version,
+                        entry_type: DT_REG,
+                        zone_id: Some(ctx.zone_id.clone()),
+                        mime_type: None,
+                    },
+                );
+
+                Ok(SysWriteResult {
+                    hit: true,
+                    content_id: Some(hash),
+                    post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
+                    version: new_version,
+                    size: content_size,
+                })
+            }
             None => miss(),
         };
 
-        // 6. Release VFS lock (always, even on miss)
+        // 7. Release VFS lock (always, even on miss)
         if lock_handle > 0 {
             if let Some(ref lm) = self.vfs_lock {
                 lm.do_release(lock_handle);
@@ -596,25 +688,19 @@ impl Kernel {
 
     // ── sys_stat ───────────────────────────────────────────────────────
 
-    /// Rust syscall: get file metadata (FUSE getattr hot path, zero GIL).
+    /// Rust syscall: get file metadata (pure Rust, no GIL).
     ///
-    /// validate → route → dcache lookup → return dict.
+    /// validate -> route -> dcache lookup -> return StatResult.
     /// Returns None on dcache miss or trie-resolved paths (wrapper handles).
-    fn sys_stat<'py>(
-        &self,
-        py: Python<'py>,
-        path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+    pub fn sys_stat(&self, path: &str, zone_id: &str, is_admin: bool) -> Option<StatResult> {
         // 1. Validate
         if validate_path_fast(path).is_err() {
-            return Ok(None);
+            return None;
         }
 
-        // 2. Trie-resolved paths → wrapper handles
+        // 2. Trie-resolved paths -> wrapper handles
         if self.trie.lookup(path).is_some() {
-            return Ok(None);
+            return None;
         }
 
         // 3. Route
@@ -623,71 +709,51 @@ impl Kernel {
             .route_impl(path, zone_id, is_admin, false)
             .is_err()
         {
-            return Ok(None);
+            return None;
         }
 
-        // 4. DCache lookup (miss → wrapper handles via metastore)
-        let entry = match self.dcache.get_entry(path) {
-            Some(e) => e,
-            None => return Ok(None),
-        };
+        // 4. DCache lookup (miss -> wrapper handles via metastore)
+        let entry = self.dcache.get_entry(path)?;
 
         let is_dir = entry.entry_type == DT_DIR;
-        let dict = PyDict::new(py);
+        let mime = entry
+            .mime_type
+            .as_deref()
+            .unwrap_or(if is_dir {
+                "inode/directory"
+            } else {
+                "application/octet-stream"
+            })
+            .to_string();
 
-        dict.set_item("path", path)?;
-        dict.set_item("backend_name", &entry.backend_name)?;
-        dict.set_item("physical_path", &entry.physical_path)?;
-        dict.set_item(
-            "size",
-            if is_dir && entry.size == 0 {
-                4096u64
+        Some(StatResult {
+            path: path.to_string(),
+            backend_name: entry.backend_name,
+            physical_path: entry.physical_path,
+            size: if is_dir && entry.size == 0 {
+                4096
             } else {
                 entry.size
             },
-        )?;
-        dict.set_item("etag", entry.etag.as_deref())?;
-
-        let mime = entry.mime_type.as_deref().unwrap_or(if is_dir {
-            "inode/directory"
-        } else {
-            "application/octet-stream"
-        });
-        dict.set_item("mime_type", mime)?;
-
-        dict.set_item("created_at", py.None())?;
-        dict.set_item("modified_at", py.None())?;
-
-        dict.set_item("is_directory", is_dir)?;
-        dict.set_item("entry_type", entry.entry_type)?;
-
-        dict.set_item("mode", if is_dir { 0o755u32 } else { 0o644u32 })?;
-
-        dict.set_item("version", entry.version)?;
-        dict.set_item("zone_id", entry.zone_id.as_deref())?;
-
-        Ok(Some(dict))
+            etag: entry.etag,
+            mime_type: mime,
+            is_directory: is_dir,
+            entry_type: entry.entry_type,
+            mode: if is_dir { 0o755 } else { 0o644 },
+            version: entry.version,
+            zone_id: entry.zone_id,
+        })
     }
 
-    // ── sys_unlink ────────────────────────────────────────────────────────
+    // ── sys_unlink ────────────────────────────────────────────────────
 
     /// Rust syscall: validate + route + dcache evict for unlink.
     ///
     /// Returns entry_type of the evicted entry (0 if not in dcache).
-    /// Metastore.delete stays in Python wrapper [INTERMEDIATE].
-    /// DT_PIPE/DT_STREAM → returns entry_type for wrapper dispatch.
-    #[pyo3(signature = (path, zone_id, is_admin))]
-    fn sys_unlink(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> PyResult<u8> {
+    /// DT_PIPE/DT_STREAM -> returns entry_type for wrapper dispatch.
+    pub fn sys_unlink(&self, path: &str, zone_id: &str, is_admin: bool) -> Result<u8, KernelError> {
         // 1. Validate
-        if let Err(msg) = validate_path_fast(path) {
-            return Err(Self::raise_invalid_path(py, &msg));
-        }
+        validate_path_fast(path)?;
 
         // 2. Route (check write access)
         if self
@@ -709,28 +775,21 @@ impl Kernel {
         Ok(entry_type)
     }
 
-    // ── sys_rename ────────────────────────────────────────────────────────
+    // ── sys_rename ────────────────────────────────────────────────────
 
     /// Rust syscall: validate + route both + dcache move for rename.
     ///
     /// Returns true if both paths validated and routed successfully.
-    /// Metastore.rename stays in Python wrapper [INTERMEDIATE].
-    #[pyo3(signature = (old_path, new_path, zone_id, is_admin))]
-    fn sys_rename(
+    pub fn sys_rename(
         &self,
-        py: Python<'_>,
         old_path: &str,
         new_path: &str,
         zone_id: &str,
         is_admin: bool,
-    ) -> PyResult<bool> {
+    ) -> Result<bool, KernelError> {
         // 1. Validate both
-        if let Err(msg) = validate_path_fast(old_path) {
-            return Err(Self::raise_invalid_path(py, &msg));
-        }
-        if let Err(msg) = validate_path_fast(new_path) {
-            return Err(Self::raise_invalid_path(py, &msg));
-        }
+        validate_path_fast(old_path)?;
+        validate_path_fast(new_path)?;
 
         // 2. Route both (check write access)
         if self
@@ -775,8 +834,7 @@ impl Kernel {
     ///
     /// Returns true if file exists in dcache and path is routable.
     /// Does NOT check metastore (dcache authoritative for hot-path).
-    #[pyo3(signature = (path, zone_id, is_admin))]
-    fn access(&self, path: &str, zone_id: &str, is_admin: bool) -> bool {
+    pub fn access(&self, path: &str, zone_id: &str, is_admin: bool) -> bool {
         if validate_path_fast(path).is_err() {
             return false;
         }
@@ -793,10 +851,7 @@ impl Kernel {
     /// List immediate children of a directory path from dcache.
     ///
     /// Returns Vec of (child_name, entry_type) tuples.
-    /// Only returns entries with `parent_path/child_name` pattern.
-    /// Does NOT recurse into subdirectories.
-    #[pyo3(signature = (parent_path, zone_id, is_admin))]
-    fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
+    pub fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         if validate_path_fast(parent_path).is_err() {
             return Vec::new();
         }
@@ -818,43 +873,27 @@ impl Kernel {
     }
 }
 
-// ── Private helpers (kernel-internal) ────────────────────────────────────
-
-impl Kernel {
-    // ── Error constructors ──
-
-    fn raise_invalid_path(py: Python<'_>, msg: &str) -> PyErr {
-        py.import("nexus.contracts.exceptions")
-            .and_then(|m| m.getattr("InvalidPathError"))
-            .and_then(|cls| cls.call1((msg,)))
-            .map(PyErr::from_value)
-            .unwrap_or_else(|e| e)
-    }
-
-    fn raise_file_not_found(py: Python<'_>, path: &str) -> PyErr {
-        py.import("nexus.contracts.exceptions")
-            .and_then(|m| m.getattr("NexusFileNotFoundError"))
-            .and_then(|cls| cls.call1((path,)))
-            .map(PyErr::from_value)
-            .unwrap_or_else(|e| e)
-    }
-}
-
 // ── Fast path validation ────────────────────────────────────────────────
 
-fn validate_path_fast(path: &str) -> Result<(), String> {
+pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
     if path.is_empty() {
-        return Err("Path cannot be empty".to_string());
+        return Err(KernelError::InvalidPath("Path cannot be empty".to_string()));
     }
     if !path.starts_with('/') {
-        return Err("Path must start with /".to_string());
+        return Err(KernelError::InvalidPath(
+            "Path must start with /".to_string(),
+        ));
     }
     if path.contains('\0') {
-        return Err("Path contains null byte".to_string());
+        return Err(KernelError::InvalidPath(
+            "Path contains null byte".to_string(),
+        ));
     }
     for segment in path.split('/') {
         if segment == ".." {
-            return Err("Path contains parent directory reference (..)".to_string());
+            return Err(KernelError::InvalidPath(
+                "Path contains parent directory reference (..)".to_string(),
+            ));
         }
     }
     Ok(())

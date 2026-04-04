@@ -261,30 +261,36 @@ class RustVFSLockManager:
     """Thin wrapper around ``nexus_fast.VFSLockManager``."""
 
     def __init__(self) -> None:
-        from nexus_fast import VFSLockManager
+        from nexus._rust_compat import VFSLockManager
 
+        if VFSLockManager is None:
+            raise RuntimeError(
+                "RustVFSLockManager requires the nexus-fast Rust extension. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
         self._inner = VFSLockManager()
         # Expose Rust PyO3 object for Arc sharing with Kernel (Phase G)
         self._rust = self._inner
 
     def acquire(self, path: str, mode: str, timeout_ms: int = 0) -> int:
-        return self._inner.acquire(path, mode, timeout_ms)
+        return int(self._inner.acquire(path, mode, timeout_ms))
 
     def release(self, handle: int) -> bool:
-        return self._inner.release(handle)
+        return bool(self._inner.release(handle))
 
     def is_locked(self, path: str) -> bool:
-        return self._inner.is_locked(path)
+        return bool(self._inner.is_locked(path))
 
     def holders(self, path: str) -> dict | None:
-        return self._inner.holders(path)
+        result = self._inner.holders(path)
+        return dict(result) if result is not None else None
 
     def stats(self) -> dict:
-        return self._inner.stats()
+        return dict(self._inner.stats())
 
     @property
     def active_locks(self) -> int:
-        return self._inner.active_locks
+        return int(self._inner.active_locks)
 
 
 # ---------------------------------------------------------------------------
@@ -296,11 +302,17 @@ def create_vfs_lock_manager() -> RustVFSLockManager | PythonVFSLockManager:
     """Return the best available VFS lock manager.
 
     Prefers the Rust implementation; falls back to pure Python.
+    Checks sys.modules at call time (not cached import) so test patches work.
     """
+    import sys
+
+    if "nexus_fast" not in sys.modules or sys.modules["nexus_fast"] is None:
+        logger.debug("VFS lock manager: Python (nexus_fast not available)")
+        return PythonVFSLockManager()
     try:
         mgr = RustVFSLockManager()
         logger.debug("VFS lock manager: Rust (nexus_fast)")
         return mgr
-    except (ImportError, Exception) as exc:
+    except Exception as exc:
         logger.debug("Rust VFS lock manager unavailable (%s), using Python fallback", exc)
         return PythonVFSLockManager()

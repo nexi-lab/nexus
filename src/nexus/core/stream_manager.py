@@ -104,10 +104,24 @@ class StreamManager:
         if path in self._buffers:
             raise StreamError(f"stream already exists: {path}")
 
+        # Pre-check: Rust IPC buffer required. Fail before writing metadata
+        # to avoid orphaned DT_STREAM inodes when Rust is unavailable.
+        from nexus._rust_compat import StreamBufferCore
+
+        if StreamBufferCore is None:
+            raise StreamError(
+                "Stream creation requires the nexus-fast Rust extension. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
+
         # Check if inode already exists in metastore
         existing = self._metastore.get(path)
         if existing is not None:
             raise StreamError(f"path already exists: {path}")
+
+        # Construct buffer BEFORE persisting metadata — if construction fails
+        # (ABI mismatch, Rust error), no orphaned DT_STREAM inode is left behind.
+        buf = StreamBuffer(capacity=capacity)
 
         # Create DT_STREAM inode in MetastoreABC.
         # Embed origin address so remote nodes can proxy stream I/O.
@@ -123,9 +137,6 @@ class StreamManager:
             owner_id=owner_id,
         )
         self._metastore.put(metadata)
-
-        # Create in-memory linear buffer
-        buf = StreamBuffer(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("stream created: %s (capacity=%d)", path, capacity)
@@ -180,7 +191,15 @@ class StreamManager:
                 logger.debug("stream opened (remote): %s → %s", path, addr.origins[0])
                 return backend
 
-        # Local: recreate buffer (restart recovery)
+        # Local: recreate buffer (restart recovery).
+        # Pre-check Rust IPC — same guard as create() to produce typed error.
+        from nexus._rust_compat import StreamBufferCore as _SBC
+
+        if _SBC is None:
+            raise StreamError(
+                f"Cannot reopen stream at {path}: nexus-fast Rust extension required. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
         buf = StreamBuffer(capacity=capacity)
         self._buffers[path] = buf
 

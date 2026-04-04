@@ -31,9 +31,9 @@ import logging
 from typing import Protocol, runtime_checkable
 
 # RUST_FALLBACK: RingBufferCore
-from nexus_fast import RingBufferCore
+from nexus._rust_compat import RingBufferCore
 
-_RingBufferCoreType: type = RingBufferCore
+_RingBufferCoreType: type | None = RingBufferCore
 
 
 logger = logging.getLogger(__name__)
@@ -149,6 +149,11 @@ class RingBuffer:
         """
         if capacity <= 0:
             raise ValueError(f"capacity must be > 0, got {capacity}")
+        if _RingBufferCoreType is None:
+            raise RuntimeError(
+                "Pipe requires the nexus-fast Rust extension. "
+                "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
+            )
         self._core = _RingBufferCoreType(capacity)
         self._not_empty = asyncio.Event()
         self._not_full = asyncio.Event()

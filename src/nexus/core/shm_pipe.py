@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from nexus_fast import SharedRingBufferCore
 
 # RUST_FALLBACK: SharedRingBufferCore
-from nexus_fast import SharedRingBufferCore as _SharedRingBufferCore
+from nexus._rust_compat import SharedRingBufferCore as _SharedRingBufferCore
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,8 @@ class SharedRingBuffer:
             - data_rd_fd: pass to child (child listens for data notifications)
             - space_rd_fd: keep in parent (parent listens for space notifications)
         """
+        if _SharedRingBufferCore is None:
+            raise RuntimeError("SharedPipe requires the nexus-fast Rust extension.")
         core, shm_path, data_rd_fd, space_rd_fd = _SharedRingBufferCore.create(capacity)
         # Parent keeps space_rd_fd (wakes when reader frees space)
         buf = cls(core, data_rd_fd=-1, space_rd_fd=space_rd_fd)
@@ -105,6 +107,8 @@ class SharedRingBuffer:
             notify_space_wr: Write-end of space pipe (child writes here after pop — passed to Rust core).
             data_rd_fd: Read-end of data pipe (child listens here for data notifications).
         """
+        if _SharedRingBufferCore is None:
+            raise RuntimeError("SharedPipe requires the nexus-fast Rust extension.")
         core = _SharedRingBufferCore.attach(shm_path, notify_data_wr, notify_space_wr)
         return cls(core, data_rd_fd=data_rd_fd, space_rd_fd=-1)
 

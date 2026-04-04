@@ -145,7 +145,7 @@ class WorkflowDispatchService:
         if self._pipe_manager is None:
             return  # CLI mode — no pipe manager
 
-        from nexus.core.pipe import PipeExistsError
+        from nexus.core.pipe import PipeError, PipeExistsError
 
         try:
             self._pipe_manager.create(
@@ -156,6 +156,10 @@ class WorkflowDispatchService:
         except PipeExistsError:
             # Pipe already exists (e.g., restart recovery) — open it
             self._pipe_manager.open(_WORKFLOW_PIPE_PATH, capacity=_WORKFLOW_PIPE_CAPACITY)
+        except PipeError as exc:
+            # Rust IPC unavailable — degrade gracefully, workflow dispatch disabled.
+            logger.warning("[WORKFLOW-DISPATCH] pipe unavailable, dispatch disabled: %s", exc)
+            return
 
         self._pipe_ready = True
 

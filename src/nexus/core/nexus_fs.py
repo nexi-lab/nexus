@@ -237,19 +237,31 @@ class NexusFS(  # type: ignore[misc]
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self._dispatch)
 
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
-        from nexus_fast import Kernel as _Kernel
+        # Optional: requires nexus_fast Rust extension. Falls back to pure
+        # Python path (slower but functional) when unavailable.
+        from nexus._rust_compat import RUST_AVAILABLE
 
-        self._kernel = _Kernel()  # Empty kernel — owns all state internally
+        self._kernel = None
+        if RUST_AVAILABLE:
+            try:
+                from nexus_fast import Kernel as _Kernel
 
-        # Wire kernel to components (late-binding)
-        metadata_store._kernel = self._kernel
-        self._mount_table._kernel = self._kernel
-        self._dispatch._kernel = self._kernel
+                self._kernel = _Kernel()
+                # Wire kernel into subsystems that need Rust fast-path access
+                metadata_store._kernel = self._kernel
+                self._mount_table._kernel = self._kernel
+                self._dispatch._kernel = self._kernel
+                # Wire VFS lock if available
+                _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+                if _vfs_rust is not None:
+                    self._kernel.set_vfs_lock(_vfs_rust)
+            except Exception as exc:
+                import logging as _logging
 
-        # Wire VFS lock (Arc-shared with Python VFSLockManager)
-        _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-        if _vfs_rust is not None:
-            self._kernel.set_vfs_lock(_vfs_rust)
+                _logging.getLogger(__name__).warning(
+                    "Kernel init failed — falling back to Python path: %s", exc
+                )
+                self._kernel = None
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
@@ -639,7 +651,7 @@ class NexusFS(  # type: ignore[misc]
         """
         # ── Rust fast path (Phase H): dcache hit → dict from Rust ──────
         # Skipped when include_lock=True (needs Python _lock_manager).
-        if not include_lock:
+        if not include_lock and self._kernel is not None:
             _is_admin = (
                 getattr(context, "is_admin", False)
                 if context is not None and not isinstance(context, dict)
@@ -1310,7 +1322,7 @@ class NexusFS(  # type: ignore[misc]
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
-        # [INTERMEDIATE] PRE-DISPATCH: resolve — migrates to Rust dispatch middleware in PR 7
+        path = self._validate_path(path)
         context = self._parse_context(context)
         _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
         if _handled:

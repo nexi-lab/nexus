@@ -352,7 +352,16 @@ class SlimNexusFS:
         Returns:
             List of match dicts with keys: file, line, content, match.
         """
-        # List all files recursively
+        import re
+
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            compiled = re.compile(pattern, flags)
+        except re.error as exc:
+            raise ValueError(f"Invalid regex pattern: {exc}") from exc
+
+        # Stream: list files, read and search each one incrementally.
+        # Stop as soon as max_results is reached — no unbounded preloading.
         entries = await self._kernel.sys_readdir(
             path,
             recursive=True,
@@ -362,58 +371,65 @@ class SlimNexusFS:
         file_paths = [
             e["path"] for e in entries if isinstance(e, dict) and not e.get("is_directory", False)
         ]
-        if not file_paths:
-            return []
-
-        # Read contents (batch)
-        file_contents: dict[str, bytes] = {}
-        for fp in file_paths:
-            try:
-                file_contents[fp] = await self._kernel.sys_read(fp, context=self._ctx)
-            except Exception:
-                continue  # skip unreadable files
-
-        if not file_contents:
-            return []
-
-        # Try Rust-accelerated grep
-        try:
-            from nexus_fast import grep_bulk as _rust_grep
-
-            results = _rust_grep(pattern, file_contents, ignore_case, max_results)
-            if results is not None:
-                return results
-        except (ImportError, OSError, ValueError, RuntimeError):
-            pass
-
-        # Python fallback
-        import re
-
-        flags = re.IGNORECASE if ignore_case else 0
-        try:
-            compiled = re.compile(pattern, flags)
-        except re.error as exc:
-            raise ValueError(f"Invalid regex pattern: {exc}") from exc
 
         matches: list[dict[str, Any]] = []
-        for fp, content in file_contents.items():
-            try:
-                text = content.decode("utf-8", errors="replace")
-            except Exception:
+        # Process in bounded batches for Rust bulk grep when available
+        _BATCH_SIZE = 64
+        _rust_grep: Any = None
+        _has_rust_grep = False
+        try:
+            from nexus_fast import grep_bulk
+
+            _rust_grep = grep_bulk
+            _has_rust_grep = True
+        except (ImportError, OSError):
+            pass
+
+        for batch_start in range(0, len(file_paths), _BATCH_SIZE):
+            if len(matches) >= max_results:
+                break
+            batch = file_paths[batch_start : batch_start + _BATCH_SIZE]
+            batch_contents: dict[str, bytes] = {}
+            for fp in batch:
+                try:
+                    batch_contents[fp] = await self._kernel.sys_read(fp, context=self._ctx)
+                except Exception:
+                    continue
+
+            if not batch_contents:
                 continue
-            for line_no, line in enumerate(text.splitlines(), 1):
-                m = compiled.search(line)
-                if m:
-                    matches.append(
-                        {
-                            "file": fp,
-                            "line": line_no,
-                            "content": line,
-                            "match": m.group(0),
-                        }
-                    )
-                    if len(matches) >= max_results:
-                        return matches
+
+            remaining = max_results - len(matches)
+
+            # Try Rust bulk grep on this batch
+            if _has_rust_grep:
+                try:
+                    batch_results = _rust_grep(pattern, batch_contents, ignore_case, remaining)
+                    if batch_results is not None:
+                        matches.extend(batch_results)
+                        continue
+                except (ValueError, RuntimeError):
+                    pass
+
+            # Python fallback for this batch
+            for fp, content in batch_contents.items():
+                try:
+                    text = content.decode("utf-8", errors="replace")
+                except Exception:
+                    continue
+                for line_no, line in enumerate(text.splitlines(), 1):
+                    m = compiled.search(line)
+                    if m:
+                        matches.append(
+                            {
+                                "file": fp,
+                                "line": line_no,
+                                "content": line,
+                                "match": m.group(0),
+                            }
+                        )
+                        if len(matches) >= max_results:
+                            return matches
         return matches
 
     async def glob(

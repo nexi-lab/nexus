@@ -13,18 +13,21 @@ Issue #3584.
 
 from __future__ import annotations
 
+import contextlib
 import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-# RUST_FALLBACK: canonicalize_path, extract_zone_id
-from nexus_fast import (
+# RUST_FALLBACK: canonicalize_path, extract_zone_id, RustPathRouter
+from nexus._rust_compat import (
+    RustPathRouter,
+)
+from nexus._rust_compat import (
     canonicalize_path as _rust_canonicalize_path,
 )
-from nexus_fast import (
+from nexus._rust_compat import (
     extract_zone_id as _rust_extract_zone_id,
 )
-
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.path_utils import normalize_path
 
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
 # Zone-canonical path helpers (pure functions, ~0 cost)
 # ---------------------------------------------------------------------------
 
-_RUST_ZONE_AVAILABLE = True
+_RUST_ZONE_AVAILABLE = _rust_canonicalize_path is not None
 
 
 def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
@@ -48,7 +51,7 @@ def canonicalize_path(path: str, zone_id: str = ROOT_ZONE_ID) -> str:
     """
     # RUST_FALLBACK: canonicalize_path
     if _RUST_ZONE_AVAILABLE:
-        return _rust_canonicalize_path(path, zone_id)
+        return str(_rust_canonicalize_path(path, zone_id))
     stripped = path.lstrip("/")
     return f"/{zone_id}/{stripped}" if stripped else f"/{zone_id}"
 
@@ -61,7 +64,8 @@ def extract_zone_id(canonical_path: str) -> tuple[str, str]:
     """
     # RUST_FALLBACK: extract_zone_id
     if _RUST_ZONE_AVAILABLE:
-        return _rust_extract_zone_id(canonical_path)
+        result = _rust_extract_zone_id(canonical_path)
+        return (str(result[0]), str(result[1]))
     parts = canonical_path.lstrip("/").split("/", 1)
     zone_id = parts[0]
     relative = "/" + parts[1] if len(parts) > 1 else "/"
@@ -106,13 +110,14 @@ class MountTable:
     distinguishes zones.
     """
 
-    __slots__ = ("_entries", "_kernel", "_default_metastore")
+    __slots__ = ("_entries", "_rust", "_default_metastore", "_kernel")
 
     def __init__(self, default_metastore: "MetastoreABC") -> None:
         self._entries: dict[str, MountEntry] = {}
         self._default_metastore: MetastoreABC = default_metastore
-        # Late-bound: set after Kernel is created
-        self._kernel: Any = None
+        # RUST_FALLBACK: RustPathRouter — LPM acceleration
+        self._rust: Any = RustPathRouter() if RustPathRouter is not None else None
+        self._kernel: Any = None  # late-bound; set by NexusFS after Kernel is created
 
     # -- Write operations (called by coordinator) ---------------------------
 
@@ -139,16 +144,16 @@ class MountTable:
             io_profile=io_profile,
             stream_backend_factory=stream_backend_factory,
         )
-        if self._kernel is not None:
-            _backend_name = backend.name
-            if not isinstance(_backend_name, str):
-                _backend_name = str(_backend_name)
-            _local_root = (
-                str(getattr(backend, "root_path", None))
-                if getattr(backend, "has_root_path", False)
-                else None
-            )
-            self._kernel.add_mount(
+        _backend_name = backend.name
+        if not isinstance(_backend_name, str):
+            _backend_name = str(_backend_name)
+        _local_root = (
+            str(getattr(backend, "root_path", None))
+            if getattr(backend, "has_root_path", False)
+            else None
+        )
+        if self._rust is not None:
+            self._rust.add_mount(
                 mount_point,
                 zone_id,
                 readonly,
@@ -158,6 +163,20 @@ class MountTable:
                 _local_root,
                 True,  # fsync
             )
+        # Also wire into Kernel router (Issue #1868) so sys_read/sys_stat
+        # fast path sees live mounts.
+        if self._kernel is not None:
+            with contextlib.suppress(Exception):
+                self._kernel.add_mount(
+                    mount_point,
+                    zone_id,
+                    readonly,
+                    admin_only,
+                    io_profile,
+                    _backend_name,
+                    _local_root,
+                    True,
+                )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:
         """Remove a mount entry. Called by coordinator.unmount().
@@ -172,8 +191,11 @@ class MountTable:
         if canonical not in self._entries:
             return False
         del self._entries[canonical]
+        if self._rust is not None:
+            self._rust.remove_mount(normalized, zone_id)
         if self._kernel is not None:
-            self._kernel.remove_mount(normalized, zone_id)
+            with contextlib.suppress(Exception):
+                self._kernel.remove_mount(normalized, zone_id)
         return True
 
     # -- Read operations (called by router, kernel) -------------------------
@@ -224,4 +246,4 @@ class MountTable:
     @property
     def rust(self) -> Any:
         """Rust LPM engine (if available). Used by PathRouter for fast routing."""
-        return self._kernel
+        return self._rust

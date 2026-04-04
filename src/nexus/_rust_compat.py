@@ -1,0 +1,211 @@
+"""Rust extension compatibility shim.
+
+Centralises all ``nexus_fast`` imports so that the slim ``nexus-fs``
+package (which does not depend on the Rust extension) can still import
+``nexus.core.*`` modules without crashing at import time.
+
+Every symbol is re-exported as its original name.  When ``nexus_fast``
+is unavailable the symbol is set to ``None`` and call-sites must
+guard with ``if _Symbol is not None:`` before use.
+
+Usage in other modules::
+
+    from nexus._rust_compat import RustDCache  # None when Rust unavailable
+
+This avoids scattering try/except blocks across dozens of files.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+# -- Attempt bulk import of the Rust extension --------------------------------
+
+try:
+    import nexus_fast as _nf
+
+    RUST_AVAILABLE: bool = True
+except ModuleNotFoundError:
+    # Module genuinely not installed — slim/nexus-fs mode.
+    _nf = None  # type: ignore[assignment]
+    RUST_AVAILABLE = False
+except Exception:
+    # Module is installed but broken (ImportError, NameError, ABI skew,
+    # missing transitive dep, init-time crash). Catch broad Exception to
+    # prevent ANY import-time failure from escaping the shim.
+    _nf = None  # type: ignore[assignment]
+    RUST_AVAILABLE = False
+
+# Whether the import found a module at all (even if broken).
+# ModuleNotFoundError = not installed. Other ImportError = installed but broken.
+# hash_fast uses this to decide: "no extension" (SHA-256 ok for pure-Python
+# environments) vs "broken extension" (SHA-256 never ok — fail closed).
+RUST_EXTENSION_INSTALLED: bool = True  # assume installed unless ModuleNotFoundError
+try:
+    import importlib.util
+
+    RUST_EXTENSION_INSTALLED = importlib.util.find_spec("nexus_fast") is not None
+except Exception:
+    pass
+
+
+# -- Capability-group validation -----------------------------------------------
+# Symbols are validated per capability group. A missing symbol disables only
+# its group, not all of Rust. This prevents e.g. a missing VolumeEngine from
+# disabling BLAKE3 hashing.
+#
+# The _CORE group is special: if any core symbol is missing, ALL Rust is
+# disabled (these are required for basic kernel operation).
+
+_CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
+    "core": (
+        "Kernel",  # unified kernel (replaces SyscallEngine+RustDCache+RustPathRouter+PathTrie+HookRegistry+ObserverRegistry)
+        "normalize_path",
+        "validate_path",
+        "canonicalize_path",
+        "extract_zone_id",
+        "get_ancestors",
+        "get_parent",
+        "get_parent_chain",
+        "parent_path",
+        "path_matches_pattern",
+        "split_path",
+        "unscope_internal_path",
+    ),
+    "hash": ("hash_content_py", "hash_content_smart_py"),
+    "ipc": (
+        "RingBufferCore",
+        "StreamBufferCore",
+        "SharedRingBufferCore",
+        "SharedStreamBufferCore",
+    ),
+    "io": ("read_file", "read_files_bulk"),
+    "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
+    "storage": (
+        "BloomFilter",
+        "L1MetadataCache",
+        "VFSLockManager",
+        "VFSSemaphore",
+        "VolumeEngine",
+    ),
+}
+
+# Per-group availability flags (set after validation below)
+RUST_HASH_AVAILABLE: bool = False
+RUST_IPC_AVAILABLE: bool = False
+
+if RUST_AVAILABLE:
+    import logging as _logging
+
+    _log = _logging.getLogger(__name__)
+
+    # Compute per-group availability BEFORE the core kill-switch clears _nf.
+    # This ensures hash/ipc flags reflect actual symbol presence, not whether
+    # an unrelated core symbol (e.g. SyscallEngine) is missing.
+    _group_ok: dict[str, bool] = {}
+    for _group, _symbols in _CAPABILITY_GROUPS.items():
+        _missing = [s for s in _symbols if not hasattr(_nf, s)]
+        _group_ok[_group] = len(_missing) == 0
+        if _missing:
+            _log.info(
+                "nexus_fast missing %s symbols %s — %s features disabled. "
+                "Rebuild with: pip install -e rust/nexus_pyo3",
+                _group,
+                _missing,
+                _group,
+            )
+
+    RUST_HASH_AVAILABLE = _group_ok.get("hash", False)
+    RUST_IPC_AVAILABLE = _group_ok.get("ipc", False)
+
+    _core_disabled = not _group_ok.get("core", False)
+    if _core_disabled:
+        RUST_AVAILABLE = False
+
+# Build set of symbols whose group failed validation — these return None.
+# _group_ok may not exist if RUST_AVAILABLE was False (import failed).
+_disabled_symbols: set[str] = set()
+if RUST_EXTENSION_INSTALLED and not RUST_AVAILABLE and _nf is None:
+    # Extension installed but import completely failed — module not usable.
+    # Disable ALL symbols since we can't call any of them.
+    for _syms in _CAPABILITY_GROUPS.values():
+        _disabled_symbols.update(_syms)
+elif RUST_EXTENSION_INSTALLED and _nf is not None:
+    # Extension imported but some groups may be incomplete.
+    # Only disable symbols from failing groups — working groups stay live.
+    for _g, _syms in _CAPABILITY_GROUPS.items():
+        if not _group_ok.get(_g, False):
+            _disabled_symbols.update(_syms)
+
+# Snapshot the module for re-exports.
+_nf_snapshot: Any = _nf
+
+
+def _get(name: str) -> Any:
+    """Get an attribute from nexus_fast, or None if unavailable.
+
+    Returns None if the module is absent OR if the symbol belongs to a
+    capability group that failed validation (e.g. core symbols when core
+    is disabled due to version skew).
+    """
+    if _nf_snapshot is None:
+        return None
+    if name in _disabled_symbols:
+        return None
+    return getattr(_nf_snapshot, name, None)
+
+
+# -- Re-exports (alphabetical) -----------------------------------------------
+# Each symbol is either the real Rust class/function or None.
+
+# Core kernel (Issue #1868 — unified Kernel replaces SyscallEngine+RustDCache+
+# RustPathRouter+PathTrie+HookRegistry+ObserverRegistry)
+Kernel = _get("Kernel")
+SysReadResult = _get("SysReadResult")
+SysWriteResult = _get("SysWriteResult")
+
+# Legacy aliases — None on 0.9.19+ (removed in favor of Kernel)
+RustDCache = _get("RustDCache")
+RustPathRouter = _get("RustPathRouter")
+HookRegistry = _get("HookRegistry")
+ObserverRegistry = _get("ObserverRegistry")
+PathTrie = _get("PathTrie")
+
+# Classes still exported as standalone
+BloomFilter = _get("BloomFilter")
+L1MetadataCache = _get("L1MetadataCache")
+RingBufferCore = _get("RingBufferCore")
+SharedRingBufferCore = _get("SharedRingBufferCore")
+SharedStreamBufferCore = _get("SharedStreamBufferCore")
+StreamBufferCore = _get("StreamBufferCore")
+VFSLockManager = _get("VFSLockManager")
+VFSSemaphore = _get("VFSSemaphore")
+VolumeEngine = _get("VolumeEngine")
+
+# Path utilities
+get_ancestors = _get("get_ancestors")
+get_parent = _get("get_parent")
+get_parent_chain = _get("get_parent_chain")
+normalize_path = _get("normalize_path")
+parent_path = _get("parent_path")
+path_matches_pattern = _get("path_matches_pattern")
+split_path = _get("split_path")
+unscope_internal_path = _get("unscope_internal_path")
+validate_path = _get("validate_path")
+
+# Hash utilities
+hash_content_py = _get("hash_content_py")
+hash_content_smart_py = _get("hash_content_smart_py")
+
+# I/O utilities
+read_file = _get("read_file")
+read_files_bulk = _get("read_files_bulk")
+
+# Mount table helpers
+canonicalize_path = _get("canonicalize_path")
+extract_zone_id = _get("extract_zone_id")
+
+# Grep / search
+grep_bulk = _get("grep_bulk")
+grep_files_mmap = _get("grep_files_mmap")
+glob_match_bulk = _get("glob_match_bulk")

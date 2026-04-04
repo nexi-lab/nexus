@@ -322,3 +322,175 @@ impl Metastore for PyMetastoreAdapter {
         })
     }
 }
+
+// ── Direction 2 (DISPATCH) adapters — wrap Python hooks/resolvers/observers ──
+
+use crate::dispatch::{InterceptHook, MutationObserver, PathResolver};
+
+// ── PyInterceptHookAdapter ───────────────────────────────────────────────
+
+/// Wraps Python VFS hook → Rust InterceptHook trait.
+///
+/// Direction 2 adapter: permanent (hooks are always user-provided Python).
+/// Kernel stores Box<dyn InterceptHook>; never knows about Python.
+pub(crate) struct PyInterceptHookAdapter {
+    inner: Py<PyAny>,
+    hook_name: String,
+}
+
+unsafe impl Send for PyInterceptHookAdapter {}
+unsafe impl Sync for PyInterceptHookAdapter {}
+
+impl PyInterceptHookAdapter {
+    pub(crate) fn new(py: Python<'_>, hook: Py<PyAny>) -> Self {
+        let name = hook
+            .bind(py)
+            .getattr("name")
+            .and_then(|n| n.extract::<String>())
+            .unwrap_or_else(|_| "<hook>".to_string());
+        Self {
+            inner: hook,
+            hook_name: name,
+        }
+    }
+}
+
+impl InterceptHook for PyInterceptHookAdapter {
+    fn name(&self) -> &str {
+        &self.hook_name
+    }
+
+    fn on_pre_read(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_read") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_read(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_read") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_write(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_write") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_write(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_write") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_delete(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_delete") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_delete(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_delete") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_rename(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_rename") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_rename(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_rename") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+}
+
+// ── PyPathResolverAdapter ────────────────────────────────────────────────
+
+/// Wraps Python VFSPathResolver → Rust PathResolver trait.
+pub(crate) struct PyPathResolverAdapter {
+    inner: Py<PyAny>,
+}
+
+unsafe impl Send for PyPathResolverAdapter {}
+unsafe impl Sync for PyPathResolverAdapter {}
+
+impl PathResolver for PyPathResolverAdapter {
+    fn try_read(&self, path: &str) -> Option<Vec<u8>> {
+        Python::attach(|py| {
+            let result = self.inner.call_method1(py, "try_read", (path,)).ok()?;
+            if result.is_none(py) {
+                return None;
+            }
+            result.extract::<Vec<u8>>(py).ok()
+        })
+    }
+
+    fn try_write(&self, path: &str, content: &[u8]) -> Option<()> {
+        Python::attach(|py| {
+            self.inner
+                .call_method1(py, "try_write", (path, content))
+                .ok()?;
+            Some(())
+        })
+    }
+
+    fn try_delete(&self, path: &str) -> Option<()> {
+        Python::attach(|py| {
+            self.inner.call_method1(py, "try_delete", (path,)).ok()?;
+            Some(())
+        })
+    }
+}
+
+// ── PyMutationObserverAdapter ────────────────────────────────────────────
+
+/// Wraps Python VFSObserver → Rust MutationObserver trait.
+pub(crate) struct PyMutationObserverAdapter {
+    inner: Py<PyAny>,
+}
+
+unsafe impl Send for PyMutationObserverAdapter {}
+unsafe impl Sync for PyMutationObserverAdapter {}
+
+impl MutationObserver for PyMutationObserverAdapter {
+    fn on_mutation(&self, event_type: u32, path: &str) {
+        Python::attach(|py| {
+            let _ = self
+                .inner
+                .call_method1(py, "on_mutation", (event_type, path));
+        });
+    }
+}

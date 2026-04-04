@@ -372,8 +372,39 @@ impl Kernel {
     // ── Hook proxy methods ─────────────────────────────────────────────
 
     /// Register a hook for an operation.
+    ///
+    /// Wraps the Python hook with PyInterceptHookAdapter (in generated_adapters.rs)
+    /// so the kernel stores Box<dyn InterceptHook> — language-agnostic.
     fn register_hook(&self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
-        self.hooks.lock().register(py, op, hook)
+        use crate::generated_adapters::PyInterceptHookAdapter;
+
+        let hook_ref = hook.bind(py);
+        let name: String = hook_ref
+            .getattr("name")
+            .and_then(|n| n.extract())
+            .unwrap_or_else(|_| "<hook>".to_string());
+
+        let pre_attr = format!("on_pre_{op}");
+        let has_pre = hook_ref
+            .getattr(pre_attr.as_str())
+            .map(|attr| !attr.is_none())
+            .unwrap_or(false);
+
+        let post_attr = format!("on_post_{op}");
+        let is_async_post = match hook_ref.getattr(post_attr.as_str()) {
+            Ok(post_fn) => py
+                .import("inspect")?
+                .call_method1("iscoroutinefunction", (post_fn,))?
+                .extract::<bool>()
+                .unwrap_or(false),
+            Err(_) => false,
+        };
+
+        let adapter = PyInterceptHookAdapter::new(py, hook.clone_ref(py));
+        self.hooks
+            .lock()
+            .register(op, Box::new(adapter), hook, has_pre, is_async_post, name);
+        Ok(())
     }
 
     /// Unregister a hook by identity.
@@ -480,8 +511,9 @@ impl Kernel {
             let rhc = py
                 .import("nexus.contracts.vfs_hooks")?
                 .getattr("ReadHookContext")?
-                .call1((path, Py::new(py, ctx.clone())?.into_any()))?;
-            self.dispatch_pre_hooks(py, "read", &rhc)?;
+                .call1((path, Py::new(py, ctx.clone())?.into_any()))?
+                .unbind();
+            self.dispatch_pre_hooks("read", &rhc)?;
         }
 
         // 3. Route (pure Rust LPM)
@@ -627,8 +659,9 @@ impl Kernel {
             let whc = py
                 .import("nexus.contracts.vfs_hooks")?
                 .getattr("WriteHookContext")?
-                .call1((path, content, Py::new(py, ctx.clone())?.into_any()))?;
-            self.dispatch_pre_hooks(py, "write", &whc)?;
+                .call1((path, content, Py::new(py, ctx.clone())?.into_any()))?
+                .unbind();
+            self.dispatch_pre_hooks("write", &whc)?;
         }
 
         // 3. Route (check write access)
@@ -974,32 +1007,22 @@ impl Kernel {
 
     // ── Pre-hook dispatch (INTERCEPT phase) ──
 
-    /// Dispatch pre-hooks for an operation. Returns Ok(()) or propagates hook exception.
+    /// Dispatch pre-hooks via Rust InterceptHook trait. Language-agnostic.
     ///
     /// Checks atomic hook count (zero-cost when no hooks registered),
-    /// then loops through pre-hooks calling `hook.on_pre_{op}(ctx)` via GIL.
-    /// Any hook can abort by raising a Python exception.
-    fn dispatch_pre_hooks(
-        &self,
-        py: Python<'_>,
-        op: &str,
-        hook_ctx: &Bound<'_, PyAny>,
-    ) -> PyResult<()> {
-        let count = match op {
-            "read" => &self.read_hook_count,
-            "write" => &self.write_hook_count,
-            "stat" => &self.stat_hook_count,
-            "delete" => &self.delete_hook_count,
-            "rename" => &self.rename_hook_count,
-            _ => return Ok(()),
-        };
-        if count.load(Ordering::Relaxed) == 0 {
-            return Ok(());
-        }
-        let method_name = format!("on_pre_{op}");
-        let hooks = self.hooks.lock().get_pre_hooks(py, op);
-        for hook in hooks {
-            hook.bind(py).call_method1(&*method_name, (hook_ctx,))?;
+    /// then loops through pre-hooks calling trait method on_pre_{op}(ctx).
+    /// Any hook can abort by returning Err (propagated as Python exception).
+    fn dispatch_pre_hooks(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
+        let hooks = self.hooks.lock();
+        let impls = hooks.get_pre_hook_impls(op);
+        for hook in impls {
+            match op {
+                "read" => hook.on_pre_read(hook_ctx)?,
+                "write" => hook.on_pre_write(hook_ctx)?,
+                "delete" => hook.on_pre_delete(hook_ctx)?,
+                "rename" => hook.on_pre_rename(hook_ctx)?,
+                _ => {}
+            }
         }
         Ok(())
     }

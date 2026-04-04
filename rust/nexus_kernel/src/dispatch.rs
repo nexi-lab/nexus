@@ -62,184 +62,9 @@ pub(crate) trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event_type: u32, path: &str);
 }
 
-// ── PyO3 Adapters (wrap Python impl → Rust trait) ──────────────────────
-
-/// Wraps a Python VFS hook object → impl InterceptHook.
-///
-/// Calls Python methods via GIL. Hand-written for PR 7;
-/// PR 8 codegen replaces with auto-generated adapter.
-#[allow(dead_code)]
-pub(crate) struct PyInterceptHookAdapter {
-    inner: Py<PyAny>,
-    hook_name: String,
-}
-
-unsafe impl Send for PyInterceptHookAdapter {}
-unsafe impl Sync for PyInterceptHookAdapter {}
-
-#[allow(dead_code)]
-impl PyInterceptHookAdapter {
-    pub(crate) fn new(py: Python<'_>, hook: Py<PyAny>) -> Self {
-        let name = hook
-            .bind(py)
-            .getattr("name")
-            .and_then(|n| n.extract::<String>())
-            .unwrap_or_else(|_| "<hook>".to_string());
-        Self {
-            inner: hook,
-            hook_name: name,
-        }
-    }
-}
-
-impl InterceptHook for PyInterceptHookAdapter {
-    fn name(&self) -> &str {
-        &self.hook_name
-    }
-
-    fn on_pre_read(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_pre_read") {
-                method.call1((ctx,))?;
-            }
-            Ok(())
-        })
-    }
-
-    fn on_post_read(&self, ctx: &Py<PyAny>) {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_post_read") {
-                let _ = method.call1((ctx,));
-            }
-        });
-    }
-
-    fn on_pre_write(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_pre_write") {
-                method.call1((ctx,))?;
-            }
-            Ok(())
-        })
-    }
-
-    fn on_post_write(&self, ctx: &Py<PyAny>) {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_post_write") {
-                let _ = method.call1((ctx,));
-            }
-        });
-    }
-
-    fn on_pre_delete(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_pre_delete") {
-                method.call1((ctx,))?;
-            }
-            Ok(())
-        })
-    }
-
-    fn on_post_delete(&self, ctx: &Py<PyAny>) {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_post_delete") {
-                let _ = method.call1((ctx,));
-            }
-        });
-    }
-
-    fn on_pre_rename(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_pre_rename") {
-                method.call1((ctx,))?;
-            }
-            Ok(())
-        })
-    }
-
-    fn on_post_rename(&self, ctx: &Py<PyAny>) {
-        Python::attach(|py| {
-            let hook = self.inner.bind(py);
-            if let Ok(method) = hook.getattr("on_post_rename") {
-                let _ = method.call1((ctx,));
-            }
-        });
-    }
-}
-
-/// Wraps a Python VFSPathResolver → impl PathResolver.
-#[allow(dead_code)]
-pub(crate) struct PyPathResolverAdapter {
-    inner: Py<PyAny>,
-}
-
-unsafe impl Send for PyPathResolverAdapter {}
-unsafe impl Sync for PyPathResolverAdapter {}
-
-#[allow(dead_code)]
-impl PathResolver for PyPathResolverAdapter {
-    fn try_read(&self, path: &str) -> Option<Vec<u8>> {
-        Python::attach(|py| {
-            let result = self.inner.call_method1(py, "try_read", (path,)).ok()?;
-            if result.is_none(py) {
-                return None;
-            }
-            result.extract::<Vec<u8>>(py).ok()
-        })
-    }
-
-    fn try_write(&self, path: &str, content: &[u8]) -> Option<()> {
-        Python::attach(|py| {
-            let result = self
-                .inner
-                .call_method1(py, "try_write", (path, content))
-                .ok()?;
-            if result.is_none(py) {
-                None
-            } else {
-                Some(())
-            }
-        })
-    }
-
-    fn try_delete(&self, path: &str) -> Option<()> {
-        Python::attach(|py| {
-            let result = self.inner.call_method1(py, "try_delete", (path,)).ok()?;
-            if result.is_none(py) {
-                None
-            } else {
-                Some(())
-            }
-        })
-    }
-}
-
-/// Wraps a Python VFSObserver → impl MutationObserver.
-#[allow(dead_code)]
-pub(crate) struct PyMutationObserverAdapter {
-    inner: Py<PyAny>,
-}
-
-unsafe impl Send for PyMutationObserverAdapter {}
-unsafe impl Sync for PyMutationObserverAdapter {}
-
-#[allow(dead_code)]
-impl MutationObserver for PyMutationObserverAdapter {
-    fn on_mutation(&self, event_type: u32, path: &str) {
-        Python::attach(|py| {
-            let _ = self
-                .inner
-                .call_method1(py, "on_mutation", (event_type, path));
-        });
-    }
-}
+// PyO3 adapters (PyInterceptHookAdapter, PyPathResolverAdapter, PyMutationObserverAdapter)
+// are in generated_adapters.rs — auto-generated by scripts/codegen_kernel_abi.py.
+// This file stays language-agnostic (pure Rust ABI).
 
 // ── TrieNode ──────────────────────────────────────────────────────────
 
@@ -404,7 +229,10 @@ impl Trie {
 
 /// Cached metadata for a single hook.
 pub(crate) struct HookEntry {
-    pub(crate) hook: Py<PyAny>,
+    /// Rust trait object — used by kernel dispatch (language-agnostic).
+    pub(crate) hook: Box<dyn InterceptHook>,
+    /// Original Python object — returned to Python callers via get_pre_hooks().
+    pub(crate) hook_py: Py<PyAny>,
     pub(crate) has_pre: bool,
     pub(crate) is_async_post: bool,
     #[allow(dead_code)]
@@ -427,55 +255,35 @@ impl HookRegistry {
     }
 
     /// Register a hook for the given operation.
-    pub(crate) fn register(&mut self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
-        let hook_ref = hook.bind(py);
-
-        let name: String = hook_ref
-            .getattr("name")
-            .and_then(|n| n.extract())
-            .unwrap_or_else(|_| {
-                hook_ref
-                    .get_type()
-                    .name()
-                    .map(|n| format!("<{}>", n))
-                    .unwrap_or_else(|_| "<?>".to_string())
-            });
-
-        let pre_attr = format!("on_pre_{}", op);
-        let has_pre = hook_ref
-            .getattr(pre_attr.as_str())
-            .map(|attr| !attr.is_none())
-            .unwrap_or(false);
-
-        let post_attr = format!("on_post_{}", op);
-        let is_async_post = match hook_ref.getattr(post_attr.as_str()) {
-            Ok(post_fn) => {
-                let inspect = py.import("inspect")?;
-                inspect
-                    .call_method1("iscoroutinefunction", (post_fn,))?
-                    .extract::<bool>()
-                    .unwrap_or(false)
-            }
-            Err(_) => false,
-        };
-
+    ///
+    /// `hook_impl`: Rust trait object (used by kernel dispatch).
+    /// `hook_py`: Original Python object (returned to Python callers).
+    /// `has_pre`/`is_async_post`/`name`: cached metadata (computed by caller).
+    pub(crate) fn register(
+        &mut self,
+        op: &str,
+        hook_impl: Box<dyn InterceptHook>,
+        hook_py: Py<PyAny>,
+        has_pre: bool,
+        is_async_post: bool,
+        name: String,
+    ) {
         self.ops.entry(op.to_string()).or_default().push(HookEntry {
-            hook,
+            hook: hook_impl,
+            hook_py,
             has_pre,
             is_async_post,
             name,
         });
-
-        Ok(())
     }
 
-    /// Remove a hook by identity (`is` check).
+    /// Remove a hook by identity (`is` check on original Python object).
     pub(crate) fn unregister(&mut self, py: Python<'_>, op: &str, hook: &Bound<'_, PyAny>) -> bool {
         if let Some(entries) = self.ops.get_mut(op) {
             let hook_ptr = hook.as_ptr();
             if let Some(pos) = entries
                 .iter()
-                .position(|e| e.hook.bind(py).as_ptr() == hook_ptr)
+                .position(|e| e.hook_py.bind(py).as_ptr() == hook_ptr)
             {
                 entries.remove(pos);
                 return true;
@@ -484,7 +292,7 @@ impl HookRegistry {
         false
     }
 
-    /// Return hooks that have `on_pre_{op}`.
+    /// Return Python hook objects that have `on_pre_{op}` (for Python callers).
     pub(crate) fn get_pre_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
         self.ops
             .get(op)
@@ -492,13 +300,27 @@ impl HookRegistry {
                 entries
                     .iter()
                     .filter(|e| e.has_pre)
-                    .map(|e| e.hook.clone_ref(py))
+                    .map(|e| e.hook_py.clone_ref(py))
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    /// Return (sync_post_hooks, async_post_hooks).
+    /// Return Rust trait references for pre-hooks (for kernel dispatch).
+    pub(crate) fn get_pre_hook_impls(&self, op: &str) -> Vec<&dyn InterceptHook> {
+        self.ops
+            .get(op)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|e| e.has_pre)
+                    .map(|e| e.hook.as_ref())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Return (sync_post_hooks, async_post_hooks) as Python objects.
     pub(crate) fn get_post_hooks(
         &self,
         py: Python<'_>,
@@ -511,21 +333,21 @@ impl HookRegistry {
         let sync: Vec<Py<PyAny>> = entries
             .iter()
             .filter(|e| !e.is_async_post)
-            .map(|e| e.hook.clone_ref(py))
+            .map(|e| e.hook_py.clone_ref(py))
             .collect();
         let async_: Vec<Py<PyAny>> = entries
             .iter()
             .filter(|e| e.is_async_post)
-            .map(|e| e.hook.clone_ref(py))
+            .map(|e| e.hook_py.clone_ref(py))
             .collect();
         (sync, async_)
     }
 
-    /// Return all hooks for the given operation.
+    /// Return all Python hook objects for the given operation.
     pub(crate) fn get_all_hooks(&self, py: Python<'_>, op: &str) -> Vec<Py<PyAny>> {
         self.ops
             .get(op)
-            .map(|entries| entries.iter().map(|e| e.hook.clone_ref(py)).collect())
+            .map(|entries| entries.iter().map(|e| e.hook_py.clone_ref(py)).collect())
             .unwrap_or_default()
     }
 

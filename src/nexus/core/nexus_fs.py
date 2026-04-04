@@ -4231,9 +4231,7 @@ class NexusFS(  # type: ignore[misc]
 
         return results
 
-    def register_observe(self, observer: Any) -> None:
-        """Register a mutation observer (OBSERVE phase, Issue #900)."""
-        self.register_observe(observer)
+    # register_observe inherited from DispatchMixin
 
     # ------------------------------------------------------------------
     # Method forwarders — delegate to services.

@@ -7,7 +7,7 @@
 //! as a PyO3 class. External callers (Python) still use `CASAddressingEngine`.
 //!
 //! Not included (stays in Python):
-//! - CDC chunking (large file split/reassemble)
+//! - CDC chunked write (split into chunks) — read reassembly IS in Rust
 //! - Content cache (LRU)
 //! - TTL routing
 //! - Multipart upload
@@ -20,6 +20,7 @@
 use std::io;
 
 use crate::cas_transport::LocalCASTransport;
+use serde_json::Value;
 
 /// Error type for CAS operations.
 #[derive(Debug)]
@@ -68,14 +69,60 @@ impl CASEngine {
 
     /// Read content by etag (content hash).
     ///
-    /// Corresponds to Python `CASAddressingEngine.read_content(content_id)`.
-    ///
-    /// NOTE: Does not handle CDC manifests — those fall back to Python.
+    /// Handles CDC chunked manifests: detects manifest JSON, reads all chunks,
+    /// reassembles into original content. Single-blob files returned directly.
     pub fn read_content(&self, etag: &str) -> Result<Vec<u8>, CASError> {
-        self.transport.read_blob(etag).map_err(|e| match e.kind() {
+        let data = self.transport.read_blob(etag).map_err(|e| match e.kind() {
             io::ErrorKind::NotFound => CASError::NotFound(etag.to_string()),
             _ => CASError::IOError(e),
-        })
+        })?;
+
+        // CDC manifest detection + reassembly
+        if data.len() < 500 * 1024
+            && data
+                .get(..30)
+                .is_some_and(|p| p.starts_with(b"{\"type\":\"chunked_manifest"))
+        {
+            if let Ok(manifest) = serde_json::from_slice::<Value>(&data) {
+                if let Some(chunks) = manifest.get("chunks").and_then(|c| c.as_array()) {
+                    return self.reassemble_chunks(chunks);
+                }
+            }
+        }
+
+        Ok(data)
+    }
+
+    /// Reassemble CDC chunks from manifest chunk array.
+    fn reassemble_chunks(&self, chunks: &[Value]) -> Result<Vec<u8>, CASError> {
+        // Collect (offset, data) pairs
+        let mut parts: Vec<(i64, Vec<u8>)> = Vec::with_capacity(chunks.len());
+        for chunk in chunks {
+            let hash = chunk
+                .get("chunk_hash")
+                .and_then(|h| h.as_str())
+                .ok_or_else(|| {
+                    CASError::IOError(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "missing chunk_hash",
+                    ))
+                })?;
+            let offset = chunk.get("offset").and_then(|o| o.as_i64()).unwrap_or(0);
+            let data = self.transport.read_blob(hash).map_err(|e| match e.kind() {
+                io::ErrorKind::NotFound => CASError::NotFound(hash.to_string()),
+                _ => CASError::IOError(e),
+            })?;
+            parts.push((offset, data));
+        }
+
+        // Sort by offset, concatenate
+        parts.sort_by_key(|(offset, _)| *offset);
+        let total: usize = parts.iter().map(|(_, d)| d.len()).sum();
+        let mut result = Vec::with_capacity(total);
+        for (_, data) in parts {
+            result.extend_from_slice(&data);
+        }
+        Ok(result)
     }
 
     /// Write content and return its BLAKE3 hash.

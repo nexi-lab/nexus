@@ -497,24 +497,15 @@ impl Kernel {
         }
 
         // 7. Return result
+        // CDC manifests are reassembled by CASEngine.read_content() — no special
+        // handling needed here. Content is always the final assembled bytes.
         match content {
-            Some(data) => {
-                // CDC chunked manifest — let Python CAS engine reassemble chunks
-                if data.len() < 500 * 1024
-                    && data
-                        .get(..30)
-                        .is_some_and(|prefix| prefix.starts_with(b"{\"type\":\"chunked_manifest"))
-                {
-                    return miss();
-                }
-                Ok(SysReadResult {
-                    hit: true,
-                    data: Some(PyBytes::new(py, &data).into()),
-                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                    content_hash: entry.etag,
-                })
-            }
-            // No Rust backend available (e.g. remote) — wrapper handles
+            Some(data) => Ok(SysReadResult {
+                hit: true,
+                data: Some(PyBytes::new(py, &data).into()),
+                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                content_hash: entry.etag,
+            }),
             None => miss(),
         }
     }

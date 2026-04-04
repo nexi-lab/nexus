@@ -12,6 +12,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from nexus.contracts.exceptions import AuthenticationError
 from nexus.contracts.unified_auth import AuthStatus, CredentialKind
 from nexus.fs._oauth_support import get_token_manager, run_google_oauth_setup, run_x_oauth_setup
 from nexus.fs._output import OutputOptions, add_output_options, render_output
@@ -170,6 +171,36 @@ def _prompt_for_secret_values(
     return values
 
 
+def _raise_authentication_error(
+    exc: AuthenticationError, output_opts: OutputOptions | None = None
+) -> None:
+    """Render an AuthenticationError and exit non-zero."""
+    if output_opts is not None and output_opts.json_output:
+        import json
+
+        payload: dict[str, object] = {"error": "AuthenticationError", "detail": str(exc)}
+        if exc.provider:
+            payload["provider"] = exc.provider
+        if exc.user_email:
+            payload["user_email"] = exc.user_email
+        if exc.auth_url:
+            payload["auth_url"] = exc.auth_url
+        console.print(json.dumps(payload))
+        raise SystemExit(1)
+
+    console.print(f"[red]Auth error:[/red] {exc}")
+    if exc.provider or exc.user_email:
+        account = (
+            f"{exc.provider}:{exc.user_email}"
+            if exc.provider and exc.user_email
+            else (exc.provider or exc.user_email)
+        )
+        console.print(f"[dim]Account: {account}[/dim]")
+    if exc.auth_url:
+        console.print(f"[yellow]Re-authenticate:[/yellow] {exc.auth_url}")
+    raise SystemExit(1)
+
+
 def _print_connect_success(
     service_name: str,
     kind: CredentialKind,
@@ -297,6 +328,8 @@ def test_auth(
         result = asyncio.run(
             service.test_service(service_name, user_email=user_email, target=target)
         )
+    except AuthenticationError as exc:
+        _raise_authentication_error(exc, output_opts)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -362,34 +395,37 @@ def connect_auth(
     service = _build_auth_service()
     _print_steps(service_name, auth_type)
 
-    if auth_type == "oauth":
-        user_email = _resolve_user_email(user_email)
-        if service_name in {"gws", "google-drive", "gmail", "google-calendar"}:
-            run_google_oauth_setup(user_email=user_email, service_name=service_name)
-            return
-        if service_name == "x":
-            run_x_oauth_setup(user_email=user_email)
-            return
-        raise click.ClickException(f"OAuth connect is not implemented for '{service_name}'.")
+    try:
+        if auth_type == "oauth":
+            user_email = _resolve_user_email(user_email)
+            if service_name in {"gws", "google-drive", "gmail", "google-calendar"}:
+                run_google_oauth_setup(user_email=user_email, service_name=service_name)
+                return
+            if service_name == "x":
+                run_x_oauth_setup(user_email=user_email)
+                return
+            raise click.ClickException(f"OAuth connect is not implemented for '{service_name}'.")
 
-    if auth_type == "native":
-        record = service.connect_native(service_name)
+        if auth_type == "native":
+            record = service.connect_native(service_name)
+            _print_connect_success(
+                service_name,
+                record.kind,
+                str(service.secret_store_path),
+                source="native fallback",
+            )
+            return
+
+        values = _prompt_for_secret_values(service, service_name, pairs)
+        record = service.connect_secret(service_name, values)
         _print_connect_success(
             service_name,
             record.kind,
             str(service.secret_store_path),
-            source="native fallback",
+            sorted(record.data),
         )
-        return
-
-    values = _prompt_for_secret_values(service, service_name, pairs)
-    record = service.connect_secret(service_name, values)
-    _print_connect_success(
-        service_name,
-        record.kind,
-        str(service.secret_store_path),
-        sorted(record.data),
-    )
+    except AuthenticationError as exc:
+        _raise_authentication_error(exc)
 
 
 @auth.command("disconnect")

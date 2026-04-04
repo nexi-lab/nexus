@@ -520,13 +520,30 @@ class AuthenticationError(NexusError):
     Examples:
         >>> raise AuthenticationError("No OAuth credential found for google:user@example.com")
         >>> raise AuthenticationError("Failed to refresh token: refresh_token revoked")
+        >>> raise AuthenticationError(
+        ...     "Token expired",
+        ...     provider="google",
+        ...     user_email="user@example.com",
+        ...     auth_url="https://accounts.google.com/o/oauth2/auth?...",
+        ... )
     """
 
     is_expected = True  # User auth issue (invalid/expired credentials)
     status_code = 401
     error_type = "Unauthorized"
 
-    def __init__(self, message: str, path: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        path: str | None = None,
+        *,
+        provider: str | None = None,
+        user_email: str | None = None,
+        auth_url: str | None = None,
+    ):
+        self.provider = provider
+        self.user_email = user_email
+        self.auth_url = auth_url
         super().__init__(message, path)
 
 

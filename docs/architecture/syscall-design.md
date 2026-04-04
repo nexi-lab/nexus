@@ -17,9 +17,9 @@ Nexus:   Client      → nx.read()    →                  → NexusFS.sys_read(
                         Composes primitives                  Atomic primitives
 ```
 
-- **Tier 1 (kernel)**: Abstract `sys_*` methods on `NexusFilesystemABC`. Implemented by `NexusFS`.
+- **Tier 1 (kernel)**: Abstract `sys_*` methods on `NexusFilesystem`. Implemented by `NexusFS`.
   All POSIX-aligned, path-addressed. No hash-addressing at kernel level.
-- **Tier 2 (convenience)**: Concrete methods on `NexusFilesystemABC`. Compose Tier 1 syscalls.
+- **Tier 2 (convenience)**: Concrete methods on `NexusFilesystem`. Compose Tier 1 syscalls.
   Half POSIX VFS-aligned, half HDFS/GFS-aligned (content access via driver).
 
 ---
@@ -71,7 +71,7 @@ Hash-addressed content operations (`read_content`, `write_content`, `stream`,
 
 ---
 
-## 3. Convenience Layer (NexusFilesystemABC Tier 2)
+## 3. Convenience Layer (NexusFilesystem Tier 2)
 
 Defined in `contracts/filesystem/filesystem_abc.py` as concrete methods.
 NexusFS inherits them — callers use `nx.read(path)` directly.
@@ -216,9 +216,9 @@ PYTHONPATH=src uv run lint-imports
 
 ## 7. Long-term Architecture: Collapse to RPC Boundary (decided 2026-04-02)
 
-### 7.1 Problem: NexusFilesystemABC is a redundant boundary
+### 7.1 Problem: NexusFilesystem is a redundant boundary
 
-The current kernel boundary (`NexusFilesystemABC`) is a Python ABC whose
+The current kernel boundary (`NexusFilesystem`) is a Python ABC whose
 `sys_*` methods mirror the gRPC proto RPC definitions almost 1:1. This
 means the ABC is not a real abstraction — it's just the wire protocol's
 Python projection. All transport adapters converge on the same methods:
@@ -226,7 +226,7 @@ Python projection. All transport adapters converge on the same methods:
 ```
 gRPC servicer        ──┐
 HTTP/FastAPI routers  ──┤
-FUSE operations       ──┼──→  NexusFilesystemABC.sys_read/write/...
+FUSE operations       ──┼──→  NexusFilesystem.sys_read/write/...
 Python SDK (nexus-fs)  ──┤
 MCP                   ──┘
 Future: driver API    ──┘
@@ -296,13 +296,17 @@ Key design decisions:
 
 | Artifact | Status after collapse |
 |----------|----------------------|
-| `NexusFilesystemABC` | **Deleted** — kernel is `pub fn`, not ABC |
-| `Kernel` (FFI facade) | **Deleted** — no FFI boundary to bridge |
-| `Arc<Inner>` on 5+ structs | **Gone** — all structs are fields of one kernel struct |
-| GIL safety clone-then-call | **Gone** — only for Python backend calls (unchanged) |
-| Dual Rust/Python code paths | **Gone** — one Rust path, Python fallback only for backends |
-| `stubs/nexus_kernel/__init__.pyi` | **Simplified** — only PyO3 bindings, not internal types |
-| Per-feature 6-file updates | **2 files** — proto + Rust impl (or just Rust for non-network) |
+| `NexusFilesystem` (ABC → Protocol) | **Done** — now a Protocol, not ABC (PR 7a) |
+| `Kernel` struct | **Done** — owns all core state: DCache, Router, Trie, Hooks, Observers, Metastore (PR 7b) |
+| `Arc<Inner>` on 5+ structs | **Done** — all structs are fields of `Kernel` |
+| Dispatch (KernelDispatch → DispatchMixin) | **Done** — Rust Kernel owns registries, DispatchMixin provides Python API (PR 7c) |
+| Overlay feature | **Deleted** — CAS dedup makes it unnecessary (PR 7, -1354 lines) |
+| CDC reassembly | **Done** — chunked_manifest detection + reassembly in Rust CAS engine |
+| `stubs/nexus_kernel/__init__.pyi` | **Auto-generated** — `codegen_kernel_abi.py` reads Rust source |
+| Module rename | **Done** — `nexus_fast` → `nexus_kernel` (PR 8) |
+| Remaining: `_backend_read` | Python fallback for non-Rust backends — eliminated when all backends are Rust/gRPC |
+| Remaining: `sys_write` metadata | Python builds metadata after Rust CAS write — move to Rust |
+| Remaining: PIPE/STREAM/hooks | Python wrapper handles — move to Rust for full passthrough |
 
 ### 7.4 Concrete code shape
 
@@ -350,7 +354,7 @@ Migration phases (incremental, each a PR):
 2. **PyO3 binding adapter**: Replace `Kernel` pyclass with thin
    `#[pyfunction]` bindings to `kernel::sys_*`. NexusFS calls these
    directly instead of through Kernel.
-3. **Delete NexusFilesystemABC**: Move Tier 2 methods to a standalone
+3. **Delete NexusFilesystem**: Move Tier 2 methods to a standalone
    Python module that calls the PyO3 `sys_*` functions.
 4. **tonic adapter** (optional, parallel): Add gRPC serving via tonic,
    calling the same `kernel::sys_*` functions.
@@ -359,11 +363,19 @@ Migration phases (incremental, each a PR):
 
 | Phase | Status | Relationship to §7 |
 |-------|--------|-------------------|
-| A-G | Done | Logic **reused verbatim** in `kernel::sys_read/write` |
-| H (all Tier 1 syscalls) | Done | `sys_stat` + plan methods in Kernel (now private). These become `kernel::sys_*` functions directly. |
-| I (io_uring) | **Deferred indefinitely** | Evaluated: ~1-2μs per syscall (negligible). After §7 collapse, Rust-native async I/O (tokio/rayon) covers batch workloads without Linux-only branching. |
-| §7 PR 2 (rename + flatten) | Done | `SyscallEngine` → `Kernel`. Plan types → kernel-internal. |
-| **§7 collapse (remaining)** | **Next** | Kernel owns all state, deletes NexusFilesystemABC, promotes kernel functions to top-level. |
+| A-G | Done | Logic **reused verbatim** in `Kernel.sys_read/write` |
+| H (all Tier 1 syscalls) | Done | `sys_stat` + plan methods in Kernel |
+| I (io_uring) | **Deferred indefinitely** | ~1-2μs per syscall (negligible). Rust-native async covers batch workloads. |
+| §7 PR 7a (ABC → Protocol) | Done | `NexusFilesystemABC(ABC)` → `NexusFilesystem(Protocol)`, 28 files |
+| §7 PR 7b (Metastore adapter) | Done | `PyMetastoreAdapter` in Rust, `set_metastore()`, dcache-miss fallback |
+| §7 PR 7c (Dispatch collapse) | Done | `_resolve_and_read` deleted, `_read_via_dlc` → `_backend_read`, `KernelDispatch` → `DispatchMixin` |
+| §7 PR 7d (Crate rename) | Done | `rust/nexus_pyo3` → `rust/nexus_kernel` |
+| §7 PR 7e (Dispatch traits) | Done | `InterceptHook`/`PathResolver`/`MutationObserver` Rust traits + PyO3 adapters |
+| §7 PR 7f (CDC Rust) | Done | CDC chunked_manifest detection + reassembly in Rust CAS engine |
+| §7 PR 7g (Overlay deleted) | Done | Overlay feature deleted (-1354 lines), CAS dedup replaces it |
+| §7 PR 8 (Codegen) | Done | `codegen_kernel_abi.py` generates stubs, protocols, exports from Rust source |
+| §7 PR 8 (Module rename) | Done | `nexus_fast` → `nexus_kernel` (Python module name, 90+ files) |
+| **§7 remaining** | **Next** | Eliminate `_backend_read` (all backends Rust/gRPC), move sys_write metadata to Rust, move PIPE/STREAM/hooks to Rust |
 
 The key insight: **Phase H is the last phase that adds logic.** The §7
 collapse is a **refactoring** that changes the boundary, not the logic.

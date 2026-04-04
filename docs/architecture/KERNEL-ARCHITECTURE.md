@@ -130,7 +130,7 @@ canonical paths — zone handling is PathRouter's responsibility, not theirs.
 `connect(config=...)` is the **mode-dispatcher factory function** — the single
 entry point for all Nexus users. It auto-detects deployment mode
 (standalone/remote/federation), bootstraps the appropriate stack, and returns
-`NexusFilesystemABC`.
+`NexusFilesystem`.
 
 ```python
 from nexus.sdk import connect
@@ -140,7 +140,7 @@ nx = connect(config={"profile": "remote", "url": "http://..."})
 
 Linux analogue: the boot sequence that selects rootfs and mounts it
 (`mount_root()` in `init/do_mounts.c`). After `connect()` returns, you have a
-usable filesystem. All three modes return the same `NexusFilesystemABC` contract
+usable filesystem. All three modes return the same `NexusFilesystem` contract
 — clients never need to know which mode is running.
 
 Not DI — it's the user-facing entry point. The factory/DI machinery is internal.
@@ -151,9 +151,9 @@ Not DI — it's the user-facing entry point. The factory/DI machinery is interna
 
 **Category:** User Contract (↑) | **Audience:** Users, AI, agents | **Package:** `contracts.filesystem`, `core.nexus_fs`
 
-### 2.1 NexusFilesystemABC — Published Contract
+### 2.1 NexusFilesystem — Published Contract
 
-The published user-facing contract is `NexusFilesystemABC` (in `contracts/filesystem/`):
+The published user-facing contract is `NexusFilesystem` (Protocol, in `contracts/filesystem/`):
 
 | Tier | Content | Caller responsibility |
 |------|---------|----------------------|
@@ -165,7 +165,7 @@ program against the contract, kernel implements it.
 
 ### 2.2 Kernel Syscalls — POSIX-Aligned, Path-Addressed
 
-`NexusFS` is the kernel implementation of `NexusFilesystemABC`. It wires
+`NexusFS` is the kernel implementation of `NexusFilesystem`. It wires
 primitives (§4) into user-facing operations. NexusFS contains **no service
 business logic**.
 
@@ -204,7 +204,7 @@ See `syscall-design.md` for the full per-syscall primitive matrix.
 
 ### 2.3 Tier 2 Convenience Methods
 
-Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFilesystemABC`:
+Tier 2 methods compose Tier 1 syscalls — concrete implementations in `NexusFilesystem`:
 
 | Half | Examples | Addressing |
 |------|----------|-----------|
@@ -375,7 +375,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **VFSRouter** | `core.router` | VFS `lookup_slow()` | `route(path, zone_id)` → `RouteResult`. Zone-canonical LPM (~30ns Rust / ~300ns Python). In-memory mount table keyed by `/{zone_id}/{mount_point}` |
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
 | **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Zone-agnostic (receives canonical paths from router). Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
-| **KernelDispatch** | `core.kernel_dispatch` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust PathTrie + HookRegistry. Empty = zero overhead |
+| **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/nexus_kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry. DispatchMixin provides Python-side registration API. Empty = zero overhead |
 | **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (RingBuffer). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |

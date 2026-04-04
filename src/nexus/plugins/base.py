@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
 
 @dataclass
@@ -29,7 +29,7 @@ class NexusPlugin(ABC):
     - Custom CLI commands
     - Lifecycle hooks
     - Configuration
-    - Access to NexusFilesystemABC
+    - Access to NexusFilesystem
 
     Example:
         class MyPlugin(NexusPlugin):
@@ -50,15 +50,15 @@ class NexusPlugin(ABC):
                 print(f"Hello, {name}!")
     """
 
-    def __init__(self, nexus_fs: NexusFilesystemABC | None = None):
-        """Initialize plugin with optional NexusFilesystemABC instance."""
+    def __init__(self, nexus_fs: NexusFilesystem | None = None):
+        """Initialize plugin with optional NexusFilesystem instance."""
         self._nexus_fs = nexus_fs
         self._config: dict[str, Any] = {}
         self._enabled = True
 
     @property
-    def nx(self) -> NexusFilesystemABC | None:
-        """Access to NexusFilesystemABC instance."""
+    def nx(self) -> NexusFilesystem | None:
+        """Access to NexusFilesystem instance."""
         return self._nexus_fs
 
     @abstractmethod

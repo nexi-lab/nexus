@@ -31,7 +31,7 @@ from nexus.bricks.mcp.mount import MCPMountManager
 from nexus.bricks.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
 
 if TYPE_CHECKING:
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class MCPConnectionManager:
 
     def __init__(
         self,
-        filesystem: "NexusFilesystemABC | None" = None,
+        filesystem: "NexusFilesystem | None" = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
     ):

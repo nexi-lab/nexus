@@ -33,7 +33,7 @@ from nexus.lib.virtual_views import parse_virtual_path
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.namespace_manager import NamespaceManager
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
     from nexus.contracts.types import OperationContext
     from nexus.fuse.mount import MountMode
     from nexus.fuse.ops._events import FUSEEventDispatcher
@@ -104,7 +104,7 @@ class FUSESharedContext:
     module-level helper functions.
     """
 
-    nexus_fs: "NexusFilesystemABC"
+    nexus_fs: "NexusFilesystem"
     mode: "MountMode"
     context: "OperationContext | None"
     namespace_manager: "NamespaceManager | None"

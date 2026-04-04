@@ -5,7 +5,7 @@ import builtins
 import contextlib
 import logging
 import time
-from collections.abc import Callable, Generator, Iterator
+from collections.abc import AsyncIterator, Callable, Generator, Iterator
 from dataclasses import replace as _dc_replace
 from datetime import UTC, datetime
 from typing import Any, NamedTuple
@@ -18,7 +18,6 @@ from nexus.contracts.exceptions import (
     InvalidPathError,
     NexusFileNotFoundError,
 )
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
 from nexus.contracts.metadata import DT_DIR, FileMetadata
 from nexus.contracts.types import OperationContext
 from nexus.core.config import (
@@ -65,7 +64,6 @@ class NexusFS(  # type: ignore[misc]
     LockMixin,
     IPCMixin,
     WatchMixin,
-    NexusFilesystemABC,
 ):
     """
     Unified filesystem for Nexus.
@@ -262,6 +260,10 @@ class NexusFS(  # type: ignore[misc]
                     "Kernel init failed — falling back to Python path: %s", exc
                 )
                 self._kernel = None
+
+        # Wire metastore (PyMetastoreAdapter wraps Python MetastoreABC → Rust Metastore trait)
+        # After this, sys_read dcache-miss falls back to metastore.get() in Rust.
+        self._kernel.set_metastore(metadata_store)
 
         # ── Kernel-knows (sentinel None, injected by factory) ───────────
         # See KERNEL-ARCHITECTURE.md §1 DI patterns table.
@@ -1099,22 +1101,15 @@ class NexusFS(  # type: ignore[misc]
         mark_acquired(L1_VFS)
         return handle
 
-    def _read_via_dlc(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
-        """[INTERMEDIATE] DLC fallback read for non-Rust backends — deleted in PR 7."""
-        from dataclasses import replace as _dc_replace
+    def _backend_read(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
+        """Read from Python backend (non-Rust backends: GCS, remote, external).
 
+        Called when Rust CAS engine returns hit=False (no local blob).
+        Metadata is already in dcache (populated by metastore fallback).
+        """
         route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
 
-        # DT_EXTERNAL_STORAGE: backend manages own content
         from nexus.core.router import ExternalRouteResult
-
-        if isinstance(route, ExternalRouteResult):
-            _ctx = (
-                _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
-                if context
-                else None
-            )
-            return route.backend.read_content("", context=_ctx)
 
         _ctx = (
             _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
@@ -1123,24 +1118,16 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
         )
-        with self._vfs_locked(path, "read"):
-            meta = route.metastore.get(path)
-            # Overlay resolution: check base layer if upper has no entry
-            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-                overlay_config = self._get_overlay_config(path)
-                if overlay_config:
-                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
-            if meta is None:
-                raise NexusFileNotFoundError(path)
-            if meta.etag is None and not (_ctx and _ctx.backend_path):
-                raise NexusFileNotFoundError(path)
-            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
-                meta
-            ):
-                raise NexusFileNotFoundError(path)
-            return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-                meta.etag or "", context=_ctx
-            )
+
+        if isinstance(route, ExternalRouteResult):
+            return route.backend.read_content("", context=_ctx)
+
+        meta = route.metastore.get(path)
+        if meta is None or (meta.etag is None and not route.backend_path):
+            raise NexusFileNotFoundError(path)
+        return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+            meta.etag or "", context=_ctx
+        )
 
     @contextlib.contextmanager
     def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
@@ -1164,115 +1151,7 @@ class NexusFS(  # type: ignore[misc]
 
     # _acquire_lock_sync / _release_lock_sync in nexus_fs_lock.py (LockMixin)
 
-    async def _resolve_and_read(
-        self,
-        path: str,
-        context: OperationContext | None = None,
-    ) -> tuple[bytes, Any, Any, str | None, str | None]:
-        """Core read pipeline: validate, resolve, route, read, post-hooks.
-
-        Returns (content, meta, route, zone_id, agent_id).
-        Extracted from sys_read() so that read_range() can share the logic
-        without duplicating virtual-path dispatch, overlay resolution,
-        hook invocation, and dynamic connector bypass.
-        """
-        # DT_PIPE fast-path: skip validate/resolve/intercept/route
-        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
-            content = self._pipe_manager._get_buffer(path).read_nowait()
-            return (content, None, None, None, None)
-        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        if path in self._stream_manager._buffers:
-            content, _ = self._stream_manager.stream_read_at(path, 0)
-            return (content, None, None, None, None)
-
-        path = self._validate_path(path)
-        context = self._parse_context(context)
-
-        # PRE-DISPATCH: virtual path resolvers (Issue #889)
-        _handled, _resolve_hint = self._dispatch.resolve_read(path, context=context)
-        if _handled:
-            return (_resolve_hint or b"", None, None, None, None)
-
-        # PRE-INTERCEPT: pre-read hooks (Issue #899)
-        perm_check_start = time.time()
-        from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
-
-        self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
-        perm_check_elapsed = time.time() - perm_check_start
-
-        if perm_check_elapsed > 0.010:
-            logger.warning(
-                "[READ-PERF] SLOW pre-intercept for %s: %.1fms",
-                path,
-                perm_check_elapsed * 1000,
-            )
-
-        zone_id, agent_id, is_admin = self._get_context_identity(context)
-        route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
-
-        # DT_PIPE / DT_STREAM bypass (sync — range reads not applicable)
-        from nexus.core.router import ExternalRouteResult, PipeRouteResult, StreamRouteResult
-
-        if isinstance(route, PipeRouteResult | StreamRouteResult):
-            # Range reads not applicable; use sync non-blocking path
-            if isinstance(route, PipeRouteResult):
-                content = self._pipe_manager._get_buffer(path).read_nowait()
-            else:
-                content, _ = self._stream_manager.stream_read_at(path, 0)
-            return (content, None, route, zone_id, agent_id)
-
-        from dataclasses import replace
-
-        if context:
-            read_context = replace(context, backend_path=route.backend_path, virtual_path=path)
-        else:
-            read_context = OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-
-        # DT_EXTERNAL_STORAGE: backend manages own content — skip metastore lookup
-        if isinstance(route, ExternalRouteResult):
-            content = route.backend.read_content("", context=read_context)
-            return (content, None, route, zone_id, agent_id)
-
-        # VFS I/O Lock
-        with self._vfs_locked(path, "read"):
-            meta = _resolve_hint if _resolve_hint is not None else route.metastore.get(path)
-
-            if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
-                overlay_config = self._get_overlay_config(path)
-                if overlay_config:
-                    meta = self._overlay_resolver.resolve_read(path, overlay_config)
-
-            if meta is None or meta.etag is None:
-                raise NexusFileNotFoundError(path)
-
-            if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(
-                meta
-            ):
-                raise NexusFileNotFoundError(path)
-
-            content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-                meta.etag or "", context=read_context
-            )
-
-        # Post-read hooks
-        if self._dispatch.read_hook_count > 0:
-            from nexus.contracts.vfs_hooks import ReadHookContext
-
-            _read_ctx = ReadHookContext(
-                path=path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                metadata=meta,
-                content=content,
-                content_hash=meta.etag,
-            )
-            await self._dispatch.intercept_post_read(_read_ctx)
-            content = _read_ctx.content or content
-
-        return (content, meta, route, zone_id, agent_id)
+    # _acquire_lock_sync / _release_lock_sync in nexus_fs_lock.py (LockMixin)
 
     @rpc_expose(description="Read file content")
     async def sys_read(
@@ -1339,24 +1218,21 @@ class NexusFS(  # type: ignore[misc]
 
             self._dispatch.intercept_pre_read(_RHC(path=path, context=context))
 
-        # ── KERNEL (pure Rust, zero GIL) ──
+        # ── KERNEL (Rust — dcache hit: zero GIL, dcache miss: metastore fallback via GIL) ──
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        try:
-            result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        except NexusFileNotFoundError:
-            # [INTERMEDIATE] dcache miss (e.g. overlay base layer) — DLC fallback
-            data = self._read_via_dlc(path, _is_admin, context)
-            if offset or count is not None:
-                data = data[offset : offset + count] if count is not None else data[offset:]
-            return data
-        # [INTERMEDIATE] DLC fallback: non-Rust backends + CDC chunked manifests — deleted in PR 7
-        _raw = result.data or b""
-        _needs_dlc = not result.hit or (_raw[:30].startswith(b'{"type":"chunked_manifest'))
-        data = self._read_via_dlc(path, _is_admin, context) if _needs_dlc else _raw
+        result = self._kernel.sys_read(path, self._zone_id, _is_admin)
+        if result.hit:
+            data = result.data or b""
+            # CDC chunked manifest — read from backend instead of returning manifest JSON
+            if data[:30].startswith(b'{"type":"chunked_manifest'):
+                data = self._backend_read(path, _is_admin, context)
+        else:
+            # Non-Rust backend (GCS, remote, external) — read from Python backend
+            data = self._backend_read(path, _is_admin, context)
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
@@ -1422,7 +1298,6 @@ class NexusFS(  # type: ignore[misc]
             >>> print(results["/file1.txt"]["content"])
             >>> print(results["/file1.txt"]["etag"])
         """
-        import time
 
         bulk_start = time.time()
         results: dict[str, bytes | dict[str, Any] | None] = {}
@@ -1773,8 +1648,8 @@ class NexusFS(  # type: ignore[misc]
                 )
                 return _rb.read_content_range(meta.etag, start, end, context=read_context)
 
-        # FALLBACK: full read via _resolve_and_read + slice
-        content, _meta, _route, _zone_id, _agent_id = await self._resolve_and_read(path, context)
+        # FALLBACK: full read via sys_read + slice
+        content = await self.sys_read(path, count=end, offset=0, context=context)
         return content[start:end]
 
     @rpc_expose(description="Stream file content in chunks")
@@ -3923,7 +3798,6 @@ class NexusFS(  # type: ignore[misc]
             - Batch metadata lookups
             - Expected speedup: 10-50x for 100+ files
         """
-        import time
 
         bulk_start = time.time()
         results: dict[str, dict[str, Any] | None] = {}
@@ -4370,8 +4244,7 @@ class NexusFS(  # type: ignore[misc]
         self._dispatch.register_observe(observer)
 
     # ------------------------------------------------------------------
-    # Abstract method forwarders (ABCMeta requires real definitions)
-    # These satisfy the NexusFilesystemABC while delegating to services.
+    # Method forwarders — delegate to services.
     # ------------------------------------------------------------------
 
     # --- Workspace Versioning (→ _workspace_rpc_service) ---
@@ -4825,3 +4698,114 @@ class NexusFS(  # type: ignore[misc]
                 close_fn()
             except Exception as e:
                 logger.debug("Failed to close runtime resource %s: %s", type(resource).__name__, e)
+
+    def __enter__(self) -> "NexusFS":
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Context manager exit."""
+        self.close()
+
+    # ── Tier 2: Lock Convenience (moved from ABC) ────────────────
+
+    async def lock(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 60.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> str | None:
+        """Acquire lock with blocking wait (Tier 2 over sys_lock).
+
+        Retries sys_lock() until acquired or timeout.
+        Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
+        """
+        import asyncio
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while True:
+            lock_id = await self.sys_lock(
+                path,
+                mode=mode,
+                ttl=ttl,
+                max_holders=max_holders,
+                context=context,
+            )
+            if lock_id is not None:
+                return lock_id
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                return None
+            await asyncio.sleep(min(0.05, remaining))
+
+    async def unlock(
+        self, lock_id: str, path: str, *, context: "OperationContext | None" = None
+    ) -> bool:
+        """Release lock (Tier 2 alias for sys_unlock)."""
+        return await self.sys_unlock(path, lock_id, context=context)
+
+    @contextlib.asynccontextmanager
+    async def locked(
+        self,
+        path: str,
+        mode: str = "exclusive",
+        timeout: float = 30.0,
+        ttl: float = 30.0,
+        max_holders: int = 1,
+        *,
+        context: "OperationContext | None" = None,
+    ) -> "AsyncIterator[str]":
+        """Async context manager for advisory lock (Tier 2).
+
+        Acquires lock via lock() (blocking wait), yields lock_id,
+        releases on exit. Raises LockTimeout on failure.
+        """
+        from nexus.contracts.exceptions import LockTimeout
+
+        lock_id = await self.lock(
+            path,
+            mode=mode,
+            timeout=timeout,
+            ttl=ttl,
+            max_holders=max_holders,
+            context=context,
+        )
+        if lock_id is None:
+            raise LockTimeout(path=path, timeout=timeout)
+        try:
+            yield lock_id
+        finally:
+            await self.unlock(lock_id, path, context=context)
+
+    # ── Tier 2: glob/grep (moved from ABC) ────────────────────────
+
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+        """Find files matching a glob pattern (like glob(3)).
+
+        Requires SearchService.
+        """
+        raise NotImplementedError("glob requires SearchService")
+
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 1000,
+        search_mode: str = "auto",
+        context: Any = None,
+        before_context: int = 0,
+        after_context: int = 0,
+        invert_match: bool = False,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search file contents using regex patterns (like grep(1)).
+
+        Requires SearchService.
+        """
+        raise NotImplementedError("grep requires SearchService")

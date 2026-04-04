@@ -1,20 +1,20 @@
 //! Kernel — Rust kernel owning all core state.
 //!
-//! Owns DCache, PathRouter, Trie, VFS Lock, HookRegistry, ObserverRegistry.
+//! Owns DCache, PathRouter, Trie, VFS Lock, HookRegistry, ObserverRegistry, Metastore.
 //! Exposes proxy #[pymethods] for Python-side mutation and syscall execution.
 //!
 //! Architecture:
 //!   - Created empty via Kernel(), then components are wired by factory.
 //!   - DCache/Router/Trie/Hooks/Observers use interior mutability (&self methods).
 //!   - VFS Lock is optionally Arc-shared with Python VFSLockManager (blocking acquire).
-//!   - Metastore trait (Option<Box<dyn Metastore>>) reserved for PR 4+.
+//!   - Metastore (PyMetastoreAdapter) wraps Python MetastoreABC via GIL.
 //!
-//! Issue #1868: PR 3 — Kernel owns state, 4-pillar traits, dispatch registration.
+//! Issue #1868: PR 7b — Metastore wired, dcache-miss → metastore fallback.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{HookRegistry, ObserverRegistry, Trie};
 use crate::lock::{LockMode, VFSLockManager, VFSLockManagerInner};
-use crate::metastore::Metastore;
+use crate::metastore::{Metastore, PyMetastoreAdapter};
 use crate::router::PathRouter;
 use parking_lot::Mutex;
 use pyo3::prelude::*;
@@ -72,8 +72,7 @@ pub struct Kernel {
     // Hook/Observer registries (Mutex for interior mutability)
     hooks: Mutex<HookRegistry>,
     observers: Mutex<ObserverRegistry>,
-    // Metastore trait (Rust-native, used when available)
-    #[allow(dead_code)]
+    // Metastore (PyMetastoreAdapter wrapping Python MetastoreABC)
     metastore: Option<Box<dyn Metastore>>,
     // VFS lock timeout for blocking acquire (ms)
     vfs_lock_timeout_ms: u64,
@@ -119,6 +118,16 @@ impl Kernel {
     /// Set VFS lock timeout in milliseconds (default 5000).
     fn set_vfs_lock_timeout(&mut self, timeout_ms: u64) {
         self.vfs_lock_timeout_ms = timeout_ms;
+    }
+
+    // ── Metastore wiring ──────────────────────────────────────────────
+
+    /// Wire Python MetastoreABC → Rust Metastore trait via PyMetastoreAdapter.
+    ///
+    /// Called once from NexusFS.__init__. After this, sys_read dcache-miss
+    /// falls back to metastore.get() instead of raising FileNotFoundError.
+    fn set_metastore(&mut self, metastore: Py<PyAny>) {
+        self.metastore = Some(Box::new(PyMetastoreAdapter::new(metastore)));
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────
@@ -375,17 +384,17 @@ impl Kernel {
 
     // ── sys_read ───────────────────────────────────────────────────────
 
-    /// Rust syscall: read file content — pure Rust path (zero GIL).
+    /// Rust syscall: read file content.
     ///
-    /// validate → route → dcache (authoritative) → VFS lock → CAS read → return.
+    /// validate → route → dcache → [metastore fallback] → VFS lock → CAS read → return.
     ///
-    /// DCache is authoritative: miss = FileNotFoundError (no metastore fallback).
+    /// DCache hit = hot path (zero GIL). DCache miss = cold path: queries
+    /// Python MetastoreABC via PyMetastoreAdapter (GIL), populates dcache,
+    /// then continues with CAS read.
+    ///
     /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
     /// or when no Rust backend is available (e.g. remote backends).
     /// Raises `InvalidPathError`, `NexusFileNotFoundError` on errors.
-    ///
-    /// Resolve, pre-hooks, and post-hooks are handled by the Python wrapper
-    /// (intermediate state — migrates to Rust dispatch middleware in PR 7).
     #[pyo3(signature = (path, zone_id, is_admin))]
     fn sys_read<'py>(
         &self,
@@ -414,10 +423,35 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. DCache lookup (authoritative — miss = FileNotFoundError)
+        // 3. DCache lookup — on miss, fallback to metastore (cold path, GIL)
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
-            None => return Err(Self::raise_file_not_found(py, path)),
+            None => {
+                // Metastore fallback: query Python MetastoreABC via PyMetastoreAdapter
+                match &self.metastore {
+                    Some(ms) => match ms.get(path) {
+                        Ok(Some(meta)) => {
+                            // Populate dcache from metastore result
+                            let cached = CachedEntry {
+                                backend_name: meta.backend_name.clone(),
+                                physical_path: meta.physical_path.clone(),
+                                size: meta.size,
+                                etag: meta.etag.clone(),
+                                version: meta.version,
+                                entry_type: meta.entry_type,
+                                zone_id: meta.zone_id.clone(),
+                                mime_type: meta.mime_type.clone(),
+                            };
+                            self.dcache.put(path, cached);
+                            // Re-fetch from dcache (now populated)
+                            self.dcache.get_entry(path).unwrap()
+                        }
+                        Ok(None) => return Err(Self::raise_file_not_found(py, path)),
+                        Err(_) => return Err(Self::raise_file_not_found(py, path)),
+                    },
+                    None => return Err(Self::raise_file_not_found(py, path)),
+                }
+            }
         };
 
         // DT_PIPE/DT_STREAM → wrapper handles async IPC

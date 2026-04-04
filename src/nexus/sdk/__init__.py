@@ -120,7 +120,7 @@ from nexus.contracts.exceptions import (
 from nexus.contracts.exceptions import (
     NexusPermissionError as PermissionError,
 )
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as Filesystem
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as Filesystem
 
 # ReBAC types canonical in contracts — always available (#3230)
 from nexus.contracts.rebac_types import WILDCARD_SUBJECT, CheckResult, Entity, GraphLimitExceeded

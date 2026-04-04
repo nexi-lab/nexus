@@ -70,7 +70,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.namespace_manager import NamespaceManager
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
     from nexus.contracts.types import OperationContext
     from nexus.fuse.mount import MountMode
 
@@ -86,7 +86,7 @@ class NexusFUSEOperations(Operations):
 
     def __init__(
         self,
-        nexus_fs: "NexusFilesystemABC",
+        nexus_fs: "NexusFilesystem",
         mode: "MountMode",
         cache_config: dict[str, Any] | None = None,
         context: "OperationContext | None" = None,

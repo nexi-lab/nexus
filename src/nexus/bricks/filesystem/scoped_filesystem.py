@@ -23,7 +23,7 @@ import builtins
 from typing import Any, cast
 
 from nexus.bricks.filesystem._scoped_base import ScopedPathMixin
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.contracts.types import OperationContext
 
 
@@ -41,11 +41,11 @@ class ScopedFilesystem(ScopedPathMixin):
     are forwarded directly via ``__getattr__`` — no path scoping.
 
     Attributes:
-        _fs: The underlying NexusFilesystemABC instance
+        _fs: The underlying NexusFilesystem instance
         _root: The root path prefix to prepend to all paths
     """
 
-    def __init__(self, fs: NexusFilesystemABC, root: str) -> None:
+    def __init__(self, fs: NexusFilesystem, root: str) -> None:
         """Initialize ScopedFilesystem.
 
         Args:
@@ -57,7 +57,7 @@ class ScopedFilesystem(ScopedPathMixin):
         self._fs = fs
 
     @property
-    def wrapped_fs(self) -> NexusFilesystemABC:
+    def wrapped_fs(self) -> NexusFilesystem:
         """The underlying wrapped filesystem."""
         return self._fs
 

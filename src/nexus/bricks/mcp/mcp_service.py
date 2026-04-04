@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 from nexus.lib.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ class MCPService:
 
     def __init__(
         self,
-        filesystem: NexusFilesystemABC | None = None,
+        filesystem: NexusFilesystem | None = None,
         *,
         credential_service: Any = None,
         mount_lister: Callable[[], list[tuple[str, str]]] | None = None,

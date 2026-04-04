@@ -372,19 +372,6 @@ class Kernel:
     def set_vfs_lock(self, vfs_lock: Any) -> None: ...
     def set_vfs_lock_timeout(self, timeout_ms: int) -> None: ...
     def set_metastore(self, metastore: Any) -> None: ...
-    def metastore_put(
-        self,
-        path: str,
-        backend_name: str,
-        physical_path: str,
-        size: int,
-        entry_type: int,
-        version: int = 1,
-        etag: str | None = None,
-        zone_id: str | None = None,
-        mime_type: str | None = None,
-    ) -> None: ...
-    def metastore_delete(self, path: str) -> bool: ...
     def dcache_put(
         self,
         path: str,

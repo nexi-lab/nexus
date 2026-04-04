@@ -438,6 +438,7 @@ class SysReadResult:
     data: bytes | None
     post_hook_needed: bool
     content_hash: str | None
+    entry_type: int
 
 class SysWriteResult:
     hit: bool

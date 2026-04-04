@@ -80,6 +80,9 @@ pub struct SysReadResult {
     pub post_hook_needed: bool,
     /// Content hash (etag) for post-hook context.
     pub content_hash: Option<String>,
+    /// DT_PIPE(3)/DT_STREAM(4) when hit=false — tells Python to dispatch IPC.
+    /// 0 = normal miss (not found or no backend).
+    pub entry_type: u8,
 }
 
 /// Result of sys_write(): concrete type instead of Option<str>.
@@ -376,7 +379,7 @@ impl Kernel {
     /// Wraps the Python hook with PyInterceptHookAdapter (in generated_adapters.rs)
     /// so the kernel stores Box<dyn InterceptHook> — language-agnostic.
     fn register_hook(&self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
-        use crate::generated_adapters::PyInterceptHookAdapter;
+        use crate::dispatch_adapters::PyInterceptHookAdapter;
 
         let hook_ref = hook.bind(py);
         let name: String = hook_ref
@@ -498,6 +501,7 @@ impl Kernel {
                 data: None,
                 post_hook_needed: false,
                 content_hash: None,
+                entry_type: 0,
             })
         };
 
@@ -557,10 +561,15 @@ impl Kernel {
             }
         };
 
-        // DT_PIPE/DT_STREAM → wrapper handles async IPC
-        match entry.entry_type {
-            DT_PIPE | DT_STREAM => return miss(),
-            _ => {}
+        // DT_PIPE/DT_STREAM → return entry_type so Python dispatches IPC
+        if let dt @ (DT_PIPE | DT_STREAM) = entry.entry_type {
+            return Ok(SysReadResult {
+                hit: false,
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+                entry_type: dt,
+            });
         }
 
         // Content identifier: CAS backends use etag (hash), path backends
@@ -614,6 +623,7 @@ impl Kernel {
                 data: Some(PyBytes::new(py, &data).into()),
                 post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
                 content_hash: entry.etag,
+                entry_type: DT_REG,
             }),
             None => miss(),
         }

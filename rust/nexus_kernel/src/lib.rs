@@ -12,6 +12,7 @@ mod cas_engine;
 mod cas_transport;
 mod dcache;
 mod dispatch;
+mod dispatch_adapters;
 mod generated_adapters;
 mod glob;
 mod hash;

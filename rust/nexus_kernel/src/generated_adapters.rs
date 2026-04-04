@@ -143,11 +143,32 @@ impl ObjectStore for PyObjectStoreAdapter {
         })
     }
 
-    fn read_content(&self, content_id: &str) -> Result<Vec<u8>, StorageError> {
+    fn read_content(&self, content_id: &str, backend_path: &str) -> Result<Vec<u8>, StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
+            // Construct minimal OperationContext with backend_path
+            // (CAS backends ignore it; path backends require it)
+            let ctx_cls = py
+                .import("nexus.contracts.types")
+                .and_then(|m| m.getattr("OperationContext"))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            let _ = kwargs.set_item("backend_path", backend_path);
+            let _ = kwargs.set_item("virtual_path", "");
+            let _ = kwargs.set_item("user_id", "kernel");
+            let ctx = ctx_cls
+                .call((), Some(&kwargs))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
             let result = obj
-                .call_method1("read_content", (content_id,))
+                .call_method(
+                    "read_content",
+                    (content_id,),
+                    Some(&{
+                        let kw = pyo3::types::PyDict::new(py);
+                        let _ = kw.set_item("context", &ctx);
+                        kw
+                    }),
+                )
                 .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
             result
                 .extract::<Vec<u8>>()

@@ -468,11 +468,20 @@ impl Kernel {
             _ => {}
         }
 
-        // Path-based backend: no etag → use backend_path
-        let etag = entry.etag.as_deref().unwrap_or("");
-        if etag.is_empty() && route.backend_path.is_empty() {
+        // Content identifier: CAS backends use etag (hash), path backends
+        // use physical_path.  Either must be non-empty to attempt a read.
+        let content_id = entry.etag.as_deref().filter(|s| !s.is_empty()).or_else(|| {
+            let pp = entry.physical_path.as_str();
+            if pp.is_empty() {
+                None
+            } else {
+                Some(pp)
+            }
+        });
+        if content_id.is_none() {
             return Err(Self::raise_file_not_found(py, path));
         }
+        let content_id = content_id.unwrap();
 
         // 4. VFS lock (blocking, GIL released during wait)
         let lock_handle = if let Some(ref lm) = self.vfs_lock {
@@ -489,12 +498,10 @@ impl Kernel {
             return miss();
         }
 
-        // 5. Backend read (CasLocal — pure Rust, zero GIL)
-        let content = if !etag.is_empty() {
-            self.router.read_content(&route.mount_point, etag)
-        } else {
-            None
-        };
+        // 5. Backend read (CasLocal or PyObjectStoreAdapter)
+        let content = self
+            .router
+            .read_content(&route.mount_point, content_id, &route.backend_path);
 
         // 6. Release VFS lock (always, even on miss)
         if lock_handle > 0 {

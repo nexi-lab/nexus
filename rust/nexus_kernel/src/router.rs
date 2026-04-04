@@ -129,10 +129,22 @@ impl PathRouter {
     }
 
     /// Read content from the storage backend attached to a mount.
-    pub(crate) fn read_content(&self, mount_point: &str, etag: &str) -> Option<Vec<u8>> {
+    ///
+    /// `content_id`: CAS hash or path-based content identifier.
+    /// `backend_path`: mount-relative path (for path-addressed backends).
+    pub(crate) fn read_content(
+        &self,
+        mount_point: &str,
+        content_id: &str,
+        backend_path: &str,
+    ) -> Option<Vec<u8>> {
         let mounts = self.mounts.read();
         let entry = mounts.get(mount_point)?;
-        entry.backend.as_ref()?.read_content(etag).ok()
+        entry
+            .backend
+            .as_ref()?
+            .read_content(content_id, backend_path)
+            .ok()
     }
 
     /// Write content to the storage backend attached to a mount.

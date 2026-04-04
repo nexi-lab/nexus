@@ -842,6 +842,8 @@ ADAPTER_METHOD_OVERRIDES: dict[str, str] = {
     "ObjectStore.write_content": "WRITE_RESULT",
     # Metastore.get() → check None + extract_metadata
     "Metastore.get": "OPTION_FILE_METADATA",
+    # ObjectStore.read_content(content_id, backend_path) → construct OperationContext
+    "ObjectStore.read_content": "READ_WITH_CONTEXT",
     # Metastore.put() → to_python_metadata for FileMetadata param
     "Metastore.put": "PUT_FILE_METADATA",
     # Metastore.list() → iterate + extract_metadata
@@ -891,6 +893,42 @@ def _generate_adapter_method(
         return lines
 
     lines.append(f"    fn {method.name}({sig}) -> {ret} {{")
+
+    if override == "READ_WITH_CONTEXT":
+        # read_content(content_id, backend_path): construct OperationContext for path-based backends
+        err = _rust_err_map(config, method.name, first_param)
+        lines.append("        Python::attach(|py| {")
+        lines.append("            let obj = self.inner.bind(py);")
+        lines.append("            // Construct minimal OperationContext with backend_path")
+        lines.append("            // (CAS backends ignore it; path backends require it)")
+        lines.append("            let ctx_cls = py")
+        lines.append('                .import("nexus.contracts.types")')
+        lines.append('                .and_then(|m| m.getattr("OperationContext"))')
+        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            let kwargs = pyo3::types::PyDict::new(py);")
+        lines.append('            let _ = kwargs.set_item("backend_path", backend_path);')
+        lines.append('            let _ = kwargs.set_item("virtual_path", "");')
+        lines.append('            let _ = kwargs.set_item("user_id", "kernel");')
+        lines.append("            let ctx = ctx_cls")
+        lines.append("                .call((), Some(&kwargs))")
+        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            let result = obj")
+        lines.append("                .call_method(")
+        lines.append('                    "read_content",')
+        lines.append("                    (content_id,),")
+        lines.append("                    Some(&{")
+        lines.append("                        let kw = pyo3::types::PyDict::new(py);")
+        lines.append('                        let _ = kw.set_item("context", &ctx);')
+        lines.append("                        kw")
+        lines.append("                    }),")
+        lines.append("                )")
+        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            result")
+        lines.append("                .extract::<Vec<u8>>()")
+        lines.append(f"                .map_err(|e| {err})")
+        lines.append("        })")
+        lines.append("    }")
+        return lines
 
     if override == "WRITE_RESULT":
         # write_content: Python returns WriteResult, extract .content_id

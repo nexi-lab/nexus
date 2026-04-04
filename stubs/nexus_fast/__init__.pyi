@@ -1,10 +1,10 @@
 # AUTO-GENERATED — target for scripts/codegen_kernel.py (PR 8)
 # Manual edits OK until codegen is implemented.
-# Source: rust/nexus_pyo3/src/kernel.rs
+# Source: rust/nexus_kernel/src/kernel.rs
 
 """Type stubs for nexus_fast — Rust-accelerated PyO3 extension module.
 
-Auto-generated from rust/nexus_pyo3/src/*.rs exports.
+Auto-generated from rust/nexus_kernel/src/*.rs exports.
 Keep in sync when adding new #[pyfunction] or #[pyclass] exports.
 """
 
@@ -227,6 +227,12 @@ class RingBufferCore:
     def is_full(self) -> bool: ...
     def is_empty(self) -> bool: ...
     @property
+    def capacity(self) -> int: ...
+    @property
+    def size(self) -> int: ...
+    @property
+    def msg_count(self) -> int: ...
+    @property
     def closed(self) -> bool: ...
     def stats(self) -> dict[str, Any]: ...
 
@@ -318,6 +324,8 @@ class Kernel:
     # VFS Lock wiring
     def set_vfs_lock(self, vfs_lock: VFSLockManager) -> None: ...
     def set_vfs_lock_timeout(self, timeout_ms: int) -> None: ...
+    # Metastore wiring
+    def set_metastore(self, metastore: Any) -> None: ...
     # DCache proxy
     def dcache_put(
         self,

@@ -8,7 +8,7 @@ name: Conda Pack
 #
 # Build order per runner:
 #   1. Create nexus conda env (Python 3.13) + pip install .
-#   2. Compile nexus_fast  (rust/nexus_pyo3) via maturin
+#   2. Compile nexus_fast  (rust/nexus_kernel) via maturin
 #   3. Compile nexus_raft  (rust/nexus_raft --features full) via maturin
 #   4. pip install both .whl files into the nexus env
 #   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
@@ -31,7 +31,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # nexus_pyo3 (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
+          # nexus_kernel (shm_pipe/shm_stream) uses POSIX-only APIs (fcntl, pipe,
           # O_NONBLOCK) that do not exist on Windows. That wheel is skipped on
           # Windows via `if: matrix.os != 'windows-latest'` below.
           - os: windows-latest
@@ -88,7 +88,7 @@ jobs:
         with:
           shared-key: conda-pack-rust-${{ matrix.os }}
           workspaces: |
-            rust/nexus_pyo3
+            rust/nexus_kernel
             rust/nexus_raft
 
       - name: Install protoc (Windows)
@@ -135,14 +135,14 @@ jobs:
           conda run -n nexus pip install maturin
 
       # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
-      - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+      - name: Build nexus_fast wheel  (rust/nexus_kernel)
         if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |
           mkdir -p build/dist
           conda run -n nexus maturin build --release \
             --out build/dist \
-            -m rust/nexus_pyo3/Cargo.toml
+            -m rust/nexus_kernel/Cargo.toml
 
       - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
         shell: bash -el {0}

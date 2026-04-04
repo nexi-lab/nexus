@@ -24,12 +24,11 @@ Issue #1811, #1320.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.protocols.service_hooks import HookSpec
 
 if TYPE_CHECKING:
-    from nexus.core.kernel_dispatch import KernelDispatch
     from nexus.core.metastore import MetastoreABC
     from nexus.core.mount_table import MountTable
     from nexus.core.object_store import ObjectStoreABC
@@ -59,7 +58,7 @@ class DriverLifecycleCoordinator:
     def __init__(
         self,
         mount_table: "MountTable",
-        dispatch: "KernelDispatch",
+        dispatch: Any,
         *,
         self_address: str | None = None,
         transport_pool: "RPCTransportPool | None" = None,

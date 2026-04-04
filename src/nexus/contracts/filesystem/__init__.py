@@ -1,8 +1,8 @@
-"""Filesystem ABC (contracts tier).
+"""Filesystem Protocol (contracts tier).
 
-Exports ``NexusFilesystemABC`` — the kernel syscall contract.
+Exports ``NexusFilesystem`` — the kernel syscall contract.
 """
 
-from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC
+from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem
 
-__all__ = ["NexusFilesystemABC"]
+__all__ = ["NexusFilesystem"]

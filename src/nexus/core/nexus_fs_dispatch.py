@@ -1,8 +1,6 @@
-"""KernelDispatch — unified three-phase VFS dispatch.
+"""DispatchMixin — three-phase VFS dispatch (collapsed from KernelDispatch).
 
-Single dispatch point for all kernel VFS operation notifications.
-Every VFS operation (read/write/delete/rename/mkdir/rmdir) passes
-through three ordered phases:
+Mixin for NexusFS. Every VFS operation passes through three ordered phases:
 
     PRE-DISPATCH  (first-match short-circuit)
     └── Registered VFSPathResolver chain.
@@ -41,7 +39,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import AuditLogError
@@ -57,19 +54,9 @@ from nexus.contracts.vfs_hooks import (
     RmdirHookContext,
     StatHookContext,
     UnmountHookContext,
-    VFSAccessHook,
-    VFSCopyHook,
-    VFSDeleteHook,
-    VFSMkdirHook,
     VFSMountHook,
     VFSObserver,
-    VFSReadHook,
-    VFSRenameHook,
-    VFSRmdirHook,
-    VFSStatHook,
     VFSUnmountHook,
-    VFSWriteBatchHook,
-    VFSWriteHook,
     WriteBatchHookContext,
     WriteHookContext,
 )
@@ -81,130 +68,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class _PythonHookRegistry:
-    """Pure-Python fallback when ``nexus_fast`` is unavailable."""
+class DispatchMixin:
+    """Three-phase VFS dispatch mixin for NexusFS.
 
-    def __init__(self) -> None:
-        self._hooks: dict[str, list[Any]] = defaultdict(list)
-        # Bitmap for O(1) "any hooks registered?" check.
-        # Updated on register/unregister. Callers check this before
-        # constructing HookContext objects — saves ~300-700ns per syscall
-        # when no hooks are registered for a given operation.
-        self._nonempty: set[str] = set()
+    Collapsed from KernelDispatch (PR 7c). Dispatch state lives directly
+    on NexusFS — no separate object, no indirection.
 
-    def register(self, op: str, hook: Any) -> None:
-        self._hooks[op].append(hook)
-        self._nonempty.add(op)
-
-    def unregister(self, op: str, hook: Any) -> bool:
-        hooks = self._hooks.get(op, [])
-        try:
-            hooks.remove(hook)
-            if not hooks:
-                self._nonempty.discard(op)
-            return True
-        except ValueError:
-            return False
-
-    def count(self, op: str) -> int:
-        return len(self._hooks.get(op, []))
-
-    def get_pre_hooks(self, op: str) -> list[Any]:
-        method = f"on_pre_{op}"
-        return [hook for hook in self._hooks.get(op, []) if hasattr(hook, method)]
-
-    def get_post_hooks(self, op: str) -> tuple[list[Any], list[Any]]:
-        method = f"on_post_{op}"
-        sync_hooks: list[Any] = []
-        async_hooks: list[Any] = []
-        for hook in self._hooks.get(op, []):
-            fn = getattr(hook, method, None)
-            if fn is None:
-                continue
-            if asyncio.iscoroutinefunction(fn):
-                async_hooks.append(hook)
-            else:
-                sync_hooks.append(hook)
-        return sync_hooks, async_hooks
-
-
-class _PythonObserverRegistry:
-    """Pure-Python fallback when Rust ``nexus_fast.ObserverRegistry`` is unavailable."""
-
-    def __init__(self) -> None:
-        self._entries: list[tuple[Any, str, int]] = []
-
-    def register(self, obs: Any, event_mask: int) -> None:
-        name = type(obs).__name__
-        self._entries.append((obs, name, event_mask))
-
-    def unregister(self, obs: Any) -> bool:
-        for i, (o, _, _) in enumerate(self._entries):
-            if o is obs:
-                self._entries.pop(i)
-                return True
-        return False
-
-    def get_matching(self, event_type_bit: int) -> list[tuple[Any, str]]:
-        return [(obs, name) for obs, name, mask in self._entries if mask & event_type_bit]
-
-    def count(self) -> int:
-        return len(self._entries)
-
-    def __repr__(self) -> str:
-        return f"_PythonObserverRegistry(count={len(self._entries)})"
-
-
-class KernelDispatch:
-    """Unified three-phase VFS dispatch (PRE-DISPATCH / INTERCEPT / OBSERVE).
-
-    Construction (kernel __init__):
-        self._dispatch = KernelDispatch()   # empty callback lists
-
-    Registration (factory at boot — NOT kernel code):
-        dispatch.register_intercept_read(some_hook)
-        dispatch.register_observe(some_observer)
-
-    Dispatch (kernel VFS call sites):
-        dispatch.resolve_read(path)          # phase 0: PRE-DISPATCH (try_read)
-        dispatch.intercept_pre_read(ctx)     # phase 1a: INTERCEPT (pre)
-        ...actual VFS operation...
-        dispatch.intercept_post_read(ctx)    # phase 1b: INTERCEPT (post)
-        await dispatch.notify(event)         # phase 2: OBSERVE (inline + deferred)
+    Expects ``self._kernel`` (Rust Kernel) to be set before use.
     """
 
-    __slots__ = (
-        "_trie_resolvers",
-        "_fallback_resolvers",
-        "_next_resolver_idx",
-        "_hooks_nonempty",
-        "_mount_hooks",
-        "_unmount_hooks",
-        "_background_tasks",
-        "_kernel",
-    )
+    _kernel: Any  # Rust Kernel — set by NexusFS.__init__
 
-    def __init__(self) -> None:
-        # PRE-DISPATCH: Python-side resolver mapping (trie lives in Kernel)
-        self._trie_resolvers: dict[int, VFSPathResolver] = {}
-        self._fallback_resolvers: list[VFSPathResolver] = []
+    def _init_dispatch(self) -> None:
+        """Initialize dispatch state. Called from NexusFS.__init__."""
+        self._trie_resolvers: dict[int, Any] = {}
+        self._fallback_resolvers: list[Any] = []
         self._next_resolver_idx: int = 0
-
-        # O(1) bitmap: "any hooks for this op?" — lives on KernelDispatch
-        # so it works for fast-path checks before constructing HookContext.
         self._hooks_nonempty: set[str] = set()
-
-        # MOUNT/UNMOUNT: driver lifecycle hooks (Issue #1811)
         self._mount_hooks: list[VFSMountHook] = []
         self._unmount_hooks: list[VFSUnmountHook] = []
-
-        # Issue #3391: tracked background tasks for deferred OBSERVE dispatch.
-        # Strong references prevent GC of in-flight tasks (CPython #91887).
         self._background_tasks: set[asyncio.Task] = set()
-
-        # Kernel ref — owns PathTrie, HookRegistry, ObserverRegistry.
-        # Set by factory after Kernel construction.
-        self._kernel: Any = None
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
 
@@ -250,7 +133,7 @@ class KernelDispatch:
         appended to the fallback linear-scan list.
         """
         pattern: str | None = getattr(resolver, "TRIE_PATTERN", None)
-        if isinstance(pattern, str) and pattern and self._kernel is not None:
+        if isinstance(pattern, str) and pattern:
             idx = self._next_resolver_idx
             self._next_resolver_idx += 1
             self._kernel.trie_register(pattern, idx)
@@ -258,67 +141,32 @@ class KernelDispatch:
         else:
             self._fallback_resolvers.append(resolver)
 
-    def resolve_read(
-        self,
-        path: str,
-        *,
-        context: Any = None,
-    ) -> tuple[bool, bytes | None]:
-        """PRE-DISPATCH: first-match resolver for read (#1665).
-
-        Returns (handled, result):
-            handled=True,  result=content — resolver handled the read.
-            handled=False, result=None    — no resolver matched.
-
-        Trie resolvers are checked first (~50ns), then fallback list.
-        """
-        # Phase 1: Rust trie lookup (via Kernel)
-        if self._kernel is not None:
-            idx = self._kernel.trie_lookup(path)
-            if idx is not None:
-                resolver = self._trie_resolvers.get(idx)
-                if resolver is not None:
-                    result = resolver.try_read(path, context=context)
-                    if result is not None:
-                        return True, result
-        # Phase 2: fallback linear scan
+    def _resolve(self, path: str, method: str, **kwargs: Any) -> tuple[bool, Any]:
+        """Generic PRE-DISPATCH: trie lookup → fallback scan."""
+        idx = self._kernel.trie_lookup(path)
+        if idx is not None:
+            resolver = self._trie_resolvers.get(idx)
+            if resolver is not None:
+                result = getattr(resolver, method)(path, **kwargs)
+                if result is not None:
+                    return True, result
         for r in self._fallback_resolvers:
-            result = r.try_read(path, context=context)
+            result = getattr(r, method)(path, **kwargs)
             if result is not None:
                 return True, result
         return False, None
+
+    def resolve_read(self, path: str, *, context: Any = None) -> tuple[bool, bytes | None]:
+        """PRE-DISPATCH: first-match resolver for read."""
+        return self._resolve(path, "try_read", context=context)
 
     def resolve_write(self, path: str, content: bytes) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for write (#1665)."""
-        if self._kernel is not None:
-            idx = self._kernel.trie_lookup(path)
-            if idx is not None:
-                resolver = self._trie_resolvers.get(idx)
-                if resolver is not None:
-                    result = resolver.try_write(path, content)
-                    if result is not None:
-                        return True, result
-        for r in self._fallback_resolvers:
-            result = r.try_write(path, content)
-            if result is not None:
-                return True, result
-        return False, None
+        """PRE-DISPATCH: first-match resolver for write."""
+        return self._resolve(path, "try_write", content=content)
 
     def resolve_delete(self, path: str, *, context: Any = None) -> tuple[bool, Any]:
-        """PRE-DISPATCH: first-match resolver for delete (#1665)."""
-        if self._kernel is not None:
-            idx = self._kernel.trie_lookup(path)
-            if idx is not None:
-                resolver = self._trie_resolvers.get(idx)
-                if resolver is not None:
-                    result = resolver.try_delete(path, context=context)
-                    if result is not None:
-                        return True, result
-        for r in self._fallback_resolvers:
-            result = r.try_delete(path, context=context)
-            if result is not None:
-                return True, result
-        return False, None
+        """PRE-DISPATCH: first-match resolver for delete."""
+        return self._resolve(path, "try_delete", context=context)
 
     @property
     def resolver_count(self) -> int:
@@ -327,8 +175,6 @@ class KernelDispatch:
     # ── register_intercept: per-operation INTERCEPT hooks ─────────────
 
     def _mark_hook(self, op: str) -> None:
-        if self._kernel is None:
-            return  # No kernel = no dispatch; don't mark active to avoid misleading state
         self._hooks_nonempty.add(op)
         self._sync_hook_count(op)
 
@@ -342,55 +188,44 @@ class KernelDispatch:
         if self._kernel is not None:
             self._kernel.set_hook_count(op, int(self._kernel.hook_count(op)))
 
-    def register_intercept_read(self, hook: VFSReadHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("read", hook)
-        self._mark_hook("read")
+    def register_intercept(self, op: str, hook: Any) -> None:
+        """Register an INTERCEPT hook for the given operation.
 
-    def register_intercept_write(self, hook: VFSWriteHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("write", hook)
-        self._mark_hook("write")
+        Delegates to Rust HookRegistry. Callers use named wrappers below.
+        """
+        self._kernel.register_hook(op, hook)
+        self._mark_hook(op)
 
-    def register_intercept_write_batch(self, hook: VFSWriteBatchHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("write_batch", hook)
-        self._mark_hook("write_batch")
+    # Named registration wrappers — preserve existing call sites.
+    def register_intercept_read(self, hook: Any) -> None:
+        self.register_intercept("read", hook)
 
-    def register_intercept_delete(self, hook: VFSDeleteHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("delete", hook)
-        self._mark_hook("delete")
+    def register_intercept_write(self, hook: Any) -> None:
+        self.register_intercept("write", hook)
 
-    def register_intercept_rename(self, hook: VFSRenameHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("rename", hook)
-        self._mark_hook("rename")
+    def register_intercept_write_batch(self, hook: Any) -> None:
+        self.register_intercept("write_batch", hook)
 
-    def register_intercept_copy(self, hook: VFSCopyHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("copy", hook)
-        self._mark_hook("copy")
+    def register_intercept_delete(self, hook: Any) -> None:
+        self.register_intercept("delete", hook)
 
-    def register_intercept_mkdir(self, hook: VFSMkdirHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("mkdir", hook)
-        self._mark_hook("mkdir")
+    def register_intercept_rename(self, hook: Any) -> None:
+        self.register_intercept("rename", hook)
 
-    def register_intercept_rmdir(self, hook: VFSRmdirHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("rmdir", hook)
-        self._mark_hook("rmdir")
+    def register_intercept_copy(self, hook: Any) -> None:
+        self.register_intercept("copy", hook)
 
-    def register_intercept_stat(self, hook: VFSStatHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("stat", hook)
-        self._mark_hook("stat")
+    def register_intercept_mkdir(self, hook: Any) -> None:
+        self.register_intercept("mkdir", hook)
 
-    def register_intercept_access(self, hook: VFSAccessHook) -> None:
-        if self._kernel is not None:
-            self._kernel.register_hook("access", hook)
-        self._mark_hook("access")
+    def register_intercept_rmdir(self, hook: Any) -> None:
+        self.register_intercept("rmdir", hook)
+
+    def register_intercept_stat(self, hook: Any) -> None:
+        self.register_intercept("stat", hook)
+
+    def register_intercept_access(self, hook: Any) -> None:
+        self.register_intercept("access", hook)
 
     # ── unregister ─────────────────────────────────────────────────────
 
@@ -398,8 +233,7 @@ class KernelDispatch:
         """Remove a PRE-DISPATCH resolver. Returns True if found."""
         for idx, r in list(self._trie_resolvers.items()):
             if r is resolver:
-                if self._kernel is not None:
-                    self._kernel.trie_unregister(idx)
+                self._kernel.trie_unregister(idx)
                 del self._trie_resolvers[idx]
                 return True
         try:
@@ -408,82 +242,43 @@ class KernelDispatch:
         except ValueError:
             return False
 
-    def unregister_intercept_read(self, hook: VFSReadHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("read", hook))
+    def unregister_intercept(self, op: str, hook: Any) -> bool:
+        """Unregister an INTERCEPT hook. Returns True if found."""
+        r = bool(self._kernel.unregister_hook(op, hook))
         if r:
-            self._unmark_hook("read")
+            self._unmark_hook(op)
         return r
 
-    def unregister_intercept_write(self, hook: VFSWriteHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("write", hook))
-        if r:
-            self._unmark_hook("write")
-        return r
+    # Named unregistration wrappers — preserve existing call sites.
+    def unregister_intercept_read(self, hook: Any) -> bool:
+        return self.unregister_intercept("read", hook)
 
-    def unregister_intercept_write_batch(self, hook: VFSWriteBatchHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("write_batch", hook))
-        if r:
-            self._unmark_hook("write_batch")
-        return r
+    def unregister_intercept_write(self, hook: Any) -> bool:
+        return self.unregister_intercept("write", hook)
 
-    def unregister_intercept_delete(self, hook: VFSDeleteHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("delete", hook))
-        if r:
-            self._unmark_hook("delete")
-        return r
+    def unregister_intercept_write_batch(self, hook: Any) -> bool:
+        return self.unregister_intercept("write_batch", hook)
 
-    def unregister_intercept_rename(self, hook: VFSRenameHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("rename", hook))
-        if r:
-            self._unmark_hook("rename")
-        return r
+    def unregister_intercept_delete(self, hook: Any) -> bool:
+        return self.unregister_intercept("delete", hook)
 
-    def unregister_intercept_copy(self, hook: VFSCopyHook) -> bool:
-        if self._kernel is None:
-            return False
-        return bool(self._kernel.unregister_hook("copy", hook))
+    def unregister_intercept_rename(self, hook: Any) -> bool:
+        return self.unregister_intercept("rename", hook)
 
-    def unregister_intercept_mkdir(self, hook: VFSMkdirHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("mkdir", hook))
-        if r:
-            self._unmark_hook("mkdir")
-        return r
+    def unregister_intercept_copy(self, hook: Any) -> bool:
+        return self.unregister_intercept("copy", hook)
 
-    def unregister_intercept_rmdir(self, hook: VFSRmdirHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("rmdir", hook))
-        if r:
-            self._unmark_hook("rmdir")
-        return r
+    def unregister_intercept_mkdir(self, hook: Any) -> bool:
+        return self.unregister_intercept("mkdir", hook)
 
-    def unregister_intercept_stat(self, hook: VFSStatHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("stat", hook))
-        if r:
-            self._unmark_hook("stat")
-        return r
+    def unregister_intercept_rmdir(self, hook: Any) -> bool:
+        return self.unregister_intercept("rmdir", hook)
 
-    def unregister_intercept_access(self, hook: VFSAccessHook) -> bool:
-        if self._kernel is None:
-            return False
-        r = bool(self._kernel.unregister_hook("access", hook))
-        if r:
-            self._unmark_hook("access")
-        return r
+    def unregister_intercept_stat(self, hook: Any) -> bool:
+        return self.unregister_intercept("stat", hook)
+
+    def unregister_intercept_access(self, hook: Any) -> bool:
+        return self.unregister_intercept("access", hook)
 
     # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
@@ -491,16 +286,13 @@ class KernelDispatch:
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        if self._kernel is not None:
-            self._kernel.register_observer(obs, mask)
+        self._kernel.register_observer(obs, mask)
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Avoids HookContext construction."""
         return op in self._hooks_nonempty
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
-        if self._kernel is None:
-            return False
         return bool(self._kernel.unregister_observer(obs))
 
     # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
@@ -511,16 +303,12 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for read — hooks may abort by raising."""
         if "read" not in self._hooks_nonempty:
             return
-        if self._kernel is None:
-            return
         for hook in self._kernel.get_pre_hooks("read"):
             hook.on_pre_read(ctx)
 
     def intercept_pre_write(self, ctx: WriteHookContext) -> None:
         """PRE-INTERCEPT phase for write — hooks may abort by raising."""
         if "write" not in self._hooks_nonempty:
-            return
-        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("write"):
             hook.on_pre_write(ctx)
@@ -529,8 +317,6 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for delete — hooks may abort by raising."""
         if "delete" not in self._hooks_nonempty:
             return
-        if self._kernel is None:
-            return
         for hook in self._kernel.get_pre_hooks("delete"):
             hook.on_pre_delete(ctx)
 
@@ -538,15 +324,11 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for rename — hooks may abort by raising."""
         if "rename" not in self._hooks_nonempty:
             return
-        if self._kernel is None:
-            return
         for hook in self._kernel.get_pre_hooks("rename"):
             hook.on_pre_rename(ctx)
 
     def intercept_pre_copy(self, ctx: CopyHookContext) -> None:
         """PRE-INTERCEPT phase for copy — hooks may abort by raising."""
-        if self._kernel is None:
-            return
         if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("copy"):
@@ -556,16 +338,12 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for mkdir — hooks may abort by raising."""
         if "mkdir" not in self._hooks_nonempty:
             return
-        if self._kernel is None:
-            return
         for hook in self._kernel.get_pre_hooks("mkdir"):
             hook.on_pre_mkdir(ctx)
 
     def intercept_pre_rmdir(self, ctx: RmdirHookContext) -> None:
         """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
         if "rmdir" not in self._hooks_nonempty:
-            return
-        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("rmdir"):
             hook.on_pre_rmdir(ctx)
@@ -574,16 +352,12 @@ class KernelDispatch:
         """PRE-INTERCEPT phase for stat — hooks may abort by raising."""
         if "stat" not in self._hooks_nonempty:
             return
-        if self._kernel is None:
-            return
         for hook in self._kernel.get_pre_hooks("stat"):
             hook.on_pre_stat(ctx)
 
     def intercept_pre_access(self, ctx: AccessHookContext) -> None:
         """PRE-INTERCEPT phase for access — hooks may abort by raising."""
         if "access" not in self._hooks_nonempty:
-            return
-        if self._kernel is None:
             return
         for hook in self._kernel.get_pre_hooks("access"):
             hook.on_pre_access(ctx)
@@ -598,8 +372,6 @@ class KernelDispatch:
         Only ``AuditLogError`` aborts; other exceptions become warnings.
         """
         if op not in self._hooks_nonempty:
-            return
-        if self._kernel is None:
             return
         sync_hooks, async_hooks = self._kernel.get_post_hooks(op)
 
@@ -652,7 +424,7 @@ class KernelDispatch:
         agent_id: str | None = None,
     ) -> None:
         """INTERCEPT phase for batch write."""
-        if self._kernel is None or self._kernel.hook_count("write_batch") == 0:
+        if self._kernel.hook_count("write_batch") == 0:
             return
         ctx = WriteBatchHookContext(
             items=items, context=context, zone_id=zone_id, agent_id=agent_id
@@ -695,8 +467,6 @@ class KernelDispatch:
         event_type = event.type if isinstance(event.type, FileEventType) else None
         bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
         if not bit:
-            return
-        if self._kernel is None:
             return
         observers = self._kernel.get_matching_observers(bit)
         if not observers:
@@ -775,56 +545,22 @@ class KernelDispatch:
             except Exception as exc:
                 logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
 
-    # ── Hook counts ────────────────────────────────────────────────────
+    # ── Hook counts — delegate to Rust Kernel ────────────────────────
 
-    @property
-    def read_hook_count(self) -> int:
-        return int(self._kernel.hook_count("read")) if self._kernel else 0
+    def _hook_count(self, op: str) -> int:
+        return int(self._kernel.hook_count(op))
 
-    @property
-    def write_hook_count(self) -> int:
-        return int(self._kernel.hook_count("write")) if self._kernel else 0
-
-    @property
-    def write_batch_hook_count(self) -> int:
-        return int(self._kernel.hook_count("write_batch")) if self._kernel else 0
-
-    @property
-    def delete_hook_count(self) -> int:
-        return int(self._kernel.hook_count("delete")) if self._kernel else 0
-
-    @property
-    def rename_hook_count(self) -> int:
-        return int(self._kernel.hook_count("rename")) if self._kernel else 0
-
-    @property
-    def copy_hook_count(self) -> int:
-        return int(self._kernel.hook_count("copy")) if self._kernel else 0
-
-    @property
-    def mkdir_hook_count(self) -> int:
-        return int(self._kernel.hook_count("mkdir")) if self._kernel else 0
-
-    @property
-    def rmdir_hook_count(self) -> int:
-        return int(self._kernel.hook_count("rmdir")) if self._kernel else 0
-
-    @property
-    def stat_hook_count(self) -> int:
-        return int(self._kernel.hook_count("stat")) if self._kernel else 0
-
-    @property
-    def access_hook_count(self) -> int:
-        return int(self._kernel.hook_count("access")) if self._kernel else 0
-
-    @property
-    def observer_count(self) -> int:
-        return int(self._kernel.observer_count()) if self._kernel else 0
-
-    @property
-    def mount_hook_count(self) -> int:
-        return len(self._mount_hooks)
-
-    @property
-    def unmount_hook_count(self) -> int:
-        return len(self._unmount_hooks)
+    # Properties for backward compat with existing callers.
+    read_hook_count = property(lambda self: self._hook_count("read"))
+    write_hook_count = property(lambda self: self._hook_count("write"))
+    write_batch_hook_count = property(lambda self: self._hook_count("write_batch"))
+    delete_hook_count = property(lambda self: self._hook_count("delete"))
+    rename_hook_count = property(lambda self: self._hook_count("rename"))
+    copy_hook_count = property(lambda self: self._hook_count("copy"))
+    mkdir_hook_count = property(lambda self: self._hook_count("mkdir"))
+    rmdir_hook_count = property(lambda self: self._hook_count("rmdir"))
+    stat_hook_count = property(lambda self: self._hook_count("stat"))
+    access_hook_count = property(lambda self: self._hook_count("access"))
+    observer_count = property(lambda self: int(self._kernel.observer_count()))
+    mount_hook_count = property(lambda self: len(self._mount_hooks))
+    unmount_hook_count = property(lambda self: len(self._unmount_hooks))

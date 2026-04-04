@@ -38,23 +38,21 @@ async def nx(tmp_path: Path) -> NexusFS:
 
 @pytest.fixture
 def mock_notify(nx: NexusFS) -> AsyncMock:
-    """Replace _dispatch with a mock and return the mock's .notify attribute."""
-    mock_dispatch = MagicMock()
+    """Replace dispatch methods on nx with mocks and return the mock notify."""
     # resolve_* methods must return (handled=False, None) so sys_ methods
     # fall through to the real implementation instead of unpacking a MagicMock.
-    mock_dispatch.resolve_read.return_value = (False, None)
-    mock_dispatch.resolve_write.return_value = (False, None)
-    mock_dispatch.resolve_delete.return_value = (False, None)
+    nx.resolve_read = MagicMock(return_value=(False, None))
+    nx.resolve_write = MagicMock(return_value=(False, None))
+    nx.resolve_delete = MagicMock(return_value=(False, None))
     # All post-dispatch and notify methods are now async
-    mock_dispatch.notify = AsyncMock()
-    mock_dispatch.intercept_post_write = AsyncMock()
-    mock_dispatch.intercept_post_delete = AsyncMock()
-    mock_dispatch.intercept_post_rename = AsyncMock()
-    mock_dispatch.intercept_post_mkdir = AsyncMock()
-    mock_dispatch.intercept_post_rmdir = AsyncMock()
-    mock_dispatch.intercept_post_write_batch = AsyncMock()
-    nx._dispatch = mock_dispatch
-    return mock_dispatch.notify
+    nx.notify = AsyncMock()
+    nx.intercept_post_write = AsyncMock()
+    nx.intercept_post_delete = AsyncMock()
+    nx.intercept_post_rename = AsyncMock()
+    nx.intercept_post_mkdir = AsyncMock()
+    nx.intercept_post_rmdir = AsyncMock()
+    nx.intercept_post_write_batch = AsyncMock()
+    return nx.notify
 
 
 # =========================================================================
@@ -182,14 +180,12 @@ class TestWriteStreamCallsDispatch:
         if not hasattr(nx, "write_stream"):
             pytest.skip("write_stream not available")
 
-        mock_dispatch = MagicMock()
-        mock_dispatch.resolve_read.return_value = (False, None)
-        mock_dispatch.resolve_write.return_value = (False, None)
-        mock_dispatch.resolve_delete.return_value = (False, None)
+        nx.resolve_read = MagicMock(return_value=(False, None))
+        nx.resolve_write = MagicMock(return_value=(False, None))
+        nx.resolve_delete = MagicMock(return_value=(False, None))
         # All post-dispatch methods are now async
-        mock_dispatch.intercept_post_write = AsyncMock()
-        mock_dispatch.notify = AsyncMock()
-        nx._dispatch = mock_dispatch
+        nx.intercept_post_write = AsyncMock()
+        nx.notify = AsyncMock()
 
         # path_local backend requires backend_path in OperationContext for
         # streaming writes (no content_id available until hash is computed).
@@ -198,8 +194,8 @@ class TestWriteStreamCallsDispatch:
         ctx = OperationContext(user_id="test", groups=[], backend_path="streamed.txt")
         await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
 
-        mock_dispatch.intercept_post_write.assert_called_once()
-        hook_ctx = mock_dispatch.intercept_post_write.call_args.args[0]
+        nx.intercept_post_write.assert_called_once()
+        hook_ctx = nx.intercept_post_write.call_args.args[0]
         assert hook_ctx.path == "/streamed.txt"
         assert hook_ctx.is_new_file is True
 
@@ -252,19 +248,17 @@ class TestRmdirCallsDispatch:
         backend = CASLocalBackend(root_path=str(tmp_path / "cas_data"))
         cas_nx = await make_test_nexus(tmp_path, backend=backend)
 
-        mock_dispatch = MagicMock()
-        mock_dispatch.resolve_read.return_value = (False, None)
-        mock_dispatch.resolve_write.return_value = (False, None)
-        mock_dispatch.resolve_delete.return_value = (False, None)
-        mock_dispatch.notify = AsyncMock()
-        mock_dispatch.intercept_post_write = AsyncMock()
-        mock_dispatch.intercept_post_delete = AsyncMock()
-        mock_dispatch.intercept_post_rename = AsyncMock()
-        mock_dispatch.intercept_post_mkdir = AsyncMock()
-        mock_dispatch.intercept_post_rmdir = AsyncMock()
-        mock_dispatch.intercept_post_write_batch = AsyncMock()
-        cas_nx._dispatch = mock_dispatch
-        mock_notify = mock_dispatch.notify
+        cas_nx.resolve_read = MagicMock(return_value=(False, None))
+        cas_nx.resolve_write = MagicMock(return_value=(False, None))
+        cas_nx.resolve_delete = MagicMock(return_value=(False, None))
+        cas_nx.notify = AsyncMock()
+        cas_nx.intercept_post_write = AsyncMock()
+        cas_nx.intercept_post_delete = AsyncMock()
+        cas_nx.intercept_post_rename = AsyncMock()
+        cas_nx.intercept_post_mkdir = AsyncMock()
+        cas_nx.intercept_post_rmdir = AsyncMock()
+        cas_nx.intercept_post_write_batch = AsyncMock()
+        mock_notify = cas_nx.notify
 
         await cas_nx.mkdir("/mydir")
         await cas_nx.write("/mydir/file.txt", b"content")

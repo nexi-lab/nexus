@@ -31,7 +31,7 @@ COPY proto/ ./proto/
 # Copy Rust source — nexus_raft is the build target; stub other workspace
 # members so Cargo can resolve the workspace without copying their full source.
 COPY rust/nexus_raft/ ./rust/nexus_raft/
-RUN for d in nexus_core nexus_pyo3 nexus_tasks; do \
+RUN for d in nexus_core nexus_kernel nexus_tasks; do \
         mkdir -p rust/$d/src && \
         printf '[package]\nname = "%s"\nversion = "0.1.0"\nedition = "2021"\n' "$d" > rust/$d/Cargo.toml && \
         echo '' > rust/$d/src/lib.rs; \

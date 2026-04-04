@@ -1,4 +1,4 @@
-"""Filesystem ABC — kernel syscall contract.
+"""Filesystem Protocol — kernel syscall contract.
 
 Linux analogy: the syscall table (``read``, ``write``, ``open``, ``unlink``,
 ``stat``, ``readdir``, …). This is the **user-facing entry point** into the
@@ -11,61 +11,47 @@ Service-layer operations (workspace, memory, sandbox) have their own
 protocols in ``services/protocols/`` and are NOT part of the kernel contract.
 
 Two tiers:
-  Tier 1: Abstract ``sys_`` syscalls — implementors MUST override.
+  Tier 1: ``sys_`` syscalls — implementors MUST provide.
           Named after POSIX syscalls where a classic name exists;
           historical baggage replaced with better names for our context.
-  Tier 2: Convenience methods — concrete, compose syscalls.
-          User-space utilities (like libc/coreutils). NOT abstract.
-          Overridable for optimization.
+  Tier 2: Convenience methods — compose syscalls.
+          User-space utilities (like libc/coreutils).
+          Implementations live in NexusFS directly.
 """
 
 import builtins
-import contextlib
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.contracts.types import OperationContext
 
 
-class NexusFilesystemABC(ABC):
+@runtime_checkable
+class NexusFilesystem(Protocol):
     """Kernel syscall contract — Linux VFS-aligned.
 
     All filesystem modes (Standalone, Remote, Federation) must implement
-    this interface. Service-layer concerns (workspace, memory, sandbox)
-    are deliberately excluded — they belong to their respective service
-    protocols, not the kernel.
+    this interface structurally. Service-layer concerns (workspace, memory,
+    sandbox) are deliberately excluded — they belong to their respective
+    service protocols, not the kernel.
 
     Error pattern: mutations raise, queries return False/None, stat returns None if not found.
     """
 
     # ── Service Registry ──────────────────────────────────────────
-    #
-    # Concrete method — look up registered services by name.
-    # Returns None when service not registered (default for the ABC).
 
-    def service(self, name: str) -> Any | None:
-        """Look up a registered service by canonical name.
+    def service(self, name: str) -> Any | None: ...
 
-        Returns the service instance, or ``None`` if not registered.
-        Concrete implementations (e.g. NexusFS) back this with a
-        ServiceRegistry; the ABC default returns ``None``.
-        """
-        del name
-        return None
-
-    # ── Tier 1: Abstract Syscalls ──────────────────────────────────
+    # ── Tier 1: Syscalls ──────────────────────────────────────────
     #
     # Content I/O — sys_read(2), sys_write(2)
     # Metadata I/O — sys_stat(2), sys_setattr (chmod/chown/utimensat)
-    # Namespace — sys_unlink(2), sys_rename(2)
-    # Directory — sys_readdir(3)  (mkdir, rmdir are Tier 2)
-    # Query — access(2), is_directory
-    # System — get_top_level_mounts, close
+    # Namespace — sys_unlink(2), sys_rename(2), sys_copy
+    # Directory — sys_readdir(3)
+    # Locking — sys_lock, sys_unlock
+    # Watch — sys_watch
 
     # ── Content I/O ────────────────────────────────────────────────
 
-    @abstractmethod
     async def sys_read(
         self,
         path: str,
@@ -73,21 +59,8 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> bytes:
-        """Read file content (POSIX pread(2)).
+    ) -> bytes: ...
 
-        Args:
-            path: Virtual file path.
-            count: Max bytes to read (None = entire file).
-            offset: Byte offset to start reading from.
-            context: Operation context (auth, zone, etc.).
-
-        Returns:
-            File content as bytes.
-        """
-        ...
-
-    @abstractmethod
     async def sys_write(
         self,
         path: str,
@@ -96,141 +69,34 @@ class NexusFilesystemABC(ABC):
         count: int | None = None,
         offset: int = 0,
         context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Writes content with implicit metadata side effects (mtime, size, version, etag) —
-        like POSIX write(2) updating st_mtime/st_size. Metadata updates are kernel-managed
-        in VFS lock.
-
-        Args:
-            path: Virtual file path.
-            buf: File content as bytes or str.
-            count: Max bytes to write (None = len(buf)).
-            offset: Byte offset to start writing at.
-            context: Operation context.
-
-        Returns:
-            Dict with path and bytes_written.
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist.
-        """
-        ...
+    ) -> dict[str, Any]: ...
 
     # ── Metadata I/O ───────────────────────────────────────────────
 
-    @abstractmethod
     async def sys_stat(
         self, path: str, *, context: OperationContext | None = None
-    ) -> dict[str, Any] | None:
-        """Read all file metadata (POSIX stat(2)).
+    ) -> dict[str, Any] | None: ...
 
-        Returns:
-            Dict of metadata fields, or None if file not found.
-        """
-        ...
-
-    @abstractmethod
     async def sys_setattr(
         self, path: str, *, context: OperationContext | None = None, **attrs: Any
-    ) -> dict[str, Any]:
-        """Upsert file metadata (chmod/chown/utimensat + mknod analog).
-
-        Upsert semantics — create-on-write for metadata:
-        - Path missing + entry_type provided → CREATE inode
-        - Path missing + no entry_type → NexusFileNotFoundError
-        - Path exists + no entry_type → UPDATE mutable fields
-        - Path exists + same entry_type (DT_PIPE/DT_STREAM) → IDEMPOTENT OPEN (recover buffer)
-        - Path exists + different entry_type → ValueError (immutable after creation)
-
-        Args:
-            path: Virtual file path.
-            context: Operation context.
-            **attrs: Metadata attributes. Include ``entry_type`` to create.
-
-        Returns:
-            Dict with path, created flag, and type-specific fields.
-        """
-        ...
+    ) -> dict[str, Any]: ...
 
     # ── Namespace ──────────────────────────────────────────────────
 
-    @abstractmethod
     async def sys_unlink(
         self, path: str, *, recursive: bool = False, context: OperationContext | None = None
-    ) -> dict[str, Any]:
-        """Remove a file or directory entry.
+    ) -> dict[str, Any]: ...
 
-        Unified delete syscall — handles files and directories.
-        NOT "delete" — unlink is precise: removes directory entry,
-        CAS refcount decrements. Content freed only when refcount=0.
-
-        When operating in overlay mode and the file exists only in the
-        base layer, creates a whiteout marker instead of deleting.
-        Returns ``{"overlay_whiteout": True}`` in that case.
-        """
-        ...
-
-    @abstractmethod
     async def sys_rename(
         self, old_path: str, new_path: str, *, context: OperationContext | None = None
-    ) -> dict[str, Any]:
-        """Rename/move a file (POSIX rename(2))."""
-        ...
+    ) -> dict[str, Any]: ...
 
-    @abstractmethod
     async def sys_copy(
         self, src_path: str, dst_path: str, *, context: OperationContext | None = None
-    ) -> dict[str, Any]:
-        """Copy a file (Issue #3329).
+    ) -> dict[str, Any]: ...
 
-        Uses backend-native server-side copy when available,
-        streaming for cross-backend, or read+write as fallback.
-        """
-        ...
+    # ── Directory ──────────────────────────────────────────────────
 
-    # ── Directory (Tier 2 convenience) ───────────────────────────
-
-    async def mkdir(
-        self,
-        path: str,
-        parents: bool = True,
-        exist_ok: bool = True,
-        *,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Create a directory (Tier 2 convenience over sys_setattr).
-
-        Defaults: parents=True, exist_ok=True (mkdir -p semantics).
-        Composes sys_setattr(entry_type=DT_DIR) for inode creation.
-        NexusFS overrides with full orchestration (hooks, backend, events).
-        """
-        from nexus.contracts.metadata import DT_DIR
-
-        if parents:
-            parts = path.strip("/").split("/")
-            for i in range(1, len(parts)):
-                parent = "/" + "/".join(parts[:i])
-                await self.sys_setattr(parent, entry_type=DT_DIR, context=context)
-
-        result = await self.sys_setattr(path, entry_type=DT_DIR, context=context)
-        if not result.get("created") and not exist_ok:
-            raise FileExistsError(f"Directory already exists: {path}")
-
-    async def rmdir(
-        self,
-        path: str,
-        recursive: bool = True,
-        *,
-        context: OperationContext | None = None,
-    ) -> None:
-        """Remove a directory with lenient defaults (Tier 2).
-
-        Delegates to sys_unlink with caller-friendly defaults:
-        recursive=True (rm -rf semantics).
-        """
-        await self.sys_unlink(path, recursive=recursive, context=context)
-
-    @abstractmethod
     async def sys_readdir(
         self,
         path: str = "/",
@@ -241,44 +107,10 @@ class NexusFilesystemABC(ABC):
         context: OperationContext | None = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any:
-        """List directory entries (POSIX readdir(3)).
+    ) -> builtins.list[str] | builtins.list[dict[str, Any]] | Any: ...
 
-        Replaces ``list()`` — readdir is the POSIX name.
+    # ── Locking ────────────────────────────────────────────────────
 
-        When *limit* is provided, returns a PaginatedResult instead of
-        a plain list.
-        """
-        ...
-
-    # ── Query ──────────────────────────────────────────────────────
-
-    async def access(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Tier 2: check if path exists and is accessible.
-
-        Default derives from sys_stat — returns True if stat succeeds.
-        Subclasses may override for optimized implementations.
-        """
-        try:
-            return (await self.sys_stat(path, context=context)) is not None
-        except Exception:
-            return False
-
-    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool:
-        """Tier 2: check if path is a directory.
-
-        Default derives from sys_stat — returns is_directory field.
-        Subclasses may override for optimized implementations.
-        """
-        try:
-            stat = await self.sys_stat(path, context=context)
-            return stat is not None and stat.get("is_directory", False)
-        except Exception:
-            return False
-
-    # ── Locking (POSIX flock equivalent) ────────────────────────────
-
-    @abstractmethod
     async def sys_lock(
         self,
         path: str,
@@ -287,20 +119,14 @@ class NexusFilesystemABC(ABC):
         max_holders: int = 1,
         *,
         context: "OperationContext | None" = None,
-    ) -> str | None:
-        """Acquire advisory lock (POSIX flock(2)). Returns lock_id or None."""
-        ...
+    ) -> str | None: ...
 
-    @abstractmethod
     async def sys_unlock(
         self, path: str, lock_id: str, *, context: "OperationContext | None" = None
-    ) -> bool:
-        """Release advisory lock. Returns True if released."""
-        ...
+    ) -> bool: ...
 
-    # ── Watch (inotify equivalent) ────────────────────────────────
+    # ── Watch ──────────────────────────────────────────────────────
 
-    @abstractmethod
     async def sys_watch(
         self,
         path: str,
@@ -308,11 +134,30 @@ class NexusFilesystemABC(ABC):
         *,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> dict[str, Any] | None:
-        """Wait for file changes (inotify(7)). Returns FileEvent dict or None on timeout."""
-        ...
+    ) -> dict[str, Any] | None: ...
 
-    # ── Tier 2: Lock Convenience ──────────────────────────────────
+    # ── Tier 2: Convenience ───────────────────────────────────────
+
+    async def mkdir(
+        self,
+        path: str,
+        parents: bool = True,
+        exist_ok: bool = True,
+        *,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = True,
+        *,
+        context: OperationContext | None = None,
+    ) -> None: ...
+
+    async def access(self, path: str, *, context: OperationContext | None = None) -> bool: ...
+
+    async def is_directory(self, path: str, *, context: OperationContext | None = None) -> bool: ...
 
     async def lock(
         self,
@@ -323,39 +168,13 @@ class NexusFilesystemABC(ABC):
         max_holders: int = 1,
         *,
         context: "OperationContext | None" = None,
-    ) -> str | None:
-        """Acquire lock with blocking wait (Tier 2 over sys_lock).
-
-        Retries sys_lock() until acquired or timeout.
-        Like fcntl(F_SETLKW) — blocking variant of sys_lock (F_SETLK).
-        """
-        import asyncio
-        import time as _time
-
-        deadline = _time.monotonic() + timeout
-        while True:
-            lock_id = await self.sys_lock(
-                path,
-                mode=mode,
-                ttl=ttl,
-                max_holders=max_holders,
-                context=context,
-            )
-            if lock_id is not None:
-                return lock_id
-            remaining = deadline - _time.monotonic()
-            if remaining <= 0:
-                return None
-            await asyncio.sleep(min(0.05, remaining))
+    ) -> str | None: ...
 
     async def unlock(
         self, lock_id: str, path: str, *, context: "OperationContext | None" = None
-    ) -> bool:
-        """Release lock (Tier 2 alias for sys_unlock)."""
-        return await self.sys_unlock(path, lock_id, context=context)
+    ) -> bool: ...
 
-    @contextlib.asynccontextmanager
-    async def locked(
+    def locked(
         self,
         path: str,
         mode: str = "exclusive",
@@ -364,65 +183,7 @@ class NexusFilesystemABC(ABC):
         max_holders: int = 1,
         *,
         context: "OperationContext | None" = None,
-    ) -> "AsyncIterator[str]":
-        """Async context manager for advisory lock (Tier 2).
-
-        Acquires lock via lock() (blocking wait), yields lock_id,
-        releases on exit. Raises LockTimeout on failure.
-
-        Usage::
-
-            async with nx.locked("/shared/config.json", timeout=5.0) as lock_id:
-                content = await nx.sys_read("/shared/config.json")
-                await nx.write("/shared/config.json", new_content)
-        """
-        from nexus.contracts.exceptions import LockTimeout
-
-        lock_id = await self.lock(
-            path,
-            mode=mode,
-            timeout=timeout,
-            ttl=ttl,
-            max_holders=max_holders,
-            context=context,
-        )
-        if lock_id is None:
-            raise LockTimeout(path=path, timeout=timeout)
-        try:
-            yield lock_id
-        finally:
-            await self.unlock(lock_id, path, context=context)
-
-    # ── System Info + Lifecycle ────────────────────────────────────
-
-    @abstractmethod
-    def get_top_level_mounts(self, context: Any = None) -> builtins.list[str]:
-        """Get list of top-level mount names."""
-        ...
-
-    @abstractmethod
-    def close(self) -> None:
-        """Close the filesystem and release resources."""
-        ...
-
-    def __enter__(self) -> "NexusFilesystemABC":
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Context manager exit."""
-        self.close()
-
-    # ── Tier 2: Convenience Methods (user-space utilities) ─────────
-    #
-    # NOT abstract. Compose from syscalls. Overridable for optimization.
-    # Like libc/coreutils built on top of syscalls.
-    #
-    # Two halves (see syscall-design.md §3):
-    #   VFS half  — POSIX-aligned: read, write, stat, mkdir, unlink, append, edit
-    #   HDFS half — driver-level content access: read_content, write_content
-
-    # ── VFS Half ──────────────────────────────────────────────────
+    ) -> Any: ...
 
     async def read(
         self,
@@ -432,37 +193,7 @@ class NexusFilesystemABC(ABC):
         offset: int = 0,
         context: OperationContext | None = None,
         return_metadata: bool = False,
-    ) -> bytes | dict[str, Any]:
-        """Read with optional metadata (VFS convenience).
-
-        Composes sys_stat + sys_read. POSIX pread semantics.
-        Override in NexusFS for parsed-content support.
-
-        Args:
-            path: Virtual file path.
-            count: Max bytes to read (None = entire file).
-            offset: Byte offset to start reading from.
-            context: Operation context.
-            return_metadata: If True, return dict with content + metadata.
-
-        Returns:
-            bytes if return_metadata=False, else dict with content + metadata.
-        """
-        content = await self.sys_read(path, count=count, offset=offset, context=context)
-        if not return_metadata:
-            return content
-        meta = await self.sys_stat(path, context=context)
-        result: dict[str, Any] = {"content": content}
-        if meta:
-            result.update(
-                {
-                    "etag": meta.get("etag"),
-                    "version": meta.get("version"),
-                    "modified_at": meta.get("modified_at"),
-                    "size": meta.get("size"),
-                }
-            )
-        return result
+    ) -> bytes | dict[str, Any]: ...
 
     async def write(
         self,
@@ -473,28 +204,7 @@ class NexusFilesystemABC(ABC):
         offset: int = 0,
         context: OperationContext | None = None,
         consistency: str = "sc",
-    ) -> dict[str, Any]:
-        """Write with metadata update (VFS convenience).
-
-        Composes content write + metadata update. POSIX pwrite + metadata.
-        Override in NexusFS for driver-specific params (CAS/lock).
-
-        Args:
-            path: Virtual file path.
-            buf: File content as bytes or str.
-            count: Max bytes to write (None = len(buf)).
-            offset: Byte offset to start writing at.
-            context: Operation context.
-            consistency: Metastore consistency — ``"sc"`` (strong, default)
-                or ``"ec"`` (eventual, local-first). Issue #1829.
-
-        Returns:
-            Dict with metadata (etag, version, modified_at, size).
-        """
-        await self.sys_write(path, buf, count=count, offset=offset, context=context)
-        await self.sys_setattr(path, context=context, consistency=consistency)
-        meta = await self.sys_stat(path, context=context)
-        return meta or {}
+    ) -> dict[str, Any]: ...
 
     async def append(
         self,
@@ -502,20 +212,7 @@ class NexusFilesystemABC(ABC):
         content: bytes | str,
         *,
         context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Append content to a file (like shell >>).
-
-        User-space: read + write.
-        """
-        try:
-            existing = await self.sys_read(path, context=context)
-        except FileNotFoundError:
-            existing = b""
-        if isinstance(content, str):
-            content = content.encode("utf-8")
-        if isinstance(existing, str):
-            existing = existing.encode("utf-8")
-        return await self.write(path, existing + content, context=context)
+    ) -> dict[str, Any]: ...
 
     async def edit(
         self,
@@ -525,29 +222,16 @@ class NexusFilesystemABC(ABC):
         context: OperationContext | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
-    ) -> dict[str, Any]:
-        """Apply surgical search/replace edits to a file.
-
-        User-space: read + modify + write.
-        Override in NexusFS (requires EditEngine).
-        """
-        raise NotImplementedError("Override in NexusFS (requires EditEngine)")
+    ) -> dict[str, Any]: ...
 
     async def write_batch(
         self,
         files: builtins.list[tuple[str, bytes]],
         *,
         context: OperationContext | None = None,
-    ) -> builtins.list[dict[str, Any]]:
-        """Write multiple files. Default: N × write()."""
-        return [await self.write(p, c, context=context) for p, c in files]
+    ) -> builtins.list[dict[str, Any]]: ...
 
-    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
-        """Find files matching a glob pattern (like glob(3)).
-
-        Requires SearchService. Override in NexusFS.
-        """
-        raise NotImplementedError("Override in NexusFS (requires SearchService)")
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]: ...
 
     def grep(
         self,
@@ -561,9 +245,10 @@ class NexusFilesystemABC(ABC):
         before_context: int = 0,
         after_context: int = 0,
         invert_match: bool = False,
-    ) -> builtins.list[dict[str, Any]]:
-        """Search file contents using regex patterns (like grep(1)).
+    ) -> builtins.list[dict[str, Any]]: ...
 
-        Requires SearchService. Override in NexusFS.
-        """
-        raise NotImplementedError("Override in NexusFS (requires SearchService)")
+    # ── System Info + Lifecycle ────────────────────────────────────
+
+    def get_top_level_mounts(self, context: Any = None) -> builtins.list[str]: ...
+
+    def close(self) -> None: ...

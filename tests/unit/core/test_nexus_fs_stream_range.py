@@ -25,9 +25,11 @@ class _StubFS:
         self._enforce_permissions = False
         self._zone_id = ROOT_ZONE_ID
         self._init_cred = OperationContext(user_id="test", groups=[], zone_id=ROOT_ZONE_ID)
-        self._dispatch = MagicMock()  # KernelDispatch stub — intercept_pre_* are no-ops
-        self._dispatch.read_hook_count = 0
-        self._dispatch.resolve_read.return_value = (False, None)
+        # DispatchMixin stub — intercept_pre_* are no-ops
+        self.read_hook_count = 0
+        self.resolve_read = MagicMock(return_value=(False, None))
+        self.intercept_pre_read = MagicMock()
+        self.intercept_pre_stat = MagicMock()
         self._overlay_resolver = None
         # Kernel IPC primitives — empty registries (no pipes/streams in range tests)
         self._pipe_manager = None
@@ -57,12 +59,23 @@ class _StubFS:
     def _vfs_locked(self, path, mode):
         yield
 
+    async def sys_read(self, path, *, count=None, offset=0, context=None):
+        """Stub sys_read for read_range fallback path."""
+        meta = self.metadata.get(path)
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+        content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+            meta.etag or ""
+        )
+        if count is not None:
+            content = content[:count]
+        return content
+
 
 # Graft VFS methods onto stub (Issue #899: dissolved from mixin into NexusFS)
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 
 _StubFS.read_range = NexusFS.read_range
-_StubFS._resolve_and_read = NexusFS._resolve_and_read
 _StubFS.stream_range = NexusFS.stream_range
 
 

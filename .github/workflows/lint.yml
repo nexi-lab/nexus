@@ -96,7 +96,7 @@ jobs:
           workspaces: |
             rust/nexus_tasks
             rust/nexus_core
-            rust/nexus_pyo3
+            rust/nexus_kernel
             rust/nexus_raft
 
       - name: Install protobuf compiler
@@ -104,7 +104,7 @@ jobs:
 
       - name: Check Rust formatting
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3 nexus_raft; do
+          for crate in nexus_tasks nexus_core nexus_kernel nexus_raft; do
             echo "::group::fmt $crate"
             cd rust/$crate && cargo fmt --check && cd ../..
             echo "::endgroup::"
@@ -112,7 +112,7 @@ jobs:
 
       - name: Run Clippy
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3; do
+          for crate in nexus_tasks nexus_core nexus_kernel; do
             echo "::group::clippy $crate"
             cd rust/$crate && cargo clippy -- -D warnings && cd ../..
             echo "::endgroup::"
@@ -125,7 +125,7 @@ jobs:
         env:
           PYO3_PYTHON: python3
         run: |
-          for crate in nexus_tasks nexus_core nexus_pyo3; do
+          for crate in nexus_tasks nexus_core nexus_kernel; do
             echo "::group::test $crate"
             cd rust/$crate && cargo test && cd ../..
             echo "::endgroup::"

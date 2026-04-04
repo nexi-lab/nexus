@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 from nexus.contracts.protocols.service_hooks import HookSpec
 from nexus.contracts.vfs_hooks import MountHookContext, UnmountHookContext
 from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator
-from nexus.core.kernel_dispatch import KernelDispatch
+from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,13 +69,18 @@ class _BackendWithHookSpec:
         )
 
 
-def _make_coordinator() -> tuple[MagicMock, KernelDispatch, DriverLifecycleCoordinator]:
-    """Create a coordinator with a mock mount_table and real KernelDispatch."""
-    from nexus_fast import Kernel
+class _TestDispatch(DispatchMixin):
+    def __init__(self):
+        from nexus_fast import Kernel
 
+        self._kernel = Kernel()
+        self._init_dispatch()
+
+
+def _make_coordinator() -> tuple[MagicMock, _TestDispatch, DriverLifecycleCoordinator]:
+    """Create a coordinator with a mock mount_table and real DispatchMixin."""
     mount_table = MagicMock()
-    dispatch = KernelDispatch()
-    dispatch._kernel = Kernel()  # Wire kernel for hook/observer registration
+    dispatch = _TestDispatch()
     coord = DriverLifecycleCoordinator(mount_table, dispatch)
     return mount_table, dispatch, coord
 

@@ -6,9 +6,17 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.kernel_dispatch import KernelDispatch
+from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 # ── helpers ────────────────────────────────────────────────────────────
+
+
+class _TestDispatch(DispatchMixin):
+    def __init__(self):
+        from nexus_fast import Kernel
+
+        self._kernel = Kernel()
+        self._init_dispatch()
 
 
 def _make_resolver(*, trie_pattern: str | None = None) -> MagicMock:
@@ -23,8 +31,8 @@ def _make_resolver(*, trie_pattern: str | None = None) -> MagicMock:
 
 
 @pytest.fixture()
-def dispatch() -> KernelDispatch:
-    return KernelDispatch()
+def dispatch() -> _TestDispatch:
+    return _TestDispatch()
 
 
 # ── PathTrie via Kernel proxy methods (standalone) ──────────────────────
@@ -86,17 +94,17 @@ class TestPathTrieViaKernel:
 
 
 class TestTrieResolverRegistration:
-    def test_trie_resolver_counted(self, dispatch: KernelDispatch) -> None:
+    def test_trie_resolver_counted(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         dispatch.register_resolver(r)
         assert dispatch.resolver_count == 1
 
-    def test_fallback_resolver_counted(self, dispatch: KernelDispatch) -> None:
+    def test_fallback_resolver_counted(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver()
         dispatch.register_resolver(r)
         assert dispatch.resolver_count == 1
 
-    def test_mixed_resolvers_counted(self, dispatch: KernelDispatch) -> None:
+    def test_mixed_resolvers_counted(self, dispatch: _TestDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         fallback_r = _make_resolver()
         dispatch.register_resolver(trie_r)
@@ -105,7 +113,7 @@ class TestTrieResolverRegistration:
 
 
 class TestTrieResolverDispatch:
-    def test_trie_resolver_handles_read(self, dispatch: KernelDispatch) -> None:
+    def test_trie_resolver_handles_read(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r.try_read.return_value = b'{"pid": "123"}'
         dispatch.register_resolver(r)
@@ -115,7 +123,7 @@ class TestTrieResolverDispatch:
         assert result == b'{"pid": "123"}'
         r.try_read.assert_called_once()
 
-    def test_trie_resolver_returns_none_falls_to_fallback(self, dispatch: KernelDispatch) -> None:
+    def test_trie_resolver_returns_none_falls_to_fallback(self, dispatch: _TestDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         trie_r.try_read.return_value = None  # trie resolver doesn't claim it
         fallback_r = _make_resolver()
@@ -127,7 +135,7 @@ class TestTrieResolverDispatch:
         assert handled is True
         assert result == b"fallback"
 
-    def test_trie_miss_goes_to_fallback(self, dispatch: KernelDispatch) -> None:
+    def test_trie_miss_goes_to_fallback(self, dispatch: _TestDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         trie_r.try_read.return_value = None  # doesn't claim non-matching paths
         fallback_r = _make_resolver()
@@ -140,7 +148,7 @@ class TestTrieResolverDispatch:
         assert handled is True
         assert result == b"fallback"
 
-    def test_no_match_anywhere(self, dispatch: KernelDispatch) -> None:
+    def test_no_match_anywhere(self, dispatch: _TestDispatch) -> None:
         trie_r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         trie_r.try_read.return_value = None
         fallback_r = _make_resolver()
@@ -152,7 +160,7 @@ class TestTrieResolverDispatch:
         assert handled is False
         assert result is None
 
-    def test_trie_resolver_handles_write(self, dispatch: KernelDispatch) -> None:
+    def test_trie_resolver_handles_write(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r.try_write.side_effect = PermissionError("read-only")
         dispatch.register_resolver(r)
@@ -160,7 +168,7 @@ class TestTrieResolverDispatch:
         with pytest.raises(PermissionError, match="read-only"):
             dispatch.resolve_write("/zone/proc/123/status", b"data")
 
-    def test_trie_resolver_handles_delete(self, dispatch: KernelDispatch) -> None:
+    def test_trie_resolver_handles_delete(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r.try_delete.side_effect = PermissionError("read-only")
         dispatch.register_resolver(r)
@@ -170,7 +178,7 @@ class TestTrieResolverDispatch:
 
 
 class TestTrieResolverUnregister:
-    def test_unregister_trie_resolver(self, dispatch: KernelDispatch) -> None:
+    def test_unregister_trie_resolver(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r.try_read.return_value = b"data"
         dispatch.register_resolver(r)
@@ -183,16 +191,16 @@ class TestTrieResolverUnregister:
         handled, result = dispatch.resolve_read("/zone/proc/123/status")
         assert handled is False
 
-    def test_unregister_fallback_resolver(self, dispatch: KernelDispatch) -> None:
+    def test_unregister_fallback_resolver(self, dispatch: _TestDispatch) -> None:
         r = _make_resolver()
         dispatch.register_resolver(r)
         assert dispatch.unregister_resolver(r) is True
         assert dispatch.resolver_count == 0
 
-    def test_unregister_missing_returns_false(self, dispatch: KernelDispatch) -> None:
+    def test_unregister_missing_returns_false(self, dispatch: _TestDispatch) -> None:
         assert dispatch.unregister_resolver(MagicMock()) is False
 
-    def test_unregister_preserves_others(self, dispatch: KernelDispatch) -> None:
+    def test_unregister_preserves_others(self, dispatch: _TestDispatch) -> None:
         r1 = _make_resolver(trie_pattern="/{}/proc/{}/status")
         r2 = _make_resolver(trie_pattern="/.tasks/tasks/{}/agent/status")
         # Make resolvers only claim paths matching their pattern

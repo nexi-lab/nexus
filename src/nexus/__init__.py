@@ -75,7 +75,7 @@ if TYPE_CHECKING:
         NexusFileNotFoundError,
         NexusPermissionError,
     )
-    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystemABC as NexusFilesystem
+    from nexus.contracts.filesystem.filesystem_abc import NexusFilesystem as NexusFilesystem
     from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
 
@@ -109,7 +109,7 @@ _LAZY_IMPORTS = {
     "NexusConfig": ("nexus.config", "NexusConfig"),
     "load_config": ("nexus.config", "load_config"),
     # Core - heavy
-    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystemABC"),
+    "NexusFilesystem": ("nexus.contracts.filesystem.filesystem_abc", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     # Slim package top-level API (nexus.mount / nexus.mount_sync)
     "mount": ("nexus.fs", "mount"),
@@ -638,7 +638,7 @@ __all__ = [
     "NexusConfig",
     "load_config",
     # Core interfaces
-    "NexusFilesystem",  # Abstract base class for all filesystem modes
+    "NexusFilesystem",  # Protocol for all filesystem modes
     # Filesystem implementation
     "NexusFS",
     # Backends

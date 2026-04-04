@@ -1,6 +1,6 @@
 //! Criterion benchmarks for path prefix matching (Issue #1565).
 //!
-//! Run: cd rust/nexus_pyo3 && cargo bench prefix
+//! Run: cd rust/nexus_kernel && cargo bench prefix
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 

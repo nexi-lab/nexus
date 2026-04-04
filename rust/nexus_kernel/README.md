@@ -77,7 +77,7 @@ Only needed for development or unsupported platforms:
 
 ```bash
 # Navigate to the Rust extension directory
-cd rust/nexus_pyo3
+cd rust/nexus_kernel
 
 # Build and install in development mode
 maturin develop
@@ -328,7 +328,7 @@ def check_permissions_optimized(checks, tuples, namespace_configs):
 ### Project Structure
 
 ```
-rust/nexus_pyo3/
+rust/nexus_kernel/
 ├── Cargo.toml              # Rust dependencies and configuration
 ├── pyproject.toml          # Python packaging configuration
 ├── src/

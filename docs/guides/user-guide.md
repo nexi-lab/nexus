@@ -88,7 +88,7 @@ it in the same uv-managed environment:
 ```bash
 source .venv/bin/activate
 uv pip install -e . maturin
-maturin develop --release -m rust/nexus_pyo3/Cargo.toml
+maturin develop --release -m rust/nexus_kernel/Cargo.toml
 python -c "import nexus_fast; print('nexus_fast available')"
 ```
 

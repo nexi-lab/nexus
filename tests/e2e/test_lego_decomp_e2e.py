@@ -616,6 +616,6 @@ class TestFactoryServiceWiring:
         assert nx._workspace_registry is not None
 
     def test_kernel_dispatch_wired(self, nx):
-        """KernelDispatch should be wired."""
-        assert hasattr(nx, "_dispatch")
-        assert nx._dispatch is not None
+        """KernelDispatch methods should be available on NexusFS (via DispatchMixin)."""
+        assert hasattr(nx, "resolve_read")
+        assert hasattr(nx, "notify")

@@ -1275,8 +1275,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexus_pyo3"
-version = "0.9.19"
+name = "nexus_kernel"
+version = "0.9.21"
 dependencies = [
  "ahash",
  "blake3",

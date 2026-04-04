@@ -1,8 +1,8 @@
 """Filesystem bricks — same-Protocol wrappers for path scoping.
 
 Per LEGO architecture (§4.3 Mechanism 2: Recursive Wrapping), these are
-brick-tier wrappers that implement ``NexusFilesystemABC`` and delegate to
-an inner ``NexusFilesystemABC``.  They are assembled by ``factory.py``.
+brick-tier wrappers that implement ``NexusFilesystem`` and delegate to
+an inner ``NexusFilesystem``.  They are assembled by ``factory.py``.
 
 Current bricks:
   - ScopedFilesystem       — sync path-scoping wrapper (async via asyncio.to_thread)

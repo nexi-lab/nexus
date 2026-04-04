@@ -314,6 +314,20 @@ impl HookRegistry {
             .unwrap_or_default()
     }
 
+    /// Return Rust trait references for sync post-hooks (kernel dispatch).
+    pub(crate) fn get_post_hook_impls(&self, op: &str) -> Vec<&dyn InterceptHook> {
+        self.ops
+            .get(op)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|e| !e.is_async_post)
+                    .map(|e| e.hook.as_ref())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Return (sync_post_hooks, async_post_hooks) as Python objects.
     pub(crate) fn get_post_hooks(
         &self,

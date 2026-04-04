@@ -1070,10 +1070,10 @@ impl PyKernel {
     }
 }
 
-// ── Private: dispatch_pre_hooks (wrapper-only) ─────────────────────────
+// ── Private: hook dispatch (wrapper-only) ───────────────────────────────
 
 impl PyKernel {
-    /// Dispatch pre-hooks via Rust InterceptHook trait. Language-agnostic.
+    /// Dispatch pre-hooks via Rust InterceptHook trait.
     fn dispatch_pre_hooks(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
         let hooks = self.hooks.lock();
         let impls = hooks.get_pre_hook_impls(op);
@@ -1087,5 +1087,24 @@ impl PyKernel {
             }
         }
         Ok(())
+    }
+
+    /// Dispatch sync post-hooks via Rust InterceptHook trait.
+    ///
+    /// Runs sync post-hooks serially, fault-isolated (fire-and-forget).
+    /// Async hooks are NOT handled here — Python thin wrapper schedules
+    /// them via asyncio.gather (codegen or manual).
+    fn dispatch_post_hooks_sync(&self, op: &str, hook_ctx: &Py<PyAny>) {
+        let hooks = self.hooks.lock();
+        let impls = hooks.get_post_hook_impls(op);
+        for hook in impls {
+            match op {
+                "read" => hook.on_post_read(hook_ctx),
+                "write" => hook.on_post_write(hook_ctx),
+                "delete" => hook.on_post_delete(hook_ctx),
+                "rename" => hook.on_post_rename(hook_ctx),
+                _ => {}
+            }
+        }
     }
 }

@@ -3044,7 +3044,7 @@ class NexusFS(  # type: ignore[misc]
             raise NexusFileNotFoundError(path)
 
         # ── Directory branch: rmdir logic ────────────────────────────
-        if meta.is_dir or meta.is_mount:
+        if meta.is_dir or meta.is_mount or meta.is_external_storage:
             return await self._unlink_directory(
                 path, meta=meta, route=route, recursive=recursive, context=context
             )

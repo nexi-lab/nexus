@@ -475,7 +475,16 @@ impl Kernel {
             return Err(Self::raise_invalid_path(py, &msg));
         }
 
-        // 2. Route (pure Rust LPM)
+        // 2. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.read_hook_count.load(Ordering::Relaxed) > 0 {
+            let rhc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("ReadHookContext")?
+                .call1((path, Py::new(py, ctx.clone())?.into_any()))?;
+            self.dispatch_pre_hooks(py, "read", &rhc)?;
+        }
+
+        // 3. Route (pure Rust LPM)
         let route = match self
             .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, false)
@@ -484,7 +493,7 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. DCache lookup — on miss, fallback to metastore (cold path, GIL)
+        // 4. DCache lookup — on miss, fallback to metastore (cold path, GIL)
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
@@ -613,7 +622,16 @@ impl Kernel {
             return Err(Self::raise_invalid_path(py, &msg));
         }
 
-        // 2. Route (check write access)
+        // 2. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.write_hook_count.load(Ordering::Relaxed) > 0 {
+            let whc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("WriteHookContext")?
+                .call1((path, content, Py::new(py, ctx.clone())?.into_any()))?;
+            self.dispatch_pre_hooks(py, "write", &whc)?;
+        }
+
+        // 3. Route (check write access)
         let route = match self
             .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
@@ -952,6 +970,38 @@ impl Kernel {
             .and_then(|cls| cls.call1((path,)))
             .map(PyErr::from_value)
             .unwrap_or_else(|e| e)
+    }
+
+    // ── Pre-hook dispatch (INTERCEPT phase) ──
+
+    /// Dispatch pre-hooks for an operation. Returns Ok(()) or propagates hook exception.
+    ///
+    /// Checks atomic hook count (zero-cost when no hooks registered),
+    /// then loops through pre-hooks calling `hook.on_pre_{op}(ctx)` via GIL.
+    /// Any hook can abort by raising a Python exception.
+    fn dispatch_pre_hooks(
+        &self,
+        py: Python<'_>,
+        op: &str,
+        hook_ctx: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let count = match op {
+            "read" => &self.read_hook_count,
+            "write" => &self.write_hook_count,
+            "stat" => &self.stat_hook_count,
+            "delete" => &self.delete_hook_count,
+            "rename" => &self.rename_hook_count,
+            _ => return Ok(()),
+        };
+        if count.load(Ordering::Relaxed) == 0 {
+            return Ok(());
+        }
+        let method_name = format!("on_pre_{op}");
+        let hooks = self.hooks.lock().get_pre_hooks(py, op);
+        for hook in hooks {
+            hook.bind(py).call_method1(&*method_name, (hook_ctx,))?;
+        }
+        Ok(())
     }
 }
 

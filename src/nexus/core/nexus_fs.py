@@ -1181,13 +1181,9 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        # PRE-INTERCEPT hooks
-        if self.read_hook_count > 0:
-            from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
+        # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
 
-            self.intercept_pre_read(_RHC(path=path, context=context))
-
-        # ── KERNEL (Rust — all backends via OperationContext) ──
+        # ── KERNEL (Rust — pre-hooks + route + backend read) ──
         from nexus_kernel import OperationContext as _RustCtx
 
         _rust_ctx = _RustCtx(

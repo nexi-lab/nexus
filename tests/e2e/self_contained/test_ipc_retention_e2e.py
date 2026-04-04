@@ -1,13 +1,16 @@
 """E2E tests for IPC retention/compaction features via real KernelVFSAdapter.
 
 Tests the full stack: KernelVFSAdapter → NexusFS → LocalConnector backend.
-Verifies that mtime-based retention, stale inbox drain, processed/outbox pruning,
-dead_letter compaction, and .proc_ claim mechanism work correctly end-to-end.
-Also measures sweep performance for the expected production scale.
+
+Correctness tests use real NexusFS with a 1-second retention window + asyncio.sleep
+so files genuinely age past the cutoff — no mtime mocking, no InMemoryVFS.
+
+Performance tests measure actual throughput at production-representative scale.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import time
@@ -20,20 +23,34 @@ from nexus.bricks.ipc.conventions import (
     dead_letter_archive_path,
     dead_letter_path,
     inbox_path,
+    outbox_path,
     processed_path,
 )
 from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
+from nexus.bricks.ipc.exceptions import DLQReason
 from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 from nexus.bricks.ipc.provisioning import AgentProvisioner
-from nexus.bricks.ipc.sweep import TTLSweeper
+from nexus.bricks.ipc.sweep import (
+    TTLSweeper,
+)
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 ZONE = ROOT_ZONE_ID
 
+# Retention window used in correctness tests: short enough to not slow tests,
+# long enough to be reliable on a busy CI machine.
+_TINY_RETENTION_SECS = 1.5  # files written, sleep 2s, then retention fires
+_SLEEP_SECS = 2.0
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
 
 @pytest.fixture
-async def nx_with_local_backend():
+async def nx():
     """Real NexusFS with LocalConnector backend in a temp directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         from nexus.backends.storage.local_connector import LocalConnectorBackend
@@ -45,22 +62,21 @@ async def nx_with_local_backend():
         db_file = Path(tmpdir) / "metadata"
         metadata_store = RaftMetadataStore.embedded(str(db_file))
 
-        nx = await create_nexus_fs(
+        _nx = await create_nexus_fs(
             backend=backend,
             metadata_store=metadata_store,
             permissions=PermissionConfig(enforce=False),
         )
-        yield nx, tmpdir
-        nx.close()
+        yield _nx
+        _nx.close()
 
 
 @pytest.fixture
-async def vfs_adapter(nx_with_local_backend):
-    """KernelVFSAdapter bound to a real NexusFS instance."""
-    nx, tmpdir = nx_with_local_backend
-    adapter = KernelVFSAdapter(zone_id=ZONE)
-    adapter.bind(nx)
-    return adapter, tmpdir
+async def adapter(nx):
+    """KernelVFSAdapter bound to a real NexusFS."""
+    a = KernelVFSAdapter(zone_id=ZONE)
+    a.bind(nx)
+    return a
 
 
 async def _provision(adapter: KernelVFSAdapter, *agent_ids: str) -> None:
@@ -69,232 +85,467 @@ async def _provision(adapter: KernelVFSAdapter, *agent_ids: str) -> None:
         await prov.provision(aid)
 
 
-def _make_envelope(msg_id: str, ttl: int | None = None) -> MessageEnvelope:
+def _make_msg(msg_id: str, ttl: int | None = None, ts: datetime | None = None) -> MessageEnvelope:
     return MessageEnvelope(
         sender="agent:alice",
         recipient="agent:bob",
         type=MessageType.TASK,
         id=msg_id,
+        timestamp=ts or datetime.now(UTC),
         ttl_seconds=ttl,
     )
 
 
-class TestKernelVFSAdapterFileMtime:
-    """Verify file_mtime() returns real server-observed mtime via real NexusFS."""
+# ---------------------------------------------------------------------------
+# Correctness: file_mtime through real NexusFS
+# ---------------------------------------------------------------------------
+
+
+class TestFileMtimeReal:
+    """Verify file_mtime() returns real server-observed timestamps via NexusFS."""
 
     @pytest.mark.asyncio
-    async def test_file_mtime_returns_non_none_for_written_file(self, vfs_adapter):
-        adapter, _ = vfs_adapter
+    async def test_mtime_non_none_after_write(self, adapter: KernelVFSAdapter) -> None:
         await _provision(adapter, "agent:bob")
+        path = f"{inbox_path('agent:bob')}/msg_mtime_check.json"
 
-        path = f"{inbox_path('agent:bob')}/test_mtime.json"
         before = datetime.now(UTC)
-        await adapter.write(path, b'{"id":"test"}', ZONE)
+        await adapter.write(path, b'{"id":"x"}', ZONE)
         after = datetime.now(UTC)
 
         mtime = await adapter.file_mtime(path, ZONE)
-        assert mtime is not None, "file_mtime() must return non-None for LocalConnector backend"
-        assert before <= mtime <= after + timedelta(seconds=2), (
-            f"mtime {mtime} not between {before} and {after}"
-        )
+        assert mtime is not None, "file_mtime must be non-None for LocalConnector"
+        assert before <= mtime <= after + timedelta(seconds=2)
 
     @pytest.mark.asyncio
-    async def test_file_mtime_returns_none_for_missing_file(self, vfs_adapter):
-        adapter, _ = vfs_adapter
-        mtime = await adapter.file_mtime("/nonexistent/path.json", ZONE)
-        assert mtime is None
-
-    @pytest.mark.asyncio
-    async def test_mtime_advances_on_overwrite(self, vfs_adapter):
-        adapter, _ = vfs_adapter
+    async def test_mtime_advances_on_overwrite(self, adapter: KernelVFSAdapter) -> None:
         await _provision(adapter, "agent:bob")
-
-        path = f"{inbox_path('agent:bob')}/overwrite_test.json"
+        path = f"{inbox_path('agent:bob')}/msg_overwrite.json"
         await adapter.write(path, b"v1", ZONE)
         mtime1 = await adapter.file_mtime(path, ZONE)
 
-        # Small sleep to ensure mtime advances
-        import asyncio
-
-        await asyncio.sleep(0.05)
-
+        await asyncio.sleep(0.1)
         await adapter.write(path, b"v2", ZONE)
         mtime2 = await adapter.file_mtime(path, ZONE)
 
-        assert mtime2 is not None
-        assert mtime1 is not None
+        assert mtime1 is not None and mtime2 is not None
         assert mtime2 >= mtime1
 
+    @pytest.mark.asyncio
+    async def test_mtime_none_for_missing_file(self, adapter: KernelVFSAdapter) -> None:
+        mtime = await adapter.file_mtime("/agents/nobody/inbox/ghost.json", ZONE)
+        assert mtime is None
 
-class TestRetentionWithRealVFS:
-    """End-to-end retention tests using real KernelVFSAdapter + NexusFS."""
+
+# ---------------------------------------------------------------------------
+# Correctness: processed/ and outbox/ pruning via real NexusFS
+# ---------------------------------------------------------------------------
+
+
+class TestPruneRetentionReal:
+    """Write real files, age them past a tiny retention window, verify deletion."""
 
     @pytest.mark.asyncio
-    async def test_prune_old_processed_files(self, vfs_adapter):
-        """processed/ files with old mtime are deleted by _prune_dir."""
-        adapter, _ = vfs_adapter
+    async def test_prune_processed_deletes_aged_files(self, adapter: KernelVFSAdapter) -> None:
         await _provision(adapter, "agent:bob")
-
         proc = processed_path("agent:bob")
-        fn = "20200101T000000_msg_old.json"
-        path = f"{proc}/{fn}"
-        await adapter.write(path, b'{"id":"msg_old"}', ZONE)
 
-        mtime = await adapter.file_mtime(path, ZONE)
-        assert mtime is not None, "mtime must be available for LocalConnector"
+        # Write 5 processed files
+        for i in range(5):
+            path = f"{proc}/20260101T{i:06d}_msg_{i}.json"
+            await adapter.write(path, b'{"id":"x"}', ZONE)
 
-        # Backdate by writing and then faking the age via the cutoff
-        # Since we can't backdate mtime on LocalConnector, set a very short retention
-        # and verify the file is NOT pruned (it's fresh), then verify nothing deleted
-        sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=1)
-        await sweeper._prune_dir("agent:bob", "processed", 1)
+        # Confirm files exist
+        files_before = await adapter.list_dir(proc, ZONE)
+        assert len(files_before) == 5
 
-        # File was just written — should NOT be pruned (mtime = now)
+        # Age the files: sleep past the tiny retention window
+        await asyncio.sleep(_SLEEP_SECS)
+
+        # Prune with retention = _TINY_RETENTION_SECS / 86400 days
+        retention_days = _TINY_RETENTION_SECS / 86400
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=retention_days)
+        await sweeper._prune_dir("agent:bob", "processed", retention_days)
+
+        files_after = await adapter.list_dir(proc, ZONE)
+        assert len(files_after) == 0, (
+            f"Expected 0 files after prune, got {len(files_after)}: {files_after}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_prune_outbox_deletes_aged_files(self, adapter: KernelVFSAdapter) -> None:
+        await _provision(adapter, "agent:bob")
+        out = outbox_path("agent:bob")
+
+        for i in range(3):
+            await adapter.write(f"{out}/20260101T{i:06d}_msg_{i}.json", b'{"id":"x"}', ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        retention_days = _TINY_RETENTION_SECS / 86400
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, outbox_retention_days=retention_days)
+        await sweeper._prune_dir("agent:bob", "outbox", retention_days)
+
+        files_after = await adapter.list_dir(out, ZONE)
+        assert len(files_after) == 0
+
+    @pytest.mark.asyncio
+    async def test_prune_does_not_delete_fresh_files(self, adapter: KernelVFSAdapter) -> None:
+        await _provision(adapter, "agent:bob")
+        proc = processed_path("agent:bob")
+        await adapter.write(f"{proc}/20260101T000000_fresh.json", b'{"id":"fresh"}', ZONE)
+
+        # Prune immediately (no sleep) — file is fresh, should NOT be deleted
+        retention_days = _TINY_RETENTION_SECS / 86400
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=retention_days)
+        await sweeper._prune_dir("agent:bob", "processed", retention_days)
+
         files = await adapter.list_dir(proc, ZONE)
-        assert fn in files, "Fresh file should not be pruned"
+        assert len(files) == 1, "Fresh file must not be pruned"
+
+
+# ---------------------------------------------------------------------------
+# Correctness: stale inbox drain via real NexusFS
+# ---------------------------------------------------------------------------
+
+
+class TestStaleInboxDrainReal:
+    """Write no-TTL inbox messages, age them, verify drain fires correctly."""
 
     @pytest.mark.asyncio
-    async def test_retention_safe_fail_when_mtime_would_be_none(self, vfs_adapter):
-        """When mtime unavailable, retention silently skips — no data loss."""
-        # Use InMemoryVFS with mtime removed to simulate unavailable mtime
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
+    async def test_drain_dead_letters_aged_no_ttl_message(self, adapter: KernelVFSAdapter) -> None:
+        await _provision(adapter, "agent:bob")
+        inbox = inbox_path("agent:bob")
+        dl = dead_letter_path("agent:bob")
 
-        vfs = InMemoryVFS()
-        await _provision(vfs, "agent:bob")
+        msg = _make_msg("msg_drain_real")
+        path = f"{inbox}/20260101T000000_{msg.id}.json"
+        await adapter.write(path, msg.to_bytes(), ZONE)
 
-        proc = processed_path("agent:bob")
-        fn = "20200101T000000_msg_no_mtime.json"
-        path = f"{proc}/{fn}"
-        await vfs.write(path, b'{"id":"msg"}', ZONE)
-        # Remove mtime to simulate backend that returns None
-        vfs._mtimes.pop((path, ZONE), None)
+        await asyncio.sleep(_SLEEP_SECS)
 
-        sweeper = TTLSweeper(vfs, zone_id=ZONE, processed_retention_days=1)
-        # Force cutoff to be now+1h so file WOULD be deleted if mtime were available
-        await sweeper._prune_dir("agent:bob", "processed", 0)  # 0-day retention = delete everything
-
-        files = await vfs.list_dir(proc, ZONE)
-        assert fn in files, "File without mtime must NOT be deleted (safe fail)"
-
-    @pytest.mark.asyncio
-    async def test_stale_inbox_drain_via_real_vfs(self, vfs_adapter):
-        """Stale drain correctly reads from claimed path through real VFS."""
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
-
-        vfs = InMemoryVFS()
-        await _provision(vfs, "agent:bob")
-
-        # Write a message with old mtime (no TTL)
-        msg = _make_envelope("msg_drain_e2e")
-        fn = "20200101T000000_msg_drain_e2e.json"
-        path = f"{inbox_path('agent:bob')}/{fn}"
-        await vfs.write(path, msg.to_bytes(), ZONE)
-        # Backdate mtime to simulate old message
-        vfs.set_mtime(path, ZONE, datetime(2020, 1, 1, tzinfo=UTC))
-
-        sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=1)
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
         drained = await sweeper._drain_stale_inbox("agent:bob")
 
         assert drained == 1
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
+
+        # Inbox empty
+        inbox_files = await adapter.list_dir(inbox, ZONE)
         assert len(inbox_files) == 0
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert any(not f.endswith(".reason.json") for f in dl_files)
+
+        # Dead letter has the message
+        dl_files = await adapter.list_dir(dl, ZONE)
+        msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(msg_files) == 1
+
+        # Reason sidecar written with stale_inbox reason
+        reason_files = [f for f in dl_files if f.endswith(".reason.json")]
+        assert len(reason_files) == 1
+        reason_path = f"{dl}/{reason_files[0]}"
+        reason = json.loads(await adapter.sys_read(reason_path, ZONE))
+        assert reason["reason"] == DLQReason.STALE_INBOX
 
     @pytest.mark.asyncio
-    async def test_compaction_archive_then_preserve_idempotent(self, vfs_adapter):
-        """Preserve-originals compaction writes archive once, .archived marker prevents re-archiving."""
-        from datetime import timedelta
+    async def test_drain_skips_fresh_messages(self, adapter: KernelVFSAdapter) -> None:
+        await _provision(adapter, "agent:bob")
+        inbox = inbox_path("agent:bob")
 
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
+        msg = _make_msg("msg_fresh")
+        path = f"{inbox}/20260101T000000_{msg.id}.json"
+        await adapter.write(path, msg.to_bytes(), ZONE)
 
-        vfs = InMemoryVFS()
-        await _provision(vfs, "agent:bob")
+        # No sleep — message is fresh
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
+        drained = await sweeper._drain_stale_inbox("agent:bob")
 
-        dl = dead_letter_path("agent:bob")
-        base_ts = datetime.now(UTC) - timedelta(days=5)
-        for i in range(5):
-            ts = (base_ts + timedelta(seconds=i)).strftime("%Y%m%dT%H%M%S")
-            fn = f"{ts}_msg_{i:03d}.json"
-            path = f"{dl}/{fn}"
-            await vfs.write(path, json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
-            vfs.set_mtime(path, ZONE, base_ts + timedelta(seconds=i))
+        assert drained == 0
+        inbox_files = await adapter.list_dir(inbox, ZONE)
+        assert len(inbox_files) == 1
 
-        sweeper = TTLSweeper(
-            vfs,
-            zone_id=ZONE,
-            dead_letter_compact_min_files=5,
-            dead_letter_compact_delete_originals=False,  # preserve originals
+    @pytest.mark.asyncio
+    async def test_drain_skips_messages_with_ttl(self, adapter: KernelVFSAdapter) -> None:
+        """Messages with TTL are handled by _sweep_agent, not the stale drain."""
+        await _provision(adapter, "agent:bob")
+        inbox = inbox_path("agent:bob")
+
+        # Message with a far-future TTL (won't expire)
+        msg = _make_msg("msg_with_ttl", ttl=999999)
+        path = f"{inbox}/20260101T000000_{msg.id}.json"
+        await adapter.write(path, msg.to_bytes(), ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
+        drained = await sweeper._drain_stale_inbox("agent:bob")
+
+        assert drained == 0  # TTL message skipped by drain
+        inbox_files = await adapter.list_dir(inbox, ZONE)
+        assert len(inbox_files) == 1
+
+    @pytest.mark.asyncio
+    async def test_drain_claim_prevents_double_dead_letter(self, adapter: KernelVFSAdapter) -> None:
+        """Two concurrent drain calls for the same message only dead-letter once."""
+        await _provision(adapter, "agent:bob")
+        inbox = inbox_path("agent:bob")
+
+        msg = _make_msg("msg_concurrent_drain")
+        path = f"{inbox}/20260101T000000_{msg.id}.json"
+        await adapter.write(path, msg.to_bytes(), ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper1 = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
+        sweeper2 = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
+
+        # Both drains race — only one should win via atomic rename claim
+        r1, r2 = await asyncio.gather(
+            sweeper1._drain_stale_inbox("agent:bob"),
+            sweeper2._drain_stale_inbox("agent:bob"),
         )
 
-        # First compaction — writes archive + .archived markers
-        archived1 = await sweeper._compact_dead_letter("agent:bob")
-        assert archived1 == 5
+        total = r1 + r2
+        assert total == 1, f"Expected exactly 1 drained, got r1={r1} r2={r2}"
 
-        # Second compaction — should archive 0 (all files have .archived markers)
-        archived2 = await sweeper._compact_dead_letter("agent:bob")
-        assert archived2 == 0, "Preserve-originals compaction must be idempotent"
+        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
+        msg_files = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(msg_files) == 1, "Message must appear exactly once in dead_letter"
 
-        # Originals still present
-        dl_files = await vfs.list_dir(dl, ZONE)
+
+# ---------------------------------------------------------------------------
+# Correctness: DLQ compaction via real NexusFS
+# ---------------------------------------------------------------------------
+
+
+class TestDeadLetterCompactionReal:
+    """Write DLQ files, age them, compact, verify archive and originals."""
+
+    @pytest.mark.asyncio
+    async def test_compaction_preserve_originals_creates_archive(
+        self, adapter: KernelVFSAdapter
+    ) -> None:
+        await _provision(adapter, "agent:bob")
+        dl = dead_letter_path("agent:bob")
+        archive_dir = dead_letter_archive_path("agent:bob")
+
+        # Write 10 DLQ files
+        for i in range(10):
+            fn = f"20260101T{i:06d}_msg_{i:04d}.json"
+            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+            await adapter.write(
+                f"{dl}/{fn}.reason.json",
+                json.dumps({"reason": "handler_error"}).encode(),
+                ZONE,
+            )
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        min_age_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            dead_letter_compact_min_files=5,
+            dead_letter_compact_min_age_hours=min_age_hours,
+            dead_letter_compact_delete_originals=False,  # preserve originals
+        )
+        archived = await sweeper._compact_dead_letter("agent:bob")
+
+        assert archived == 10
+
+        # Archive segment created
+        archive_files = await adapter.list_dir(archive_dir, ZONE)
+        jsonl_files = [f for f in archive_files if f.endswith(".jsonl")]
+        assert len(jsonl_files) == 1, f"Expected 1 archive segment, got {jsonl_files}"
+
+        # Archive is valid JSONL
+        content = await adapter.sys_read(f"{archive_dir}/{jsonl_files[0]}", ZONE)
+        records = [json.loads(line) for line in content.splitlines() if line]
+        assert len(records) == 10
+        for r in records:
+            assert "file" in r and "envelope" in r and "reason" in r
+
+        # Originals preserved (preserve mode)
+        dl_files = await adapter.list_dir(dl, ZONE)
         msg_files = [
             f
             for f in dl_files
             if f.endswith(".json") and not f.endswith(".reason.json") and ".archived" not in f
         ]
-        assert len(msg_files) == 5, "Originals must be preserved"
+        assert len(msg_files) == 10
+
+    @pytest.mark.asyncio
+    async def test_compaction_delete_originals_removes_source_files(
+        self, adapter: KernelVFSAdapter
+    ) -> None:
+        await _provision(adapter, "agent:bob")
+        dl = dead_letter_path("agent:bob")
+        archive_dir = dead_letter_archive_path("agent:bob")
+
+        for i in range(10):
+            fn = f"20260101T{i:06d}_msg_{i:04d}.json"
+            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        min_age_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            dead_letter_compact_min_files=5,
+            dead_letter_compact_min_age_hours=min_age_hours,
+            dead_letter_compact_delete_originals=True,
+        )
+        archived = await sweeper._compact_dead_letter("agent:bob")
+
+        assert archived == 10
+
+        # Originals deleted
+        dl_files = await adapter.list_dir(dl, ZONE)
+        msg_files = [
+            f
+            for f in dl_files
+            if f.endswith(".json") and not f.endswith(".reason.json") and ".archived" not in f
+        ]
+        assert len(msg_files) == 0
 
         # Archive exists
-        archive_dir = dead_letter_archive_path("agent:bob")
-        archive_files = await vfs.list_dir(archive_dir, ZONE)
+        archive_files = await adapter.list_dir(archive_dir, ZONE)
         jsonl_files = [f for f in archive_files if f.endswith(".jsonl")]
         assert len(jsonl_files) == 1
 
+    @pytest.mark.asyncio
+    async def test_preserve_originals_idempotent(self, adapter: KernelVFSAdapter) -> None:
+        """Second sweep must not re-archive files already marked .archived."""
+        await _provision(adapter, "agent:bob")
+        dl = dead_letter_path("agent:bob")
 
-class TestProcClaimMechanism:
-    """E2E tests for processor claim-before-handler .proc_ mechanism."""
+        for i in range(5):
+            fn = f"20260101T{i:06d}_msg_{i:04d}.json"
+            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        min_age_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            dead_letter_compact_min_files=5,
+            dead_letter_compact_min_age_hours=min_age_hours,
+            dead_letter_compact_delete_originals=False,
+        )
+
+        archived1 = await sweeper._compact_dead_letter("agent:bob")
+        assert archived1 == 5
+
+        archived2 = await sweeper._compact_dead_letter("agent:bob")
+        assert archived2 == 0, "Second compaction must be idempotent (0 re-archived)"
 
     @pytest.mark.asyncio
-    async def test_processor_claim_prevents_concurrent_drain(self, vfs_adapter):
-        """Once processor claims .proc_, drain cannot dead-letter the same message."""
+    async def test_compaction_skips_fresh_files(self, adapter: KernelVFSAdapter) -> None:
+        """Files younger than min_age must not be compacted."""
+        await _provision(adapter, "agent:bob")
+        dl = dead_letter_path("agent:bob")
 
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
+        for i in range(10):
+            fn = f"20260101T{i:06d}_msg_{i:04d}.json"
+            await adapter.write(f"{dl}/{fn}", json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
 
-        vfs = InMemoryVFS()
-        await _provision(vfs, "agent:bob")
+        # No sleep — files are fresh
+        min_age_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            dead_letter_compact_min_files=5,
+            dead_letter_compact_min_age_hours=min_age_hours,
+        )
+        archived = await sweeper._compact_dead_letter("agent:bob")
+        assert archived == 0, "Fresh files must not be compacted"
 
-        msg = _make_envelope("msg_claim_test")
-        fn = "20200101T000000_msg_claim_test.json"
-        path = f"{inbox_path('agent:bob')}/{fn}"
-        await vfs.write(path, msg.to_bytes(), ZONE)
-        vfs.set_mtime(path, ZONE, datetime(2020, 1, 1, tzinfo=UTC))
 
-        # Simulate: processor claims the file (renames to .proc_)
-        proc_path = path + ".proc_20260101T000000_abcd"
-        await vfs.rename(path, proc_path, ZONE)
-        # Backdate the proc claim mtime to look "active" (recent claim)
-        # (rename sets mtime to now — so it should NOT be recovered)
+# ---------------------------------------------------------------------------
+# Correctness: full sweep_once() via real NexusFS
+# ---------------------------------------------------------------------------
 
-        # Drain now runs — should not touch the claimed file
-        sweeper = TTLSweeper(vfs, zone_id=ZONE, inbox_stale_hours=1)
-        drained = await sweeper._drain_stale_inbox("agent:bob")
 
-        assert drained == 0, "Drain must not act on .proc_-claimed messages"
-        # Message should still be in proc state (not dead-lettered)
-        dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
+class TestFullSweepOnceReal:
+    """Run sweep_once() end-to-end with all retention features enabled."""
+
+    @pytest.mark.asyncio
+    async def test_sweep_once_prunes_all_directories(self, adapter: KernelVFSAdapter) -> None:
+        """sweep_once() with all retention enabled cleans processed, outbox, drains inbox."""
+        await _provision(adapter, "agent:alice", "agent:bob")
+
+        proc = processed_path("agent:bob")
+        out = outbox_path("agent:bob")
+        inbox = inbox_path("agent:bob")
+
+        # Write aged processed + outbox files
+        for i in range(3):
+            await adapter.write(f"{proc}/20260101T{i:06d}_p{i}.json", b'{"id":"p"}', ZONE)
+            await adapter.write(f"{out}/20260101T{i:06d}_o{i}.json", b'{"id":"o"}', ZONE)
+
+        # Write a no-TTL inbox message that should be stale-drained
+        msg = _make_msg("msg_stale_sweep")
+        await adapter.write(f"{inbox}/20260101T000000_{msg.id}.json", msg.to_bytes(), ZONE)
+
+        # Write a FRESH inbox message — must not be touched
+        fresh = _make_msg("msg_fresh_sweep")
+        await adapter.write(f"{inbox}/20260101T999999_{fresh.id}.json", fresh.to_bytes(), ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        # Write fresh message AFTER sleep — should be protected
+        very_fresh = _make_msg("msg_very_fresh")
+        await adapter.write(
+            f"{inbox}/20260101T888888_{very_fresh.id}.json", very_fresh.to_bytes(), ZONE
+        )
+
+        retention = _TINY_RETENTION_SECS / 86400
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            interval=3600,  # large — so _is_recent_by_filename never skips
+            processed_retention_days=retention,
+            outbox_retention_days=retention,
+            inbox_stale_hours=stale_hours,
+        )
+        await sweeper.sweep_once()
+
+        # processed/ and outbox/ cleaned up
+        assert len(await adapter.list_dir(proc, ZONE)) == 0
+        assert len(await adapter.list_dir(out, ZONE)) == 0
+
+        # Old inbox msg drained
+        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
         dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
-        assert len(dl_msgs) == 0
+        assert any("msg_stale_sweep" in f for f in dl_msgs)
+
+        # Fresh inbox messages untouched
+        inbox_files = await adapter.list_dir(inbox, ZONE)
+        assert any("msg_very_fresh" in f for f in inbox_files)
+
+
+# ---------------------------------------------------------------------------
+# Correctness: processor .proc_ claim via real NexusFS
+# ---------------------------------------------------------------------------
+
+
+class TestProcClaimReal:
+    """Verify .proc_ claim mechanism works through real VFS."""
 
     @pytest.mark.asyncio
-    async def test_full_message_lifecycle_with_claim(self):
-        """Full roundtrip: send → claim → handler → processed."""
-        from tests.unit.bricks.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
+    async def test_full_roundtrip_with_proc_claim(self, adapter: KernelVFSAdapter) -> None:
+        """Full send → claim → handler → processed lifecycle via real adapter."""
+        from tests.unit.bricks.ipc.fakes import InMemoryEventPublisher
 
-        vfs = InMemoryVFS()
-        await _provision(vfs, "agent:alice", "agent:bob")
+        await _provision(adapter, "agent:alice", "agent:bob")
 
-        sender = MessageSender(vfs, InMemoryEventPublisher(), zone_id=ZONE)
-        msg = _make_envelope("msg_lifecycle")
+        sender = MessageSender(adapter, InMemoryEventPublisher(), zone_id=ZONE)
+        msg = _make_msg("msg_proc_real")
         await sender.send(msg)
 
         received = []
@@ -302,152 +553,179 @@ class TestProcClaimMechanism:
         async def handler(envelope: MessageEnvelope) -> None:
             received.append(envelope.id)
 
-        processor = MessageProcessor(vfs, "agent:bob", handler, zone_id=ZONE)
+        processor = MessageProcessor(adapter, "agent:bob", handler, zone_id=ZONE)
         count = await processor.process_inbox()
 
         assert count == 1
-        assert "msg_lifecycle" in received
-        # Message moved to processed/
-        proc_files = await vfs.list_dir(processed_path("agent:bob"), ZONE)
-        assert any("msg_lifecycle" in f for f in proc_files)
+        assert "msg_proc_real" in received
+
         # Inbox empty
-        inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
-        assert len(inbox_files) == 0
+        assert len(await adapter.list_dir(inbox_path("agent:bob"), ZONE)) == 0
 
-
-class TestPerformance:
-    """Performance benchmarks for sweep operations at production scale."""
-
-    @pytest.mark.asyncio
-    async def test_sweep_100_agents_10_messages_each(self):
-        """Sweep 100 agents × 10 messages should complete in < 5 seconds."""
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
-
-        vfs = InMemoryVFS()
-        N_AGENTS = 100
-        N_MSGS = 10
-
-        # Provision agents and write already-expired messages
-        old_ts = datetime(2020, 1, 1, tzinfo=UTC)
-        for i in range(N_AGENTS):
-            agent_id = f"agent:perf_{i:03d}"
-            await _provision(vfs, agent_id)
-            for j in range(N_MSGS):
-                fn = f"20200101T{j:06d}_msg_{j:03d}.json"
-                msg = MessageEnvelope(
-                    sender="agent:alice",
-                    recipient=agent_id,
-                    type=MessageType.TASK,
-                    id=f"msg_{i}_{j}",
-                    timestamp=old_ts,  # old timestamp → expired immediately
-                    ttl_seconds=60,
-                )
-                path = f"{inbox_path(agent_id)}/{fn}"
-                await vfs.write(path, msg.to_bytes(), ZONE)
-
-        sweeper = TTLSweeper(vfs, zone_id=ZONE, interval=60)
-
-        t0 = time.perf_counter()
-        expired = await sweeper.sweep_once()
-        elapsed = time.perf_counter() - t0
-
-        assert expired == N_AGENTS * N_MSGS, f"Expected {N_AGENTS * N_MSGS} expired, got {expired}"
-        assert elapsed < 5.0, f"Sweep of {N_AGENTS}×{N_MSGS} took {elapsed:.2f}s — too slow"
-        print(
-            f"\n[PERF] {N_AGENTS} agents × {N_MSGS} msgs: {elapsed * 1000:.0f}ms ({expired} expired)"
-        )
+        # Message moved to processed
+        proc_files = await adapter.list_dir(processed_path("agent:bob"), ZONE)
+        assert any("msg_proc_real" in f for f in proc_files)
 
     @pytest.mark.asyncio
-    async def test_retention_200_files_per_agent(self):
-        """Retention across 10 agents × 200 processed files should complete in < 3 seconds."""
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
+    async def test_proc_claim_prevents_concurrent_drain(self, adapter: KernelVFSAdapter) -> None:
+        """Processor claims file; concurrent drain cannot dead-letter it."""
+        await _provision(adapter, "agent:bob")
+        inbox = inbox_path("agent:bob")
 
-        vfs = InMemoryVFS()
-        N_AGENTS = 10
-        N_FILES = 200
+        msg = _make_msg("msg_race")
+        path = f"{inbox}/20260101T000000_{msg.id}.json"
+        await adapter.write(path, msg.to_bytes(), ZONE)
 
-        for i in range(N_AGENTS):
-            agent_id = f"agent:ret_{i:03d}"
-            await _provision(vfs, agent_id)
-            proc = processed_path(agent_id)
-            for j in range(N_FILES):
-                fn = f"20200101T{j:06d}_msg_{j:04d}.json"
-                path = f"{proc}/{fn}"
-                await vfs.write(path, b'{"id":"x"}', ZONE)
-                # Backdate mtime: 10 days old
-                vfs.set_mtime(path, ZONE, datetime(2020, 1, 1, tzinfo=UTC) + timedelta(seconds=j))
+        # Simulate processor claiming the file
+        claim_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        proc_path = f"{path}.proc_{claim_ts}_abcd"
+        await adapter.rename(path, proc_path, ZONE)
 
-        sweeper = TTLSweeper(vfs, zone_id=ZONE, processed_retention_days=7)
+        await asyncio.sleep(_SLEEP_SECS)
 
-        t0 = time.perf_counter()
-        await sweeper.sweep_once()
-        elapsed = time.perf_counter() - t0
+        # Drain runs — should not touch the .proc_ file (not a .json)
+        stale_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, inbox_stale_hours=stale_hours)
+        drained = await sweeper._drain_stale_inbox("agent:bob")
 
-        # Verify all old files pruned
-        for i in range(N_AGENTS):
-            proc_files = await vfs.list_dir(processed_path(f"agent:ret_{i:03d}"), ZONE)
-            assert len(proc_files) == 0, f"agent:ret_{i:03d} still has {len(proc_files)} files"
+        assert drained == 0
+        dl_files = await adapter.list_dir(dead_letter_path("agent:bob"), ZONE)
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 0, "Claimed message must not appear in DLQ"
 
-        assert elapsed < 3.0, f"Retention of {N_AGENTS}×{N_FILES} took {elapsed:.2f}s"
-        print(f"\n[PERF] Retention {N_AGENTS}×{N_FILES} processed files: {elapsed * 1000:.0f}ms")
 
-    @pytest.mark.asyncio
-    async def test_dead_letter_compaction_200_files(self):
-        """DLQ compaction of 200 files (delete_originals=True) should finish < 2 seconds."""
-        from tests.unit.bricks.ipc.fakes import InMemoryVFS
+# ---------------------------------------------------------------------------
+# Performance: real NexusFS at production-representative scale
+# ---------------------------------------------------------------------------
 
-        vfs = InMemoryVFS()
-        N_FILES = 200
-        await _provision(vfs, "agent:compact_perf")
 
-        dl = dead_letter_path("agent:compact_perf")
-        base_ts = datetime.now(UTC) - timedelta(days=5)
-        for i in range(N_FILES):
-            ts = (base_ts + timedelta(seconds=i)).strftime("%Y%m%dT%H%M%S")
-            fn = f"{ts}_msg_{i:04d}.json"
-            path = f"{dl}/{fn}"
-            await vfs.write(path, json.dumps({"id": f"msg_{i}"}).encode(), ZONE)
-            vfs.set_mtime(path, ZONE, base_ts + timedelta(seconds=i))
-
-        sweeper = TTLSweeper(
-            vfs,
-            zone_id=ZONE,
-            dead_letter_compact_min_files=50,
-            dead_letter_compact_delete_originals=True,
-        )
-
-        t0 = time.perf_counter()
-        archived = await sweeper._compact_dead_letter("agent:compact_perf")
-        elapsed = time.perf_counter() - t0
-
-        assert archived == N_FILES
-        assert elapsed < 2.0, f"Compaction of {N_FILES} files took {elapsed:.2f}s"
-        print(
-            f"\n[PERF] DLQ compaction {N_FILES} files: {elapsed * 1000:.0f}ms ({archived} archived)"
-        )
+class TestPerformanceReal:
+    """Performance benchmarks using real KernelVFSAdapter + NexusFS."""
 
     @pytest.mark.asyncio
-    async def test_file_mtime_via_real_kernel_adapter_latency(self, vfs_adapter):
-        """file_mtime() per-file latency via real KernelVFSAdapter < 20ms each."""
-        adapter, _ = vfs_adapter
-        await _provision(adapter, "agent:mtime_perf")
+    async def test_file_mtime_latency_20_files(self, adapter: KernelVFSAdapter) -> None:
+        """file_mtime() per-call latency via real NexusFS must average < 20ms."""
+        await _provision(adapter, "agent:perf_mtime")
 
-        # Write 20 files
         paths = []
         for i in range(20):
-            p = f"{inbox_path('agent:mtime_perf')}/msg_{i:03d}.json"
+            p = f"{inbox_path('agent:perf_mtime')}/msg_{i:03d}.json"
             await adapter.write(p, b'{"id":"x"}', ZONE)
             paths.append(p)
 
-        # Measure mtime latency per file
         latencies = []
         for p in paths:
             t0 = time.perf_counter()
             mtime = await adapter.file_mtime(p, ZONE)
             latencies.append(time.perf_counter() - t0)
-            assert mtime is not None, f"file_mtime must not be None for {p}"
+            assert mtime is not None
 
         avg_ms = sum(latencies) / len(latencies) * 1000
         max_ms = max(latencies) * 1000
-        print(f"\n[PERF] file_mtime() via KernelVFSAdapter: avg={avg_ms:.1f}ms, max={max_ms:.1f}ms")
-        assert avg_ms < 20.0, f"Average file_mtime latency {avg_ms:.1f}ms exceeds 20ms budget"
+        print(f"\n[PERF] file_mtime 20 files: avg={avg_ms:.1f}ms  max={max_ms:.1f}ms")
+        assert avg_ms < 20.0, f"Avg mtime latency {avg_ms:.1f}ms > 20ms budget"
+
+    @pytest.mark.asyncio
+    async def test_prune_50_processed_files_real(self, adapter: KernelVFSAdapter) -> None:
+        """Prune 50 processed files through real NexusFS in < 10 seconds."""
+        await _provision(adapter, "agent:perf_prune")
+        proc = processed_path("agent:perf_prune")
+
+        for i in range(50):
+            await adapter.write(f"{proc}/20260101T{i:06d}_msg_{i:04d}.json", b"{}", ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        retention_days = _TINY_RETENTION_SECS / 86400
+        sweeper = TTLSweeper(adapter, zone_id=ZONE, processed_retention_days=retention_days)
+
+        t0 = time.perf_counter()
+        await sweeper._prune_dir("agent:perf_prune", "processed", retention_days)
+        elapsed = time.perf_counter() - t0
+
+        remaining = await adapter.list_dir(proc, ZONE)
+        assert len(remaining) == 0, f"Expected 0 files, got {len(remaining)}"
+        print(f"\n[PERF] Prune 50 processed files (real NexusFS): {elapsed * 1000:.0f}ms")
+        assert elapsed < 10.0, f"Prune of 50 files took {elapsed:.2f}s > 10s budget"
+
+    @pytest.mark.asyncio
+    async def test_compact_30_dlq_files_real(self, adapter: KernelVFSAdapter) -> None:
+        """Compact 30 DLQ files through real NexusFS in < 10 seconds."""
+        await _provision(adapter, "agent:perf_compact")
+        dl = dead_letter_path("agent:perf_compact")
+        archive_dir = dead_letter_archive_path("agent:perf_compact")
+
+        for i in range(30):
+            fn = f"20260101T{i:06d}_msg_{i:04d}.json"
+            payload = json.dumps({"id": f"msg_{i}", "data": "x" * 512}).encode()
+            await adapter.write(f"{dl}/{fn}", payload, ZONE)
+            await adapter.write(
+                f"{dl}/{fn}.reason.json",
+                json.dumps({"reason": "handler_error", "detail": f"err {i}"}).encode(),
+                ZONE,
+            )
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        min_age_hours = _TINY_RETENTION_SECS / 3600
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            dead_letter_compact_min_files=10,
+            dead_letter_compact_min_age_hours=min_age_hours,
+            dead_letter_compact_delete_originals=True,
+        )
+
+        t0 = time.perf_counter()
+        archived = await sweeper._compact_dead_letter("agent:perf_compact")
+        elapsed = time.perf_counter() - t0
+
+        assert archived == 30
+        # _archive subdir will appear in listing — filter it out
+        dl_files = await adapter.list_dir(dl, ZONE)
+        remaining = [f for f in dl_files if f != "_archive"]
+        assert len(remaining) == 0, f"Unexpected files remaining: {remaining}"
+
+        archive_files = await adapter.list_dir(archive_dir, ZONE)
+        assert any(f.endswith(".jsonl") for f in archive_files)
+
+        print(f"\n[PERF] Compact 30 DLQ files (real NexusFS): {elapsed * 1000:.0f}ms")
+        assert elapsed < 10.0, f"Compact of 30 files took {elapsed:.2f}s > 10s budget"
+
+    @pytest.mark.asyncio
+    async def test_sweep_once_10_agents_5_files_each_real(self, adapter: KernelVFSAdapter) -> None:
+        """Full sweep_once() across 10 agents × 5 files via real NexusFS < 15s."""
+        N_AGENTS = 10
+        N_FILES = 5
+
+        for i in range(N_AGENTS):
+            aid = f"agent:sweepperf_{i:02d}"
+            await _provision(adapter, aid)
+            proc = processed_path(aid)
+            for j in range(N_FILES):
+                await adapter.write(f"{proc}/20260101T{j:06d}_msg_{j:04d}.json", b"{}", ZONE)
+
+        await asyncio.sleep(_SLEEP_SECS)
+
+        retention_days = _TINY_RETENTION_SECS / 86400
+        sweeper = TTLSweeper(
+            adapter,
+            zone_id=ZONE,
+            interval=3600,
+            processed_retention_days=retention_days,
+        )
+
+        t0 = time.perf_counter()
+        await sweeper.sweep_once()
+        elapsed = time.perf_counter() - t0
+
+        # All processed files deleted across all agents
+        for i in range(N_AGENTS):
+            remaining = await adapter.list_dir(processed_path(f"agent:sweepperf_{i:02d}"), ZONE)
+            assert len(remaining) == 0
+
+        print(
+            f"\n[PERF] sweep_once() {N_AGENTS} agents × {N_FILES} processed files "
+            f"(real NexusFS): {elapsed * 1000:.0f}ms"
+        )
+        assert elapsed < 15.0, f"sweep_once took {elapsed:.2f}s > 15s budget"

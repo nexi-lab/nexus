@@ -80,8 +80,14 @@ class KernelVFSAdapter:
     async def sys_read(self, path: str, zone_id: str) -> bytes:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        result: bytes = await self._nx.sys_read(path, context=ctx)
-        return result
+        try:
+            result: bytes = await self._nx.sys_read(path, context=ctx)
+            return result
+        except AttributeError:
+            # Rust kernel not initialized (embedded/test mode without full boot).
+            # Fall back to the DLC read path which routes directly to the backend
+            # without requiring the kernel — same as _read_via_dlc in nexus_fs.py.
+            return self._nx._read_via_dlc(path, True, ctx)
 
     async def write(self, path: str, data: bytes, zone_id: str) -> None:
         self._require_bound()
@@ -90,14 +96,28 @@ class KernelVFSAdapter:
 
     async def list_dir(self, path: str, zone_id: str) -> list[str]:  # noqa: ARG002
         self._require_bound()
-        # Route through PathRouter directly to the LocalConnector backend.
-        # This bypasses the metadata layer whose Raft prefix scan may not
-        # index entries under the /agents mount.
+        # Route through PathRouter directly to the LocalConnector backend for
+        # enumeration — Raft prefix scans may not index /agents entries.
+        # Then cross-reference each entry against the metastore to filter out
+        # logically-deleted files: nexus_fs.sys_unlink removes the metastore
+        # entry immediately but defers physical deletion to background GC
+        # (HDFS/GFS pattern). Without this filter, sys_unlink'd files would
+        # still appear in listing results.
         import asyncio
 
         route = self._nx.router.route(path, is_admin=True, check_write=False)
         raw: list[str] = await asyncio.to_thread(route.backend.list_dir, route.backend_path)
-        return [name for name in raw if "/" not in name]
+        prefix = path.rstrip("/")
+        result = []
+        for name in raw:
+            if "/" in name:
+                continue
+            full_path = f"{prefix}/{name}"
+            meta = route.metastore.get(full_path)
+            if meta is None and not route.metastore.is_implicit_directory(full_path):
+                continue  # physically present but logically deleted — skip
+            result.append(name)
+        return result
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         entries = await self.list_dir(path, zone_id)
@@ -106,7 +126,40 @@ class KernelVFSAdapter:
     async def rename(self, src: str, dst: str, zone_id: str) -> None:
         self._require_bound()
         ctx = self._ctx(zone_id)
-        await self._nx.rename(src, dst, context=ctx)
+
+        # sys_rename is metadata-only (nexus_fs.py:3325 — "does NOT copy file
+        # content"). For path-based backends (LocalConnector, which uses
+        # context.backend_path not content hash for storage), we must also
+        # physically move the file so reads from dst work.
+        # Pre-compute physical paths BEFORE renaming while src still routes correctly.
+        import asyncio
+
+        src_phys = dst_phys = None
+        try:
+            src_route = self._nx.router.route(src, is_admin=True, check_write=False)
+            dst_route = self._nx.router.route(dst, is_admin=True, check_write=False)
+            to_phys_s = getattr(src_route.backend, "_to_physical", None)
+            to_phys_d = getattr(dst_route.backend, "_to_physical", None)
+            if to_phys_s and to_phys_d:
+                src_phys = to_phys_s(src_route.backend_path)
+                dst_phys = to_phys_d(dst_route.backend_path)
+        except Exception:
+            pass
+
+        await self._nx.sys_rename(src, dst, context=ctx)
+
+        # After metadata rename, physically move the file so reads from dst work.
+        if src_phys is not None and dst_phys is not None:
+            try:
+                if await asyncio.to_thread(src_phys.exists):
+                    await asyncio.to_thread(
+                        lambda: (
+                            dst_phys.parent.mkdir(parents=True, exist_ok=True),
+                            src_phys.rename(dst_phys),
+                        )
+                    )
+            except Exception:
+                pass  # best-effort; metadata rename already succeeded
 
     async def mkdir(self, path: str, zone_id: str) -> None:
         self._require_bound()

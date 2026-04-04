@@ -292,7 +292,12 @@ class SlimNexusFS:
         meta: FileMetadata | None = self._kernel.metadata.get(normalized)
 
         if meta is not None:
-            is_dir = meta.is_dir or meta.is_mount or meta.mime_type == "inode/directory"
+            is_dir = (
+                meta.is_dir
+                or meta.is_mount
+                or meta.is_external_storage
+                or meta.mime_type == "inode/directory"
+            )
             return _make_stat_dict(
                 path=meta.path,
                 size=meta.size or (4096 if is_dir else 0),

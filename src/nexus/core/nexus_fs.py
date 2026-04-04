@@ -589,7 +589,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Use pre-fetched meta if provided, otherwise fetch
             meta = self.metadata.get(path) if _meta is _SENTINEL else _meta
-            if meta is not None and (meta.is_dir or meta.is_mount):
+            if meta is not None and (meta.is_dir or meta.is_mount or meta.is_external_storage):
                 return True
 
             # Route with access control (read permission needed to check)
@@ -639,7 +639,7 @@ class NexusFS(  # type: ignore[misc]
 
         names: set[str] = set()
         for meta in self.metadata.list("/"):
-            if not meta.is_mount:
+            if not (meta.is_mount or meta.is_external_storage):
                 continue
             top = meta.path.lstrip("/").split("/")[0]
             if not top:
@@ -3108,8 +3108,8 @@ class NexusFS(  # type: ignore[misc]
 
         self.intercept_pre_rmdir(RmdirHookContext(path=path, context=ctx))
 
-        # DT_MOUNT: unmount via DriverLifecycleCoordinator + delete metadata
-        if meta.is_mount:
+        # DT_MOUNT / DT_EXTERNAL_STORAGE: unmount via DriverLifecycleCoordinator + delete metadata
+        if meta.is_mount or meta.is_external_storage:
             removed = self._driver_coordinator.unmount(path)
             if removed:
                 route.metastore.delete(path)

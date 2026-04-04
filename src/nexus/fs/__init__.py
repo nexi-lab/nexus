@@ -37,6 +37,8 @@ _LAZY_IMPORTS = {
     "NexusFileSystem": ("nexus.fs._fsspec", "NexusFileSystem"),
     "parse_uri": ("nexus.fs._uri", "parse_uri"),
     "MountSpec": ("nexus.fs._uri", "MountSpec"),
+    "generate_auth_url": ("nexus.fs._oauth_support", "generate_auth_url"),
+    "exchange_auth_code": ("nexus.fs._oauth_support", "exchange_auth_code"),
 }
 
 

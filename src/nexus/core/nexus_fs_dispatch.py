@@ -143,6 +143,8 @@ class DispatchMixin:
 
     def _resolve(self, path: str, method: str, **kwargs: Any) -> tuple[bool, Any]:
         """Generic PRE-DISPATCH: trie lookup → fallback scan."""
+        if self._kernel is None:
+            return False, None
         idx = self._kernel.trie_lookup(path)
         if idx is not None:
             resolver = self._trie_resolvers.get(idx)

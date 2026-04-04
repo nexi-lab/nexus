@@ -446,8 +446,9 @@ impl Kernel {
                             // Re-fetch from dcache (now populated)
                             self.dcache.get_entry(path).unwrap()
                         }
-                        Ok(None) => return Err(Self::raise_file_not_found(py, path)),
-                        Err(_) => return Err(Self::raise_file_not_found(py, path)),
+                        // Metastore miss — may be overlay base layer; let Python handle
+                        Ok(None) => return miss(),
+                        Err(_) => return miss(),
                     },
                     None => return Err(Self::raise_file_not_found(py, path)),
                 }

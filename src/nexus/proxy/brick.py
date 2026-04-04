@@ -10,6 +10,7 @@ import base64
 import contextlib
 import logging
 from dataclasses import asdict
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.proxy.circuit_breaker import AsyncCircuitBreaker, CircuitState
@@ -266,6 +267,42 @@ class ProxyVFSBrick(ProxyBrick):
 
     async def count_dir(self, path: str, zone_id: str) -> int:
         return cast(int, await self._forward("count_dir", path=path, zone_id=zone_id))
+
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        """VFSOperations-compatible alias for sys_rename."""
+        await self.sys_rename(src, dst, zone_id)
+
+    async def sys_unlink(self, path: str, zone_id: str) -> None:
+        """Delete a file at the given path via remote kernel."""
+        await self._forward("sys_unlink", path=path, zone_id=zone_id)
+
+    async def file_mtime(self, path: str, zone_id: str) -> "datetime | None":
+        """Return server-observed mtime via the ``sys_stat`` RPC (modified_at field).
+
+        ``sys_stat`` is an existing RPC in the server dispatch table (mapped to
+        ``handle_get_metadata``). Its response includes ``modified_at`` set by
+        the kernel at write time — server-controlled, not sender-influenced.
+
+        Returns ``None`` when the stat call fails or ``modified_at`` is absent.
+        Callers treat ``None`` as a safe-fail: retention is skipped.
+        """
+        try:
+            result = await self._forward("sys_stat", path=path, zone_id=zone_id)
+            if not isinstance(result, dict):
+                return None
+            metadata = result.get("metadata") or result
+            if not isinstance(metadata, dict):
+                return None
+            modified_at = metadata.get("modified_at")
+            if modified_at is None:
+                return None
+            if isinstance(modified_at, datetime):
+                return modified_at
+            if isinstance(modified_at, str):
+                return datetime.fromisoformat(modified_at)
+        except Exception:
+            pass
+        return None
 
 
 class ProxySchedulerBrick(ProxyBrick):

@@ -30,6 +30,7 @@ DEAD_LETTER_DIR = "dead_letter"
 TASKS_DIR = "tasks"
 NOTIFY_PIPE_NAME = "notify"
 AGENT_CARD_FILENAME = "AGENT.json"
+ARCHIVE_DIR = "_archive"
 
 # All directories auto-provisioned for each agent
 AGENT_SUBDIRS: tuple[str, ...] = (
@@ -182,3 +183,18 @@ def message_path_in_processed(agent_id: str, msg_id: str, timestamp: datetime) -
 def message_path_in_dead_letter(agent_id: str, msg_id: str, timestamp: datetime) -> str:
     """Full path for a message in an agent's dead letter directory."""
     return f"{dead_letter_path(agent_id)}/{message_filename(msg_id, timestamp)}"
+
+
+def dead_letter_archive_path(agent_id: str) -> str:
+    """Archive directory for compacted dead_letter segments: ``/agents/{agent_id}/dead_letter/_archive``."""
+    return f"{dead_letter_path(agent_id)}/{ARCHIVE_DIR}"
+
+
+def dead_letter_archive_segment(agent_id: str, day: str, timestamp: str) -> str:
+    """Committed archive segment: ``/agents/{agent_id}/dead_letter/_archive/{day}_{ts}.jsonl``."""
+    return f"{dead_letter_archive_path(agent_id)}/{day}_{timestamp}.jsonl"
+
+
+def dead_letter_archive_tmp(agent_id: str, day: str, timestamp: str) -> str:
+    """Temporary archive segment (in-flight write): ``.../{day}_{ts}.jsonl.tmp``."""
+    return f"{dead_letter_archive_path(agent_id)}/{day}_{timestamp}.jsonl.tmp"

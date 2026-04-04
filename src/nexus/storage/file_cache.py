@@ -40,7 +40,7 @@ import blake3
 
 # RUST_FALLBACK: BloomFilter, read_file, read_files_bulk
 if TYPE_CHECKING:
-    from nexus_fast import BloomFilter
+    from nexus_kernel import BloomFilter
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class FileContentCache:
     def _init_bloom_filter(self) -> None:
         """Initialize Bloom filter for fast cache miss detection."""
         # RUST_FALLBACK: BloomFilter
-        from nexus_fast import BloomFilter
+        from nexus_kernel import BloomFilter
 
         self._bloom = BloomFilter(self._bloom_capacity, self._bloom_fp_rate)
         self._populate_bloom_from_disk()
@@ -377,7 +377,7 @@ class FileContentCache:
         Uses Bloom filter for fast cache miss detection - avoids disk I/O
         for entries that definitely don't exist.
 
-        Uses mmap-based reading via nexus_fast for better performance:
+        Uses mmap-based reading via nexus_kernel for better performance:
         - Leverages OS page cache efficiently
         - 20-70% faster for medium to large files
 
@@ -403,7 +403,7 @@ class FileContentCache:
         cache_path = self._get_cache_path(zone_id, virtual_path)
 
         # RUST_FALLBACK: read_file
-        from nexus_fast import read_file
+        from nexus_kernel import read_file
 
         try:
             result: bytes | None = read_file(str(cache_path))
@@ -452,7 +452,7 @@ class FileContentCache:
     ) -> dict[str, bytes]:
         """Read multiple files from cache.
 
-        Uses parallel mmap-based reading via nexus_fast for better performance
+        Uses parallel mmap-based reading via nexus_kernel for better performance
         when reading many files (10+ files uses parallel I/O).
 
         Args:
@@ -482,7 +482,7 @@ class FileContentCache:
             cache_paths.append(cache_path)
 
         # RUST_FALLBACK: read_files_bulk
-        from nexus_fast import read_files_bulk
+        from nexus_kernel import read_files_bulk
 
         # Parallel mmap read
         cache_contents = read_files_bulk(cache_paths)

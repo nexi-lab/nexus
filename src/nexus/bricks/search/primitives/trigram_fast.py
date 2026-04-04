@@ -14,23 +14,23 @@ import logging
 import os
 from typing import Any
 
-# RUST_FALLBACK: trigram_fast — build_trigram_index, trigram_grep, etc. have Rust equivalents in nexus_fast.
-from nexus_fast import (
+# RUST_FALLBACK: trigram_fast — build_trigram_index, trigram_grep, etc. have Rust equivalents in nexus_kernel.
+from nexus_kernel import (
     build_trigram_index as _build_trigram_index,
 )
-from nexus_fast import (
+from nexus_kernel import (
     build_trigram_index_from_entries as _build_trigram_index_from_entries,
 )
-from nexus_fast import (
+from nexus_kernel import (
     invalidate_trigram_cache as _invalidate_trigram_cache,
 )
-from nexus_fast import (
+from nexus_kernel import (
     trigram_grep as _trigram_grep,
 )
-from nexus_fast import (
+from nexus_kernel import (
     trigram_index_stats as _trigram_index_stats,
 )
-from nexus_fast import (
+from nexus_kernel import (
     trigram_search_candidates as _trigram_search_candidates,
 )
 

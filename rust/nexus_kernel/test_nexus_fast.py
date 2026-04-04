@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Test script for nexus_fast Rust extension
+Test script for nexus_kernel Rust extension
 """
 
 import time
 from typing import Any
 
-import nexus_fast
+import nexus_kernel
 
 # Counter for unique tuple_version values (cache invalidation between tests)
 _test_version = 0
@@ -40,7 +40,9 @@ def test_basic_permission() -> None:
 
     namespace_configs: dict[str, Any] = {}
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
+    result = nexus_kernel.compute_permissions_bulk(
+        checks, tuples, namespace_configs, _next_version()
+    )
     print(f"  Result: {result}")
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
@@ -76,7 +78,9 @@ def test_permission_with_namespace() -> None:
         }
     }
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
+    result = nexus_kernel.compute_permissions_bulk(
+        checks, tuples, namespace_configs, _next_version()
+    )
     print(f"  Result: {result}")
     assert result[("user", "alice", "editor", "file", "doc1")]
     print("  ✓ Passed")
@@ -121,7 +125,9 @@ def test_tuple_to_userset() -> None:
         "folder": {"relations": {"read": "direct"}, "permissions": {}},
     }
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
+    result = nexus_kernel.compute_permissions_bulk(
+        checks, tuples, namespace_configs, _next_version()
+    )
     print(f"  Result: {result}")
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
@@ -151,7 +157,9 @@ def test_bulk_performance() -> None:
     namespace_configs: dict[str, Any] = {}
 
     start = time.time()
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
+    result = nexus_kernel.compute_permissions_bulk(
+        checks, tuples, namespace_configs, _next_version()
+    )
     elapsed = time.time() - start
 
     print(f"  Processed {len(checks)} checks in {elapsed * 1000:.2f}ms")
@@ -182,7 +190,9 @@ def test_negative_case() -> None:
 
     namespace_configs: dict[str, Any] = {}
 
-    result = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs, _next_version())
+    result = nexus_kernel.compute_permissions_bulk(
+        checks, tuples, namespace_configs, _next_version()
+    )
     print(f"  Result: {result}")
     assert not result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
@@ -205,7 +215,7 @@ def test_single_permission_check() -> None:
 
     namespace_configs: dict[str, Any] = {}
 
-    result = nexus_fast.compute_permission_single(
+    result = nexus_kernel.compute_permission_single(
         "user", "alice", "read", "file", "doc1", tuples, namespace_configs
     )
     print(f"  Result: {result}")
@@ -248,7 +258,7 @@ def test_single_with_hierarchy() -> None:
         "folder": {"relations": {"read": "direct"}, "permissions": {}},
     }
 
-    result = nexus_fast.compute_permission_single(
+    result = nexus_kernel.compute_permission_single(
         "user", "alice", "read", "file", "doc1", tuples, namespace_configs
     )
     print(f"  Result: {result}")
@@ -271,7 +281,7 @@ def test_filter_paths_basic() -> None:
 
     exclude_patterns = ["._*", ".DS_Store", "Thumbs.db"]
 
-    result = nexus_fast.filter_paths(paths, exclude_patterns)
+    result = nexus_kernel.filter_paths(paths, exclude_patterns)
     print(f"  Input: {len(paths)} paths")
     print(f"  Filtered: {len(result)} paths")
     print(f"  Result: {result}")
@@ -295,7 +305,7 @@ def test_filter_paths_with_directories() -> None:
 
     exclude_patterns = ["._*", ".DS_Store", "Thumbs.db"]
 
-    result = nexus_fast.filter_paths(paths, exclude_patterns)
+    result = nexus_kernel.filter_paths(paths, exclude_patterns)
     print(f"  Filtered: {len(result)} paths")
 
     expected = [
@@ -323,7 +333,7 @@ def test_filter_paths_performance() -> None:
     exclude_patterns = ["._*", ".DS_Store*"]
 
     start = time.time()
-    result = nexus_fast.filter_paths(paths, exclude_patterns)
+    result = nexus_kernel.filter_paths(paths, exclude_patterns)
     elapsed = time.time() - start
 
     print(f"  Processed {len(paths)} paths in {elapsed * 1000:.2f}ms")
@@ -337,7 +347,7 @@ def test_filter_paths_performance() -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("Testing nexus_fast Rust extension")
+    print("Testing nexus_kernel Rust extension")
     print("=" * 60)
 
     test_basic_permission()

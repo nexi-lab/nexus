@@ -2,7 +2,7 @@
 
 Verifies:
 - Rust and Python implementations produce identical results for a sequence of ops.
-- Fallback works when nexus_fast is not importable.
+- Fallback works when nexus_kernel is not importable.
 - NexusFS initialization creates the lock manager attribute.
 """
 
@@ -89,18 +89,18 @@ class TestIdenticalBehaviour:
 
 
 # ---------------------------------------------------------------------------
-# Fallback when nexus_fast unavailable
+# Fallback when nexus_kernel unavailable
 # ---------------------------------------------------------------------------
 
 
 class TestFallback:
     def test_fallback_returns_python_impl(self) -> None:
-        with patch.dict("sys.modules", {"nexus_fast": None}):
+        with patch.dict("sys.modules", {"nexus_kernel": None}):
             mgr = create_vfs_lock_manager()
             assert isinstance(mgr, PythonVFSLockManager)
 
     def test_fallback_is_functional(self) -> None:
-        with patch.dict("sys.modules", {"nexus_fast": None}):
+        with patch.dict("sys.modules", {"nexus_kernel": None}):
             mgr = create_vfs_lock_manager()
             h = mgr.acquire("/test", "write")
             assert h > 0

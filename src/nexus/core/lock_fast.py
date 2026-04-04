@@ -5,7 +5,7 @@ This is a local, in-process lock manager — it does NOT replace the
 distributed Raft-based lock system (``distributed_lock.py``).
 
 Fallback chain:
-    1. Rust ``VFSLockManager`` (via ``nexus_fast``) — ~100-200ns per acquire
+    1. Rust ``VFSLockManager`` (via ``nexus_kernel``) — ~100-200ns per acquire
     2. Python ``PythonVFSLockManager`` (threading-based) — ~500ns-1us
 """
 
@@ -258,14 +258,14 @@ class PythonVFSLockManager:
 
 # RUST_FALLBACK: VFSLockManager
 class RustVFSLockManager:
-    """Thin wrapper around ``nexus_fast.VFSLockManager``."""
+    """Thin wrapper around ``nexus_kernel.VFSLockManager``."""
 
     def __init__(self) -> None:
         from nexus._rust_compat import VFSLockManager
 
         if VFSLockManager is None:
             raise RuntimeError(
-                "RustVFSLockManager requires the nexus-fast Rust extension. "
+                "RustVFSLockManager requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
         self._inner = VFSLockManager()
@@ -306,12 +306,12 @@ def create_vfs_lock_manager() -> RustVFSLockManager | PythonVFSLockManager:
     """
     import sys
 
-    if "nexus_fast" not in sys.modules or sys.modules["nexus_fast"] is None:
-        logger.debug("VFS lock manager: Python (nexus_fast not available)")
+    if "nexus_kernel" not in sys.modules or sys.modules["nexus_kernel"] is None:
+        logger.debug("VFS lock manager: Python (nexus_kernel not available)")
         return PythonVFSLockManager()
     try:
         mgr = RustVFSLockManager()
-        logger.debug("VFS lock manager: Rust (nexus_fast)")
+        logger.debug("VFS lock manager: Rust (nexus_kernel)")
         return mgr
     except Exception as exc:
         logger.debug("Rust VFS lock manager unavailable (%s), using Python fallback", exc)

@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RUST_SRC = ROOT / "rust" / "nexus_kernel" / "src"
 
-STUBS_PATH = ROOT / "stubs" / "nexus_fast" / "__init__.pyi"
+STUBS_PATH = ROOT / "stubs" / "nexus_kernel" / "__init__.pyi"
 EXPORTS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_exports.py"
 PROTOCOLS_PATH = ROOT / "src" / "nexus" / "core" / "kernel_protocols.py"
 
@@ -619,7 +619,7 @@ def generate_stubs(
         MARKER,
         "# Source: rust/nexus_kernel/src/*.rs",
         "",
-        '"""Type stubs for nexus_fast — Rust-accelerated PyO3 extension module.',
+        '"""Type stubs for nexus_kernel — Rust-accelerated PyO3 extension module.',
         "",
         "Auto-generated from rust/nexus_kernel/src/*.rs exports.",
         "Re-run: python scripts/codegen_kernel_abi.py",
@@ -780,7 +780,7 @@ def generate_exports(all_names: list[str]) -> str:
         '"""',
         "from __future__ import annotations",
         "",
-        "from nexus_fast import (",
+        "from nexus_kernel import (",
     ]
 
     for name in sorted(all_names):

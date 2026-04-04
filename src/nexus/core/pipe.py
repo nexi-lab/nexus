@@ -18,7 +18,7 @@ Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **data** (bytes in ring buffer) → process heap (not in any pillar)
 
 Design: SPSC (single-producer, single-consumer) message-oriented buffer with
-byte-capacity tracking. Data plane in Rust (nexus_fast.RingBufferCore) for
+byte-capacity tracking. Data plane in Rust (nexus_kernel.RingBufferCore) for
 ~0.5μs/op. asyncio.Event pairs provide blocking semantics from Python.
 
 See: federation-memo.md §7j
@@ -127,7 +127,7 @@ class RingBuffer:
     For VFS-visible named pipes (mkfifo equivalent), use PipeManager
     from core/pipe_manager.py.
 
-    Data plane backed by Rust ``nexus_fast.RingBufferCore`` (~0.5μs/op).
+    Data plane backed by Rust ``nexus_kernel.RingBufferCore`` (~0.5μs/op).
     Python provides asyncio.Event coordination for blocking read/write.
     """
 
@@ -151,7 +151,7 @@ class RingBuffer:
             raise ValueError(f"capacity must be > 0, got {capacity}")
         if _RingBufferCoreType is None:
             raise RuntimeError(
-                "Pipe requires the nexus-fast Rust extension. "
+                "Pipe requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
         self._core = _RingBufferCoreType(capacity)

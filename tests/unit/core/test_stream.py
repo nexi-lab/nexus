@@ -13,7 +13,7 @@ from nexus.core.stream import (
 )
 
 try:
-    from nexus_fast import StreamBufferCore  # noqa: F401
+    from nexus_kernel import StreamBufferCore  # noqa: F401
 
     _HAS_STREAM_CORE = True
 except ImportError:
@@ -21,7 +21,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not _HAS_STREAM_CORE,
-    reason="nexus_fast.StreamBufferCore not built — rebuild Rust extension",
+    reason="nexus_kernel.StreamBufferCore not built — rebuild Rust extension",
 )
 
 # ---------------------------------------------------------------------------

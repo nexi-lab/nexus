@@ -22,7 +22,7 @@ def make_hash(seed: int) -> str:
 
 
 def run_benchmark(count: int = 100_000) -> None:
-    from nexus_fast import VolumeEngine
+    from nexus_kernel import VolumeEngine
 
     with tempfile.TemporaryDirectory() as d:
         vol_dir = f"{d}/volumes"

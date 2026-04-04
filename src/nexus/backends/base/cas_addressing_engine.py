@@ -121,7 +121,7 @@ class CASAddressingEngine(Backend):
         self._transport = transport
         self._backend_name = backend_name or f"cas-{transport.transport_name}"
         # Feature DI: None means feature disabled (cloud backends pass nothing)
-        self._bloom = bloom_filter  # nexus_fast.BloomFilter
+        self._bloom = bloom_filter  # nexus_kernel.BloomFilter
         self._cache = content_cache  # storage.content_cache.ContentCache
         self._meta_cache: Any | None = meta_cache  # cachetools.LRUCache
         self._meta_cache_hits = 0

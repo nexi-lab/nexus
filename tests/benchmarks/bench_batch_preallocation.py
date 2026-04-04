@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-nf = pytest.importorskip("nexus_fast")
+nf = pytest.importorskip("nexus_kernel")
 VolumeEngine = nf.VolumeEngine
 
 ITERATIONS = 3

@@ -235,14 +235,14 @@ class NexusFS(  # type: ignore[misc]
         self._service_registry: ServiceRegistry = ServiceRegistry(dispatch=self)
 
         # ── Kernel (Issue #1817 — single-FFI sys_read/sys_write) ──
-        # Optional: requires nexus_fast Rust extension. Falls back to pure
+        # Optional: requires nexus_kernel Rust extension. Falls back to pure
         # Python path (slower but functional) when unavailable.
         from nexus._rust_compat import RUST_AVAILABLE
 
         self._kernel = None
         if RUST_AVAILABLE:
             try:
-                from nexus_fast import Kernel as _Kernel
+                from nexus_kernel import Kernel as _Kernel
 
                 self._kernel = _Kernel()
                 metadata_store._kernel = self._kernel

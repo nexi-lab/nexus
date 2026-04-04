@@ -80,7 +80,7 @@ repos:
 
       # Fast Rust format check (< 2s)
       - id: rust-fmt-fast
-        name: Rust Format Check (nexus_fast)
+        name: Rust Format Check (nexus_kernel)
         entry: bash -c 'cd rust/nexus_kernel && cargo fmt --check'
         language: system
         pass_filenames: false
@@ -95,7 +95,7 @@ repos:
 
       # Rust clippy (requires compilation, ~10-30s per crate)
       - id: rust-clippy-fast
-        name: Rust Clippy (nexus_fast)
+        name: Rust Clippy (nexus_kernel)
         entry: bash -c 'cd rust/nexus_kernel && cargo clippy -- -D warnings'
         language: system
         pass_filenames: false

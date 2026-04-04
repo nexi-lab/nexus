@@ -15,8 +15,8 @@ The module automatically falls back to Python implementation if Rust is unavaila
 import logging
 from typing import TYPE_CHECKING, Any
 
-# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_fast
-import nexus_fast as _rust_module
+# RUST_FALLBACK: rebac — compute_permissions_bulk, etc. from nexus_kernel
+import nexus_kernel as _rust_module
 
 if TYPE_CHECKING:
     from nexus.bricks.rebac.domain import Entity
@@ -30,14 +30,14 @@ logger = logging.getLogger(__name__)
 _internal_module: Any = _rust_module
 _external_module: Any = _rust_module
 RUST_AVAILABLE = True
-logger.info("Rust acceleration available (nexus_fast)")
+logger.info("Rust acceleration available (nexus_kernel)")
 
 
 def is_rust_available() -> bool:
     """Check if Rust acceleration is available.
 
     Returns:
-        True if nexus_fast Rust extension is loaded, False otherwise
+        True if nexus_kernel Rust extension is loaded, False otherwise
     """
     return RUST_AVAILABLE
 
@@ -330,7 +330,7 @@ def check_permission_single_rust(
     if _external_module is None:
         raise RuntimeError(
             "Rust single permission check not available. "
-            "Install nexus_fast: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
         )
 
     try:
@@ -468,7 +468,7 @@ def expand_subjects_rust(
     if _external_module is None:
         raise RuntimeError(
             "Rust expand_subjects not available. "
-            "Install nexus_fast: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
         )
 
     try:
@@ -586,7 +586,7 @@ def list_objects_for_subject_rust(
     if _external_module is None:
         raise RuntimeError(
             "Rust list_objects_for_subject not available. "
-            "Install nexus_fast: cd rust/nexus_kernel && maturin develop"
+            "Install nexus_kernel: cd rust/nexus_kernel && maturin develop"
         )
 
     try:

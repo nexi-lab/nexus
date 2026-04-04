@@ -1471,7 +1471,7 @@ fn hostname_to_node_id(hostname: &str) -> u64 {
 }
 
 /// Python module initialization.
-/// Module name: _nexus_raft (consistent with _nexus_fast)
+/// Module name: _nexus_raft (consistent with _nexus_kernel)
 /// Import as: from _nexus_raft import Metastore, ZoneManager, ZoneHandle
 #[pymodule]
 fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {

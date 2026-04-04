@@ -12,7 +12,7 @@ Re-run: python scripts/codegen_kernel_abi.py
 
 from __future__ import annotations
 
-from nexus_fast import (
+from nexus_kernel import (
     BloomFilter,
     Kernel,
     L1MetadataCache,

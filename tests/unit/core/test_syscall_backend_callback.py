@@ -9,7 +9,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from nexus_fast import (
+from nexus_kernel import (
     Kernel,
     hash_bytes,
 )

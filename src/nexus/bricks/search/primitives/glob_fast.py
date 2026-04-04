@@ -1,12 +1,12 @@
 """Fast glob pattern matching using Rust acceleration.
 
 This module provides high-performance glob matching functions that use the Rust
-nexus_fast library for pattern matching, achieving 10-20x speedup over
+nexus_kernel library for pattern matching, achieving 10-20x speedup over
 the pure Python implementation using regex/fnmatch.
 
 Falls back to Python fnmatch if Rust extension is not available.
 
-# RUST_FALLBACK: glob_fast — glob_match_bulk has Rust equivalent in nexus_fast.
+# RUST_FALLBACK: glob_fast — glob_match_bulk has Rust equivalent in nexus_kernel.
 
 Functions:
     glob_match_bulk: Match paths against multiple patterns (returns None if Rust unavailable)
@@ -20,7 +20,7 @@ import fnmatch
 import re
 
 # RUST_FALLBACK: glob_match_bulk
-from nexus_fast import glob_match_bulk as _rust_glob_match_bulk
+from nexus_kernel import glob_match_bulk as _rust_glob_match_bulk
 
 RUST_AVAILABLE = True
 

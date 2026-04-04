@@ -1,12 +1,12 @@
 """Fast grep implementation using Rust acceleration.
 
 This module provides a high-performance grep function that uses the Rust
-nexus_fast library for regex matching, achieving 50-100x speedup over
+nexus_kernel library for regex matching, achieving 50-100x speedup over
 the pure Python implementation.
 
 Falls back to None if Rust extension is not available.
 
-# RUST_FALLBACK: grep_fast — grep_bulk, grep_files_mmap have Rust equivalents in nexus_fast.
+# RUST_FALLBACK: grep_fast — grep_bulk, grep_files_mmap have Rust equivalents in nexus_kernel.
 
 Issue #893: Added grep_files_mmap for memory-mapped I/O performance.
 """
@@ -14,8 +14,8 @@ Issue #893: Added grep_files_mmap for memory-mapped I/O performance.
 from typing import Any
 
 # RUST_FALLBACK: grep_bulk, grep_files_mmap
-from nexus_fast import grep_bulk as _rust_grep_bulk
-from nexus_fast import grep_files_mmap as _rust_grep_files_mmap
+from nexus_kernel import grep_bulk as _rust_grep_bulk
+from nexus_kernel import grep_files_mmap as _rust_grep_files_mmap
 
 RUST_AVAILABLE = True
 MMAP_AVAILABLE = True

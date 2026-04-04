@@ -39,7 +39,7 @@ use pyo3::prelude::*;
 
 /// Python module definition.
 #[pymodule]
-fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
+fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // ReBAC
     m.add_function(wrap_pyfunction!(rebac::compute_permissions_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::compute_permission_single, m)?)?;

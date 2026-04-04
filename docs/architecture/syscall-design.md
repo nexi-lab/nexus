@@ -301,7 +301,7 @@ Key design decisions:
 | `Arc<Inner>` on 5+ structs | **Gone** — all structs are fields of one kernel struct |
 | GIL safety clone-then-call | **Gone** — only for Python backend calls (unchanged) |
 | Dual Rust/Python code paths | **Gone** — one Rust path, Python fallback only for backends |
-| `stubs/nexus_fast/__init__.pyi` | **Simplified** — only PyO3 bindings, not internal types |
+| `stubs/nexus_kernel/__init__.pyi` | **Simplified** — only PyO3 bindings, not internal types |
 | Per-feature 6-file updates | **2 files** — proto + Rust impl (or just Rust for non-network) |
 
 ### 7.4 Concrete code shape

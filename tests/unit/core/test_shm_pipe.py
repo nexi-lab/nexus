@@ -9,9 +9,9 @@ import asyncio
 
 import pytest
 
-pytest.importorskip("nexus_fast")
+pytest.importorskip("nexus_kernel")
 
-from nexus_fast import SharedRingBufferCore
+from nexus_kernel import SharedRingBufferCore
 
 from nexus.core.pipe import PipeBackend, PipeEmptyError, PipeFullError
 from nexus.core.shm_pipe import SharedRingBuffer

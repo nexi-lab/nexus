@@ -23,7 +23,7 @@ def _make_volume_transport(tmp_path):
 
         return VolumeLocalTransport(root_path=tmp_path, fsync=False)
     except Exception:
-        pytest.skip("VolumeLocalTransport not available (nexus_fast not built)")
+        pytest.skip("VolumeLocalTransport not available (nexus_kernel not built)")
 
 
 @pytest.fixture(params=["local", "volume"], ids=["LocalTransport", "VolumeLocalTransport"])

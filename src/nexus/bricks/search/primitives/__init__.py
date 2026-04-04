@@ -9,7 +9,7 @@ These primitives power Search brick operations:
 - trigram_fast: Trigram-based search indexing
 
 Re-exported for convenience. All modules follow Rust-accelerated pattern
-with Python fallback when nexus_fast is unavailable.
+with Python fallback when nexus_kernel is unavailable.
 
 Related: NEXUS-LEGO-ARCHITECTURE.md (minimal kernel, maximal bricks)
 """

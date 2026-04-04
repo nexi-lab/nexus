@@ -1,6 +1,6 @@
 //! `nexus_core` — portable Rust kernel for Nexus.
 //!
-//! This crate contains WASM-safe computation extracted from `nexus_fast`.
+//! This crate contains WASM-safe computation extracted from `nexus_kernel`.
 //! It compiles to `wasm32-unknown-unknown` and has zero CPython (PyO3) dependency.
 //!
 //! Modules:

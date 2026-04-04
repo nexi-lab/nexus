@@ -156,7 +156,7 @@ jobs:
 
       - name: Verify Rust extensions
         run: |
-          uv run python -c "import nexus_fast; print('nexus_fast OK')"
+          uv run python -c "import nexus_kernel; print('nexus_kernel OK')"
           uv run python -c "from _nexus_raft import Metastore; print('nexus_raft OK')"
         shell: bash
 

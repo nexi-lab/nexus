@@ -3,7 +3,7 @@ requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "nexus-fast"
+name = "nexus-kernel"
 version = "0.9.21"
 description = "Fast Rust-based ReBAC permission computation for Nexus"
 requires-python = ">=3.12"
@@ -13,4 +13,4 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "nexus_fast"
+module-name = "nexus_kernel"

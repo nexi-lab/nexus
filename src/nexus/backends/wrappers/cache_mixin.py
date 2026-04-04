@@ -23,7 +23,7 @@ from nexus.contracts.types import OperationContext
 
 # RUST_FALLBACK: L1MetadataCache
 if TYPE_CHECKING:
-    from nexus_fast import L1MetadataCache
+    from nexus_kernel import L1MetadataCache
     from sqlalchemy.orm import Session
 
     from nexus.backends.cache.service import CacheService as _CacheServiceType
@@ -86,7 +86,7 @@ class CacheConnectorMixin:
         """Get or create the shared L1 metadata cache (Rust-based)."""
         if cls._l1_cache is None:
             # RUST_FALLBACK: L1MetadataCache
-            from nexus_fast import L1MetadataCache
+            from nexus_kernel import L1MetadataCache
 
             cls._l1_cache = L1MetadataCache(
                 max_entries=cls._l1_max_entries,

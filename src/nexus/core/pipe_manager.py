@@ -192,7 +192,7 @@ class PipeManager:
 
         if _RBC is None:
             raise PipeError(
-                "Pipe creation requires the nexus-fast Rust extension. "
+                "Pipe creation requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
         buf = RingBuffer(capacity=capacity)
@@ -283,7 +283,7 @@ class PipeManager:
         from nexus._rust_compat import RingBufferCore as _RBC
 
         if _RBC is None:
-            raise PipeError(f"Cannot reopen pipe at {path}: nexus-fast Rust extension required.")
+            raise PipeError(f"Cannot reopen pipe at {path}: nexus-kernel Rust extension required.")
         buf = RingBuffer(capacity=capacity)
         self._buffers[path] = buf
 

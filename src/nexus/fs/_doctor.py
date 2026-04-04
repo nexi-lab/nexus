@@ -95,20 +95,20 @@ def check_nexus_fs_version() -> DoctorCheckResult:
             )
 
 
-def check_nexus_fast_version() -> DoctorCheckResult:
-    """Check nexus-fast (Rust/pyo3) availability."""
+def check_nexus_kernel_version() -> DoctorCheckResult:
+    """Check nexus-kernel (Rust/pyo3) availability."""
     try:
         import nexus_kernel
 
         version = getattr(nexus_kernel, "__version__", "unknown")
         return DoctorCheckResult(
-            name="nexus-fast",
+            name="nexus-kernel",
             status=DoctorStatus.PASS,
             message=f"v{version}",
         )
     except ImportError:
         return DoctorCheckResult(
-            name="nexus-fast",
+            name="nexus-kernel",
             status=DoctorStatus.NOT_INSTALLED,
             message="Rust accelerator not installed (optional)",
             install_cmd="pip install nexus-pyo3",
@@ -299,7 +299,7 @@ async def _run_all_checks_inner(
 ) -> dict[str, list[DoctorCheckResult]]:
     """Core check logic — called within the overall timeout wrapper."""
     # Section 1: Environment (sync checks, run in thread pool)
-    env_checks = [check_python_version, check_nexus_fs_version, check_nexus_fast_version]
+    env_checks = [check_python_version, check_nexus_fs_version, check_nexus_kernel_version]
     env_coros = [asyncio.to_thread(fn) for fn in env_checks]
 
     # Section 2: Backends (sync checks, run in thread pool)
@@ -310,7 +310,7 @@ async def _run_all_checks_inner(
     # Run env + backend checks concurrently with per-check timeouts
     all_coros = env_coros + backend_install_coros + backend_cred_coros
     all_names = (
-        ["python", "nexus-fs", "nexus-fast"]
+        ["python", "nexus-fs", "nexus-kernel"]
         + [f"{s}-backend" for s in schemes]
         + [f"{s}-creds" for s in schemes]
     )

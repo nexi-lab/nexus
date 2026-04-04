@@ -30,7 +30,6 @@ class _StubFS:
         self.resolve_read = MagicMock(return_value=(False, None))
         self.intercept_pre_read = MagicMock()
         self.intercept_pre_stat = MagicMock()
-        self._overlay_resolver = None
         # Kernel IPC primitives — empty registries (no pipes/streams in range tests)
         self._pipe_manager = None
         self._stream_manager = MagicMock()
@@ -51,9 +50,6 @@ class _StubFS:
 
     def _parse_context(self, context):
         return context
-
-    def _get_overlay_config(self, path):
-        return None
 
     @contextlib.contextmanager
     def _vfs_locked(self, path, mode):

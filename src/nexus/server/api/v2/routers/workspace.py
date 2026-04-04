@@ -49,8 +49,6 @@ class WorkspaceRegisterRequest(BaseModel):
     ttl_seconds: int | None = Field(
         None, ge=60, le=604800, description="TTL in seconds (60s to 7d)"
     )
-    overlay: bool = Field(False, description="Enable overlay for this workspace")
-    base_snapshot_hash: str | None = Field(None, description="Base manifest CAS hash for overlay")
 
     @field_validator("path")
     @classmethod
@@ -212,8 +210,6 @@ def register_workspace(
             context=context,
             session_id=request.session_id,
             ttl=ttl,
-            overlay=request.overlay,
-            base_snapshot_hash=request.base_snapshot_hash,
         )
 
         db_model = _get_workspace_db_model(registry, request.path)

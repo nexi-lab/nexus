@@ -189,8 +189,6 @@ class WorkspaceRegistry:
         context: Any | None = None,
         session_id: str | None = None,
         ttl: Any | None = None,
-        overlay: bool = False,
-        base_snapshot_hash: str | None = None,
     ) -> WorkspaceConfig:
         """Register a directory as a workspace."""
         if path in self._workspaces:
@@ -202,12 +200,6 @@ class WorkspaceRegistry:
         expires_at = self._compute_expiry(ttl)
 
         ws_metadata = metadata or {}
-        if overlay and base_snapshot_hash:
-            ws_metadata["overlay_config"] = {
-                "enabled": True,
-                "base_manifest_hash": base_snapshot_hash,
-                "agent_id": agent_id,
-            }
 
         config = WorkspaceConfig(
             path=path,

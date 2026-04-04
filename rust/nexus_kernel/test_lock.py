@@ -2,7 +2,7 @@
 """Direct tests for the Rust VFSLockManager via nexus_fast (Issue #1398).
 
 Run after building with: maturin develop
-Usage: python rust/nexus_pyo3/test_lock.py
+Usage: python rust/nexus_kernel/test_lock.py
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 [package]
-name = "nexus_pyo3"
+name = "nexus_kernel"
 version = "0.9.21"
 edition = "2021"
 

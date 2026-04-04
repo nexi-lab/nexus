@@ -263,7 +263,7 @@ uv run pytest tests/
 ```
 
 For semantic search work: `uv sync --extra semantic-search`
-For Rust extensions: `maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+For Rust extensions: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
@@ -279,7 +279,7 @@ Install from PyPI: `pip install nexus-ai-fs`. The package name on PyPI is `nexus
 <details>
 <summary><code>maturin develop</code> fails at the repo root</summary>
 
-Point maturin at a crate manifest: `maturin develop --release -m rust/nexus_pyo3/Cargo.toml`
+Point maturin at a crate manifest: `maturin develop --release -m rust/nexus_kernel/Cargo.toml`
 
 </details>
 

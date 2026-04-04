@@ -56,15 +56,15 @@ class TestNexusFsVersion:
 class TestNexusFastVersion:
     def test_installed(self):
         mock_module = MagicMock(__version__="0.9.10")
-        with patch.dict("sys.modules", {"nexus_pyo3": mock_module}):
+        with patch.dict("sys.modules", {"nexus_kernel": mock_module}):
             result = check_nexus_fast_version()
             assert result.status == DoctorStatus.PASS
             assert "0.9.10" in result.message
 
     def test_not_installed(self):
         with (
-            patch.dict("sys.modules", {"nexus_pyo3": None}),
-            patch("builtins.__import__", side_effect=ImportError("no nexus_pyo3")),
+            patch.dict("sys.modules", {"nexus_kernel": None}),
+            patch("builtins.__import__", side_effect=ImportError("no nexus_kernel")),
         ):
             result = check_nexus_fast_version()
             assert result.status == DoctorStatus.NOT_INSTALLED

@@ -111,7 +111,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_F16=0 \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
-    maturin build --release --out /build/dist -m rust/nexus_pyo3/Cargo.toml
+    maturin build --release --out /build/dist -m rust/nexus_kernel/Cargo.toml
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,id=cargo-target-${TARGETARCH},target=/build/target \

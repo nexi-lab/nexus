@@ -5,13 +5,13 @@ This guide shows how to integrate the high-performance Rust permission checker w
 ## Step 1: Install the Extension
 
 ```bash
-cd rust/nexus_pyo3
+cd rust/nexus_kernel
 maturin develop
 ```
 
 Or for production (optimized):
 ```bash
-cd rust/nexus_pyo3
+cd rust/nexus_kernel
 maturin build --release
 pip install target/wheels/nexus_fast-*.whl
 ```

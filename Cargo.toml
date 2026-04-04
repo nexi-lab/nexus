@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "rust/nexus_core",
-    "rust/nexus_pyo3",
+    "rust/nexus_kernel",
     "rust/nexus_raft",
     "rust/nexus_tasks",
 ]

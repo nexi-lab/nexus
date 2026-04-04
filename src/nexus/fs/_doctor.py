@@ -98,9 +98,9 @@ def check_nexus_fs_version() -> DoctorCheckResult:
 def check_nexus_fast_version() -> DoctorCheckResult:
     """Check nexus-fast (Rust/pyo3) availability."""
     try:
-        import nexus_pyo3
+        import nexus_kernel
 
-        version = getattr(nexus_pyo3, "__version__", "unknown")
+        version = getattr(nexus_kernel, "__version__", "unknown")
         return DoctorCheckResult(
             name="nexus-fast",
             status=DoctorStatus.PASS,

@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::backend::{CasLocalBackend, ObjectStore};
-use crate::generated_adapters::PyObjectStoreAdapter;
+use crate::generated_store::PyObjectStoreAdapter;
 
 // ---------------------------------------------------------------------------
 // Internal types

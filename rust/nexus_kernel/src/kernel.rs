@@ -13,7 +13,7 @@
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{HookRegistry, ObserverRegistry, Trie};
-use crate::generated_adapters::PyMetastoreAdapter;
+use crate::generated_store::PyMetastoreAdapter;
 use crate::lock::{LockMode, VFSLockManager, VFSLockManagerInner};
 use crate::metastore::Metastore;
 use crate::router::PathRouter;
@@ -376,10 +376,10 @@ impl Kernel {
 
     /// Register a hook for an operation.
     ///
-    /// Wraps the Python hook with PyInterceptHookAdapter (in generated_adapters.rs)
+    /// Wraps the Python hook with PyInterceptHookAdapter (in generated_store.rs)
     /// so the kernel stores Box<dyn InterceptHook> — language-agnostic.
     fn register_hook(&self, py: Python<'_>, op: &str, hook: Py<PyAny>) -> PyResult<()> {
-        use crate::dispatch_adapters::PyInterceptHookAdapter;
+        use crate::generated_dispatch::PyInterceptHookAdapter;
 
         let hook_ref = hook.bind(py);
         let name: String = hook_ref

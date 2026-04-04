@@ -1,0 +1,177 @@
+name: Release nexus-fs
+
+# Standalone release pipeline for the nexus-fs slim package.
+# Triggered by tags of the form nexus-fs-v<semver> (e.g. nexus-fs-v0.4.2).
+# This allows nexus-fs hotfixes and minor releases without requiring a full
+# nexus-ai-fs main release bump.
+#
+# The publish-nexus-fs job in release.yml has a skip-if-exists guard, so
+# co-releases via the main pipeline will silently no-op if this workflow
+# already published the version.
+#
+# Idempotency: if PyPI publish succeeds but a later step fails (e.g. gh release
+# create), reruns skip the publish step rather than hard-failing. This avoids
+# forcing a version bump for a pure infrastructure failure.
+
+on:
+  push:
+    tags:
+      - "nexus-fs-v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  verify-version:
+    name: Verify version matches tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify version
+        id: check
+        run: |
+          TAG_VERSION=${GITHUB_REF#refs/tags/nexus-fs-v}
+          PKG_VERSION=$(grep '^version = ' packages/nexus-fs/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Tag version:     $TAG_VERSION"
+          echo "Package version: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "❌ Version mismatch: tag is nexus-fs-v$TAG_VERSION but packages/nexus-fs/pyproject.toml is $PKG_VERSION"
+            exit 1
+          fi
+          echo "✅ Version match confirmed: $PKG_VERSION"
+          echo "version=$PKG_VERSION" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Build and publish nexus-fs to PyPI
+    needs: [verify-version]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: python -m pip install build hatchling
+
+      - name: Build nexus-fs wheel and sdist
+        run: |
+          ln -s ../../src src
+          sed -i 's|"../../src/nexus"|"src/nexus"|' pyproject.toml
+          python -m hatchling build -d ../../dist-nexus-fs
+          git checkout pyproject.toml
+          rm -f src
+        working-directory: packages/nexus-fs
+
+      - name: Validate wheel
+        run: |
+          pip install twine check-wheel-contents pydistcheck
+          twine check --strict dist-nexus-fs/*
+          check-wheel-contents dist-nexus-fs/*.whl || echo "::warning::check-wheel-contents found issues (non-fatal)"
+          pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
+
+      - name: Smoke test — install in clean environment
+        env:
+          NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          python -m venv /tmp/nexus-fs-release-test
+          /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
+          RUNTIME_VERSION=$(/tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(nexus.fs.__version__)")
+          echo "Runtime __version__: $RUNTIME_VERSION"
+          if [ "$RUNTIME_VERSION" != "$NEXUS_FS_VERSION" ]; then
+            echo "❌ nexus.fs.__version__ ($RUNTIME_VERSION) does not match release version ($NEXUS_FS_VERSION)"
+            exit 1
+          fi
+          echo "✅ nexus.fs.__version__ matches tag"
+          /tmp/nexus-fs-release-test/bin/nexus-fs --help
+
+      - name: Check if version already on PyPI
+        id: pypi-check
+        env:
+          NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import urllib.error
+          import urllib.request
+
+          version = os.environ["NEXUS_FS_VERSION"]
+          local_files = {p.name for p in pathlib.Path("dist-nexus-fs").iterdir()}
+
+          url = "https://pypi.org/pypi/nexus-fs/json"
+          remote_files = set()
+
+          try:
+              with urllib.request.urlopen(url) as response:
+                  payload = json.load(response)
+          except urllib.error.HTTPError as exc:
+              if exc.code != 404:
+                  raise
+          else:
+              remote_files = {
+                  f["filename"]
+                  for f in payload.get("releases", {}).get(version, [])
+              }
+
+          missing = local_files - remote_files
+          already_present = local_files & remote_files
+
+          if not missing:
+              # All local artifacts are already on PyPI — safe to skip publish.
+              print(f"⏭ All artifacts for nexus-fs {version} already on PyPI — skipping publish")
+              skip = "true"
+          elif already_present:
+              # Partial upload detected — fail loudly so the state is not silently ignored.
+              print(f"❌ Partial publish detected for nexus-fs {version}:")
+              print(f"   Already on PyPI : {sorted(already_present)}")
+              print(f"   Missing         : {sorted(missing)}")
+              print("   Manual intervention required — cannot safely re-upload partial releases.")
+              raise SystemExit(1)
+          else:
+              print(f"✅ nexus-fs {version} not yet on PyPI — proceeding with publish")
+              skip = "false"
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"skip={skip}\n")
+          PY
+
+      - name: Publish nexus-fs to PyPI
+        if: steps.pypi-check.outputs.skip != 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: dist-nexus-fs
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-fs-dist
+          path: dist-nexus-fs/*
+          retention-days: 90
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
+        run: |
+          if gh release view "nexus-fs-v${NEXUS_FS_VERSION}" &>/dev/null; then
+            echo "⏭ GitHub Release nexus-fs-v${NEXUS_FS_VERSION} already exists — skipping"
+          else
+            gh release create "nexus-fs-v${NEXUS_FS_VERSION}" \
+              --title "nexus-fs v${NEXUS_FS_VERSION}" \
+              --notes "See [packages/nexus-fs/pyproject.toml](packages/nexus-fs/pyproject.toml) for details." \
+              --latest=false \
+              dist-nexus-fs/*
+          fi

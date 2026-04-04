@@ -195,10 +195,10 @@ class NexusFS(  # type: ignore[misc]
 
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
 
-        from nexus.remote.rpc_transport import RPCTransportPool as _RPCTransportPool
-
-        self._transport_pool: _RPCTransportPool | None = None
+        self._transport_pool = None
         if _ipc_self_addr:
+            from nexus.remote.rpc_transport import RPCTransportPool as _RPCTransportPool
+
             self._transport_pool = _RPCTransportPool()
 
         from nexus.core.driver_lifecycle_coordinator import DriverLifecycleCoordinator

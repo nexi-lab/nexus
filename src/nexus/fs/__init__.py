@@ -17,7 +17,7 @@ All imports are lazy to keep ``import nexus.fs`` under 200ms.
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.4.2"
 
 # =============================================================================
 # LAZY IMPORTS — everything is deferred for <200ms import time

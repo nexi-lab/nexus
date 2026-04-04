@@ -175,6 +175,55 @@ impl Kernel {
         self.metastore = Some(Box::new(PyMetastoreAdapter::new(metastore)));
     }
 
+    // ── Metastore proxy methods ──────────────────────────────────────────
+
+    /// Put metadata via Rust Metastore trait (PyMetastoreAdapter → Python MetastoreABC).
+    ///
+    /// Bridges Rust kernel → Python metastore for write operations.
+    /// Used by sys_write (PR 11) after CAS write to persist metadata.
+    #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn metastore_put(
+        &self,
+        path: &str,
+        backend_name: &str,
+        physical_path: &str,
+        size: u64,
+        entry_type: u8,
+        version: u32,
+        etag: Option<&str>,
+        zone_id: Option<&str>,
+        mime_type: Option<&str>,
+    ) -> PyResult<()> {
+        let ms = self
+            .metastore
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("metastore not wired"))?;
+        let meta = crate::metastore::FileMetadata {
+            path: path.to_string(),
+            backend_name: backend_name.to_string(),
+            physical_path: physical_path.to_string(),
+            size,
+            etag: etag.map(|s| s.to_string()),
+            version,
+            entry_type,
+            zone_id: zone_id.map(|s| s.to_string()),
+            mime_type: mime_type.map(|s| s.to_string()),
+        };
+        ms.put(path, meta)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e:?}")))
+    }
+
+    /// Delete metadata via Rust Metastore trait. Returns true if entry existed.
+    fn metastore_delete(&self, path: &str) -> PyResult<bool> {
+        let ms = self
+            .metastore
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("metastore not wired"))?;
+        ms.delete(path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("{e:?}")))
+    }
+
     // ── DCache proxy methods ───────────────────────────────────────────
 
     /// Insert or update a cache entry.

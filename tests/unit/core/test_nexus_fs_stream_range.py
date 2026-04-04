@@ -59,12 +59,23 @@ class _StubFS:
     def _vfs_locked(self, path, mode):
         yield
 
+    async def sys_read(self, path, *, count=None, offset=0, context=None):
+        """Stub sys_read for read_range fallback path."""
+        meta = self.metadata.get(path)
+        if meta is None:
+            raise NexusFileNotFoundError(path)
+        content = self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
+            meta.etag or ""
+        )
+        if count is not None:
+            content = content[:count]
+        return content
+
 
 # Graft VFS methods onto stub (Issue #899: dissolved from mixin into NexusFS)
 from nexus.core.nexus_fs import NexusFS  # noqa: E402
 
 _StubFS.read_range = NexusFS.read_range
-_StubFS._resolve_and_read = NexusFS._resolve_and_read
 _StubFS.stream_range = NexusFS.stream_range
 
 

@@ -173,12 +173,16 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       set({
         serverVersion: features?.version ?? get().serverVersion,
         uptime: health.uptime_seconds ?? get().uptime,
+        userInfo,
       });
       if (features) {
         get().setFeatures(features);
       }
 
-      set({ connectionStatus: "connected", connectionError: null, userInfo });
+      // Route through setConnectionStatus so the connection-based feature refresh
+      // fires on reconnects too.  The TTL guard in refreshFeatures() prevents a
+      // double-fetch when setFeatures() was already called above.
+      get().setConnectionStatus("connected");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection test failed";
       set({
@@ -197,12 +201,17 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       activePanel: panel,
       panelHistory: [...state.panelHistory.slice(-9), current],
     }));
-    // Re-fetch features on panel switch (Decision 3A)
-    get().refreshFeatures();
   },
 
   setConnectionStatus: (status, error) => {
+    const previous = get().connectionStatus;
     set({ connectionStatus: status, connectionError: error ?? null });
+    // Refresh features whenever a connection is (re-)established.
+    // The TTL guard in refreshFeatures() prevents a double-fetch when
+    // testConnection() already called setFeatures() moments ago.
+    if (status === "connected" && previous !== "connected") {
+      void get().refreshFeatures();
+    }
   },
 
   setServerInfo: (info) => {
@@ -239,8 +248,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   refreshFeatures: async () => {
     const { client, featuresLastFetched } = get();
     if (!client) return;
-    // TTL: skip if fetched within the last 10 seconds (Decision 13A)
-    if (Date.now() - featuresLastFetched < 10_000) return;
+    // TTL: skip if fetched within the last 30 seconds (Decision 13A — bumped from 10s;
+    // now a reconnect-storm guard rather than a panel-switch guard)
+    if (Date.now() - featuresLastFetched < 30_000) return;
     try {
       const features = await client.get<{
         profile: string;

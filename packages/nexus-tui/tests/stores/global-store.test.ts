@@ -47,6 +47,28 @@ describe("GlobalStore", () => {
       }
       expect(useGlobalStore.getState().panelHistory.length).toBeLessThanOrEqual(10);
     });
+
+    it("does NOT call refreshFeatures on panel switch (Decision 4A)", async () => {
+      // Ensure featuresLastFetched is 0 (TTL expired) so refreshFeatures would
+      // actually fire an API call if it were triggered.
+      const mockFetchClient = {
+        get: mock(async () => ({
+          profile: "full",
+          mode: "standalone",
+          enabled_bricks: ["new_brick"],
+          disabled_bricks: [],
+          version: null,
+          rate_limit_enabled: false,
+        })),
+      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+
+      useGlobalStore.setState({ client: mockFetchClient, featuresLastFetched: 0 });
+      useGlobalStore.getState().setActivePanel("console");
+
+      // Give any async refreshFeatures a tick to fire
+      await new Promise((r) => setTimeout(r, 10));
+      expect((mockFetchClient.get as ReturnType<typeof mock>)).not.toHaveBeenCalled();
+    });
   });
 
   describe("setConnectionStatus", () => {
@@ -61,6 +83,61 @@ describe("GlobalStore", () => {
       useGlobalStore.getState().setConnectionStatus("error", "fail");
       useGlobalStore.getState().setConnectionStatus("connected");
       expect(useGlobalStore.getState().connectionError).toBeNull();
+    });
+
+    it("calls refreshFeatures when transitioning to connected (Decision 4A)", async () => {
+      const mockFetchClient = {
+        get: mock(async () => ({
+          profile: "full",
+          mode: "standalone",
+          enabled_bricks: ["brick_a"],
+          disabled_bricks: [],
+          version: null,
+          rate_limit_enabled: false,
+        })),
+      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+
+      // Start from disconnected with expired TTL so the fetch actually fires
+      useGlobalStore.setState({
+        client: mockFetchClient,
+        connectionStatus: "disconnected",
+        featuresLastFetched: 0,
+        featuresLoaded: false,
+        enabledBricks: [],
+      });
+
+      useGlobalStore.getState().setConnectionStatus("connected");
+      // refreshFeatures is async; wait for it to settle
+      await new Promise((r) => setTimeout(r, 20));
+
+      expect((mockFetchClient.get as ReturnType<typeof mock>)).toHaveBeenCalled();
+      expect(useGlobalStore.getState().enabledBricks).toEqual(["brick_a"]);
+    });
+
+    it("does NOT call refreshFeatures when already connected", async () => {
+      const mockFetchClient = {
+        get: mock(async () => ({
+          profile: "full",
+          mode: "standalone",
+          enabled_bricks: ["new"],
+          disabled_bricks: [],
+          version: null,
+          rate_limit_enabled: false,
+        })),
+      } as unknown as import("@nexus-ai-fs/api-client").FetchClient;
+
+      // Already connected, TTL expired
+      useGlobalStore.setState({
+        client: mockFetchClient,
+        connectionStatus: "connected",
+        featuresLastFetched: 0,
+      });
+
+      useGlobalStore.getState().setConnectionStatus("connected");
+      await new Promise((r) => setTimeout(r, 20));
+
+      // No transition from non-connected, so refreshFeatures should NOT fire
+      expect((mockFetchClient.get as ReturnType<typeof mock>)).not.toHaveBeenCalled();
     });
   });
 
@@ -198,7 +275,7 @@ describe("GlobalStore", () => {
 
       useGlobalStore.setState({
         client: mockFetchClient,
-        featuresLastFetched: Date.now() - 15_000, // 15s ago, past 10s TTL
+        featuresLastFetched: Date.now() - 35_000, // 35s ago, past 30s TTL
         featuresLoaded: true,
         enabledBricks: ["old_brick"],
       });

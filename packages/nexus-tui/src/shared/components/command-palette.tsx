@@ -73,7 +73,7 @@ export function CommandPalette({
     <box height="100%" width="100%" justifyContent="center" alignItems="flex-start">
       <box flexDirection="column" borderStyle="double" width={72} padding={1} marginTop={2}>
         <text style={textStyle({ bold: true })}>Command Palette</text>
-        <text style={textStyle({ fg: statusColor.info })}>{`> ${query}${query.length >= 0 ? "\u2588" : ""}`}</text>
+        <text style={textStyle({ fg: statusColor.info })}>{`> ${query}\u2588`}</text>
         <text style={textStyle({ dim: true })}>Type to filter. Enter runs. Esc closes.</text>
         <text>{""}</text>
 

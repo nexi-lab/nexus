@@ -1117,7 +1117,14 @@ class NexusFS(  # type: ignore[misc]
             return route.backend.read_content("", context=_ctx)
 
         meta = route.metastore.get(path)
+        # Overlay resolution: check base layer if upper has no entry
+        if (meta is None or meta.etag is None) and getattr(self, "_overlay_resolver", None):
+            overlay_config = self._get_overlay_config(path)
+            if overlay_config:
+                meta = self._overlay_resolver.resolve_read(path, overlay_config)
         if meta is None or (meta.etag is None and not route.backend_path):
+            raise NexusFileNotFoundError(path)
+        if getattr(self, "_overlay_resolver", None) and self._overlay_resolver.is_whiteout(meta):
             raise NexusFileNotFoundError(path)
         return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
             meta.etag or "", context=_ctx

@@ -1226,14 +1226,7 @@ class NexusFS(  # type: ignore[misc]
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
         result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        if result.hit:
-            data = result.data or b""
-            # CDC chunked manifest — read from backend instead of returning manifest JSON
-            if data[:30].startswith(b'{"type":"chunked_manifest'):
-                data = self._backend_read(path, _is_admin, context)
-        else:
-            # Non-Rust backend (GCS, remote, external) — read from Python backend
-            data = self._backend_read(path, _is_admin, context)
+        data = result.data or b"" if result.hit else self._backend_read(path, _is_admin, context)
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]

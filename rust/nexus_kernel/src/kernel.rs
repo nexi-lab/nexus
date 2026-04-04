@@ -498,12 +498,22 @@ impl Kernel {
 
         // 7. Return result
         match content {
-            Some(data) => Ok(SysReadResult {
-                hit: true,
-                data: Some(PyBytes::new(py, &data).into()),
-                post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
-                content_hash: entry.etag,
-            }),
+            Some(data) => {
+                // CDC chunked manifest — let Python CAS engine reassemble chunks
+                if data.len() < 500 * 1024
+                    && data
+                        .get(..30)
+                        .is_some_and(|prefix| prefix.starts_with(b"{\"type\":\"chunked_manifest"))
+                {
+                    return miss();
+                }
+                Ok(SysReadResult {
+                    hit: true,
+                    data: Some(PyBytes::new(py, &data).into()),
+                    post_hook_needed: self.read_hook_count.load(Ordering::Relaxed) > 0,
+                    content_hash: entry.etag,
+                })
+            }
             // No Rust backend available (e.g. remote) — wrapper handles
             None => miss(),
         }

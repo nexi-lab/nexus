@@ -1928,14 +1928,36 @@ class NexusFS(  # type: ignore[misc]
         result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         if result.hit:
-            # Rust wrote to CAS — now update metadata + dispatch events [INTERMEDIATE]
-            # _write_internal will re-call backend.write_content (CAS dedup = no-op)
-            # and handle metastore.put + event dispatch atomically.
-            await self._write_internal(
-                path=path, content=buf, offset=offset, context=context, _meta=_meta
+            # Rust wrote CAS + metadata + dcache — only dispatch events
+            zone_id, agent_id, _ = self._get_context_identity(context)
+            await self._dispatch_write_events(
+                path,
+                _WriteContentResult(
+                    content_hash=result.content_id or "",
+                    size=result.size,
+                    metadata=FileMetadata(
+                        path=path,
+                        backend_name="",
+                        physical_path=result.content_id or "",
+                        size=result.size,
+                        etag=result.content_id,
+                        version=result.version,
+                        zone_id=zone_id,
+                    ),
+                    new_version=result.version,
+                    is_new=(_meta is None),
+                    old_etag=_meta.etag if _meta else None,
+                    old_metadata=_meta,
+                    context=context or OperationContext(user_id="anonymous", groups=[]),
+                    zone_id=zone_id,
+                    agent_id=agent_id,
+                    is_remote=False,
+                    is_external=False,
+                ),
+                buf,
             )
         else:
-            # [INTERMEDIATE] DLC fallback for non-Rust backends — deleted in PR 7
+            # Non-Rust backend fallback
             await self._write_internal(
                 path=path, content=buf, offset=offset, context=context, _meta=_meta
             )

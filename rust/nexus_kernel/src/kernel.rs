@@ -91,6 +91,10 @@ pub struct SysWriteResult {
     pub content_id: Option<String>,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
+    /// Metadata version after write (for event dispatch).
+    pub version: u32,
+    /// Content size in bytes.
+    pub size: u64,
 }
 
 // ── Kernel ──────────────────────────────────────────────────────────────
@@ -576,16 +580,16 @@ impl Kernel {
 
     // ── sys_write ──────────────────────────────────────────────────────
 
-    /// Rust syscall: write file content — pure Rust path (zero GIL).
+    /// Rust syscall: write file content.
     ///
-    /// validate → route → VFS lock (blocking, GIL released) → CAS write → return.
+    /// validate → route → VFS lock → CAS write → metadata build → metastore.put
+    /// → dcache update → return.
+    ///
+    /// After CAS write, Rust builds FileMetadata (version++, size, etag=hash)
+    /// and calls metastore.put() to persist. Python only dispatches events.
     ///
     /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
-    /// or when no Rust backend is available (e.g. remote backends).
-    /// Raises `InvalidPathError` on invalid paths.
-    ///
-    /// Metastore.put (metadata update) is handled by the Python wrapper
-    /// (intermediate state — migrates to Rust metastore in PR 7).
+    /// or when no Rust backend is available.
     #[pyo3(signature = (path, ctx, content))]
     fn sys_write<'py>(
         &self,
@@ -599,6 +603,8 @@ impl Kernel {
                 hit: false,
                 content_id: None,
                 post_hook_needed: false,
+                version: 0,
+                size: 0,
             })
         };
 
@@ -639,18 +645,61 @@ impl Kernel {
             return miss();
         }
 
-        // 5. Backend write (CasLocal — pure Rust, zero GIL)
-        let result = match self.router.write_content(&route.mount_point, content) {
-            Some(hash) => Ok(SysWriteResult {
-                hit: true,
-                content_id: Some(hash),
-                post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
-            }),
-            // No Rust backend available (e.g. remote) — wrapper handles
+        // 5. Backend write (CasLocal or PyObjectStoreAdapter)
+        let content_hash = self.router.write_content(&route.mount_point, content);
+
+        // 6. After CAS write → build metadata + metastore.put + dcache update
+        let result = match content_hash {
+            Some(hash) => {
+                let content_size = content.len() as u64;
+                // Get existing version for increment
+                let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                let new_version = old_version + 1;
+
+                // Build FileMetadata and persist via metastore
+                if let Some(ref ms) = self.metastore {
+                    let meta = crate::metastore::FileMetadata {
+                        path: path.to_string(),
+                        backend_name: route.io_profile.clone(), // mount io_profile as backend key
+                        physical_path: hash.clone(),
+                        size: content_size,
+                        etag: Some(hash.clone()),
+                        version: new_version,
+                        entry_type: DT_REG,
+                        zone_id: Some(ctx.zone_id.clone()),
+                        mime_type: None,
+                    };
+                    // Best-effort metastore.put — error logged but doesn't fail write
+                    let _ = ms.put(path, meta);
+                }
+
+                // Update dcache with new metadata
+                self.dcache.put(
+                    path,
+                    CachedEntry {
+                        backend_name: route.io_profile.clone(),
+                        physical_path: hash.clone(),
+                        size: content_size,
+                        etag: Some(hash.clone()),
+                        version: new_version,
+                        entry_type: DT_REG,
+                        zone_id: Some(ctx.zone_id.clone()),
+                        mime_type: None,
+                    },
+                );
+
+                Ok(SysWriteResult {
+                    hit: true,
+                    content_id: Some(hash),
+                    post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
+                    version: new_version,
+                    size: content_size,
+                })
+            }
             None => miss(),
         };
 
-        // 6. Release VFS lock (always, even on miss)
+        // 7. Release VFS lock (always, even on miss)
         if lock_handle > 0 {
             if let Some(ref lm) = self.vfs_lock {
                 lm.do_release(lock_handle);

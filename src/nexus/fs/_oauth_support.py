@@ -449,7 +449,7 @@ async def exchange_auth_code(
         if not code_verifier:
             raise ValueError("code_verifier is required for X OAuth (PKCE).")
         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID", "")
-        client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
+        x_client_secret: str | None = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
         if not client_id:
             raise ValueError("X OAuth client ID not provided. Set NEXUS_OAUTH_X_CLIENT_ID.")
         oauth_provider = _get_x_oauth_provider_cls()(
@@ -457,7 +457,7 @@ async def exchange_auth_code(
             redirect_uri=redirect_uri,
             scopes=_X_SCOPES,
             provider_name="x",
-            client_secret=client_secret,
+            client_secret=x_client_secret,
         )
         credential = await oauth_provider.exchange_code_pkce(code, code_verifier)
         provider_name = "twitter"

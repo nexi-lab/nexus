@@ -29,6 +29,7 @@ import { useApiConsoleStore } from "../../src/stores/api-console-store.js";
 import { useConnectorsStore } from "../../src/stores/connectors-store.js";
 import { useStackStore } from "../../src/stores/stack-store.js";
 import { useUiStore } from "../../src/stores/ui-store.js";
+import { useGlobalStore } from "../../src/stores/global-store.js";
 
 // =============================================================================
 // Helpers
@@ -70,6 +71,9 @@ function resetStores(): void {
   useStackStore.setState({ error: null });
   // Reset unseen/stale timestamps (files visited at startup matches production init)
   useUiStore.setState({ panelDataTimestamps: {}, panelVisitTimestamps: { files: Date.now() } });
+  // SideNav now uses useVisibleTabs which reads from global store. Ensure
+  // featuresLoaded is false so all panels are visible regardless of brick state.
+  useGlobalStore.setState({ featuresLoaded: false, enabledBricks: [] });
 }
 
 // =============================================================================

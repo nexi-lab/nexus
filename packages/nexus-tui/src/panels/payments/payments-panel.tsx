@@ -13,6 +13,10 @@ import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useUiStore } from "../../stores/ui-store.js";
+import { useVisibleTabs } from "../../shared/hooks/use-visible-tabs.js";
+import { useTabFallback } from "../../shared/hooks/use-tab-fallback.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
+import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { BrickGate } from "../../shared/components/brick-gate.js";
 import { statusColor } from "../../shared/theme.js";
 import { BalanceCard } from "./balance-card.js";
@@ -93,6 +97,9 @@ export default function PaymentsPanel(): React.ReactNode {
   );
   const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
 
+  const visibleTabs = useVisibleTabs(PAYMENTS_TABS);
+  useTabFallback(visibleTabs, activeTab, setActiveTab);
+
   // Clamp selectedPolicyIndex when policies list shrinks (e.g. after delete)
   useEffect(() => {
     if (policies.length > 0 && selectedPolicyIndex >= policies.length) {
@@ -117,7 +124,7 @@ export default function PaymentsPanel(): React.ReactNode {
 
   // Refresh current view based on active tab.
   // Reservations are tracked locally, so no fetch is needed for that tab.
-  const refreshCurrentView = (): void => {
+  const refreshCurrentView = useCallback((): void => {
     if (!client) return;
 
     if (activeTab === "balance") {
@@ -129,13 +136,12 @@ export default function PaymentsPanel(): React.ReactNode {
     } else if (activeTab === "approvals") {
       fetchApprovals(client);
     }
-  };
+  }, [client, activeTab, fetchBalance, fetchTransactions, fetchPolicies, fetchApprovals]);
 
   // Auto-fetch when tab changes
   useEffect(() => {
     refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, client]);
+  }, [refreshCurrentView]);
 
   // Text input for afford check (numbers-only)
   const affordInput = useTextInput({
@@ -332,14 +338,7 @@ export default function PaymentsPanel(): React.ReactNode {
     <BrickGate brick="pay">
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
-        <box height={1} width="100%">
-          <text>
-            {TAB_ORDER.map((tab) => {
-              const label = TAB_LABELS[tab];
-              return tab === activeTab ? `[${label}]` : ` ${label} `;
-            }).join(" ")}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
 
         {/* Afford check input */}
         {affordInput.active && (

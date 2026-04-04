@@ -9,6 +9,7 @@
 
 import { describe, it, expect } from "bun:test";
 import { PANEL_BINDINGS, type KeyBinding } from "../../src/shared/action-registry.js";
+import { ALL_PANEL_IDS } from "../../src/shared/nav-items.js";
 import {
   jumpToStart,
   jumpToEnd,
@@ -178,12 +179,9 @@ describe("keybinding consistency (from real registry)", () => {
   });
 
   describe("registry completeness", () => {
-    it("all 10 panels have keybinding entries", () => {
-      const expectedPanels = [
-        "files", "versions", "agents", "zones", "access",
-        "payments", "search", "workflows", "infrastructure", "console",
-      ];
-      for (const panel of expectedPanels) {
+    it("every PanelId has keybinding entries in PANEL_BINDINGS", () => {
+      // Derived from ALL_PANEL_IDS so this test auto-updates when PanelId grows.
+      for (const panel of ALL_PANEL_IDS) {
         expect(PANEL_BINDINGS[panel]).toBeDefined();
         expect(PANEL_BINDINGS[panel]!.length).toBeGreaterThan(0);
       }

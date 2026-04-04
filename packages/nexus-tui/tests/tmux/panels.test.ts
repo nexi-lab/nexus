@@ -123,7 +123,7 @@ describe("Events panel (Screen 11)", () => {
       expect(content).toContain("Filter:");
 
       // Verify help bar
-      expect(content).toContain("f:filter type");
+      expect(content).toContain("f:type filter");
       expect(content).toContain("s:search");
     } finally {
       await session.destroy();

@@ -10,7 +10,7 @@ import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { useErrorStore } from "./stores/error-store.js";
 import { useAnnouncementStore } from "./stores/announcement-store.js";
-import { TabBar, type Tab } from "./shared/components/tab-bar.js";
+import { SideNav } from "./shared/components/side-nav.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
 import { AnnouncementBar } from "./shared/components/announcement-bar.js";
@@ -26,7 +26,8 @@ import { CommandPalette } from "./shared/components/command-palette.js";
 import { type CommandPaletteItem } from "./shared/command-palette.js";
 import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 import { detectConnectionState } from "./shared/hooks/use-connection-state.js";
-import { useVisibleTabs, type TabDef } from "./shared/hooks/use-visible-tabs.js";
+import { useVisibleTabs } from "./shared/hooks/use-visible-tabs.js";
+import { NAV_ITEMS } from "./shared/nav-items.js";
 import { killAllProcesses } from "./services/command-runner.js";
 import { PANEL_DESCRIPTORS } from "./shared/navigation.js";
 import {
@@ -46,53 +47,31 @@ const SearchPanel = lazy(() => import("./panels/search/search-panel.js"));
 const WorkflowsPanel = lazy(() => import("./panels/workflows/workflows-panel.js"));
 const EventsPanel = lazy(() => import("./panels/events/events-panel.js"));
 const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-panel.js"));
+const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.js"));
+const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
 
-type AppTab = Tab & TabDef<PanelId>;
-
-const TABS: readonly AppTab[] = [
-  { id: "files", label: "Files", shortcut: "1", brick: null },
-  { id: "versions", label: "Ver", shortcut: "2", brick: "versioning" },
-  { id: "agents", label: "Agent", shortcut: "3", brick: ["agent_runtime", "delegation", "ipc"] },
-  { id: "zones", label: "Zone", shortcut: "4", brick: null },
-  { id: "access", label: "ACL", shortcut: "5", brick: ["access_manifest", "governance", "auth", "delegation"] },
-  { id: "payments", label: "Pay", shortcut: "6", brick: "pay" },
-  { id: "search", label: "Find", shortcut: "7", brick: null },
-  { id: "workflows", label: "Flow", shortcut: "8", brick: "workflows" },
-  { id: "infrastructure", label: "Event", shortcut: "9", brick: null },
-  { id: "console", label: "CLI", shortcut: "0", brick: null },
-];
+/**
+ * Exhaustive panel route map — adding a new PanelId without a matching entry
+ * here is a compile-time error (Record<PanelId, ...> enforces completeness).
+ */
+export const PANEL_ROUTES: Record<PanelId, () => React.ReactNode> = {
+  files:          () => <FileExplorerPanel />,
+  versions:       () => <VersionsPanel />,
+  agents:         () => <AgentsPanel />,
+  zones:          () => <ZonesPanel />,
+  access:         () => <AccessPanel />,
+  payments:       () => <PaymentsPanel />,
+  search:         () => <SearchPanel />,
+  workflows:      () => <WorkflowsPanel />,
+  infrastructure: () => <EventsPanel />,
+  console:        () => <ApiConsolePanel />,
+  connectors:     () => <ConnectorsPanel />,
+  stack:          () => <StackPanel />,
+};
 
 function PanelRouter(): React.ReactNode {
   const activePanel = useGlobalStore((s) => s.activePanel);
-
-  switch (activePanel) {
-    case "files":
-      return <FileExplorerPanel />;
-    case "versions":
-      return <VersionsPanel />;
-    case "agents":
-      return <AgentsPanel />;
-    case "zones":
-      return <ZonesPanel />;
-    case "access":
-      return <AccessPanel />;
-    case "payments":
-      return <PaymentsPanel />;
-    case "search":
-      return <SearchPanel />;
-    case "workflows":
-      return <WorkflowsPanel />;
-    case "infrastructure":
-      return <EventsPanel />;
-    case "console":
-      return <ApiConsolePanel />;
-    default:
-      return (
-        <box height="100%" width="100%" justifyContent="center" alignItems="center">
-          <text>{`Unknown panel: "${activePanel}"`}</text>
-        </box>
-      );
-  }
+  return PANEL_ROUTES[activePanel]();
 }
 
 /**
@@ -140,8 +119,8 @@ export function App(): React.ReactNode {
   const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const visibleTabs = useVisibleTabs(TABS);
-  const tabBarTabs = visibleTabs as readonly AppTab[];
+  const [sideNavVisible, setSideNavVisible] = useState(true);
+  const visibleTabs = useVisibleTabs(NAV_ITEMS);
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
   const showWelcome = isFresh === true && !welcomeDismissed;
@@ -198,6 +177,15 @@ export function App(): React.ReactNode {
     announce(formatErrorAnnouncement(latestError.message), "error");
   }, [latestError, connectionStatus, connectionError, announce]);
 
+  // Centralized panel navigation — rejects panels not in the current visible set
+  // so that disabled-brick panels cannot be entered via keyboard shortcuts.
+  const navigateToPanel = useCallback((panelId: PanelId): void => {
+    if (useUiStore.getState().fileEditorOpen) return;
+    if (visibleTabs.some((t) => t.id === panelId)) {
+      setActivePanel(panelId);
+    }
+  }, [visibleTabs, setActivePanel]);
+
   const toggleIdentitySwitcher = useCallback(() => {
     setIdentitySwitcherOpen((prev) => !prev);
   }, []);
@@ -211,14 +199,19 @@ export function App(): React.ReactNode {
   }, []);
 
   const commandPaletteItems = React.useMemo<readonly CommandPaletteItem[]>(() => {
-    const panelCommands: CommandPaletteItem[] = tabBarTabs.map((tab) => ({
-      id: `panel:${tab.id}`,
-      title: `Switch to ${tab.label}`,
-      section: "Panels",
-      hint: tab.shortcut,
-      keywords: [tab.id, tab.label, "panel", "switch"],
-      run: () => setActivePanel(tab.id as PanelId),
-    }));
+    // Only show panels that are currently brick-enabled so hidden panels
+    // cannot be navigated to through the command palette.
+    const visiblePanelIds = new Set(visibleTabs.map((t) => t.id));
+    const panelCommands: CommandPaletteItem[] = NAV_ITEMS
+      .filter((item) => visiblePanelIds.has(item.id))
+      .map((item) => ({
+        id: `panel:${item.id}`,
+        title: `Switch to ${item.fullLabel}`,
+        section: "Panels",
+        hint: item.shortcut,
+        keywords: [item.id, item.fullLabel, "panel", "switch"],
+        run: () => setActivePanel(item.id),
+      }));
 
     const appCommands: CommandPaletteItem[] = [
       {
@@ -264,7 +257,7 @@ export function App(): React.ReactNode {
     ];
 
     return [...appCommands, ...panelCommands];
-  }, [tabBarTabs, setActivePanel, zoomedPanel, activePanel, toggleZoom]);
+  }, [visibleTabs, setActivePanel, zoomedPanel, activePanel, toggleZoom]);
 
   useKeyboard(
     showPreConnection
@@ -278,18 +271,24 @@ export function App(): React.ReactNode {
           "ctrl+i": toggleIdentitySwitcher,
         }
       : {
-          // Check fileEditorOpen synchronously inside each handler so we don't
-          // depend on React re-render timing — OpenTUI broadcasts to ALL handlers.
-          "1": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("files"); },
-          "2": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("versions"); },
-          "3": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("agents"); },
-          "4": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("zones"); },
-          "5": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("access"); },
-          "6": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("payments"); },
-          "7": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("search"); },
-          "8": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("workflows"); },
-          "9": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("infrastructure"); },
-          "0": () => { if (!useUiStore.getState().fileEditorOpen) setActivePanel("console"); },
+          // navigateToPanel checks both fileEditorOpen and brick visibility,
+          // so disabled-brick panels cannot be entered via keyboard shortcuts.
+          "1": () => navigateToPanel("files"),
+          "2": () => navigateToPanel("versions"),
+          "3": () => navigateToPanel("agents"),
+          "4": () => navigateToPanel("zones"),
+          "5": () => navigateToPanel("access"),
+          "6": () => navigateToPanel("payments"),
+          "7": () => navigateToPanel("search"),
+          "8": () => navigateToPanel("workflows"),
+          "9": () => navigateToPanel("infrastructure"),
+          "0": () => navigateToPanel("console"),
+          // Connectors and Stack have no dedicated global shortcuts: OpenTUI
+          // broadcasts to all handlers simultaneously, so any uppercase letter
+          // can collide with an existing panel-local binding (e.g. shift+c is
+          // already claimed by Access/fraud for fetchCollusionRings). Both panels
+          // remain reachable via the command palette (`:`) or the side nav.
+          "ctrl+b": () => { setSideNavVisible((v) => !v); },
           "ctrl+p": () => { if (!useUiStore.getState().fileEditorOpen) setCommandPaletteOpen(true); },
           ":": () => { if (!useUiStore.getState().fileEditorOpen) setCommandPaletteOpen(true); },
           "ctrl+i": toggleIdentitySwitcher,
@@ -315,22 +314,25 @@ export function App(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Tab bar (hidden when zoomed) */}
-      {!zoomedPanel && <TabBar tabs={tabBarTabs} activeTab={activePanel} onSelect={(id) => setActivePanel(id as PanelId)} />}
+      {/* Main row: sidebar + panel content */}
+      <box flexGrow={1} flexDirection="row">
+        {/* Side navigation (Ctrl+B toggles, hidden when zoomed) */}
+        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel} />
 
-      {/* Main content */}
-      <box flexGrow={1}>
-        <ErrorBoundary>
-          <Suspense
-            fallback={
-              <box height="100%" width="100%" justifyContent="center" alignItems="center">
-                <Spinner label="Loading panel..." />
-              </box>
-            }
-          >
-            <PanelRouter />
-          </Suspense>
-        </ErrorBoundary>
+        {/* Panel content */}
+        <box flexGrow={1}>
+          <ErrorBoundary>
+            <Suspense
+              fallback={
+                <box height="100%" width="100%" justifyContent="center" alignItems="center">
+                  <Spinner label="Loading panel..." />
+                </box>
+              }
+            >
+              <PanelRouter />
+            </Suspense>
+          </ErrorBoundary>
+        </box>
       </box>
 
       {/* Overlays */}

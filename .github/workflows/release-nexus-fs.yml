@@ -8,6 +8,10 @@ name: Release nexus-fs
 # The publish-nexus-fs job in release.yml has a skip-if-exists guard, so
 # co-releases via the main pipeline will silently no-op if this workflow
 # already published the version.
+#
+# Idempotency: if PyPI publish succeeds but a later step fails (e.g. gh release
+# create), reruns skip the publish step rather than hard-failing. This avoids
+# forcing a version bump for a pure infrastructure failure.
 
 on:
   push:
@@ -77,13 +81,21 @@ jobs:
           pydistcheck --max-allowed-size-compressed '5M' --ignore 'mixed-file-extensions' dist-nexus-fs/*.whl
 
       - name: Smoke test — install in clean environment
+        env:
+          NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
           python -m venv /tmp/nexus-fs-release-test
           /tmp/nexus-fs-release-test/bin/pip install dist-nexus-fs/*.whl
-          /tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(f'nexus-fs v{nexus.fs.__version__}')"
+          RUNTIME_VERSION=$(/tmp/nexus-fs-release-test/bin/python -c "import nexus.fs; print(nexus.fs.__version__)")
+          echo "Runtime __version__: $RUNTIME_VERSION"
+          if [ "$RUNTIME_VERSION" != "$NEXUS_FS_VERSION" ]; then
+            echo "❌ nexus.fs.__version__ ($RUNTIME_VERSION) does not match release version ($NEXUS_FS_VERSION)"
+            exit 1
+          fi
+          echo "✅ nexus.fs.__version__ matches tag"
           /tmp/nexus-fs-release-test/bin/nexus-fs --help
 
-      - name: Check version not already on PyPI
+      - name: Check if version already on PyPI
         id: pypi-check
         env:
           NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
@@ -107,14 +119,17 @@ jobs:
           else:
               exists = version in payload.get("releases", {})
 
-          if exists:
-              print(f"❌ nexus-fs {version} already exists on PyPI — delete the tag and use a new version")
-              raise SystemExit(1)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"exists={'true' if exists else 'false'}\n")
 
-          print(f"✅ nexus-fs {version} not yet on PyPI — proceeding with publish")
+          if exists:
+              print(f"⏭ nexus-fs {version} already on PyPI — skipping publish, continuing post-publish steps")
+          else:
+              print(f"✅ nexus-fs {version} not yet on PyPI — proceeding with publish")
           PY
 
       - name: Publish nexus-fs to PyPI
+        if: steps.pypi-check.outputs.exists != 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
@@ -132,8 +147,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           NEXUS_FS_VERSION: ${{ needs.verify-version.outputs.version }}
         run: |
-          gh release create "nexus-fs-v${NEXUS_FS_VERSION}" \
-            --title "nexus-fs v${NEXUS_FS_VERSION}" \
-            --notes "See [packages/nexus-fs/pyproject.toml](packages/nexus-fs/pyproject.toml) for details." \
-            --latest=false \
-            dist-nexus-fs/*
+          if gh release view "nexus-fs-v${NEXUS_FS_VERSION}" &>/dev/null; then
+            echo "⏭ GitHub Release nexus-fs-v${NEXUS_FS_VERSION} already exists — skipping"
+          else
+            gh release create "nexus-fs-v${NEXUS_FS_VERSION}" \
+              --title "nexus-fs v${NEXUS_FS_VERSION}" \
+              --notes "See [packages/nexus-fs/pyproject.toml](packages/nexus-fs/pyproject.toml) for details." \
+              --latest=false \
+              dist-nexus-fs/*
+          fi

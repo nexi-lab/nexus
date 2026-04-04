@@ -97,7 +97,7 @@ These tests fail to collect — they're skipped silently in CI but represent tec
 | Error | Files | Root Cause |
 |-------|-------|-----------|
 | `No module 'hypothesis'` | 10 files | Missing `pytest.importorskip("hypothesis")` guard |
-| `No module 'nexus_fast'` | 2 files (`test_shm_pipe.py`, `test_shm_stream.py`) | Missing skip when Rust ext not built |
+| `No module 'nexus_kernel'` | 2 files (`test_shm_pipe.py`, `test_shm_stream.py`) | Missing skip when Rust ext not built |
 | `No module 'pytest_alembic'` | 1 file | Missing optional dep guard |
 
 **Action:** Add `pytest.importorskip()` at the top of each file. This is a 1-line fix per file

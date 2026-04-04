@@ -169,7 +169,7 @@ class TestEnlistWiredServices:
 
         class _TestDispatch(DispatchMixin):
             def __init__(self):
-                from nexus_fast import Kernel
+                from nexus_kernel import Kernel
 
                 self._kernel = Kernel()
                 self._init_dispatch()

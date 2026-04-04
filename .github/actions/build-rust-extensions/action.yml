@@ -1,5 +1,5 @@
 name: Build Rust Extensions
-description: Build nexus_fast, nexus_raft, and nexus_tasks Python wheels from Rust source
+description: Build nexus_kernel, nexus_raft, and nexus_tasks Python wheels from Rust source
 
 inputs:
   profile:

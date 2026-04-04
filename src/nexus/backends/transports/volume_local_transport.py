@@ -1,6 +1,6 @@
 """Volume-packed local Transport — append-only volume files for CAS.
 
-Wraps the Rust VolumeEngine (nexus_fast.VolumeEngine) and implements the
+Wraps the Rust VolumeEngine (nexus_kernel.VolumeEngine) and implements the
 Transport protocol. Routes CAS blob keys (cas/...) to the volume engine
 and delegates directory operations (dirs/...) to an internal LocalTransport.
 
@@ -123,7 +123,7 @@ class VolumeLocalTransport:
         self._VolumeEngine: Any = None  # Class reference for lazy creation
 
         # RUST_FALLBACK: VolumeEngine
-        from nexus_fast import VolumeEngine
+        from nexus_kernel import VolumeEngine
 
         self._VolumeEngine = VolumeEngine
         self._volume_available = True

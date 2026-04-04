@@ -89,11 +89,11 @@ it in the same uv-managed environment:
 source .venv/bin/activate
 uv pip install -e . maturin
 maturin develop --release -m rust/nexus_kernel/Cargo.toml
-python -c "import nexus_fast; print('nexus_fast available')"
+python -c "import nexus_kernel; print('nexus_kernel available')"
 ```
 
 You do not need this for a normal first run. Nexus falls back to Python
-implementations when `nexus_fast` is not installed. Add it when you want faster
+implementations when `nexus_kernel` is not installed. Add it when you want faster
 grep/glob, hashing, lock/semaphore primitives, Bloom-filter paths, and some
 permission/search fast paths.
 

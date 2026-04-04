@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("nexus_fast")
+pytest.importorskip("nexus_kernel")
 
-from nexus_fast import SharedStreamBufferCore
+from nexus_kernel import SharedStreamBufferCore
 
 from nexus.core.shm_stream import SharedStreamBuffer
 from nexus.core.stream import StreamBackend, StreamEmptyError

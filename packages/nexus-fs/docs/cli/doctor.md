@@ -20,7 +20,7 @@ nexus-fs doctor --mount s3://my-bucket --mount gcs://project/bucket
 |-------|------------------|
 | Python version | Python >= 3.11 |
 | nexus-fs version | Package is installed and reports its version |
-| Rust accelerator | Optional `nexus-fast` Rust extension (speeds up hashing) |
+| Rust accelerator | Optional `nexus-kernel` Rust extension (speeds up hashing) |
 
 ### 2. Backends
 
@@ -52,7 +52,7 @@ nexus-fs doctor
 ├──────────────┼────────┼──────────────────────────┤
 │ Python       │ PASS   │ 3.13.2                   │
 │ nexus-fs     │ PASS   │ 0.1.0                    │
-│ nexus-fast   │ PASS   │ 0.2.0 (Rust accelerator) │
+│ nexus-kernel   │ PASS   │ 0.2.0 (Rust accelerator) │
 ├──────────────┼────────┼──────────────────────────┤
 │ s3 package   │ PASS   │ boto3 installed           │
 │ s3 creds     │ PASS   │ from ~/.aws/credentials   │

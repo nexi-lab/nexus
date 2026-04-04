@@ -17,8 +17,8 @@ from nexus.fs._doctor import (
     _run_with_timeout,
     check_backend_credentials,
     check_backend_installed,
-    check_nexus_fast_version,
     check_nexus_fs_version,
+    check_nexus_kernel_version,
     check_python_version,
     generate_tip,
     render_doctor,
@@ -57,7 +57,7 @@ class TestNexusFastVersion:
     def test_installed(self):
         mock_module = MagicMock(__version__="0.9.10")
         with patch.dict("sys.modules", {"nexus_kernel": mock_module}):
-            result = check_nexus_fast_version()
+            result = check_nexus_kernel_version()
             assert result.status == DoctorStatus.PASS
             assert "0.9.10" in result.message
 
@@ -66,7 +66,7 @@ class TestNexusFastVersion:
             patch.dict("sys.modules", {"nexus_kernel": None}),
             patch("builtins.__import__", side_effect=ImportError("no nexus_kernel")),
         ):
-            result = check_nexus_fast_version()
+            result = check_nexus_kernel_version()
             assert result.status == DoctorStatus.NOT_INSTALLED
             assert result.install_cmd is not None
 

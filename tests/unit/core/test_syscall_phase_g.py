@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from nexus_fast import (
+from nexus_kernel import (
     Kernel,
     VFSLockManager,
     hash_bytes,
@@ -183,7 +183,7 @@ class TestCASBackendWithLock:
         import tempfile
         from pathlib import Path
 
-        from nexus_fast import hash_bytes
+        from nexus_kernel import hash_bytes
 
         with tempfile.TemporaryDirectory() as cas_dir:
             kernel = Kernel()

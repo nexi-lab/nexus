@@ -4,7 +4,7 @@ version = "0.9.21"
 edition = "2021"
 
 [lib]
-name = "nexus_fast"
+name = "nexus_kernel"
 crate-type = ["cdylib"]
 
 [dependencies]

@@ -1,10 +1,10 @@
-# nexus_fast
+# nexus_kernel
 
 High-performance Rust implementations for Nexus core operations.
 
 ## Overview
 
-`nexus_fast` is a Python extension module written in Rust using PyO3. It provides blazing-fast implementations of:
+`nexus_kernel` is a Python extension module written in Rust using PyO3. It provides blazing-fast implementations of:
 
 1. **ReBAC Permission Computation** - 10-100x faster permission checking
 2. **Content Search (grep)** - 30-100x faster regex-based file searching
@@ -45,11 +45,11 @@ All operations use GIL-free computation for true parallel execution with zero-co
 
 ### Automatic Installation (Recommended)
 
-The published Rust extension package is `nexus-fast`. Install it directly:
+The published Rust extension package is `nexus-kernel`. Install it directly:
 
 ```bash
 # Install the Rust extension package directly
-pip install nexus-fast
+pip install nexus-kernel
 
 # Base installation (no Rust acceleration)
 pip install nexus-ai-fs
@@ -95,7 +95,7 @@ pip install target/wheels/*.whl
 ## Usage
 
 ```python
-import nexus_fast
+import nexus_kernel
 
 # Define permission checks: [(subject, permission, object), ...]
 checks = [
@@ -131,7 +131,7 @@ namespace_configs = {
 }
 
 # Compute permissions
-results = nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+results = nexus_kernel.compute_permissions_bulk(checks, tuples, namespace_configs)
 
 # Results is a dict mapping (subject_type, subject_id, permission, object_type, object_id) -> bool
 print(results[("user", "alice", "read", "file", "doc1")])  # True/False
@@ -168,7 +168,7 @@ Fast regex-based content search across multiple files.
 
 **Example:**
 ```python
-import nexus_fast
+import nexus_kernel
 
 files = {
     "/test.py": b"def hello():\n    print('Hello')\n",
@@ -176,10 +176,10 @@ files = {
 }
 
 # Case-sensitive search
-results = nexus_fast.grep_bulk(r"def \w+", files)
+results = nexus_kernel.grep_bulk(r"def \w+", files)
 
 # Case-insensitive search
-results = nexus_fast.grep_bulk("hello", files, ignore_case=True)
+results = nexus_kernel.grep_bulk("hello", files, ignore_case=True)
 ```
 
 ---
@@ -231,13 +231,13 @@ Compute multiple permission checks in bulk.
 Run the included test suite:
 
 ```bash
-python test_nexus_fast.py
+python test_nexus_kernel.py
 ```
 
 Expected output:
 ```
 ============================================================
-Testing nexus_fast Rust extension
+Testing nexus_kernel Rust extension
 ============================================================
 Test 1: Basic direct permission...
   ✓ Passed
@@ -293,14 +293,14 @@ To integrate with the Nexus Python codebase:
 
 ```python
 from nexus.bricks.rebac.domain import check_permissions_python  # existing
-import nexus_fast
+import nexus_kernel
 
 def check_permissions_optimized(checks, tuples, namespace_configs):
     """
     Fast permission checking with fallback to Python implementation.
     """
     try:
-        return nexus_fast.compute_permissions_bulk(checks, tuples, namespace_configs)
+        return nexus_kernel.compute_permissions_bulk(checks, tuples, namespace_configs)
     except Exception as e:
         # Fallback to Python implementation
         return check_permissions_python(checks, tuples, namespace_configs)
@@ -333,7 +333,7 @@ rust/nexus_kernel/
 ├── pyproject.toml          # Python packaging configuration
 ├── src/
 │   └── lib.rs             # Main implementation
-├── test_nexus_fast.py     # Test suite
+├── test_nexus_kernel.py     # Test suite
 └── README.md              # This file
 ```
 
@@ -358,7 +358,7 @@ Same as parent Nexus project.
 
 When modifying the Rust code:
 
-1. Run tests: `python test_nexus_fast.py`
+1. Run tests: `python test_nexus_kernel.py`
 2. Check formatting: `cargo fmt`
 3. Run linter: `cargo clippy`
 4. Rebuild: `maturin develop`

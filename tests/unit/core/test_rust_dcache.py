@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from nexus_fast import Kernel
+    from nexus_kernel import Kernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -26,7 +26,7 @@ DT_STREAM = 4
 DT_EXTERNAL = 5
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCachePut(unittest.TestCase):
     def setUp(self) -> None:
         self.kernel = Kernel()
@@ -51,7 +51,7 @@ class TestRustDCachePut(unittest.TestCase):
         assert self.kernel.dcache_len() == 6
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheGet(unittest.TestCase):
     def setUp(self) -> None:
         self.kernel = Kernel()
@@ -98,7 +98,7 @@ class TestRustDCacheGet(unittest.TestCase):
         assert result["zone_id"] == "corp"
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheEvict(unittest.TestCase):
     def setUp(self) -> None:
         self.kernel = Kernel()
@@ -128,7 +128,7 @@ class TestRustDCacheEvict(unittest.TestCase):
         assert self.kernel.dcache_len() == 6
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheContains(unittest.TestCase):
     def test_contains(self) -> None:
         kernel = Kernel()
@@ -137,7 +137,7 @@ class TestRustDCacheContains(unittest.TestCase):
         assert kernel.dcache_contains("/b") is False
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheStats(unittest.TestCase):
     def test_stats_empty(self) -> None:
         kernel = Kernel()
@@ -161,7 +161,7 @@ class TestRustDCacheStats(unittest.TestCase):
         assert abs(stats["hit_rate"] - 2 / 3) < 0.01
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheClear(unittest.TestCase):
     def test_clear(self) -> None:
         kernel = Kernel()
@@ -177,7 +177,7 @@ class TestRustDCacheClear(unittest.TestCase):
         assert stats["misses"] == 0
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheRepr(unittest.TestCase):
     def test_repr(self) -> None:
         kernel = Kernel()
@@ -186,7 +186,7 @@ class TestRustDCacheRepr(unittest.TestCase):
         assert "Kernel" in r
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestRustDCacheMetastoreIntegration(unittest.TestCase):
     """Verify MetastoreABC dual-write keeps Python dict and Kernel dcache in sync."""
 

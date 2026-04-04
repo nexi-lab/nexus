@@ -35,7 +35,7 @@ from nexus.storage.models import FilePathModel
 
 # RUST_FALLBACK: L1MetadataCache
 if TYPE_CHECKING:
-    from nexus_fast import L1MetadataCache
+    from nexus_kernel import L1MetadataCache
     from sqlalchemy.orm import Session
 
     from nexus.backends.misc.backend_io import BackendIOService

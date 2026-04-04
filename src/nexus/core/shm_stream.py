@@ -22,7 +22,7 @@ from nexus.core.stream import (
 )
 
 if TYPE_CHECKING:
-    from nexus_fast import SharedStreamBufferCore
+    from nexus_kernel import SharedStreamBufferCore
 
 # RUST_FALLBACK: SharedStreamBufferCore
 from nexus._rust_compat import SharedStreamBufferCore as _SharedStreamBufferCore
@@ -72,7 +72,7 @@ class SharedStreamBuffer:
             - data_rd_fd: pass to reader (reader listens for data notifications)
         """
         if _SharedStreamBufferCore is None:
-            raise RuntimeError("SharedStream requires the nexus-fast Rust extension.")
+            raise RuntimeError("SharedStream requires the nexus-kernel Rust extension.")
         core, shm_path, data_rd_fd = _SharedStreamBufferCore.create(capacity)
         buf = cls(core, data_rd_fd=-1)
         return buf, shm_path, data_rd_fd
@@ -87,7 +87,7 @@ class SharedStreamBuffer:
             data_rd_fd: Read-end of data pipe (reader listens here).
         """
         if _SharedStreamBufferCore is None:
-            raise RuntimeError("SharedStream requires the nexus-fast Rust extension.")
+            raise RuntimeError("SharedStream requires the nexus-kernel Rust extension.")
         core = _SharedStreamBufferCore.attach(shm_path, notify_data_wr)
         return cls(core, data_rd_fd=data_rd_fd)
 

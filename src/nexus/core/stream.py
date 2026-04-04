@@ -18,7 +18,7 @@ Storage model (KERNEL-ARCHITECTURE.md):
     - Stream **inode** (FileMetadata, entry_type=DT_STREAM) → MetastoreABC
     - Stream **data** (bytes in linear buffer) → process heap (not in any pillar)
 
-Data plane backed by Rust ``nexus_fast.StreamBufferCore``.
+Data plane backed by Rust ``nexus_kernel.StreamBufferCore``.
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class StreamBuffer:
     append-only buffer where reads never consume data. Multiple readers
     maintain independent byte offsets (cursors).
 
-    Data plane backed by Rust ``nexus_fast.StreamBufferCore``.
+    Data plane backed by Rust ``nexus_kernel.StreamBufferCore``.
     Python provides asyncio.Event coordination for blocked writers.
     """
 
@@ -121,7 +121,7 @@ class StreamBuffer:
             raise ValueError(f"capacity must be > 0, got {capacity}")
         if _StreamBufferCoreType is None:
             raise RuntimeError(
-                "Stream requires the nexus-fast Rust extension. "
+                "Stream requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
         self._core = _StreamBufferCoreType(capacity)

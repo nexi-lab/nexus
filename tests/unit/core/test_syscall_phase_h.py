@@ -11,7 +11,7 @@ and no longer exposed to Python.
 """
 
 import pytest
-from nexus_fast import (
+from nexus_kernel import (
     Kernel,
     VFSLockManager,
 )

@@ -340,7 +340,7 @@ class SlimNexusFS:
         """Search file contents for a regex pattern.
 
         Recursively lists files under *path*, reads their contents, and
-        searches using Rust-accelerated regex (nexus_fast) when available,
+        searches using Rust-accelerated regex (nexus_kernel) when available,
         falling back to Python ``re`` otherwise.
 
         Args:
@@ -378,7 +378,7 @@ class SlimNexusFS:
         _rust_grep: Any = None
         _has_rust_grep = False
         try:
-            from nexus_fast import grep_bulk
+            from nexus_kernel import grep_bulk
 
             _rust_grep = grep_bulk
             _has_rust_grep = True
@@ -440,7 +440,7 @@ class SlimNexusFS:
         """Find files matching a glob pattern.
 
         Recursively lists files under *path* and filters them using
-        Rust-accelerated glob matching (nexus_fast) when available,
+        Rust-accelerated glob matching (nexus_kernel) when available,
         falling back to Python ``fnmatch`` otherwise.
 
         Args:
@@ -462,7 +462,7 @@ class SlimNexusFS:
 
         # Try Rust-accelerated glob
         try:
-            from nexus_fast import glob_match_bulk as _rust_glob
+            from nexus_kernel import glob_match_bulk as _rust_glob
 
             results = _rust_glob([pattern], all_paths)
             if results is not None:

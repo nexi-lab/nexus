@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
-from nexus_fast import Kernel
+from nexus_kernel import Kernel
 
 from nexus.contracts.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore

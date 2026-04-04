@@ -10,7 +10,7 @@ from __future__ import annotations
 import unittest
 
 try:
-    from nexus_fast import Kernel
+    from nexus_kernel import Kernel
 
     RUST_AVAILABLE = True
 except ImportError:
@@ -54,14 +54,14 @@ def _make_kernel(
     return kernel
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestKernelConstruction(unittest.TestCase):
     def test_construct(self) -> None:
         kernel = _make_kernel()
         assert kernel is not None
 
 
-@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_fast extension not available")
+@unittest.skipUnless(RUST_AVAILABLE, "Rust nexus_kernel extension not available")
 class TestArcSharing(unittest.TestCase):
     """Verify that Kernel internal state is mutable after construction."""
 

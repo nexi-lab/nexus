@@ -8,7 +8,7 @@ name: Conda Pack
 #
 # Build order per runner:
 #   1. Create nexus conda env (Python 3.13) + pip install .
-#   2. Compile nexus_fast  (rust/nexus_kernel) via maturin
+#   2. Compile nexus_kernel  (rust/nexus_kernel) via maturin
 #   3. Compile nexus_raft  (rust/nexus_raft --features full) via maturin
 #   4. pip install both .whl files into the nexus env
 #   5. conda-pack the nexus env → <artifact_name>-<version>.tar.gz
@@ -135,7 +135,7 @@ jobs:
           conda run -n nexus pip install maturin
 
       # Skipped on Windows: shm_pipe.rs / shm_stream.rs use POSIX-only APIs.
-      - name: Build nexus_fast wheel  (rust/nexus_kernel)
+      - name: Build nexus_kernel wheel  (rust/nexus_kernel)
         if: matrix.os != 'windows-latest'
         shell: bash -el {0}
         run: |

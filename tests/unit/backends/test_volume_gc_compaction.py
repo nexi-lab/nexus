@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 try:
-    from nexus_fast import VolumeEngine
+    from nexus_kernel import VolumeEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
@@ -26,7 +26,7 @@ except ImportError:
 from nexus.backends.engines.cas_gc import CASGarbageCollector
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_fast.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
 )
 
 

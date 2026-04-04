@@ -13,7 +13,7 @@ from nexus.core.nexus_fs_dispatch import DispatchMixin
 
 class _TestDispatch(DispatchMixin):
     def __init__(self):
-        from nexus_fast import Kernel
+        from nexus_kernel import Kernel
 
         self._kernel = Kernel()
         self._init_dispatch()
@@ -43,7 +43,7 @@ class TestPathTrieViaKernel:
 
     @pytest.fixture()
     def kernel(self):
-        from nexus_fast import Kernel
+        from nexus_kernel import Kernel
 
         return Kernel()
 

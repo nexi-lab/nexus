@@ -1,10 +1,10 @@
-"""Rust RingBufferCore integration tests (nexus_fast.RingBufferCore).
+"""Rust RingBufferCore integration tests (nexus_kernel.RingBufferCore).
 
 Tests the Rust data-plane directly, bypassing the Python RingBuffer wrapper.
 """
 
 import pytest
-from nexus_fast import RingBufferCore
+from nexus_kernel import RingBufferCore
 
 
 class TestRingBufferCoreBasic:

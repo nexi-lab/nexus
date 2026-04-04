@@ -12,7 +12,7 @@ Semantics mirror the Raft semaphore exactly:
     - acquire() returns ``str | None`` (holder_id or None on timeout)
 
 Fallback chain:
-    1. Rust ``VFSSemaphore`` (via ``nexus_fast``) — ~200ns per acquire
+    1. Rust ``VFSSemaphore`` (via ``nexus_kernel``) — ~200ns per acquire
     2. Python ``PythonVFSSemaphore`` (threading-based) — ~500ns-1us
 
 References:
@@ -248,10 +248,10 @@ class PythonVFSSemaphore:
 
 # RUST_FALLBACK: VFSSemaphore
 class RustVFSSemaphore:
-    """Thin wrapper around ``nexus_fast.VFSSemaphore``."""
+    """Thin wrapper around ``nexus_kernel.VFSSemaphore``."""
 
     def __init__(self) -> None:
-        from nexus_fast import VFSSemaphore
+        from nexus_kernel import VFSSemaphore
 
         self._inner: Any = VFSSemaphore()
 
@@ -296,7 +296,7 @@ def create_vfs_semaphore() -> VFSSemaphoreProtocol:
     """
     try:
         sem = RustVFSSemaphore()
-        logger.debug("VFS semaphore: Rust (nexus_fast)")
+        logger.debug("VFS semaphore: Rust (nexus_kernel)")
         return sem
     except (ImportError, Exception) as exc:
         logger.debug("Rust VFS semaphore unavailable (%s), using Python fallback", exc)

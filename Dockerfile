@@ -123,7 +123,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
                SIMSIMD_TARGET_SVE_I8=0; \
     fi && \
     maturin build --release --features full --out /build/dist -m rust/nexus_raft/Cargo.toml
-RUN pip install --no-cache-dir /build/dist/nexus_fast-*.whl /build/dist/nexus_raft-*.whl
+RUN pip install --no-cache-dir /build/dist/nexus_kernel-*.whl /build/dist/nexus_raft-*.whl
 
 # ---------- Copy real application source and reinstall local package ----------
 COPY src/ ./src/
@@ -217,7 +217,7 @@ COPY --from=zoekt-builder /go/bin/zoekt-webserver /usr/local/bin/zoekt-webserver
 # this build-time import check. We split the check: non-torch imports
 # are fatal, torch-dependent imports (txtai) are best-effort on ARM64.
 RUN python3 -c "\
-import nexus_fast; \
+import nexus_kernel; \
 from _nexus_raft import Metastore; \
 import pgvector; \
 import docker; \
@@ -225,7 +225,7 @@ import fastembed; \
 import psutil; \
 print('✓ Core imports passed')"
 RUN python3 -c "\
-from nexus_fast import cosine_similarity_f32, dot_product_f32; \
+from nexus_kernel import cosine_similarity_f32, dot_product_f32; \
 s = cosine_similarity_f32([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]); \
 assert abs(s - 1.0) < 0.01, f'cosine self-similarity failed: {s}'; \
 d = dot_product_f32([1.0, 2.0], [3.0, 4.0]); \

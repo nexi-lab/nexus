@@ -110,7 +110,7 @@ class StreamManager:
 
         if StreamBufferCore is None:
             raise StreamError(
-                "Stream creation requires the nexus-fast Rust extension. "
+                "Stream creation requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
 
@@ -197,7 +197,7 @@ class StreamManager:
 
         if _SBC is None:
             raise StreamError(
-                f"Cannot reopen stream at {path}: nexus-fast Rust extension required. "
+                f"Cannot reopen stream at {path}: nexus-kernel Rust extension required. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
         buf = StreamBuffer(capacity=capacity)

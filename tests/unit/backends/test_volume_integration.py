@@ -15,14 +15,14 @@ from __future__ import annotations
 import pytest
 
 try:
-    from nexus_fast import VolumeEngine
+    from nexus_kernel import VolumeEngine
 
     HAS_VOLUME_ENGINE = True
 except ImportError:
     HAS_VOLUME_ENGINE = False
 
 pytestmark = pytest.mark.skipif(
-    not HAS_VOLUME_ENGINE, reason="nexus_fast.VolumeEngine not available"
+    not HAS_VOLUME_ENGINE, reason="nexus_kernel.VolumeEngine not available"
 )
 
 

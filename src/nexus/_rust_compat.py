@@ -1,10 +1,10 @@
 """Rust extension compatibility shim.
 
-Centralises all ``nexus_fast`` imports so that the slim ``nexus-fs``
+Centralises all ``nexus_kernel`` imports so that the slim ``nexus-fs``
 package (which does not depend on the Rust extension) can still import
 ``nexus.core.*`` modules without crashing at import time.
 
-Every symbol is re-exported as its original name.  When ``nexus_fast``
+Every symbol is re-exported as its original name.  When ``nexus_kernel``
 is unavailable the symbol is set to ``None`` and call-sites must
 guard with ``if _Symbol is not None:`` before use.
 
@@ -22,7 +22,7 @@ from typing import Any
 # -- Attempt bulk import of the Rust extension --------------------------------
 
 try:
-    import nexus_fast as _nf
+    import nexus_kernel as _nf
 
     RUST_AVAILABLE: bool = True
 except ModuleNotFoundError:
@@ -44,7 +44,7 @@ RUST_EXTENSION_INSTALLED: bool = True  # assume installed unless ModuleNotFoundE
 try:
     import importlib.util
 
-    RUST_EXTENSION_INSTALLED = importlib.util.find_spec("nexus_fast") is not None
+    RUST_EXTENSION_INSTALLED = importlib.util.find_spec("nexus_kernel") is not None
 except Exception:
     pass
 
@@ -108,7 +108,7 @@ if RUST_AVAILABLE:
         _group_ok[_group] = len(_missing) == 0
         if _missing:
             _log.info(
-                "nexus_fast missing %s symbols %s — %s features disabled. "
+                "nexus_kernel missing %s symbols %s — %s features disabled. "
                 "Rebuild with: pip install -e rust/nexus_pyo3",
                 _group,
                 _missing,
@@ -142,7 +142,7 @@ _nf_snapshot: Any = _nf
 
 
 def _get(name: str) -> Any:
-    """Get an attribute from nexus_fast, or None if unavailable.
+    """Get an attribute from nexus_kernel, or None if unavailable.
 
     Returns None if the module is absent OR if the symbol belongs to a
     capability group that failed validation (e.g. core symbols when core

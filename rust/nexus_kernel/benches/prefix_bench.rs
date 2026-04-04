@@ -5,7 +5,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 // Import the prefix functions from the library crate.
-// Since nexus_fast is a cdylib, we access the module directly.
+// Since nexus_kernel is a cdylib, we access the module directly.
 mod prefix {
     /// Normalize a prefix: strip trailing slashes.
     #[inline]

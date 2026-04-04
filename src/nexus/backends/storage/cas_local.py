@@ -63,7 +63,7 @@ def _init_bloom_from_transport(
     both volume-packed storage and file-per-blob storage (Issue #3403).
     """
     # RUST_FALLBACK: BloomFilter
-    from nexus_fast import BloomFilter
+    from nexus_kernel import BloomFilter
 
     bloom = BloomFilter(capacity, fp_rate)
     if hasattr(transport, "list_content_hashes"):

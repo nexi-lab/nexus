@@ -381,7 +381,7 @@ class LocalTransport:
             return {}
 
         # RUST_FALLBACK: read_files_bulk
-        from nexus_fast import read_files_bulk
+        from nexus_kernel import read_files_bulk
 
         paths = [str(self._resolve(k)) for k in keys]
         disk_contents = read_files_bulk(paths)

@@ -1096,14 +1096,12 @@ class NexusFS(  # type: ignore[misc]
         return handle
 
     def _backend_read(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
-        """Read from Python backend (non-Rust backends: GCS, remote, external).
+        """Read from Python backend (non-Rust backends: GCS, remote).
 
         Called when Rust CAS engine returns hit=False (no local blob).
-        Metadata is already in dcache (populated by metastore fallback).
+        ExternalRouteResult is handled by pre-check in sys_read — never reaches here.
         """
         route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
-
-        from nexus.core.router import ExternalRouteResult
 
         _ctx = (
             _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
@@ -1112,9 +1110,6 @@ class NexusFS(  # type: ignore[misc]
                 user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
             )
         )
-
-        if isinstance(route, ExternalRouteResult):
-            return route.backend.read_content("", context=_ctx)
 
         meta = route.metastore.get(path)
         # Overlay resolution: check base layer if upper has no entry
@@ -1213,18 +1208,40 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # [INTERMEDIATE] PRE-INTERCEPT: hooks — migrates to Rust dispatch middleware in PR 7
+        # DT_EXTERNAL_STORAGE pre-check — backend manages own namespace, skip kernel
+        _is_admin = (
+            getattr(context, "is_admin", False)
+            if context is not None and not isinstance(context, dict)
+            else (context.get("is_admin", False) if isinstance(context, dict) else False)
+        )
+        from nexus.core.router import ExternalRouteResult
+
+        _route = self.router.route(
+            path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
+        )
+        if isinstance(_route, ExternalRouteResult):
+            _ctx = (
+                _dc_replace(context, backend_path=_route.backend_path, virtual_path=path)
+                if context
+                else OperationContext(
+                    user_id="anonymous",
+                    groups=[],
+                    backend_path=_route.backend_path,
+                    virtual_path=path,
+                )
+            )
+            data = _route.backend.read_content("", context=_ctx)
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
+
+        # PRE-INTERCEPT hooks
         if self.read_hook_count > 0:
             from nexus.contracts.vfs_hooks import ReadHookContext as _RHC
 
             self.intercept_pre_read(_RHC(path=path, context=context))
 
         # ── KERNEL (Rust — dcache hit: zero GIL, dcache miss: metastore fallback via GIL) ──
-        _is_admin = (
-            getattr(context, "is_admin", False)
-            if context is not None and not isinstance(context, dict)
-            else (context.get("is_admin", False) if isinstance(context, dict) else False)
-        )
         result = self._kernel.sys_read(path, self._zone_id, _is_admin)
         data = result.data or b"" if result.hit else self._backend_read(path, _is_admin, context)
 

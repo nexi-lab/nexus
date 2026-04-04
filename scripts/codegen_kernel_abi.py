@@ -892,33 +892,32 @@ def _generate_adapter_method(
         lines.append("    }")
         return lines
 
-    lines.append(f"    fn {method.name}({sig}) -> {ret} {{")
+    # Check if signature fits on one line (rustfmt limit ~100 chars)
+    one_line = f"    fn {method.name}({sig}) -> {ret} {{"
+    if len(one_line) <= 100:
+        lines.append(one_line)
+    else:
+        lines.append(f"    fn {method.name}(")
+        for i, sp in enumerate(sig_params):
+            comma = "," if i < len(sig_params) - 1 else ","
+            lines.append(f"        {sp}{comma}")
+        lines.append(f"    ) -> {ret} {{")
 
     if override == "READ_WITH_CONTEXT":
-        # read_content(content_id, backend_path): construct OperationContext for path-based backends
+        # read_content(content_id, backend_path, ctx): convert Rust OperationContext → Python
         err = _rust_err_map(config, method.name, first_param)
         lines.append("        Python::attach(|py| {")
         lines.append("            let obj = self.inner.bind(py);")
-        lines.append("            // Construct minimal OperationContext with backend_path")
-        lines.append("            // (CAS backends ignore it; path backends require it)")
-        lines.append("            let ctx_cls = py")
-        lines.append('                .import("nexus.contracts.types")')
-        lines.append('                .and_then(|m| m.getattr("OperationContext"))')
-        lines.append(f"                .map_err(|e| {err})?;")
-        lines.append("            let kwargs = pyo3::types::PyDict::new(py);")
-        lines.append('            let _ = kwargs.set_item("backend_path", backend_path);')
-        lines.append('            let _ = kwargs.set_item("virtual_path", "");')
-        lines.append('            let _ = kwargs.set_item("user_id", "kernel");')
-        lines.append("            let ctx = ctx_cls")
-        lines.append("                .call((), Some(&kwargs))")
-        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            // Convert Rust OperationContext → Python OperationContext")
+        lines.append("            let py_ctx = rust_ctx_to_python(py, ctx, backend_path)")
+        lines.append("                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;")
         lines.append("            let result = obj")
         lines.append("                .call_method(")
         lines.append('                    "read_content",')
         lines.append("                    (content_id,),")
         lines.append("                    Some(&{")
         lines.append("                        let kw = pyo3::types::PyDict::new(py);")
-        lines.append('                        let _ = kw.set_item("context", &ctx);')
+        lines.append('                        let _ = kw.set_item("context", &py_ctx);')
         lines.append("                        kw")
         lines.append("                    }),")
         lines.append("                )")
@@ -1155,6 +1154,32 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         '        .set_item("mime_type", meta.mime_type.as_deref())',
         "        .map_err(err)?;",
         "    cls.call((), Some(&kwargs)).map_err(err)",
+        "}",
+        "",
+        "/// Convert Rust OperationContext → Python OperationContext.",
+        "///",
+        "/// Bridges Rust kernel credential to Python backend's expected context type.",
+        "fn rust_ctx_to_python<'py>(",
+        "    py: Python<'py>,",
+        "    ctx: &crate::kernel::OperationContext,",
+        "    backend_path: &str,",
+        ") -> Result<Bound<'py, PyAny>, String> {",
+        "    let cls = py",
+        '        .import("nexus.contracts.types")',
+        '        .and_then(|m| m.getattr("OperationContext"))',
+        '        .map_err(|e| format!("import OperationContext: {e}"))?;',
+        "    let kwargs = PyDict::new(py);",
+        '    let _ = kwargs.set_item("user_id", &ctx.user_id);',
+        '    let _ = kwargs.set_item("zone_id", &ctx.zone_id);',
+        '    let _ = kwargs.set_item("is_admin", ctx.is_admin);',
+        '    let _ = kwargs.set_item("is_system", ctx.is_system);',
+        '    let _ = kwargs.set_item("backend_path", backend_path);',
+        '    let _ = kwargs.set_item("groups", pyo3::types::PyList::empty(py));',
+        "    if let Some(ref agent_id) = ctx.agent_id {",
+        '        let _ = kwargs.set_item("agent_id", agent_id);',
+        "    }",
+        "    cls.call((), Some(&kwargs))",
+        '        .map_err(|e| format!("OperationContext(): {e}"))',
         "}",
     ]
 

@@ -113,6 +113,7 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // Route result (returned from Kernel.route())
     m.add_class::<router::RustRouteResult>()?;
     // Kernel (Issue #1868 — owns all core state: dcache, router, trie, hooks, observers)
+    m.add_class::<kernel::OperationContext>()?;
     m.add_class::<kernel::Kernel>()?;
     m.add_class::<kernel::SysReadResult>()?;
     m.add_class::<kernel::SysWriteResult>()?;

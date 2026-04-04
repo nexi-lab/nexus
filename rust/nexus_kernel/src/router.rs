@@ -132,18 +132,20 @@ impl PathRouter {
     ///
     /// `content_id`: CAS hash or path-based content identifier.
     /// `backend_path`: mount-relative path (for path-addressed backends).
+    /// `ctx`: operation credential for backends that need identity/auth.
     pub(crate) fn read_content(
         &self,
         mount_point: &str,
         content_id: &str,
         backend_path: &str,
+        ctx: &crate::kernel::OperationContext,
     ) -> Option<Vec<u8>> {
         let mounts = self.mounts.read();
         let entry = mounts.get(mount_point)?;
         entry
             .backend
             .as_ref()?
-            .read_content(content_id, backend_path)
+            .read_content(content_id, backend_path, ctx)
             .ok()
     }
 

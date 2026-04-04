@@ -12,11 +12,15 @@ from pathlib import Path
 import pytest
 from nexus_kernel import (
     Kernel,
+    OperationContext,
     VFSLockManager,
     hash_bytes,
 )
 
 DT_REG = 0
+
+# Test helper: default OperationContext for "root" zone
+_ctx = OperationContext(zone_id="root")
 
 
 # ---------------------------------------------------------------------------
@@ -63,20 +67,20 @@ class TestHookCountBypass:
         )
 
         # Without hooks: hit=true, post_hook_needed=false
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.post_hook_needed is False
 
         # Set read hook count > 0: hit=true, post_hook_needed=true
         engine.set_hook_count("read", 1)
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.post_hook_needed is True
         assert result.data == content
 
         # Reset hook count
         engine.set_hook_count("read", 0)
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.post_hook_needed is False
 
@@ -90,13 +94,13 @@ class TestHookCountBypass:
         engine.dcache_put("/workspace/f.txt", "local", "", 0, DT_REG, etag="old")
 
         # Without hooks: hit=true, post_hook_needed=false
-        result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/f.txt", _ctx, b"data")
         assert result.hit is True
         assert result.post_hook_needed is False
 
         # Set write hook count > 0: hit=true, post_hook_needed=true
         engine.set_hook_count("write", 1)
-        result = engine.sys_write("/workspace/f.txt", "root", b"data", False)
+        result = engine.sys_write("/workspace/f.txt", _ctx, b"data")
         assert result.hit is True
         assert result.post_hook_needed is True
 
@@ -124,7 +128,7 @@ class TestVFSLockIntegration:
             "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
         )
 
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.data == content
         # Lock should be released after read
@@ -150,14 +154,14 @@ class TestVFSLockIntegration:
         assert handle > 0
 
         # sys_read should return hit=false (read blocked by write lock, times out)
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is False
 
         # Release the external lock
         lock.release(handle)
 
         # Now sys_read should succeed
-        result = engine.sys_read("/workspace/f.txt", "root", False)
+        result = engine.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is True
         assert result.data == content
 
@@ -168,7 +172,7 @@ class TestVFSLockIntegration:
         kernel.dcache_put("/workspace/f.txt", "remote", "", 0, DT_REG, etag="hash")
 
         # Should not crash -- returns hit=false (no Rust backend)
-        result = kernel.sys_read("/workspace/f.txt", "root", False)
+        result = kernel.sys_read("/workspace/f.txt", _ctx)
         assert result.hit is False
 
 
@@ -201,7 +205,7 @@ class TestCASBackendWithLock:
                 "/workspace/f.txt", "local", content_hash, len(content), DT_REG, etag=content_hash
             )
 
-            result = kernel.sys_read("/workspace/f.txt", "root", False)
+            result = kernel.sys_read("/workspace/f.txt", _ctx)
             assert result.hit is True
             assert result.data == content
             # Lock released after read

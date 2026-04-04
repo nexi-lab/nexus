@@ -1068,30 +1068,8 @@ class NexusFS(  # type: ignore[misc]
         mark_acquired(L1_VFS)
         return handle
 
-    def _backend_read(self, path: str, is_admin: bool, context: "OperationContext | None") -> bytes:
-        """Fallback read for path-addressed backends (non-CAS).
-
-        Called when Rust sys_read returns hit=False and the mount uses a
-        path-based backend (PathLocalBackend) that needs OperationContext.
-        CAS backends go through Rust PyObjectStoreAdapter — this path is
-        only for legacy path-addressed backends.
-        """
-        route = self.router.route(path, is_admin=is_admin, check_write=False, zone_id=self._zone_id)
-
-        _ctx = (
-            _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
-            if context
-            else OperationContext(
-                user_id="anonymous", groups=[], backend_path=route.backend_path, virtual_path=path
-            )
-        )
-
-        meta = route.metastore.get(path)
-        if meta is None or (meta.etag is None and not route.backend_path):
-            raise NexusFileNotFoundError(path)
-        return self._driver_coordinator.resolve_backend(meta.backend_name).read_content(
-            meta.etag or "", context=_ctx
-        )
+    # _backend_read deleted — Rust PyObjectStoreAdapter handles all backends
+    # via OperationContext (Rust-constructed with backend_path from route).
 
     @contextlib.contextmanager
     def _vfs_locked(self, path: str, mode: str) -> Generator[int, None, None]:
@@ -1209,15 +1187,25 @@ class NexusFS(  # type: ignore[misc]
 
             self.intercept_pre_read(_RHC(path=path, context=context))
 
-        # ── KERNEL (Rust — CAS backends via CasLocal or PyObjectStoreAdapter) ──
-        result = self._kernel.sys_read(path, self._zone_id, _is_admin)
-        data = result.data or b"" if result.hit else self._backend_read(path, _is_admin, context)
+        # ── KERNEL (Rust — all backends via OperationContext) ──
+        from nexus_kernel import OperationContext as _RustCtx
+
+        _rust_ctx = _RustCtx(
+            user_id=context.user_id if context else "anonymous",
+            zone_id=self._zone_id,
+            is_admin=_is_admin,
+            agent_id=getattr(context, "agent_id", None) if context else None,
+        )
+        result = self._kernel.sys_read(path, _rust_ctx)
+        if not result.hit:
+            raise NexusFileNotFoundError(path)
+        data = result.data or b""
 
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
 
         # [INTERMEDIATE] POST-INTERCEPT: hooks — migrates to Rust thread::spawn in PR 7
-        if result.post_hook_needed or (not result.hit and self.read_hook_count > 0):
+        if result.post_hook_needed:
             zone_id, agent_id, _ = self._get_context_identity(context)
             from nexus.contracts.vfs_hooks import ReadHookContext
 
@@ -1929,7 +1917,15 @@ class NexusFS(  # type: ignore[misc]
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        result = self._kernel.sys_write(path, self._zone_id, buf, _is_admin)
+        from nexus_kernel import OperationContext as _RustCtx
+
+        _rust_ctx = _RustCtx(
+            user_id=context.user_id if context else "anonymous",
+            zone_id=self._zone_id,
+            is_admin=_is_admin,
+            agent_id=getattr(context, "agent_id", None) if context else None,
+        )
+        result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         if result.hit:
             # Rust wrote to CAS — now update metadata + dispatch events [INTERMEDIATE]

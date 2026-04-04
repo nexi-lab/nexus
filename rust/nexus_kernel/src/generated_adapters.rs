@@ -97,6 +97,32 @@ fn to_python_metadata<'py>(
     cls.call((), Some(&kwargs)).map_err(err)
 }
 
+/// Convert Rust OperationContext → Python OperationContext.
+///
+/// Bridges Rust kernel credential to Python backend's expected context type.
+fn rust_ctx_to_python<'py>(
+    py: Python<'py>,
+    ctx: &crate::kernel::OperationContext,
+    backend_path: &str,
+) -> Result<Bound<'py, PyAny>, String> {
+    let cls = py
+        .import("nexus.contracts.types")
+        .and_then(|m| m.getattr("OperationContext"))
+        .map_err(|e| format!("import OperationContext: {e}"))?;
+    let kwargs = PyDict::new(py);
+    let _ = kwargs.set_item("user_id", &ctx.user_id);
+    let _ = kwargs.set_item("zone_id", &ctx.zone_id);
+    let _ = kwargs.set_item("is_admin", ctx.is_admin);
+    let _ = kwargs.set_item("is_system", ctx.is_system);
+    let _ = kwargs.set_item("backend_path", backend_path);
+    let _ = kwargs.set_item("groups", pyo3::types::PyList::empty(py));
+    if let Some(ref agent_id) = ctx.agent_id {
+        let _ = kwargs.set_item("agent_id", agent_id);
+    }
+    cls.call((), Some(&kwargs))
+        .map_err(|e| format!("OperationContext(): {e}"))
+}
+
 // ── PyObjectStoreAdapter ────────────────────────────────────────
 
 /// Wraps Python `ObjectStoreABC` → Rust `ObjectStore` trait.
@@ -143,29 +169,24 @@ impl ObjectStore for PyObjectStoreAdapter {
         })
     }
 
-    fn read_content(&self, content_id: &str, backend_path: &str) -> Result<Vec<u8>, StorageError> {
+    fn read_content(
+        &self,
+        content_id: &str,
+        backend_path: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
-            // Construct minimal OperationContext with backend_path
-            // (CAS backends ignore it; path backends require it)
-            let ctx_cls = py
-                .import("nexus.contracts.types")
-                .and_then(|m| m.getattr("OperationContext"))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            let kwargs = pyo3::types::PyDict::new(py);
-            let _ = kwargs.set_item("backend_path", backend_path);
-            let _ = kwargs.set_item("virtual_path", "");
-            let _ = kwargs.set_item("user_id", "kernel");
-            let ctx = ctx_cls
-                .call((), Some(&kwargs))
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            // Convert Rust OperationContext → Python OperationContext
+            let py_ctx = rust_ctx_to_python(py, ctx, backend_path)
+                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
             let result = obj
                 .call_method(
                     "read_content",
                     (content_id,),
                     Some(&{
                         let kw = pyo3::types::PyDict::new(py);
-                        let _ = kw.set_item("context", &ctx);
+                        let _ = kw.set_item("context", &py_ctx);
                         kw
                     }),
                 )

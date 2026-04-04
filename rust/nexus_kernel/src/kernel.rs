@@ -23,6 +23,50 @@ use pyo3::types::{PyBytes, PyDict};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+// ── OperationContext — kernel-internal credential ─────────────────────────
+
+/// Syscall credential — carried through every kernel operation.
+///
+/// Constructed by thin wrapper (Python, gRPC, etc.) with identity fields.
+/// Rust kernel adds routing fields (backend_path, virtual_path) internally.
+///
+/// Analogous to Linux `struct cred` — immutable after construction.
+#[pyclass(get_all)]
+#[derive(Clone, Debug)]
+pub struct OperationContext {
+    /// Subject identity (human user or service account).
+    pub user_id: String,
+    /// Kernel namespace partition (zone isolation).
+    pub zone_id: String,
+    /// Admin privilege flag.
+    pub is_admin: bool,
+    /// Agent identity (optional, for agent-initiated operations).
+    pub agent_id: Option<String>,
+    /// System operation flag (bypasses all checks).
+    pub is_system: bool,
+}
+
+#[pymethods]
+impl OperationContext {
+    #[new]
+    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false))]
+    fn new(
+        user_id: &str,
+        zone_id: &str,
+        is_admin: bool,
+        agent_id: Option<&str>,
+        is_system: bool,
+    ) -> Self {
+        Self {
+            user_id: user_id.to_string(),
+            zone_id: zone_id.to_string(),
+            is_admin,
+            agent_id: agent_id.map(|s| s.to_string()),
+            is_system,
+        }
+    }
+}
+
 // ── Strong-typed result types ──────────────────────────────────────────
 
 /// Result of sys_read(): concrete type instead of Option<bytes>.
@@ -402,13 +446,12 @@ impl Kernel {
     /// Returns `hit=false` for DT_PIPE/DT_STREAM (wrapper handles async IPC)
     /// or when no Rust backend is available (e.g. remote backends).
     /// Raises `InvalidPathError`, `NexusFileNotFoundError` on errors.
-    #[pyo3(signature = (path, zone_id, is_admin))]
+    #[pyo3(signature = (path, ctx))]
     fn sys_read<'py>(
         &self,
         py: Python<'py>,
         path: &str,
-        zone_id: &str,
-        is_admin: bool,
+        ctx: &OperationContext,
     ) -> PyResult<SysReadResult> {
         let miss = || {
             Ok(SysReadResult {
@@ -425,7 +468,10 @@ impl Kernel {
         }
 
         // 2. Route (pure Rust LPM)
-        let route = match self.router.route_impl(path, zone_id, is_admin, false) {
+        let route = match self
+            .router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, false)
+        {
             Ok(r) => r,
             Err(_) => return miss(),
         };
@@ -499,9 +545,9 @@ impl Kernel {
         }
 
         // 5. Backend read (CasLocal or PyObjectStoreAdapter)
-        let content = self
-            .router
-            .read_content(&route.mount_point, content_id, &route.backend_path);
+        let content =
+            self.router
+                .read_content(&route.mount_point, content_id, &route.backend_path, ctx);
 
         // 6. Release VFS lock (always, even on miss)
         if lock_handle > 0 {
@@ -536,14 +582,13 @@ impl Kernel {
     ///
     /// Metastore.put (metadata update) is handled by the Python wrapper
     /// (intermediate state — migrates to Rust metastore in PR 7).
-    #[pyo3(signature = (path, zone_id, content, is_admin))]
+    #[pyo3(signature = (path, ctx, content))]
     fn sys_write<'py>(
         &self,
         py: Python<'py>,
         path: &str,
-        zone_id: &str,
+        ctx: &OperationContext,
         content: &[u8],
-        is_admin: bool,
     ) -> PyResult<SysWriteResult> {
         let miss = || {
             Ok(SysWriteResult {
@@ -559,7 +604,10 @@ impl Kernel {
         }
 
         // 2. Route (check write access)
-        let route = match self.router.route_impl(path, zone_id, is_admin, true) {
+        let route = match self
+            .router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+        {
             Ok(r) => r,
             Err(_) => return miss(),
         };

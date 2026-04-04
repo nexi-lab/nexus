@@ -146,6 +146,8 @@ fn to_python_metadata<'py>(
 }
 
 /// Convert Rust OperationContext -> Python OperationContext.
+///
+/// Forwards ALL fields so Python hooks see the full credential.
 fn rust_ctx_to_python<'py>(
     py: Python<'py>,
     ctx: &OperationContext,
@@ -157,13 +159,36 @@ fn rust_ctx_to_python<'py>(
         .map_err(|e| format!("import OperationContext: {e}"))?;
     let kwargs = PyDict::new(py);
     let _ = kwargs.set_item("user_id", &ctx.user_id);
-    let _ = kwargs.set_item("zone_id", &ctx.zone_id);
+    // Use context_zone_id (caller's zone, may be None) for Python context,
+    // NOT routing zone_id (always set to NexusFS instance zone).
+    match &ctx.context_zone_id {
+        Some(z) => {
+            let _ = kwargs.set_item("zone_id", z);
+        }
+        None => {
+            let _ = kwargs.set_item("zone_id", py.None());
+        }
+    }
     let _ = kwargs.set_item("is_admin", ctx.is_admin);
     let _ = kwargs.set_item("is_system", ctx.is_system);
     let _ = kwargs.set_item("backend_path", backend_path);
-    let _ = kwargs.set_item("groups", PyList::empty(py));
+    let groups = PyList::new(py, &ctx.groups).map_err(|e| format!("groups: {e}"))?;
+    let _ = kwargs.set_item("groups", groups);
     if let Some(ref agent_id) = ctx.agent_id {
         let _ = kwargs.set_item("agent_id", agent_id);
+    }
+    // admin_capabilities: Vec<String> → Python set[str]
+    let cap_set = pyo3::types::PySet::empty(py).map_err(|e| format!("set(): {e}"))?;
+    for cap in &ctx.admin_capabilities {
+        let _ = cap_set.add(cap);
+    }
+    let _ = kwargs.set_item("admin_capabilities", &cap_set);
+    let _ = kwargs.set_item("subject_type", &ctx.subject_type);
+    if let Some(ref sid) = ctx.subject_id {
+        let _ = kwargs.set_item("subject_id", sid);
+    }
+    if !ctx.request_id.is_empty() {
+        let _ = kwargs.set_item("request_id", &ctx.request_id);
     }
     cls.call((), Some(&kwargs))
         .map_err(|e| format!("OperationContext(): {e}"))
@@ -211,6 +236,7 @@ impl ObjectStore for PyObjectStoreAdapter {
             let result = obj
                 .call_method1("write_content", (content,))
                 .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            // Python ObjectStoreABC.write_content() returns WriteResult; extract .content_id
             result
                 .getattr("content_id")
                 .and_then(|v| v.extract::<String>())
@@ -222,10 +248,11 @@ impl ObjectStore for PyObjectStoreAdapter {
         &self,
         content_id: &str,
         backend_path: &str,
-        ctx: &OperationContext,
+        ctx: &crate::kernel::OperationContext,
     ) -> Result<Vec<u8>, StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
+            // Convert Rust OperationContext → Python OperationContext
             let py_ctx = rust_ctx_to_python(py, ctx, backend_path)
                 .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
             let result = obj
@@ -233,7 +260,7 @@ impl ObjectStore for PyObjectStoreAdapter {
                     "read_content",
                     (content_id,),
                     Some(&{
-                        let kw = PyDict::new(py);
+                        let kw = pyo3::types::PyDict::new(py);
                         let _ = kw.set_item("context", &py_ctx);
                         kw
                     }),
@@ -556,18 +583,31 @@ pub struct PyOperationContext {
     pub is_admin: bool,
     pub agent_id: Option<String>,
     pub is_system: bool,
+    pub groups: Vec<String>,
+    pub admin_capabilities: Vec<String>,
+    pub subject_type: String,
+    pub subject_id: Option<String>,
+    pub request_id: String,
+    pub context_zone_id: Option<String>,
 }
 
 #[pymethods]
 impl PyOperationContext {
     #[new]
-    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false))]
+    #[pyo3(signature = (user_id="anonymous", zone_id="root", is_admin=false, agent_id=None, is_system=false, groups=Vec::new(), admin_capabilities=Vec::new(), subject_type="user", subject_id=None, request_id="", context_zone_id=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         user_id: &str,
         zone_id: &str,
         is_admin: bool,
         agent_id: Option<&str>,
         is_system: bool,
+        groups: Vec<String>,
+        admin_capabilities: Vec<String>,
+        subject_type: &str,
+        subject_id: Option<&str>,
+        request_id: &str,
+        context_zone_id: Option<&str>,
     ) -> Self {
         Self {
             user_id: user_id.to_string(),
@@ -575,6 +615,12 @@ impl PyOperationContext {
             is_admin,
             agent_id: agent_id.map(|s| s.to_string()),
             is_system,
+            groups,
+            admin_capabilities,
+            subject_type: subject_type.to_string(),
+            subject_id: subject_id.map(|s| s.to_string()),
+            request_id: request_id.to_string(),
+            context_zone_id: context_zone_id.map(|s| s.to_string()),
         }
     }
 }
@@ -588,6 +634,12 @@ impl PyOperationContext {
             is_admin: self.is_admin,
             agent_id: self.agent_id.clone(),
             is_system: self.is_system,
+            groups: self.groups.clone(),
+            admin_capabilities: self.admin_capabilities.clone(),
+            subject_type: self.subject_type.clone(),
+            subject_id: self.subject_id.clone(),
+            request_id: self.request_id.clone(),
+            context_zone_id: self.context_zone_id.clone(),
         }
     }
 }
@@ -944,10 +996,13 @@ impl PyKernel {
     ) -> PyResult<PySysReadResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("read") {
+            // Convert Rust ctx to Python OperationContext dataclass (full round-trip)
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
             let rhc = py
                 .import("nexus.contracts.vfs_hooks")?
                 .getattr("ReadHookContext")?
-                .call1((path, Py::new(py, ctx.clone())?.into_any()))?
+                .call1((path, py_ctx))?
                 .unbind();
             self.dispatch_pre_hooks("read", &rhc)?;
         }
@@ -979,10 +1034,13 @@ impl PyKernel {
     ) -> PyResult<PySysWriteResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("write") {
+            // Convert Rust ctx to Python OperationContext dataclass (full round-trip)
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
             let whc = py
                 .import("nexus.contracts.vfs_hooks")?
                 .getattr("WriteHookContext")?
-                .call1((path, content, Py::new(py, ctx.clone())?.into_any()))?
+                .call1((path, content, py_ctx))?
                 .unbind();
             self.dispatch_pre_hooks("write", &whc)?;
         }

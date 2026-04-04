@@ -360,11 +360,17 @@ class PyRustRouteResult:
 class PyOperationContext:
     def __init__(
         self,
-        user_id: str = "anonymous",
-        zone_id: str = "root",
-        is_admin: bool = False,
-        agent_id: str | None = None,
-        is_system: bool = False,
+        user_id: str,
+        zone_id: str,
+        is_admin: bool,
+        agent_id: str | None,
+        is_system: bool,
+        groups: list[str],
+        admin_capabilities: list[str],
+        subject_type: str,
+        subject_id: str | None,
+        request_id: str,
+        context_zone_id: str | None,
     ) -> None: ...
 
 class PyKernel:

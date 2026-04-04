@@ -409,6 +409,24 @@ class NexusFS(  # type: ignore[misc]
             "Use factory create_nexus_fs(init_cred=...) or pass context= to each syscall."
         )
 
+    def _build_rust_ctx(self, context: "OperationContext | None", is_admin: bool) -> object:
+        """Build Rust OperationContext from Python context with all fields."""
+        from nexus_kernel import OperationContext as _RustCtx
+
+        return _RustCtx(
+            user_id=context.user_id if context else "anonymous",
+            zone_id=self._zone_id,  # routing zone (always set)
+            is_admin=is_admin,
+            agent_id=getattr(context, "agent_id", None) if context else None,
+            is_system=getattr(context, "is_system", False) if context else False,
+            groups=context.groups if context else [],
+            admin_capabilities=list(context.admin_capabilities) if context else [],
+            subject_type=getattr(context, "subject_type", "user") if context else "user",
+            subject_id=getattr(context, "subject_id", None) if context else None,
+            request_id=getattr(context, "request_id", "") if context else "",
+            context_zone_id=context.zone_id if context else None,  # caller's zone
+        )
+
     def _get_context_identity(
         self, context: OperationContext | dict | None = None
     ) -> tuple[str | None, str | None, bool]:
@@ -1184,14 +1202,7 @@ class NexusFS(  # type: ignore[misc]
         # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
 
         # ── KERNEL (Rust — pre-hooks + route + backend read) ──
-        from nexus_kernel import OperationContext as _RustCtx
-
-        _rust_ctx = _RustCtx(
-            user_id=context.user_id if context else "anonymous",
-            zone_id=self._zone_id,
-            is_admin=_is_admin,
-            agent_id=getattr(context, "agent_id", None) if context else None,
-        )
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_read(path, _rust_ctx)
         if not result.hit:
             raise NexusFileNotFoundError(path)
@@ -1913,14 +1924,7 @@ class NexusFS(  # type: ignore[misc]
             if context is not None and not isinstance(context, dict)
             else (context.get("is_admin", False) if isinstance(context, dict) else False)
         )
-        from nexus_kernel import OperationContext as _RustCtx
-
-        _rust_ctx = _RustCtx(
-            user_id=context.user_id if context else "anonymous",
-            zone_id=self._zone_id,
-            is_admin=_is_admin,
-            agent_id=getattr(context, "agent_id", None) if context else None,
-        )
+        _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         if result.hit:

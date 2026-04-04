@@ -52,14 +52,14 @@ impl From<std::io::Error> for KernelError {
 /// Syscall credential — carried through every kernel operation.
 ///
 /// Constructed by thin wrapper (Python, gRPC, etc.) with identity fields.
-/// Rust kernel adds routing fields (backend_path, virtual_path) internally.
+/// Rust kernel uses `zone_id` for routing; hooks use the full context.
 ///
 /// Analogous to Linux `struct cred` — immutable after construction.
 #[derive(Clone, Debug)]
 pub struct OperationContext {
     /// Subject identity (human user or service account).
     pub user_id: String,
-    /// Kernel namespace partition (zone isolation).
+    /// Routing zone — NexusFS instance zone for mount lookup (always set).
     pub zone_id: String,
     /// Admin privilege flag.
     pub is_admin: bool,
@@ -67,6 +67,18 @@ pub struct OperationContext {
     pub agent_id: Option<String>,
     /// System operation flag (bypasses all checks).
     pub is_system: bool,
+    /// Group memberships for ReBAC.
+    pub groups: Vec<String>,
+    /// Granted admin capabilities (e.g. "MANAGE_ZONES", "READ_ALL").
+    pub admin_capabilities: Vec<String>,
+    /// Subject type for ReBAC (default: "user").
+    pub subject_type: String,
+    /// Subject ID for ReBAC (defaults to user_id).
+    pub subject_id: Option<String>,
+    /// Audit trail correlation ID.
+    pub request_id: String,
+    /// Caller's zone_id (None = no zone restriction). Distinct from routing zone_id.
+    pub context_zone_id: Option<String>,
 }
 
 impl OperationContext {
@@ -84,6 +96,12 @@ impl OperationContext {
             is_admin,
             agent_id: agent_id.map(|s| s.to_string()),
             is_system,
+            groups: Vec::new(),
+            admin_capabilities: Vec::new(),
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: String::new(),
+            context_zone_id: None,
         }
     }
 }

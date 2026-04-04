@@ -146,13 +146,7 @@ mod tests {
     }
 
     fn test_ctx() -> crate::kernel::OperationContext {
-        crate::kernel::OperationContext {
-            user_id: "test".to_string(),
-            zone_id: "root".to_string(),
-            is_admin: false,
-            agent_id: None,
-            is_system: false,
-        }
+        crate::kernel::OperationContext::new("test", "root", false, None, false)
     }
 
     #[test]

@@ -1,10 +1,10 @@
 """Cache data models for connector backends.
 
-Defines data structures for cache entries, sync results, and cached reads.
+Defines data structures for cache entries and cached reads.
 Originally extracted from cache logic (#1628) to separate data definitions.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 # Backend version constant for immutable content (e.g., Gmail emails that never change)
@@ -18,25 +18,6 @@ MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
 
 # Summary size for large files (default 100KB)
 SUMMARY_SIZE: int = 100 * 1024
-
-
-@dataclass
-class SyncResult:
-    """Result of a sync operation."""
-
-    files_scanned: int = 0
-    files_synced: int = 0
-    files_skipped: int = 0
-    bytes_synced: int = 0
-    embeddings_generated: int = 0
-    errors: list[str] = field(default_factory=list)
-
-    def __repr__(self) -> str:
-        return (
-            f"SyncResult(scanned={self.files_scanned}, synced={self.files_synced}, "
-            f"skipped={self.files_skipped}, bytes={self.bytes_synced}, "
-            f"embeddings={self.embeddings_generated}, errors={len(self.errors)})"
-        )
 
 
 @dataclass

@@ -93,9 +93,6 @@ class BackendFeature(StrEnum):
     README_DOC = "readme_doc"
     """Backend supports ReadmeDocMixin (auto-generated .readme/ documentation)."""
 
-    SYNC = "sync"
-    """Backend supports delta sync capability."""
-
     CLI_BACKED = "cli_backed"
     """Backend delegates execution to an external CLI subprocess."""
 
@@ -134,7 +131,6 @@ CLI_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
         BackendFeature.CLI_BACKED,
         BackendFeature.README_DOC,
-        BackendFeature.SYNC,
     }
 )
 """Common capabilities for CLI-backed connectors (gws, gh)."""

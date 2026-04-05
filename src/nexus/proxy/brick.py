@@ -21,7 +21,7 @@ from nexus.proxy.errors import (
     RemoteCallError,
     is_connection_error,
 )
-from nexus.proxy.offline_queue import OfflineQueue
+from nexus.proxy.queue_protocol import InMemoryQueue
 from nexus.proxy.replay_engine import ReplayEngine
 from nexus.proxy.transport import HttpTransport
 
@@ -62,9 +62,7 @@ class ProxyBrick:
     ) -> None:
         self._config = config
         self._transport = transport or HttpTransport(config)
-        self._queue: OfflineQueueProtocol = queue or OfflineQueue(
-            config.queue_db_path, max_retry_count=config.max_retry_count
-        )
+        self._queue: OfflineQueueProtocol = queue or InMemoryQueue()
         self._circuit = AsyncCircuitBreaker(
             failure_threshold=config.cb_failure_threshold,
             recovery_timeout=config.cb_recovery_timeout,

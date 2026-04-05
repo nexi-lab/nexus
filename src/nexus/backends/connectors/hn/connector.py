@@ -21,13 +21,11 @@ Virtual filesystem structure:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.cache.models import SyncResult
 from nexus.backends.connectors.base import ReadmeDocMixin
 from nexus.backends.connectors.hn.transport import VALID_FEEDS, HNTransport
 from nexus.contracts.backend_features import BackendFeature
@@ -63,7 +61,6 @@ class PathHNBackend(
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
             BackendFeature.README_DOC,
-            BackendFeature.SYNC,
         }
     )
 
@@ -285,68 +282,3 @@ class PathHNBackend(
             raise FileNotFoundError(f"Directory not found: {path}")
 
         return sorted(entries)
-
-    # =================================================================
-    # Sync operation -- pre-fetch stories to cache
-    # =================================================================
-
-    def sync(
-        self,
-        path: str | None = None,
-        mount_point: str | None = None,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        max_file_size: int | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> SyncResult:
-        """Sync HN content by pre-fetching stories."""
-        result = SyncResult()
-
-        # Determine which feeds to sync
-        if path:
-            path_clean = path.strip("/")
-            if path_clean.startswith("hn/"):
-                path_clean = path_clean[3:]
-            feeds = [path_clean] if path_clean in VALID_FEEDS else []
-        else:
-            feeds = list(VALID_FEEDS)
-
-        if not feeds:
-            return result
-
-        async def _sync_feeds() -> None:
-            for feed in feeds:
-                try:
-                    story_ids = await self._hn_transport._fetch_story_ids(feed)
-                    ids_to_sync = story_ids[: self.stories_per_feed]
-                    result.files_scanned += len(ids_to_sync)
-
-                    for rank, story_id in enumerate(ids_to_sync, start=1):
-                        try:
-                            story = await self._hn_transport._fetch_story_with_comments(
-                                story_id,
-                                include_comments=self.include_comments,
-                            )
-                            story["_rank"] = rank
-                            story["_feed"] = feed
-
-                            content = json.dumps(story, indent=2, ensure_ascii=False).encode(
-                                "utf-8"
-                            )
-
-                            result.files_synced += 1
-                            result.bytes_synced += len(content)
-
-                        except Exception as e:
-                            result.errors.append(f"Failed to sync {feed}/{rank}: {e}")
-
-                except Exception as e:
-                    result.errors.append(f"Failed to sync feed {feed}: {e}")
-
-            await self._hn_transport._close_client()
-
-        from nexus.lib.sync_bridge import run_sync
-
-        run_sync(_sync_feeds())
-        return result

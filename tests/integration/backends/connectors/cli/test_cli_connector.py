@@ -285,10 +285,6 @@ class TestCapabilities:
         connector = FakeCLIBackend()
         assert connector.has_feature(BackendFeature.README_DOC)
 
-    def test_has_sync(self) -> None:
-        connector = FakeCLIBackend()
-        assert connector.has_feature(BackendFeature.SYNC)
-
     def test_name(self) -> None:
         connector = FakeCLIBackend()
         assert connector.name == "cli:test-cli:items"

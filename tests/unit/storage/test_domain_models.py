@@ -249,45 +249,6 @@ class TestOAuthCredentialModel:
             cred.validate()
 
 
-class TestSyncJobModelToDict:
-    """Tests for SyncJobModel.to_dict()."""
-
-    def test_to_dict_minimal(self) -> None:
-        from nexus.storage.models.sync import SyncJobModel
-
-        job = SyncJobModel(
-            id="j1",
-            mount_point="/mnt/test",
-            status="completed",
-            progress_pct=100,
-            created_at=datetime(2025, 1, 1, tzinfo=UTC),
-        )
-        d = job.to_dict()
-        assert d["id"] == "j1"
-        assert d["status"] == "completed"
-        assert d["progress_pct"] == 100
-        assert d["progress_detail"] is None
-        assert d["result"] is None
-
-    def test_to_dict_with_json_fields(self) -> None:
-        from nexus.storage.models.sync import SyncJobModel
-
-        job = SyncJobModel(
-            id="j2",
-            mount_point="/mnt/test",
-            status="running",
-            progress_pct=50,
-            progress_detail='{"files_scanned": 50}',
-            sync_params='{"path": "/inbox"}',
-            result='{"files_created": 10}',
-            created_at=datetime(2025, 1, 1, tzinfo=UTC),
-        )
-        d = job.to_dict()
-        assert d["progress_detail"] == {"files_scanned": 50}
-        assert d["sync_params"] == {"path": "/inbox"}
-        assert d["result"] == {"files_created": 10}
-
-
 class TestSubscriptionModelMethods:
     """Tests for SubscriptionModel helper methods."""
 
@@ -457,23 +418,6 @@ class TestWorkflowModelValidate:
         w = WorkflowModel(name="", definition="yaml", definition_hash="a" * 64)
         with pytest.raises(Exception, match="name is required"):
             w.validate()
-
-
-class TestBackendChangeLogValidate:
-    """Tests for BackendChangeLogModel.validate()."""
-
-    def test_valid_log(self) -> None:
-        from nexus.storage.models.sync import BackendChangeLogModel
-
-        log = BackendChangeLogModel(path="/test.txt", backend_name="gcs")
-        log.validate()
-
-    def test_negative_size(self) -> None:
-        from nexus.storage.models.sync import BackendChangeLogModel
-
-        log = BackendChangeLogModel(path="/test.txt", backend_name="gcs", size_bytes=-1)
-        with pytest.raises(Exception, match="size_bytes cannot be negative"):
-            log.validate()
 
 
 class TestSandboxMetadataValidate:

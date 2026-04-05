@@ -225,6 +225,7 @@ pub struct Kernel {
     rmdir_hook_count: AtomicU64,
     copy_hook_count: AtomicU64,
     access_hook_count: AtomicU64,
+    write_batch_hook_count: AtomicU64,
 }
 
 impl Kernel {
@@ -248,6 +249,7 @@ impl Kernel {
             rmdir_hook_count: AtomicU64::new(0),
             copy_hook_count: AtomicU64::new(0),
             access_hook_count: AtomicU64::new(0),
+            write_batch_hook_count: AtomicU64::new(0),
         }
     }
 
@@ -453,6 +455,7 @@ impl Kernel {
             "rmdir" => self.rmdir_hook_count.store(count, Ordering::Relaxed),
             "copy" => self.copy_hook_count.store(count, Ordering::Relaxed),
             "access" => self.access_hook_count.store(count, Ordering::Relaxed),
+            "write_batch" => self.write_batch_hook_count.store(count, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -469,6 +472,7 @@ impl Kernel {
             "rmdir" => self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
             "copy" => self.copy_hook_count.load(Ordering::Relaxed) > 0,
             "access" => self.access_hook_count.load(Ordering::Relaxed) > 0,
+            "write_batch" => self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
     }
@@ -957,6 +961,209 @@ impl Kernel {
             return false;
         }
         self.dcache.contains(path)
+    }
+
+    // ── Internal batch functions (not Tier 1 syscalls) ────────────────
+
+    /// Internal: batch write — loops sys_write logic for each item.
+    ///
+    /// NOT a syscall — prefixed with `_`. Called by Python `write_batch` method.
+    /// Each item is (path, content). Returns Vec<SysWriteResult> with per-item results.
+    /// Sorted VFS lock acquisition to avoid deadlocks.
+    /// PRE-hooks are NOT dispatched here (caller handles batch pre-hooks).
+    pub fn _write_batch(
+        &self,
+        items: &[(String, Vec<u8>)],
+        ctx: &OperationContext,
+    ) -> Result<Vec<SysWriteResult>, KernelError> {
+        let mut results = Vec::with_capacity(items.len());
+
+        // 1. Validate all paths (fail-fast)
+        for (path, _) in items {
+            validate_path_fast(path)?;
+        }
+
+        // 2. Route all paths (single lock acquisition on mount table via read lock)
+        let mut routes = Vec::with_capacity(items.len());
+        for (path, _) in items {
+            let route = self
+                .router
+                .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
+                .ok();
+            routes.push(route);
+        }
+
+        // 3. Sorted VFS lock acquisition for all paths
+        let mut lock_handles: Vec<u64> = vec![0; items.len()];
+        if self.vfs_lock.is_some() {
+            // Sort indices by path to avoid deadlock
+            let mut indices: Vec<usize> = (0..items.len()).collect();
+            indices.sort_by(|a, b| items[*a].0.cmp(&items[*b].0));
+
+            for idx in indices {
+                if routes[idx].is_some() {
+                    if let Some(ref lm) = self.vfs_lock {
+                        lock_handles[idx] = lm.blocking_acquire(
+                            &items[idx].0,
+                            LockMode::Write,
+                            self.vfs_lock_timeout_ms,
+                        );
+                    }
+                }
+            }
+        }
+
+        // 4. Write each item
+        for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
+            let route = match route_opt {
+                Some(r) => r,
+                None => {
+                    results.push(SysWriteResult {
+                        hit: false,
+                        content_id: None,
+                        post_hook_needed: false,
+                        version: 0,
+                        size: 0,
+                    });
+                    continue;
+                }
+            };
+
+            // Lock timeout check
+            if self.vfs_lock.is_some() && lock_handles[i] == 0 {
+                results.push(SysWriteResult {
+                    hit: false,
+                    content_id: None,
+                    post_hook_needed: false,
+                    version: 0,
+                    size: 0,
+                });
+                continue;
+            }
+
+            // Backend write
+            let write_result =
+                self.router
+                    .write_content(&route.mount_point, content, &route.backend_path, ctx);
+
+            match write_result {
+                Some(wr) => {
+                    let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                    let new_version = old_version + 1;
+
+                    // Metastore put
+                    if let Some(ref ms) = self.metastore {
+                        let meta = crate::metastore::FileMetadata {
+                            path: path.clone(),
+                            backend_name: route.io_profile.clone(),
+                            physical_path: wr.content_id.clone(),
+                            size: wr.size,
+                            etag: Some(wr.content_id.clone()),
+                            version: new_version,
+                            entry_type: DT_REG,
+                            zone_id: Some(ctx.zone_id.clone()),
+                            mime_type: None,
+                        };
+                        let _ = ms.put(path, meta);
+                    }
+
+                    // DCache update
+                    self.dcache.put(
+                        path,
+                        CachedEntry {
+                            backend_name: route.io_profile.clone(),
+                            physical_path: wr.content_id.clone(),
+                            size: wr.size,
+                            etag: Some(wr.content_id.clone()),
+                            version: new_version,
+                            entry_type: DT_REG,
+                            zone_id: Some(ctx.zone_id.clone()),
+                            mime_type: None,
+                        },
+                    );
+
+                    results.push(SysWriteResult {
+                        hit: true,
+                        content_id: Some(wr.content_id),
+                        post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0
+                            || self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
+                        version: new_version,
+                        size: wr.size,
+                    });
+                }
+                None => {
+                    results.push(SysWriteResult {
+                        hit: false,
+                        content_id: None,
+                        post_hook_needed: false,
+                        version: 0,
+                        size: 0,
+                    });
+                }
+            }
+        }
+
+        // 5. Release all VFS locks
+        if let Some(ref lm) = self.vfs_lock {
+            for handle in &lock_handles {
+                if *handle > 0 {
+                    lm.do_release(*handle);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Internal: batch read — loops sys_read logic for each path.
+    ///
+    /// NOT a syscall — prefixed with `_`. Called by Python `read_bulk` method.
+    /// Returns Vec<SysReadResult> with per-path results.
+    pub fn _read_batch(
+        &self,
+        paths: &[String],
+        ctx: &OperationContext,
+    ) -> Result<Vec<SysReadResult>, KernelError> {
+        let mut results = Vec::with_capacity(paths.len());
+
+        for path in paths {
+            match self.sys_read(path, ctx) {
+                Ok(r) => results.push(r),
+                Err(_) => results.push(SysReadResult {
+                    hit: false,
+                    data: None,
+                    post_hook_needed: false,
+                    content_hash: None,
+                    entry_type: 0,
+                }),
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Internal: batch delete — loops sys_unlink logic for each path.
+    ///
+    /// NOT a syscall — prefixed with `_`. Called by Python batch delete.
+    /// Returns Vec<SysUnlinkResult> with per-path results.
+    pub fn _delete_batch(
+        &self,
+        paths: &[String],
+        ctx: &OperationContext,
+    ) -> Result<Vec<SysUnlinkResult>, KernelError> {
+        let mut results = Vec::with_capacity(paths.len());
+
+        for path in paths {
+            match self.sys_unlink(path, ctx) {
+                Ok(r) => results.push(r),
+                Err(_) => results.push(SysUnlinkResult {
+                    entry_type: 0,
+                    post_hook_needed: false,
+                }),
+            }
+        }
+
+        Ok(results)
     }
 
     /// List immediate children of a directory path from dcache.

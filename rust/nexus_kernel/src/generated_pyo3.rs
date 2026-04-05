@@ -19,7 +19,10 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{CasLocalBackend, ObjectStore, PathLocalBackend, StorageError, WriteResult};
+use crate::backend::{
+    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,
+    WriteResult,
+};
 use crate::dispatch::{MutationObserver, PathResolver};
 use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
@@ -28,25 +31,57 @@ use crate::metastore::{FileMetadata, Metastore, MetastoreError};
 use crate::router::{RouteError, RustRouteResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Error conversion: KernelError -> PyErr
+// Error conversion: KernelError -> PyErr (cached exception classes)
 // ═══════════════════════════════════════════════════════════════════════════
+
+/// Cached exception class references — initialized once on first use.
+struct ExceptionCache {
+    invalid_path: Py<PyAny>,
+    file_not_found: Py<PyAny>,
+}
+
+static EXCEPTION_CACHE: std::sync::OnceLock<Option<ExceptionCache>> = std::sync::OnceLock::new();
+
+fn get_exception_cache(py: Python<'_>) -> Option<&'static ExceptionCache> {
+    EXCEPTION_CACHE
+        .get_or_init(|| {
+            let m = py.import("nexus.contracts.exceptions").ok()?;
+            let invalid_path = m.getattr("InvalidPathError").ok()?.unbind();
+            let file_not_found = m.getattr("NexusFileNotFoundError").ok()?.unbind();
+            Some(ExceptionCache {
+                invalid_path,
+                file_not_found,
+            })
+        })
+        .as_ref()
+}
 
 impl From<KernelError> for PyErr {
     fn from(e: KernelError) -> PyErr {
         match e {
             KernelError::InvalidPath(msg) => Python::attach(|py| {
-                py.import("nexus.contracts.exceptions")
-                    .and_then(|m| m.getattr("InvalidPathError"))
-                    .and_then(|cls| cls.call1((&msg,)))
-                    .map(PyErr::from_value)
-                    .unwrap_or_else(|_| pyo3::exceptions::PyValueError::new_err(msg))
+                if let Some(cache) = get_exception_cache(py) {
+                    cache
+                        .invalid_path
+                        .bind(py)
+                        .call1((&msg,))
+                        .map(PyErr::from_value)
+                        .unwrap_or_else(|_| pyo3::exceptions::PyValueError::new_err(msg))
+                } else {
+                    pyo3::exceptions::PyValueError::new_err(msg)
+                }
             }),
             KernelError::FileNotFound(path) => Python::attach(|py| {
-                py.import("nexus.contracts.exceptions")
-                    .and_then(|m| m.getattr("NexusFileNotFoundError"))
-                    .and_then(|cls| cls.call1((&path,)))
-                    .map(PyErr::from_value)
-                    .unwrap_or_else(|_| pyo3::exceptions::PyFileNotFoundError::new_err(path))
+                if let Some(cache) = get_exception_cache(py) {
+                    cache
+                        .file_not_found
+                        .bind(py)
+                        .call1((&path,))
+                        .map(PyErr::from_value)
+                        .unwrap_or_else(|_| pyo3::exceptions::PyFileNotFoundError::new_err(path))
+                } else {
+                    pyo3::exceptions::PyFileNotFoundError::new_err(path)
+                }
             }),
             KernelError::Route(RouteError::NotMounted(msg)) => {
                 pyo3::exceptions::PyValueError::new_err(msg)
@@ -624,6 +659,25 @@ impl InterceptHook for PyInterceptHookAdapter {
             }
         });
     }
+
+    fn on_pre_write_batch(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_write_batch") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_write_batch(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_write_batch") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
 }
 
 // ── PyPathResolverAdapter ───────────────────────────────────────
@@ -973,7 +1027,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas"))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -987,10 +1041,15 @@ impl PyKernel {
         fsync: bool,
         py_backend: Option<Py<PyAny>>,
         backend_type: &str,
+        follow_symlinks: bool,
     ) -> PyResult<()> {
-        // Backend resolution: local_root -> CasLocalBackend or PathLocalBackend, py_backend -> PyObjectStoreAdapter
+        // Backend resolution: local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
         let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {
-            if backend_type == "path_local" {
+            if backend_type == "local_connector" {
+                let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            } else if backend_type == "path_local" {
                 let b = PathLocalBackend::new(Path::new(root), fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
                 Some(Box::new(b))
@@ -1186,6 +1245,7 @@ impl PyKernel {
                 "copy" => hook.on_pre_copy(&hook_ctx)?,
                 "stat" => hook.on_pre_stat(&hook_ctx)?,
                 "access" => hook.on_pre_access(&hook_ctx)?,
+                "write_batch" => hook.on_pre_write_batch(&hook_ctx)?,
                 _ => {}
             }
         }
@@ -1461,6 +1521,79 @@ impl PyKernel {
     fn readdir(&self, parent_path: &str, zone_id: &str, is_admin: bool) -> Vec<(String, u8)> {
         self.inner.readdir(parent_path, zone_id, is_admin)
     }
+
+    // ── Internal batch functions ──────────────────────────────────────
+
+    /// Batch write: validate + route + lock + write + metastore + dcache.
+    /// Returns list of SysWriteResult (one per item).
+    #[pyo3(signature = (items, ctx))]
+    fn _write_batch<'py>(
+        &self,
+        py: Python<'py>,
+        items: Vec<(String, Vec<u8>)>,
+        ctx: &PyOperationContext,
+    ) -> PyResult<Vec<PySysWriteResult>> {
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner._write_batch(&items, &rust_ctx));
+        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        Ok(results
+            .into_iter()
+            .map(|r| PySysWriteResult {
+                hit: r.hit,
+                content_id: r.content_id,
+                post_hook_needed: r.post_hook_needed,
+                version: r.version,
+                size: r.size,
+            })
+            .collect())
+    }
+
+    /// Batch read: loops sys_read for each path.
+    /// Returns list of SysReadResult (one per path).
+    #[pyo3(signature = (paths, ctx))]
+    fn _read_batch<'py>(
+        &self,
+        py: Python<'py>,
+        paths: Vec<String>,
+        ctx: &PyOperationContext,
+    ) -> PyResult<Vec<PySysReadResult>> {
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner._read_batch(&paths, &rust_ctx));
+        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        Ok(results
+            .into_iter()
+            .map(|r| PySysReadResult {
+                hit: r.hit,
+                data: r
+                    .data
+                    .map(|d| Python::attach(|py| PyBytes::new(py, &d).into())),
+                post_hook_needed: r.post_hook_needed,
+                content_hash: r.content_hash,
+                entry_type: r.entry_type,
+            })
+            .collect())
+    }
+
+    /// Batch delete: loops sys_unlink for each path.
+    /// Returns list of SysUnlinkResult (one per path).
+    #[pyo3(signature = (paths, ctx))]
+    fn _delete_batch(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+        ctx: &PyOperationContext,
+    ) -> PyResult<Vec<PySysUnlinkResult>> {
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner._delete_batch(&paths, &rust_ctx));
+        let results = result.map_err(|e| -> PyErr { e.into() })?;
+        Ok(results
+            .into_iter()
+            .map(|r| PySysUnlinkResult {
+                entry_type: r.entry_type,
+                post_hook_needed: r.post_hook_needed,
+            })
+            .collect())
+    }
 }
 
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────
@@ -1481,6 +1614,7 @@ impl PyKernel {
                 "copy" => hook.on_pre_copy(hook_ctx)?,
                 "stat" => hook.on_pre_stat(hook_ctx)?,
                 "access" => hook.on_pre_access(hook_ctx)?,
+                "write_batch" => hook.on_pre_write_batch(hook_ctx)?,
                 _ => {}
             }
         }
@@ -1506,6 +1640,7 @@ impl PyKernel {
                 "copy" => hook.on_post_copy(hook_ctx),
                 "stat" => hook.on_post_stat(hook_ctx),
                 "access" => hook.on_post_access(hook_ctx),
+                "write_batch" => hook.on_post_write_batch(hook_ctx),
                 _ => {}
             }
         }

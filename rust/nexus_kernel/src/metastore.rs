@@ -60,6 +60,25 @@ pub(crate) trait Metastore: Send + Sync {
 
     /// Check if a path exists in the metastore.
     fn exists(&self, path: &str) -> Result<bool, MetastoreError>;
+
+    /// Batch put: store multiple metadata records.
+    /// Default impl loops single puts. Override for single-transaction batch.
+    fn put_batch(&self, items: &[(String, FileMetadata)]) -> Result<(), MetastoreError> {
+        for (path, meta) in items {
+            self.put(path, meta.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Batch get: retrieve metadata for multiple paths.
+    /// Default impl loops single gets.
+    fn get_batch(&self, paths: &[String]) -> Result<Vec<Option<FileMetadata>>, MetastoreError> {
+        let mut results = Vec::with_capacity(paths.len());
+        for path in paths {
+            results.push(self.get(path)?);
+        }
+        Ok(results)
+    }
 }
 
 // PyMetastoreAdapter + conversion helpers (extract_metadata, to_python_metadata)

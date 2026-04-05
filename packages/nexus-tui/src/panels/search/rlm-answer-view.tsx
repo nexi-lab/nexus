@@ -30,7 +30,7 @@ export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewPr
       <box height="100%" width="100%" flexDirection="column" justifyContent="center" alignItems="center">
         <text>Press / to ask a question about your documents</text>
         {contextPaths.length > 0 ? (
-          <text>{`Context: ${contextPaths.length} file(s) — a:clear`}</text>
+          <text>{`Docs: ${contextPaths.join(", ")} — a:clear`}</text>
         ) : (
           <text>{"Tip: go to Search tab, select results, press 'a' to add document context"}</text>
         )}
@@ -82,7 +82,7 @@ export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewPr
       {/* Main content: answer or streaming steps */}
       <scrollbox flexGrow={1} width="100%">
         {answer.answer ? (
-          <markdown content={answer.answer} streaming={answer.status === "streaming"} />
+          <text>{answer.answer}</text>
         ) : answer.steps.length > 0 ? (
           <box flexDirection="column">
             {answer.steps.map((step) => (

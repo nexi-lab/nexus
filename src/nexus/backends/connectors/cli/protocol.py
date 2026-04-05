@@ -88,39 +88,6 @@ class FetchResult:
         return self.async_chunks is not None
 
 
-@dataclass
-class MountSyncState:
-    """Persisted sync state for a mount point.
-
-    Stored in metastore keyed by (mount_point, provider_type).
-    The orchestrator manages lifecycle: create, update, invalidate.
-
-    Attributes:
-        mount_point: The mount this state belongs to.
-        provider_type: Connector type identifier.
-        state_token: Opaque token from the provider's last sync page.
-        status: Current status of the state token.
-        last_sync_time: ISO 8601 timestamp of last successful sync.
-        items_synced: Total items synced in last run.
-        pages_processed: Pages processed in last run.
-    """
-
-    mount_point: str
-    provider_type: str
-    state_token: str | None = None
-    status: SyncStatus = SyncStatus.INITIAL
-    last_sync_time: str | None = None
-    items_synced: int = 0
-    pages_processed: int = 0
-
-    def invalidate(self) -> None:
-        """Mark state as requiring full re-sync."""
-        self.state_token = None
-        self.status = SyncStatus.INITIAL
-        self.items_synced = 0
-        self.pages_processed = 0
-
-
 @runtime_checkable
 class ConnectorSyncProvider(Protocol):
     """Protocol for connectors that support delta sync.

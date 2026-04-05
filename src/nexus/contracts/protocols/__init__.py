@@ -26,7 +26,7 @@ from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
 from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
 from nexus.contracts.protocols.mcp import MCPProtocol
-from nexus.contracts.protocols.mount import MountProtocol, ProgressCallback
+from nexus.contracts.protocols.mount import MountProtocol
 from nexus.contracts.protocols.mount_persist import MountPersistProtocol
 from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.contracts.protocols.oauth import OAuthProtocol
@@ -66,7 +66,6 @@ __all__ = [
     "PersistentService",
     "PermissionEnforcerProtocol",
     "PermissionProtocol",
-    "ProgressCallback",
     "ReBACBrickProtocol",
     "SandboxProtocol",
     "SchedulerProtocol",

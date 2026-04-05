@@ -9,14 +9,10 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-
-# Type alias matching the mixin's ProgressCallback
-ProgressCallback = Callable[[int, str], None]
 
 
 @runtime_checkable

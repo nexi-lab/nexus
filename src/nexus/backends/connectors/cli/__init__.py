@@ -20,7 +20,6 @@ from nexus.backends.connectors.cli.config import (
 from nexus.backends.connectors.cli.protocol import (
     ConnectorSyncProvider,
     FetchResult,
-    MountSyncState,
     RemoteItem,
     SyncPage,
 )
@@ -39,7 +38,6 @@ __all__ = [
     # Sync protocol (from protocol.py — still used by connectors)
     "ConnectorSyncProvider",
     "FetchResult",
-    "MountSyncState",
     "RemoteItem",
     "SyncPage",
     # Result

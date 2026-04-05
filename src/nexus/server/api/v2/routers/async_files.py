@@ -553,6 +553,10 @@ def create_async_files_router(
         request: Request,
         path: str = Query(..., description="Path to read"),
         include_metadata: bool = Query(False, description="Include metadata in response"),
+        version: str | None = Query(
+            None,
+            description="Content hash (etag) to read a specific historical version from CAS",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -560,9 +564,32 @@ def create_async_files_router(
 
         Supports ETag-based caching via If-None-Match header.
         Returns 304 Not Modified if content hasn't changed.
+
+        When `version` is provided it is treated as a content-addressed hash
+        (etag) and the content is fetched directly from CAS via the backend
+        that owns `path`, bypassing the normal VFS read path.  This is used
+        by the TUI diff viewer to retrieve historical snapshots.
         """
         try:
             fs = await _get_fs()
+
+            # Fast path: content-hash (etag) lookup — used by the diff viewer
+            # to retrieve a historical snapshot stored in CAS.
+            if version:
+                try:
+                    route = fs.router.route(path)
+                except Exception as exc:
+                    raise NexusFileNotFoundError(f"{path} (version {version})") from exc
+                if route is None:
+                    raise NexusFileNotFoundError(f"{path} (version {version})")
+                raw: bytes = await asyncio.to_thread(route.backend.read_content, version)
+                text_v = raw.decode("utf-8", errors="replace")
+                resp_v = ReadResponse(content=text_v, etag=version)
+                return Response(
+                    content=resp_v.model_dump_json(),
+                    media_type="application/json",
+                    headers={"ETag": f'"{version}"'},
+                )
 
             # Check If-None-Match header for caching
             if_none_match = request.headers.get("If-None-Match")

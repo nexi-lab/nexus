@@ -13,6 +13,9 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use std::collections::HashMap;
 
+/// (observer, name) pair — shared by observer query methods.
+pub(crate) type ObserverPair = (Py<PyAny>, String);
+
 // ── InterceptHook trait ──────────────────────────────────────────────
 
 /// INTERCEPT hook — called before/after each syscall.
@@ -192,6 +195,9 @@ pub(crate) struct ObserverEntry {
     pub(crate) observer: Py<PyAny>,
     pub(crate) name: String,
     pub(crate) event_mask: u32,
+    /// Cached at registration: True = run inline (sync on caller path),
+    /// False = deferred (returned to Python for asyncio.create_task).
+    pub(crate) is_inline: bool,
 }
 
 /// Rust-side observer registry with event-type bitmask filtering.
@@ -206,12 +212,13 @@ impl ObserverRegistry {
         }
     }
 
-    /// Register observer with event_mask bitmask.
+    /// Register observer with event_mask bitmask and is_inline flag.
     pub(crate) fn register(
         &mut self,
         py: Python<'_>,
         obs: Py<PyAny>,
         event_mask: u32,
+        is_inline: bool,
     ) -> PyResult<()> {
         let obs_ref = obs.bind(py);
         let name: String = obs_ref
@@ -224,6 +231,7 @@ impl ObserverRegistry {
             observer: obs,
             name,
             event_mask,
+            is_inline,
         });
         Ok(())
     }
@@ -243,16 +251,33 @@ impl ObserverRegistry {
     }
 
     /// Return (observer, name) pairs matching the event_type_bit.
-    pub(crate) fn get_matching(
-        &self,
-        py: Python<'_>,
-        event_type_bit: u32,
-    ) -> Vec<(Py<PyAny>, String)> {
+    pub(crate) fn get_matching(&self, py: Python<'_>, event_type_bit: u32) -> Vec<ObserverPair> {
         self.observers
             .iter()
             .filter(|e| e.event_mask & event_type_bit != 0)
             .map(|e| (e.observer.clone_ref(py), e.name.clone()))
             .collect()
+    }
+
+    /// Return (inline, deferred) observer pairs matching the event_type_bit.
+    pub(crate) fn get_matching_partitioned(
+        &self,
+        py: Python<'_>,
+        event_type_bit: u32,
+    ) -> (Vec<ObserverPair>, Vec<ObserverPair>) {
+        let mut inline = Vec::new();
+        let mut deferred = Vec::new();
+        for e in &self.observers {
+            if e.event_mask & event_type_bit != 0 {
+                let pair = (e.observer.clone_ref(py), e.name.clone());
+                if e.is_inline {
+                    inline.push(pair);
+                } else {
+                    deferred.push(pair);
+                }
+            }
+        }
+        (inline, deferred)
     }
 
     pub(crate) fn count(&self) -> usize {

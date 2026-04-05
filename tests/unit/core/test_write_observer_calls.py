@@ -5,7 +5,7 @@ Coverage matrix (all gaps closed in Issue #625, migrated to KernelDispatch in #9
 - delete()      -> _dispatch.notify(FILE_DELETE)     YES
 - rename()      -> _dispatch.notify(FILE_RENAME)     YES
 - write_batch() -> _dispatch.notify(FILE_WRITE) x N  YES
-- write_stream()-> _dispatch.intercept_post_write()  YES
+- write_stream()-> dispatch_post_hooks("write", ctx) YES
 - mkdir()       -> _dispatch.notify(DIR_CREATE)      YES  (Issue #625)
 - rmdir()       -> _dispatch.notify(DIR_DELETE)      YES  (Issue #625)
 
@@ -44,14 +44,9 @@ def mock_notify(nx: NexusFS) -> AsyncMock:
     nx.resolve_read = MagicMock(return_value=(False, None))
     nx.resolve_write = MagicMock(return_value=(False, None))
     nx.resolve_delete = MagicMock(return_value=(False, None))
-    # All post-dispatch and notify methods are now async
+    # Post-hooks dispatch through Rust (sync, no mock needed).
+    # OBSERVE dispatch is async — mock notify to capture events.
     nx.notify = AsyncMock()
-    nx.intercept_post_write = AsyncMock()
-    nx.intercept_post_delete = AsyncMock()
-    nx.intercept_post_rename = AsyncMock()
-    nx.intercept_post_mkdir = AsyncMock()
-    nx.intercept_post_rmdir = AsyncMock()
-    nx.intercept_post_write_batch = AsyncMock()
     return nx.notify
 
 
@@ -173,29 +168,30 @@ class TestWriteBatchCallsDispatch:
 
 
 class TestWriteStreamCallsDispatch:
-    """write_stream() calls _dispatch.intercept_post_write() directly."""
+    """write_stream() dispatches post-write hooks via Rust dispatch_post_hooks."""
 
     @pytest.mark.asyncio
-    async def test_write_stream_calls_intercept(self, nx: NexusFS) -> None:
+    async def test_write_stream_dispatches_post_hooks(self, nx: NexusFS) -> None:
         if not hasattr(nx, "write_stream"):
             pytest.skip("write_stream not available")
 
         nx.resolve_read = MagicMock(return_value=(False, None))
         nx.resolve_write = MagicMock(return_value=(False, None))
         nx.resolve_delete = MagicMock(return_value=(False, None))
-        # All post-dispatch methods are now async
-        nx.intercept_post_write = AsyncMock()
         nx.notify = AsyncMock()
 
-        # path_local backend requires backend_path in OperationContext for
-        # streaming writes (no content_id available until hash is computed).
+        # Register a sync hook to verify dispatch
+        hook = MagicMock()
+        hook.name = "test_hook"
+        nx.register_intercept_write(hook)
+
         from nexus.contracts.types import OperationContext
 
         ctx = OperationContext(user_id="test", groups=[], backend_path="streamed.txt")
         await nx.write_stream("/streamed.txt", iter([b"chunk1", b"chunk2"]), context=ctx)
 
-        nx.intercept_post_write.assert_called_once()
-        hook_ctx = nx.intercept_post_write.call_args.args[0]
+        hook.on_post_write.assert_called_once()
+        hook_ctx = hook.on_post_write.call_args.args[0]
         assert hook_ctx.path == "/streamed.txt"
         assert hook_ctx.is_new_file is True
 
@@ -252,12 +248,6 @@ class TestRmdirCallsDispatch:
         cas_nx.resolve_write = MagicMock(return_value=(False, None))
         cas_nx.resolve_delete = MagicMock(return_value=(False, None))
         cas_nx.notify = AsyncMock()
-        cas_nx.intercept_post_write = AsyncMock()
-        cas_nx.intercept_post_delete = AsyncMock()
-        cas_nx.intercept_post_rename = AsyncMock()
-        cas_nx.intercept_post_mkdir = AsyncMock()
-        cas_nx.intercept_post_rmdir = AsyncMock()
-        cas_nx.intercept_post_write_batch = AsyncMock()
         mock_notify = cas_nx.notify
 
         await cas_nx.mkdir("/mydir")

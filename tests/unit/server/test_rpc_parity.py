@@ -214,14 +214,7 @@ def test_all_public_methods_are_exposed_or_excluded():
         "intercept_pre_rmdir",  # Internal - PRE-INTERCEPT dispatch
         "intercept_pre_stat",  # Internal - PRE-INTERCEPT dispatch
         "intercept_pre_access",  # Internal - PRE-INTERCEPT dispatch
-        "intercept_post_read",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_write",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_write_batch",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_delete",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_rename",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_copy",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_mkdir",  # Internal - POST-INTERCEPT dispatch
-        "intercept_post_rmdir",  # Internal - POST-INTERCEPT dispatch
+        # POST-INTERCEPT dispatch deleted — now via Rust dispatch_post_hooks
         "notify",  # Internal - OBSERVE dispatch
         "notify_mount",  # Internal - mount notification
         "notify_unmount",  # Internal - unmount notification

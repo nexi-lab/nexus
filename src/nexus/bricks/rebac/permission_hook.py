@@ -48,7 +48,7 @@ class PermissionCheckHook:
 
     Pre methods check permission and raise ``PermissionError`` to abort.
     Post methods are no-ops (required for protocol compatibility with
-    ``intercept_post_*`` which calls ``on_post_*`` directly).
+    ``dispatch_post_hooks`` which calls ``on_post_*`` directly).
     """
 
     name = "permission_check"

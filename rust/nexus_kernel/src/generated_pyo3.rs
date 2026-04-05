@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use crate::backend::{CasLocalBackend, ObjectStore, StorageError};
 use crate::dispatch::{MutationObserver, PathResolver};
-use crate::hook_registry::{HookRegistry, InterceptHook, ObserverRegistry};
+use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, Metastore, MetastoreError};
@@ -1087,20 +1087,38 @@ impl PyKernel {
 
     // ── Observer proxy methods ─────────────────────────────────────────
 
-    fn register_observer(&self, py: Python<'_>, obs: Py<PyAny>, event_mask: u32) -> PyResult<()> {
-        self.observers.lock().register(py, obs, event_mask)
+    #[pyo3(signature = (obs, event_mask, is_inline=true))]
+    fn register_observer(
+        &self,
+        py: Python<'_>,
+        obs: Py<PyAny>,
+        event_mask: u32,
+        is_inline: bool,
+    ) -> PyResult<()> {
+        self.observers
+            .lock()
+            .register(py, obs, event_mask, is_inline)
     }
 
     fn unregister_observer(&self, py: Python<'_>, obs: &Bound<'_, PyAny>) -> bool {
         self.observers.lock().unregister(py, obs)
     }
 
-    fn get_matching_observers(
+    fn get_matching_observers(&self, py: Python<'_>, event_type_bit: u32) -> Vec<ObserverPair> {
+        self.observers.lock().get_matching(py, event_type_bit)
+    }
+
+    /// Dispatch observers: returns (inline_observers, deferred_observers).
+    /// Inline observers are meant to be awaited on the caller's path.
+    /// Deferred observers are returned for Python asyncio.create_task().
+    fn dispatch_observers(
         &self,
         py: Python<'_>,
         event_type_bit: u32,
-    ) -> Vec<(Py<PyAny>, String)> {
-        self.observers.lock().get_matching(py, event_type_bit)
+    ) -> (Vec<ObserverPair>, Vec<ObserverPair>) {
+        self.observers
+            .lock()
+            .get_matching_partitioned(py, event_type_bit)
     }
 
     fn observer_count(&self) -> usize {

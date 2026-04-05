@@ -12,8 +12,8 @@ Mixin for NexusFS. Every VFS operation passes through three ordered phases:
     └── Registered interceptor hooks (per-operation hook lists).
         PRE:  ``intercept_pre_*()`` — hooks may abort by raising
               (e.g. PermissionError).  All exceptions propagate.
-        POST: ``intercept_post_*()`` — hooks modify context or audit.
-              Only AuditLogError aborts; others become warnings.
+        POST: ``dispatch_post_hooks(op, ctx)`` — hooks modify context or audit.
+              Dispatched via Rust (fire-and-forget, fault-isolated).
 
     OBSERVE  (fire-and-forget)
     └── Registered mutation observers receive a frozen FileEvent.
@@ -28,7 +28,7 @@ Linux kernel analogy:
 Lifecycle:
     Kernel creates KernelDispatch with empty callback lists at init.
     Factory registers resolvers, interceptor hooks, and observers at boot.
-    Kernel call sites invoke ``resolve_*()`` then ``intercept_post_*()``
+    Kernel call sites invoke ``resolve_*()`` then ``dispatch_post_hooks()``
     then ``notify()``.
     Empty lists = no-op dispatch = zero overhead when no services.
 
@@ -41,22 +41,10 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.exceptions import AuditLogError
-from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.vfs_hooks import (
-    CopyHookContext,
-    DeleteHookContext,
-    MkdirHookContext,
-    MountHookContext,
-    ReadHookContext,
-    RenameHookContext,
-    RmdirHookContext,
-    UnmountHookContext,
     VFSMountHook,
     VFSObserver,
     VFSUnmountHook,
-    WriteBatchHookContext,
-    WriteHookContext,
 )
 from nexus.core.file_events import FileEvent
 
@@ -82,9 +70,8 @@ class DispatchMixin:
         self._trie_resolvers: dict[int, Any] = {}
         self._fallback_resolvers: list[Any] = []
         self._next_resolver_idx: int = 0
-        self._hooks_nonempty: set[str] = set()
-        self._mount_hooks: list[VFSMountHook] = []
-        self._unmount_hooks: list[VFSUnmountHook] = []
+        self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
+        self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         self._background_tasks: set[asyncio.Task] = set()
 
     # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
@@ -174,15 +161,6 @@ class DispatchMixin:
 
     # ── register_intercept: per-operation INTERCEPT hooks ─────────────
 
-    def _mark_hook(self, op: str) -> None:
-        self._hooks_nonempty.add(op)
-        self._sync_hook_count(op)
-
-    def _unmark_hook(self, op: str) -> None:
-        if self._kernel is not None and self._kernel.hook_count(op) == 0:
-            self._hooks_nonempty.discard(op)
-        self._sync_hook_count(op)
-
     def _sync_hook_count(self, op: str) -> None:
         """Push hook count to Rust Kernel bitmap."""
         if self._kernel is not None:
@@ -194,7 +172,7 @@ class DispatchMixin:
         Delegates to Rust HookRegistry. Callers use named wrappers below.
         """
         self._kernel.register_hook(op, hook)
-        self._mark_hook(op)
+        self._sync_hook_count(op)
 
     # Named registration wrappers — preserve existing call sites.
     def register_intercept_read(self, hook: Any) -> None:
@@ -246,7 +224,7 @@ class DispatchMixin:
         """Unregister an INTERCEPT hook. Returns True if found."""
         r = bool(self._kernel.unregister_hook(op, hook))
         if r:
-            self._unmark_hook(op)
+            self._sync_hook_count(op)
         return r
 
     # Named unregistration wrappers — preserve existing call sites.
@@ -286,11 +264,13 @@ class DispatchMixin:
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        self._kernel.register_observer(obs, mask)
+        is_inline_attr = getattr(obs, "OBSERVE_INLINE", True)
+        is_inline = bool(is_inline_attr) if isinstance(is_inline_attr, (bool, int)) else True
+        self._kernel.register_observer(obs, mask, is_inline)
 
     def has_hooks(self, op: str) -> bool:
-        """O(1) check: any hooks registered for *op*? Avoids HookContext construction."""
-        return op in self._hooks_nonempty
+        """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
+        return bool(self._kernel.hook_count(op) > 0)
 
     def unregister_observe(self, obs: VFSObserver) -> bool:
         return bool(self._kernel.unregister_observer(obs))
@@ -302,101 +282,20 @@ class DispatchMixin:
     # pre-hooks internally.  Tier 2 methods call dispatch_pre_hooks() directly.
 
     # ── POST-INTERCEPT dispatch ────────────────────────────────────────
-
-    async def _post_dispatch(self, op: str, method: str, ctx: Any, *, timeout: float = 5.0) -> None:
-        """Shared POST dispatch — sync hooks serial, async hooks parallel.
-
-        Sync hooks: direct call, fault-isolated (try/except per hook).
-        Async hooks: ``asyncio.gather`` with per-hook timeout.
-        Only ``AuditLogError`` aborts; other exceptions become warnings.
-        """
-        if op not in self._hooks_nonempty:
-            return
-        sync_hooks, async_hooks = self._kernel.get_post_hooks(op)
-
-        # Sync: serial, fault-isolated
-        for hook in sync_hooks:
-            try:
-                getattr(hook, method)(ctx)
-            except AuditLogError:
-                raise
-            except Exception as exc:
-                ctx.warnings.append(
-                    OperationWarning(
-                        severity="degraded",
-                        component=hook.name,
-                        message=f"{method} hook failed: {exc}",
-                    )
-                )
-
-        # Async: parallel with per-hook timeout
-        if async_hooks:
-            tasks = [
-                asyncio.create_task(asyncio.wait_for(getattr(h, method)(ctx), timeout=timeout))
-                for h in async_hooks
-            ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for hook, result in zip(async_hooks, results, strict=True):
-                if isinstance(result, AuditLogError):
-                    raise result
-                elif isinstance(result, Exception):
-                    ctx.warnings.append(
-                        OperationWarning(
-                            severity="degraded",
-                            component=hook.name,
-                            message=f"{method} hook failed: {result}",
-                        )
-                    )
-
-    async def intercept_post_read(self, ctx: ReadHookContext) -> None:
-        await self._post_dispatch("read", "on_post_read", ctx)
-
-    async def intercept_post_write(self, ctx: WriteHookContext) -> None:
-        await self._post_dispatch("write", "on_post_write", ctx)
-
-    async def intercept_post_write_batch(
-        self,
-        items: list[tuple],
-        *,
-        context: Any = None,
-        zone_id: str | None = None,
-        agent_id: str | None = None,
-    ) -> None:
-        """INTERCEPT phase for batch write."""
-        if self._kernel.hook_count("write_batch") == 0:
-            return
-        ctx = WriteBatchHookContext(
-            items=items, context=context, zone_id=zone_id, agent_id=agent_id
-        )
-        await self._post_dispatch("write_batch", "on_post_write_batch", ctx)
-
-    async def intercept_post_delete(self, ctx: DeleteHookContext) -> None:
-        await self._post_dispatch("delete", "on_post_delete", ctx)
-
-    async def intercept_post_rename(self, ctx: RenameHookContext) -> None:
-        await self._post_dispatch("rename", "on_post_rename", ctx)
-
-    async def intercept_post_copy(self, ctx: CopyHookContext) -> None:
-        await self._post_dispatch("copy", "on_post_copy", ctx)
-
-    async def intercept_post_mkdir(self, ctx: MkdirHookContext) -> None:
-        await self._post_dispatch("mkdir", "on_post_mkdir", ctx)
-
-    async def intercept_post_rmdir(self, ctx: RmdirHookContext) -> None:
-        await self._post_dispatch("rmdir", "on_post_rmdir", ctx)
+    # ALL post-hook dispatch goes through Rust via
+    # self._kernel.dispatch_post_hooks(op, ctx).
+    # Sync post-hooks: serial in Rust (fire-and-forget).
 
     # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
     async def notify(self, event: FileEvent) -> None:
         """OBSERVE phase — hybrid inline/deferred dispatch.
 
-        Inline observers (``OBSERVE_INLINE=True``, default): run via
-        ``asyncio.gather`` on the caller's path — suited for fast,
-        in-process work (e.g. resolving FileWatcher futures).
+        Rust ``dispatch_observers()`` partitions observers by ``is_inline``
+        (cached at registration from ``OBSERVE_INLINE`` attribute).
 
-        Deferred observers (``OBSERVE_INLINE=False``): spawned as tracked
-        background tasks — true fire-and-forget from the caller's
-        perspective (e.g. EventBus publish to Redis/NATS).
+        Inline observers: run via ``asyncio.gather`` on the caller's path.
+        Deferred observers: spawned as tracked background tasks.
 
         Issue #3391: inspired by DFUSE (arXiv:2503.18191) — eliminate
         I/O round-trips from the write critical path.
@@ -407,17 +306,9 @@ class DispatchMixin:
         bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
         if not bit:
             return
-        observers = self._kernel.get_matching_observers(bit)
-        if not observers:
+        inline, deferred = self._kernel.dispatch_observers(bit)
+        if not inline and not deferred:
             return
-
-        inline: list[tuple[Any, str]] = []
-        deferred: list[tuple[Any, str]] = []
-        for obs, name in observers:
-            if getattr(obs, "OBSERVE_INLINE", True):
-                inline.append((obs, name))
-            else:
-                deferred.append((obs, name))
 
         async def _safe(obs: Any, name: str) -> None:
             from nexus.lib.lock_order import enter_observer_context, exit_observer_context
@@ -442,49 +333,106 @@ class DispatchMixin:
             self._background_tasks.add(task)
             task.add_done_callback(self._on_background_task_done)
 
-    # ── MOUNT/UNMOUNT hooks (Issue #1811) ──────────────────────────────
+    # ── MOUNT/UNMOUNT hooks (unified into OBSERVE phase) ────────────────
+    #
+    # Mount/unmount hooks are registered as observers with MOUNT/UNMOUNT
+    # event_mask bits. Legacy API preserved — wraps hooks as observers.
 
     def register_mount_hook(self, hook: VFSMountHook) -> None:
-        self._mount_hooks.append(hook)
+        """Register a mount hook as an OBSERVE observer with MOUNT event mask."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        # Wrap VFSMountHook as an observer with on_mutation
+        class _MountObserverAdapter:
+            OBSERVE_INLINE = True
+
+            def __init__(self, h: VFSMountHook):
+                self._hook = h
+                self.event_mask = FILE_EVENT_BIT[FileEventType.MOUNT]
+
+            async def on_mutation(self, event: Any) -> None:
+                from nexus.contracts.vfs_hooks import MountHookContext
+
+                ctx = MountHookContext(
+                    mount_point=event.path, backend=getattr(event, "_backend", None)
+                )
+                self._hook.on_mount(ctx)
+
+        adapter = _MountObserverAdapter(hook)
+        self._mount_hooks.append((hook, adapter))
+        self.register_observe(adapter)
 
     def register_unmount_hook(self, hook: VFSUnmountHook) -> None:
-        self._unmount_hooks.append(hook)
+        """Register an unmount hook as an OBSERVE observer with UNMOUNT event mask."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        class _UnmountObserverAdapter:
+            OBSERVE_INLINE = True
+
+            def __init__(self, h: VFSUnmountHook):
+                self._hook = h
+                self.event_mask = FILE_EVENT_BIT[FileEventType.UNMOUNT]
+
+            async def on_mutation(self, event: Any) -> None:
+                from nexus.contracts.vfs_hooks import UnmountHookContext
+
+                ctx = UnmountHookContext(
+                    mount_point=event.path, backend=getattr(event, "_backend", None)
+                )
+                self._hook.on_unmount(ctx)
+
+        adapter = _UnmountObserverAdapter(hook)
+        self._unmount_hooks.append((hook, adapter))
+        self.register_observe(adapter)
 
     def unregister_mount_hook(self, hook: VFSMountHook) -> bool:
-        try:
-            self._mount_hooks.remove(hook)
-            return True
-        except ValueError:
-            return False
+        for i, (h, adapter) in enumerate(self._mount_hooks):
+            if h is hook:
+                self._mount_hooks.pop(i)
+                self.unregister_observe(adapter)
+                return True
+        return False
 
     def unregister_unmount_hook(self, hook: VFSUnmountHook) -> bool:
-        try:
-            self._unmount_hooks.remove(hook)
-            return True
-        except ValueError:
-            return False
+        for i, (h, adapter) in enumerate(self._unmount_hooks):
+            if h is hook:
+                self._unmount_hooks.pop(i)
+                self.unregister_observe(adapter)
+                return True
+        return False
 
     def notify_mount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget mount notification to all registered hooks."""
-        if not self._mount_hooks:
+        """Fire-and-forget mount notification via OBSERVE phase."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        bit = FILE_EVENT_BIT[FileEventType.MOUNT]
+        observers = self._kernel.get_matching_observers(bit)
+        if not observers:
             return
-        ctx = MountHookContext(mount_point=mount_point, backend=backend)
-        for hook in self._mount_hooks:
+        event = FileEvent(type=FileEventType.MOUNT, path=mount_point)
+        # Attach backend as private attr for adapters
+        object.__setattr__(event, "_backend", backend)
+        for obs, name in observers:
             try:
-                hook.on_mount(ctx)
+                obs.on_mutation(event)
             except Exception as exc:
-                logger.warning("Mount hook %s failed: %s", type(hook).__name__, exc)
+                logger.warning("Mount observer %s failed: %s", name, exc)
 
     def notify_unmount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget unmount notification to all registered hooks."""
-        if not self._unmount_hooks:
+        """Fire-and-forget unmount notification via OBSERVE phase."""
+        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+
+        bit = FILE_EVENT_BIT[FileEventType.UNMOUNT]
+        observers = self._kernel.get_matching_observers(bit)
+        if not observers:
             return
-        ctx = UnmountHookContext(mount_point=mount_point, backend=backend)
-        for hook in self._unmount_hooks:
+        event = FileEvent(type=FileEventType.UNMOUNT, path=mount_point)
+        object.__setattr__(event, "_backend", backend)
+        for obs, name in observers:
             try:
-                hook.on_unmount(ctx)
+                obs.on_mutation(event)
             except Exception as exc:
-                logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
+                logger.warning("Unmount observer %s failed: %s", name, exc)
 
     # ── Hook counts — delegate to Rust Kernel ────────────────────────
 

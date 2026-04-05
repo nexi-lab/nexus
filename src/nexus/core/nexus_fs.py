@@ -1212,7 +1212,7 @@ class NexusFS(  # type: ignore[misc]
         if offset or count is not None:
             data = data[offset : offset + count] if count is not None else data[offset:]
 
-        # [INTERMEDIATE] POST-INTERCEPT: hooks — migrates to Rust thread::spawn in PR 7
+        # POST-INTERCEPT: hooks dispatched via Rust dispatch_post_hooks
         if result.post_hook_needed:
             zone_id, agent_id, _ = self._get_context_identity(context)
             from nexus.contracts.vfs_hooks import ReadHookContext
@@ -1225,7 +1225,7 @@ class NexusFS(  # type: ignore[misc]
                 content=data,
                 content_hash=result.content_hash,
             )
-            await self.intercept_post_read(_read_ctx)
+            self._kernel.dispatch_post_hooks("read", _read_ctx)
             data = _read_ctx.content or data
 
         return data
@@ -1850,7 +1850,7 @@ class NexusFS(  # type: ignore[misc]
             is_new_file=(meta is None),
             metadata=new_meta,
         )
-        await self.intercept_post_write(_ws_ctx)
+        self._kernel.dispatch_post_hooks("write", _ws_ctx)
 
         return {
             "etag": content_hash,
@@ -2041,13 +2041,14 @@ class NexusFS(  # type: ignore[misc]
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
-            await self.intercept_post_mkdir(
+            self._kernel.dispatch_post_hooks(
+                "mkdir",
                 MkdirHookContext(
                     path=path,
                     context=ctx,
                     zone_id=ctx.zone_id,
                     agent_id=ctx.agent_id,
-                )
+                ),
             )
 
     @rpc_expose(description="Remove directory")
@@ -2357,7 +2358,7 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Post-write event dispatch (async, outside lock).
 
-        Fires FileEvent notify (OBSERVE) + intercept_post_write hooks (INTERCEPT).
+        Fires FileEvent notify (OBSERVE) + dispatch_post_hooks (INTERCEPT).
         Uses the augmented context from _write_content (stored in result).
 
         Returns:
@@ -2395,7 +2396,7 @@ class NexusFS(  # type: ignore[misc]
             old_metadata=result.old_metadata,
             new_version=result.new_version,
         )
-        await self.intercept_post_write(_write_ctx)
+        self._kernel.dispatch_post_hooks("write", _write_ctx)
 
         # Return metadata for optimistic concurrency control
         return {
@@ -2938,12 +2939,15 @@ class NexusFS(  # type: ignore[misc]
         items = [
             (metadata, existing_metadata.get(metadata.path) is None) for metadata in metadata_list
         ]
-        await self.intercept_post_write_batch(
-            items,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-        )
+        if self._kernel.hook_count("write_batch") > 0:
+            from nexus.contracts.vfs_hooks import WriteBatchHookContext
+
+            self._kernel.dispatch_post_hooks(
+                "write_batch",
+                WriteBatchHookContext(
+                    items=items, context=context, zone_id=zone_id, agent_id=agent_id
+                ),
+            )
 
         # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
         for metadata in metadata_list:
@@ -3073,7 +3077,7 @@ class NexusFS(  # type: ignore[misc]
             metadata=meta,
         )
         if _unlink_result.post_hook_needed:
-            await self.intercept_post_delete(_delete_ctx)
+            self._kernel.dispatch_post_hooks("delete", _delete_ctx)
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         with self._vfs_locked(path, "write"):
@@ -3161,14 +3165,15 @@ class NexusFS(  # type: ignore[misc]
                 user_id=ctx.user_id,
             )
         )
-        await self.intercept_post_rmdir(
+        self._kernel.dispatch_post_hooks(
+            "rmdir",
             RmdirHookContext(
                 path=path,
                 context=ctx,
                 zone_id=ctx.zone_id,
                 agent_id=ctx.agent_id,
                 recursive=recursive,
-            )
+            ),
         )
 
         return {}
@@ -3341,7 +3346,7 @@ class NexusFS(  # type: ignore[misc]
                 is_directory=bool(is_directory),
                 metadata=meta,
             )
-            await self.intercept_post_rename(_rename_ctx)
+            self._kernel.dispatch_post_hooks("rename", _rename_ctx)
 
         return {}
 
@@ -3591,7 +3596,7 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        await self.intercept_post_copy(_copy_ctx)
+        self._kernel.dispatch_post_hooks("copy", _copy_ctx)
 
         return result
 

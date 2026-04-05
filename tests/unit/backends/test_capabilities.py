@@ -45,8 +45,8 @@ class TestBackendFeatureEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """20 features: removed EXTERNAL_CONTENT (now DT type) + 5 dead (DATA_DIR, PARALLEL_MMAP, SEARCHABLE, WATCH, CHANGE_NOTIFICATIONS) + SYNC_ELIGIBLE."""
-        assert len(BackendFeature) == 20
+        """18 features after sync/cache cleanup removed SYNC_ELIGIBLE and CHANGE_NOTIFICATIONS."""
+        assert len(BackendFeature) == 18
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""

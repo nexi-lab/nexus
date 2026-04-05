@@ -557,6 +557,10 @@ def create_async_files_router(
             None,
             description="Content hash (etag) to read a specific historical version from CAS",
         ),
+        transaction_id: str | None = Query(
+            None,
+            description="Transaction ID — required when version is set to validate the hash belongs to this path",
+        ),
         context: Any = Depends(get_context),
     ) -> Response:
         """
@@ -567,8 +571,9 @@ def create_async_files_router(
 
         When `version` is provided it is treated as a content-addressed hash
         (etag) and the content is fetched directly from CAS via the backend
-        that owns `path`, bypassing the normal VFS read path.  This is used
-        by the TUI diff viewer to retrieve historical snapshots.
+        that owns `path`.  `transaction_id` is required alongside `version`
+        so the server can validate that the requested hash actually belongs to
+        `path` in that transaction, preventing cross-path blob reads.
         """
         try:
             fs = await _get_fs()
@@ -576,13 +581,68 @@ def create_async_files_router(
             # Fast path: content-hash (etag) lookup — used by the diff viewer
             # to retrieve a historical snapshot stored in CAS.
             if version:
+                if not transaction_id:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="transaction_id is required when version is specified",
+                    )
+                # --- Zone-ownership check (mirrors snapshots router) ---
+                _snap_svc = getattr(request.app.state, "transactional_snapshot_service", None)
+                if _snap_svc is None:
+                    _snap_svc = getattr(fs, "_snapshot_service", None)
+                if _snap_svc is None:
+                    raise HTTPException(status_code=503, detail="Snapshot service not available")
+                from nexus.contracts.constants import ROOT_ZONE_ID as _ROOT_ZONE_ID
+
+                _caller_zone = getattr(context, "zone_id", None) or _ROOT_ZONE_ID
+                _txn_info = await _snap_svc.get_transaction(transaction_id)
+                if _txn_info is None or _txn_info.zone_id != _caller_zone:
+                    raise HTTPException(
+                        status_code=404, detail=f"Transaction not found: {transaction_id}"
+                    )
+                # --- Validate hash belongs to path in this transaction ---
+                _entries = await _snap_svc.list_entries(transaction_id)
+                _valid = any(
+                    e.path == path and (e.original_hash == version or e.new_hash == version)
+                    for e in _entries
+                )
+                if not _valid:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"version is not recorded for this path in transaction {transaction_id!r}",
+                    )
                 try:
                     route = fs.router.route(path)
                 except Exception as exc:
                     raise NexusFileNotFoundError(f"{path} (version {version})") from exc
                 if route is None:
                     raise NexusFileNotFoundError(f"{path} (version {version})")
-                raw: bytes = await asyncio.to_thread(route.backend.read_content, version)
+                # --- Enforce standard read authorization via the VFS path ---
+                try:
+                    _accessible = await fs.access(path, context=context)
+                except NexusPermissionError as e:
+                    raise HTTPException(status_code=403, detail=str(e)) from e
+                if not _accessible:
+                    raise NexusFileNotFoundError(path)
+                # --- Gate on CAS-capable backend ---
+                from nexus.contracts.backend_features import BackendFeature as _BF
+
+                if not route.backend.has_capability(_BF.CAS):
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"Historical version reads are only supported on CAS-addressed backends; "
+                            f"backend for {path!r} does not support content-addressed history"
+                        ),
+                    )
+                import dataclasses as _dc
+
+                _read_ctx = _dc.replace(
+                    context,
+                    backend_path=getattr(route, "backend_path", path),
+                    virtual_path=path,
+                )
+                raw: bytes = await asyncio.to_thread(route.backend.read_content, version, _read_ctx)
                 text_v = raw.decode("utf-8", errors="replace")
                 resp_v = ReadResponse(content=text_v, etag=version)
                 return Response(

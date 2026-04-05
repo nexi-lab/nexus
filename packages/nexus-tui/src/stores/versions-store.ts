@@ -96,6 +96,7 @@ export interface VersionsState {
   // Diff viewer
   readonly diffContent: DiffContent | null;
   readonly diffLoading: boolean;
+  readonly _diffRequestKey: string;
 
   // Transaction detail
   readonly transactionDetail: Transaction | null;
@@ -116,6 +117,7 @@ export interface VersionsState {
     path: string,
     version1: string | null,
     version2: string | null,
+    transactionId: string,
     client: FetchClient,
   ) => Promise<void>;
   readonly fetchTransactionDetail: (txnId: string, client: FetchClient) => Promise<void>;
@@ -128,6 +130,7 @@ export interface VersionsState {
   readonly rollbackTransaction: (txnId: string, client: FetchClient) => Promise<void>;
   readonly fetchConflicts: (client: FetchClient) => Promise<void>;
   readonly toggleConflicts: () => void;
+  readonly clearDiff: () => void;
 }
 
 const SOURCE = "versions";
@@ -143,6 +146,7 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
   entriesLoading: false,
   diffContent: null,
   diffLoading: false,
+  _diffRequestKey: "",
   transactionDetail: null,
   transactionDetailLoading: false,
   conflicts: [],
@@ -234,35 +238,36 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
     }
   },
 
-  fetchDiff: async (path, version1, version2, client) => {
-    set({ diffLoading: true, diffContent: null, error: null });
+  fetchDiff: async (path, version1, version2, transactionId, client) => {
+    const requestKey = `${transactionId}\x00${path}\x00${version1 ?? ""}\x00${version2 ?? ""}`;
+    set({ diffLoading: true, diffContent: null, error: null, _diffRequestKey: requestKey });
 
     try {
+      const txnParam = `&transaction_id=${encodeURIComponent(transactionId)}`;
       // version1 null = new file (no original), version2 null = deleted file
       const [oldContent, newContent] = await Promise.all([
         version1
           ? client.get<{ content: string }>(
-              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version1)}&include_metadata=false`,
+              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version1)}&include_metadata=false${txnParam}`,
             ).then((r) => r.content ?? "")
           : Promise.resolve(""),
         version2
           ? client.get<{ content: string }>(
-              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version2)}&include_metadata=false`,
+              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version2)}&include_metadata=false${txnParam}`,
             ).then((r) => r.content ?? "")
           : Promise.resolve(""),
       ]);
-      const oldResponse = { content: oldContent };
-      const newResponse = { content: newContent };
+
+      // Discard stale response if selection changed while this was in-flight
+      if (get()._diffRequestKey !== requestKey) return;
 
       set({
-        diffContent: {
-          old: oldResponse.content ?? "",
-          new: newResponse.content ?? "",
-        },
+        diffContent: { old: oldContent, new: newContent },
         diffLoading: false,
       });
       useUiStore.getState().markDataUpdated("versions");
     } catch (err) {
+      if (get()._diffRequestKey !== requestKey) return;
       const message = err instanceof Error ? err.message : String(err ?? "Failed to fetch diff");
       set({
         diffContent: null,
@@ -358,5 +363,9 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
 
   toggleConflicts: () => {
     set((state) => ({ showConflicts: !state.showConflicts }));
+  },
+
+  clearDiff: () => {
+    set({ diffContent: null, diffLoading: false, _diffRequestKey: "" });
   },
 }));

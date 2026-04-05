@@ -59,6 +59,7 @@ export default function VersionsPanel(): React.ReactNode {
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
   const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
   const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
+  const clearDiff = useVersionsStore((s) => s.clearDiff);
 
   // Clipboard copy
   const { copy, copied } = useCopy();
@@ -107,14 +108,15 @@ export default function VersionsPanel(): React.ReactNode {
     }
   }, [client, statusFilter, fetchTransactions]);
 
-  // Fetch entries and transaction detail when selection changes; reset entry cursor
+  // Fetch entries and transaction detail when selection changes; reset entry cursor and diff
   useEffect(() => {
     setSelectedEntryIndex(0);
+    clearDiff();
     if (client && selectedTransaction) {
       fetchEntries(selectedTransaction.transaction_id, client);
       fetchTransactionDetail(selectedTransaction.transaction_id, client);
     }
-  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail]);
+  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail, clearDiff]);
 
   // Keyboard navigation
   useKeyboard(
@@ -142,25 +144,25 @@ export default function VersionsPanel(): React.ReactNode {
                 const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
                 setSelectedEntryIndex(next);
                 const entry = entries[next];
-                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
               },
               "down": () => {
                 const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
                 setSelectedEntryIndex(next);
                 const entry = entries[next];
-                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
               },
               "k": () => {
                 const prev = Math.max(selectedEntryIndex - 1, 0);
                 setSelectedEntryIndex(prev);
                 const entry = entries[prev];
-                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
               },
               "up": () => {
                 const prev = Math.max(selectedEntryIndex - 1, 0);
                 setSelectedEntryIndex(prev);
                 const entry = entries[prev];
-                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
               },
               "tab": () => toggleFocus("versions"),
             }
@@ -204,7 +206,7 @@ export default function VersionsPanel(): React.ReactNode {
                 if (!client || !selectedTransaction || entries.length === 0) return;
                 const entry = entries[selectedEntryIndex];
                 if (entry) {
-                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction.transaction_id, client);
                 }
               },
               "c": () => {
@@ -285,8 +287,8 @@ export default function VersionsPanel(): React.ReactNode {
               onSelectEntry={(index) => {
                 setSelectedEntryIndex(index);
                 const entry = entries[index];
-                if (client && entry) {
-                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                if (client && entry && selectedTransaction) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction.transaction_id, client);
                 }
               }}
             />

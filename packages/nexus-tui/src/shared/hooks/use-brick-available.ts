@@ -29,7 +29,7 @@ export function checkBricksAvailable(
   bricks: readonly string[],
 ): BrickAvailability {
   return {
-    available: bricks.some((b) => enabledBricks.includes(b)),
+    available: featuresLoaded && bricks.some((b) => enabledBricks.includes(b)),
     loading: !featuresLoaded,
   };
 }

@@ -194,6 +194,9 @@ function generateUnifiedDiff(
 // Component
 // =============================================================================
 
+// Guard: skip quadratic LCS for files exceeding this line count per side
+const MAX_DIFF_LINES = 500;
+
 export function DiffViewer({
   oldText,
   newText,
@@ -201,6 +204,16 @@ export function DiffViewer({
   newLabel = "b",
   view = "unified",
 }: DiffViewerProps): React.ReactNode {
+  const oldLineCount = oldText ? oldText.split("\n").length : 0;
+  const newLineCount = newText ? newText.split("\n").length : 0;
+  if (oldLineCount > MAX_DIFF_LINES || newLineCount > MAX_DIFF_LINES) {
+    return (
+      <box height="100%" width="100%">
+        <text>{`Diff skipped: files too large (${oldLineCount} + ${newLineCount} lines). Open in editor to compare.`}</text>
+      </box>
+    );
+  }
+
   const diffString = generateUnifiedDiff(oldText, newText, oldLabel, newLabel);
 
   if (diffString === "") {

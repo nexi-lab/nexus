@@ -110,13 +110,20 @@ jobs:
         run: |
           # fastbloom-rs>=0.5.0 doesn't exist on PyPI (highest available: 0.3.0).
           # It's only used in rebac/cache bricks excluded from the cluster profile.
-          # Relax the constraint so pip resolves to 0.3.0 and proceeds normally.
           # pyproject.toml already gates uvloop with sys_platform != 'win32'.
           # fastbloom-rs: only used in rebac/cache bricks excluded from cluster profile.
           # Its sdist has a broken Cargo.toml structure that fails to build from source
           # on any platform without pre-built wheels (which don't exist for >=0.5.0).
           # Remove it entirely so pip install . proceeds cleanly.
-          sed -i '' '/fastbloom-rs/d' pyproject.toml
+          python - <<'PY'
+          from pathlib import Path
+          
+          pyproject = Path("pyproject.toml")
+          lines = pyproject.read_text().splitlines()
+          pyproject.write_text(
+              "\n".join(line for line in lines if "fastbloom-rs" not in line) + "\n"
+          )
+          PY
           pip install .
 
       # ── protoc (required by nexus_raft build.rs) ─────────────────────────

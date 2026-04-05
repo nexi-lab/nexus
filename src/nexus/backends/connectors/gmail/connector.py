@@ -187,9 +187,15 @@ class PathGmailBackend(
         record_store: "RecordStoreABC | None" = None,
         max_message_per_label: int = 200,
         metadata_store: Any = None,
+        encryption_key: str | None = None,
     ):
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
+        self._init_oauth(
+            token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            encryption_key=encryption_key,
+        )
 
         # 2. Create GmailTransport with the token manager
         gmail_transport = GmailTransport(

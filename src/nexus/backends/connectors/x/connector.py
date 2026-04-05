@@ -149,6 +149,7 @@ class PathXBackend(
         *,
         memory_cache_maxsize: int = 1024,
         user_id_cache_maxsize: int = 256,
+        encryption_key: str | None = None,
     ):
         """Initialize X connector backend.
 
@@ -162,7 +163,12 @@ class PathXBackend(
             user_id_cache_maxsize: Max entries in the user ID LRU cache
         """
         # 1. Initialize OAuth
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
+        self._init_oauth(
+            token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            encryption_key=encryption_key,
+        )
 
         # 2. Create XTransport with the token manager
         x_transport = XTransport(

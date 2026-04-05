@@ -27,6 +27,7 @@ class OAuthConnectorMixin:
         token_manager_db: str,
         user_email: str | None = None,
         provider: str = "oauth",
+        encryption_key: str | None = None,
     ) -> None:
         """Initialize OAuth token management.
 
@@ -37,6 +38,10 @@ class OAuthConnectorMixin:
             token_manager_db: Path to TokenManager database or database URL
             user_email: Optional user email for OAuth lookup. None = use context.
             provider: OAuth provider name from config
+            encryption_key: Fernet encryption key for token storage. Must match
+                the key used by exchange_auth_code() in the same session so stored
+                tokens are readable. In slim-fs mode this is always provided by
+                _backend_factory via get_oauth_encryption_key().
         """
         import importlib as _il
 
@@ -49,7 +54,8 @@ class OAuthConnectorMixin:
         from nexus.backends.connectors.utils import resolve_database_url
 
         resolved_db = resolve_database_url(token_manager_db)
+        extra = {"encryption_key": encryption_key} if encryption_key else {}
         if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
+            self.token_manager = TokenManager(db_url=resolved_db, **extra)
         else:
-            self.token_manager = TokenManager(db_path=resolved_db)
+            self.token_manager = TokenManager(db_path=resolved_db, **extra)

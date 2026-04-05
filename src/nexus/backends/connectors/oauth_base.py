@@ -72,6 +72,7 @@ class OAuthConnectorBase(
         provider: str = "oauth",
         record_store: "RecordStoreABC | None" = None,
         metadata_store: Any = None,
+        encryption_key: str | None = None,
     ) -> None:
         """Initialize OAuth connector base.
 
@@ -83,7 +84,12 @@ class OAuthConnectorBase(
             metadata_store: MetastoreABC instance for file_paths table (optional).
         """
         super().__init__()
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
+        self._init_oauth(
+            token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            encryption_key=encryption_key,
+        )
         self.session_factory = record_store.session_factory if record_store else None
         self.metadata_store = metadata_store
 

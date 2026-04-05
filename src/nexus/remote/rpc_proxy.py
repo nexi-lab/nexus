@@ -27,6 +27,7 @@ _INTERNAL_ATTRS = frozenset(
         "connect_timeout",
         "session",
         "max_retries",
+        "close",  # local lifecycle method — must not be proxied as an RPC call
     }
 )
 
@@ -49,6 +50,16 @@ class RPCProxyBase:
 
     # Cache for ABC method parameter names (class-level)
     _param_name_cache: dict[str, list[str]] = {}
+
+    def close(self) -> None:
+        """Local lifecycle method — close any underlying transport/session.
+
+        Subclasses should override to release resources.  The base
+        implementation is a no-op so that callers can safely call close()
+        without knowing whether the proxy has resources to release.
+        ``close`` must not be proxied as a remote RPC call (it is listed in
+        _INTERNAL_ATTRS for that reason).
+        """
 
     def _call_rpc(
         self,

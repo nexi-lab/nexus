@@ -130,11 +130,11 @@ class FileWatcher:
     # VFSObserver: on_mutation (OBSERVE phase)
     # ------------------------------------------------------------------
 
-    async def on_mutation(self, event: "FileEvent") -> None:
+    def on_mutation(self, event: "FileEvent") -> None:
         """Called by KernelDispatch.notify() on every local mutation.
 
         Matches the event against pending waiters and resolves their futures.
-        Runs on the event loop (via gather in KernelDispatch).
+        Pure in-memory (~0μs) — no I/O, no await needed.
         """
         with self._waiters_lock:
             for w in self._waiters:

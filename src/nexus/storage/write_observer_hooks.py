@@ -144,11 +144,10 @@ class SyncAuditWriteInterceptor:
 
 
 class AuditWriteInterceptor:
-    """Async VFS interceptor: serialize mutation events → sys_write to pipe.
+    """Sync VFS interceptor: serialize mutation events → write_nowait to pipe.
 
-    Registered as an async POST hook via ``register_intercept_*()``.
-    The Rust HookRegistry auto-classifies it as async because
-    ``on_post_write`` is ``async def``.
+    Registered as a sync POST hook (all ``on_post_*`` are plain ``def``).
+    The fast path writes directly to the pipe ring buffer (~0.5μs).
 
     Error policy: ``strict_mode=True`` aborts with AuditLogError on
     pipe write failure; ``strict_mode=False`` logs and continues.
@@ -184,7 +183,7 @@ class AuditWriteInterceptor:
 
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
-    async def on_post_write(self, ctx: "WriteHookContext") -> None:
+    def on_post_write(self, ctx: "WriteHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
         event = {
@@ -197,11 +196,11 @@ class AuditWriteInterceptor:
             "metadata_snapshot": ctx.old_metadata.to_dict() if ctx.old_metadata else None,
             "metadata": ctx.metadata.to_dict() if ctx.metadata else None,
         }
-        await self._emit(event, "write", ctx.path)
+        self._emit(event, "write", ctx.path)
 
     # ── VFSWriteBatchHook ─────────────────────────────────────────────
 
-    async def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
+    def on_post_write_batch(self, ctx: "WriteBatchHookContext") -> None:
         for metadata, is_new in ctx.items:
             if metadata.path.startswith(_INTERNAL_PIPE_PREFIX):
                 continue
@@ -214,11 +213,11 @@ class AuditWriteInterceptor:
                 "snapshot_hash": metadata.etag,
                 "metadata": metadata.to_dict(),
             }
-            await self._emit(event, "write_batch", metadata.path)
+            self._emit(event, "write_batch", metadata.path)
 
     # ── VFSDeleteHook ─────────────────────────────────────────────────
 
-    async def on_post_delete(self, ctx: "DeleteHookContext") -> None:
+    def on_post_delete(self, ctx: "DeleteHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
         event = {
@@ -229,11 +228,11 @@ class AuditWriteInterceptor:
             "snapshot_hash": ctx.metadata.etag if ctx.metadata else None,
             "metadata_snapshot": ctx.metadata.to_dict() if ctx.metadata else None,
         }
-        await self._emit(event, "delete", ctx.path)
+        self._emit(event, "delete", ctx.path)
 
     # ── VFSRenameHook ─────────────────────────────────────────────────
 
-    async def on_post_rename(self, ctx: "RenameHookContext") -> None:
+    def on_post_rename(self, ctx: "RenameHookContext") -> None:
         if ctx.old_path.startswith(_INTERNAL_PIPE_PREFIX) or ctx.new_path.startswith(
             _INTERNAL_PIPE_PREFIX
         ):
@@ -247,11 +246,11 @@ class AuditWriteInterceptor:
             "snapshot_hash": ctx.metadata.etag if ctx.metadata else None,
             "metadata_snapshot": ctx.metadata.to_dict() if ctx.metadata else None,
         }
-        await self._emit(event, "rename", ctx.old_path)
+        self._emit(event, "rename", ctx.old_path)
 
     # ── VFSMkdirHook ─────────────────────────────────────────────────
 
-    async def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
+    def on_post_mkdir(self, ctx: "MkdirHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
         event = {
@@ -260,11 +259,11 @@ class AuditWriteInterceptor:
             "zone_id": ctx.zone_id,
             "agent_id": ctx.agent_id,
         }
-        await self._emit(event, "mkdir", ctx.path)
+        self._emit(event, "mkdir", ctx.path)
 
     # ── VFSRmdirHook ─────────────────────────────────────────────────
 
-    async def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
+    def on_post_rmdir(self, ctx: "RmdirHookContext") -> None:
         if ctx.path.startswith(_INTERNAL_PIPE_PREFIX):
             return
         event = {
@@ -274,56 +273,42 @@ class AuditWriteInterceptor:
             "agent_id": ctx.agent_id,
             "recursive": ctx.recursive,
         }
-        await self._emit(event, "rmdir", ctx.path)
+        self._emit(event, "rmdir", ctx.path)
 
     # ── Internal ──────────────────────────────────────────────────────
 
-    async def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
-        """Serialize event to JSON and write directly to the pipe buffer.
+    def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
+        """Serialize event to JSON and write directly to the pipe buffer (~0.5μs).
 
-        Writes directly to PipeManager's in-memory buffer instead of going
-        through ``nx.sys_write()``.  This avoids re-entering the full VFS
-        pipeline (validate → metastore → dispatch → hooks), which would
-        trigger this hook again recursively and hit the 5s per-hook timeout
-        in ``KernelDispatch._post_dispatch``.
+        Writes directly to PipeManager's in-memory ring buffer via
+        ``write_nowait()`` — synchronous, non-blocking Rust call.
 
-        The DT_PIPE fast-path in ``sys_write`` does the same buffer lookup,
-        but calling it from a post-write hook creates a recursive chain that
-        only terminates via timeout when the pipe buffer isn't yet registered
-        (race during startup).  Writing to the buffer directly eliminates
-        both the recursion risk and the VFS overhead (~1μs vs 5s).
+        If the pipe buffer isn't ready (startup race), the event is dropped
+        with a warning. This eliminates the recursive sys_write fallback
+        that caused 5s timeouts in the previous async implementation.
         """
         try:
             data = json.dumps(event).encode()
 
-            # Fast path: write directly to cached pipe buffer (~1μs)
+            # Fast path: write directly to cached pipe buffer (~0.5μs)
             buf = self._pipe_buffer
             if buf is None:
-                # Lazy-resolve: look up the buffer from PipeManager on first emit.
-                # After PipedRecordStoreWriteObserver.start() creates the DT_PIPE,
-                # the buffer is registered in PipeManager._buffers.
                 pm = getattr(self._nx, "_pipe_manager", None)
                 if pm is not None:
                     buf = pm._buffers.get(self._pipe_path)
                     if buf is not None:
-                        self._pipe_buffer = buf  # cache for subsequent calls
+                        self._pipe_buffer = buf
 
             if buf is not None:
                 buf.write_nowait(data)
                 return
 
-            # Fallback: pipe buffer not ready (startup race or missing pipe).
-            # Use sys_write which will go through the VFS pipeline.  This is
-            # slow but correct — it only happens before start() creates the pipe.
-            from nexus.contracts.types import OperationContext
-
-            _audit_ctx = OperationContext(
-                user_id="__audit__",
-                groups=[],
-                is_admin=True,
-                is_system=True,
+            # Pipe not ready (startup race) — drop event with warning.
+            logger.warning(
+                "Audit pipe not ready, dropping %s event for '%s'",
+                operation,
+                op_path,
             )
-            await self._nx.sys_write(self._pipe_path, data, context=_audit_ctx)
         except Exception as e:
             from nexus.contracts.exceptions import AuditLogError
 

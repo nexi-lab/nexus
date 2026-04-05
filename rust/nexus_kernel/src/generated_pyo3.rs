@@ -1144,6 +1144,31 @@ impl PyKernel {
         Ok(())
     }
 
+    // ── Post-hook dispatch (sync Rust + return async for Python) ───────���
+
+    /// Dispatch post-hooks: sync in Rust, return async hooks for Python.
+    ///
+    /// Sync post-hooks: serial, fault-isolated (fire-and-forget).
+    /// Returns async hooks as Vec<Py<PyAny>> for Python asyncio.gather.
+    #[pyo3(signature = (op, hook_ctx))]
+    fn dispatch_post_hooks(
+        &self,
+        py: Python<'_>,
+        op: &str,
+        hook_ctx: Py<PyAny>,
+    ) -> PyResult<Vec<Py<PyAny>>> {
+        if !self.inner.has_hooks(op) {
+            return Ok(Vec::new());
+        }
+        // 1. Dispatch sync post-hooks in Rust (fire-and-forget)
+        self.dispatch_post_hooks_sync(op, &hook_ctx);
+
+        // 2. Return async hooks for Python to schedule
+        let hooks = self.hooks.lock();
+        let (_, async_hooks) = hooks.get_post_hooks(py, op);
+        Ok(async_hooks)
+    }
+
     // ── sys_read ───────────────────────────────────────────────────────
 
     #[pyo3(signature = (path, ctx))]

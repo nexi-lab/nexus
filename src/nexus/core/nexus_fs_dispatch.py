@@ -424,7 +424,9 @@ class DispatchMixin:
 
             enter_observer_context()
             try:
-                await obs.on_mutation(event)
+                result = obs.on_mutation(event)
+                if result is not None:
+                    await result  # async observer
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", name, exc)
             finally:

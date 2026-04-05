@@ -114,8 +114,8 @@ export interface VersionsState {
   readonly fetchEntries: (txnId: string, client: FetchClient) => Promise<void>;
   readonly fetchDiff: (
     path: string,
-    version1: string,
-    version2: string,
+    version1: string | null,
+    version2: string | null,
     client: FetchClient,
   ) => Promise<void>;
   readonly fetchTransactionDetail: (txnId: string, client: FetchClient) => Promise<void>;
@@ -238,14 +238,21 @@ export const useVersionsStore = create<VersionsState>((set, get) => ({
     set({ diffLoading: true, diffContent: null, error: null });
 
     try {
-      const [oldResponse, newResponse] = await Promise.all([
-        client.get<{ content: string }>(
-          `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version1)}&include_metadata=false`,
-        ),
-        client.get<{ content: string }>(
-          `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version2)}&include_metadata=false`,
-        ),
+      // version1 null = new file (no original), version2 null = deleted file
+      const [oldContent, newContent] = await Promise.all([
+        version1
+          ? client.get<{ content: string }>(
+              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version1)}&include_metadata=false`,
+            ).then((r) => r.content ?? "")
+          : Promise.resolve(""),
+        version2
+          ? client.get<{ content: string }>(
+              `/api/v2/files/read?path=${encodeURIComponent(path)}&version=${encodeURIComponent(version2)}&include_metadata=false`,
+            ).then((r) => r.content ?? "")
+          : Promise.resolve(""),
       ]);
+      const oldResponse = { content: oldContent };
+      const newResponse = { content: newContent };
 
       set({
         diffContent: {

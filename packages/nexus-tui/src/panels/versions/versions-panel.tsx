@@ -68,6 +68,9 @@ export default function VersionsPanel(): React.ReactNode {
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
   const overlayActive = useUiStore((s) => s.overlayActive);
 
+  // Entry selection within the right pane
+  const [selectedEntryIndex, setSelectedEntryIndex] = useState(0);
+
   // Transaction search/filter
   const [txnFilterMode, setTxnFilterMode] = useState(false);
   const [txnFilter, setTxnFilter] = useState("");
@@ -104,8 +107,9 @@ export default function VersionsPanel(): React.ReactNode {
     }
   }, [client, statusFilter, fetchTransactions]);
 
-  // Fetch entries and transaction detail when selection changes
+  // Fetch entries and transaction detail when selection changes; reset entry cursor
   useEffect(() => {
+    setSelectedEntryIndex(0);
     if (client && selectedTransaction) {
       fetchEntries(selectedTransaction.transaction_id, client);
       fetchTransactionDetail(selectedTransaction.transaction_id, client);
@@ -131,64 +135,81 @@ export default function VersionsPanel(): React.ReactNode {
               setTxnFilter((b) => b.slice(0, -1));
             },
           }
-        : {
-            "j": () => {
-              if (filteredTransactions.length === 0) return;
-              setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+        : uiFocusPane === "right"
+          ? {
+              // Right pane focused: j/k navigates entries
+              "j": () => setSelectedEntryIndex(Math.min(selectedEntryIndex + 1, entries.length - 1)),
+              "down": () => setSelectedEntryIndex(Math.min(selectedEntryIndex + 1, entries.length - 1)),
+              "k": () => setSelectedEntryIndex(Math.max(selectedEntryIndex - 1, 0)),
+              "up": () => setSelectedEntryIndex(Math.max(selectedEntryIndex - 1, 0)),
+              "v": () => {
+                if (!client || !selectedTransaction || entries.length === 0) return;
+                const entry = entries[selectedEntryIndex];
+                if (entry) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                }
+              },
+              "tab": () => toggleFocus("versions"),
+            }
+          : {
+              // Left pane focused: j/k navigates transactions
+              "j": () => {
+                if (filteredTransactions.length === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+              },
+              "down": () => {
+                if (filteredTransactions.length === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+              },
+              "k": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
+              "up": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
+              "return": () => {
+                if (selectedTransaction?.status === "active" && client) {
+                  commitTransaction(selectedTransaction.transaction_id, client);
+                }
+              },
+              "backspace": () => {
+                if (selectedTransaction?.status === "active" && client) {
+                  rollbackTransaction(selectedTransaction.transaction_id, client);
+                }
+              },
+              "n": () => {
+                if (client) {
+                  beginTransaction(client);
+                }
+              },
+              "f": () => {
+                const next = nextStatusFilter(statusFilter);
+                setStatusFilter(next);
+              },
+              "/": () => {
+                setTxnFilterMode(true);
+                setTxnFilter("");
+              },
+              "v": () => {
+                // Diff the selected entry (defaults to index 0)
+                if (!client || !selectedTransaction || entries.length === 0) return;
+                const entry = entries[selectedEntryIndex];
+                if (entry) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                }
+              },
+              "c": () => {
+                // Toggle conflicts view; fetch on first open
+                toggleConflicts();
+                if (!showConflicts && client) {
+                  fetchConflicts(client);
+                }
+              },
+              "tab": () => toggleFocus("versions"),
+              "g": () => setSelectedIndex(jumpToStart()),
+              "shift+g": () => setSelectedIndex(jumpToEnd(filteredTransactions.length)),
+              "y": () => {
+                if (selectedTransaction) {
+                  copy(selectedTransaction.transaction_id);
+                }
+              },
             },
-            "down": () => {
-              if (filteredTransactions.length === 0) return;
-              setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
-            },
-            "k": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
-            "up": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
-            "return": () => {
-              if (selectedTransaction?.status === "active" && client) {
-                commitTransaction(selectedTransaction.transaction_id, client);
-              }
-            },
-            "backspace": () => {
-              if (selectedTransaction?.status === "active" && client) {
-                rollbackTransaction(selectedTransaction.transaction_id, client);
-              }
-            },
-            "n": () => {
-              if (client) {
-                beginTransaction(client);
-              }
-            },
-            "f": () => {
-              const next = nextStatusFilter(statusFilter);
-              setStatusFilter(next);
-            },
-            "/": () => {
-              setTxnFilterMode(true);
-              setTxnFilter("");
-            },
-            "v": () => {
-              // View diff for the first entry of the selected transaction
-              if (!client || !selectedTransaction || entries.length === 0) return;
-              const entry = entries[0];
-              if (entry && entry.original_hash && entry.new_hash) {
-                fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
-              }
-            },
-            "c": () => {
-              // Toggle conflicts view; fetch on first open
-              toggleConflicts();
-              if (!showConflicts && client) {
-                fetchConflicts(client);
-              }
-            },
-            "tab": () => toggleFocus("versions"),
-            "g": () => setSelectedIndex(jumpToStart()),
-            "shift+g": () => setSelectedIndex(jumpToEnd(filteredTransactions.length)),
-            "y": () => {
-              if (selectedTransaction) {
-                copy(selectedTransaction.transaction_id);
-              }
-            },
-          },
     txnFilterMode ? handleFilterKey : undefined,
   );
 
@@ -246,6 +267,15 @@ export default function VersionsPanel(): React.ReactNode {
               transaction={selectedTransaction}
               entries={entries}
               isLoading={entriesLoading}
+              selectedEntryIndex={selectedEntryIndex}
+              focused={uiFocusPane === "right"}
+              onSelectEntry={(index) => {
+                setSelectedEntryIndex(index);
+                const entry = entries[index];
+                if (client && entry) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+                }
+              }}
             />
           </box>
         </box>

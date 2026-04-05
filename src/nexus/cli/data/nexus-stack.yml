@@ -97,6 +97,10 @@ services:
       NEXUS_GRPC_PORT: "2028"  # Fixed inside container; host port varies via port mapping
       NEXUS_GRPC_TLS: ${NEXUS_GRPC_TLS:-false}
       NEXUS_GRPC_BIND_ALL: ${NEXUS_GRPC_BIND_ALL:-true}
+      # 0.0.0.0 is a valid bind address but not a valid connect/advertise address.
+      # Without this, NEXUS_ADVERTISE_ADDR defaults to 0.0.0.0 which fails the
+      # insecure-channel loopback check when pipe_manager connects back to itself.
+      NEXUS_ADVERTISE_ADDR: ${NEXUS_ADVERTISE_ADDR:-127.0.0.1:2028}
       # Zoekt (external container, not built-in sidecar)
       ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
       ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}

@@ -110,7 +110,8 @@ class TestMount:
 
         coord.mount("/data", backend)
 
-        assert dispatch.observer_count == 1
+        # 1 regular observer + 1 mount hook (registered as observer adapter)
+        assert dispatch.observer_count == 2
 
     def test_mount_registers_hook_spec_mount_hooks(self) -> None:
         _, dispatch, coord = _make_coordinator()
@@ -153,7 +154,8 @@ class TestUnmount:
         backend = _BackendWithHookSpec()
 
         coord.mount("/data", backend)
-        assert dispatch.observer_count == 1
+        # 1 regular observer + 1 mount hook (registered as observer adapter)
+        assert dispatch.observer_count == 2
 
         # Setup mount_table.get to return a MountEntry-like object
         mount_entry = MagicMock()
@@ -215,7 +217,11 @@ class TestUnmount:
 
 class TestCASWiringFix:
     def test_cas_hook_spec_has_no_observers(self) -> None:
-        """CAS hook_spec() returns HookSpec with NO observers (empty tuple), only mount_hooks."""
+        """CAS hook_spec() returns HookSpec with NO observers (empty tuple), only mount_hooks.
+
+        Mount hooks are now registered as observer adapters, so observer_count
+        reflects the mount hook adapter registration.
+        """
         _, dispatch, coord = _make_coordinator()
 
         # Create a minimal CAS-like backend with hook_spec that has no observers
@@ -226,5 +232,6 @@ class TestCASWiringFix:
 
         coord.mount("/", backend)
 
-        assert dispatch.observer_count == 0
+        # 0 regular observers + 1 mount hook adapter registered as observer
+        assert dispatch.observer_count == 1
         assert dispatch.mount_hook_count == 1

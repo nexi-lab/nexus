@@ -11,8 +11,9 @@
 //!   `CasGcsBackend` = CAS addressing + GCS transport
 //!   `PathLocalBackend` = Path addressing + Local transport
 
+use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cas_engine::{CASEngine, CASError};
 use crate::cas_transport::LocalCASTransport;
@@ -38,9 +39,28 @@ impl From<CASError> for StorageError {
     }
 }
 
+/// Result of a write operation (equivalent to Python `WriteResult`).
+///
+/// - `content_id`: Primary addressing key (opaque).
+///   CAS backends: SHA-256 hex digest.
+///   PAS backends: blob path or version ID.
+/// - `version`: OCC token for conflict detection.
+///   CAS: same as content_id (hash is immutable).
+///   PAS: cloud version_id or content hash.
+/// - `size`: Content size in bytes.
+#[allow(dead_code)]
+pub(crate) struct WriteResult {
+    pub(crate) content_id: String,
+    pub(crate) version: String,
+    pub(crate) size: u64,
+}
+
 /// ObjectStore pillar — kernel `file_operations` contract.
 ///
-/// Rust equivalent of Python `ObjectStoreABC`.
+/// Rust equivalent of Python `ObjectStoreABC` (one of the Four Storage Pillars).
+/// CAS/PAS agnostic: `content_id` is an opaque key whose semantics are
+/// backend-defined (hash for CAS, blob path for PAS).
+///
 /// 6 abstract methods matching the Python ABC:
 ///   - write_content, read_content, delete_content, get_content_size
 ///   - mkdir, rmdir
@@ -53,11 +73,22 @@ pub(crate) trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
     fn name(&self) -> &str;
 
-    /// Write content and return `(content_id, size)`.
-    fn write_content(&self, content: &[u8]) -> Result<String, StorageError>;
+    /// Write content to storage and return a `WriteResult`.
+    ///
+    /// - `content_id`: Target address for the content.
+    ///   CAS backends: ignored (address = hash of content).
+    ///   PAS backends: blob path where content will be stored.
+    /// - `ctx`: Operation context (carries backend_path, auth, TTL).
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError>;
 
     /// Read content by opaque identifier.
     ///
+    /// `content_id`: CAS=hash, PAS=version_id.
     /// `backend_path`: mount-relative path (for path-addressed backends).
     /// `ctx`: operation credential for backends that need identity/auth.
     /// CAS backends ignore backend_path and ctx.
@@ -119,8 +150,18 @@ impl ObjectStore for CasLocalBackend {
         self.0.read_content(content_id).map_err(StorageError::from)
     }
 
-    fn write_content(&self, content: &[u8]) -> Result<String, StorageError> {
-        self.0.write_content(content).map_err(StorageError::from)
+    fn write_content(
+        &self,
+        content: &[u8],
+        _content_id: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
+        let hash = self.0.write_content(content).map_err(StorageError::from)?;
+        Ok(WriteResult {
+            version: hash.clone(),
+            size: content.len() as u64,
+            content_id: hash,
+        })
     }
 
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
@@ -131,6 +172,292 @@ impl ObjectStore for CasLocalBackend {
 
     fn get_content_size(&self, content_id: &str) -> Result<u64, StorageError> {
         self.0.content_size(content_id).map_err(StorageError::from)
+    }
+}
+
+// ── PathLocalBackend ────────────────────────────────────────────────
+
+/// Path-based local filesystem backend (Rust equivalent of Python PathLocalBackend).
+///
+/// Files are stored at their actual paths under `root_path`. No CAS
+/// transformation, no deduplication. `content_id` is the blob path.
+pub(crate) struct PathLocalBackend {
+    root_path: PathBuf,
+    fsync: bool,
+}
+
+impl PathLocalBackend {
+    pub fn new(root: &Path, fsync: bool) -> io::Result<Self> {
+        fs::create_dir_all(root)?;
+        Ok(Self {
+            root_path: root.to_path_buf(),
+            fsync,
+        })
+    }
+
+    /// Resolve backend_path to absolute file path under root.
+    fn resolve_path(&self, backend_path: &str) -> Result<PathBuf, StorageError> {
+        let clean = backend_path.trim_start_matches('/');
+        if clean.contains("..") {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("path traversal detected: {backend_path}"),
+            )));
+        }
+        Ok(self.root_path.join(clean))
+    }
+}
+
+impl ObjectStore for PathLocalBackend {
+    fn name(&self) -> &str {
+        "path_local"
+    }
+
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
+        if content_id.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PathLocalBackend requires content_id (blob path)",
+            )));
+        }
+        let file_path = self.resolve_path(content_id)?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+
+        fs::write(&file_path, content).map_err(StorageError::IOError)?;
+
+        if self.fsync {
+            if let Ok(f) = fs::File::open(&file_path) {
+                let _ = f.sync_all();
+            }
+        }
+
+        // PAS: content_id for future reads = hash of content (no version_id for local)
+        let hash = nexus_core::hash::hash_content(content);
+        Ok(WriteResult {
+            content_id: hash.clone(),
+            version: hash,
+            size: content.len() as u64,
+        })
+    }
+
+    fn read_content(
+        &self,
+        _content_id: &str,
+        backend_path: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
+        if backend_path.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PathLocalBackend requires backend_path",
+            )));
+        }
+        let file_path = self.resolve_path(backend_path)?;
+        fs::read(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(backend_path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
+        // For PAS local, content_id is not the path — need backend_path from context.
+        // In practice, kernel calls sys_unlink which does metastore.delete() + backend cleanup.
+        // delete_content with just content_id (hash) is a no-op for path backends.
+        let _ = content_id;
+        Ok(())
+    }
+
+    fn get_content_size(&self, _content_id: &str) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported(
+            "PathLocalBackend.get_content_size requires backend_path",
+        ))
+    }
+
+    fn mkdir(&self, path: &str, parents: bool, _exist_ok: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if parents {
+            fs::create_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::create_dir(&dir_path).map_err(StorageError::IOError)
+        }
+    }
+
+    fn rmdir(&self, path: &str, recursive: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if recursive {
+            fs::remove_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::remove_dir(&dir_path).map_err(StorageError::IOError)
+        }
+    }
+}
+
+// ── LocalConnectorBackend ──────────────────────────────────────────
+
+/// Local filesystem connector backend (reference mode, no CAS).
+///
+/// Mounts an external local folder into Nexus. Files remain at original
+/// location (Single Source of Truth). Supports symlink following with
+/// escape detection (resolved path must stay within root).
+pub(crate) struct LocalConnectorBackend {
+    root_path: PathBuf,
+    follow_symlinks: bool,
+    fsync: bool,
+}
+
+impl LocalConnectorBackend {
+    pub fn new(root: &Path, follow_symlinks: bool, fsync: bool) -> io::Result<Self> {
+        if !root.exists() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("local_connector root does not exist: {}", root.display()),
+            ));
+        }
+        Ok(Self {
+            root_path: fs::canonicalize(root)?,
+            follow_symlinks,
+            fsync,
+        })
+    }
+
+    /// Resolve virtual path to physical path with escape detection.
+    fn resolve_path(&self, virtual_path: &str) -> Result<PathBuf, StorageError> {
+        let clean = virtual_path.trim_start_matches('/');
+        if clean.contains("..") {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("path traversal detected: {virtual_path}"),
+            )));
+        }
+        let physical = self.root_path.join(clean);
+
+        let resolved = if self.follow_symlinks {
+            // Resolve symlinks, falling back to parent resolution if path doesn't exist yet
+            match fs::canonicalize(&physical) {
+                Ok(p) => p,
+                Err(_) => {
+                    // Path may not exist yet (write). Resolve parent + leaf.
+                    if let Some(parent) = physical.parent() {
+                        match fs::canonicalize(parent) {
+                            Ok(p) => p.join(physical.file_name().unwrap_or_default()),
+                            Err(_) => physical.clone(),
+                        }
+                    } else {
+                        physical.clone()
+                    }
+                }
+            }
+        } else {
+            physical.clone()
+        };
+
+        // Escape detection: resolved path must be under root
+        if !resolved.starts_with(&self.root_path) {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("path escapes mount root: {virtual_path}"),
+            )));
+        }
+
+        Ok(resolved)
+    }
+}
+
+impl ObjectStore for LocalConnectorBackend {
+    fn name(&self) -> &str {
+        "local_connector"
+    }
+
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
+        if content_id.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LocalConnectorBackend requires content_id (backend_path)",
+            )));
+        }
+        let file_path = self.resolve_path(content_id)?;
+
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+
+        fs::write(&file_path, content).map_err(StorageError::IOError)?;
+
+        if self.fsync {
+            if let Ok(f) = fs::File::open(&file_path) {
+                let _ = f.sync_all();
+            }
+        }
+
+        let hash = nexus_core::hash::hash_content(content);
+        Ok(WriteResult {
+            content_id: hash.clone(),
+            version: hash,
+            size: content.len() as u64,
+        })
+    }
+
+    fn read_content(
+        &self,
+        _content_id: &str,
+        backend_path: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
+        if backend_path.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LocalConnectorBackend requires backend_path",
+            )));
+        }
+        let file_path = self.resolve_path(backend_path)?;
+        fs::read(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(backend_path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn delete_content(&self, _content_id: &str) -> Result<(), StorageError> {
+        // For reference-mode connector, delete_content by hash is not meaningful.
+        // Actual deletion happens via backend_path through kernel sys_unlink flow.
+        Ok(())
+    }
+
+    fn mkdir(&self, path: &str, parents: bool, _exist_ok: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if parents {
+            fs::create_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::create_dir(&dir_path).map_err(StorageError::IOError)
+        }
+    }
+
+    fn rmdir(&self, path: &str, recursive: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if recursive {
+            fs::remove_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::remove_dir(&dir_path).map_err(StorageError::IOError)
+        }
     }
 }
 
@@ -152,12 +479,15 @@ mod tests {
     #[test]
     fn test_cas_local_backend_write_and_read() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"hello via ObjectStore";
 
-        let hash = backend.write_content(content).unwrap();
-        assert_eq!(hash.len(), 64);
+        let result = backend.write_content(content, "", &ctx).unwrap();
+        assert_eq!(result.content_id.len(), 64);
+        assert_eq!(result.size, content.len() as u64);
+        assert_eq!(result.version, result.content_id); // CAS: version == hash
 
-        let read_back = backend.read_content(&hash, "", &test_ctx()).unwrap();
+        let read_back = backend.read_content(&result.content_id, "", &ctx).unwrap();
         assert_eq!(read_back, content);
     }
 
@@ -176,11 +506,12 @@ mod tests {
     #[test]
     fn test_cas_local_backend_dedup() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"dedup via ObjectStore";
 
-        let hash1 = backend.write_content(content).unwrap();
-        let hash2 = backend.write_content(content).unwrap();
-        assert_eq!(hash1, hash2);
+        let r1 = backend.write_content(content, "", &ctx).unwrap();
+        let r2 = backend.write_content(content, "", &ctx).unwrap();
+        assert_eq!(r1.content_id, r2.content_id);
     }
 
     #[test]
@@ -192,10 +523,11 @@ mod tests {
     #[test]
     fn test_cas_local_backend_delete() {
         let (_tmp, backend) = setup();
-        let hash = backend.write_content(b"to delete").unwrap();
-        assert!(backend.delete_content(&hash).is_ok());
+        let ctx = test_ctx();
+        let r = backend.write_content(b"to delete", "", &ctx).unwrap();
+        assert!(backend.delete_content(&r.content_id).is_ok());
         assert!(matches!(
-            backend.read_content(&hash, "", &test_ctx()).unwrap_err(),
+            backend.read_content(&r.content_id, "", &ctx).unwrap_err(),
             StorageError::NotFound(_)
         ));
     }
@@ -203,10 +535,11 @@ mod tests {
     #[test]
     fn test_cas_local_backend_get_content_size() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"size check";
-        let hash = backend.write_content(content).unwrap();
+        let r = backend.write_content(content, "", &ctx).unwrap();
         assert_eq!(
-            backend.get_content_size(&hash).unwrap(),
+            backend.get_content_size(&r.content_id).unwrap(),
             content.len() as u64
         );
     }
@@ -220,5 +553,136 @@ mod tests {
             backend.mkdir("/foo", false, false).unwrap_err(),
             StorageError::NotSupported("mkdir")
         ));
+    }
+
+    // ── PathLocalBackend tests ────────────────────────────────────────
+
+    fn setup_path() -> (TempDir, PathLocalBackend) {
+        let tmp = TempDir::new().unwrap();
+        let backend = PathLocalBackend::new(tmp.path(), false).unwrap();
+        (tmp, backend)
+    }
+
+    #[test]
+    fn test_path_local_write_and_read() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let content = b"hello via path backend";
+
+        let wr = backend
+            .write_content(content, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(wr.size, content.len() as u64);
+        assert_eq!(wr.content_id.len(), 64); // hash
+
+        let data = backend
+            .read_content(&wr.content_id, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(data, content);
+    }
+
+    #[test]
+    fn test_path_local_overwrite() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+
+        backend.write_content(b"v1", "file.txt", &ctx).unwrap();
+        backend.write_content(b"v2", "file.txt", &ctx).unwrap();
+
+        let data = backend.read_content("", "file.txt", &ctx).unwrap();
+        assert_eq!(data, b"v2");
+    }
+
+    #[test]
+    fn test_path_local_not_found() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.read_content("", "nonexistent.txt", &ctx);
+        assert!(matches!(result.unwrap_err(), StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_path_local_mkdir_rmdir() {
+        let (_tmp, backend) = setup_path();
+        backend.mkdir("mydir", false, false).unwrap();
+        assert!(backend.resolve_path("mydir").unwrap().is_dir());
+        backend.rmdir("mydir", false).unwrap();
+        assert!(!backend.resolve_path("mydir").unwrap().exists());
+    }
+
+    #[test]
+    fn test_path_local_rejects_traversal() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_local_name() {
+        let (_tmp, backend) = setup_path();
+        assert_eq!(backend.name(), "path_local");
+    }
+
+    #[test]
+    fn test_path_local_empty_content_id_errors() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.write_content(b"data", "", &ctx);
+        assert!(result.is_err());
+    }
+
+    // ── LocalConnectorBackend tests ─────────────────────────────────
+
+    fn setup_connector() -> (TempDir, LocalConnectorBackend) {
+        let tmp = TempDir::new().unwrap();
+        let backend = LocalConnectorBackend::new(tmp.path(), true, false).unwrap();
+        (tmp, backend)
+    }
+
+    #[test]
+    fn test_connector_write_and_read() {
+        let (_tmp, backend) = setup_connector();
+        let ctx = test_ctx();
+        let content = b"hello via connector";
+
+        let wr = backend
+            .write_content(content, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(wr.size, content.len() as u64);
+
+        let data = backend
+            .read_content(&wr.content_id, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(data, content);
+    }
+
+    #[test]
+    fn test_connector_name() {
+        let (_tmp, backend) = setup_connector();
+        assert_eq!(backend.name(), "local_connector");
+    }
+
+    #[test]
+    fn test_connector_rejects_traversal() {
+        let (_tmp, backend) = setup_connector();
+        let ctx = test_ctx();
+        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_connector_mkdir_rmdir() {
+        let (_tmp, backend) = setup_connector();
+        backend.mkdir("subdir", false, false).unwrap();
+        assert!(backend.resolve_path("subdir").unwrap().is_dir());
+        backend.rmdir("subdir", false).unwrap();
+        assert!(!backend.resolve_path("subdir").unwrap().exists());
+    }
+
+    #[test]
+    fn test_connector_nonexistent_root_errors() {
+        let result = LocalConnectorBackend::new(Path::new("/nonexistent/root"), true, false);
+        assert!(result.is_err());
     }
 }

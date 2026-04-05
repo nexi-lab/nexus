@@ -33,6 +33,9 @@ class FileEventType(StrEnum):
     SYNC_TO_BACKEND_COMPLETED = "sync_to_backend_completed"
     SYNC_TO_BACKEND_FAILED = "sync_to_backend_failed"
     CONFLICT_DETECTED = "conflict_detected"
+    # Mount/unmount lifecycle events (Step C: unified into OBSERVE phase)
+    MOUNT = "mount"
+    UNMOUNT = "unmount"
 
 
 # ── Bitmask positions for Rust ObserverRegistry filtering (Issue #1748) ──
@@ -49,8 +52,10 @@ FILE_EVENT_BIT: dict[FileEventType, int] = {
     FileEventType.SYNC_TO_BACKEND_FAILED: 1 << 8,
     FileEventType.CONFLICT_DETECTED: 1 << 9,
     FileEventType.FILE_COPY: 1 << 10,  # Issue #3329
+    FileEventType.MOUNT: 1 << 11,
+    FileEventType.UNMOUNT: 1 << 12,
 }
-ALL_FILE_EVENTS: int = (1 << 11) - 1  # 0x7FF — matches all event types
+ALL_FILE_EVENTS: int = (1 << 13) - 1  # 0x1FFF — matches all event types
 
 
 @dataclass(frozen=True)

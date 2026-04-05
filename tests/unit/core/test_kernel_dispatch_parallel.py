@@ -1,7 +1,7 @@
-"""Unit tests for async parallel dispatch (Issue #1317, #1748, #1812, #3391).
+"""Unit tests for Rust-dispatched post hooks and async OBSERVE dispatch.
 
 Tests:
-- POST hook dispatch (sync/async/mixed/fault isolation)
+- POST hook dispatch via Rust dispatch_post_hooks (sync, fire-and-forget)
 - Async OBSERVE dispatch with ObserverRegistry + event_mask filtering
 - Hybrid inline/deferred OBSERVE dispatch (Issue #3391)
 - Background task lifecycle (tracking, exception logging, shutdown)
@@ -14,7 +14,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.vfs_hooks import WriteHookContext
 from nexus.core.file_events import ALL_FILE_EVENTS, FILE_EVENT_BIT, FileEvent, FileEventType
 from nexus.core.nexus_fs_dispatch import DispatchMixin
@@ -42,27 +41,6 @@ def _make_sync_hook(*, name: str = "sync_hook", side_effect: Exception | None = 
     return hook
 
 
-def _make_async_hook(
-    *,
-    name: str = "async_hook",
-    delay: float = 0.0,
-    side_effect: Exception | None = None,
-):
-    """Create a hook with async on_post_write."""
-    hook = MagicMock()
-    hook.name = name
-    hook.TRIE_PATTERN = None
-
-    async def _async_post_write(ctx):
-        if delay > 0:
-            await asyncio.sleep(delay)
-        if side_effect:
-            raise side_effect
-
-    hook.on_post_write = _async_post_write
-    return hook
-
-
 def _write_ctx(**kwargs) -> WriteHookContext:
     defaults = {
         "path": "/test",
@@ -81,98 +59,31 @@ def _write_ctx(**kwargs) -> WriteHookContext:
 
 
 class TestSyncPostHooks:
-    async def test_sync_hook_called(self, dispatch: _TestDispatch) -> None:
+    """Post-hooks dispatched via Rust dispatch_post_hooks (all sync, fire-and-forget)."""
+
+    def test_sync_hook_called(self, dispatch: _TestDispatch) -> None:
         hook = _make_sync_hook()
         dispatch.register_intercept_write(hook)
         ctx = _write_ctx()
-        await dispatch.intercept_post_write(ctx)
+        dispatch._kernel.dispatch_post_hooks("write", ctx)
         hook.on_post_write.assert_called_once_with(ctx)
 
-    async def test_sync_hook_fault_isolation(self, dispatch: _TestDispatch) -> None:
+    def test_sync_hook_fault_isolation(self, dispatch: _TestDispatch) -> None:
+        """Bad hook failure is fire-and-forget — good hook still called."""
         bad = _make_sync_hook(name="bad", side_effect=RuntimeError("boom"))
         good = _make_sync_hook(name="good")
         dispatch.register_intercept_write(bad)
         dispatch.register_intercept_write(good)
 
         ctx = _write_ctx()
-        await dispatch.intercept_post_write(ctx)
-
+        # Rust dispatch is fire-and-forget — exceptions don't propagate
+        dispatch._kernel.dispatch_post_hooks("write", ctx)
         good.on_post_write.assert_called_once()
-        assert len(ctx.warnings) == 1
-        assert "boom" in ctx.warnings[0].message
 
-    async def test_audit_log_error_aborts(self, dispatch: _TestDispatch) -> None:
-        hook = _make_sync_hook(side_effect=AuditLogError("critical"))
-        dispatch.register_intercept_write(hook)
-
-        with pytest.raises(AuditLogError, match="critical"):
-            await dispatch.intercept_post_write(_write_ctx())
-
-
-class TestAsyncPostHooks:
-    async def test_async_hook_called(self, dispatch: _TestDispatch) -> None:
-        hook = _make_async_hook()
-        dispatch.register_intercept_write(hook)
+    def test_no_hooks_noop(self, dispatch: _TestDispatch) -> None:
+        """dispatch_post_hooks with no hooks registered is a no-op."""
         ctx = _write_ctx()
-        await dispatch.intercept_post_write(ctx)
-        assert len(ctx.warnings) == 0
-
-    async def test_async_hooks_run_parallel(self, dispatch: _TestDispatch) -> None:
-        """Two hooks each sleeping 0.1s should complete in ~0.1s, not ~0.2s."""
-        dispatch.register_intercept_write(_make_async_hook(name="a", delay=0.1))
-        dispatch.register_intercept_write(_make_async_hook(name="b", delay=0.1))
-
-        ctx = _write_ctx()
-        import time
-
-        t0 = time.monotonic()
-        await dispatch.intercept_post_write(ctx)
-        elapsed = time.monotonic() - t0
-
-        assert elapsed < 0.18, f"Expected parallel (~0.1s), got {elapsed:.3f}s"
-
-    async def test_async_hook_fault_isolation(self, dispatch: _TestDispatch) -> None:
-        bad = _make_async_hook(name="bad", side_effect=RuntimeError("async boom"))
-        good = _make_async_hook(name="good", delay=0.01)
-        dispatch.register_intercept_write(bad)
-        dispatch.register_intercept_write(good)
-
-        ctx = _write_ctx()
-        await dispatch.intercept_post_write(ctx)
-
-        assert len(ctx.warnings) == 1
-        assert "async boom" in ctx.warnings[0].message
-
-    async def test_async_hook_timeout(self, dispatch: _TestDispatch) -> None:
-        slow = _make_async_hook(name="slow", delay=10.0)
-        dispatch.register_intercept_write(slow)
-
-        ctx = _write_ctx()
-        await dispatch._post_dispatch("write", "on_post_write", ctx, timeout=0.1)
-
-        assert len(ctx.warnings) == 1
-        assert "slow" in ctx.warnings[0].component
-
-    async def test_async_audit_log_error_aborts(self, dispatch: _TestDispatch) -> None:
-        hook = _make_async_hook(side_effect=AuditLogError("async critical"))
-        dispatch.register_intercept_write(hook)
-
-        with pytest.raises(AuditLogError, match="async critical"):
-            await dispatch.intercept_post_write(_write_ctx())
-
-
-class TestMixedHooks:
-    async def test_sync_and_async_together(self, dispatch: _TestDispatch) -> None:
-        sync_hook = _make_sync_hook(name="sync")
-        async_hook = _make_async_hook(name="async", delay=0.01)
-        dispatch.register_intercept_write(sync_hook)
-        dispatch.register_intercept_write(async_hook)
-
-        ctx = _write_ctx()
-        await dispatch.intercept_post_write(ctx)
-
-        sync_hook.on_post_write.assert_called_once_with(ctx)
-        assert len(ctx.warnings) == 0
+        dispatch._kernel.dispatch_post_hooks("write", ctx)  # should not raise
 
 
 # ── Async OBSERVE dispatch tests (Issue #1748, #1812) ─────────────────

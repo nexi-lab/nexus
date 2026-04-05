@@ -51,8 +51,11 @@ class RevisionTrackingObserver:
     def __init__(self, revision_notifier: RevisionNotifierBase) -> None:
         self._notifier = revision_notifier
 
-    async def on_mutation(self, event: FileEvent) -> None:
-        """Update revision tracking when a versioned mutation occurs."""
+    def on_mutation(self, event: FileEvent) -> None:
+        """Update revision tracking when a versioned mutation occurs.
+
+        Pure in-memory sync call — no I/O, no await needed.
+        """
         version = event.version
         zone_id = event.zone_id
         if version is not None and zone_id is not None:

@@ -32,7 +32,7 @@ class TestFileWatcherLocal:
 
         async def mutator() -> None:
             await asyncio.sleep(0.01)
-            await fw.on_mutation(event)
+            fw.on_mutation(event)
 
         await asyncio.gather(waiter(), mutator())
         assert result is not None
@@ -61,7 +61,7 @@ class TestFileWatcherLocal:
 
         async def mutator() -> None:
             await asyncio.sleep(0.01)
-            await fw.on_mutation(_make_event("/test/b.txt"))
+            fw.on_mutation(_make_event("/test/b.txt"))
 
         await asyncio.gather(waiter_a(), waiter_b(), mutator())
         assert result_a is None  # didn't match
@@ -120,7 +120,7 @@ class TestFileWatcherWait:
 
         async def mutator() -> None:
             await asyncio.sleep(0.01)
-            await fw.on_mutation(event)
+            fw.on_mutation(event)
 
         task = asyncio.create_task(fw.wait("/test/file.txt", timeout=5.0))
         await mutator()
@@ -157,7 +157,7 @@ class TestFileWatcherWait:
 
         async def mutator() -> None:
             await asyncio.sleep(0.01)
-            await fw.on_mutation(local_event)
+            fw.on_mutation(local_event)
 
         task = asyncio.create_task(fw.wait("/local/file.txt", timeout=5.0))
         await mutator()

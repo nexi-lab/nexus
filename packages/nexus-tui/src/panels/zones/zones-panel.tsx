@@ -417,7 +417,7 @@ export default function ZonesPanel(): React.ReactNode {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Multi-field input form for register/mount */}
       {inputMode !== "none" && (

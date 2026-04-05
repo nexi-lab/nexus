@@ -399,7 +399,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       ) : <>
 
       {/* Panel-level tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Input bar for text modes */}
       {inputMode !== "none" && (
@@ -473,10 +473,23 @@ export default function FileExplorerPanel(): React.ReactNode {
                 </box>
 
                 {/* Metadata tab bar with aspect count badge */}
-                <box height={1} width="100%">
-                  <text>
-                    {`  ${metadataTab === "metadata" ? "[Metadata]" : " Metadata "} ${metadataTab === "lineage" ? "[Lineage]" : " Lineage "}${catalogAvailable ? ` ${metadataTab === "aspects" ? `[Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : ` Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""} `} ${metadataTab === "schema" ? "[Schema]" : " Schema "}` : ""}`}
-                  </text>
+                <box height={1} width="100%" flexDirection="row">
+                  <box height={1} onMouseDown={() => setMetadataTab("metadata")}>
+                    <text>{metadataTab === "metadata" ? " [Metadata]" : "  Metadata "}</text>
+                  </box>
+                  <box height={1} onMouseDown={() => setMetadataTab("lineage")}>
+                    <text>{metadataTab === "lineage" ? " [Lineage]" : "  Lineage "}</text>
+                  </box>
+                  {catalogAvailable && (
+                    <box height={1} onMouseDown={() => setMetadataTab("aspects")}>
+                      <text>{metadataTab === "aspects" ? ` [Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : `  Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}  `}</text>
+                    </box>
+                  )}
+                  {catalogAvailable && (
+                    <box height={1} onMouseDown={() => setMetadataTab("schema")}>
+                      <text>{metadataTab === "schema" ? " [Schema]" : "  Schema "}</text>
+                    </box>
+                  )}
                 </box>
 
                 {/* Metadata sidebar (bottom 30%) */}

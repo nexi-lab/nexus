@@ -51,6 +51,9 @@ export function FileTree({ filterQuery = "", effectiveSelection }: FileTreeProps
   const treeNodes = useFilesStore((s) => s.treeNodes);
   const currentPath = useFilesStore((s) => s.currentPath);
   const selectedIndex = useFilesStore((s) => s.selectedIndex);
+  const setSelectedIndex = useFilesStore((s) => s.setSelectedIndex);
+  const toggleNode = useFilesStore((s) => s.toggleNode);
+  const fetchPreview = useFilesStore((s) => s.fetchPreview);
   const expandNode = useFilesStore((s) => s.expandNode);
   const loadMoreChildren = useFilesStore((s) => s.loadMoreChildren);
 
@@ -117,6 +120,16 @@ export function FileTree({ filterQuery = "", effectiveSelection }: FileTreeProps
         viewportHeight={VIEWPORT_HEIGHT}
         selectedIndex={selectedIndex}
         overscan={5}
+        onSelect={(index) => {
+          setSelectedIndex(index);
+          const node = visibleNodes[index];
+          if (!node || node.path.endsWith(LOAD_MORE_SENTINEL) || !client) return;
+          if (node.isDirectory) {
+            void toggleNode(node.path, client);
+          } else {
+            void fetchPreview(node.path, client);
+          }
+        }}
       />
     </ScrollIndicator>
   );

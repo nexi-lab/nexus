@@ -338,7 +338,7 @@ export default function PaymentsPanel(): React.ReactNode {
     <BrickGate brick="pay">
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Afford check input */}
         {affordInput.active && (

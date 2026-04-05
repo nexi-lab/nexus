@@ -2840,29 +2840,15 @@ class NexusFS(  # type: ignore[misc]
         if not files:
             return []
 
-        # Validate all paths first
+        # Validate paths
         validated_files: list[tuple[str, bytes]] = []
         for path, content in files:
-            validated_path = self._validate_path(path)
-            validated_files.append((validated_path, content))
+            validated_files.append((self._validate_path(path), content))
 
-        # Route all paths and check write access
         zone_id, agent_id, is_admin = self._get_context_identity(context)
-        routes = []
-        for path, _ in validated_files:
-            route = self.router.route(
-                path,
-                is_admin=is_admin,
-                check_write=True,
-                zone_id=self._zone_id,
-            )
-            # Check if path is read-only
-            if route.readonly:
-                raise PermissionError(f"Path is read-only: {path}")
-            routes.append(route)
+        paths = [p for p, _ in validated_files]
 
-        # Get existing metadata for all paths (single query)
-        paths = [path for path, _ in validated_files]
+        # Get existing metadata for pre-hooks and is_new detection
         existing_metadata = self.metadata.get_batch(paths)
 
         # PRE-INTERCEPT: pre-write hooks per file in batch
@@ -2880,60 +2866,80 @@ class NexusFS(  # type: ignore[misc]
                 ),
             )
 
+        # ── KERNEL: Rust batch write (validate + route + lock + write + metastore + dcache) ──
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        rust_results = self._kernel._write_batch(validated_files, _rust_ctx)
+
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []
         results: list[dict[str, Any]] = []
 
-        # Write all content to backend (deduplicated automatically for CAS)
-        for (path, content), route in zip(validated_files, routes, strict=False):
-            # Add backend_path to context for path-based backends
-            if context:
-                _write_ctx = _dc_replace(
-                    context, backend_path=route.backend_path, virtual_path=path
+        for i, (path, content) in enumerate(validated_files):
+            r = rust_results[i]
+            if r.hit:
+                results.append(
+                    {
+                        "etag": r.content_id,
+                        "version": r.version,
+                        "modified_at": now,
+                        "size": r.size,
+                    }
+                )
+                metadata_list.append(
+                    FileMetadata(
+                        path=path,
+                        backend_name="",
+                        physical_path=r.content_id or "",
+                        size=r.size,
+                        etag=r.content_id,
+                        version=r.version,
+                        zone_id=zone_id or "root",
+                    )
                 )
             else:
-                _write_ctx = OperationContext(
-                    user_id="anonymous",
-                    groups=[],
-                    backend_path=route.backend_path,
-                    virtual_path=path,
+                # Fallback: remote backend or route failure — use Python path
+                route = self.router.route(
+                    path, is_admin=is_admin, check_write=True, zone_id=self._zone_id
                 )
-            content_hash = route.backend.write_content(content, context=_write_ctx).content_id
+                _write_ctx = (
+                    _dc_replace(context, backend_path=route.backend_path, virtual_path=path)
+                    if context
+                    else OperationContext(
+                        user_id="anonymous",
+                        groups=[],
+                        backend_path=route.backend_path,
+                        virtual_path=path,
+                    )
+                )
+                content_hash = route.backend.write_content(content, context=_write_ctx).content_id
+                meta = existing_metadata.get(path)
+                new_version = (meta.version + 1) if meta else 1
+                results.append(
+                    {
+                        "etag": content_hash,
+                        "version": new_version,
+                        "modified_at": now,
+                        "size": len(content),
+                    }
+                )
+                metadata_list.append(
+                    FileMetadata(
+                        path=path,
+                        backend_name=self._driver_coordinator.backend_key(
+                            route.backend, route.mount_point
+                        ),
+                        physical_path=content_hash,
+                        size=len(content),
+                        etag=content_hash,
+                        created_at=meta.created_at if meta else now,
+                        modified_at=now,
+                        version=new_version,
+                        zone_id=zone_id or "root",
+                    )
+                )
 
-            # Get existing metadata for this file
-            meta = existing_metadata.get(path)
-
-            # UNIX permissions removed - all access control via ReBAC
-
-            # Calculate new version number (increment if updating)
-            new_version = (meta.version + 1) if meta else 1
-
-            # Build metadata for batch insert
-            # Note: UNIX permissions (owner/group/mode) removed - use ReBAC instead
-            metadata = FileMetadata(
-                path=path,
-                backend_name=self._driver_coordinator.backend_key(route.backend, route.mount_point),
-                physical_path=content_hash,  # CAS: hash is the "physical" location
-                size=len(content),
-                etag=content_hash,  # SHA-256 hash for integrity
-                created_at=meta.created_at if meta else now,
-                modified_at=now,
-                version=new_version,
-                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
-            )
-            metadata_list.append(metadata)
-
-            # Build result dict
-            results.append(
-                {
-                    "etag": content_hash,
-                    "version": new_version,
-                    "modified_at": now,
-                    "size": len(content),
-                }
-            )
-
-        # Store all metadata in a single transaction (with version history)
+        # Persist metadata for all items via Python metastore
+        # (Rust _write_batch updates Rust DCache but Python metastore needs explicit put)
         self.metadata.put_batch(metadata_list)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)

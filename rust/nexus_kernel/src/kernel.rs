@@ -223,6 +223,8 @@ pub struct Kernel {
     rename_hook_count: AtomicU64,
     mkdir_hook_count: AtomicU64,
     rmdir_hook_count: AtomicU64,
+    copy_hook_count: AtomicU64,
+    access_hook_count: AtomicU64,
 }
 
 impl Kernel {
@@ -244,6 +246,8 @@ impl Kernel {
             rename_hook_count: AtomicU64::new(0),
             mkdir_hook_count: AtomicU64::new(0),
             rmdir_hook_count: AtomicU64::new(0),
+            copy_hook_count: AtomicU64::new(0),
+            access_hook_count: AtomicU64::new(0),
         }
     }
 
@@ -447,6 +451,8 @@ impl Kernel {
             "rename" => self.rename_hook_count.store(count, Ordering::Relaxed),
             "mkdir" => self.mkdir_hook_count.store(count, Ordering::Relaxed),
             "rmdir" => self.rmdir_hook_count.store(count, Ordering::Relaxed),
+            "copy" => self.copy_hook_count.store(count, Ordering::Relaxed),
+            "access" => self.access_hook_count.store(count, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -461,6 +467,8 @@ impl Kernel {
             "rename" => self.rename_hook_count.load(Ordering::Relaxed) > 0,
             "mkdir" => self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
             "rmdir" => self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
+            "copy" => self.copy_hook_count.load(Ordering::Relaxed) > 0,
+            "access" => self.access_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
     }

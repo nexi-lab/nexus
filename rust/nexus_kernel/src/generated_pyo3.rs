@@ -545,6 +545,63 @@ impl InterceptHook for PyInterceptHookAdapter {
             }
         });
     }
+
+    fn on_pre_copy(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_copy") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_copy(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_copy") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_stat(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_stat") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_stat(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_stat") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_access(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_access") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_access(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_access") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
 }
 
 // ── PyPathResolverAdapter ───────────────────────────────────────
@@ -1057,6 +1114,37 @@ impl PyKernel {
         self.inner.set_hook_count(op, count);
     }
 
+    // ── Public hook dispatch (for Tier 2 Python callers) ──────────────
+
+    /// Dispatch pre-hooks for an operation via Rust InterceptHook trait.
+    ///
+    /// Called by Tier 2 Python methods (read_range, stream, write, copy, etc.)
+    /// that build their own hook context objects. Tier 1 syscalls (sys_read,
+    /// sys_write, etc.) dispatch pre-hooks internally.
+    #[pyo3(signature = (op, hook_ctx))]
+    fn dispatch_pre_hooks(&self, op: &str, hook_ctx: Py<PyAny>) -> PyResult<()> {
+        if !self.inner.has_hooks(op) {
+            return Ok(());
+        }
+        let hooks = self.hooks.lock();
+        let impls = hooks.get_pre_hook_impls(op);
+        for hook in impls {
+            match op {
+                "read" => hook.on_pre_read(&hook_ctx)?,
+                "write" => hook.on_pre_write(&hook_ctx)?,
+                "delete" => hook.on_pre_delete(&hook_ctx)?,
+                "rename" => hook.on_pre_rename(&hook_ctx)?,
+                "mkdir" => hook.on_pre_mkdir(&hook_ctx)?,
+                "rmdir" => hook.on_pre_rmdir(&hook_ctx)?,
+                "copy" => hook.on_pre_copy(&hook_ctx)?,
+                "stat" => hook.on_pre_stat(&hook_ctx)?,
+                "access" => hook.on_pre_access(&hook_ctx)?,
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     // ── sys_read ───────────────────────────────────────────────────────
 
     #[pyo3(signature = (path, ctx))]
@@ -1076,7 +1164,7 @@ impl PyKernel {
                 .getattr("ReadHookContext")?
                 .call1((path, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("read", &rhc)?;
+            self.dispatch_pre_hooks_inner("read", &rhc)?;
         }
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
@@ -1114,7 +1202,7 @@ impl PyKernel {
                 .getattr("WriteHookContext")?
                 .call1((path, content, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("write", &whc)?;
+            self.dispatch_pre_hooks_inner("write", &whc)?;
         }
 
         // 2. Call pure Rust kernel (releasing GIL for VFS lock blocking)
@@ -1181,7 +1269,7 @@ impl PyKernel {
                 .getattr("DeleteHookContext")?
                 .call1((path, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("delete", &dhc)?;
+            self.dispatch_pre_hooks_inner("delete", &dhc)?;
         }
 
         // 2. Call pure Rust kernel
@@ -1214,7 +1302,7 @@ impl PyKernel {
                 .getattr("RenameHookContext")?
                 .call1((old_path, new_path, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("rename", &rhc)?;
+            self.dispatch_pre_hooks_inner("rename", &rhc)?;
         }
 
         // 2. Call pure Rust kernel
@@ -1246,7 +1334,7 @@ impl PyKernel {
                 .getattr("MkdirHookContext")?
                 .call1((path, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("mkdir", &mhc)?;
+            self.dispatch_pre_hooks_inner("mkdir", &mhc)?;
         }
 
         // 2. Call pure Rust kernel (validate + route)
@@ -1277,7 +1365,7 @@ impl PyKernel {
                 .getattr("RmdirHookContext")?
                 .call1((path, py_ctx))?
                 .unbind();
-            self.dispatch_pre_hooks("rmdir", &rhc)?;
+            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;
         }
 
         // 2. Call pure Rust kernel
@@ -1306,8 +1394,8 @@ impl PyKernel {
 // ── Private: hook dispatch (wrapper-only) ───────────────────────────────
 
 impl PyKernel {
-    /// Dispatch pre-hooks via Rust InterceptHook trait.
-    fn dispatch_pre_hooks(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
+    /// Internal pre-hook dispatch (used by Tier 1 syscalls).
+    fn dispatch_pre_hooks_inner(&self, op: &str, hook_ctx: &Py<PyAny>) -> PyResult<()> {
         let hooks = self.hooks.lock();
         let impls = hooks.get_pre_hook_impls(op);
         for hook in impls {
@@ -1318,6 +1406,9 @@ impl PyKernel {
                 "rename" => hook.on_pre_rename(hook_ctx)?,
                 "mkdir" => hook.on_pre_mkdir(hook_ctx)?,
                 "rmdir" => hook.on_pre_rmdir(hook_ctx)?,
+                "copy" => hook.on_pre_copy(hook_ctx)?,
+                "stat" => hook.on_pre_stat(hook_ctx)?,
+                "access" => hook.on_pre_access(hook_ctx)?,
                 _ => {}
             }
         }
@@ -1340,6 +1431,9 @@ impl PyKernel {
                 "rename" => hook.on_post_rename(hook_ctx),
                 "mkdir" => hook.on_post_mkdir(hook_ctx),
                 "rmdir" => hook.on_post_rmdir(hook_ctx),
+                "copy" => hook.on_post_copy(hook_ctx),
+                "stat" => hook.on_post_stat(hook_ctx),
+                "access" => hook.on_post_access(hook_ctx),
                 _ => {}
             }
         }

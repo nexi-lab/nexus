@@ -44,7 +44,6 @@ from typing import TYPE_CHECKING, Any
 from nexus.contracts.exceptions import AuditLogError
 from nexus.contracts.operation_result import OperationWarning
 from nexus.contracts.vfs_hooks import (
-    AccessHookContext,
     CopyHookContext,
     DeleteHookContext,
     MkdirHookContext,
@@ -52,7 +51,6 @@ from nexus.contracts.vfs_hooks import (
     ReadHookContext,
     RenameHookContext,
     RmdirHookContext,
-    StatHookContext,
     UnmountHookContext,
     VFSMountHook,
     VFSObserver,
@@ -297,56 +295,11 @@ class DispatchMixin:
     def unregister_observe(self, obs: VFSObserver) -> bool:
         return bool(self._kernel.unregister_observer(obs))
 
-    # ── PRE-INTERCEPT dispatch (Issue #899) ───────────────────────────
-    # Uses HookRegistry.get_pre_hooks() — pre-filtered at registration.
-    # Exceptions propagate (abort operation) — LSM semantics.
-
-    def intercept_pre_read(self, ctx: ReadHookContext) -> None:
-        """PRE-INTERCEPT phase for read — hooks may abort by raising."""
-        if "read" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("read"):
-            hook.on_pre_read(ctx)
-
-    def intercept_pre_write(self, ctx: WriteHookContext) -> None:
-        """PRE-INTERCEPT phase for write — hooks may abort by raising."""
-        if "write" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("write"):
-            hook.on_pre_write(ctx)
-
-    # intercept_pre_delete: dispatched by Rust sys_unlink (PR 19)
-    # intercept_pre_rename: dispatched by Rust sys_rename (PR 19)
-
-    def intercept_pre_copy(self, ctx: CopyHookContext) -> None:
-        """PRE-INTERCEPT phase for copy — hooks may abort by raising."""
-        if self._kernel is None:
-            return
-        for hook in self._kernel.get_pre_hooks("copy"):
-            hook.on_pre_copy(ctx)
-
-    # intercept_pre_mkdir: dispatched by Rust sys_mkdir (PR 19)
-
-    def intercept_pre_rmdir(self, ctx: RmdirHookContext) -> None:
-        """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""
-        if "rmdir" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("rmdir"):
-            hook.on_pre_rmdir(ctx)
-
-    def intercept_pre_stat(self, ctx: StatHookContext) -> None:
-        """PRE-INTERCEPT phase for stat — hooks may abort by raising."""
-        if "stat" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("stat"):
-            hook.on_pre_stat(ctx)
-
-    def intercept_pre_access(self, ctx: AccessHookContext) -> None:
-        """PRE-INTERCEPT phase for access — hooks may abort by raising."""
-        if "access" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("access"):
-            hook.on_pre_access(ctx)
+    # ── PRE-INTERCEPT dispatch ──────────────────────────────────────────
+    # ALL pre-hook dispatch now goes through Rust InterceptHook trait via
+    # self._kernel.dispatch_pre_hooks(op, ctx).  See PR 19 / PR 20.
+    # Tier 1 syscalls (sys_read/write/unlink/rename/mkdir/rmdir) dispatch
+    # pre-hooks internally.  Tier 2 methods call dispatch_pre_hooks() directly.
 
     # ── POST-INTERCEPT dispatch ────────────────────────────────────────
 

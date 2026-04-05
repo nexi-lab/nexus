@@ -117,12 +117,12 @@ class TestWriteBatchWithFailingBackend:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         real_backend = CASLocalBackend(root_path=data_dir)
-        failing = FailingBackend(real_backend, fail_on_nth=2)
+        failing = FailingBackend(real_backend, fail_on_nth=2, fail_permanently=True)
 
         nx = await make_test_nexus(tmp_path / "nx", backend=failing)
 
         # First file write succeeds (call #1 = write_content)
-        # Second file write fails (call #2 = write_content)
+        # Second file write fails (call #2+ = write_content, permanently)
         with pytest.raises(BackendError):
             await nx.write_batch(
                 [

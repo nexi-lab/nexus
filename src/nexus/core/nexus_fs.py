@@ -242,15 +242,27 @@ class NexusFS(  # type: ignore[misc]
         self._kernel = None
         if RUST_AVAILABLE:
             try:
-                from nexus_kernel import Kernel as _Kernel
+                from nexus.core.metastore import RustMetastoreProxy
 
-                self._kernel = _Kernel()
-                metadata_store._kernel = self._kernel
-                self._mount_table._kernel = self._kernel
-                _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
-                if _vfs_rust is not None:
-                    self._kernel.set_vfs_lock(_vfs_rust)
-                self._kernel.set_metastore(metadata_store)
+                # Reuse kernel from RustMetastoreProxy (already has metastore wired)
+                if isinstance(metadata_store, RustMetastoreProxy):
+                    self._kernel = metadata_store._rust_kernel
+                    metadata_store._kernel = self._kernel
+                    self._mount_table._kernel = self._kernel
+                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+                    if _vfs_rust is not None:
+                        self._kernel.set_vfs_lock(_vfs_rust)
+                    # No set_metastore needed — RustMetastoreProxy already wired via set_metastore_path
+                else:
+                    from nexus_kernel import Kernel as _Kernel
+
+                    self._kernel = _Kernel()
+                    metadata_store._kernel = self._kernel
+                    self._mount_table._kernel = self._kernel
+                    _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
+                    if _vfs_rust is not None:
+                        self._kernel.set_vfs_lock(_vfs_rust)
+                    self._kernel.set_metastore(metadata_store)
             except Exception as exc:
                 import logging as _logging
 
@@ -1331,193 +1343,54 @@ class NexusFS(  # type: ignore[misc]
             if path not in allowed_set:
                 results[path] = None
 
-        # Read allowed files
+        # Read allowed files via Rust kernel sys_read (single path per call).
+        # Rust kernel handles: validate → route → dcache → metastore → backend read.
         read_start = time.time()
         zone_id, agent_id, is_admin = self._get_context_identity(context)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
 
-        # Group paths by backend for potential bulk optimization
-        # Use get_batch for metadata lookup (single query instead of N queries)
-        path_info: dict[str, tuple[FileMetadata, Any]] = {}  # path -> (meta, route)
-        backend_paths: dict[Any, list[str]] = {}  # backend -> [paths]
+        # Batch metadata lookup (needed for return_metadata=True)
+        batch_meta: dict[str, FileMetadata | None] | None = None
+        if return_metadata:
+            meta_start = time.time()
+            batch_meta = self.metadata.get_batch(list(allowed_set))
+            meta_elapsed = (time.time() - meta_start) * 1000
+            logger.info(
+                f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
+            )
 
-        # Batch metadata lookup
-        meta_start = time.time()
-        batch_meta = self.metadata.get_batch(list(allowed_set))
-        meta_elapsed = (time.time() - meta_start) * 1000
-        logger.info(
-            f"[READ-BULK] Batch metadata lookup: {len(batch_meta)} paths in {meta_elapsed:.1f}ms"
-        )
-
-        # Process metadata and group by backend
-        route_start = time.time()
         for path in allowed_set:
             try:
-                meta = batch_meta.get(path)
-                if meta is None or meta.etag is None:
+                result = self._kernel.sys_read(path, _rust_ctx)
+                if not result.hit:
                     if skip_errors:
                         results[path] = None
                         continue
                     raise NexusFileNotFoundError(path)
-
-                route = self.router.route(
-                    path,
-                    is_admin=is_admin,
-                    check_write=False,
-                    zone_id=self._zone_id,
-                )
-                path_info[path] = (meta, route)
-
-                # Group by backend
-                backend = route.backend
-                if backend not in backend_paths:
-                    backend_paths[backend] = []
-                backend_paths[backend].append(path)
-            except Exception as e:
-                logger.warning("[READ-BULK] Failed to route %s: %s: %s", path, type(e).__name__, e)
+                content = result.data or b""
+                if return_metadata:
+                    assert batch_meta is not None
+                    meta = batch_meta.get(path)
+                    results[path] = {
+                        "content": content,
+                        "etag": meta.etag if meta else None,
+                        "version": meta.version if meta else 0,
+                        "modified_at": meta.modified_at if meta else None,
+                        "size": len(content),
+                    }
+                else:
+                    results[path] = content
+            except NexusFileNotFoundError:
                 if skip_errors:
                     results[path] = None
                 else:
                     raise
-
-        route_elapsed = (time.time() - route_start) * 1000
-        logger.info("[READ-BULK] Routing: %d paths in %.1fms", len(path_info), route_elapsed)
-
-        # Try bulk read for backends that support it (CacheConnectorMixin)
-        for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
-                # Use bulk cache lookup
-                logger.info(
-                    f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
-                )
-                try:
-                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
-
-                    # Process cache hits
-                    paths_needing_backend: list[str] = []
-                    for path in paths_for_backend:
-                        entry = cache_entries.get(path)
-                        if entry and not entry.stale and entry.content_binary:
-                            content = entry.content_binary
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        else:
-                            paths_needing_backend.append(path)
-
-                    # Fall back to individual reads for cache misses
-                    for path in paths_needing_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = self._driver_coordinator.resolve_backend(
-                                meta.backend_name
-                            ).read_content(meta.etag or "", context=read_context)
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-                except Exception as e:
-                    logger.warning(
-                        f"[READ-BULK] Bulk cache failed, falling back to individual reads: {e}"
-                    )
-                    # Fall back to individual reads
-                    for path in paths_for_backend:
-                        try:
-                            meta, route = path_info[path]
-                            assert meta.etag is not None  # Guaranteed by check above
-                            read_context = context
-                            if context:
-                                from dataclasses import replace
-
-                                read_context = replace(context, backend_path=route.backend_path)
-                            content = self._driver_coordinator.resolve_backend(
-                                meta.backend_name
-                            ).read_content(meta.etag or "", context=read_context)
-                            if return_metadata:
-                                results[path] = {
-                                    "content": content,
-                                    "etag": meta.etag,
-                                    "version": meta.version,
-                                    "modified_at": meta.modified_at,
-                                    "size": len(content),
-                                }
-                            else:
-                                results[path] = content
-                        except Exception as e:
-                            logger.warning(
-                                f"[READ-BULK] Failed to read {path}: {type(e).__name__}: {e}"
-                            )
-                            if skip_errors:
-                                results[path] = None
-                            else:
-                                raise
-            else:
-                # Batch read via ObjectStoreABC.batch_read_content() —
-                # CASLocalBackend overrides with Rust parallel mmap;
-                # other backends use default sequential fallback.
-                content_ids = []
-                id_to_path: dict[str, tuple[str, Any]] = {}
-                for path in paths_for_backend:
-                    meta, route = path_info[path]
-                    assert meta.etag is not None
-                    content_ids.append(meta.etag)
-                    id_to_path[meta.etag] = (path, meta)
-
-                bulk = backend.batch_read_content(content_ids, context=context)
-
-                for cid, content in bulk.items():
-                    vpath, meta = id_to_path[cid]
-                    if content is None:
-                        if skip_errors:
-                            results[vpath] = None
-                        else:
-                            raise NexusFileNotFoundError(vpath)
-                    elif return_metadata:
-                        results[vpath] = {
-                            "content": content,
-                            "etag": meta.etag,
-                            "version": meta.version,
-                            "modified_at": meta.modified_at,
-                            "size": len(content),
-                        }
-                    else:
-                        results[vpath] = content
-
-                # Handle any missing ids not in bulk result
-                for path in paths_for_backend:
-                    if path not in results:
-                        if skip_errors:
-                            results[path] = None
-                        else:
-                            raise NexusFileNotFoundError(path)
+            except Exception as e:
+                logger.warning("[READ-BULK] Failed to read %s: %s: %s", path, type(e).__name__, e)
+                if skip_errors:
+                    results[path] = None
+                else:
+                    raise
 
         read_elapsed = time.time() - read_start
         bulk_elapsed = time.time() - bulk_start
@@ -4099,11 +3972,24 @@ class NexusFS(  # type: ignore[misc]
             ...     else:
             ...         print(f"Failed {path}: {result['error']}")
         """
-        results = {}
+        # Validate all paths first
+        validated: list[str] = []
+        results: dict[str, dict] = {}
         for path in paths:
             try:
-                path = self._validate_path(path)
-                meta = self.metadata.get(path)
+                validated.append(self._validate_path(path))
+            except Exception as e:
+                results[path] = {"success": False, "error": str(e)}
+
+        if not validated:
+            return results
+
+        # Batch metadata lookup (single query instead of N)
+        batch_meta = self.metadata.get_batch(validated)
+
+        for path in validated:
+            try:
+                meta = batch_meta.get(path)
 
                 # Check for implicit directory (exists because it has files beneath it)
                 is_implicit_dir = meta is None and self.metadata.is_implicit_directory(path)
@@ -4116,12 +4002,10 @@ class NexusFS(  # type: ignore[misc]
                 is_dir = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
                 if is_dir:
-                    # Use rmdir for directories
                     self._rmdir_internal(
                         path, recursive=recursive, context=context, is_implicit=is_implicit_dir
                     )
                 else:
-                    # Use delete for files
                     await self.sys_unlink(path, context=context)
 
                 results[path] = {"success": True}

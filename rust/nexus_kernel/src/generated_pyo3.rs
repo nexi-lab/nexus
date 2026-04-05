@@ -950,7 +950,90 @@ impl PyKernel {
         self.inner.set_metastore_path(path).map_err(Into::into)
     }
 
-    // ── DCache proxy methods ───────────────────────────────────────────
+    // ── Metastore proxy methods (for RustMetastoreProxy) ──────────────
+
+    fn metastore_get(&self, py: Python<'_>, path: &str) -> PyResult<Option<Py<PyAny>>> {
+        match self
+            .inner
+            .metastore_get(path)
+            .map_err::<PyErr, _>(Into::into)?
+        {
+            Some(meta) => {
+                let obj = to_python_metadata(py, &meta)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
+                Ok(Some(obj.into()))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn metastore_put(&self, py: Python<'_>, metadata: &Bound<'_, PyAny>) -> PyResult<()> {
+        let meta = extract_metadata(py, metadata)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
+        self.inner
+            .metastore_put(&meta.path.clone(), meta)
+            .map_err(Into::into)
+    }
+
+    fn metastore_delete(&self, path: &str) -> PyResult<bool> {
+        self.inner.metastore_delete(path).map_err(Into::into)
+    }
+
+    fn metastore_list(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<Py<PyAny>>> {
+        let items = self
+            .inner
+            .metastore_list(prefix)
+            .map_err::<PyErr, _>(Into::into)?;
+        let mut result = Vec::with_capacity(items.len());
+        for meta in &items {
+            result.push(
+                to_python_metadata(py, meta)
+                    .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?
+                    .into(),
+            );
+        }
+        Ok(result)
+    }
+
+    fn metastore_exists(&self, path: &str) -> PyResult<bool> {
+        self.inner.metastore_exists(path).map_err(Into::into)
+    }
+
+    fn metastore_get_batch(
+        &self,
+        py: Python<'_>,
+        paths: Vec<String>,
+    ) -> PyResult<Vec<Option<Py<PyAny>>>> {
+        let items = self
+            .inner
+            .metastore_get_batch(&paths)
+            .map_err::<PyErr, _>(Into::into)?;
+        let mut result = Vec::with_capacity(items.len());
+        for opt in &items {
+            match opt {
+                Some(meta) => result.push(Some(
+                    to_python_metadata(py, meta)
+                        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?
+                        .into(),
+                )),
+                None => result.push(None),
+            }
+        }
+        Ok(result)
+    }
+
+    fn metastore_put_batch(&self, py: Python<'_>, items: &Bound<'_, PyList>) -> PyResult<()> {
+        let mut batch = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            let meta = extract_metadata(py, &item)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("{e:?}")))?;
+            let path = meta.path.clone();
+            batch.push((path, meta));
+        }
+        self.inner.metastore_put_batch(&batch).map_err(Into::into)
+    }
+
+    // ── DCache proxy methods ─────────────��─────────────────────────────
 
     #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]
     #[allow(clippy::too_many_arguments)]

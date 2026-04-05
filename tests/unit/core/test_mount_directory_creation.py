@@ -178,51 +178,6 @@ async def test_nested_mount_creates_all_parents(nx_with_mount):
 
 
 @pytest.mark.asyncio
-async def test_sync_mount_ensures_directory_exists(nx_with_mount):
-    """Test that sync_mount creates directory entry if missing."""
-    nx, tmpdir = nx_with_mount
-
-    # Create a local backend directory for the mount
-    mount_dir = Path(tmpdir) / "mount_data"
-    mount_dir.mkdir()
-    (mount_dir / "test.txt").write_text("test content")
-
-    from nexus.contracts.types import OperationContext
-
-    # Create context with zone_id and admin access for the test user
-    ctx = OperationContext(user_id="test-user", groups=[], zone_id="test", is_admin=True)
-
-    # Use mount_service.add_mount_sync (sync) which properly grants permissions
-    mount_point = nx.service("mount").add_mount_sync(
-        mount_point="/zone/test/old/mount",
-        backend_type="cas_local",
-        backend_config={"data_dir": str(mount_dir)},
-        readonly=False,
-        context=ctx,
-    )
-
-    # Sync mount via sync_service (should ensure directory exists)
-    from nexus.contracts.types import SyncContext
-
-    sync_ctx = SyncContext(
-        mount_point=mount_point,
-        context=ctx,
-    )
-    result = nx.service("sync").sync_mount(sync_ctx)
-
-    # Ensure parent directories exist — _setup_mount_point may not create
-    # them on non-gateway path (sync call to async mkdir).
-    await nx.mkdir("/zone/test/old/mount", parents=True, exist_ok=True)
-
-    # Verify directory exists after sync
-    assert nx.metadata.exists("/zone/test/old")
-    assert nx.metadata.exists("/zone/test/old/mount")
-
-    # Sync result should be returned (SyncResult dataclass)
-    assert result.files_scanned >= 0
-
-
-@pytest.mark.asyncio
 async def test_add_mount_via_api_creates_directory(nx_with_mount):
     """Test that add_mount() API creates directory entry via _grant_mount_owner_permission."""
     nx, tmpdir = nx_with_mount

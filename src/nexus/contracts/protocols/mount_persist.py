@@ -39,7 +39,6 @@ class MountPersistProtocol(Protocol):
 
     def load_all_mounts(
         self,
-        auto_sync: bool = False,
     ) -> dict[str, Any]: ...
 
     def list_saved_mounts(

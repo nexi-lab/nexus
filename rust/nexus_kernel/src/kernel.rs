@@ -286,6 +286,87 @@ impl Kernel {
         Ok(())
     }
 
+    // ── Metastore proxy methods (for Python RustMetastoreProxy) ────────
+
+    pub fn metastore_get(
+        &self,
+        path: &str,
+    ) -> Result<Option<crate::metastore::FileMetadata>, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .get(path)
+                .map_err(|e| KernelError::IOError(format!("metastore_get({path}): {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_put(
+        &self,
+        path: &str,
+        metadata: crate::metastore::FileMetadata,
+    ) -> Result<(), KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .put(path, metadata)
+                .map_err(|e| KernelError::IOError(format!("metastore_put({path}): {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_delete(&self, path: &str) -> Result<bool, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .delete(path)
+                .map_err(|e| KernelError::IOError(format!("metastore_delete({path}): {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_list(
+        &self,
+        prefix: &str,
+    ) -> Result<Vec<crate::metastore::FileMetadata>, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .list(prefix)
+                .map_err(|e| KernelError::IOError(format!("metastore_list({prefix}): {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_exists(&self, path: &str) -> Result<bool, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .exists(path)
+                .map_err(|e| KernelError::IOError(format!("metastore_exists({path}): {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_get_batch(
+        &self,
+        paths: &[String],
+    ) -> Result<Vec<Option<crate::metastore::FileMetadata>>, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .get_batch(paths)
+                .map_err(|e| KernelError::IOError(format!("metastore_get_batch: {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    pub fn metastore_put_batch(
+        &self,
+        items: &[(String, crate::metastore::FileMetadata)],
+    ) -> Result<(), KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .put_batch(items)
+                .map_err(|e| KernelError::IOError(format!("metastore_put_batch: {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
     // ── DCache proxy methods ───────────────────────────────────────────
 
     /// Insert or update a cache entry.

@@ -449,17 +449,6 @@ class ConnectorSyncLoop:
                         with contextlib.suppress(Exception):
                             sync_svc._write_to_file_paths(meta)
 
-                # Write to content cache if backend supports it
-                if hasattr(backend, "_has_caching") and backend._has_caching():
-                    try:
-                        backend._write_to_cache(
-                            path=virtual_path,
-                            content=content,
-                            backend_version=content_hash,
-                        )
-                    except Exception:
-                        logger.debug("[CONNECTOR_SYNC] cache write failed for %s", virtual_path)
-
                 # Collect change log entry for batch upsert
                 if change_log is not None:
                     from nexus.system_services.sync.change_log_store import ChangeLogEntry

@@ -90,8 +90,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "rebac_service": "rebac",
     "mount_service": "mount",
     "gateway": "gateway",
-    "sync_service": "sync",
-    "sync_job_service": "sync_job",
     "mount_persist_service": "mount_persist",
     "mcp_service": "mcp",
     "oauth_service": "oauth",

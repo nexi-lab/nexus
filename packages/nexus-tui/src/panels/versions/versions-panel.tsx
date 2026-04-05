@@ -19,6 +19,7 @@ import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { ConflictsView } from "./conflicts-tab.js";
+import { DiffViewer } from "../../shared/components/diff-viewer.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -247,11 +248,8 @@ export default function VersionsPanel(): React.ReactNode {
 
         {/* Diff viewer */}
         {diffContent && !diffLoading && (
-          <box height={8} width="100%" borderStyle="single" flexDirection="column">
-            <box height={1} width="100%"><text>--- Old ---</text></box>
-            <scrollbox flexGrow={1} width="100%"><text>{diffContent.old}</text></scrollbox>
-            <box height={1} width="100%"><text>--- New ---</text></box>
-            <scrollbox flexGrow={1} width="100%"><text>{diffContent.new}</text></scrollbox>
+          <box height={12} width="100%">
+            <DiffViewer oldText={diffContent.old} newText={diffContent.new} oldLabel="old" newLabel="new" />
           </box>
         )}
 

@@ -6,7 +6,7 @@
  */
 
 import React from "react";
-import { useBrickAvailable, useAnyBrickAvailable } from "../hooks/use-brick-available.js";
+import { useBricksAvailable } from "../hooks/use-brick-available.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { Spinner } from "./spinner.js";
 import { textStyle } from "../text-style.js";
@@ -39,10 +39,7 @@ function BrickUnavailableMessage({ names }: { names: readonly string[] }): React
 export function BrickGate({ brick, children, fallback }: BrickGateProps): React.ReactNode {
   const bricks = Array.isArray(brick) ? brick : [brick];
 
-  // Use the appropriate hook based on single vs multiple bricks
-  const { available, loading } = bricks.length === 1
-    ? useBrickAvailable(bricks[0])
-    : useAnyBrickAvailable(bricks);
+  const { available, loading } = useBricksAvailable(bricks);
 
   if (loading) {
     return (

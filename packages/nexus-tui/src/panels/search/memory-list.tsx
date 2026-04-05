@@ -97,18 +97,14 @@ function DiffSection({
 
   if (!diff) return null;
 
-  const lines = diff.diff.split("\n");
-
   return (
-    <box width="100%" flexDirection="column" marginLeft={4}>
+    <box width="100%" height={10} flexDirection="column" marginLeft={2}>
       <box height={1} width="100%">
-        <text>{`Diff v${diff.v1} -> v${diff.v2} (${diff.mode})`}</text>
+        <text>{`Diff v${diff.v1} → v${diff.v2} (${diff.mode})`}</text>
       </box>
-      {lines.map((line, i) => (
-        <box key={i} height={1} width="100%">
-          <text>{`    ${line}`}</text>
-        </box>
-      ))}
+      <scrollbox flexGrow={1} width="100%">
+        <diff diff={diff.diff} showLineNumbers />
+      </scrollbox>
     </box>
   );
 }

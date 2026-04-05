@@ -82,7 +82,7 @@ export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewPr
       {/* Main content: answer or streaming steps */}
       <scrollbox flexGrow={1} width="100%">
         {answer.answer ? (
-          <text>{answer.answer}</text>
+          <markdown content={answer.answer} streaming={answer.status === "streaming"} />
         ) : answer.steps.length > 0 ? (
           <box flexDirection="column">
             {answer.steps.map((step) => (

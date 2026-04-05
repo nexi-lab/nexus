@@ -1931,7 +1931,7 @@ class NexusFS(  # type: ignore[misc]
         result = self._kernel.sys_write(path, _rust_ctx, buf)
 
         if result.hit:
-            # Rust wrote CAS + metadata + dcache — only dispatch events
+            # Rust wrote to backend (CAS or PAS) + built metadata + updated dcache
             zone_id, agent_id, _ = self._get_context_identity(context)
             await self._dispatch_write_events(
                 path,
@@ -1960,7 +1960,8 @@ class NexusFS(  # type: ignore[misc]
                 buf,
             )
         else:
-            # Non-Rust backend fallback
+            # Fallback: DT_PIPE/DT_STREAM, route fail, or no-backend mount.
+            # Normal CAS/PAS backends always hit=true (PR 12a fixed ObjectStore trait).
             await self._write_internal(
                 path=path, content=buf, offset=offset, context=context, _meta=_meta
             )

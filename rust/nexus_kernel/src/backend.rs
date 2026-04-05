@@ -38,9 +38,28 @@ impl From<CASError> for StorageError {
     }
 }
 
+/// Result of a write operation (equivalent to Python `WriteResult`).
+///
+/// - `content_id`: Primary addressing key (opaque).
+///   CAS backends: SHA-256 hex digest.
+///   PAS backends: blob path or version ID.
+/// - `version`: OCC token for conflict detection.
+///   CAS: same as content_id (hash is immutable).
+///   PAS: cloud version_id or content hash.
+/// - `size`: Content size in bytes.
+#[allow(dead_code)]
+pub(crate) struct WriteResult {
+    pub(crate) content_id: String,
+    pub(crate) version: String,
+    pub(crate) size: u64,
+}
+
 /// ObjectStore pillar — kernel `file_operations` contract.
 ///
-/// Rust equivalent of Python `ObjectStoreABC`.
+/// Rust equivalent of Python `ObjectStoreABC` (one of the Four Storage Pillars).
+/// CAS/PAS agnostic: `content_id` is an opaque key whose semantics are
+/// backend-defined (hash for CAS, blob path for PAS).
+///
 /// 6 abstract methods matching the Python ABC:
 ///   - write_content, read_content, delete_content, get_content_size
 ///   - mkdir, rmdir
@@ -53,11 +72,22 @@ pub(crate) trait ObjectStore: Send + Sync {
     /// Backend identifier (e.g. "local", "gcs", "s3").
     fn name(&self) -> &str;
 
-    /// Write content and return `(content_id, size)`.
-    fn write_content(&self, content: &[u8]) -> Result<String, StorageError>;
+    /// Write content to storage and return a `WriteResult`.
+    ///
+    /// - `content_id`: Target address for the content.
+    ///   CAS backends: ignored (address = hash of content).
+    ///   PAS backends: blob path where content will be stored.
+    /// - `ctx`: Operation context (carries backend_path, auth, TTL).
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError>;
 
     /// Read content by opaque identifier.
     ///
+    /// `content_id`: CAS=hash, PAS=version_id.
     /// `backend_path`: mount-relative path (for path-addressed backends).
     /// `ctx`: operation credential for backends that need identity/auth.
     /// CAS backends ignore backend_path and ctx.
@@ -119,8 +149,18 @@ impl ObjectStore for CasLocalBackend {
         self.0.read_content(content_id).map_err(StorageError::from)
     }
 
-    fn write_content(&self, content: &[u8]) -> Result<String, StorageError> {
-        self.0.write_content(content).map_err(StorageError::from)
+    fn write_content(
+        &self,
+        content: &[u8],
+        _content_id: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
+        let hash = self.0.write_content(content).map_err(StorageError::from)?;
+        Ok(WriteResult {
+            version: hash.clone(),
+            size: content.len() as u64,
+            content_id: hash,
+        })
     }
 
     fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
@@ -152,12 +192,15 @@ mod tests {
     #[test]
     fn test_cas_local_backend_write_and_read() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"hello via ObjectStore";
 
-        let hash = backend.write_content(content).unwrap();
-        assert_eq!(hash.len(), 64);
+        let result = backend.write_content(content, "", &ctx).unwrap();
+        assert_eq!(result.content_id.len(), 64);
+        assert_eq!(result.size, content.len() as u64);
+        assert_eq!(result.version, result.content_id); // CAS: version == hash
 
-        let read_back = backend.read_content(&hash, "", &test_ctx()).unwrap();
+        let read_back = backend.read_content(&result.content_id, "", &ctx).unwrap();
         assert_eq!(read_back, content);
     }
 
@@ -176,11 +219,12 @@ mod tests {
     #[test]
     fn test_cas_local_backend_dedup() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"dedup via ObjectStore";
 
-        let hash1 = backend.write_content(content).unwrap();
-        let hash2 = backend.write_content(content).unwrap();
-        assert_eq!(hash1, hash2);
+        let r1 = backend.write_content(content, "", &ctx).unwrap();
+        let r2 = backend.write_content(content, "", &ctx).unwrap();
+        assert_eq!(r1.content_id, r2.content_id);
     }
 
     #[test]
@@ -192,10 +236,11 @@ mod tests {
     #[test]
     fn test_cas_local_backend_delete() {
         let (_tmp, backend) = setup();
-        let hash = backend.write_content(b"to delete").unwrap();
-        assert!(backend.delete_content(&hash).is_ok());
+        let ctx = test_ctx();
+        let r = backend.write_content(b"to delete", "", &ctx).unwrap();
+        assert!(backend.delete_content(&r.content_id).is_ok());
         assert!(matches!(
-            backend.read_content(&hash, "", &test_ctx()).unwrap_err(),
+            backend.read_content(&r.content_id, "", &ctx).unwrap_err(),
             StorageError::NotFound(_)
         ));
     }
@@ -203,10 +248,11 @@ mod tests {
     #[test]
     fn test_cas_local_backend_get_content_size() {
         let (_tmp, backend) = setup();
+        let ctx = test_ctx();
         let content = b"size check";
-        let hash = backend.write_content(content).unwrap();
+        let r = backend.write_content(content, "", &ctx).unwrap();
         assert_eq!(
-            backend.get_content_size(&hash).unwrap(),
+            backend.get_content_size(&r.content_id).unwrap(),
             content.len() as u64
         );
     }

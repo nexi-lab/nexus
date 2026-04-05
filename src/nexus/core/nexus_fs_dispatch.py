@@ -402,37 +402,30 @@ class DispatchMixin:
         return False
 
     def notify_mount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget mount notification via OBSERVE phase."""
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+        """Fire-and-forget mount notification (synchronous)."""
+        from nexus.contracts.vfs_hooks import MountHookContext
 
-        bit = FILE_EVENT_BIT[FileEventType.MOUNT]
-        observers = self._kernel.get_matching_observers(bit)
-        if not observers:
+        if not self._mount_hooks:
             return
-        event = FileEvent(type=FileEventType.MOUNT, path=mount_point)
-        # Attach backend as private attr for adapters
-        object.__setattr__(event, "_backend", backend)
-        for obs, name in observers:
+        ctx = MountHookContext(mount_point=mount_point, backend=backend)
+        for hook, _adapter in self._mount_hooks:
             try:
-                obs.on_mutation(event)
+                hook.on_mount(ctx)
             except Exception as exc:
-                logger.warning("Mount observer %s failed: %s", name, exc)
+                logger.warning("Mount hook %s failed: %s", type(hook).__name__, exc)
 
     def notify_unmount(self, mount_point: str, backend: Any) -> None:
-        """Fire-and-forget unmount notification via OBSERVE phase."""
-        from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
+        """Fire-and-forget unmount notification (synchronous)."""
+        from nexus.contracts.vfs_hooks import UnmountHookContext
 
-        bit = FILE_EVENT_BIT[FileEventType.UNMOUNT]
-        observers = self._kernel.get_matching_observers(bit)
-        if not observers:
+        if not self._unmount_hooks:
             return
-        event = FileEvent(type=FileEventType.UNMOUNT, path=mount_point)
-        object.__setattr__(event, "_backend", backend)
-        for obs, name in observers:
+        ctx = UnmountHookContext(mount_point=mount_point, backend=backend)
+        for hook, _adapter in self._unmount_hooks:
             try:
-                obs.on_mutation(event)
+                hook.on_unmount(ctx)
             except Exception as exc:
-                logger.warning("Unmount observer %s failed: %s", name, exc)
+                logger.warning("Unmount hook %s failed: %s", type(hook).__name__, exc)
 
     # ── Hook counts — delegate to Rust Kernel ────────────────────────
 

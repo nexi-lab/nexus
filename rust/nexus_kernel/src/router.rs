@@ -129,10 +129,22 @@ impl PathRouter {
     }
 
     /// Write content to the storage backend attached to a mount.
-    pub(crate) fn write_content(&self, mount_point: &str, content: &[u8]) -> Option<String> {
+    ///
+    /// `content_id`: CAS=ignored, PAS=blob path (backend_path from route).
+    pub(crate) fn write_content(
+        &self,
+        mount_point: &str,
+        content: &[u8],
+        content_id: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Option<crate::backend::WriteResult> {
         let mounts = self.mounts.read();
         let entry = mounts.get(mount_point)?;
-        entry.backend.as_ref()?.write_content(content).ok()
+        entry
+            .backend
+            .as_ref()?
+            .write_content(content, content_id, ctx)
+            .ok()
     }
 
     // ── Mount management (called via Kernel proxy methods) ──────────────

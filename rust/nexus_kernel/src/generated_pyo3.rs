@@ -19,7 +19,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{CasLocalBackend, ObjectStore, StorageError};
+use crate::backend::{CasLocalBackend, ObjectStore, StorageError, WriteResult};
 use crate::dispatch::{MutationObserver, PathResolver};
 use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
@@ -229,17 +229,40 @@ impl ObjectStore for PyObjectStoreAdapter {
         &self.backend_name
     }
 
-    fn write_content(&self, content: &[u8]) -> Result<String, StorageError> {
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
+            // Convert Rust ctx → Python OperationContext (carries backend_path for PAS)
+            let py_ctx = rust_ctx_to_python(py, ctx, content_id)
+                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;
+            let kwargs = pyo3::types::PyDict::new(py);
+            let _ = kwargs.set_item("context", &py_ctx);
             let result = obj
-                .call_method1("write_content", (content,))
+                .call_method("write_content", (content, content_id), Some(&kwargs))
                 .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
-            // Python ObjectStoreABC.write_content() returns WriteResult; extract .content_id
-            result
+            // Python ObjectStoreABC.write_content() returns WriteResult
+            let cid = result
                 .getattr("content_id")
                 .and_then(|v| v.extract::<String>())
-                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            let version = result
+                .getattr("version")
+                .and_then(|v| v.extract::<String>())
+                .unwrap_or_else(|_| cid.clone());
+            let size = result
+                .getattr("size")
+                .and_then(|v| v.extract::<u64>())
+                .unwrap_or(content.len() as u64);
+            Ok(WriteResult {
+                content_id: cid,
+                version,
+                size,
+            })
         })
     }
 

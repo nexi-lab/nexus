@@ -667,12 +667,14 @@ impl Kernel {
         }
 
         // 5. Backend write (CasLocal or PyObjectStoreAdapter)
-        let content_hash = self.router.write_content(&route.mount_point, content);
+        //    Pass backend_path as content_id (CAS ignores it, PAS uses it as blob path).
+        let write_result =
+            self.router
+                .write_content(&route.mount_point, content, &route.backend_path, ctx);
 
-        // 6. After CAS write -> build metadata + metastore.put + dcache update
-        let result = match content_hash {
-            Some(hash) => {
-                let content_size = content.len() as u64;
+        // 6. After write -> build metadata + metastore.put + dcache update
+        let result = match write_result {
+            Some(wr) => {
                 // Get existing version for increment
                 let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
                 let new_version = old_version + 1;
@@ -682,9 +684,9 @@ impl Kernel {
                     let meta = crate::metastore::FileMetadata {
                         path: path.to_string(),
                         backend_name: route.io_profile.clone(),
-                        physical_path: hash.clone(),
-                        size: content_size,
-                        etag: Some(hash.clone()),
+                        physical_path: wr.content_id.clone(),
+                        size: wr.size,
+                        etag: Some(wr.content_id.clone()),
                         version: new_version,
                         entry_type: DT_REG,
                         zone_id: Some(ctx.zone_id.clone()),
@@ -699,9 +701,9 @@ impl Kernel {
                     path,
                     CachedEntry {
                         backend_name: route.io_profile.clone(),
-                        physical_path: hash.clone(),
-                        size: content_size,
-                        etag: Some(hash.clone()),
+                        physical_path: wr.content_id.clone(),
+                        size: wr.size,
+                        etag: Some(wr.content_id.clone()),
                         version: new_version,
                         entry_type: DT_REG,
                         zone_id: Some(ctx.zone_id.clone()),
@@ -711,10 +713,10 @@ impl Kernel {
 
                 Ok(SysWriteResult {
                     hit: true,
-                    content_id: Some(hash),
+                    content_id: Some(wr.content_id),
                     post_hook_needed: self.write_hook_count.load(Ordering::Relaxed) > 0,
                     version: new_version,
-                    size: content_size,
+                    size: wr.size,
                 })
             }
             None => miss(),

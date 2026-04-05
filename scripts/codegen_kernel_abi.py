@@ -933,20 +933,41 @@ def _generate_adapter_method(
         return lines
 
     if override == "WRITE_RESULT":
-        # write_content: Python returns WriteResult, extract .content_id
+        # write_content(content, content_id, ctx): Python returns WriteResult
+        # Pass content_id as positional arg, ctx as keyword context=
         err = _rust_err_map(config, method.name, first_param)
         lines.append("        Python::attach(|py| {")
         lines.append("            let obj = self.inner.bind(py);")
-        lines.append("            let result = obj")
-        lines.append(f'                .call_method1("{method.name}", {tuple_arg})')
-        lines.append(f"                .map_err(|e| {err})?;")
         lines.append(
-            "            // Python ObjectStoreABC.write_content() returns WriteResult; extract .content_id"
+            "            // Convert Rust ctx → Python OperationContext (carries backend_path for PAS)"
         )
-        lines.append("            result")
+        lines.append("            let py_ctx = rust_ctx_to_python(py, ctx, content_id)")
+        lines.append("                .map_err(|e| StorageError::IOError(io::Error::other(e)))?;")
+        lines.append("            let kwargs = pyo3::types::PyDict::new(py);")
+        lines.append('            let _ = kwargs.set_item("context", &py_ctx);')
+        lines.append("            let result = obj")
+        lines.append(
+            '                .call_method("write_content", (content, content_id), Some(&kwargs))'
+        )
+        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            // Python ObjectStoreABC.write_content() returns WriteResult")
+        lines.append("            let cid = result")
         lines.append('                .getattr("content_id")')
         lines.append("                .and_then(|v| v.extract::<String>())")
-        lines.append(f"                .map_err(|e| {err})")
+        lines.append(f"                .map_err(|e| {err})?;")
+        lines.append("            let version = result")
+        lines.append('                .getattr("version")')
+        lines.append("                .and_then(|v| v.extract::<String>())")
+        lines.append("                .unwrap_or_else(|_| cid.clone());")
+        lines.append("            let size = result")
+        lines.append('                .getattr("size")')
+        lines.append("                .and_then(|v| v.extract::<u64>())")
+        lines.append("                .unwrap_or(content.len() as u64);")
+        lines.append("            Ok(WriteResult {")
+        lines.append("                content_id: cid,")
+        lines.append("                version,")
+        lines.append("                size,")
+        lines.append("            })")
         lines.append("        })")
         lines.append("    }")
         return lines
@@ -1592,7 +1613,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use std::path::Path;",
             "use std::sync::Arc;",
             "",
-            "use crate::backend::{CasLocalBackend, ObjectStore, StorageError};",
+            "use crate::backend::{CasLocalBackend, ObjectStore, StorageError, WriteResult};",
             "use crate::dispatch::{MutationObserver, PathResolver};",
             "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",

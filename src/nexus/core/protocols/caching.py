@@ -2,8 +2,8 @@
 
 Caching contracts:
 
-- ``CacheConfigContract`` — the 3-attribute mixin contract that CacheService
-  relies on (session_factory, zone_id, l1_only). Formerly ``CachingConnectorContract``.
+- ``CacheConfigContract`` — the 3-attribute contract for cache configuration
+  (session_factory, zone_id, l1_only).
 
 - ``CachingConnectorContract`` — wrapping-chain cache methods for
   CachingBackendWrapper (get_cache_stats, clear_cache, describe).
@@ -13,7 +13,7 @@ Caching contracts:
 - ``EmbeddingCacheProtocol`` — protocol for embedding vector caches (cross-brick).
 
 References:
-    - Issue #1628: Split CacheConnectorMixin into focused units
+    - Issue #1628: Cache protocol contracts
     - Issue #2362: ConnectorProtocol wrapping chains
     - Issue #2364: Consolidate duplicate top-level modules
     - docs/design/cache-layer.md
@@ -25,11 +25,10 @@ from typing import Any, Protocol, runtime_checkable
 
 @runtime_checkable
 class CacheConfigContract(Protocol):
-    """Contract for connectors that support caching via CacheService.
+    """Contract for connectors that support caching configuration.
 
-    Documents the attributes that CacheService expects from its connector
-    reference. Connectors inheriting CacheConnectorMixin implicitly satisfy
-    this contract.
+    Documents the attributes that cache-aware components expect from a
+    connector reference.
 
     Attributes:
         session_factory: SQLAlchemy session factory (None for L1-only mode)

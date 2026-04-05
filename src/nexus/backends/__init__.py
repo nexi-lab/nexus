@@ -31,7 +31,6 @@ _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
     # Cache layer (depends on sqlalchemy)
     "CachedReadResult": ("nexus.backends.cache.models", "CachedReadResult"),
     "IMMUTABLE_VERSION": ("nexus.backends.cache.models", "IMMUTABLE_VERSION"),
-    "CacheService": ("nexus.backends.cache.service", "CacheService"),
     # Storage backends
     "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
     "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
@@ -204,7 +203,6 @@ __all__ = [
     "CASAddressingEngine",
     "PathAddressingEngine",
     "PathBackend",
-    "CacheService",
     "CachedReadResult",
     "IMMUTABLE_VERSION",
     # Factory

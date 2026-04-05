@@ -731,7 +731,7 @@ class GmailConnector(PathCLIBackend):
             ],
         )
         if not result.ok:
-            # Return the id-keyed metadata anyway — sync_service can look up
+            # Return the id-keyed metadata anyway — callers can look up
             # by extracting msg_id from the filename.
             return id_to_meta
 

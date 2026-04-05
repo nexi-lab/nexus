@@ -93,8 +93,6 @@ __all__ = [
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SyncMountAsyncParams",
-    "SyncMountParams",
     "SysAccessParams",
     "SysIsDirectoryParams",
     "SysMkdirParams",
@@ -902,35 +900,6 @@ class StatBulkParams:
 
 
 @dataclass
-class SyncMountParams:
-    """Parameters for sync_mount(): Sync metadata and content from connector backend(s) to Nexus database."""
-
-    mount_point: str | None = None
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-    full_sync: bool = False
-
-
-@dataclass
-class SyncMountAsyncParams:
-    """Parameters for sync_mount_async(): Start an async sync job for a mount point."""
-
-    mount_point: str
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-
-
-@dataclass
 class SysAccessParams:
     """Parameters for access(): Check if a file or directory exists."""
 
@@ -1180,8 +1149,6 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "sync_mount": SyncMountParams,
-    "sync_mount_async": SyncMountAsyncParams,
     "access": SysAccessParams,
     "is_directory": SysIsDirectoryParams,
     "mkdir": SysMkdirParams,

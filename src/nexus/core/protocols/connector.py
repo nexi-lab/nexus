@@ -240,7 +240,7 @@ class BatchContentProtocol(Protocol):
 class DirectoryListingProtocol(Protocol):
     """Extended directory operations — listing and file metadata.
 
-    Used by search_service, sync_service, and write_back_service for
+    Used by search_service, connector sync loop, and write_back_service for
     directory enumeration and delta sync change detection.
     """
 

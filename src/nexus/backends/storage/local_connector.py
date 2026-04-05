@@ -6,7 +6,7 @@ LocalConnectorBackend keeps files in their original location (SSOT - Single Sour
 
 Key features:
 - Zero data duplication (reference mode)
-- Full indexing support (semantic search via sync_mount)
+- Full indexing support (semantic search via connector sync loop)
 - Change detection via kernel OBSERVE (KernelDispatch)
 - Direct read/write to original files
 
@@ -55,7 +55,7 @@ class LocalConnectorBackend(Backend):
 
     LocalConnectorBackend is similar to GDriveConnector but for local filesystem:
     - Both use backend_path (not content_hash) for path-based access
-    - Both support full indexing via sync_mount
+    - Both support full indexing via connector sync loop
 
     Storage structure:
         mount_point: /mnt/local-projects

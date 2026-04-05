@@ -1,8 +1,5 @@
 """Change Log Store for Delta Sync (Issue #1127).
 
-Extracted from sync_service.py during Phase 0 refactoring for
-Issue #1129 (Bidirectional Sync).
-
 Provides CRUD operations for BackendChangeLogModel to support delta sync.
 Uses SyncStoreBase for shared session management and dialect detection.
 """

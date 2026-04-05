@@ -311,5 +311,4 @@ async def _auto_dispatch(
     elif asyncio.iscoroutinefunction(func):
         return await func(**kwargs)
     else:
-        timeout = 300.0 if method == "sync_mount" else None
-        return await to_thread_with_timeout(func, timeout=timeout, **kwargs)
+        return await to_thread_with_timeout(func, **kwargs)

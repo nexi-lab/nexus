@@ -1,8 +1,8 @@
 """Mount service protocol (Issue #1287: Extract domain services).
 
-Defines the contract for mount lifecycle, sync, and persistence operations.
+Defines the contract for mount lifecycle and persistence operations.
 Existing implementation: ``nexus.core.nexus_fs_mounts.NexusFSMountsMixin``
-delegating to ``MountService``, ``SyncService``, ``SyncJobService``,
+delegating to ``MountService``, ``SyncJobService``,
 and ``MountPersistService``.
 
 References:
@@ -24,9 +24,9 @@ ProgressCallback = Callable[[int, str], None]
 class MountProtocol(Protocol):
     """Service contract for mount management operations.
 
-    Four sub-domains:
+    Three sub-domains:
     - Core: add / remove / list / get mounts and connectors
-    - Sync: sync_mount (blocking) and async sync jobs
+    - Sync jobs: async sync job management
     - Persistence: save / load / delete mount configurations in DB
     - Connector: delete_connector (bundled unmount + OAuth revoke + DB cleanup)
     """
@@ -76,35 +76,7 @@ class MountProtocol(Protocol):
 
     async def has_mount(self, mount_point: str) -> bool: ...
 
-    # ── Sync ──────────────────────────────────────────────────────────────
-
-    async def sync_mount(
-        self,
-        mount_point: str | None = None,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-        progress_callback: ProgressCallback | None = None,
-        full_sync: bool = False,
-    ) -> dict[str, Any]: ...
-
-    async def sync_mount_async(
-        self,
-        mount_point: str,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any]: ...
+    # ── Sync Jobs ─────────────────────────────────────────────────────────
 
     async def get_sync_job(self, job_id: str) -> dict[str, Any] | None: ...
 

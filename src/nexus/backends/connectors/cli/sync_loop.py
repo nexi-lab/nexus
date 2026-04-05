@@ -387,7 +387,7 @@ class ConnectorSyncLoop:
         """Batch-write items to metastore and content cache.
 
         Uses batch pre-allocation for CAS content writes (Issue #3409)
-        and existing SyncService batch infrastructure for metadata.
+        and batched metastore writes for metadata.
         """
         if not items:
             return 0
@@ -398,8 +398,7 @@ class ConnectorSyncLoop:
         self._batch_write_cas_content(backend, items)
 
         synced = 0
-        sync_svc = getattr(self._mount_service, "_sync_service", None)
-        change_log = getattr(sync_svc, "_change_log", None) if sync_svc else None
+        change_log = getattr(self._mount_service, "_change_log", None)
 
         # Collect change log entries for batch upsert (Decision #14A)
         change_entries = []
@@ -440,14 +439,6 @@ class ConnectorSyncLoop:
                         metastore.set(virtual_path, meta)
                     except Exception:
                         logger.debug("[CONNECTOR_SYNC] metastore.set failed for %s", virtual_path)
-
-                    # Issue #3266: Also write to file_paths + directory_entries
-                    # so metastore-first listing reflects delta changes.
-                    if sync_svc is not None and hasattr(sync_svc, "_write_to_file_paths"):
-                        import contextlib
-
-                        with contextlib.suppress(Exception):
-                            sync_svc._write_to_file_paths(meta)
 
                 # Collect change log entry for batch upsert
                 if change_log is not None:
@@ -529,22 +520,12 @@ class ConnectorSyncLoop:
         if metastore is None:
             return
 
-        sync_svc = getattr(self._mount_service, "_sync_service", None)
-
         for path in deleted_paths:
             virtual_path = f"{mp}/{path}" if not path.startswith(mp) else path
             try:
                 metastore.delete(virtual_path)
             except Exception:
                 logger.debug("[CONNECTOR_SYNC] delete failed for %s", virtual_path)
-
-            # Issue #3266: Also clean file_paths + directory_entries
-            # so metastore-first listing doesn't show stale entries.
-            if sync_svc is not None and hasattr(sync_svc, "_delete_from_file_paths"):
-                import contextlib
-
-                with contextlib.suppress(Exception):
-                    sync_svc._delete_from_file_paths(virtual_path)
 
     # --- Directory entry population (Issue #3266) ---
 

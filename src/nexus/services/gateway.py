@@ -11,7 +11,7 @@ Phase 2: Mount Mixin Refactoring
 
 Example:
     ```python
-    class SyncService:
+    class MountService:
         def __init__(self, gateway: NexusFSGateway):
             self._gw = gateway  # Grep pattern: self._gw.
 

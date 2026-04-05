@@ -1,10 +1,7 @@
 """Cache data models for connector backends.
 
-Extracted from cache_mixin.py (#1628) to separate data definitions
-from cache logic. All symbols are re-exported from cache_mixin.py
-for backward compatibility.
-
-Part of: #1628 (Split CacheConnectorMixin into focused units)
+Defines data structures for cache entries, sync results, and cached reads.
+Originally extracted from cache logic (#1628) to separate data definitions.
 """
 
 from dataclasses import dataclass, field

@@ -4,7 +4,7 @@ Extracts the duplicated TokenManager initialization boilerplate from
 Gmail, Google Calendar, Slack, and X connectors into a single mixin.
 
 Usage:
-    class MyOAuthConnector(Backend, OAuthConnectorMixin, CacheConnectorMixin):
+    class MyOAuthConnector(Backend, OAuthConnectorMixin):
         def __init__(self, token_manager_db, user_email=None, provider="my_provider", ...):
             self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
             ...

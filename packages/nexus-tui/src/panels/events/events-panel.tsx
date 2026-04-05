@@ -216,7 +216,7 @@ export default function EventsPanel(): React.ReactNode {
     <box height="100%" width="100%" flexDirection="column">
       <Tooltip tooltipKey="events-panel" message="Tip: Press ? for keybinding help" />
       {/* Tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Filter bar (events tab) */}
       {activeTab === "events" && (

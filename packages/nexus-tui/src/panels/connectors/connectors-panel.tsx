@@ -65,7 +65,7 @@ export default function ConnectorsPanel(): React.ReactNode {
     <BrickGate brick="storage">
       <box height="100%" width="100%" flexDirection="column">
         {/* Sub-tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Active tab content */}
         <box flexGrow={1}>

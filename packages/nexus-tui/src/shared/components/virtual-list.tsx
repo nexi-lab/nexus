@@ -23,6 +23,8 @@ export interface VirtualListProps<T> {
   readonly selectedIndex: number;
   /** Extra rows rendered above and below the viewport. Default: 5 */
   readonly overscan?: number;
+  /** Called with the absolute index when a row is clicked. */
+  readonly onSelect?: (index: number) => void;
 }
 
 /**
@@ -69,6 +71,7 @@ export function VirtualList<T>({
   viewportHeight,
   selectedIndex,
   overscan = 5,
+  onSelect,
 }: VirtualListProps<T>): React.ReactNode {
   const { startIndex, endIndex } = useMemo(
     () => calculateWindow(items.length, viewportHeight, selectedIndex, overscan),
@@ -87,7 +90,14 @@ export function VirtualList<T>({
 
   return (
     <box flexDirection="column" height={viewportHeight * itemHeight} width="100%">
-      {visibleItems.map((item, i) => renderItem(item, startIndex + i))}
+      {visibleItems.map((item, i) => {
+        const absoluteIndex = startIndex + i;
+        return onSelect ? (
+          <box key={absoluteIndex} height={itemHeight} width="100%" onMouseDown={() => onSelect(absoluteIndex)}>
+            {renderItem(item, absoluteIndex)}
+          </box>
+        ) : renderItem(item, absoluteIndex);
+      })}
     </box>
   );
 }

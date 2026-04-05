@@ -303,7 +303,7 @@ export function App(): React.ReactNode {
       {/* Main row: sidebar + panel content */}
       <box flexGrow={1} flexDirection="row">
         {/* Side navigation (Ctrl+B toggles, hidden when zoomed or terminal too narrow) */}
-        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel && terminalColumns >= COLLAPSED_THRESHOLD} />
+        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel && terminalColumns >= COLLAPSED_THRESHOLD} onSelect={setActivePanel} />
 
         {/* Panel content */}
         <box flexGrow={1}>

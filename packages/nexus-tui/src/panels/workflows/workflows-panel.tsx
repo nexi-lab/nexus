@@ -200,7 +200,7 @@ export default function WorkflowsPanel(): React.ReactNode {
       <box height="100%" width="100%" flexDirection="column">
         <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Error display */}
         {error && (

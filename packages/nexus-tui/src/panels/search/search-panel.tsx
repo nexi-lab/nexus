@@ -329,7 +329,7 @@ export default function SearchPanel(): React.ReactNode {
       </box>
 
       {/* Tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Error display */}
       {error && (

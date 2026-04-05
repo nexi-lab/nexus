@@ -16,6 +16,8 @@ export interface SubTabBarProps {
   readonly tabs: readonly SubTab[];
   /** Currently active tab ID. */
   readonly activeTab: string;
+  /** Called with the tab id when a tab is clicked. */
+  readonly onSelect?: (id: string) => void;
 }
 
 /**
@@ -23,18 +25,22 @@ export interface SubTabBarProps {
  *
  * Example output: `[Zones]  Bricks   Drift   Reindex`
  */
-export function SubTabBar({ tabs, activeTab }: SubTabBarProps): React.ReactNode {
+export function SubTabBar({ tabs, activeTab, onSelect }: SubTabBarProps): React.ReactNode {
   if (tabs.length === 0) return null;
 
   return (
-    <box height={1} width="100%">
-      <text>
-        {tabs
-          .map((tab) =>
-            tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `,
-          )
-          .join(" ")}
-      </text>
+    <box height={1} width="100%" flexDirection="row">
+      {tabs.map((tab, index) => {
+        const isActive = tab.id === activeTab;
+        const isLast = index === tabs.length - 1;
+        const label = isActive ? `[${tab.label}]` : ` ${tab.label} `;
+        const content = isLast ? label : `${label} `;
+        return (
+          <box key={tab.id} height={1} onMouseDown={() => onSelect?.(tab.id)}>
+            <text>{content}</text>
+          </box>
+        );
+      })}
     </box>
   );
 }

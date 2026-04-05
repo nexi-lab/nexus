@@ -134,12 +134,13 @@ function usePanelIndicators(now: number): PanelIndicatorMap {
 interface SideNavProps {
   readonly activePanel: PanelId;
   readonly visible: boolean;
+  readonly onSelect?: (id: PanelId) => void;
 }
 
 /** Interval (ms) for re-evaluating stale state. */
 const STALE_CHECK_INTERVAL_MS = 10_000;
 
-export function SideNav({ activePanel, visible }: SideNavProps): React.ReactNode {
+export function SideNav({ activePanel, visible, onSelect }: SideNavProps): React.ReactNode {
   const { width: columns } = useTerminalDimensions();
   const mode = getSideNavMode(columns);
 
@@ -179,17 +180,18 @@ export function SideNav({ activePanel, visible }: SideNavProps): React.ReactNode
       borderColor={palette.faint}
     >
       {visibleItems.map((item) => (
-        <SideNavItem
-          key={item.id}
-          item={item as NavItem}
-          isActive={item.id === activePanel}
-          isLoading={indicators.loading[item.id]}
-          hasError={indicators.error[item.id]}
-          isUnseen={indicators.unseen[item.id]}
-          isStale={indicators.stale[item.id]}
-          mode={mode}
-          spinnerFrame={SPINNER_FRAMES[spinnerFrame]!}
-        />
+        <box key={item.id} height={1} onMouseDown={() => onSelect?.(item.id as PanelId)}>
+          <SideNavItem
+            item={item as NavItem}
+            isActive={item.id === activePanel}
+            isLoading={indicators.loading[item.id]}
+            hasError={indicators.error[item.id]}
+            isUnseen={indicators.unseen[item.id]}
+            isStale={indicators.stale[item.id]}
+            mode={mode}
+            spinnerFrame={SPINNER_FRAMES[spinnerFrame]!}
+          />
+        </box>
       ))}
     </box>
   );

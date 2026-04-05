@@ -252,6 +252,14 @@ def _instantiate_connector_backend(connector_cls: Any, *, info: Any | None, sche
         if user_email:
             kwargs["user_email"] = user_email
 
+    # Pass the process-singleton encryption key so the connector's TokenManager
+    # uses the same key as exchange_auth_code() — without this, tokens stored by
+    # exchange_auth_code are unreadable by the connector's _get_drive_service.
+    if "encryption_key" in params:
+        from nexus.fs._oauth_support import get_oauth_encryption_key
+
+        kwargs["encryption_key"] = get_oauth_encryption_key()
+
     return connector_cls(**kwargs)
 
 

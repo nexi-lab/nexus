@@ -210,9 +210,15 @@ send_notifications: true
         record_store: "RecordStoreABC | None" = None,
         max_events_per_calendar: int = 250,
         metadata_store: Any = None,
+        encryption_key: str | None = None,
     ):
         # 1. Initialize OAuth
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
+        self._init_oauth(
+            token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            encryption_key=encryption_key,
+        )
 
         # 2. Create CalendarTransport
         cal_transport = CalendarTransport(

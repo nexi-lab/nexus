@@ -183,9 +183,15 @@ class PathGDriveBackend(
         use_shared_drives: bool = False,
         shared_drive_id: str | None = None,
         provider: str = "google-drive",
+        encryption_key: str | None = None,
     ):
         # 1. Initialize OAuth (sets self.token_manager, self.provider, etc.)
-        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
+        self._init_oauth(
+            token_manager_db,
+            user_email=user_email,
+            provider=provider,
+            encryption_key=encryption_key,
+        )
 
         # 2. Create DriveTransport with the token manager
         drive_transport = DriveTransport(

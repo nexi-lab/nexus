@@ -1593,9 +1593,8 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use std::sync::Arc;",
             "",
             "use crate::backend::{CasLocalBackend, ObjectStore, StorageError};",
-            "use crate::dispatch::{",
-            "    HookRegistry, InterceptHook, MutationObserver, ObserverRegistry, PathResolver,",
-            "};",
+            "use crate::dispatch::{MutationObserver, PathResolver};",
+            "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
             "use crate::metastore::{FileMetadata, Metastore, MetastoreError};",
@@ -2657,7 +2656,7 @@ def collect_all() -> tuple[
 
     # Collect traits from dispatch.rs, metastore.rs, and backend.rs
     traits: list[TraitDef] = []
-    for rs_file in ["dispatch.rs", "metastore.rs", "backend.rs"]:
+    for rs_file in ["dispatch.rs", "hook_registry.rs", "metastore.rs", "backend.rs"]:
         rs_path = RUST_SRC / rs_file
         if rs_path.exists():
             text = rs_path.read_text()

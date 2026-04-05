@@ -20,9 +20,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::backend::{CasLocalBackend, ObjectStore, StorageError};
-use crate::dispatch::{
-    HookRegistry, InterceptHook, MutationObserver, ObserverRegistry, PathResolver,
-};
+use crate::dispatch::{MutationObserver, PathResolver};
+use crate::hook_registry::{HookRegistry, InterceptHook, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
 use crate::metastore::{FileMetadata, Metastore, MetastoreError};

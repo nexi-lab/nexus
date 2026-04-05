@@ -15,6 +15,7 @@ mod dispatch;
 mod generated_pyo3;
 mod glob;
 mod hash;
+mod hook_registry;
 mod io;
 mod kernel;
 mod lock;

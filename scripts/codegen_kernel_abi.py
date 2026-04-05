@@ -1613,7 +1613,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use std::path::Path;",
             "use std::sync::Arc;",
             "",
-            "use crate::backend::{CasLocalBackend, ObjectStore, StorageError, WriteResult};",
+            "use crate::backend::{CasLocalBackend, ObjectStore, PathLocalBackend, StorageError, WriteResult};",
             "use crate::dispatch::{MutationObserver, PathResolver};",
             "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
@@ -2121,7 +2121,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── Router proxy methods ───────────────────────────────────────────",
             "",
-            '    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None))]',
+            '    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas"))]',
             "    #[allow(clippy::too_many_arguments)]",
             "    fn add_mount(",
             "        &self,",
@@ -2134,12 +2134,19 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        local_root: Option<&str>,",
             "        fsync: bool,",
             "        py_backend: Option<Py<PyAny>>,",
+            "        backend_type: &str,",
             "    ) -> PyResult<()> {",
-            "        // Backend resolution: local_root -> CasLocalBackend, py_backend -> PyObjectStoreAdapter",
+            "        // Backend resolution: local_root -> CasLocalBackend or PathLocalBackend, py_backend -> PyObjectStoreAdapter",
             "        let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {",
-            "            let b = CasLocalBackend::new(Path::new(root), fsync)",
-            "                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
-            "            Some(Box::new(b))",
+            '            if backend_type == "path_local" {',
+            "                let b = PathLocalBackend::new(Path::new(root), fsync)",
+            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
+            "                Some(Box::new(b))",
+            "            } else {",
+            "                let b = CasLocalBackend::new(Path::new(root), fsync)",
+            "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
+            "                Some(Box::new(b))",
+            "            }",
             "        } else {",
             "            py_backend.map(|obj| -> Box<dyn ObjectStore> {",
             "                Python::attach(|py| Box::new(PyObjectStoreAdapter::new(py, obj)))",
@@ -2756,12 +2763,29 @@ def main() -> int:
     ]
 
     if check_mode:
+        # For Python files, ruff-format the expected content before comparing
+        import shutil
+        import subprocess
+        import tempfile
+
+        ruff = shutil.which("ruff")
+
+        def _ruff_format(content: str, suffix: str) -> str:
+            if ruff and suffix in (".py", ".pyi"):
+                with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
+                    f.write(content)
+                    f.flush()
+                    subprocess.run([ruff, "format", f.name], capture_output=True)
+                    return Path(f.name).read_text()
+            return content
+
         ok = True
         for path, expected in outputs:
             if not path.exists():
                 print(f"MISSING: {path.relative_to(ROOT)}")
                 ok = False
                 continue
+            expected = _ruff_format(expected, path.suffix)
             actual = path.read_text()
             if actual != expected:
                 print(f"STALE: {path.relative_to(ROOT)}")
@@ -2779,11 +2803,26 @@ def main() -> int:
                 print(f"OK: {path.relative_to(ROOT)}")
         return 0 if ok else 1
     else:
+        py_files: list[Path] = []
         for path, content in outputs:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
             rel = path.relative_to(ROOT)
             print(f"wrote {rel}")
+            if path.suffix in (".py", ".pyi"):
+                py_files.append(path)
+        # Auto-format generated Python files so codegen --check matches ruff format
+        if py_files:
+            import shutil
+
+            ruff = shutil.which("ruff")
+            if ruff:
+                import subprocess
+
+                subprocess.run(
+                    [ruff, "format", *[str(p) for p in py_files]],
+                    capture_output=True,
+                )
         return 0
 
 

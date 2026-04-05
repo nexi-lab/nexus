@@ -11,8 +11,9 @@
 //!   `CasGcsBackend` = CAS addressing + GCS transport
 //!   `PathLocalBackend` = Path addressing + Local transport
 
+use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cas_engine::{CASEngine, CASError};
 use crate::cas_transport::LocalCASTransport;
@@ -174,6 +175,135 @@ impl ObjectStore for CasLocalBackend {
     }
 }
 
+// ── PathLocalBackend ────────────────────────────────────────────────
+
+/// Path-based local filesystem backend (Rust equivalent of Python PathLocalBackend).
+///
+/// Files are stored at their actual paths under `root_path`. No CAS
+/// transformation, no deduplication. `content_id` is the blob path.
+pub(crate) struct PathLocalBackend {
+    root_path: PathBuf,
+    fsync: bool,
+}
+
+impl PathLocalBackend {
+    pub fn new(root: &Path, fsync: bool) -> io::Result<Self> {
+        fs::create_dir_all(root)?;
+        Ok(Self {
+            root_path: root.to_path_buf(),
+            fsync,
+        })
+    }
+
+    /// Resolve backend_path to absolute file path under root.
+    fn resolve_path(&self, backend_path: &str) -> Result<PathBuf, StorageError> {
+        let clean = backend_path.trim_start_matches('/');
+        if clean.contains("..") {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("path traversal detected: {backend_path}"),
+            )));
+        }
+        Ok(self.root_path.join(clean))
+    }
+}
+
+impl ObjectStore for PathLocalBackend {
+    fn name(&self) -> &str {
+        "path_local"
+    }
+
+    fn write_content(
+        &self,
+        content: &[u8],
+        content_id: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<WriteResult, StorageError> {
+        if content_id.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PathLocalBackend requires content_id (blob path)",
+            )));
+        }
+        let file_path = self.resolve_path(content_id)?;
+
+        // Ensure parent directory exists
+        if let Some(parent) = file_path.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+
+        fs::write(&file_path, content).map_err(StorageError::IOError)?;
+
+        if self.fsync {
+            if let Ok(f) = fs::File::open(&file_path) {
+                let _ = f.sync_all();
+            }
+        }
+
+        // PAS: content_id for future reads = hash of content (no version_id for local)
+        let hash = nexus_core::hash::hash_content(content);
+        Ok(WriteResult {
+            content_id: hash.clone(),
+            version: hash,
+            size: content.len() as u64,
+        })
+    }
+
+    fn read_content(
+        &self,
+        _content_id: &str,
+        backend_path: &str,
+        _ctx: &crate::kernel::OperationContext,
+    ) -> Result<Vec<u8>, StorageError> {
+        if backend_path.is_empty() {
+            return Err(StorageError::IOError(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "PathLocalBackend requires backend_path",
+            )));
+        }
+        let file_path = self.resolve_path(backend_path)?;
+        fs::read(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(backend_path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn delete_content(&self, content_id: &str) -> Result<(), StorageError> {
+        // For PAS local, content_id is not the path — need backend_path from context.
+        // In practice, kernel calls sys_unlink which does metastore.delete() + backend cleanup.
+        // delete_content with just content_id (hash) is a no-op for path backends.
+        let _ = content_id;
+        Ok(())
+    }
+
+    fn get_content_size(&self, _content_id: &str) -> Result<u64, StorageError> {
+        Err(StorageError::NotSupported(
+            "PathLocalBackend.get_content_size requires backend_path",
+        ))
+    }
+
+    fn mkdir(&self, path: &str, parents: bool, _exist_ok: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if parents {
+            fs::create_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::create_dir(&dir_path).map_err(StorageError::IOError)
+        }
+    }
+
+    fn rmdir(&self, path: &str, recursive: bool) -> Result<(), StorageError> {
+        let dir_path = self.resolve_path(path)?;
+        if recursive {
+            fs::remove_dir_all(&dir_path).map_err(StorageError::IOError)
+        } else {
+            fs::remove_dir(&dir_path).map_err(StorageError::IOError)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +396,82 @@ mod tests {
             backend.mkdir("/foo", false, false).unwrap_err(),
             StorageError::NotSupported("mkdir")
         ));
+    }
+
+    // ── PathLocalBackend tests ────────────────────────────────────────
+
+    fn setup_path() -> (TempDir, PathLocalBackend) {
+        let tmp = TempDir::new().unwrap();
+        let backend = PathLocalBackend::new(tmp.path(), false).unwrap();
+        (tmp, backend)
+    }
+
+    #[test]
+    fn test_path_local_write_and_read() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let content = b"hello via path backend";
+
+        let wr = backend
+            .write_content(content, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(wr.size, content.len() as u64);
+        assert_eq!(wr.content_id.len(), 64); // hash
+
+        let data = backend
+            .read_content(&wr.content_id, "docs/file.txt", &ctx)
+            .unwrap();
+        assert_eq!(data, content);
+    }
+
+    #[test]
+    fn test_path_local_overwrite() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+
+        backend.write_content(b"v1", "file.txt", &ctx).unwrap();
+        backend.write_content(b"v2", "file.txt", &ctx).unwrap();
+
+        let data = backend.read_content("", "file.txt", &ctx).unwrap();
+        assert_eq!(data, b"v2");
+    }
+
+    #[test]
+    fn test_path_local_not_found() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.read_content("", "nonexistent.txt", &ctx);
+        assert!(matches!(result.unwrap_err(), StorageError::NotFound(_)));
+    }
+
+    #[test]
+    fn test_path_local_mkdir_rmdir() {
+        let (_tmp, backend) = setup_path();
+        backend.mkdir("mydir", false, false).unwrap();
+        assert!(backend.resolve_path("mydir").unwrap().is_dir());
+        backend.rmdir("mydir", false).unwrap();
+        assert!(!backend.resolve_path("mydir").unwrap().exists());
+    }
+
+    #[test]
+    fn test_path_local_rejects_traversal() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.write_content(b"evil", "../../etc/passwd", &ctx);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_path_local_name() {
+        let (_tmp, backend) = setup_path();
+        assert_eq!(backend.name(), "path_local");
+    }
+
+    #[test]
+    fn test_path_local_empty_content_id_errors() {
+        let (_tmp, backend) = setup_path();
+        let ctx = test_ctx();
+        let result = backend.write_content(b"data", "", &ctx);
+        assert!(result.is_err());
     }
 }

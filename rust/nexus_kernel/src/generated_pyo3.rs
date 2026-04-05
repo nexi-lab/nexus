@@ -19,7 +19,7 @@ use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::backend::{CasLocalBackend, ObjectStore, StorageError, WriteResult};
+use crate::backend::{CasLocalBackend, ObjectStore, PathLocalBackend, StorageError, WriteResult};
 use crate::dispatch::{MutationObserver, PathResolver};
 use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
@@ -973,7 +973,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas"))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -986,12 +986,19 @@ impl PyKernel {
         local_root: Option<&str>,
         fsync: bool,
         py_backend: Option<Py<PyAny>>,
+        backend_type: &str,
     ) -> PyResult<()> {
-        // Backend resolution: local_root -> CasLocalBackend, py_backend -> PyObjectStoreAdapter
+        // Backend resolution: local_root -> CasLocalBackend or PathLocalBackend, py_backend -> PyObjectStoreAdapter
         let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {
-            let b = CasLocalBackend::new(Path::new(root), fsync)
-                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
-            Some(Box::new(b))
+            if backend_type == "path_local" {
+                let b = PathLocalBackend::new(Path::new(root), fsync)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            } else {
+                let b = CasLocalBackend::new(Path::new(root), fsync)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
         } else {
             py_backend.map(|obj| -> Box<dyn ObjectStore> {
                 Python::attach(|py| Box::new(PyObjectStoreAdapter::new(py, obj)))

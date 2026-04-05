@@ -519,7 +519,7 @@ class NexusFSGateway:
     def get_mount_for_path(self, path: str) -> dict[str, Any] | None:
         """Get mount info and backend-relative path for a virtual path.
 
-        Used by WriteBackService to resolve which backend to write back to.
+        Resolve mount info and backend-relative path for a virtual path.
         Mounts are checked longest-prefix-first so that more-specific mounts
         (e.g. ``/mnt/foo``) match before less-specific ones (e.g. ``/``).
 

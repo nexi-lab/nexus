@@ -86,7 +86,6 @@ class PathGDriveBackend(
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
             BackendFeature.README_DOC,
-            BackendFeature.WRITE_BACK,
         }
     )
 

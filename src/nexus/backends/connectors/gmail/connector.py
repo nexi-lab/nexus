@@ -88,7 +88,6 @@ class PathGmailBackend(
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.WRITE_BACK,
             BackendFeature.README_DOC,
         }
     )

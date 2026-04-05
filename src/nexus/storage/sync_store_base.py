@@ -1,10 +1,9 @@
 """Base class for sync-related database stores.
 
 Provides shared session management and dialect-aware helpers for
-ChangeLogStore, SyncBacklogStore, and future sync stores.
+ChangeLogStore and future sync stores.
 
-Extracted from ChangeLogStore (Issue #1127) during Phase 0 refactoring
-for Issue #1129 (Bidirectional Sync).
+Extracted from ChangeLogStore (Issue #1127).
 """
 
 import logging
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 class SyncStoreBase:
     """Base class providing session management and dialect-aware helpers.
 
-    Subclasses (ChangeLogStore, SyncBacklogStore) inherit:
+    Subclasses (ChangeLogStore) inherit:
     - _with_session(): Context manager for DB sessions (commit/rollback/close)
     - _dialect_insert(): Dialect-appropriate INSERT statement
     - _dialect_upsert(): Dialect-aware INSERT ON CONFLICT DO UPDATE

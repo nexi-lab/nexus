@@ -68,8 +68,6 @@ EXPECTED_MODELS = [
     # Sync
     "SyncJobModel",
     "BackendChangeLogModel",
-    "SyncBacklogModel",
-    "ConflictLogModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)

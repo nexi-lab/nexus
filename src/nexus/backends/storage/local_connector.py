@@ -480,3 +480,36 @@ class LocalConnectorBackend(Backend):
             raise BackendError(f"Permission denied: {e}") from e
         except OSError as e:
             raise BackendError(f"Rename error: {e}") from e
+
+    def delete(
+        self,
+        path: str,
+        context: "OperationContext | None" = None,
+    ) -> None:
+        """Delete a file from the host filesystem.
+
+        Called by kernel sys_unlink for PAS backend propagation —
+        ensures the physical file is removed when metadata is deleted.
+
+        Args:
+            path: Virtual path relative to mount point
+            context: Operation context (unused)
+
+        Raises:
+            BackendError: If read-only or OS error.
+        """
+        if self.readonly:
+            raise BackendError("Backend is read-only", backend="local_connector", path=path)
+
+        physical = self._to_physical(path)
+        if not physical.exists():
+            return  # Already gone — idempotent
+
+        try:
+            if physical.is_file() or physical.is_symlink():
+                physical.unlink()
+            # Directories handled by rmdir, not delete
+        except PermissionError as e:
+            raise BackendError(f"Permission denied: {e}") from e
+        except OSError as e:
+            raise BackendError(f"Delete error: {e}") from e

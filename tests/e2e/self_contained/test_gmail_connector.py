@@ -1087,12 +1087,6 @@ class TestAttachmentSchema:
 class TestBackendFeatures:
     """Test backend feature flags."""
 
-    def test_write_back_feature(self, gmail_backend):
-        """Test that Gmail connector has WRITE_BACK feature."""
-        from nexus.contracts.backend_features import BackendFeature
-
-        assert gmail_backend.has_feature(BackendFeature.WRITE_BACK)
-
     def test_readme_doc_feature(self, gmail_backend):
         """Test that Gmail connector has README_DOC feature."""
         from nexus.contracts.backend_features import BackendFeature

@@ -134,11 +134,9 @@ from nexus.storage.models.spending_policy import SpendingApprovalModel as Spendi
 from nexus.storage.models.spending_policy import SpendingLedgerModel as SpendingLedgerModel
 from nexus.storage.models.spending_policy import SpendingPolicyModel as SpendingPolicyModel
 
-# Domain: Sync and Conflict Resolution
+# Domain: Sync
 from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel
-from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
 from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
-from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
 
 # Domain: Transaction Snapshots (Issue #1752)

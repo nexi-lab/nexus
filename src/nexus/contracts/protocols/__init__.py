@@ -46,7 +46,6 @@ from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.version import VersionProtocol
 from nexus.contracts.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
-from nexus.contracts.protocols.write_back import WriteBackProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
@@ -80,5 +79,4 @@ __all__ = [
     "VersionProtocol",
     "WorkflowDispatchProtocol",
     "WorkspaceManagerProtocol",
-    "WriteBackProtocol",
 ]

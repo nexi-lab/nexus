@@ -11,7 +11,7 @@ Issue #3197:
 
 Issue #3194:
   - wait_for_signal(): generic drain-and-process utility with timeout fallback
-    Reused by PipeWakeupListener (IPC) and WriteBackService (sync).
+    Reused by PipeWakeupListener (IPC).
 
 Architecture:
   - DT_PIPE for same-node wakeup (us latency, no Redis dependency)

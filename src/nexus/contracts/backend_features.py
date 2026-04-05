@@ -96,9 +96,6 @@ class BackendFeature(StrEnum):
     SYNC = "sync"
     """Backend implements ConnectorSyncProvider for delta sync."""
 
-    WRITE_BACK = "write_back"
-    """Backend supports write operations (validated YAML → backend action)."""
-
     CLI_BACKED = "cli_backed"
     """Backend delegates execution to an external CLI subprocess."""
 
@@ -140,7 +137,6 @@ OAUTH_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
 CLI_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
     {
         BackendFeature.CLI_BACKED,
-        BackendFeature.WRITE_BACK,
         BackendFeature.README_DOC,
         BackendFeature.SYNC,
         BackendFeature.SYNC_ELIGIBLE,

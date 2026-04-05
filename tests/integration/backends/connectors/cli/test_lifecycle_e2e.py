@@ -81,7 +81,6 @@ class FakeGHConnector(ReadmeDocMixin, ValidatedMixin, TraitBasedMixin):
     _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.README_DOC,
-            BackendFeature.WRITE_BACK,
             BackendFeature.CLI_BACKED,
         }
     )
@@ -247,7 +246,6 @@ class TestConnectorLifecycleE2E:
         """Step 8: Connector declares correct capabilities."""
         connector = FakeGHConnector()
         assert connector.has_feature(BackendFeature.README_DOC)
-        assert connector.has_feature(BackendFeature.WRITE_BACK)
         assert connector.has_feature(BackendFeature.CLI_BACKED)
 
     @pytest.mark.asyncio

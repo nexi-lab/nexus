@@ -2963,6 +2963,20 @@ class NexusFS(  # type: ignore[misc]
         with self._vfs_locked(path, "write"):
             route.metastore.delete(path)
 
+            # PAS backend propagation — delete physical file.
+            # Reference-mode backends (LocalConnector) keep files on host OS;
+            # deleting metadata must also delete the physical file so SSOT
+            # stays consistent.
+            if hasattr(route.backend, "delete"):
+                try:
+                    route.backend.delete(route.backend_path, context=context)
+                except Exception as _be:
+                    logger.warning(
+                        "Backend file delete %s failed (metadata already deleted): %s",
+                        route.backend_path,
+                        _be,
+                    )
+
         # --- Lock released — event dispatch ---
         await self.notify(
             FileEvent(
@@ -3186,6 +3200,25 @@ class NexusFS(  # type: ignore[misc]
                         _child_new_meta = _replace(child, path=_child_new)
                         new_route.metastore.put(_child_new_meta)
                         old_route.metastore.delete(child.path)
+
+                # PAS backend propagation — rename physical file/dir.
+                # Reference-mode backends (LocalConnector, GCS path, S3 path) keep
+                # files in their original location; renaming in metastore must also
+                # rename on the backend so metadata stays consistent with storage.
+                if hasattr(old_route.backend, "rename"):
+                    try:
+                        old_route.backend.rename(
+                            old_route.backend_path,
+                            new_route.backend_path,
+                            context=context,
+                        )
+                    except Exception as _be:
+                        logger.warning(
+                            "Backend rename %s → %s failed (metadata already updated): %s",
+                            old_route.backend_path,
+                            new_route.backend_path,
+                            _be,
+                        )
             finally:
                 if _h2:
                     self._vfs_lock_manager.release(_h2)

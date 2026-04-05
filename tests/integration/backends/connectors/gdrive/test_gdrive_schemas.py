@@ -2,7 +2,7 @@
 
 Covers:
 - PathGDriveBackend has SCHEMAS, OPERATION_TRAITS, SKILL_NAME
-- README_DOC and WRITE_BACK capabilities are declared
+- README_DOC capability is declared
 - Mixin class hierarchy is correct
 """
 
@@ -70,10 +70,6 @@ class TestPathGDriveBackendMixins:
     def test_readme_doc_capability(self) -> None:
         caps = PathGDriveBackend._BACKEND_FEATURES
         assert BackendFeature.README_DOC in caps
-
-    def test_write_back_capability(self) -> None:
-        caps = PathGDriveBackend._BACKEND_FEATURES
-        assert BackendFeature.WRITE_BACK in caps
 
     def test_inherits_readme_doc_mixin(self) -> None:
         assert issubclass(PathGDriveBackend, ReadmeDocMixin)

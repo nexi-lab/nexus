@@ -1,42 +1,54 @@
 /**
- * Hook to check if a brick is available (enabled) in the current deployment.
+ * Brick availability hooks.
  *
- * Returns { available, loading } to distinguish "not loaded yet" from
- * "definitively disabled" (Decision 1A).
+ * Provides a single useBricksAvailable(bricks) hook (OR semantics: available
+ * if any of the listed bricks is enabled) and a checkBricksAvailable pure
+ * function for testing.
+ *
+ * Replaces the previous useBrickAvailable / useAnyBrickAvailable pair, which
+ * violated React's Rules of Hooks when BrickGate called them conditionally.
  */
 
 import { useGlobalStore } from "../../stores/global-store.js";
 
-interface BrickAvailability {
+export interface BrickAvailability {
   readonly available: boolean;
   readonly loading: boolean;
 }
 
 /**
- * Check if a specific brick is enabled in the current deployment profile.
+ * Pure function for testability: computes brick availability without hooks.
  *
- * During initial feature loading, returns { available: false, loading: true }
- * to prevent flash of "not available" messages.
+ * - Returns { available: false, loading: true } while features are loading,
+ *   to prevent a flash of "not available" before the feature list arrives.
+ * - Returns { available: true } if any brick in `bricks` is in enabledBricks.
  */
-export function useBrickAvailable(brickName: string): BrickAvailability {
-  const enabledBricks = useGlobalStore((s) => s.enabledBricks);
-  const featuresLoaded = useGlobalStore((s) => s.featuresLoaded);
-
+export function checkBricksAvailable(
+  enabledBricks: readonly string[],
+  featuresLoaded: boolean,
+  bricks: readonly string[],
+): BrickAvailability {
   return {
-    available: enabledBricks.includes(brickName),
+    available: featuresLoaded && bricks.some((b) => enabledBricks.includes(b)),
     loading: !featuresLoaded,
   };
 }
 
 /**
- * Check if any of the specified bricks are available (OR semantics).
+ * Check if any of the given bricks are enabled in the current deployment (OR
+ * semantics). Always called unconditionally — safe to use regardless of how
+ * many bricks are passed.
  */
-export function useAnyBrickAvailable(brickNames: readonly string[]): BrickAvailability {
+export function useBricksAvailable(bricks: readonly string[]): BrickAvailability {
   const enabledBricks = useGlobalStore((s) => s.enabledBricks);
   const featuresLoaded = useGlobalStore((s) => s.featuresLoaded);
+  return checkBricksAvailable(enabledBricks, featuresLoaded, bricks);
+}
 
-  return {
-    available: brickNames.some((name) => enabledBricks.includes(name)),
-    loading: !featuresLoaded,
-  };
+/**
+ * Convenience wrapper for the common single-brick case.
+ * Calls useBricksAvailable([brickName]) so hook call order is always stable.
+ */
+export function useBrickAvailable(brickName: string): BrickAvailability {
+  return useBricksAvailable([brickName]);
 }

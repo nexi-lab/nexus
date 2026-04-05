@@ -6,7 +6,6 @@
  */
 
 import React, { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
-import { useTerminalDimensions } from "@opentui/react";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { useErrorStore } from "./stores/error-store.js";
@@ -29,7 +28,6 @@ import { useFreshServer } from "./shared/hooks/use-fresh-server.js";
 import { detectConnectionState } from "./shared/hooks/use-connection-state.js";
 import { useVisibleTabs } from "./shared/hooks/use-visible-tabs.js";
 import { NAV_ITEMS } from "./shared/nav-items.js";
-import { COLLAPSED_THRESHOLD } from "./shared/components/side-nav-utils.js";
 import { killAllProcesses } from "./services/command-runner.js";
 import { resetTerminal } from "./utils/terminal.js";
 import { PANEL_DESCRIPTORS } from "./shared/navigation.js";
@@ -105,7 +103,6 @@ export function App(): React.ReactNode {
   const [helpOpen, setHelpOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [sideNavVisible, setSideNavVisible] = useState(true);
-  const { width: terminalColumns } = useTerminalDimensions();
   const visibleTabs = useVisibleTabs(NAV_ITEMS);
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = useState(false);
@@ -303,7 +300,7 @@ export function App(): React.ReactNode {
       {/* Main row: sidebar + panel content */}
       <box flexGrow={1} flexDirection="row">
         {/* Side navigation (Ctrl+B toggles, hidden when zoomed or terminal too narrow) */}
-        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel && terminalColumns >= COLLAPSED_THRESHOLD} onSelect={setActivePanel} />
+        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel} onSelect={setActivePanel} />
 
         {/* Panel content */}
         <box flexGrow={1}>

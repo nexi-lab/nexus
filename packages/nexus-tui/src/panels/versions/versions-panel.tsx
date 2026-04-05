@@ -7,6 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useTerminalDimensions } from "@opentui/react";
 import {
   useVersionsStore,
   nextStatusFilter,
@@ -19,6 +20,7 @@ import { BrickGate } from "../../shared/components/brick-gate.js";
 import { TransactionList } from "./transaction-list.js";
 import { EntryDetail } from "./entry-detail.js";
 import { ConflictsView } from "./conflicts-tab.js";
+import { DiffViewer } from "../../shared/components/diff-viewer.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -26,6 +28,8 @@ import { formatActionHints, getVersionsFooterBindings } from "../../shared/actio
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
+  const { width: columns } = useTerminalDimensions();
+  const isNarrow = columns < 120;
 
   const transactions = useVersionsStore((s) => s.transactions);
   const selectedIndex = useVersionsStore((s) => s.selectedIndex);
@@ -55,6 +59,7 @@ export default function VersionsPanel(): React.ReactNode {
   const rollbackTransaction = useVersionsStore((s) => s.rollbackTransaction);
   const fetchConflicts = useVersionsStore((s) => s.fetchConflicts);
   const toggleConflicts = useVersionsStore((s) => s.toggleConflicts);
+  const clearDiff = useVersionsStore((s) => s.clearDiff);
 
   // Clipboard copy
   const { copy, copied } = useCopy();
@@ -63,6 +68,9 @@ export default function VersionsPanel(): React.ReactNode {
   const uiFocusPane = useUiStore((s) => s.getFocusPane("versions"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
   const overlayActive = useUiStore((s) => s.overlayActive);
+
+  // Entry selection within the right pane
+  const [selectedEntryIndex, setSelectedEntryIndex] = useState(0);
 
   // Transaction search/filter
   const [txnFilterMode, setTxnFilterMode] = useState(false);
@@ -100,13 +108,15 @@ export default function VersionsPanel(): React.ReactNode {
     }
   }, [client, statusFilter, fetchTransactions]);
 
-  // Fetch entries and transaction detail when selection changes
+  // Fetch entries and transaction detail when selection changes; reset entry cursor and diff
   useEffect(() => {
+    setSelectedEntryIndex(0);
+    clearDiff();
     if (client && selectedTransaction) {
       fetchEntries(selectedTransaction.transaction_id, client);
       fetchTransactionDetail(selectedTransaction.transaction_id, client);
     }
-  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail]);
+  }, [client, selectedTransaction, fetchEntries, fetchTransactionDetail, clearDiff]);
 
   // Keyboard navigation
   useKeyboard(
@@ -127,64 +137,94 @@ export default function VersionsPanel(): React.ReactNode {
               setTxnFilter((b) => b.slice(0, -1));
             },
           }
-        : {
-            "j": () => {
-              if (filteredTransactions.length === 0) return;
-              setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+        : uiFocusPane === "right"
+          ? {
+              // Right pane focused: j/k navigates entries and auto-fetches diff
+              "j": () => {
+                const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
+                setSelectedEntryIndex(next);
+                const entry = entries[next];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
+              },
+              "down": () => {
+                const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
+                setSelectedEntryIndex(next);
+                const entry = entries[next];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
+              },
+              "k": () => {
+                const prev = Math.max(selectedEntryIndex - 1, 0);
+                setSelectedEntryIndex(prev);
+                const entry = entries[prev];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
+              },
+              "up": () => {
+                const prev = Math.max(selectedEntryIndex - 1, 0);
+                setSelectedEntryIndex(prev);
+                const entry = entries[prev];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction?.transaction_id ?? "", client);
+              },
+              "tab": () => toggleFocus("versions"),
+            }
+          : {
+              // Left pane focused: j/k navigates transactions
+              "j": () => {
+                if (filteredTransactions.length === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+              },
+              "down": () => {
+                if (filteredTransactions.length === 0) return;
+                setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
+              },
+              "k": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
+              "up": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
+              "return": () => {
+                if (selectedTransaction?.status === "active" && client) {
+                  commitTransaction(selectedTransaction.transaction_id, client);
+                }
+              },
+              "backspace": () => {
+                if (selectedTransaction?.status === "active" && client) {
+                  rollbackTransaction(selectedTransaction.transaction_id, client);
+                }
+              },
+              "n": () => {
+                if (client) {
+                  beginTransaction(client);
+                }
+              },
+              "f": () => {
+                const next = nextStatusFilter(statusFilter);
+                setStatusFilter(next);
+              },
+              "/": () => {
+                setTxnFilterMode(true);
+                setTxnFilter("");
+              },
+              "v": () => {
+                // Diff the selected entry (defaults to index 0)
+                if (!client || !selectedTransaction || entries.length === 0) return;
+                const entry = entries[selectedEntryIndex];
+                if (entry) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction.transaction_id, client);
+                }
+              },
+              "c": () => {
+                // Toggle conflicts view; fetch on first open
+                toggleConflicts();
+                if (!showConflicts && client) {
+                  fetchConflicts(client);
+                }
+              },
+              "tab": () => toggleFocus("versions"),
+              "g": () => setSelectedIndex(jumpToStart()),
+              "shift+g": () => setSelectedIndex(jumpToEnd(filteredTransactions.length)),
+              "y": () => {
+                if (selectedTransaction) {
+                  copy(selectedTransaction.transaction_id);
+                }
+              },
             },
-            "down": () => {
-              if (filteredTransactions.length === 0) return;
-              setSelectedIndex(Math.max(0, Math.min(selectedIndex + 1, filteredTransactions.length - 1)));
-            },
-            "k": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
-            "up": () => setSelectedIndex(Math.max(selectedIndex - 1, 0)),
-            "return": () => {
-              if (selectedTransaction?.status === "active" && client) {
-                commitTransaction(selectedTransaction.transaction_id, client);
-              }
-            },
-            "backspace": () => {
-              if (selectedTransaction?.status === "active" && client) {
-                rollbackTransaction(selectedTransaction.transaction_id, client);
-              }
-            },
-            "n": () => {
-              if (client) {
-                beginTransaction(client);
-              }
-            },
-            "f": () => {
-              const next = nextStatusFilter(statusFilter);
-              setStatusFilter(next);
-            },
-            "/": () => {
-              setTxnFilterMode(true);
-              setTxnFilter("");
-            },
-            "v": () => {
-              // View diff for the first entry of the selected transaction
-              if (!client || !selectedTransaction || entries.length === 0) return;
-              const entry = entries[0];
-              if (entry && entry.original_hash && entry.new_hash) {
-                fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
-              }
-            },
-            "c": () => {
-              // Toggle conflicts view; fetch on first open
-              toggleConflicts();
-              if (!showConflicts && client) {
-                fetchConflicts(client);
-              }
-            },
-            "tab": () => toggleFocus("versions"),
-            "g": () => setSelectedIndex(jumpToStart()),
-            "shift+g": () => setSelectedIndex(jumpToEnd(filteredTransactions.length)),
-            "y": () => {
-              if (selectedTransaction) {
-                copy(selectedTransaction.transaction_id);
-              }
-            },
-          },
     txnFilterMode ? handleFilterKey : undefined,
   );
 
@@ -217,21 +257,40 @@ export default function VersionsPanel(): React.ReactNode {
         )}
 
         {/* Main content: transaction list + entry detail */}
-        <box flexGrow={1} flexDirection="row">
-          {/* Left pane: transaction list (40%) */}
-          <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
+        <box flexGrow={1} flexDirection={isNarrow ? "column" : "row"}>
+          {/* Left pane: transaction list (40% wide / 40% tall on narrow) */}
+          <box
+            width={isNarrow ? "100%" : "40%"}
+            height={isNarrow ? "40%" : "100%"}
+            borderStyle="single"
+            borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}
+          >
             <TransactionList
               transactions={filteredTransactions}
               selectedIndex={selectedIndex}
             />
           </box>
 
-          {/* Right pane: entry detail (60%) */}
-          <box width="60%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
+          {/* Right pane: entry detail (60% wide / 60% tall on narrow) */}
+          <box
+            width={isNarrow ? "100%" : "60%"}
+            height={isNarrow ? "60%" : "100%"}
+            borderStyle="single"
+            borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}
+          >
             <EntryDetail
               transaction={selectedTransaction}
               entries={entries}
               isLoading={entriesLoading}
+              selectedEntryIndex={selectedEntryIndex}
+              focused={uiFocusPane === "right"}
+              onSelectEntry={(index) => {
+                setSelectedEntryIndex(index);
+                const entry = entries[index];
+                if (client && entry && selectedTransaction) {
+                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, selectedTransaction.transaction_id, client);
+                }
+              }}
             />
           </box>
         </box>
@@ -247,11 +306,8 @@ export default function VersionsPanel(): React.ReactNode {
 
         {/* Diff viewer */}
         {diffContent && !diffLoading && (
-          <box height={8} width="100%" borderStyle="single" flexDirection="column">
-            <box height={1} width="100%"><text>--- Old ---</text></box>
-            <scrollbox flexGrow={1} width="100%"><text>{diffContent.old}</text></scrollbox>
-            <box height={1} width="100%"><text>--- New ---</text></box>
-            <scrollbox flexGrow={1} width="100%"><text>{diffContent.new}</text></scrollbox>
+          <box height={12} width="100%">
+            <DiffViewer oldText={diffContent.old} newText={diffContent.new} oldLabel="old" newLabel="new" />
           </box>
         )}
 

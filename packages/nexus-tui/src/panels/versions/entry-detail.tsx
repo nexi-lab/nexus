@@ -2,9 +2,12 @@
  * Snapshot entry detail view for the selected transaction.
  *
  * Shows each entry's operation, path, and hash changes.
+ * Supports keyboard selection (selectedEntryIndex) and mouse clicks.
  */
 
 import React from "react";
+import { textStyle } from "../../shared/text-style.js";
+import { focusColor } from "../../shared/theme.js";
 import type { SnapshotEntry, Transaction } from "../../stores/versions-store.js";
 
 // =============================================================================
@@ -30,12 +33,18 @@ interface EntryDetailProps {
   readonly transaction: Transaction | null;
   readonly entries: readonly SnapshotEntry[];
   readonly isLoading: boolean;
+  readonly selectedEntryIndex: number;
+  readonly onSelectEntry: (index: number) => void;
+  readonly focused: boolean;
 }
 
 export function EntryDetail({
   transaction,
   entries,
   isLoading,
+  selectedEntryIndex,
+  onSelectEntry,
+  focused,
 }: EntryDetailProps): React.ReactNode {
   if (!transaction) {
     return (
@@ -71,14 +80,22 @@ export function EntryDetail({
           <box height={1} width="100%">
             <text>{"  --  -------------------------------  ----------  ----------"}</text>
           </box>
-          {entries.map((entry) => {
+          {entries.map((entry, index) => {
             const badge = OPERATION_BADGE[entry.operation];
             const original = truncateHash(entry.original_hash);
             const next = truncateHash(entry.new_hash);
+            const isSelected = index === selectedEntryIndex;
 
             return (
-              <box key={entry.entry_id} height={1} width="100%">
-                <text>{`  [${badge}] ${entry.path}  ${original}  ${next}`}</text>
+              <box
+                key={entry.entry_id}
+                height={1}
+                width="100%"
+                onMouseDown={() => onSelectEntry(index)}
+              >
+                <text style={isSelected ? textStyle({ fg: focusColor.activeBorder, bold: true }) : undefined}>
+                  {`${isSelected && focused ? "▶" : " "} [${badge}] ${entry.path}  ${original}  ${next}`}
+                </text>
               </box>
             );
           })}

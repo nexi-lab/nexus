@@ -95,18 +95,18 @@ function usePanelIndicators(now: number): PanelIndicatorMap {
 
   return {
     loading: {
-      files: false,
+      files: false,           // TODO: wire when files-store adds top-level isLoading
       versions: versionsLoading,
-      agents: false,
+      agents: false,          // TODO: wire when agents-store adds top-level isLoading
       zones: zonesLoading,
-      access: false,
-      payments: false,
-      search: false,
-      workflows: false,
-      infrastructure: false,
+      access: false,          // TODO: wire when access-store adds top-level isLoading
+      payments: false,        // TODO: wire when payments-store adds top-level isLoading
+      search: false,          // TODO: wire when search-store adds top-level isLoading
+      workflows: false,       // TODO: wire when workflows-store adds top-level isLoading
+      infrastructure: false,  // TODO: wire when infra-store adds top-level isLoading
       console: consoleLoading,
-      connectors: false,
-      stack: false,
+      connectors: false,      // TODO: wire when connectors-store adds top-level isLoading
+      stack: false,           // TODO: wire when stack-store adds top-level isLoading
     },
     error: {
       files: filesError,

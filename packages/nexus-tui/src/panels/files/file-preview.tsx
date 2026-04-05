@@ -2,13 +2,51 @@
  * File content preview panel with syntax highlighting.
  */
 
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useFilesStore } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { StyledText } from "../../shared/components/styled-text.js";
 import { textStyle } from "../../shared/text-style.js";
 import { defaultSyntaxStyle } from "../../shared/syntax-style.js";
+
+// Module-level constant: allocated once, not on every render call.
+const EXTENSION_TO_LANGUAGE: Readonly<Record<string, string>> = {
+  ts: "typescript",
+  tsx: "tsx",
+  js: "javascript",
+  jsx: "jsx",
+  py: "python",
+  rs: "rust",
+  go: "go",
+  rb: "ruby",
+  java: "java",
+  c: "c",
+  cpp: "cpp",
+  h: "c",
+  hpp: "cpp",
+  json: "json",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "toml",
+  md: "markdown",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  sql: "sql",
+  html: "html",
+  css: "css",
+  xml: "xml",
+  proto: "protobuf",
+};
+
+// ANSI-bearing extensions — these are checked before the content scan.
+const ANSI_EXTENSIONS = new Set(["log", "out", "err", "ans", "ansi"]);
+
+/** Map a file extension to a tree-sitter language name. Exported for testing. */
+export function extensionToLanguage(ext: string): string {
+  return EXTENSION_TO_LANGUAGE[ext] ?? "text";
+}
 
 export function FilePreview(): React.ReactNode {
   const client = useApi();
@@ -17,6 +55,17 @@ export function FilePreview(): React.ReactNode {
   const previewLoading = useFilesStore((s) => s.previewLoading);
   const previewError = useFilesStore((s) => s.error);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
+
+  const ext = previewPath?.split(".").pop()?.toLowerCase() ?? "";
+  const language = extensionToLanguage(ext);
+
+  // Memoize the ANSI scan — O(n) on file content, only recalculate when
+  // content or extension changes, not on arbitrary parent re-renders.
+  // Must be before any early returns to satisfy Rules of Hooks.
+  const hasAnsi = useMemo(
+    () => ANSI_EXTENSIONS.has(ext) || (previewContent?.includes("\x1b[") ?? false),
+    [ext, previewContent],
+  );
 
   useEffect(() => {
     if (client && previewPath) {
@@ -51,14 +100,6 @@ export function FilePreview(): React.ReactNode {
     );
   }
 
-  // Detect file extension for syntax highlighting
-  const ext = previewPath.split(".").pop()?.toLowerCase() ?? "";
-  const language = extensionToLanguage(ext);
-
-  // Files that may contain ANSI escape sequences get rendered with StyledText
-  const ansiExtensions = new Set(["log", "out", "err", "ans", "ansi"]);
-  const hasAnsi = ansiExtensions.has(ext) || previewContent.includes("\x1b[");
-
   if (hasAnsi) {
     return (
       <scrollbox height="100%" width="100%">
@@ -73,36 +114,4 @@ export function FilePreview(): React.ReactNode {
       <code content={previewContent} filetype={language} syntaxStyle={defaultSyntaxStyle} />
     </scrollbox>
   );
-}
-
-function extensionToLanguage(ext: string): string {
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "tsx",
-    js: "javascript",
-    jsx: "jsx",
-    py: "python",
-    rs: "rust",
-    go: "go",
-    rb: "ruby",
-    java: "java",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
-    json: "json",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    md: "markdown",
-    sh: "bash",
-    bash: "bash",
-    zsh: "bash",
-    sql: "sql",
-    html: "html",
-    css: "css",
-    xml: "xml",
-    proto: "protobuf",
-  };
-  return map[ext] ?? "text";
 }

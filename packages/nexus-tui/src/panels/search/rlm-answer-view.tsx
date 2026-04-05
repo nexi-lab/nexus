@@ -30,7 +30,7 @@ export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewPr
       <box height="100%" width="100%" flexDirection="column" justifyContent="center" alignItems="center">
         <text>Press / to ask a question about your documents</text>
         {contextPaths.length > 0 ? (
-          <text>{`Context: ${contextPaths.length} file(s) — a:clear`}</text>
+          <text>{`Docs: ${contextPaths.join(", ")} — a:clear`}</text>
         ) : (
           <text>{"Tip: go to Search tab, select results, press 'a' to add document context"}</text>
         )}

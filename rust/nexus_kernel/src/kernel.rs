@@ -16,7 +16,7 @@
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::Trie;
 use crate::lock::{LockMode, VFSLockManagerInner};
-use crate::metastore::Metastore;
+use crate::metastore::{Metastore, RedbMetastore};
 use crate::router::{PathRouter, RouteError, RustRouteResult};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -273,6 +273,17 @@ impl Kernel {
     /// falls back to metastore.get() instead of raising FileNotFoundError.
     pub fn set_metastore(&mut self, metastore: Box<dyn Metastore>) {
         self.metastore = Some(metastore);
+    }
+
+    /// Wire RedbMetastore by path — Rust kernel opens redb directly.
+    ///
+    /// Preferred over `set_metastore(PyMetastoreAdapter)` — eliminates
+    /// GIL crossing on every metastore.get/put in the hot path.
+    pub fn set_metastore_path(&mut self, path: &str) -> Result<(), KernelError> {
+        let ms = RedbMetastore::open(std::path::Path::new(path))
+            .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
+        self.metastore = Some(Box::new(ms));
+        Ok(())
     }
 
     // ── DCache proxy methods ───────────────────────────────────────────

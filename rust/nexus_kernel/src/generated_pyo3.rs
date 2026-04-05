@@ -944,6 +944,12 @@ impl PyKernel {
             .set_metastore(Box::new(PyMetastoreAdapter::new(metastore)));
     }
 
+    /// Wire RedbMetastore by path — Rust kernel opens redb directly.
+    /// Eliminates GIL crossing on every metastore.get/put.
+    fn set_metastore_path(&mut self, path: &str) -> PyResult<()> {
+        self.inner.set_metastore_path(path).map_err(Into::into)
+    }
+
     // ── DCache proxy methods ───────────────────────────────────────────
 
     #[pyo3(signature = (path, backend_name, physical_path, size, entry_type, version=1, etag=None, zone_id=None, mime_type=None))]

@@ -1983,11 +1983,6 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
         ctx = self._resolve_cred(context)
 
-        # PRE-INTERCEPT: pre-mkdir hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import MkdirHookContext
-
-        self.intercept_pre_mkdir(MkdirHookContext(path=path, context=ctx))
-
         # Route to backend with write access check
         route = self.router.route(
             path, is_admin=ctx.is_admin, check_write=True, zone_id=self._zone_id
@@ -2009,6 +2004,10 @@ class NexusFS(  # type: ignore[misc]
                 if parents:
                     self._ensure_parent_directories(path, ctx)
                 return
+
+        # PRE-INTERCEPT hooks via Rust kernel (PR 19)
+        _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
+        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx)
 
         # Create directory in backend
         route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
@@ -2036,14 +2035,17 @@ class NexusFS(  # type: ignore[misc]
                 user_id=ctx.user_id,
             )
         )
-        await self.intercept_post_mkdir(
-            MkdirHookContext(
-                path=path,
-                context=ctx,
-                zone_id=ctx.zone_id,
-                agent_id=ctx.agent_id,
+        if _mkdir_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import MkdirHookContext
+
+            await self.intercept_post_mkdir(
+                MkdirHookContext(
+                    path=path,
+                    context=ctx,
+                    zone_id=ctx.zone_id,
+                    agent_id=ctx.agent_id,
+                )
             )
-        )
 
     @rpc_expose(description="Remove directory")
     async def rmdir(
@@ -3051,10 +3053,9 @@ class NexusFS(  # type: ignore[misc]
 
         # ── File branch: regular unlink ──────────────────────────────
 
-        # PRE-INTERCEPT: pre-delete hooks (Issue #899)
-        from nexus.contracts.vfs_hooks import DeleteHookContext as _DHC
-
-        self.intercept_pre_delete(_DHC(path=path, context=context))
+        # PRE-INTERCEPT hooks dispatched by Rust kernel (PR 19)
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
 
         # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
         from nexus.contracts.vfs_hooks import DeleteHookContext
@@ -3066,7 +3067,8 @@ class NexusFS(  # type: ignore[misc]
             agent_id=agent_id,
             metadata=meta,
         )
-        await self.intercept_post_delete(_delete_ctx)
+        if _unlink_result.post_hook_needed:
+            await self.intercept_post_delete(_delete_ctx)
 
         # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
         with self._vfs_locked(path, "write"):
@@ -3237,19 +3239,9 @@ class NexusFS(  # type: ignore[misc]
             meta and meta.mime_type == "inode/directory"
         ) or self.metadata.is_implicit_directory(old_path)
 
-        # ── PRE-INTERCEPT (unlocked — hooks may be slow) ──
-        from nexus.contracts.vfs_hooks import RenameHookContext
-
-        _rename_ctx = RenameHookContext(
-            old_path=old_path,
-            new_path=new_path,
-            context=context,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            is_directory=bool(is_directory),
-            metadata=meta,
-        )
-        self.intercept_pre_rename(_rename_ctx)
+        # ── PRE-INTERCEPT hooks dispatched by Rust kernel (PR 19) ──
+        _rust_ctx = self._build_rust_ctx(context, is_admin)
+        _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
         # ── VFS I/O Lock: exclusive write lock on BOTH paths ──
         # Sorted order = deadlock-free (like Linux i_rwsem on both inodes).
@@ -3332,7 +3324,19 @@ class NexusFS(  # type: ignore[misc]
         # Issue #1682: ReBAC path update moved to post_rename hooks.
 
         # POST-INTERCEPT: post-rename hooks (Issue #900)
-        await self.intercept_post_rename(_rename_ctx)
+        if _rename_result.post_hook_needed:
+            from nexus.contracts.vfs_hooks import RenameHookContext
+
+            _rename_ctx = RenameHookContext(
+                old_path=old_path,
+                new_path=new_path,
+                context=context,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                is_directory=bool(is_directory),
+                metadata=meta,
+            )
+            await self.intercept_post_rename(_rename_ctx)
 
         return {}
 

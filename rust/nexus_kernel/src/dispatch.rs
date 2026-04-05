@@ -42,6 +42,10 @@ pub(crate) trait InterceptHook: Send + Sync {
     fn on_post_delete(&self, ctx: &Py<PyAny>);
     fn on_pre_rename(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
     fn on_post_rename(&self, ctx: &Py<PyAny>);
+    fn on_pre_mkdir(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_mkdir(&self, ctx: &Py<PyAny>);
+    fn on_pre_rmdir(&self, ctx: &Py<PyAny>) -> Result<(), PyErr>;
+    fn on_post_rmdir(&self, ctx: &Py<PyAny>);
 }
 
 /// PRE-DISPATCH resolver — virtual path short-circuit.

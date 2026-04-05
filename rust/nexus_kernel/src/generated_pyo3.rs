@@ -507,6 +507,44 @@ impl InterceptHook for PyInterceptHookAdapter {
             }
         });
     }
+
+    fn on_pre_mkdir(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_mkdir") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_mkdir(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_mkdir") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
+
+    fn on_pre_rmdir(&self, ctx: &Py<PyAny>) -> Result<(), PyErr> {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_pre_rmdir") {
+                method.call1((ctx,))?;
+            }
+            Ok(())
+        })
+    }
+
+    fn on_post_rmdir(&self, ctx: &Py<PyAny>) {
+        Python::attach(|py| {
+            let hook = self.inner.bind(py);
+            if let Ok(method) = hook.getattr("on_post_rmdir") {
+                let _ = method.call1((ctx,));
+            }
+        });
+    }
 }
 
 // ── PyPathResolverAdapter ───────────────────────────────────────
@@ -666,6 +704,40 @@ pub struct PySysWriteResult {
     pub post_hook_needed: bool,
     pub version: u32,
     pub size: u64,
+}
+
+// ── PySysUnlinkResult ───────────────────────────────────────────
+
+/// Python-facing SysUnlinkResult.
+#[pyclass(name = "SysUnlinkResult", get_all)]
+pub struct PySysUnlinkResult {
+    pub entry_type: u8,
+    pub post_hook_needed: bool,
+}
+
+// ── PySysRenameResult ───────────────────────────────────────────
+
+/// Python-facing SysRenameResult.
+#[pyclass(name = "SysRenameResult", get_all)]
+pub struct PySysRenameResult {
+    pub success: bool,
+    pub post_hook_needed: bool,
+}
+
+// ── PySysMkdirResult ────────────────────────────────────────────
+
+/// Python-facing SysMkdirResult.
+#[pyclass(name = "SysMkdirResult", get_all)]
+pub struct PySysMkdirResult {
+    pub post_hook_needed: bool,
+}
+
+// ── PySysRmdirResult ────────────────────────────────────────────
+
+/// Python-facing SysRmdirResult.
+#[pyclass(name = "SysRmdirResult", get_all)]
+pub struct PySysRmdirResult {
+    pub post_hook_needed: bool,
 }
 
 // ── PyRustRouteResult ───────────────────────────────────────────
@@ -1093,26 +1165,129 @@ impl PyKernel {
 
     // ── sys_unlink ────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, zone_id, is_admin))]
-    fn sys_unlink(&self, path: &str, zone_id: &str, is_admin: bool) -> PyResult<u8> {
-        self.inner
-            .sys_unlink(path, zone_id, is_admin)
-            .map_err(Into::into)
+    #[pyo3(signature = (path, ctx))]
+    fn sys_unlink(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        ctx: &PyOperationContext,
+    ) -> PyResult<PySysUnlinkResult> {
+        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.inner.has_hooks("delete") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let dhc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("DeleteHookContext")?
+                .call1((path, py_ctx))?
+                .unbind();
+            self.dispatch_pre_hooks("delete", &dhc)?;
+        }
+
+        // 2. Call pure Rust kernel
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner.sys_unlink(path, &rust_ctx));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysUnlinkResult {
+            entry_type: result.entry_type,
+            post_hook_needed: result.post_hook_needed,
+        })
     }
 
     // ── sys_rename ────────────────────────────────────────────────────
 
-    #[pyo3(signature = (old_path, new_path, zone_id, is_admin))]
+    #[pyo3(signature = (old_path, new_path, ctx))]
     fn sys_rename(
         &self,
+        py: Python<'_>,
         old_path: &str,
         new_path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> PyResult<bool> {
-        self.inner
-            .sys_rename(old_path, new_path, zone_id, is_admin)
-            .map_err(Into::into)
+        ctx: &PyOperationContext,
+    ) -> PyResult<PySysRenameResult> {
+        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.inner.has_hooks("rename") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let rhc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("RenameHookContext")?
+                .call1((old_path, new_path, py_ctx))?
+                .unbind();
+            self.dispatch_pre_hooks("rename", &rhc)?;
+        }
+
+        // 2. Call pure Rust kernel
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner.sys_rename(old_path, new_path, &rust_ctx));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysRenameResult {
+            success: result.success,
+            post_hook_needed: result.post_hook_needed,
+        })
+    }
+
+    // ── sys_mkdir ─────────────────────────────────────────────────────
+
+    #[pyo3(signature = (path, ctx))]
+    fn sys_mkdir(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        ctx: &PyOperationContext,
+    ) -> PyResult<PySysMkdirResult> {
+        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.inner.has_hooks("mkdir") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let mhc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("MkdirHookContext")?
+                .call1((path, py_ctx))?
+                .unbind();
+            self.dispatch_pre_hooks("mkdir", &mhc)?;
+        }
+
+        // 2. Call pure Rust kernel (validate + route)
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysMkdirResult {
+            post_hook_needed: result.post_hook_needed,
+        })
+    }
+
+    // ── sys_rmdir ─────────────────────────────────────────────────────
+
+    #[pyo3(signature = (path, ctx))]
+    fn sys_rmdir(
+        &self,
+        py: Python<'_>,
+        path: &str,
+        ctx: &PyOperationContext,
+    ) -> PyResult<PySysRmdirResult> {
+        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
+        if self.inner.has_hooks("rmdir") {
+            let py_ctx = rust_ctx_to_python(py, &ctx.to_rust(), "")
+                .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
+            let rhc = py
+                .import("nexus.contracts.vfs_hooks")?
+                .getattr("RmdirHookContext")?
+                .call1((path, py_ctx))?
+                .unbind();
+            self.dispatch_pre_hooks("rmdir", &rhc)?;
+        }
+
+        // 2. Call pure Rust kernel
+        let rust_ctx = ctx.to_rust();
+        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx));
+        let result = result.map_err(|e| -> PyErr { e.into() })?;
+
+        Ok(PySysRmdirResult {
+            post_hook_needed: result.post_hook_needed,
+        })
     }
 
     // ── Tier 2 convenience methods ────────────────────────────────────
@@ -1141,6 +1316,8 @@ impl PyKernel {
                 "write" => hook.on_pre_write(hook_ctx)?,
                 "delete" => hook.on_pre_delete(hook_ctx)?,
                 "rename" => hook.on_pre_rename(hook_ctx)?,
+                "mkdir" => hook.on_pre_mkdir(hook_ctx)?,
+                "rmdir" => hook.on_pre_rmdir(hook_ctx)?,
                 _ => {}
             }
         }
@@ -1161,6 +1338,8 @@ impl PyKernel {
                 "write" => hook.on_post_write(hook_ctx),
                 "delete" => hook.on_post_delete(hook_ctx),
                 "rename" => hook.on_post_rename(hook_ctx),
+                "mkdir" => hook.on_post_mkdir(hook_ctx),
+                "rmdir" => hook.on_post_rmdir(hook_ctx),
                 _ => {}
             }
         }

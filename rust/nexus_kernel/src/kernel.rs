@@ -137,6 +137,34 @@ pub struct SysWriteResult {
     pub size: u64,
 }
 
+/// Result of sys_unlink(): entry_type + post hook flag.
+pub struct SysUnlinkResult {
+    /// Entry type of the deleted entry (DT_REG, DT_DIR, etc.).
+    pub entry_type: u8,
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+}
+
+/// Result of sys_rename(): success + post hook flag.
+pub struct SysRenameResult {
+    /// True if both paths validated and routed successfully.
+    pub success: bool,
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+}
+
+/// Result of sys_mkdir(): post hook flag.
+pub struct SysMkdirResult {
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+}
+
+/// Result of sys_rmdir(): post hook flag.
+pub struct SysRmdirResult {
+    /// True if post-hooks should be fired by the async wrapper.
+    pub post_hook_needed: bool,
+}
+
 // ── DcacheStats ──────────────────────────────────────────────────────
 
 /// DCache statistics — pure Rust struct returned by dcache_stats().
@@ -193,6 +221,8 @@ pub struct Kernel {
     stat_hook_count: AtomicU64,
     delete_hook_count: AtomicU64,
     rename_hook_count: AtomicU64,
+    mkdir_hook_count: AtomicU64,
+    rmdir_hook_count: AtomicU64,
 }
 
 impl Kernel {
@@ -212,6 +242,8 @@ impl Kernel {
             stat_hook_count: AtomicU64::new(0),
             delete_hook_count: AtomicU64::new(0),
             rename_hook_count: AtomicU64::new(0),
+            mkdir_hook_count: AtomicU64::new(0),
+            rmdir_hook_count: AtomicU64::new(0),
         }
     }
 
@@ -413,6 +445,8 @@ impl Kernel {
             "stat" => self.stat_hook_count.store(count, Ordering::Relaxed),
             "delete" => self.delete_hook_count.store(count, Ordering::Relaxed),
             "rename" => self.rename_hook_count.store(count, Ordering::Relaxed),
+            "mkdir" => self.mkdir_hook_count.store(count, Ordering::Relaxed),
+            "rmdir" => self.rmdir_hook_count.store(count, Ordering::Relaxed),
             _ => {}
         }
     }
@@ -425,6 +459,8 @@ impl Kernel {
             "stat" => self.stat_hook_count.load(Ordering::Relaxed) > 0,
             "delete" => self.delete_hook_count.load(Ordering::Relaxed) > 0,
             "rename" => self.rename_hook_count.load(Ordering::Relaxed) > 0,
+            "mkdir" => self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+            "rmdir" => self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
     }
@@ -749,19 +785,26 @@ impl Kernel {
 
     /// Rust syscall: validate + route + dcache evict for unlink.
     ///
-    /// Returns entry_type of the evicted entry (0 if not in dcache).
+    /// Returns entry_type + post_hook_needed. PRE-hooks dispatched by wrapper.
     /// DT_PIPE/DT_STREAM -> returns entry_type for wrapper dispatch.
-    pub fn sys_unlink(&self, path: &str, zone_id: &str, is_admin: bool) -> Result<u8, KernelError> {
+    pub fn sys_unlink(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysUnlinkResult, KernelError> {
         // 1. Validate
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
         if self
             .router
-            .route_impl(path, zone_id, is_admin, true)
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
             .is_err()
         {
-            return Ok(0);
+            return Ok(SysUnlinkResult {
+                entry_type: 0,
+                post_hook_needed: false,
+            });
         }
 
         // 3. DCache: get entry_type then evict
@@ -772,21 +815,23 @@ impl Kernel {
             .unwrap_or(DT_REG);
         self.dcache.evict(path);
 
-        Ok(entry_type)
+        Ok(SysUnlinkResult {
+            entry_type,
+            post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
+        })
     }
 
     // ── sys_rename ────────────────────────────────────────────────────
 
     /// Rust syscall: validate + route both + dcache move for rename.
     ///
-    /// Returns true if both paths validated and routed successfully.
+    /// Returns success + post_hook_needed. PRE-hooks dispatched by wrapper.
     pub fn sys_rename(
         &self,
         old_path: &str,
         new_path: &str,
-        zone_id: &str,
-        is_admin: bool,
-    ) -> Result<bool, KernelError> {
+        ctx: &OperationContext,
+    ) -> Result<SysRenameResult, KernelError> {
         // 1. Validate both
         validate_path_fast(old_path)?;
         validate_path_fast(new_path)?;
@@ -794,17 +839,23 @@ impl Kernel {
         // 2. Route both (check write access)
         if self
             .router
-            .route_impl(old_path, zone_id, is_admin, true)
+            .route_impl(old_path, &ctx.zone_id, ctx.is_admin, true)
             .is_err()
         {
-            return Ok(false);
+            return Ok(SysRenameResult {
+                success: false,
+                post_hook_needed: false,
+            });
         }
         if self
             .router
-            .route_impl(new_path, zone_id, is_admin, true)
+            .route_impl(new_path, &ctx.zone_id, ctx.is_admin, true)
             .is_err()
         {
-            return Ok(false);
+            return Ok(SysRenameResult {
+                success: false,
+                post_hook_needed: false,
+            });
         }
 
         // 3. DCache: move entry from old to new
@@ -825,7 +876,57 @@ impl Kernel {
             );
         }
 
-        Ok(true)
+        Ok(SysRenameResult {
+            success: true,
+            post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
+        })
+    }
+
+    // ── sys_mkdir ──────────────────────────────────────────────────────
+
+    /// Rust syscall: validate + route for mkdir.
+    ///
+    /// PRE-hooks dispatched by wrapper. Returns post_hook_needed flag.
+    /// Python handles actual directory creation (metastore/dcache/backend)
+    /// via _setattr_create() which has richer metadata (timestamps, hash, backend_key).
+    pub fn sys_mkdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysMkdirResult, KernelError> {
+        // 1. Validate
+        validate_path_fast(path)?;
+
+        // 2. Route (check write access)
+        self.router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
+
+        Ok(SysMkdirResult {
+            post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+        })
+    }
+
+    // ── sys_rmdir ──────────────────────────────────────────────────────
+
+    /// Rust syscall: validate + route for rmdir.
+    ///
+    /// PRE-hooks dispatched by wrapper. Returns post_hook_needed flag.
+    /// Python handles actual directory removal (metastore/dcache/recursive delete).
+    pub fn sys_rmdir(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+    ) -> Result<SysRmdirResult, KernelError> {
+        // 1. Validate
+        validate_path_fast(path)?;
+
+        // 2. Route (check write access)
+        self.router
+            .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
+
+        Ok(SysRmdirResult {
+            post_hook_needed: self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
+        })
     }
 
     // ── Tier 2 convenience methods ────────────────────────────────────

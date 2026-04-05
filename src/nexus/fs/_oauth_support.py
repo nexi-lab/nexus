@@ -100,7 +100,14 @@ def get_fs_database_url() -> str | None:
 
 
 def get_oauth_encryption_key() -> str:
-    """Load or create the local persisted OAuth encryption key for nexus-fs."""
+    """Load or create the local persisted OAuth encryption key for nexus-fs.
+
+    Priority:
+    1. ``NEXUS_OAUTH_ENCRYPTION_KEY`` env var (set once for stable cross-restart keys)
+    2. Persisted key at ``~/.nexus/auth/oauth.key`` (auto-created on first run)
+    3. In-memory ephemeral key — OAuth tokens encrypted with it won't survive a
+       restart.  A warning is printed so the user knows to fix persistence.
+    """
     env_key = os.getenv("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
     if env_key:
         return env_key
@@ -109,8 +116,19 @@ def get_oauth_encryption_key() -> str:
         return _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
 
     key = Fernet.generate_key().decode("utf-8")
-    _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
-    console.print(f"[dim]Created local OAuth encryption key: {_DEFAULT_OAUTH_KEY_PATH}[/dim]")
+    try:
+        _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
+        console.print(
+            f"[dim]nexus-fs: created OAuth encryption key at {_DEFAULT_OAUTH_KEY_PATH}[/dim]"
+        )
+    except OSError as exc:
+        console.print(
+            f"[yellow]nexus-fs: could not persist OAuth encryption key "
+            f"({_DEFAULT_OAUTH_KEY_PATH}: {exc}). "
+            f"OAuth tokens will not survive a restart. "
+            f"Set NEXUS_OAUTH_ENCRYPTION_KEY or fix permissions on "
+            f"{_DEFAULT_OAUTH_KEY_PATH.parent}.[/yellow]"
+        )
     return key
 
 

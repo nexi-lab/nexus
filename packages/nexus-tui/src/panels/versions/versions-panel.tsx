@@ -137,17 +137,30 @@ export default function VersionsPanel(): React.ReactNode {
           }
         : uiFocusPane === "right"
           ? {
-              // Right pane focused: j/k navigates entries
-              "j": () => setSelectedEntryIndex(Math.min(selectedEntryIndex + 1, entries.length - 1)),
-              "down": () => setSelectedEntryIndex(Math.min(selectedEntryIndex + 1, entries.length - 1)),
-              "k": () => setSelectedEntryIndex(Math.max(selectedEntryIndex - 1, 0)),
-              "up": () => setSelectedEntryIndex(Math.max(selectedEntryIndex - 1, 0)),
-              "v": () => {
-                if (!client || !selectedTransaction || entries.length === 0) return;
-                const entry = entries[selectedEntryIndex];
-                if (entry) {
-                  fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
-                }
+              // Right pane focused: j/k navigates entries and auto-fetches diff
+              "j": () => {
+                const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
+                setSelectedEntryIndex(next);
+                const entry = entries[next];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+              },
+              "down": () => {
+                const next = Math.min(selectedEntryIndex + 1, entries.length - 1);
+                setSelectedEntryIndex(next);
+                const entry = entries[next];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+              },
+              "k": () => {
+                const prev = Math.max(selectedEntryIndex - 1, 0);
+                setSelectedEntryIndex(prev);
+                const entry = entries[prev];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
+              },
+              "up": () => {
+                const prev = Math.max(selectedEntryIndex - 1, 0);
+                setSelectedEntryIndex(prev);
+                const entry = entries[prev];
+                if (client && entry) fetchDiff(entry.path, entry.original_hash, entry.new_hash, client);
               },
               "tab": () => toggleFocus("versions"),
             }

@@ -166,8 +166,12 @@ class DriveTransport:
                     zone_id=zone_id,
                 )
             )
-        except AuthenticationError:
-            raise
+        except AuthenticationError as _auth_exc:
+            raise AuthenticationError(
+                str(_auth_exc),
+                provider=self._provider,
+                user_email=user_email,
+            ) from _auth_exc
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",

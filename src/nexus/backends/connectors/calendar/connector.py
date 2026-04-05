@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.cache.models import IMMUTABLE_VERSION
 from nexus.backends.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -42,6 +41,7 @@ from nexus.backends.connectors.calendar.schemas import (
 from nexus.backends.connectors.calendar.transport import CalendarTransport
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
+from nexus.contracts.constants import IMMUTABLE_VERSION
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 

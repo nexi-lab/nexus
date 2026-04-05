@@ -28,9 +28,6 @@ from nexus.core.object_store import ObjectStoreABC, WriteResult
 # Backends whose dependencies may be unavailable in slim images (e.g. remote-only)
 # are loaded lazily to avoid ImportError on startup.
 _OPTIONAL_BACKENDS: dict[str, tuple[str, str]] = {
-    # Cache layer (depends on sqlalchemy)
-    "CachedReadResult": ("nexus.backends.cache.models", "CachedReadResult"),
-    "IMMUTABLE_VERSION": ("nexus.backends.cache.models", "IMMUTABLE_VERSION"),
     # Storage backends
     "CASLocalBackend": ("nexus.backends.storage.cas_local", "CASLocalBackend"),
     "PathLocalBackend": ("nexus.backends.storage.path_local", "PathLocalBackend"),
@@ -203,8 +200,6 @@ __all__ = [
     "CASAddressingEngine",
     "PathAddressingEngine",
     "PathBackend",
-    "CachedReadResult",
-    "IMMUTABLE_VERSION",
     # Factory
     "BackendFactory",
     # Registry

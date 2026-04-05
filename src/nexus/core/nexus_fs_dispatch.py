@@ -315,19 +315,8 @@ class DispatchMixin:
         for hook in self._kernel.get_pre_hooks("write"):
             hook.on_pre_write(ctx)
 
-    def intercept_pre_delete(self, ctx: DeleteHookContext) -> None:
-        """PRE-INTERCEPT phase for delete — hooks may abort by raising."""
-        if "delete" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("delete"):
-            hook.on_pre_delete(ctx)
-
-    def intercept_pre_rename(self, ctx: RenameHookContext) -> None:
-        """PRE-INTERCEPT phase for rename — hooks may abort by raising."""
-        if "rename" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("rename"):
-            hook.on_pre_rename(ctx)
+    # intercept_pre_delete: dispatched by Rust sys_unlink (PR 19)
+    # intercept_pre_rename: dispatched by Rust sys_rename (PR 19)
 
     def intercept_pre_copy(self, ctx: CopyHookContext) -> None:
         """PRE-INTERCEPT phase for copy — hooks may abort by raising."""
@@ -336,12 +325,7 @@ class DispatchMixin:
         for hook in self._kernel.get_pre_hooks("copy"):
             hook.on_pre_copy(ctx)
 
-    def intercept_pre_mkdir(self, ctx: MkdirHookContext) -> None:
-        """PRE-INTERCEPT phase for mkdir — hooks may abort by raising."""
-        if "mkdir" not in self._hooks_nonempty:
-            return
-        for hook in self._kernel.get_pre_hooks("mkdir"):
-            hook.on_pre_mkdir(ctx)
+    # intercept_pre_mkdir: dispatched by Rust sys_mkdir (PR 19)
 
     def intercept_pre_rmdir(self, ctx: RmdirHookContext) -> None:
         """PRE-INTERCEPT phase for rmdir — hooks may abort by raising."""

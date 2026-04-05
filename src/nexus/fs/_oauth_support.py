@@ -21,6 +21,14 @@ _DEFAULT_DB_PATH = _token_manager_db_fn()
 _DEFAULT_OAUTH_KEY_PATH = _oauth_key_path_fn()
 console = Console()
 
+# Process-level caches — ensures all callers in the same process share the same
+# encryption key and token manager instance.  Critical for the ephemeral-key
+# fallback path: without caching, each call to get_oauth_encryption_key() that
+# can't persist to disk generates a *different* random key, producing multiple
+# TokenManager instances that cannot decrypt each other's tokens.
+_CACHED_OAUTH_KEY: str | None = None
+_CACHED_TOKEN_MANAGER: Any = None
+
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "gws": [
         "https://www.googleapis.com/auth/drive",
@@ -107,13 +115,22 @@ def get_oauth_encryption_key() -> str:
     2. Persisted key at ``~/.nexus/auth/oauth.key`` (auto-created on first run)
     3. In-memory ephemeral key — OAuth tokens encrypted with it won't survive a
        restart.  A warning is printed so the user knows to fix persistence.
+
+    The result is cached for the lifetime of the process so all callers share
+    the same key even when persistence fails.
     """
+    global _CACHED_OAUTH_KEY
+    if _CACHED_OAUTH_KEY is not None:
+        return _CACHED_OAUTH_KEY
+
     env_key = os.getenv("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
     if env_key:
-        return env_key
+        _CACHED_OAUTH_KEY = env_key
+        return _CACHED_OAUTH_KEY
 
     if _DEFAULT_OAUTH_KEY_PATH.exists():
-        return _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
+        _CACHED_OAUTH_KEY = _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
+        return _CACHED_OAUTH_KEY
 
     key = Fernet.generate_key().decode("utf-8")
     try:
@@ -129,21 +146,46 @@ def get_oauth_encryption_key() -> str:
             f"Set NEXUS_OAUTH_ENCRYPTION_KEY or fix permissions on "
             f"{_DEFAULT_OAUTH_KEY_PATH.parent}.[/yellow]"
         )
-    return key
+    _CACHED_OAUTH_KEY = key
+    return _CACHED_OAUTH_KEY
 
 
 def get_token_manager(db_path: str | None = None) -> Any:
-    """Create the OAuth token manager for nexus-fs."""
+    """Return the process-singleton OAuth token manager for nexus-fs.
+
+    Cached after the first call so all connector backends and OAuth helpers
+    within the same process share one instance and one encryption key.
+    Pass ``db_path`` only when you explicitly need a non-default database;
+    non-default paths bypass the cache and create a fresh instance.
+    """
+    global _CACHED_TOKEN_MANAGER
+
     db_url = get_fs_database_url()
     encryption_key = get_oauth_encryption_key()
+
+    # Non-default db_path callers (tests, multi-tenant setups) get a fresh instance.
+    if db_path is not None:
+        parent_dir = os.path.dirname(db_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        return _get_token_manager_cls()(db_path=db_path, encryption_key=encryption_key)
+
+    if _CACHED_TOKEN_MANAGER is not None:
+        return _CACHED_TOKEN_MANAGER
+
     if db_url:
-        return _get_token_manager_cls()(db_url=db_url, encryption_key=encryption_key)
-    if db_path is None:
-        db_path = str(_DEFAULT_DB_PATH)
-    parent_dir = os.path.dirname(db_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-    return _get_token_manager_cls()(db_path=db_path, encryption_key=encryption_key)
+        _CACHED_TOKEN_MANAGER = _get_token_manager_cls()(
+            db_url=db_url, encryption_key=encryption_key
+        )
+    else:
+        default_db = str(_DEFAULT_DB_PATH)
+        parent_dir = os.path.dirname(default_db)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+        _CACHED_TOKEN_MANAGER = _get_token_manager_cls()(
+            db_path=default_db, encryption_key=encryption_key
+        )
+    return _CACHED_TOKEN_MANAGER
 
 
 def get_google_auth_url(

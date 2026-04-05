@@ -166,9 +166,6 @@ send_notifications: true
 
     ERROR_REGISTRY = ERROR_REGISTRY
 
-    # Enable metadata-based listing
-    use_metadata_listing = True
-
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "token_manager_db": ConnectionArg(
             type=ArgType.PATH,

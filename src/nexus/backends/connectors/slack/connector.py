@@ -116,9 +116,6 @@ class PathSlackBackend(
     # Top-level folder types
     FOLDER_TYPES = FOLDER_TYPES
 
-    # Enable metadata-based listing (use file_paths table)
-    use_metadata_listing = True
-
     # Provider aliases for OAuth resolution
     _PROVIDER_ALIASES: dict[str, list[str]] = {}
 

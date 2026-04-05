@@ -94,13 +94,10 @@ class BackendFeature(StrEnum):
     """Backend supports ReadmeDocMixin (auto-generated .readme/ documentation)."""
 
     SYNC = "sync"
-    """Backend implements ConnectorSyncProvider for delta sync."""
+    """Backend supports delta sync capability."""
 
     CLI_BACKED = "cli_backed"
     """Backend delegates execution to an external CLI subprocess."""
-
-    SYNC_ELIGIBLE = "sync_eligible"
-    """Backend should be periodically synced to the metastore."""
 
 
 # --- Capability-to-Protocol mapping ---
@@ -129,7 +126,6 @@ OAUTH_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
         BackendFeature.USER_SCOPED,
         BackendFeature.TOKEN_MANAGER,
         BackendFeature.OAUTH,
-        BackendFeature.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for OAuth-based connectors."""
@@ -139,7 +135,6 @@ CLI_BACKEND_FEATURES: frozenset[BackendFeature] = frozenset(
         BackendFeature.CLI_BACKED,
         BackendFeature.README_DOC,
         BackendFeature.SYNC,
-        BackendFeature.SYNC_ELIGIBLE,
     }
 )
 """Common capabilities for CLI-backed connectors (gws, gh)."""

@@ -45,8 +45,8 @@ class TestBackendFeatureEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """21 features: removed EXTERNAL_CONTENT (now DT type) + 5 dead (DATA_DIR, PARALLEL_MMAP, SEARCHABLE, WATCH, CHANGE_NOTIFICATIONS)."""
-        assert len(BackendFeature) == 21
+        """20 features: removed EXTERNAL_CONTENT (now DT type) + 5 dead (DATA_DIR, PARALLEL_MMAP, SEARCHABLE, WATCH, CHANGE_NOTIFICATIONS) + SYNC_ELIGIBLE."""
+        assert len(BackendFeature) == 20
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""
@@ -87,7 +87,6 @@ class TestConvenienceFrozensets:
             BackendFeature.USER_SCOPED,
             BackendFeature.TOKEN_MANAGER,
             BackendFeature.OAUTH,
-            BackendFeature.SYNC_ELIGIBLE,
         }
         assert expected == OAUTH_BACKEND_FEATURES
 

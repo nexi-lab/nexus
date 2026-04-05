@@ -145,9 +145,6 @@ class PathGmailBackend(
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
 
-    # Enable metadata-based listing (use file_paths table for fast queries)
-    use_metadata_listing = True
-
     # Connection arguments for registry-based instantiation
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "token_manager_db": ConnectionArg(

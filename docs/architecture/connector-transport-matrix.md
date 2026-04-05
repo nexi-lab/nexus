@@ -30,7 +30,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | OAuth 2.0 (Google), provider=`gmail` |
 | **Path namespace** | `/{LABEL}/{thread_id}-{msg_id}.yaml` — labels: SENT, STARRED, IMPORTANT, INBOX |
 | **Read/Write** | Read-only (email fetch). Send/reply/forward via write_content + trait validation |
-| **Caching** | CacheConnectorMixin — IMMUTABLE_VERSION (emails never change) |
+| **Caching** | IMMUTABLE_VERSION (emails never change) |
 | **Batch** | Gmail batch API via `fetch_batch()` (50 messages/batch, exponential backoff) |
 | **Rate limits** | Gmail API quota: 250 units/second/user |
 
@@ -41,7 +41,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | OAuth 2.0 (Google), provider=`google-drive` |
 | **Path namespace** | `/{folder}/{file.ext}` — direct path mapping under configurable root folder |
 | **Read/Write** | Full CRUD. Google Workspace files auto-exported (Docs→DOCX, Sheets→XLSX, etc.) |
-| **Caching** | No CacheConnectorMixin |
+| **Caching** | None |
 | **Folder ID cache** | In-memory `dict[str, str]` — path→Drive folder ID. Cache key includes user_id+zone_id |
 | **Shared drives** | `use_shared_drives=True` + `shared_drive_id` adds corpora/driveId params |
 | **Rate limits** | Drive API: 12,000 queries/minute/project |
@@ -53,7 +53,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | OAuth 2.0 (Google), provider=`gcalendar` |
 | **Path namespace** | `/{calendar_id}/{event_id}.yaml` — `primary/` = user's default calendar |
 | **Read/Write** | Full CRUD. Write to `_new.yaml` = create, write to `{id}.yaml` = update |
-| **Caching** | CacheConnectorMixin |
+| **Caching** | None (CacheConnectorMixin removed) |
 | **Validation** | Schema validation (CreateEventSchema, UpdateEventSchema, DeleteEventSchema) |
 | **Checkpoints** | CheckpointMixin for reversible create/update/delete |
 | **Rate limits** | Calendar API: 1,000,000 queries/day |
@@ -65,7 +65,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | OAuth 2.0 (Slack Bot Token), provider=`slack` |
 | **Path namespace** | `/{channel_name}/{thread_ts}.yaml` — channels as virtual directories |
 | **Read/Write** | Read messages + post via store(). No delete. |
-| **Caching** | CacheConnectorMixin |
+| **Caching** | None (CacheConnectorMixin removed) |
 | **Rate limits** | Slack API tier-based: ~1 req/sec for most methods |
 
 ### X/Twitter (PathXBackend + XTransport)
@@ -75,7 +75,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | OAuth 2.0 PKCE (X), provider=`x` |
 | **Path namespace** | `/{timeline\|mentions\|posts}/{tweet_id}.yaml` |
 | **Read/Write** | Read timelines + create/delete tweets |
-| **Caching** | Multi-tier (LRU + disk cache), NOT CacheConnectorMixin |
+| **Caching** | Multi-tier (LRU + disk cache) |
 | **Rate limits** | X API v2 tier-dependent (Free: 500 tweets/month read) |
 
 ### Hacker News (PathHNBackend + HNTransport)
@@ -85,7 +85,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Auth** | None (public Firebase API) |
 | **Path namespace** | `/{feed}/{story_id}.yaml` — feeds: top, new, best, ask, show, job |
 | **Read/Write** | Read-only |
-| **Caching** | CacheConnectorMixin |
+| **Caching** | None (CacheConnectorMixin removed) |
 | **Comments** | Recursive comment tree fetching via `_fetch_comments()` |
 | **Rate limits** | Firebase: no official rate limit, be respectful |
 
@@ -97,7 +97,7 @@ N/A methods raise `BackendError`. Read-only transports raise on `store`/`remove`
 | **Path namespace** | Connector-defined via CLIConnectorConfig |
 | **Read/Write** | Full CRUD via subprocess |
 | **Subclasses** | GmailConnector, CalendarConnector, SheetsConnector, DocsConnector, ChatConnector, DriveConnector, GitHubConnector |
-| **Sync** | CLISyncProvider + delta sync loop |
+| **Sync** | None (sync infrastructure removed) |
 | **Rate limits** | Depends on underlying CLI tool |
 
 ## Gap Analysis: Beyond-Transport APIs

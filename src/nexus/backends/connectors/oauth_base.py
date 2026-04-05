@@ -42,7 +42,6 @@ class OAuthConnectorBase(
     - Common capability set (OAUTH)
     - OAuth initialization and token management
     - OAuth provider registration via factory
-    - Metadata store integration for metastore-first listing
     - Cache session factory setup
     - Checkpoint mixin state initialization
 
@@ -54,9 +53,6 @@ class OAuthConnectorBase(
     """
 
     _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES
-
-    # Enable metadata-based listing (use file_paths table for fast queries)
-    use_metadata_listing = True
 
     def __init__(
         self,

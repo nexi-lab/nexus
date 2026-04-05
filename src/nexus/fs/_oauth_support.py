@@ -6,6 +6,8 @@ import asyncio
 import importlib as _il
 import os
 import sys
+import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,7 @@ console = Console()
 # (request-scoped code calls close() after credential exchange) and caching a
 # closeable object causes use-after-close races.
 _CACHED_OAUTH_KEY: str | None = None
+_OAUTH_KEY_LOCK = threading.Lock()
 
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "gws": [
@@ -86,9 +89,20 @@ def _root_zone_id() -> str:
 
 
 def _write_secret_file(path: Path, content: str) -> None:
+    """Write content to path atomically using a temp file + rename."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-    os.chmod(path, 0o600)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with __import__("contextlib").suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _get_token_manager_cls() -> Any:
@@ -112,43 +126,55 @@ def get_oauth_encryption_key() -> str:
     """Load or create the local persisted OAuth encryption key for nexus-fs.
 
     Priority:
-    1. ``NEXUS_OAUTH_ENCRYPTION_KEY`` env var (set once for stable cross-restart keys)
+    1. ``NEXUS_OAUTH_ENCRYPTION_KEY`` env var (set once for stable multi-process keys)
     2. Persisted key at ``~/.nexus/auth/oauth.key`` (auto-created on first run)
-    3. In-memory ephemeral key — OAuth tokens encrypted with it won't survive a
-       restart.  A warning is printed so the user knows to fix persistence.
+    3. In-memory ephemeral key — tokens encrypted with it are unreadable by other
+       processes.  A warning is printed.  Use ``NEXUS_OAUTH_ENCRYPTION_KEY`` or fix
+       directory permissions to enable cross-process token sharing.
 
-    The result is cached for the lifetime of the process so all callers share
-    the same key even when persistence fails.
+    Protected by a module-level lock so concurrent first-use callers converge on
+    one value.  The key file is written atomically (temp + rename) so a partially
+    written file is never read.  After writing, the file is re-read and cached so
+    every caller in this process uses the exact bytes on disk.
     """
     global _CACHED_OAUTH_KEY
+
+    # Fast path — no lock needed once cached.
     if _CACHED_OAUTH_KEY is not None:
         return _CACHED_OAUTH_KEY
 
-    env_key = os.getenv("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
-    if env_key:
-        _CACHED_OAUTH_KEY = env_key
-        return _CACHED_OAUTH_KEY
+    with _OAUTH_KEY_LOCK:
+        # Re-check inside the lock in case another thread just populated it.
+        if _CACHED_OAUTH_KEY is not None:
+            return _CACHED_OAUTH_KEY
 
-    if _DEFAULT_OAUTH_KEY_PATH.exists():
-        _CACHED_OAUTH_KEY = _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
-        return _CACHED_OAUTH_KEY
+        env_key = os.getenv("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip()
+        if env_key:
+            _CACHED_OAUTH_KEY = env_key
+            return _CACHED_OAUTH_KEY
 
-    key = Fernet.generate_key().decode("utf-8")
-    try:
-        _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
-        console.print(
-            f"[dim]nexus-fs: created OAuth encryption key at {_DEFAULT_OAUTH_KEY_PATH}[/dim]"
-        )
-    except OSError as exc:
-        console.print(
-            f"[yellow]nexus-fs: could not persist OAuth encryption key "
-            f"({_DEFAULT_OAUTH_KEY_PATH}: {exc}). "
-            f"OAuth tokens will not survive a restart. "
-            f"Set NEXUS_OAUTH_ENCRYPTION_KEY or fix permissions on "
-            f"{_DEFAULT_OAUTH_KEY_PATH.parent}.[/yellow]"
-        )
-    _CACHED_OAUTH_KEY = key
-    return _CACHED_OAUTH_KEY
+        if _DEFAULT_OAUTH_KEY_PATH.exists():
+            _CACHED_OAUTH_KEY = _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
+            return _CACHED_OAUTH_KEY
+
+        key = Fernet.generate_key().decode("utf-8")
+        try:
+            _write_secret_file(_DEFAULT_OAUTH_KEY_PATH, key + "\n")
+            # Re-read from disk so the cache reflects the exact persisted bytes.
+            key = _DEFAULT_OAUTH_KEY_PATH.read_text().strip()
+            console.print(
+                f"[dim]nexus-fs: created OAuth encryption key at {_DEFAULT_OAUTH_KEY_PATH}[/dim]"
+            )
+        except OSError as exc:
+            console.print(
+                f"[yellow]nexus-fs: could not persist OAuth encryption key "
+                f"({_DEFAULT_OAUTH_KEY_PATH}: {exc}). "
+                f"Tokens stored in this process will be unreadable by other processes. "
+                f"Set NEXUS_OAUTH_ENCRYPTION_KEY or fix permissions on "
+                f"{_DEFAULT_OAUTH_KEY_PATH.parent} for cross-process token sharing.[/yellow]"
+            )
+        _CACHED_OAUTH_KEY = key
+        return _CACHED_OAUTH_KEY
 
 
 def get_token_manager(db_path: str | None = None) -> Any:

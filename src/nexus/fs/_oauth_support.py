@@ -21,13 +21,14 @@ _DEFAULT_DB_PATH = _token_manager_db_fn()
 _DEFAULT_OAUTH_KEY_PATH = _oauth_key_path_fn()
 console = Console()
 
-# Process-level caches — ensures all callers in the same process share the same
-# encryption key and token manager instance.  Critical for the ephemeral-key
-# fallback path: without caching, each call to get_oauth_encryption_key() that
-# can't persist to disk generates a *different* random key, producing multiple
-# TokenManager instances that cannot decrypt each other's tokens.
+# Process-level key cache — ensures all TokenManager instances created in the
+# same process use the same encryption key.  Critical for the ephemeral-key
+# fallback path: without caching, each call that can't persist to disk generates
+# a different random key, making tokens written by one manager unreadable by
+# another.  TokenManager instances are NOT cached because they are closeable
+# (request-scoped code calls close() after credential exchange) and caching a
+# closeable object causes use-after-close races.
 _CACHED_OAUTH_KEY: str | None = None
-_CACHED_TOKEN_MANAGER: Any = None
 
 _GOOGLE_SERVICE_SCOPES: dict[str, list[str]] = {
     "gws": [
@@ -151,41 +152,31 @@ def get_oauth_encryption_key() -> str:
 
 
 def get_token_manager(db_path: str | None = None) -> Any:
-    """Return the process-singleton OAuth token manager for nexus-fs.
+    """Create a new OAuth token manager for nexus-fs with the process-singleton key.
 
-    Cached after the first call so all connector backends and OAuth helpers
-    within the same process share one instance and one encryption key.
-    Pass ``db_path`` only when you explicitly need a non-default database;
-    non-default paths bypass the cache and create a fresh instance.
+    A fresh instance is returned on every call because TokenManager is closeable
+    and request-scoped code closes it after use.  The encryption key is stable
+    (cached via get_oauth_encryption_key()) so all instances can read each
+    other's tokens.
+
+    Database selection priority:
+    1. ``NEXUS_FS_DATABASE_URL`` env var (shared / network database)
+    2. Explicit ``db_path`` argument
+    3. Default local SQLite path (``~/.nexus/nexus.db``)
     """
-    global _CACHED_TOKEN_MANAGER
-
     db_url = get_fs_database_url()
     encryption_key = get_oauth_encryption_key()
 
-    # Non-default db_path callers (tests, multi-tenant setups) get a fresh instance.
-    if db_path is not None:
-        parent_dir = os.path.dirname(db_path)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-        return _get_token_manager_cls()(db_path=db_path, encryption_key=encryption_key)
-
-    if _CACHED_TOKEN_MANAGER is not None:
-        return _CACHED_TOKEN_MANAGER
-
+    # Shared database always takes precedence so OAuth setup and mount-time
+    # reads always target the same store regardless of what db_path is passed.
     if db_url:
-        _CACHED_TOKEN_MANAGER = _get_token_manager_cls()(
-            db_url=db_url, encryption_key=encryption_key
-        )
-    else:
-        default_db = str(_DEFAULT_DB_PATH)
-        parent_dir = os.path.dirname(default_db)
-        if parent_dir:
-            os.makedirs(parent_dir, exist_ok=True)
-        _CACHED_TOKEN_MANAGER = _get_token_manager_cls()(
-            db_path=default_db, encryption_key=encryption_key
-        )
-    return _CACHED_TOKEN_MANAGER
+        return _get_token_manager_cls()(db_url=db_url, encryption_key=encryption_key)
+
+    resolved = db_path if db_path is not None else str(_DEFAULT_DB_PATH)
+    parent_dir = os.path.dirname(resolved)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    return _get_token_manager_cls()(db_path=resolved, encryption_key=encryption_key)
 
 
 def get_google_auth_url(

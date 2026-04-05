@@ -4,57 +4,57 @@ import { palette } from "./theme.js";
 /**
  * Nexus syntax highlight theme.
  *
- * Keys are Tree-sitter scope names. Values map to the Nexus palette so code
- * blocks share the same visual language as the rest of the TUI chrome.
+ * Uses SyntaxStyle.fromTheme() so that hex color strings are parsed via
+ * parseColor() into RGBA — fromStyles() expects RGBA objects, not strings.
  *
  * Scopes follow the dot-hierarchy: "keyword.control" inherits from "keyword"
  * if no explicit entry exists for the more specific name.
  */
-export const defaultSyntaxStyle = SyntaxStyle.fromStyles({
+export const defaultSyntaxStyle = SyntaxStyle.fromTheme([
   // Keywords
-  "keyword":                  { fg: palette.accent },
-  "keyword.control":          { fg: palette.accent, bold: true },
-  "keyword.operator":         { fg: palette.accent },
+  { scope: ["keyword"],             style: { foreground: palette.accent } },
+  { scope: ["keyword.control"],     style: { foreground: palette.accent, bold: true } },
+  { scope: ["keyword.operator"],    style: { foreground: palette.accent } },
 
   // Types
-  "type":                     { fg: palette.warning },
-  "type.builtin":             { fg: palette.warning },
+  { scope: ["type"],                style: { foreground: palette.warning } },
+  { scope: ["type.builtin"],        style: { foreground: palette.warning } },
 
   // Functions
-  "function":                 { fg: "#7DD3FC" },  // sky-300 — distinct from accent
-  "function.builtin":         { fg: "#7DD3FC", bold: true },
-  "function.method":          { fg: "#7DD3FC" },
+  { scope: ["function"],            style: { foreground: "#7DD3FC" } },  // sky-300
+  { scope: ["function.builtin"],    style: { foreground: "#7DD3FC", bold: true } },
+  { scope: ["function.method"],     style: { foreground: "#7DD3FC" } },
 
   // Variables / properties
-  "variable":                 { fg: palette.bright },
-  "variable.builtin":         { fg: palette.muted, italic: true },
-  "property":                 { fg: "#A5B4FC" },  // indigo-300
+  { scope: ["variable"],            style: { foreground: palette.bright } },
+  { scope: ["variable.builtin"],    style: { foreground: palette.muted, italic: true } },
+  { scope: ["property"],            style: { foreground: "#A5B4FC" } },  // indigo-300
 
   // Strings
-  "string":                   { fg: palette.success },
-  "string.escape":            { fg: palette.warning },
-  "string.special":           { fg: palette.success, bold: true },
+  { scope: ["string"],              style: { foreground: palette.success } },
+  { scope: ["string.escape"],       style: { foreground: palette.warning } },
+  { scope: ["string.special"],      style: { foreground: palette.success, bold: true } },
 
   // Constants & numbers
-  "constant":                 { fg: palette.warning },
-  "constant.builtin":         { fg: palette.warning, bold: true },
-  "number":                   { fg: palette.warning },
-  "boolean":                  { fg: palette.warning, bold: true },
+  { scope: ["constant"],            style: { foreground: palette.warning } },
+  { scope: ["constant.builtin"],    style: { foreground: palette.warning, bold: true } },
+  { scope: ["number"],              style: { foreground: palette.warning } },
+  { scope: ["boolean"],             style: { foreground: palette.warning, bold: true } },
 
   // Comments
-  "comment":                  { fg: palette.muted, italic: true },
-  "comment.documentation":    { fg: palette.muted },
+  { scope: ["comment"],             style: { foreground: palette.muted, italic: true } },
+  { scope: ["comment.documentation"], style: { foreground: palette.muted } },
 
   // Operators & punctuation
-  "operator":                 { fg: palette.bright },
-  "punctuation":              { fg: palette.muted },
-  "punctuation.delimiter":    { fg: palette.muted },
-  "punctuation.bracket":      { fg: palette.bright },
+  { scope: ["operator"],            style: { foreground: palette.bright } },
+  { scope: ["punctuation"],         style: { foreground: palette.muted } },
+  { scope: ["punctuation.delimiter"], style: { foreground: palette.muted } },
+  { scope: ["punctuation.bracket"], style: { foreground: palette.bright } },
 
   // Markup / HTML / JSX
-  "tag":                      { fg: palette.error },
-  "attribute":                { fg: palette.warning },
+  { scope: ["tag"],                 style: { foreground: palette.error } },
+  { scope: ["attribute"],           style: { foreground: palette.warning } },
 
   // Errors
-  "error":                    { fg: palette.error, bold: true },
-});
+  { scope: ["error"],               style: { foreground: palette.error, bold: true } },
+]);

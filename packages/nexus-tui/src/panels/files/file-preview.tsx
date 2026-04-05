@@ -56,6 +56,17 @@ export function FilePreview(): React.ReactNode {
   const previewError = useFilesStore((s) => s.error);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
 
+  const ext = previewPath?.split(".").pop()?.toLowerCase() ?? "";
+  const language = extensionToLanguage(ext);
+
+  // Memoize the ANSI scan — O(n) on file content, only recalculate when
+  // content or extension changes, not on arbitrary parent re-renders.
+  // Must be before any early returns to satisfy Rules of Hooks.
+  const hasAnsi = useMemo(
+    () => ANSI_EXTENSIONS.has(ext) || (previewContent?.includes("\x1b[") ?? false),
+    [ext, previewContent],
+  );
+
   useEffect(() => {
     if (client && previewPath) {
       fetchPreview(previewPath, client);
@@ -88,16 +99,6 @@ export function FilePreview(): React.ReactNode {
       </box>
     );
   }
-
-  const ext = previewPath.split(".").pop()?.toLowerCase() ?? "";
-  const language = extensionToLanguage(ext);
-
-  // Memoize the ANSI scan — O(n) on file content, only recalculate when
-  // content or extension changes, not on arbitrary parent re-renders.
-  const hasAnsi = useMemo(
-    () => ANSI_EXTENSIONS.has(ext) || previewContent.includes("\x1b["),
-    [ext, previewContent],
-  );
 
   if (hasAnsi) {
     return (

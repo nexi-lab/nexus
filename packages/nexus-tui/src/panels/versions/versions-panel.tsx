@@ -7,6 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useTerminalDimensions } from "@opentui/react";
 import {
   useVersionsStore,
   nextStatusFilter,
@@ -27,6 +28,8 @@ import { formatActionHints, getVersionsFooterBindings } from "../../shared/actio
 
 export default function VersionsPanel(): React.ReactNode {
   const client = useApi();
+  const { width: columns } = useTerminalDimensions();
+  const isNarrow = columns < 120;
 
   const transactions = useVersionsStore((s) => s.transactions);
   const selectedIndex = useVersionsStore((s) => s.selectedIndex);
@@ -218,17 +221,27 @@ export default function VersionsPanel(): React.ReactNode {
         )}
 
         {/* Main content: transaction list + entry detail */}
-        <box flexGrow={1} flexDirection="row">
-          {/* Left pane: transaction list (40%) */}
-          <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
+        <box flexGrow={1} flexDirection={isNarrow ? "column" : "row"}>
+          {/* Left pane: transaction list (40% wide / 40% tall on narrow) */}
+          <box
+            width={isNarrow ? "100%" : "40%"}
+            height={isNarrow ? "40%" : "100%"}
+            borderStyle="single"
+            borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}
+          >
             <TransactionList
               transactions={filteredTransactions}
               selectedIndex={selectedIndex}
             />
           </box>
 
-          {/* Right pane: entry detail (60%) */}
-          <box width="60%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}>
+          {/* Right pane: entry detail (60% wide / 60% tall on narrow) */}
+          <box
+            width={isNarrow ? "100%" : "60%"}
+            height={isNarrow ? "60%" : "100%"}
+            borderStyle="single"
+            borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder}
+          >
             <EntryDetail
               transaction={selectedTransaction}
               entries={entries}

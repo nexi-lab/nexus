@@ -254,7 +254,7 @@ export const useSearchStore = create<SearchState>((set, get) => ({
     action: async (query, client) => {
       const response = await client.post<MemorySearchResponse>(
         "/api/v2/memories/search",
-        { query },
+        { query, limit: 50 },
       );
       return {
         memories: response.memories ?? [],

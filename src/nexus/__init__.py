@@ -145,9 +145,24 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def _open_local_metastore(metadata_path: str) -> "MetastoreABC":
-    """Open a local metadata store — RaftMetadataStore.embedded → DictMetastore fallback."""
+def _open_local_metastore(metadata_path: str, kernel: object = None) -> "MetastoreABC":
+    """Open a local metadata store.
+
+    Priority: RustMetastoreProxy (Rust redb, if kernel available)
+            → RaftMetadataStore.embedded (Python redb)
+            → DictMetastore (JSON fallback).
+    """
     from pathlib import Path
+
+    # Preferred: Rust kernel owns redb exclusively (zero GIL crossing)
+    if kernel is not None:
+        try:
+            from nexus.core.metastore import RustMetastoreProxy
+
+            redb_path = str(Path(metadata_path).with_suffix(".redb"))
+            return RustMetastoreProxy(kernel, redb_path)
+        except Exception as e:
+            logger.warning("RustMetastoreProxy failed, falling back: %s", e)
 
     try:
         from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -427,6 +442,15 @@ async def connect(
     overrides = cfg.features.to_overrides() if cfg.features else {}
     enabled_bricks = resolve_enabled_bricks(resolved_profile, overrides=overrides)
 
+    # Create Rust kernel early so RustMetastoreProxy can use it
+    _early_kernel = None
+    try:
+        from nexus_kernel import Kernel as _Kernel
+
+        _early_kernel = _Kernel()
+    except (ImportError, Exception):
+        pass
+
     # Create metadata store — profile-gated federation (PR #3371 Phase 2)
     metadata_store: MetastoreABC
     federation = None
@@ -441,7 +465,7 @@ async def connect(
         except ImportError:
             logger.warning("Federation brick enabled but Rust extensions unavailable")
             federation = None
-            metadata_store = _open_local_metastore(metadata_path)
+            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
         except RuntimeError as exc:
             if "ZoneManager requires PyO3 build with --features full" not in str(exc):
                 raise
@@ -450,9 +474,9 @@ async def connect(
                 "falling back to single-node metadata store"
             )
             federation = None
-            metadata_store = _open_local_metastore(metadata_path)
+            metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
     else:
-        metadata_store = _open_local_metastore(metadata_path)
+        metadata_store = _open_local_metastore(metadata_path, kernel=_early_kernel)
 
     # Permission defaults: standalone without explicit config → permissive
     enforce_permissions = cfg.enforce_permissions
@@ -599,28 +623,14 @@ async def _restore_mounts(nx_fs: "NexusFS") -> None:
     The factory itself never performs I/O — callers decide when to
     restore mounts.
     """
-    import os
-
     try:
-        auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        mount_result = await nx_fs.service("mount_persist").load_all_mounts(auto_sync=auto_sync)
+        mount_result = await nx_fs.service("mount_persist").load_all_mounts()
         if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-            sync_msg = f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
             logger.info(
-                "Mount restoration: %d loaded%s, %d failed",
+                "Mount restoration: %d loaded, %d failed",
                 mount_result["loaded"],
-                sync_msg,
                 mount_result["failed"],
             )
-            if not auto_sync and mount_result["loaded"] > 0:
-                logger.info(
-                    "Auto-sync disabled for fast startup. "
-                    "Use sync_mount() or set NEXUS_AUTO_SYNC_MOUNTS=true"
-                )
             for error in mount_result.get("errors", []):
                 logger.error("  Mount error: %s", error)
     except Exception as e:

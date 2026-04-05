@@ -105,6 +105,12 @@ and the fsspec compatibility layer.  Change this one constant to adjust all
 in-memory size guards.
 """
 
+IMMUTABLE_VERSION = "immutable"
+"""Backend version marker for content that never changes (e.g., Gmail emails).
+
+Connectors returning this version skip change-detection and re-fetch logic.
+"""
+
 ROOT_ZONE_ID = "root"
 """Default zone ID for standalone (non-federated) deployments.
 

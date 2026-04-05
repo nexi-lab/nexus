@@ -6,10 +6,9 @@ LocalConnectorBackend keeps files in their original location (SSOT - Single Sour
 
 Key features:
 - Zero data duplication (reference mode)
-- Full indexing support (semantic search via sync_mount)
+- Full indexing support (semantic search via connector sync loop)
 - Change detection via kernel OBSERVE (KernelDispatch)
 - Direct read/write to original files
-- L1-only caching (no L2 PostgreSQL needed since source is local)
 
 Example:
     >>> nx.add_mount(
@@ -20,17 +19,15 @@ Example:
 """
 
 import logging
-from datetime import UTC
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from nexus.backends.base.backend import Backend, FileInfo
+from nexus.backends.base.backend import Backend
 from nexus.backends.base.registry import (
     ArgType,
     ConnectionArg,
     register_connector,
 )
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -47,7 +44,7 @@ logger = logging.getLogger(__name__)
     description="Mount local folder into Nexus (reference mode, no copy)",
     category="storage",
 )
-class LocalConnectorBackend(Backend, CacheConnectorMixin):
+class LocalConnectorBackend(Backend):
     """Local filesystem connector - reference mode without data duplication.
 
     Mounts an external local folder into Nexus VFS. Files remain in their
@@ -58,14 +55,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
     LocalConnectorBackend is similar to GDriveConnector but for local filesystem:
     - Both use backend_path (not content_hash) for path-based access
-    - Both support full indexing via sync_mount
-    - LocalConnectorBackend doesn't need L2 cache (local disk IS the storage)
-
-    Caching:
-    - Uses L1-only mode (l1_only=True) - no L2 PostgreSQL
-    - L1 cache stores metadata + disk_path pointing to original file
-    - On L1 hit, content is read via mmap from original file
-    - On L1 miss, reads file and populates L1 cache
+    - Both support full indexing via connector sync loop
 
     Storage structure:
         mount_point: /mnt/local-projects
@@ -82,14 +72,8 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.DIRECTORY_LISTING,
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
         }
     )
-
-    # Cache configuration: L1 only, no L2 (PostgreSQL)
-    # Local disk is already fast, no need for persistent cache layer
-    l1_only = True
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "local_path": ConnectionArg(
@@ -198,90 +182,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
         return resolved
 
-    def get_physical_path(self, virtual_path: str) -> Path:
-        """Get the physical path for file watching and L1 cache.
-
-        This method is called by:
-        - CacheConnectorMixin to get disk_path for L1 cache in l1_only mode
-
-        Args:
-            virtual_path: Path relative to mount point
-
-        Returns:
-            Absolute physical path on local filesystem
-        """
-        return self._to_physical(virtual_path)
-
-    def get_watch_root(self) -> Path:
-        """Get the root path to watch for changes.
-
-        Returns:
-            The local_path that was mounted
-        """
-        return self.local_path
-
-    def get_file_info(
-        self,
-        path: str,
-        context: "OperationContext | None" = None,
-    ) -> "FileInfo":
-        """
-        Get file metadata for delta sync change detection (Issue #1127).
-
-        Returns local file metadata including size, mtime, and inode-based version
-        for efficient change detection during incremental sync.
-
-        Args:
-            path: Virtual file path (or backend_path from context)
-            context: Operation context with optional backend_path
-
-        Returns:
-            FileInfo containing size, mtime, backend_version
-
-        Raises:
-            NexusFileNotFoundError: If file does not exist
-            BackendError: On permission or OS errors
-        """
-        from datetime import datetime
-
-        try:
-            # Get backend path
-            if context and context.backend_path:
-                backend_path = context.backend_path
-            else:
-                backend_path = path.lstrip("/")
-
-            physical = self._to_physical(backend_path)
-
-            if not physical.exists():
-                raise NexusFileNotFoundError(path)
-
-            # Get file stats
-            stat = physical.stat(follow_symlinks=self.follow_symlinks)
-
-            size = stat.st_size
-            mtime = datetime.fromtimestamp(stat.st_mtime, tz=UTC)
-
-            # Build backend_version: inode + mtime_ns for robust change detection
-            # This combination detects both content changes (mtime) and file replacement (inode)
-            backend_version = f"{stat.st_ino}:{stat.st_mtime_ns}"
-
-            return FileInfo(
-                size=size,
-                mtime=mtime,
-                backend_version=backend_version,
-                content_hash=None,  # Not computed to avoid reading file content
-            )
-
-        except NexusFileNotFoundError:
-            raise
-        except FileNotFoundError as e:
-            raise NexusFileNotFoundError(path) from e
-        except PermissionError as e:
-            raise BackendError(f"Permission denied: {path} - {e}") from e
-        except OSError as e:
-            raise BackendError(f"Failed to get file info: {e}") from e
-
     # =========================================================================
     # Content Operations (with L1 Caching)
     # =========================================================================
@@ -291,17 +191,12 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         content_id: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
-        """Read file content with L1 caching.
+        """Read file content directly from local disk.
 
-        For LocalConnectorBackend, content_hash is ignored - we use context.backend_path.
-
-        Flow:
-        1. Check L1 cache (TTL-based)
-        2. If hit, return cached content (mmap from original file)
-        3. If miss, read from disk and populate L1 cache
+        For LocalConnectorBackend, content_id is ignored - we use context.backend_path.
 
         Args:
-            content_hash: Ignored (LocalConnectorBackend uses path-based access)
+            content_id: Ignored (LocalConnectorBackend uses path-based access)
             context: Operation context with backend_path
 
         Returns:
@@ -315,20 +210,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             raise BackendError("LocalConnectorBackend requires context with backend_path")
 
         path = context.backend_path
-        cache_path = context.virtual_path if context.virtual_path else path
-
-        # Step 1: Check L1 cache
-        if self._has_caching():
-            try:
-                cached = self._read_from_cache(cache_path, original=True)
-                if cached and not cached.stale and cached.content_binary:
-                    logger.info(f"[LocalConnectorBackend] L1 cache hit: {cache_path}")
-                    return cached.content_binary
-            except Exception as e:
-                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
-
-        # Step 2: L1 miss - read from disk
-        logger.debug(f"[LocalConnectorBackend] L1 cache miss, reading from disk: {path}")
         physical = self._to_physical(path)
 
         if not physical.exists():
@@ -337,25 +218,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             raise BackendError(f"Not a file: {path}")
 
         try:
-            content = physical.read_bytes()
+            return physical.read_bytes()
         except PermissionError as e:
             raise BackendError(f"Permission denied: {path} - {e}") from e
         except OSError as e:
             raise BackendError(f"Read error: {e}") from e
-
-        # Step 3: Populate L1 cache for future reads
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
-
-        return content
 
     def write_content(
         self,
@@ -369,7 +236,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
         Unlike CAS-based backends, this writes directly to the file.
         Returns WriteResult with content hash and size.
-        Invalidates L1 cache after write.
 
         Args:
             content: Bytes to write
@@ -406,20 +272,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             physical.parent.mkdir(parents=True, exist_ok=True)
             physical.write_bytes(content)
 
-            # Invalidate/update L1 cache
-            cache_path = context.virtual_path if context and context.virtual_path else write_path
-            if self._has_caching():
-                try:
-                    zone_id = getattr(context, "zone_id", None) if context else None
-                    self._write_to_cache(
-                        path=cache_path,
-                        content=content,
-                        zone_id=zone_id,
-                    )
-                except Exception as e:
-                    logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
-
-            # Return content hash and size for consistency
             content_hash = hash_content(content)
             return WriteResult(content_id=content_hash, version=content_hash, size=len(content))
         except PermissionError as e:
@@ -455,54 +307,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except (PermissionError, OSError):
             return []
 
-    def list_dir_detailed(
-        self,
-        path: str = "",
-        context: "OperationContext | None" = None,
-    ) -> list[dict[str, Any]]:
-        """List directory contents with detailed metadata.
-
-        Args:
-            path: Virtual path relative to mount point (default: root)
-            context: Operation context (unused for local connector)
-
-        Returns:
-            List of entry dicts with name, type, size, modified.
-
-        Raises:
-            NexusFileNotFoundError: If directory does not exist.
-            BackendError: If path is not a directory, permission denied, or OS error.
-        """
-        physical = self._to_physical(path)
-
-        if not physical.exists():
-            raise NexusFileNotFoundError(path, message=f"Directory not found: {path}")
-        if not physical.is_dir():
-            raise BackendError(f"Not a directory: {path}", backend="local_connector", path=path)
-
-        try:
-            entries = []
-            for item in physical.iterdir():
-                try:
-                    stat = item.stat(follow_symlinks=self.follow_symlinks)
-                    is_dir = item.is_dir()
-                    entry = {
-                        "name": item.name,
-                        "type": "directory" if is_dir else "file",
-                        "size": stat.st_size if not is_dir else 0,
-                        "modified": stat.st_mtime,
-                    }
-                    entries.append(entry)
-                except OSError:
-                    # Skip entries we can't stat (broken symlinks, permission issues)
-                    logger.debug(f"Skipping unreadable entry: {item}")
-                    continue
-            return entries
-        except PermissionError as e:
-            raise BackendError(f"Permission denied: {path} - {e}") from e
-        except OSError as e:
-            raise BackendError(f"List error: {e}") from e
-
     def exists(
         self,
         path: str,
@@ -523,59 +327,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             # Path escapes mount root
             return False
 
-    def is_dir(
-        self,
-        path: str,
-        context: "OperationContext | None" = None,
-    ) -> bool:
-        """Check if path is a directory.
-
-        Args:
-            path: Virtual path relative to mount point
-            context: Operation context (unused)
-
-        Returns:
-            True if path is a directory, False otherwise
-        """
-        try:
-            return self._to_physical(path).is_dir()
-        except BackendError:
-            return False
-
-    def delete(
-        self,
-        path: str,
-        context: "OperationContext | None" = None,
-    ) -> None:
-        """Delete file or empty directory.
-
-        Args:
-            path: Virtual path relative to mount point
-            context: Operation context (unused)
-
-        Raises:
-            BackendError: If read-only, permission denied, or OS error.
-            NexusFileNotFoundError: If path does not exist.
-        """
-        if self.readonly:
-            raise BackendError("Backend is read-only", backend="local_connector", path=path)
-
-        physical = self._to_physical(path)
-
-        try:
-            if physical.is_file():
-                physical.unlink()
-            elif physical.is_dir():
-                physical.rmdir()  # Only empty directories
-            else:
-                raise NexusFileNotFoundError(path, message=f"Path not found: {path}")
-        except NexusFileNotFoundError:
-            raise
-        except PermissionError as e:
-            raise BackendError(f"Permission denied: {path} - {e}") from e
-        except OSError as e:
-            raise BackendError(f"Delete error: {e}") from e
-
     # =========================================================================
     # Backend Interface Methods (for Backend abstract base class)
     # =========================================================================
@@ -593,9 +344,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         Raises:
             BackendError: Always (hash-based deletion not supported)
         """
-        raise BackendError(
-            "delete_content by hash not supported for local_connector. Use delete(path) instead."
-        )
+        raise BackendError("delete_content by hash not supported for local_connector.")
 
     def content_exists(
         self,
@@ -692,7 +441,10 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         context: "OperationContext | None" = None,
     ) -> bool:
         """Check if path is a directory."""
-        return self.is_dir(path, context)
+        try:
+            return self._to_physical(path).is_dir()
+        except BackendError:
+            return False
 
     def rename(
         self,
@@ -729,75 +481,35 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except OSError as e:
             raise BackendError(f"Rename error: {e}") from e
 
-    def stat(
+    def delete(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> dict[str, Any]:
-        """Get file or directory metadata.
+    ) -> None:
+        """Delete a file from the host filesystem.
+
+        Called by kernel sys_unlink for PAS backend propagation —
+        ensures the physical file is removed when metadata is deleted.
 
         Args:
             path: Virtual path relative to mount point
             context: Operation context (unused)
 
-        Returns:
-            Dict with size, mtime, ctime, atime, is_dir, is_file, is_symlink, mode.
-
         Raises:
-            NexusFileNotFoundError: If path does not exist.
-            BackendError: If permission denied or OS error.
+            BackendError: If read-only or OS error.
         """
+        if self.readonly:
+            raise BackendError("Backend is read-only", backend="local_connector", path=path)
+
         physical = self._to_physical(path)
-
         if not physical.exists():
-            raise NexusFileNotFoundError(path, message=f"Path not found: {path}")
+            return  # Already gone — idempotent
 
         try:
-            st = physical.stat(follow_symlinks=self.follow_symlinks)
-            return {
-                "size": st.st_size,
-                "mtime": st.st_mtime,
-                "ctime": st.st_ctime,
-                "atime": st.st_atime,
-                "is_dir": physical.is_dir(),
-                "is_file": physical.is_file(),
-                "is_symlink": physical.is_symlink(),
-                "mode": st.st_mode,
-            }
-        except PermissionError as e:
-            raise BackendError(f"Permission denied: {path} - {e}") from e
-        except OSError as e:
-            raise BackendError(f"Stat error: {e}") from e
-
-    def glob(
-        self,
-        pattern: str,
-        context: "OperationContext | None" = None,
-    ) -> list[str]:
-        """Find files matching a glob pattern.
-
-        Args:
-            pattern: Glob pattern (e.g., "*.txt", "**/*.py")
-            context: Operation context (unused)
-
-        Returns:
-            List of matching paths (relative to mount).
-
-        Raises:
-            BackendError: If permission denied or OS error.
-        """
-        try:
-            matches = []
-            for match in self.local_path.glob(pattern):
-                # Security: ensure match is within mount root
-                try:
-                    rel_path = match.relative_to(self.local_path)
-                    matches.append(str(rel_path).replace("\\", "/"))
-                except ValueError:
-                    # Path escapes mount root (shouldn't happen with glob)
-                    continue
-            return sorted(matches)
+            if physical.is_file() or physical.is_symlink():
+                physical.unlink()
+            # Directories handled by rmdir, not delete
         except PermissionError as e:
             raise BackendError(f"Permission denied: {e}") from e
         except OSError as e:
-            raise BackendError(f"Glob error: {e}") from e
+            raise BackendError(f"Delete error: {e}") from e

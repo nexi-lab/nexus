@@ -283,10 +283,10 @@ class PathAddressingEngine(Backend):
             return str(get_ver(blob_path))
         return None
 
-    # === Internal I/O (used by BackendIOService via duck typing) ===
+    # === Internal I/O ===
 
     def _download(self, blob_path: str, version_id: str | None = None) -> tuple[bytes, str | None]:
-        """Thin wrapper around transport.fetch for BackendIOService compat."""
+        """Thin wrapper around transport.fetch."""
         return self._transport.fetch(blob_path, version_id)
 
     def _bulk_download(
@@ -295,11 +295,7 @@ class PathAddressingEngine(Backend):
         version_ids: dict[str, str] | None = None,
         max_workers: int = 20,
     ) -> dict[str, bytes]:
-        """Parallel download of multiple blobs via transport.
-
-        Used by BackendIOService.batch_read_from_backend() for efficient
-        bulk downloads in the sync pipeline.
-        """
+        """Parallel download of multiple blobs via transport."""
         if not blob_paths:
             return {}
 

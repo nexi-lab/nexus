@@ -240,7 +240,7 @@ class BatchContentProtocol(Protocol):
 class DirectoryListingProtocol(Protocol):
     """Extended directory operations — listing and file metadata.
 
-    Used by search_service, sync_service, and write_back_service for
+    Used by search_service and connector sync loop for
     directory enumeration and delta sync change detection.
     """
 
@@ -271,7 +271,7 @@ class SignedUrlProtocol(Protocol):
 class PathDeleteProtocol(Protocol):
     """Backend supports path-based delete (Issue #2069).
 
-    Replaces 3-way hasattr fallback chain in write_back_service.py.
+    Backend supports path-based delete operations.
     """
 
     def delete(

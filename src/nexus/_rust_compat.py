@@ -83,7 +83,6 @@ _CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     "search": ("grep_bulk", "grep_files_mmap", "glob_match_bulk"),
     "storage": (
         "BloomFilter",
-        "L1MetadataCache",
         "VFSLockManager",
         "VFSSemaphore",
         "VolumeEngine",
@@ -173,7 +172,6 @@ PathTrie = _get("PathTrie")
 
 # Classes still exported as standalone
 BloomFilter = _get("BloomFilter")
-L1MetadataCache = _get("L1MetadataCache")
 RingBufferCore = _get("RingBufferCore")
 SharedRingBufferCore = _get("SharedRingBufferCore")
 SharedStreamBufferCore = _get("SharedStreamBufferCore")

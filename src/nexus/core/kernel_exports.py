@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from nexus_kernel import (
     BloomFilter,
-    L1MetadataCache,
     PyKernel,
     PyOperationContext,
     PyRustRouteResult,
@@ -77,7 +76,6 @@ from nexus_kernel import (
 
 __all__ = [
     "BloomFilter",
-    "L1MetadataCache",
     "PyKernel",
     "PyOperationContext",
     "PyRustRouteResult",

@@ -317,3 +317,134 @@ class MetastoreABC(ABC):
         """Store multiple metadata entries in the underlying store."""
         for meta in metadata_list:
             self._put_raw(meta)
+
+
+class RustMetastoreProxy(MetastoreABC):
+    """MetastoreABC implementation backed by Rust RedbMetastore.
+
+    Delegates all operations to the Rust kernel's metastore via PyKernel
+    methods (metastore_get, metastore_put, etc.). Rust kernel exclusively
+    owns the redb file — Python no longer opens it directly.
+
+    The Python dcache layer is bypassed — Rust DCache (DashMap ~100ns) is
+    the authoritative read cache. All public methods override MetastoreABC
+    to skip the Python dict dcache.
+
+    Usage:
+        kernel.set_metastore_path(str(redb_path))
+        metadata_store = RustMetastoreProxy(kernel)
+    """
+
+    def __init__(self, kernel: Any, redb_path: str) -> None:
+        super().__init__()
+        self._rust_kernel = kernel
+        kernel.set_metastore_path(redb_path)
+
+    # ── Public API (bypass Python dcache — Rust DCache is authoritative) ─
+
+    def get(self, path: str) -> FileMetadata | None:
+        """Get metadata directly from Rust metastore (no Python dcache)."""
+        result: FileMetadata | None = self._rust_kernel.metastore_get(path)
+        return result
+
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:  # noqa: ARG002
+        """Store metadata via Rust metastore."""
+        self._rust_kernel.metastore_put(metadata)
+        return None
+
+    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:  # noqa: ARG002
+        """Delete metadata via Rust metastore + evict from Rust DCache."""
+        deleted = self._rust_kernel.metastore_delete(path)
+        self._rust_kernel.dcache_evict(path)
+        return {"deleted": deleted}
+
+    def exists(self, path: str) -> bool:
+        """Check existence via Rust metastore."""
+        result: bool = self._rust_kernel.metastore_exists(path)
+        return result
+
+    def list(
+        self,
+        prefix: str = "",
+        recursive: bool = True,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> builtins.list[FileMetadata]:
+        """List metadata from Rust metastore."""
+        result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
+        return result
+
+    def dcache_evict_prefix(self, prefix: str) -> int:
+        """Evict all dcache entries under prefix (Rust DCache only)."""
+        n: int = self._rust_kernel.dcache_evict_prefix(prefix)
+        return n
+
+    # ── Batch operations ─────────────────────────────────────────────────
+
+    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
+        """Batch get via Rust metastore (no Python dcache)."""
+        results = self._rust_kernel.metastore_get_batch(list(paths))
+        return dict(zip(paths, results, strict=True))
+
+    def put_batch(
+        self,
+        metadata_list: Sequence[FileMetadata],
+        *,
+        consistency: str = "sc",  # noqa: ARG002
+        skip_snapshot: bool = False,  # noqa: ARG002
+    ) -> None:
+        """Batch put via Rust metastore."""
+        self._rust_kernel.metastore_put_batch(list(metadata_list))
+
+    def delete_batch(self, paths: Sequence[str]) -> None:
+        """Batch delete via Rust metastore."""
+        for p in paths:
+            self._rust_kernel.metastore_delete(p)
+            self._rust_kernel.dcache_evict(p)
+
+    # ── Implicit directory check ─────────────────────────────────────────
+
+    def is_implicit_directory(self, path: str) -> bool:
+        """Check if path is an implicit directory (has children but no metadata)."""
+        prefix = path.rstrip("/") + "/"
+        entries = self._rust_kernel.metastore_list(prefix)
+        return len(entries) > 0
+
+    # ── Abstract method implementations (fallback, used by base class) ───
+
+    def _get_raw(self, path: str) -> FileMetadata | None:
+        result: FileMetadata | None = self._rust_kernel.metastore_get(path)
+        return result
+
+    def _put_raw(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:  # noqa: ARG002
+        self._rust_kernel.metastore_put(metadata)
+        return None
+
+    def _delete_raw(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:  # noqa: ARG002
+        deleted = self._rust_kernel.metastore_delete(path)
+        return {"deleted": deleted}
+
+    def _exists_raw(self, path: str) -> bool:
+        result: bool = self._rust_kernel.metastore_exists(path)
+        return result
+
+    def _list_raw(
+        self,
+        prefix: str = "",
+        recursive: bool = True,  # noqa: ARG002
+        **kwargs: Any,  # noqa: ARG002
+    ) -> builtins.list[FileMetadata]:
+        result: builtins.list[FileMetadata] = self._rust_kernel.metastore_list(prefix)
+        return result
+
+    def close(self) -> None:
+        """No-op — Rust kernel manages redb lifecycle."""
+
+    @property
+    def cache_stats(self) -> dict[str, Any]:
+        """Return Rust DCache stats (no Python dcache)."""
+        return {
+            "hits": 0,
+            "misses": 0,
+            "size": 0,
+            "rust": self._rust_kernel.dcache_stats(),
+        }

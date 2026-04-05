@@ -18,7 +18,6 @@ Storage structure:
 from __future__ import annotations
 
 import logging
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
@@ -41,8 +40,8 @@ from nexus.backends.connectors.calendar.schemas import (
 )
 from nexus.backends.connectors.calendar.transport import CalendarTransport
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
+from nexus.contracts.constants import IMMUTABLE_VERSION
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -62,7 +61,6 @@ logger = logging.getLogger(__name__)
 )
 class PathCalendarBackend(
     PathAddressingEngine,
-    CacheConnectorMixin,
     OAuthConnectorMixin,
     ReadmeDocMixin,
     ValidatedMixin,
@@ -76,15 +74,9 @@ class PathCalendarBackend(
     - OAuth 2.0 authentication (per-user credentials)
     - Agent-friendly validation with self-correcting errors
     - Checkpoint/rollback for reversible operations
-    - Persistent caching via CacheConnectorMixin
     """
 
-    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
-        {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
-        }
-    )
+    _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES
 
     # ReadmeDocMixin config
     SKILL_NAME = "gcalendar"
@@ -173,9 +165,6 @@ send_notifications: true
     }
 
     ERROR_REGISTRY = ERROR_REGISTRY
-
-    # Enable metadata-based listing
-    use_metadata_listing = True
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "token_manager_db": ConnectionArg(
@@ -320,27 +309,8 @@ send_notifications: true
 
         self._bind_transport(context)
 
-        # Cache check
-        cache_path = self._get_cache_path(context) or context.backend_path
-        if self._has_caching():
-            cached = self._read_from_cache(cache_path, original=True)
-            if cached and not cached.stale and cached.content_binary:
-                return cached.content_binary
-
         # Delegate to PathAddressingEngine → transport.fetch
-        content = super().read_content(content_id, context)
-
-        # Cache result
-        if self._has_caching():
-            with suppress(Exception):
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    backend_version=IMMUTABLE_VERSION,
-                    zone_id=zone_id,
-                )
-        return content
+        return super().read_content(content_id, context)
 
     def write_content(
         self,
@@ -528,11 +498,6 @@ send_notifications: true
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         if not context:
             return 0
-
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            cached_size = self._get_size_from_cache(context.virtual_path)
-            if cached_size is not None:
-                return cached_size
 
         self._bind_transport(context)
         return super().get_content_size(content_id, context)

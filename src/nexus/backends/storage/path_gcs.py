@@ -2,7 +2,6 @@
 
 Thin subclass of PathAddressingEngine that:
 - Creates a GCSTransport for raw GCS I/O (shared with GCSBackend CAS)
-- Mixes in CacheConnectorMixin for L1+L2 caching
 - Registers as "path_gcs" via @register_connector
 - Adds GCS-specific features: signed URLs, versioning, batch version fetch
 
@@ -26,14 +25,12 @@ from typing import TYPE_CHECKING
 from nexus.backends.base.backend import FileInfo, HandlerStatusResponse
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.backend_features import BLOB_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
-    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +42,11 @@ logger = logging.getLogger(__name__)
     requires=["google-cloud-storage"],
     service_name="gcs",
 )
-class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
-    """Google Cloud Storage connector with direct path mapping and caching.
+class PathGCSBackend(PathAddressingEngine):
+    """Google Cloud Storage connector with direct path mapping.
 
     Features:
     - Direct path mapping (file.txt → file.txt in GCS)
-    - Optional local caching via CacheConnectorMixin
     - Native GCS versioning support
     - Signed URL generation
     - Batch version fetch (single API call for 1000s of files)
@@ -58,8 +54,6 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
 
     _BACKEND_FEATURES = BLOB_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
             BackendFeature.SIGNED_URL,
             BackendFeature.NATIVE_VERSIONING,
             BackendFeature.RESUMABLE_UPLOAD,
@@ -107,7 +101,6 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
         credentials_path: str | None = None,
         prefix: str = "",
         access_token: str | None = None,
-        record_store: "RecordStoreABC | None" = None,
         operation_timeout: float = 60.0,
         upload_timeout: float = 300.0,
     ):
@@ -135,9 +128,6 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
             self._gcs_transport = transport
             self._operation_timeout = operation_timeout
             self._upload_timeout = upload_timeout
-
-            # CacheConnectorMixin needs session_factory
-            self.session_factory = record_store.session_factory if record_store else None
 
         except BackendError:
             raise
@@ -272,7 +262,7 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
             "method": "GET",
         }
 
-    # === Content Operations with Caching ===
+    # === Content Operations ===
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
         if not context or not context.backend_path:
@@ -281,38 +271,13 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 backend="path_gcs",
             )
 
-        cache_path = self._get_cache_path(context) or context.backend_path
         blob_path = self._get_key_path(context.backend_path)
 
-        # Check cache first
-        if self._has_caching():
-            try:
-                cached = self._read_from_cache(cache_path, original=True)
-                if cached and not cached.stale and cached.content_binary:
-                    return cached.content_binary
-            except Exception as e:
-                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
-
-        # Read from GCS
         version_id = None
         if self.versioning_enabled and content_id and self._is_version_id(content_id):
             version_id = content_id
 
-        content, generation = self._transport.fetch(blob_path, version_id)
-
-        # Cache the result
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    backend_version=generation,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
-
+        content, _generation = self._transport.fetch(blob_path, version_id)
         return content
 
     def write_content(
@@ -329,26 +294,9 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 backend="path_gcs",
             )
 
-        virtual_path = context.backend_path
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            virtual_path = context.virtual_path
-
         blob_path = self._get_key_path(context.backend_path)
         content_type = self._detect_content_type(context.backend_path, content)
         new_version = self._transport.store(blob_path, content, content_type)
-
-        # Update cache
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=virtual_path,
-                    content=content,
-                    backend_version=new_version,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         content_hash = new_version if new_version else self._compute_hash(content)
 
@@ -365,12 +313,5 @@ class PathGCSBackend(PathAddressingEngine, CacheConnectorMixin):
                 message="GCS connector requires backend_path in OperationContext.",
                 backend="path_gcs",
             )
-
-        virtual_path = context.backend_path
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            virtual_path = context.virtual_path
-
-        if expected_version is not None:
-            self._check_version(virtual_path, expected_version, context)
 
         return self.write_content(content, context=context)

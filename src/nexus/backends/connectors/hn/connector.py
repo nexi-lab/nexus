@@ -21,7 +21,6 @@ Virtual filesystem structure:
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
@@ -29,7 +28,6 @@ from nexus.backends.base.path_addressing_engine import PathAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
 from nexus.backends.connectors.base import ReadmeDocMixin
 from nexus.backends.connectors.hn.transport import VALID_FEEDS, HNTransport
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.contracts.backend_features import BackendFeature
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
@@ -50,24 +48,19 @@ logger = logging.getLogger(__name__)
 )
 class PathHNBackend(
     PathAddressingEngine,
-    CacheConnectorMixin,
     ReadmeDocMixin,
 ):
     """HackerNews connector: PathAddressingEngine + HNTransport composition.
 
     Features:
     - Read-only (HN API doesn't support posting)
-    - TTL-based caching via CacheConnectorMixin
     - Nested comments included in story files
     - No authentication required (public API)
     """
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = frozenset(
         {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
             BackendFeature.README_DOC,
-            BackendFeature.SYNC,
         }
     )
 
@@ -159,7 +152,7 @@ class PathHNBackend(
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> bytes:
-        """Read content from HN API via virtual path, with cache check.
+        """Read content from HN API via virtual path.
 
         For HN connector, content_hash is ignored -- we use backend_path from context.
         """
@@ -169,33 +162,8 @@ class PathHNBackend(
                 backend="hn",
             )
 
-        path = context.backend_path
-        cache_path = self._get_cache_path(context) or path
-
-        # Check cache first (if caching enabled)
-        if self._has_caching():
-            cached = self._read_from_cache(cache_path, original=True)
-            if cached and not cached.stale and cached.content_binary:
-                logger.info("[HN] Cache hit: %s", path)
-                return cached.content_binary
-
         # Delegate to PathAddressingEngine (which calls transport.fetch)
-        content = super().read_content(content_hash, context)
-
-        # Cache the result
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    backend_version=None,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.warning("Failed to cache %s: %s", path, e)
-
-        return content
+        return super().read_content(content_hash, context)
 
     def write_content(
         self,
@@ -234,14 +202,7 @@ class PathHNBackend(
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> int:
-        """Get content size (cache-first, efficient)."""
-        # Cache optimization: check cache first for actual size
-        if context and hasattr(context, "virtual_path") and context.virtual_path:
-            cached_size = self._get_size_from_cache(context.virtual_path)
-            if cached_size is not None:
-                return cached_size
-
-        # Fallback: return approximate size estimate
+        """Get content size (approximate estimate)."""
         return 10 * 1024  # 10 KB estimate
 
     # =================================================================
@@ -321,87 +282,3 @@ class PathHNBackend(
             raise FileNotFoundError(f"Directory not found: {path}")
 
         return sorted(entries)
-
-    # =================================================================
-    # Sync operation -- pre-fetch stories to cache
-    # =================================================================
-
-    def sync(
-        self,
-        path: str | None = None,
-        mount_point: str | None = None,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        max_file_size: int | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> SyncResult:
-        """Sync HN content to cache.
-
-        For HN connector, sync pre-fetches stories and caches them.
-        """
-        result = SyncResult()
-
-        # Determine which feeds to sync
-        if path:
-            path_clean = path.strip("/")
-            if path_clean.startswith("hn/"):
-                path_clean = path_clean[3:]
-            feeds = [path_clean] if path_clean in VALID_FEEDS else []
-        else:
-            feeds = list(VALID_FEEDS)
-
-        if not feeds:
-            return result
-
-        async def _sync_feeds() -> None:
-            for feed in feeds:
-                try:
-                    story_ids = await self._hn_transport._fetch_story_ids(feed)
-                    ids_to_sync = story_ids[: self.stories_per_feed]
-                    result.files_scanned += len(ids_to_sync)
-
-                    for rank, story_id in enumerate(ids_to_sync, start=1):
-                        try:
-                            story = await self._hn_transport._fetch_story_with_comments(
-                                story_id,
-                                include_comments=self.include_comments,
-                            )
-                            story["_rank"] = rank
-                            story["_feed"] = feed
-
-                            content = json.dumps(story, indent=2, ensure_ascii=False).encode(
-                                "utf-8"
-                            )
-
-                            if self._has_caching():
-                                backend_path = f"{feed}/{rank}.json"
-                                virtual_path = (
-                                    f"{mount_point.rstrip('/')}/{backend_path}"
-                                    if mount_point
-                                    else f"/{backend_path}"
-                                )
-
-                                zone_id = getattr(context, "zone_id", None)
-                                self._write_to_cache(
-                                    path=virtual_path,
-                                    content=content,
-                                    backend_version=None,
-                                    zone_id=zone_id,
-                                )
-
-                            result.files_synced += 1
-                            result.bytes_synced += len(content)
-
-                        except Exception as e:
-                            result.errors.append(f"Failed to sync {feed}/{rank}: {e}")
-
-                except Exception as e:
-                    result.errors.append(f"Failed to sync feed {feed}: {e}")
-
-            await self._hn_transport._close_client()
-
-        from nexus.lib.sync_bridge import run_sync
-
-        run_sync(_sync_feeds())
-        return result

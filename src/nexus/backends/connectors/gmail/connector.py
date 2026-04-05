@@ -50,8 +50,8 @@ from nexus.backends.connectors.gmail.schemas import (
 )
 from nexus.backends.connectors.gmail.transport import LABEL_FOLDERS, GmailTransport
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
+from nexus.contracts.constants import IMMUTABLE_VERSION
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import WriteResult
 
@@ -71,7 +71,6 @@ logger = logging.getLogger(__name__)
 )
 class PathGmailBackend(
     PathAddressingEngine,
-    CacheConnectorMixin,
     OAuthConnectorMixin,
     ReadmeDocMixin,
     ValidatedMixin,
@@ -83,16 +82,12 @@ class PathGmailBackend(
     Features:
     - OAuth 2.0 authentication (per-user credentials)
     - Label-based folder structure (INBOX/, SENT/, STARRED/, etc.)
-    - Persistent caching via CacheConnectorMixin
     - Batch download via Gmail batch API
     - Immutable version for cache optimization
     """
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
-            BackendFeature.WRITE_BACK,
             BackendFeature.README_DOC,
         }
     )
@@ -149,9 +144,6 @@ class PathGmailBackend(
 
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
-
-    # Enable metadata-based listing (use file_paths table for fast queries)
-    use_metadata_listing = True
 
     # Connection arguments for registry-based instantiation
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -423,30 +415,8 @@ class PathGmailBackend(
         # Bind transport to request context for OAuth
         self._bind_transport(context)
 
-        # Cache check
-        cache_path = self._get_cache_path(context) or context.backend_path
-        if self._has_caching():
-            cached = self._read_from_cache(cache_path, original=True)
-            if cached and not cached.stale and cached.content_binary:
-                return cached.content_binary
-
         # Delegate to PathAddressingEngine (which calls transport.fetch)
-        content = super().read_content(content_id, context)
-
-        # Cache the result
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    backend_version=IMMUTABLE_VERSION,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.debug("Gmail cache write failed for %s: %s", cache_path, e)
-
-        return content
+        return super().read_content(content_id, context)
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         """Trash a Gmail message (recoverable — not permanent delete).
@@ -491,12 +461,6 @@ class PathGmailBackend(
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         if context is None or not hasattr(context, "backend_path"):
             raise ValueError("Gmail connector requires backend_path in OperationContext")
-
-        # Cache optimization: check cache first (crucial for ls -la)
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            cached_size = self._get_size_from_cache(context.virtual_path)
-            if cached_size is not None:
-                return cached_size
 
         # Bind transport and delegate
         self._bind_transport(context)

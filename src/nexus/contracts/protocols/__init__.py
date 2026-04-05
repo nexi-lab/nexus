@@ -26,7 +26,7 @@ from nexus.contracts.protocols.entity_registry import EntityRegistryProtocol
 from nexus.contracts.protocols.file_reader import FileReaderProtocol
 from nexus.contracts.protocols.lease import LeaseManagerProtocol, LeaseState
 from nexus.contracts.protocols.mcp import MCPProtocol
-from nexus.contracts.protocols.mount import MountProtocol, ProgressCallback
+from nexus.contracts.protocols.mount import MountProtocol
 from nexus.contracts.protocols.mount_persist import MountPersistProtocol
 from nexus.contracts.protocols.namespace_manager import NamespaceManagerProtocol
 from nexus.contracts.protocols.oauth import OAuthProtocol
@@ -41,13 +41,10 @@ from nexus.contracts.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.contracts.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.contracts.protocols.service_lifecycle import PersistentService
 from nexus.contracts.protocols.share_link import ShareLinkProtocol
-from nexus.contracts.protocols.sync import SyncContext, SyncResult, SyncServiceProtocol
-from nexus.contracts.protocols.sync_job import SyncJobProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.version import VersionProtocol
 from nexus.contracts.protocols.workflow_dispatch import WorkflowDispatchProtocol
 from nexus.contracts.protocols.workspace_manager import WorkspaceManagerProtocol
-from nexus.contracts.protocols.write_back import WriteBackProtocol
 
 __all__ = [
     "APIKeyCreatorProtocol",
@@ -69,20 +66,14 @@ __all__ = [
     "PersistentService",
     "PermissionEnforcerProtocol",
     "PermissionProtocol",
-    "ProgressCallback",
     "ReBACBrickProtocol",
     "SandboxProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
     "SearchProtocol",
     "ShareLinkProtocol",
-    "SyncContext",
-    "SyncJobProtocol",
-    "SyncResult",
-    "SyncServiceProtocol",
     "TimeTravelProtocol",
     "VersionProtocol",
     "WorkflowDispatchProtocol",
     "WorkspaceManagerProtocol",
-    "WriteBackProtocol",
 ]

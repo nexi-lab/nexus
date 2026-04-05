@@ -65,11 +65,6 @@ EXPECTED_MODELS = [
     "AgentEventModel",
     # Delegation (Issue #1271)
     "DelegationRecordModel",
-    # Sync
-    "SyncJobModel",
-    "BackendChangeLogModel",
-    "SyncBacklogModel",
-    "ConflictLogModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
     # Spending Policy (Issue #1358)
@@ -82,8 +77,6 @@ EXPECTED_MODELS = [
     "SecretsAuditLogModel",
     # Scheduler (Issue #1469)
     "ScheduledTaskModel",
-    # Sync
-    "PendingOperationModel",
     # Identity
     "AgentKeyModel",
     "AgentCredentialModel",

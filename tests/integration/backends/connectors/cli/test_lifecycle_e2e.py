@@ -1,12 +1,12 @@
 """Golden path E2E integration test for CLI connector lifecycle (Issue #3148, Decision #11A).
 
 Tests the full pipeline:
-    mount → post-mount hooks → skill doc generation → sync →
+    mount → post-mount hooks → skill doc generation →
     schema regeneration → agent reads skill doc → agent writes YAML →
     schema validation → CLI execution (fake) → VFS hooks
 
-This uses the FakeConnectorSyncProvider and mock filesystem to test
-the orchestration without requiring real CLI tools or OAuth tokens.
+This uses a mock filesystem to test the orchestration without requiring
+real CLI tools or OAuth tokens.
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -22,12 +22,6 @@ from nexus.backends.connectors.base import (
     Reversibility,
     TraitBasedMixin,
     ValidatedMixin,
-)
-from nexus.backends.connectors.cli.protocol import (
-    ConnectorSyncProvider,
-    FetchResult,
-    RemoteItem,
-    SyncPage,
 )
 from nexus.backends.connectors.cli.result import CLIErrorMapper, CLIResult, CLIResultStatus
 from nexus.contracts.backend_features import BackendFeature
@@ -81,7 +75,6 @@ class FakeGHConnector(ReadmeDocMixin, ValidatedMixin, TraitBasedMixin):
     _BACKEND_FEATURES = frozenset(
         {
             BackendFeature.README_DOC,
-            BackendFeature.WRITE_BACK,
             BackendFeature.CLI_BACKED,
         }
     )
@@ -92,36 +85,6 @@ class FakeGHConnector(ReadmeDocMixin, ValidatedMixin, TraitBasedMixin):
     @property
     def capabilities(self) -> frozenset[BackendFeature]:
         return self._BACKEND_FEATURES
-
-
-class FakeGHSyncProvider:
-    """Fake sync provider for GitHub issues."""
-
-    async def list_remote_items(
-        self,
-        path: str,
-        *,
-        since: str | None = None,
-        page_token: str | None = None,
-        page_size: int = 100,
-    ) -> SyncPage:
-        return SyncPage(
-            items=[
-                RemoteItem(
-                    item_id="issue-1",
-                    relative_path="issues/1.yaml",
-                    size=256,
-                    metadata={"title": "Test issue"},
-                ),
-            ],
-            state_token="sync-tok-1",
-        )
-
-    async def fetch_item(self, item_id: str) -> FetchResult:
-        return FetchResult(
-            relative_path="issues/1.yaml",
-            content=b"title: Test issue\nbody: This is a test\n",
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -228,33 +191,11 @@ class TestConnectorLifecycleE2E:
         assert enriched.error_code == "RATE_LIMITED"
         assert enriched.retryable is True
 
-    @pytest.mark.asyncio
-    async def test_step7_sync_with_fake_provider(self) -> None:
-        """Step 7: Sync provider returns items for indexing."""
-        provider = FakeGHSyncProvider()
-
-        # List remote items
-        page = await provider.list_remote_items("/")
-        assert len(page.items) == 1
-        assert page.state_token == "sync-tok-1"
-
-        # Fetch item content
-        fetched = await provider.fetch_item("issue-1")
-        assert fetched.content is not None
-        assert b"title: Test issue" in fetched.content
-
     def test_step8_capability_declaration(self) -> None:
         """Step 8: Connector declares correct capabilities."""
         connector = FakeGHConnector()
         assert connector.has_feature(BackendFeature.README_DOC)
-        assert connector.has_feature(BackendFeature.WRITE_BACK)
         assert connector.has_feature(BackendFeature.CLI_BACKED)
-
-    @pytest.mark.asyncio
-    async def test_step9_sync_provider_satisfies_protocol(self) -> None:
-        """Step 9: Fake sync provider satisfies ConnectorSyncProvider protocol."""
-        provider = FakeGHSyncProvider()
-        assert isinstance(provider, ConnectorSyncProvider)
 
 
 # ---------------------------------------------------------------------------

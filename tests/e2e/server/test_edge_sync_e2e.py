@@ -260,9 +260,9 @@ class TestIdempotencyOnReplay:
         HttpTransport(config, client=client)  # ensures config is valid
 
         # Use the queue directly to enqueue duplicate ops
-        from nexus.proxy.offline_queue import OfflineQueue
+        from nexus.proxy.queue_protocol import InMemoryQueue
 
-        queue = OfflineQueue(str(tmp_path / "queue.db"))
+        queue = InMemoryQueue()
         await queue.initialize()
 
         # Enqueue two operations with the same idempotency key
@@ -324,10 +324,10 @@ class TestVectorClockSerializationE2E:
 
     async def test_clock_persists_through_queue(self, tmp_path) -> None:  # noqa: ANN001
         """Vector clock stored in queue can be recovered."""
-        from nexus.proxy.offline_queue import OfflineQueue
+        from nexus.proxy.queue_protocol import InMemoryQueue
 
         vc = VectorClock(counters={"edge-1": 5, "cloud": 3})
-        queue = OfflineQueue(str(tmp_path / "vc_queue.db"))
+        queue = InMemoryQueue()
         await queue.initialize()
 
         try:

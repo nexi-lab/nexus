@@ -10,7 +10,7 @@ Mixins (in order of complexity):
 - CheckpointMixin: Rollback support for reversible operations
 
 Example:
-    >>> class MyConnector(Backend, CacheConnectorMixin, ReadmeDocMixin, ValidatedMixin):
+    >>> class MyConnector(Backend, ReadmeDocMixin, ValidatedMixin):
     ...     SKILL_NAME = "myconnector"
     ...     SCHEMAS = {"create": CreateSchema}
 """

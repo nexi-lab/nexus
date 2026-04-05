@@ -39,8 +39,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "metadata_list",
         "metadata_delete",
     ),
-    "sync": ("sync_mount",),
-    "sync_job": ("get_job", "list_jobs", "sync_mount_async", "cancel_sync_job"),
     "mount_persist": (
         "save_mount",
         "load_mount",
@@ -90,8 +88,6 @@ _CANONICAL_NAMES: dict[str, str] = {
     "rebac_service": "rebac",
     "mount_service": "mount",
     "gateway": "gateway",
-    "sync_service": "sync",
-    "sync_job_service": "sync_job",
     "mount_persist_service": "mount_persist",
     "mcp_service": "mcp",
     "oauth_service": "oauth",

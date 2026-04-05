@@ -11,7 +11,7 @@ because MountCoreService.add_mount is async. Database-only methods remain sync.
 
 Example:
     ```python
-    persist_service = MountPersistService(mount_manager, mount_service, sync_service)
+    persist_service = MountPersistService(mount_manager, mount_service)
 
     # Save mount config
     mount_id = await persist_service.save_mount(
@@ -30,7 +30,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.lib.context_utils import get_user_identity, get_zone_id
 
 if TYPE_CHECKING:
@@ -54,18 +53,15 @@ class MountPersistService:
         self,
         mount_manager: "MountManager | None",
         mount_service: "MountService | None",
-        sync_service: Any = None,
     ):
         """Initialize persist service.
 
         Args:
             mount_manager: MountManager for database operations
             mount_service: MountService for activating mounts
-            sync_service: Optional SyncService for auto-sync
         """
         self._manager = mount_manager
         self._mounts_ref: "MountService | None" = mount_service
-        self._sync = sync_service
 
     @property
     def _mounts(self) -> "MountService":
@@ -202,34 +198,29 @@ class MountPersistService:
             context=context,
         )
 
-    async def load_all_mounts(self, auto_sync: bool = False) -> dict[str, Any]:
+    async def load_all_mounts(self) -> dict[str, Any]:
         """Load all saved mount configurations.
-
-        Args:
-            auto_sync: If True, sync connector mounts after loading
 
         Returns:
             Dictionary with loading results:
             - loaded: Number of mounts loaded
-            - synced: Number of mounts synced
             - failed: Number of failures
             - errors: List of error messages
         """
         if not self._manager:
             logger.debug("Mount manager not available, skipping mount restoration")
-            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+            return {"loaded": 0, "failed": 0, "errors": []}
 
         saved_mounts = self._manager.list_mounts()
 
         if not saved_mounts:
             logger.info("No saved mounts found in database")
-            return {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+            return {"loaded": 0, "failed": 0, "errors": []}
 
         logger.info(f"Found {len(saved_mounts)} saved mount(s) to load")
 
         loaded = 0
         failed = 0
-        synced = 0
         errors: list[str] = []
 
         for mount in saved_mounts:
@@ -254,49 +245,15 @@ class MountPersistService:
                 loaded += 1
                 logger.info(f"Successfully loaded mount: {mount_point}")
 
-                # Auto-sync if requested
-                if auto_sync and self._sync:
-                    backend_type = mount["backend_type"]
-                    is_connector = "connector" in backend_type.lower() or backend_type.lower() in [
-                        "gcs",
-                        "s3",
-                    ]
-
-                    if is_connector:
-                        try:
-                            logger.info(f"Auto-syncing connector mount: {mount_point}")
-                            from nexus.contracts.types import SyncContext
-
-                            # Build context from mount owner if available
-                            sync_context = self._build_sync_context(mount)
-
-                            ctx = SyncContext(
-                                mount_point=mount_point,
-                                recursive=True,
-                                dry_run=False,
-                                context=sync_context,
-                            )
-                            result = self._sync.sync_mount(ctx)
-                            synced += 1
-                            logger.info(
-                                f"Synced {mount_point}: "
-                                f"{result.files_scanned} scanned, "
-                                f"{result.files_created} created"
-                            )
-                        except Exception as sync_e:
-                            logger.warning(f"Failed to sync {mount_point}: {sync_e}")
-                    else:
-                        logger.info(f"Skipping auto-sync for {mount_point} (not a connector)")
-
             except Exception as e:
                 failed += 1
                 error_msg = f"Failed to load mount {mount_point}: {e}"
                 errors.append(error_msg)
                 logger.error(error_msg)
 
-        logger.info(f"Mount loading complete: {loaded} loaded, {synced} synced, {failed} failed")
+        logger.info(f"Mount loading complete: {loaded} loaded, {failed} failed")
 
-        return {"loaded": loaded, "synced": synced, "failed": failed, "errors": errors}
+        return {"loaded": loaded, "failed": failed, "errors": errors}
 
     def list_saved_mounts(
         self,
@@ -346,35 +303,3 @@ class MountPersistService:
 
         assert self._manager is not None
         return self._manager.remove_mount(mount_point)
-
-    def _build_sync_context(self, mount: dict[str, Any]) -> Any:
-        """Build OperationContext from mount owner info.
-
-        Args:
-            mount: Mount configuration dictionary
-
-        Returns:
-            OperationContext or None
-        """
-        if not mount.get("owner_user_id"):
-            return None
-
-        try:
-            from nexus.contracts.types import OperationContext
-
-            owner_parts = mount["owner_user_id"].split(":", 1)
-            if len(owner_parts) == 2:
-                subject_type, subject_id = owner_parts
-            else:
-                subject_type, subject_id = "user", owner_parts[0]
-
-            return OperationContext(
-                user_id=subject_id,
-                groups=[],
-                zone_id=mount.get("zone_id", ROOT_ZONE_ID),
-                subject_type=subject_type,
-                subject_id=subject_id,
-            )
-        except Exception as e:
-            logger.warning(f"Failed to build sync context: {e}")
-            return None

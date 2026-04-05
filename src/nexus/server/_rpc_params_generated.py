@@ -20,7 +20,6 @@ __all__ = [
     "AgentTransitionParams",
     "AppendParams",
     "BackfillDirectoryIndexParams",
-    "CancelSyncJobParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
     "DeleteBatchParams",
@@ -35,7 +34,6 @@ __all__ = [
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
-    "GetSyncJobParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
     "GetWorkspaceInfoParams",
@@ -52,7 +50,6 @@ __all__ = [
     "ListQueueTasksParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
-    "ListSyncJobsParams",
     "ListVersionsParams",
     "ListWorkspacesParams",
     "LoadMountParams",
@@ -93,8 +90,6 @@ __all__ = [
     "SnapshotRollbackParams",
     "StatBulkParams",
     "StatParams",
-    "SyncMountAsyncParams",
-    "SyncMountParams",
     "SysAccessParams",
     "SysIsDirectoryParams",
     "SysMkdirParams",
@@ -176,13 +171,6 @@ class BackfillDirectoryIndexParams:
 
     prefix: str = "/"
     zone_id: str | None = None
-
-
-@dataclass
-class CancelSyncJobParams:
-    """Parameters for cancel_sync_job(): Cancel a running sync job."""
-
-    job_id: str
 
 
 @dataclass
@@ -305,13 +293,6 @@ class GetShareLinkAccessLogsParams:
 
     link_id: str
     limit: int = 100
-
-
-@dataclass
-class GetSyncJobParams:
-    """Parameters for get_sync_job(): Get the status and progress of a sync job."""
-
-    job_id: str
 
 
 @dataclass
@@ -460,15 +441,6 @@ class ListShareLinksParams:
     path: str | None = None
     include_revoked: bool = False
     include_expired: bool = False
-
-
-@dataclass
-class ListSyncJobsParams:
-    """Parameters for list_sync_jobs(): List sync jobs with optional filters."""
-
-    mount_point: str | None = None
-    status: str | None = None
-    limit: int = 50
 
 
 @dataclass
@@ -902,35 +874,6 @@ class StatBulkParams:
 
 
 @dataclass
-class SyncMountParams:
-    """Parameters for sync_mount(): Sync metadata and content from connector backend(s) to Nexus database."""
-
-    mount_point: str | None = None
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-    full_sync: bool = False
-
-
-@dataclass
-class SyncMountAsyncParams:
-    """Parameters for sync_mount_async(): Start an async sync job for a mount point."""
-
-    mount_point: str
-    path: str | None = None
-    recursive: bool = True
-    dry_run: bool = False
-    sync_content: bool = True
-    include_patterns: list[str] | None = None
-    exclude_patterns: list[str] | None = None
-    generate_embeddings: bool = False
-
-
-@dataclass
 class SysAccessParams:
     """Parameters for access(): Check if a file or directory exists."""
 
@@ -1107,7 +1050,6 @@ METHOD_PARAMS: dict[str, type] = {
     "agent_transition": AgentTransitionParams,
     "append": AppendParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
-    "cancel_sync_job": CancelSyncJobParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
     "delete_batch": DeleteBatchParams,
@@ -1122,7 +1064,6 @@ METHOD_PARAMS: dict[str, type] = {
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
-    "get_sync_job": GetSyncJobParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "get_workspace_info": GetWorkspaceInfoParams,
@@ -1139,7 +1080,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_queue_tasks": ListQueueTasksParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
-    "list_sync_jobs": ListSyncJobsParams,
     "list_versions": ListVersionsParams,
     "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,
@@ -1180,8 +1120,6 @@ METHOD_PARAMS: dict[str, type] = {
     "snapshot_rollback": SnapshotRollbackParams,
     "stat": StatParams,
     "stat_bulk": StatBulkParams,
-    "sync_mount": SyncMountParams,
-    "sync_mount_async": SyncMountAsyncParams,
     "access": SysAccessParams,
     "is_directory": SysIsDirectoryParams,
     "mkdir": SysMkdirParams,

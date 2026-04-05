@@ -20,8 +20,7 @@ from nexus.backends.connectors.base import (
     ValidatedMixin,
 )
 from nexus.backends.connectors.oauth import OAuthConnectorMixin
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
-from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
+from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES
 
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
@@ -31,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 class OAuthConnectorBase(
     Backend,
-    CacheConnectorMixin,
     OAuthConnectorMixin,
     ReadmeDocMixin,
     ValidatedMixin,
@@ -41,10 +39,9 @@ class OAuthConnectorBase(
     """Shared base class for OAuth API-backed connectors.
 
     Provides:
-    - Common capability set (OAUTH + CACHE_BULK_READ + CACHE_SYNC + SYNC_ELIGIBLE)
+    - Common capability set (OAUTH)
     - OAuth initialization and token management
     - OAuth provider registration via factory
-    - Metadata store integration for metastore-first listing
     - Cache session factory setup
     - Checkpoint mixin state initialization
 
@@ -55,15 +52,7 @@ class OAuthConnectorBase(
     - Connector-specific ``SKILL_NAME``, ``SCHEMAS``, ``OPERATION_TRAITS``
     """
 
-    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES | frozenset(
-        {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
-        }
-    )
-
-    # Enable metadata-based listing (use file_paths table for fast queries)
-    use_metadata_listing = True
+    _BACKEND_FEATURES = OAUTH_BACKEND_FEATURES
 
     def __init__(
         self,

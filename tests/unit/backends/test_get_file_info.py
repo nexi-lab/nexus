@@ -7,7 +7,6 @@ Tests delta sync change detection metadata returned by each backend:
 """
 
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,82 +17,6 @@ from nexus.contracts.exceptions import NexusFileNotFoundError
 # =============================================================================
 # LocalConnectorBackend.get_file_info()
 # =============================================================================
-
-
-class TestLocalConnectorGetFileInfo:
-    """Test LocalConnectorBackend.get_file_info()."""
-
-    @pytest.fixture()
-    def connector(self, tmp_path: Path):
-        from nexus.backends.storage.local_connector import LocalConnectorBackend
-
-        return LocalConnectorBackend(tmp_path)
-
-    def test_returns_file_info_for_existing_file(self, connector, tmp_path: Path):
-        """Should return FileInfo with size, mtime, and inode:mtime_ns version."""
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("hello world")
-
-        info = connector.get_file_info("test.txt")
-
-        assert isinstance(info, FileInfo)
-        assert info.size == 11  # len("hello world")
-        assert info.mtime is not None
-        assert info.backend_version is not None
-        # Format: "{inode}:{mtime_ns}"
-        parts = info.backend_version.split(":")
-        assert len(parts) == 2
-        assert parts[0].isdigit()  # inode
-        assert parts[1].isdigit()  # mtime_ns
-        assert info.content_hash is None
-
-    def test_raises_not_found_for_missing_file(self, connector):
-        """Should raise NexusFileNotFoundError for nonexistent file."""
-        with pytest.raises(NexusFileNotFoundError):
-            connector.get_file_info("nonexistent.txt")
-
-    def test_version_changes_on_content_change(self, connector, tmp_path: Path):
-        """Should return different version when file content changes."""
-        test_file = tmp_path / "mutable.txt"
-        test_file.write_text("original")
-
-        info1 = connector.get_file_info("mutable.txt")
-        version1 = info1.backend_version
-
-        # Modify the file (ensure mtime changes)
-        import time
-
-        time.sleep(0.01)
-        test_file.write_text("modified content")
-
-        info2 = connector.get_file_info("mutable.txt")
-        version2 = info2.backend_version
-
-        # Version should change (mtime_ns differs)
-        assert version1 != version2
-
-    def test_uses_context_backend_path(self, connector, tmp_path: Path):
-        """Should use context.backend_path when available."""
-        subdir = tmp_path / "sub"
-        subdir.mkdir()
-        (subdir / "file.txt").write_text("data")
-
-        ctx = MagicMock()
-        ctx.backend_path = "sub/file.txt"
-
-        info = connector.get_file_info("ignored_path", context=ctx)
-
-        assert isinstance(info, FileInfo)
-        assert info.size == 4
-
-    def test_empty_file(self, connector, tmp_path: Path):
-        """Should handle empty files correctly."""
-        (tmp_path / "empty.txt").write_text("")
-
-        info = connector.get_file_info("empty.txt")
-
-        assert isinstance(info, FileInfo)
-        assert info.size == 0
 
 
 # =============================================================================

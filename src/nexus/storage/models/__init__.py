@@ -14,7 +14,6 @@ Domain modules:
     models.sharing         -- Share link models
     models.infrastructure  -- System config, sandbox, session models
     models.agents          -- Agent lifecycle models
-    models.sync            -- Sync and conflict models
     models.file_path       -- FilePathModel
     models.version_history -- VersionHistoryModel
     models.operation_log   -- OperationLogModel
@@ -133,13 +132,6 @@ from nexus.storage.models.sharing import ShareLinkModel as ShareLinkModel
 from nexus.storage.models.spending_policy import SpendingApprovalModel as SpendingApprovalModel
 from nexus.storage.models.spending_policy import SpendingLedgerModel as SpendingLedgerModel
 from nexus.storage.models.spending_policy import SpendingPolicyModel as SpendingPolicyModel
-
-# Domain: Sync and Conflict Resolution
-from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel
-from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
-from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
-from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
-from nexus.storage.models.sync import SyncJobModel as SyncJobModel
 
 # Domain: Transaction Snapshots (Issue #1752)
 from nexus.storage.models.transaction_snapshot import SnapshotEntryModel as SnapshotEntryModel

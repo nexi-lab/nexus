@@ -45,7 +45,6 @@ from nexus.backends.connectors.slack.schemas import (
     UpdateMessageSchema,
 )
 from nexus.backends.connectors.slack.transport import FOLDER_TYPES, SlackTransport
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.backend_features import OAUTH_BACKEND_FEATURES, BackendFeature
 from nexus.contracts.exceptions import BackendError
 from nexus.core.object_store import WriteResult
@@ -66,7 +65,6 @@ logger = logging.getLogger(__name__)
 )
 class PathSlackBackend(
     PathAddressingEngine,
-    CacheConnectorMixin,
     OAuthConnectorMixin,
     ReadmeDocMixin,
     ValidatedMixin,
@@ -77,14 +75,11 @@ class PathSlackBackend(
     Features:
     - OAuth 2.0 authentication (per-user credentials)
     - Channel-based folder structure (channels/, private-channels/, dms/)
-    - Persistent caching via CacheConnectorMixin
     - Message posting via write_content
     """
 
     _BACKEND_FEATURES: ClassVar[frozenset[BackendFeature]] = OAUTH_BACKEND_FEATURES | frozenset(
         {
-            BackendFeature.CACHE_BULK_READ,
-            BackendFeature.CACHE_SYNC,
             BackendFeature.README_DOC,
         }
     )
@@ -120,9 +115,6 @@ class PathSlackBackend(
 
     # Top-level folder types
     FOLDER_TYPES = FOLDER_TYPES
-
-    # Enable metadata-based listing (use file_paths table)
-    use_metadata_listing = True
 
     # Provider aliases for OAuth resolution
     _PROVIDER_ALIASES: dict[str, list[str]] = {}
@@ -263,7 +255,7 @@ class PathSlackBackend(
             raise BackendError(f"Failed to write message: {e}", backend="slack") from e
 
     def read_content(self, content_id: str, context: "OperationContext | None" = None) -> bytes:
-        """Read channel messages as YAML, with cache check.
+        """Read channel messages as YAML.
 
         Args:
             content_id: Ignored for connector backends
@@ -281,31 +273,8 @@ class PathSlackBackend(
         # Bind transport to request context for OAuth
         self._bind_transport(context)
 
-        # Cache check
-        cache_path = self._get_cache_path(context) or context.backend_path
-        if self._has_caching():
-            cached = self._read_from_cache(cache_path, original=True)
-            if cached and not cached.stale and cached.content_binary:
-                return cached.content_binary
-
         # Delegate to PathAddressingEngine (which calls transport.fetch)
-        content = super().read_content(content_id, context)
-
-        # Cache the result with a timestamp-based version
-        if self._has_caching():
-            try:
-                zone_id = getattr(context, "zone_id", None)
-                version = str(int(datetime.now(UTC).timestamp()))
-                self._write_to_cache(
-                    path=cache_path,
-                    content=content,
-                    backend_version=version,
-                    zone_id=zone_id,
-                )
-            except Exception as e:
-                logger.debug("Slack cache write failed for %s: %s", cache_path, e)
-
-        return content
+        return super().read_content(content_id, context)
 
     def delete_content(self, content_id: str, context: "OperationContext | None" = None) -> None:
         raise BackendError(
@@ -322,12 +291,6 @@ class PathSlackBackend(
     def get_content_size(self, content_id: str, context: "OperationContext | None" = None) -> int:
         if context is None or not hasattr(context, "backend_path"):
             raise ValueError("Slack connector requires backend_path in OperationContext")
-
-        # Cache optimization: check cache first
-        if hasattr(context, "virtual_path") and context.virtual_path:
-            cached_size = self._get_size_from_cache(context.virtual_path)
-            if cached_size is not None:
-                return cached_size
 
         # Bind transport and delegate
         self._bind_transport(context)

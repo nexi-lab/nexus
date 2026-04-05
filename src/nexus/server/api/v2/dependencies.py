@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import Depends, HTTPException, Request
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.contracts.protocols.write_back import WriteBackProtocol
 from nexus.core.protocols.vfs_core import VFSCoreProtocol
 from nexus.server.dependencies import get_operation_context, require_auth
 
@@ -88,25 +87,6 @@ async def get_auth_result(
 # =============================================================================
 # Service dependencies
 # =============================================================================
-
-
-async def get_conflict_log_store(request: Request) -> Any:
-    """Get ConflictLogStore instance from app state."""
-    store = getattr(request.app.state, "conflict_log_store", None)
-    if store is None:
-        raise HTTPException(status_code=503, detail="Conflict log store not initialized")
-    return store
-
-
-async def get_write_back_service(request: Request) -> WriteBackProtocol:
-    """Get WriteBackService instance from app state."""
-    service = getattr(request.app.state, "write_back_service", None)
-    if service is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Write-back service not initialized (set NEXUS_WRITE_BACK=true)",
-        )
-    return cast(WriteBackProtocol, service)
 
 
 async def get_operation_logger(

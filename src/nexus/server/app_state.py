@@ -91,7 +91,6 @@ class NexusAppState:
     cache_brick: Any = None
     websocket_manager: Any = None
     reactive_subscription_manager: Any = None
-    write_back_service: Any = None
     exporter_registry: Any = None
 
     # === Permissions ===

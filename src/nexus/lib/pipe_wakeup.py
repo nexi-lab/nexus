@@ -1,8 +1,7 @@
 """Generic DT_PIPE wakeup signal utility (Issue #3194).
 
 Provides ``wait_for_signal()`` — the drain-and-process pattern for pipe-based
-wakeup signals.  Used by both IPC (``PipeWakeupListener``) and sync
-(``WriteBackService``) subsystems.
+wakeup signals.  Used by IPC (``PipeWakeupListener``) subsystems.
 
 Lives in ``nexus.lib`` (not ``nexus.bricks.ipc``) so that system_services
 can import it without violating the five-tier architecture boundary.

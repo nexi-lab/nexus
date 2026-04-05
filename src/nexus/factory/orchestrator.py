@@ -635,12 +635,6 @@ async def _register_vfs_hooks(
     _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
     await _enlist("revision_tracking", _rev_observer)
 
-    # WriteBackObserver: receives VFS mutations and enqueues write-back ops.
-    # Replaces the old EventBus _subscribe_loop() (Issue #3194).
-    # NOTE: WriteBackService is created later in realtime.py startup and
-    # registered as an observer via app.state — not at factory time.
-    # The _enlist() call happens in realtime.py after WriteBackService.start().
-
     # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
     # ref_count eliminated; reachability-based GC via CASGarbageCollector.
     # GC is owned by CASLocalBackend, metastore injected via set_metastore().

@@ -1,4 +1,4 @@
-"""Realtime startup/shutdown: event bus, WebSocket, WriteBack, locks.
+"""Realtime startup/shutdown: event bus, WebSocket, locks.
 
 Extracted from fastapi_server.py (#1602).
 """
@@ -6,11 +6,9 @@ Extracted from fastapi_server.py (#1602).
 import asyncio
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from fastapi import FastAPI
 
     from nexus.server.lifespan.services_container import LifespanServices
@@ -25,7 +23,6 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     - Event bus start + wiring
     - Event Stream Exporters (Issue #1138)
     - WebSocket Manager (Issue #1116)
-    - WriteBack Service (Issue #1129)
     - Lock Manager coordination (Issue #1186)
     """
     bg_tasks: list[asyncio.Task] = []
@@ -33,8 +30,6 @@ async def startup_realtime(app: "FastAPI", svc: "LifespanServices") -> list[asyn
     await _startup_event_bus(app, svc)
     _startup_exporter_registry(app, svc)
     await _startup_websocket(app, svc)
-    await _startup_writeback(app, svc)
-    await _startup_connector_sync(app, svc)
     await _startup_lock_manager(app, svc)
 
     return bg_tasks
@@ -58,18 +53,6 @@ async def shutdown_realtime(app: "FastAPI", svc: "LifespanServices") -> None:
             logger.info("WebSocket manager stopped")
         except Exception as e:
             logger.warning("Error shutting down WebSocket manager: %s", e, exc_info=True)
-
-    # Stop WriteBack Service (Issue #1129) and unregister OBSERVE hook (#3194)
-    if app.state.write_back_service:
-        try:
-            # Unregister OBSERVE hook to prevent duplicate observers on hot reload
-            _dispatch = getattr(svc.nexus_fs, "_dispatch", None) if svc.nexus_fs else None
-            if _dispatch is not None:
-                _dispatch.unregister_observe(app.state.write_back_service)
-            await app.state.write_back_service.stop()
-            logger.info("WriteBack service stopped")
-        except Exception as e:
-            logger.warning("Error shutting down WriteBack service: %s", e, exc_info=True)
 
     # Stop event bus (Issue #1331)
     _ebus = svc.event_bus
@@ -146,127 +129,6 @@ async def _startup_websocket(app: "FastAPI", svc: "LifespanServices") -> None:
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning("Failed to start WebSocket manager: %s", e)
-
-
-async def _startup_writeback(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130).
-
-    When ``NEXUS_WRITE_BACK=true`` and an event bus is available, the full
-    WriteBackService starts with conflict resolution and backlog stores.
-
-    Otherwise, an ``InMemoryWriteBack`` fallback is installed so that sync
-    endpoints return zero-change responses instead of 503 — this keeps
-    the API surface consistent in standalone mode.
-    """
-    if not svc.nexus_fs:
-        return
-
-    write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-
-    try:
-        # Always initialize ConflictLogStore for the REST API, even when write-back is disabled
-        from nexus.services.gateway import NexusFSGateway
-        from nexus.services.sync.conflict_log_store import ConflictLogStore
-
-        gw = NexusFSGateway(svc.nexus_fs)
-        _is_pg = gw.is_postgresql
-        conflict_log_store = ConflictLogStore(record_store=gw.record_store, is_postgresql=_is_pg)
-        app.state.conflict_log_store = conflict_log_store
-
-        if write_back_enabled:
-            from nexus.services.sync.change_log_store import ChangeLogStore
-            from nexus.services.sync.conflict_resolution import ConflictStrategy
-            from nexus.services.sync.sync_backlog_store import SyncBacklogStore
-            from nexus.services.sync.write_back_service import WriteBackService
-
-            wb_event_bus = svc.event_bus
-            if wb_event_bus:
-                change_log_store = ChangeLogStore(
-                    record_store=gw.record_store, is_postgresql=_is_pg
-                )
-
-                # Map env var to ConflictStrategy (backward compat)
-                _policy_map = {
-                    "lww": ConflictStrategy.KEEP_NEWER,
-                    "fork": ConflictStrategy.RENAME_CONFLICT,
-                }
-                raw_policy = os.getenv("NEXUS_CONFLICT_POLICY", "keep_newer")
-                try:
-                    default_strategy = ConflictStrategy(raw_policy)
-                except ValueError:
-                    default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
-
-                # DT_PIPE wakeup callback (Issue #3194): sync, best-effort, never blocks.
-                # SyncBacklogStore calls this after every enqueue() commit to wake the
-                # poll loop via pipe signal instead of waiting up to 30s.
-                _pm = svc.pipe_manager
-                _on_enqueue = None
-                if _pm is not None:
-                    import contextlib
-
-                    from nexus.services.sync.write_back_service import (
-                        _BACKLOG_WAKEUP_PIPE,
-                    )
-
-                    def _make_on_enqueue(pm: "Any", pipe_path: str) -> "Callable[[], None]":
-                        def _signal() -> None:
-                            with contextlib.suppress(Exception):
-                                pm.pipe_write_nowait(pipe_path, b"\x01")
-
-                        return _signal
-
-                    _on_enqueue = _make_on_enqueue(_pm, _BACKLOG_WAKEUP_PIPE)
-
-                backlog_store = SyncBacklogStore(
-                    record_store=gw.record_store,
-                    is_postgresql=_is_pg,
-                    on_enqueue=_on_enqueue,
-                )
-
-                app.state.write_back_service = WriteBackService(
-                    gateway=gw,
-                    event_bus=wb_event_bus,
-                    backlog_store=backlog_store,
-                    change_log_store=change_log_store,
-                    default_strategy=default_strategy,
-                    conflict_log_store=conflict_log_store,
-                )
-                await app.state.write_back_service.start()
-
-                # Register as VFSObserver (Issue #3194): receive file mutation events
-                # directly from KernelDispatch OBSERVE phase (us latency, replaces
-                # EventBus _subscribe_loop).
-                _dispatch = getattr(svc.nexus_fs, "_dispatch", None)
-                if _dispatch is not None:
-                    _dispatch.register_observe(app.state.write_back_service)
-                    logger.debug("WriteBack observer registered with KernelDispatch")
-
-                logger.info("WriteBack service started for bidirectional sync")
-                return
-
-        # Fallback: provide InMemoryWriteBack so sync endpoints return
-        # zero-change responses instead of 503 in standalone mode.
-        from nexus.contracts.protocols.write_back import InMemoryWriteBack
-
-        app.state.write_back_service = InMemoryWriteBack()
-        await app.state.write_back_service.start()
-        logger.info("WriteBack service started (in-memory fallback)")
-    except Exception as e:
-        logger.warning("Failed to start WriteBack service: %s", e)
-
-
-async def _startup_connector_sync(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Start ConnectorSyncLoop for periodic background sync (Issue #3148)."""
-    if not svc.nexus_fs:
-        return
-
-    sync_loop = svc.nexus_fs.service("connector_sync_loop")
-    if sync_loop is not None:
-        try:
-            await sync_loop.start()
-            app.state.connector_sync_loop = sync_loop
-        except Exception as e:
-            logger.warning("Failed to start connector sync loop: %s", e)
 
 
 async def _startup_lock_manager(_app: "FastAPI", svc: "LifespanServices") -> None:

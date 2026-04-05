@@ -10,11 +10,10 @@ Tests cover batch optimization methods:
 
 from collections.abc import Iterator
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from nexus.backends.base.backend import Backend
 from nexus.backends.base.path_addressing_engine import PathAddressingEngine
-from nexus.backends.wrappers.cache_mixin import CacheConnectorMixin
 from nexus.contracts.exceptions import BackendError, NexusFileNotFoundError
 from nexus.contracts.types import OperationContext
 from nexus.core.object_store import WriteResult
@@ -67,7 +66,7 @@ class InMemoryTransport:
             yield data[i : i + chunk_size]
 
 
-class MockBlobConnector(PathAddressingEngine, CacheConnectorMixin):
+class MockBlobConnector(PathAddressingEngine):
     """Mock blob connector for testing batch operations."""
 
     def __init__(self, session_factory):
@@ -259,153 +258,6 @@ class TestBulkDownloadBlobs:
         assert result == {}
 
 
-class TestBatchWriteToCache:
-    """Test batch_write_to_cache() method."""
-
-    def test_batch_write_multiple_entries(self, tmp_path: Path):
-        """Test batch writing multiple cache entries in single transaction."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Prepare entries for batch write
-        entries = [
-            {
-                "path": "/test/file1.txt",
-                "content": b"content1",
-                "content_text": "content1",
-                "content_type": "full",
-                "backend_version": "v1",
-            },
-            {
-                "path": "/test/file2.txt",
-                "content": b"content2",
-                "content_text": "content2",
-                "content_type": "full",
-                "backend_version": "v2",
-            },
-            {
-                "path": "/test/file3.txt",
-                "content": b"content3",
-                "content_text": "content3",
-                "content_type": "full",
-                "backend_version": "v3",
-            },
-        ]
-
-        # Mock path_id lookup
-        with patch.object(backend, "_get_path_ids_bulk") as mock_path_ids:
-            mock_path_ids.return_value = {
-                "/test/file1.txt": "path1",
-                "/test/file2.txt": "path2",
-                "/test/file3.txt": "path3",
-            }
-
-            # Call batch write
-            result = backend.batch_write_to_cache(entries)
-
-            # Verify all entries written (cache_id is "" in disk-only mode)
-            assert len(result) == 3
-            assert all(entry.content_hash for entry in result)
-
-    def test_batch_write_empty_list(self, tmp_path: Path):
-        """Test batch write with empty list."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Call with empty list
-        result = backend.batch_write_to_cache([])
-
-        # Should return empty list
-        assert result == []
-
-
-class TestBatchReadFromBackend:
-    """Test batch_read_from_backend() integration."""
-
-    def test_batch_read_uses_bulk_download(self, tmp_path: Path):
-        """Test that batch read uses _bulk_download() for blob connectors."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-        backend.files = {
-            "file1.txt": b"content1",
-            "file2.txt": b"content2",
-            "file3.txt": b"content3",
-        }
-
-        # Mock _bulk_download to verify it's called
-        with patch.object(backend, "_bulk_download", wraps=backend._bulk_download) as mock_bulk:
-            # Call batch read
-            result = backend.batch_read_from_backend(["file1.txt", "file2.txt", "file3.txt"])
-
-            # Verify bulk download was called
-            assert mock_bulk.called, "batch_read_from_backend should use _bulk_download"
-
-            # Verify all files read
-            assert len(result) == 3
-            assert result["file1.txt"] == b"content1"
-            assert result["file2.txt"] == b"content2"
-            assert result["file3.txt"] == b"content3"
-
-    def test_batch_read_performance_benefit(self, tmp_path: Path):
-        """Test that batch read is significantly faster than sequential."""
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        db_path = tmp_path / "test.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        SessionLocal = sessionmaker(bind=engine)
-
-        backend = MockBlobConnector(SessionLocal)
-
-        # Create 50 test files
-        for i in range(50):
-            backend.files[f"file{i}.txt"] = b"content"
-
-        # Reset download count
-        backend.download_count = 0
-
-        # Call batch read
-        paths = [f"file{i}.txt" for i in range(50)]
-        result = backend.batch_read_from_backend(paths)
-
-        # Verify all files read
-        assert len(result) == 50
-
-        # Verify _download was called for each file
-        # (but in parallel, not sequential)
-        assert backend.download_count == 50
-
-
 # === GCS batch_read_content tests (#1626) ===
 
 
@@ -568,7 +420,7 @@ class TestGCSBatchReadContent:
 # === S3 batch_read_content tests (#1626) ===
 
 
-class MockS3ConnectorForBatch(PathAddressingEngine, CacheConnectorMixin):
+class MockS3ConnectorForBatch(PathAddressingEngine):
     """Mock S3-like connector for testing batch_read_content with per-file contexts.
 
     Simulates path-based access where each file needs its own OperationContext.

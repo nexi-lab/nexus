@@ -568,7 +568,6 @@ class GmailConnector(PathCLIBackend):
     SKILL_NAME = "gmail"
     CLI_NAME = "gws"
     CLI_SERVICE = "gmail"
-    use_metadata_listing = True  # Issue #3266: prefer synced directory_entries
 
     SCHEMAS: dict[str, type] = {
         "send_email": SendEmailSchema,
@@ -731,7 +730,7 @@ class GmailConnector(PathCLIBackend):
             ],
         )
         if not result.ok:
-            # Return the id-keyed metadata anyway — sync_service can look up
+            # Return the id-keyed metadata anyway — callers can look up
             # by extracting msg_id from the filename.
             return id_to_meta
 
@@ -1138,7 +1137,6 @@ class CalendarConnector(PathCLIBackend):
     SKILL_NAME = "gcalendar"
     CLI_NAME = "gws"
     CLI_SERVICE = "calendar"
-    use_metadata_listing = True  # Issue #3266: prefer synced directory_entries
 
     DIRECTORY_STRUCTURE = """\
 /mnt/calendar/

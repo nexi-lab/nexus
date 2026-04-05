@@ -443,7 +443,7 @@ class TestLoadAllSavedMounts:
             pytest.skip("Mount manager is available, test N/A")
 
         result = await nx.service("mount_persist").load_all_mounts()
-        assert result == {"loaded": 0, "synced": 0, "failed": 0, "errors": []}
+        assert result == {"loaded": 0, "failed": 0, "errors": []}
 
     async def test_load_all_saved_mounts_empty(self, nx: NexusFS) -> None:
         """Test load_all_saved_mounts when no mounts are saved."""
@@ -453,121 +453,7 @@ class TestLoadAllSavedMounts:
 
         result = await nx.service("mount_persist").load_all_mounts()
         assert "loaded" in result
-        assert "synced" in result
         assert "failed" in result
-        assert "errors" in result
-
-
-class TestSyncMount:
-    """Tests for sync_mount method."""
-
-    def test_sync_mount_nonexistent_raises_error(self, nx: NexusFS) -> None:
-        """Test that sync_mount raises ValueError for nonexistent mount."""
-        with pytest.raises(ValueError, match="Mount not found"):
-            nx.service("sync").sync_mount_flat("/mnt/nonexistent")
-
-    async def test_sync_mount_non_connector_backend_raises_error(
-        self, nx: NexusFS, temp_dir: Path
-    ) -> None:
-        """Test sync_mount with non-connector backend raises RuntimeError."""
-        # CASLocalBackend doesn't have list_dir for connector-style operations
-        # (it does have list_dir but not the connector-style behavior)
-        # This test verifies the error message is clear
-        mount_data_dir = temp_dir / "sync_mount"
-        mount_data_dir.mkdir()
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/sync",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-        )
-
-        # CASLocalBackend has list_dir, so it won't raise the "does not support" error
-        # but we can test the sync functionality
-        result = nx.service("sync").sync_mount_flat("/mnt/sync")
-        assert "files_scanned" in result
-        assert "files_created" in result
-        assert "files_updated" in result
-        assert "files_deleted" in result
-        assert "errors" in result
-
-    async def test_sync_mount_dry_run(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test sync_mount in dry run mode."""
-        mount_data_dir = temp_dir / "dryrun_mount"
-        mount_data_dir.mkdir()
-
-        # Create some files in the mount directory
-        (mount_data_dir / "file1.txt").write_text("content1")
-        (mount_data_dir / "file2.txt").write_text("content2")
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/dryrun",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-        )
-
-        # Dry run should not create entries in database
-        result = nx.service("sync").sync_mount_flat("/mnt/dryrun", dry_run=True)
-
-        assert result["files_scanned"] >= 0
-        assert result["files_created"] == 0  # Dry run doesn't create
-        assert result["files_updated"] == 0  # Dry run doesn't update
-        assert result["files_deleted"] == 0  # Dry run doesn't delete
-
-    async def test_sync_mount_recursive(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test sync_mount with recursive option."""
-        mount_data_dir = temp_dir / "recursive_mount"
-        mount_data_dir.mkdir()
-
-        # Create nested structure
-        subdir = mount_data_dir / "subdir"
-        subdir.mkdir()
-        (mount_data_dir / "file1.txt").write_text("content1")
-        (subdir / "file2.txt").write_text("content2")
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/recursive",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-        )
-
-        result = nx.service("sync").sync_mount_flat("/mnt/recursive", recursive=True)
-
-        assert "files_scanned" in result
-        assert "files_created" in result
-        assert "files_updated" in result
-        assert "files_deleted" in result
-        assert "errors" in result
-        # CASLocalBackend uses CAS model, so sync may return 0 if files aren't detected
-        # The important thing is that the sync completes without error
-        assert isinstance(result["files_scanned"], int)
-
-    async def test_sync_mount_with_context(self, nx: NexusFS, temp_dir: Path) -> None:
-        """Test sync_mount with operation context."""
-        from nexus.contracts.types import OperationContext
-
-        mount_data_dir = temp_dir / "context_mount"
-        mount_data_dir.mkdir()
-        (mount_data_dir / "file.txt").write_text("content")
-
-        nx.service("mount").add_mount_sync(
-            mount_point="/mnt/context",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-        )
-
-        # Use admin context to bypass permission check (testing sync functionality)
-        context = OperationContext(
-            user_id="alice",
-            groups=[],
-            subject_type="user",
-            subject_id="alice",
-            is_admin=True,
-        )
-
-        result = nx.service("sync").sync_mount_flat("/mnt/context", context=context)
-
-        assert "files_scanned" in result
         assert "errors" in result
 
 
@@ -641,46 +527,6 @@ class TestMountPermissionEnforcement:
                 "/mnt/admin_mount", context=user_context
             )
 
-    async def test_sync_mount_requires_read_permission(
-        self, nx_with_permissions: NexusFS, temp_dir: Path
-    ) -> None:
-        """Test that sync_mount fails without read permission on mount."""
-        from nexus.contracts.types import OperationContext
-
-        mount_data_dir = temp_dir / "sync_perm_mount"
-        mount_data_dir.mkdir()
-
-        # First create mount as admin
-        admin_context = OperationContext(
-            user_id="admin",
-            groups=[],
-            zone_id="test_zone",
-            subject_type="user",
-            subject_id="admin",
-            is_admin=True,
-        )
-        nx_with_permissions.service("mount").add_mount_sync(
-            mount_point="/mnt/sync_test",
-            backend_type="cas_local",
-            backend_config={"data_dir": str(mount_data_dir)},
-            context=admin_context,
-        )
-
-        # Non-admin user tries to sync without permission
-        user_context = OperationContext(
-            user_id="bob",
-            groups=[],
-            zone_id="test_zone",
-            subject_type="user",
-            subject_id="bob",
-            is_admin=False,
-        )
-
-        with pytest.raises(PermissionError, match="no read permission"):
-            nx_with_permissions.service("sync").sync_mount_flat(
-                "/mnt/sync_test", context=user_context
-            )
-
     async def test_get_mount_returns_none_without_read_permission(
         self, nx_with_permissions: NexusFS, temp_dir: Path
     ) -> None:
@@ -740,10 +586,6 @@ class TestMountPermissionEnforcement:
         # get_mount should also work
         mount = nx.service("mount").get_mount_sync("/mnt/no_ctx", context=None)
         assert mount is not None
-
-        # sync_mount should work
-        result = nx.service("sync").sync_mount_flat("/mnt/no_ctx", context=None)
-        assert "files_scanned" in result
 
         # remove_mount should work
         result = nx.service("mount").remove_mount_sync("/mnt/no_ctx", context=None)

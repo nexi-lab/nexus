@@ -354,8 +354,6 @@ def _boot_independent_bricks(
 
         from nexus.factory._distributed import _create_workflow_engine
 
-        # mount_sync wired post-boot via WorkflowServices.mount_sync = mount_service
-        # (see _wired.py where MountService is created after bricks)
         workflow_engine = _create_workflow_engine(ctx.record_store, _glob_match_fn)
     elif not _on("workflows"):
         logger.debug("[BOOT:BRICK] Workflows brick disabled by profile")

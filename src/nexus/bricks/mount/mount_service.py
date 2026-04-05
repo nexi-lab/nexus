@@ -8,14 +8,12 @@ Operations:
 - Dynamic backend mounting/unmounting (with metastore persistence)
 - Mount configuration persistence
 - Connector discovery and listing
-- Metadata synchronization (via SyncService / SyncJobService DI)
 """
 
 import asyncio
 import json
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nexus.lib.context_utils import get_database_url, get_user_identity, get_zone_id
 from nexus.lib.permission_utils import PermissionCheckError, check_permission
@@ -43,9 +41,6 @@ def _record_error(result: dict, msg: str) -> None:
     logger.warning(msg)
 
 
-# Type alias for progress callback: (files_scanned: int, current_path: str) -> None
-ProgressCallback = Callable[[int, str], None]
-
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
 
@@ -59,13 +54,11 @@ class MountService:
     - Add/remove dynamic backend mounts (sync core + async wrappers)
     - List available connectors and active mounts
     - Save/load/delete mount configurations
-    - Sync metadata from connector backends
 
     Architecture:
         - Uses NexusFSGateway for all NexusFS access (filesystem, metadata,
           permissions, router)
         - Uses MountManager for persistence
-        - Uses sub-services (SyncService, SyncJobService, etc.) for sync ops
         - Uses OperationContext for permissions
     """
 
@@ -76,8 +69,6 @@ class MountService:
         nexus_fs: Any = None,
         *,
         gateway: Any = None,
-        sync_service: Any = None,
-        sync_job_service: Any = None,
         mount_persist_service: Any = None,
         oauth_service: Any = None,
         auth_service: Any = None,
@@ -93,8 +84,6 @@ class MountService:
             mount_manager: Optional mount manager for persistence
             nexus_fs: Optional NexusFS instance (for kernel ops: mkdir, rmdir, rebac)
             gateway: NexusFSGateway for NexusFS access (preferred over nexus_fs)
-            sync_service: SyncService for metadata sync operations
-            sync_job_service: SyncJobService for async sync job management
             mount_persist_service: MountPersistService for config persistence
             oauth_service: OAuthCredentialService for credential revocation
             auth_service: UnifiedAuthService for stored/native credential resolution
@@ -108,8 +97,6 @@ class MountService:
         self.mount_manager = mount_manager
         self.nexus_fs = nexus_fs
         self._gw = gateway
-        self._sync_service = sync_service
-        self._sync_job_service = sync_job_service
         self._mount_persist_service = mount_persist_service
         self._oauth_service = oauth_service
         self._auth_service = auth_service
@@ -1519,260 +1506,3 @@ class MountService:
             )
 
         return await asyncio.to_thread(self.mount_manager.remove_mount, mount_point)
-
-    # =========================================================================
-    # Public API: Metadata Synchronization
-    # =========================================================================
-
-    @rpc_expose(description="Sync metadata from connector backend")
-    async def sync_mount(
-        self,
-        mount_point: str | None = None,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-        progress_callback: ProgressCallback | None = None,
-        full_sync: bool = False,
-    ) -> dict[str, Any]:
-        """Sync metadata and content from connector backend(s) to Nexus database.
-
-        Args:
-            mount_point: Virtual path of mount to sync (None = sync all mounts)
-            path: Specific path within mount to sync (None = entire mount)
-            recursive: If True, sync all subdirectories recursively
-            dry_run: If True, show what would be synced without changes
-            sync_content: If True, also sync content to cache
-            include_patterns: Glob patterns to include (e.g., ["*.py", "*.md"])
-            exclude_patterns: Glob patterns to exclude (e.g., ["*.pyc"])
-            generate_embeddings: If True, generate embeddings for semantic search
-            context: Operation context
-            progress_callback: Optional callback for progress updates
-            full_sync: If True, perform a full resync
-
-        Returns:
-            Dictionary with sync results
-
-        Raises:
-            RuntimeError: If sync_service not configured
-        """
-        logger.info(
-            f"[MOUNT_SVC] sync_mount called: mount_point={mount_point}, _sync_service={type(self._sync_service).__name__}"
-        )
-        if self._sync_service is None:
-            raise RuntimeError(
-                "sync_mount requires sync_service. Pass sync_service to MountService.__init__"
-            )
-
-        def _sync_mount_sync() -> dict[str, Any]:
-            from nexus.contracts.types import SyncContext
-
-            ctx = SyncContext(
-                mount_point=mount_point,
-                path=path,
-                recursive=recursive,
-                dry_run=dry_run,
-                sync_content=sync_content,
-                include_patterns=include_patterns,
-                exclude_patterns=exclude_patterns,
-                generate_embeddings=generate_embeddings,
-                context=context,
-                progress_callback=progress_callback,
-                full_sync=full_sync,
-            )
-
-            result = self._sync_service.sync_mount(ctx)
-            return cast(dict[str, Any], result.to_dict())
-
-        sync_result = await asyncio.to_thread(_sync_mount_sync)
-
-        # Post-sync: regenerate .readme/ directory (Issue #3148, Decision #7B).
-        # Schema files are re-generated on every sync so they stay fresh.
-        if mount_point and not dry_run:
-            try:
-                route = self.router.route(mount_point)
-                if route:
-                    await self._generate_readmes(mount_point, route.backend)
-            except Exception:
-                logger.warning(
-                    "Post-sync readme doc regeneration failed for %s",
-                    mount_point,
-                    exc_info=True,
-                )
-
-            # Post-sync: index synced content for semantic search (Issue #3148).
-            # Use the indexing service to bulk-index all files in the mount.
-            files_scanned = sync_result.get("files_scanned", 0)
-            if files_scanned > 0 and self._search_service is not None:
-                try:
-                    _zone = getattr(context, "zone_id", None) if context else None
-                    asyncio.create_task(self._index_mount_content(mount_point, zone_id=_zone))
-                except Exception:
-                    logger.debug(
-                        "Post-sync search indexing failed for %s",
-                        mount_point,
-                        exc_info=True,
-                    )
-
-        return sync_result
-
-    @rpc_expose(description="Start async sync job for a mount")
-    async def sync_mount_async(
-        self,
-        mount_point: str,
-        path: str | None = None,
-        recursive: bool = True,
-        dry_run: bool = False,
-        sync_content: bool = True,
-        include_patterns: list[str] | None = None,
-        exclude_patterns: list[str] | None = None,
-        generate_embeddings: bool = False,
-        context: "OperationContext | None" = None,
-    ) -> dict[str, Any]:
-        """Start an async sync job for a mount point.
-
-        Args:
-            mount_point: Virtual path of mount to sync
-            path: Specific path within mount to sync
-            recursive: If True, sync all subdirectories recursively
-            dry_run: If True, only report what would be synced
-            sync_content: If True, also sync content to cache
-            include_patterns: Glob patterns to include
-            exclude_patterns: Glob patterns to exclude
-            generate_embeddings: If True, generate embeddings
-            context: Operation context
-
-        Returns:
-            Dictionary with job info (job_id, status, mount_point)
-
-        Raises:
-            RuntimeError: If sync_job_service not configured
-            ValueError: If mount_point is None
-        """
-        if self._sync_job_service is None:
-            raise RuntimeError(
-                "sync_mount_async requires sync_job_service. "
-                "Pass sync_job_service to MountService.__init__"
-            )
-
-        if mount_point is None:
-            raise ValueError("mount_point is required for async sync")
-
-        user_id = None
-        if context:
-            user_id = getattr(context, "subject_id", None)
-
-        params = {
-            "path": path,
-            "recursive": recursive,
-            "dry_run": dry_run,
-            "sync_content": sync_content,
-            "include_patterns": include_patterns,
-            "exclude_patterns": exclude_patterns,
-            "generate_embeddings": generate_embeddings,
-        }
-
-        def _start_async_sync() -> dict[str, Any]:
-            job_id = self._sync_job_service.create_job(mount_point, params, user_id)
-            self._sync_job_service.start_job(job_id)
-            return {
-                "job_id": job_id,
-                "status": "pending",
-                "mount_point": mount_point,
-            }
-
-        return await asyncio.to_thread(_start_async_sync)
-
-    @rpc_expose(description="Get sync job status and progress")
-    async def get_sync_job(self, job_id: str) -> dict[str, Any] | None:
-        """Get the status and progress of a sync job.
-
-        Args:
-            job_id: UUID of the sync job
-
-        Returns:
-            Job details dict or None if not found
-
-        Raises:
-            RuntimeError: If sync_job_service not configured
-        """
-        if self._sync_job_service is None:
-            raise RuntimeError(
-                "get_sync_job requires sync_job_service. "
-                "Pass sync_job_service to MountService.__init__"
-            )
-
-        return await asyncio.to_thread(self._sync_job_service.get_job, job_id)
-
-    @rpc_expose(description="Cancel a running sync job")
-    async def cancel_sync_job(self, job_id: str) -> dict[str, Any]:
-        """Cancel a running sync job.
-
-        Args:
-            job_id: UUID of the sync job to cancel
-
-        Returns:
-            Dictionary with result (success, job_id, message)
-
-        Raises:
-            RuntimeError: If sync_job_service not configured
-        """
-        if self._sync_job_service is None:
-            raise RuntimeError(
-                "cancel_sync_job requires sync_job_service. "
-                "Pass sync_job_service to MountService.__init__"
-            )
-
-        def _cancel_sync_job_sync() -> dict[str, Any]:
-            success = self._sync_job_service.cancel_job(job_id)
-
-            if success:
-                return {"success": True, "job_id": job_id, "message": "Cancellation requested"}
-
-            job = self._sync_job_service.get_job(job_id)
-            if not job:
-                return {"success": False, "job_id": job_id, "message": "Job not found"}
-            return {
-                "success": False,
-                "job_id": job_id,
-                "message": f"Cannot cancel job with status: {job['status']}",
-            }
-
-        return await asyncio.to_thread(_cancel_sync_job_sync)
-
-    @rpc_expose(description="List sync jobs")
-    async def list_sync_jobs(
-        self,
-        mount_point: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        """List sync jobs with optional filters.
-
-        Args:
-            mount_point: Filter by mount point
-            status: Filter by status
-            limit: Maximum number of jobs to return
-
-        Returns:
-            List of job info dictionaries
-
-        Raises:
-            RuntimeError: If sync_job_service not configured
-        """
-        if self._sync_job_service is None:
-            raise RuntimeError(
-                "list_sync_jobs requires sync_job_service. "
-                "Pass sync_job_service to MountService.__init__"
-            )
-
-        return await asyncio.to_thread(
-            self._sync_job_service.list_jobs,
-            mount_point=mount_point,
-            status=status,
-            limit=limit,
-        )

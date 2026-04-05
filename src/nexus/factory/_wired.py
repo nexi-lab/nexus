@@ -117,28 +117,6 @@ async def _boot_post_kernel_services(
     else:
         logger.debug("[BOOT:WIRED] MCPService disabled by profile")
 
-    # --- SyncService: Sync operations (gateway-dependent) ---
-    sync_service: Any = None
-    if gateway is not None:
-        try:
-            from nexus.services.sync.sync_service import SyncService
-
-            sync_service = SyncService(gateway)
-            logger.debug("[BOOT:WIRED] SyncService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] SyncService unavailable: %s", exc)
-
-    # --- SyncJobService: Sync job management ---
-    sync_job_service: Any = None
-    if gateway is not None and sync_service is not None:
-        try:
-            from nexus.services.sync.sync_job_service import SyncJobService
-
-            sync_job_service = SyncJobService(gateway, sync_service)
-            logger.debug("[BOOT:WIRED] SyncJobService created")
-        except Exception as exc:
-            logger.debug("[BOOT:WIRED] SyncJobService unavailable: %s", exc)
-
     # --- MountPersistService: Mount persistence ---
     # Created with mount_service=None initially; wired after MountService creation below.
     mount_persist_service: Any = None
@@ -149,7 +127,6 @@ async def _boot_post_kernel_services(
             mount_persist_service = MountPersistService(
                 mount_manager=services.get("mount_manager"),
                 mount_service=None,  # wired after MountService creation below
-                sync_service=sync_service,
             )
             logger.debug("[BOOT:WIRED] MountPersistService created (mount_service pending)")
         except Exception as exc:
@@ -166,8 +143,6 @@ async def _boot_post_kernel_services(
             mount_manager=services.get("mount_manager"),
             nexus_fs=nx,
             gateway=gateway,
-            sync_service=sync_service,
-            sync_job_service=sync_job_service,
             mount_persist_service=mount_persist_service,
             oauth_service=oauth_service,
         )
@@ -218,20 +193,6 @@ async def _boot_post_kernel_services(
             if _wf_services is not None and hasattr(_wf_services, "mount_sync"):
                 _wf_services.mount_sync = mount_service
                 logger.debug("[BOOT:WIRED] MountService -> WorkflowServices.mount_sync")
-
-    # Start ConnectorSyncLoop for periodic background sync (Issue #3148)
-    if mount_service is not None:
-        try:
-            from nexus.backends.connectors.cli.sync_loop import ConnectorSyncLoop
-
-            connector_sync = ConnectorSyncLoop(
-                mount_service=mount_service,
-                router=router,
-            )
-            await nx.sys_setattr("/__sys__/services/connector_sync_loop", service=connector_sync)
-            logger.debug("[BOOT:WIRED] ConnectorSyncLoop created (starts on first request)")
-        except Exception:
-            logger.debug("[BOOT:WIRED] ConnectorSyncLoop not available")
 
     # --- ShareLinkService: Share link operations ---
     share_link_service: Any = None
@@ -551,8 +512,6 @@ async def _boot_post_kernel_services(
         "rebac_service": rebac_service,
         "mount_service": mount_service,
         "gateway": gateway,
-        "sync_service": sync_service,
-        "sync_job_service": sync_job_service,
         "mount_persist_service": mount_persist_service,
         "mcp_service": mcp_service,
         "oauth_service": oauth_service,

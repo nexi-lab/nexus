@@ -100,7 +100,7 @@ class BackendFeature(StrEnum):
     """Backend delegates execution to an external CLI subprocess."""
 
     SYNC_ELIGIBLE = "sync_eligible"
-    """Backend should be periodically synced to the metastore by ConnectorSyncLoop."""
+    """Backend should be periodically synced to the metastore."""
 
 
 # --- Capability-to-Protocol mapping ---

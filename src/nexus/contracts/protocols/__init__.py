@@ -41,7 +41,6 @@ from nexus.contracts.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.contracts.protocols.search import SearchBrickProtocol, SearchProtocol
 from nexus.contracts.protocols.service_lifecycle import PersistentService
 from nexus.contracts.protocols.share_link import ShareLinkProtocol
-from nexus.contracts.protocols.sync_job import SyncJobProtocol
 from nexus.contracts.protocols.time_travel import TimeTravelProtocol
 from nexus.contracts.protocols.version import VersionProtocol
 from nexus.contracts.protocols.workflow_dispatch import WorkflowDispatchProtocol
@@ -74,7 +73,6 @@ __all__ = [
     "SearchBrickProtocol",
     "SearchProtocol",
     "ShareLinkProtocol",
-    "SyncJobProtocol",
     "TimeTravelProtocol",
     "VersionProtocol",
     "WorkflowDispatchProtocol",

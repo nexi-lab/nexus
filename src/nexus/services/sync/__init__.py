@@ -1,10 +1,5 @@
 """Sync service domain -- SYSTEM tier.
 
 Canonical location for data synchronization services.
+ChangeLogStore removed (dead code, never instantiated).
 """
-
-from nexus.services.sync.change_log_store import ChangeLogStore
-
-__all__ = [
-    "ChangeLogStore",
-]

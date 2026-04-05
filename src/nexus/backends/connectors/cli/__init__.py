@@ -4,7 +4,6 @@ Provides the foundation for CLI-backed connectors (gws, gh, etc.):
 - PathCLIBackend base class (PathAddressingEngine + CLITransport composition)
 - CLITransport implementing the Transport protocol via subprocess
 - ConnectorSyncProvider protocol for delta sync integration
-- CLISyncProvider bridging sync protocol to CLI list/fetch
 - CLIResult / CLIErrorMapper for structured subprocess error handling
 - CLIConnectorConfig for declarative YAML-based connector configuration
 - CLIContractSuite for behavioral contract compliance testing
@@ -37,8 +36,7 @@ __all__ = [
     "PathCLIBackend",
     # Transport
     "CLITransport",
-    # Sync
-    "CLISyncProvider",
+    # Sync protocol (from protocol.py — still used by connectors)
     "ConnectorSyncProvider",
     "FetchResult",
     "MountSyncState",
@@ -72,10 +70,6 @@ def __getattr__(name: str) -> object:
         from nexus.backends.connectors.cli.transport import CLITransport
 
         return CLITransport
-    if name == "CLISyncProvider":
-        from nexus.backends.connectors.cli.sync_provider import CLISyncProvider
-
-        return CLISyncProvider
     if name in (
         "load_connector_config",
         "create_connector_from_yaml",

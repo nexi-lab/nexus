@@ -2,8 +2,7 @@
 
 Defines the contract for mount lifecycle and persistence operations.
 Existing implementation: ``nexus.core.nexus_fs_mounts.NexusFSMountsMixin``
-delegating to ``MountService``, ``SyncJobService``,
-and ``MountPersistService``.
+delegating to ``MountService`` and ``MountPersistService``.
 
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md
@@ -24,9 +23,8 @@ ProgressCallback = Callable[[int, str], None]
 class MountProtocol(Protocol):
     """Service contract for mount management operations.
 
-    Three sub-domains:
+    Sub-domains:
     - Core: add / remove / list / get mounts and connectors
-    - Sync jobs: async sync job management
     - Persistence: save / load / delete mount configurations in DB
     - Connector: delete_connector (bundled unmount + OAuth revoke + DB cleanup)
     """
@@ -75,19 +73,6 @@ class MountProtocol(Protocol):
     ) -> dict[str, Any] | None: ...
 
     async def has_mount(self, mount_point: str) -> bool: ...
-
-    # ── Sync Jobs ─────────────────────────────────────────────────────────
-
-    async def get_sync_job(self, job_id: str) -> dict[str, Any] | None: ...
-
-    async def cancel_sync_job(self, job_id: str) -> dict[str, Any]: ...
-
-    async def list_sync_jobs(
-        self,
-        mount_point: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]: ...
 
     # ── Persistence ───────────────────────────────────────────────────────
 

@@ -20,7 +20,6 @@ __all__ = [
     "AgentTransitionParams",
     "AppendParams",
     "BackfillDirectoryIndexParams",
-    "CancelSyncJobParams",
     "CreateShareLinkParams",
     "DeleteAgentParams",
     "DeleteBatchParams",
@@ -35,7 +34,6 @@ __all__ = [
     "GetMountParams",
     "GetShareLinkAccessLogsParams",
     "GetShareLinkParams",
-    "GetSyncJobParams",
     "GetTopLevelMountsParams",
     "GetVersionParams",
     "GetWorkspaceInfoParams",
@@ -52,7 +50,6 @@ __all__ = [
     "ListQueueTasksParams",
     "ListSavedMountsParams",
     "ListShareLinksParams",
-    "ListSyncJobsParams",
     "ListVersionsParams",
     "ListWorkspacesParams",
     "LoadMountParams",
@@ -177,13 +174,6 @@ class BackfillDirectoryIndexParams:
 
 
 @dataclass
-class CancelSyncJobParams:
-    """Parameters for cancel_sync_job(): Cancel a running sync job."""
-
-    job_id: str
-
-
-@dataclass
 class CreateShareLinkParams:
     """Parameters for create_share_link(): Create a shareable link for a file or directory."""
 
@@ -303,13 +293,6 @@ class GetShareLinkAccessLogsParams:
 
     link_id: str
     limit: int = 100
-
-
-@dataclass
-class GetSyncJobParams:
-    """Parameters for get_sync_job(): Get the status and progress of a sync job."""
-
-    job_id: str
 
 
 @dataclass
@@ -458,15 +441,6 @@ class ListShareLinksParams:
     path: str | None = None
     include_revoked: bool = False
     include_expired: bool = False
-
-
-@dataclass
-class ListSyncJobsParams:
-    """Parameters for list_sync_jobs(): List sync jobs with optional filters."""
-
-    mount_point: str | None = None
-    status: str | None = None
-    limit: int = 50
 
 
 @dataclass
@@ -1076,7 +1050,6 @@ METHOD_PARAMS: dict[str, type] = {
     "agent_transition": AgentTransitionParams,
     "append": AppendParams,
     "backfill_directory_index": BackfillDirectoryIndexParams,
-    "cancel_sync_job": CancelSyncJobParams,
     "create_share_link": CreateShareLinkParams,
     "delete_agent": DeleteAgentParams,
     "delete_batch": DeleteBatchParams,
@@ -1091,7 +1064,6 @@ METHOD_PARAMS: dict[str, type] = {
     "get_mount": GetMountParams,
     "get_share_link": GetShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
-    "get_sync_job": GetSyncJobParams,
     "get_top_level_mounts": GetTopLevelMountsParams,
     "get_version": GetVersionParams,
     "get_workspace_info": GetWorkspaceInfoParams,
@@ -1108,7 +1080,6 @@ METHOD_PARAMS: dict[str, type] = {
     "list_queue_tasks": ListQueueTasksParams,
     "list_saved_mounts": ListSavedMountsParams,
     "list_share_links": ListShareLinksParams,
-    "list_sync_jobs": ListSyncJobsParams,
     "list_versions": ListVersionsParams,
     "list_workspaces": ListWorkspacesParams,
     "load_mount": LoadMountParams,

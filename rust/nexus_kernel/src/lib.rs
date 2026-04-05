@@ -7,7 +7,6 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod backend;
 mod bitmap;
 mod bloom;
-mod cache;
 mod cas_engine;
 mod cas_transport;
 mod dcache;
@@ -100,7 +99,6 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(trigram::invalidate_trigram_cache, m)?)?;
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
-    m.add_class::<cache::L1MetadataCache>()?;
     m.add_class::<lock::VFSLockManager>()?;
     m.add_class::<pipe::RingBufferCore>()?;
     m.add_class::<stream::StreamBufferCore>()?;

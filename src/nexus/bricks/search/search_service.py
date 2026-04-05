@@ -727,7 +727,7 @@ class SearchService:
             )
 
         # Issue #3266: Metastore-first listing.
-        # Prefer metastore entries when available (populated by ConnectorSyncLoop).
+        # Prefer metastore entries when available (populated by sync infrastructure).
         # Fall back to live API on cache miss (empty metastore for this path).
         all_paths = self._list_from_metastore_or_api(
             path=path,

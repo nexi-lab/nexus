@@ -39,7 +39,6 @@ _CANONICAL_EXPORTS: dict[str, tuple[str, ...]] = {
         "metadata_list",
         "metadata_delete",
     ),
-    "sync_job": ("get_job", "list_jobs", "cancel_sync_job"),
     "mount_persist": (
         "save_mount",
         "load_mount",

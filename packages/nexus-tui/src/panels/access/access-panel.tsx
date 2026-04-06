@@ -50,6 +50,7 @@ import { ManifestCreator } from "./manifest-creator.js";
 import { ConstraintList } from "./constraint-list.js";
 import { ConstraintCreator } from "./constraint-creator.js";
 import { ACCESS_TABS } from "../../shared/navigation.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 
 type OverlayMode =
   | "none"
@@ -390,14 +391,7 @@ export default function AccessPanel(): JSX.Element {
   if (overlay() !== "none") {
     return (
       <box height="100%" width="100%" flexDirection="column">
-        <box height={1} width="100%">
-          <text>
-            {visibleTabs.map((tab) => {
-              return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-            }).join(" ")}
-            {overlayLabel}
-          </text>
-        </box>
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
         <box flexGrow={1} borderStyle="single">
           {overlay() === "permissionChecker" && (
             <PermissionChecker

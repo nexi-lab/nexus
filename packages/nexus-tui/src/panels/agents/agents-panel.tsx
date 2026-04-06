@@ -20,6 +20,7 @@ import { TrajectoriesTab } from "./trajectories-tab.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { StyledText } from "../../shared/components/styled-text.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { CommandOutput } from "../../shared/components/command-output.js";
 import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
@@ -313,13 +314,7 @@ export default function AgentsPanel(): JSX.Element {
         {/* Right pane: detail views (70%) */}
         <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           {/* Tab bar */}
-          <box height={1} width="100%">
-            <text>
-              {visibleTabs.map((tab) => {
-                return tab.id === useAgentsStore((s) => s.activeTab) ? `[${tab.label}]` : ` ${tab.label} `;
-              }).join(" ")}
-            </text>
-          </box>
+          <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
           {/* Operation in-progress feedback */}
           {operationLoading() && (

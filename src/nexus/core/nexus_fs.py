@@ -262,7 +262,10 @@ class NexusFS(  # type: ignore[misc]
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:
                         self._kernel.set_vfs_lock(_vfs_rust)
-                    self._kernel.set_metastore(metadata_store)
+                    # PyMetastoreAdapter removed (Phase 9) — wire redb if available
+                    _redb_path = getattr(metadata_store, "_redb_path", None)
+                    if _redb_path is not None:
+                        self._kernel.set_metastore_path(str(_redb_path))
             except Exception as exc:
                 import logging as _logging
 
@@ -1882,18 +1885,16 @@ class NexusFS(  # type: ignore[misc]
                     self._ensure_parent_directories(path, ctx)
                 return
 
-        # PRE-INTERCEPT hooks via Rust kernel (PR 19)
+        # PRE-INTERCEPT hooks via Rust kernel
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
-        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx)
+        _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
 
-        # Create directory in backend
+        # Python always does metastore + backend (authoritative metadata with timestamps/backend_key)
         route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
 
-        # Create parent directory metadata
         if parents:
             self._ensure_parent_directories(path, ctx)
 
-        # Create directory inode via _setattr_create (DT_DIR)
         self._setattr_create(
             path,
             DT_DIR,
@@ -2942,11 +2943,11 @@ class NexusFS(  # type: ignore[misc]
 
         # ── File branch: regular unlink ──────────────────────────────
 
-        # PRE-INTERCEPT hooks dispatched by Rust kernel (PR 19)
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
 
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # POST-INTERCEPT hooks
         from nexus.contracts.vfs_hooks import DeleteHookContext
 
         _delete_ctx = DeleteHookContext(
@@ -2959,14 +2960,12 @@ class NexusFS(  # type: ignore[misc]
         if _unlink_result.post_hook_needed:
             self._kernel.dispatch_post_hooks("delete", _delete_ctx)
 
-        # VFS I/O Lock: exclusive write lock around CAS delete + metadata delete.
+        # Python always does metastore + backend delete under VFS lock
+        # (Rust kernel has the capability for FUSE/gRPC bypass)
         with self._vfs_locked(path, "write"):
             route.metastore.delete(path)
 
-            # PAS backend propagation — delete physical file.
-            # Reference-mode backends (LocalConnector) keep files on host OS;
-            # deleting metadata must also delete the physical file so SSOT
-            # stays consistent.
+            # PAS backend propagation
             if hasattr(route.backend, "delete"):
                 try:
                     route.backend.delete(route.backend_path, context=context)
@@ -2977,7 +2976,7 @@ class NexusFS(  # type: ignore[misc]
                         _be,
                     )
 
-        # --- Lock released — event dispatch ---
+        # Event dispatch
         await self.notify(
             FileEvent(
                 type=FileEventType.FILE_DELETE,
@@ -3021,7 +3020,7 @@ class NexusFS(  # type: ignore[misc]
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
-        # Check if directory contains any files
+        # Python always does full rmdir (Rust kernel has the capability for FUSE/gRPC bypass)
         dir_path = path if path.endswith("/") else path + "/"
         files_in_dir = route.metastore.list(dir_path)
 
@@ -3143,18 +3142,19 @@ class NexusFS(  # type: ignore[misc]
             meta and meta.mime_type == "inode/directory"
         ) or self.metadata.is_implicit_directory(old_path)
 
-        # ── PRE-INTERCEPT hooks dispatched by Rust kernel (PR 19) ──
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        # ── VFS I/O Lock: exclusive write lock on BOTH paths ──
-        # Sorted order = deadlock-free (like Linux i_rwsem on both inodes).
+        # Python always does full metastore rename under VFS lock
+        # (Rust kernel has the capability for FUSE/gRPC bypass, but Python
+        # wrapper continues to use route.metastore for authoritative metadata)
         _first, _second = sorted([old_path, new_path])
         _h1 = self._vfs_acquire(_first, "write")
         try:
             _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
-                # ── Authoritative checks (under lock, TOCTOU-safe) ──
+                # Authoritative checks (under lock, TOCTOU-safe)
                 is_implicit_dir = not old_route.metastore.exists(
                     old_path
                 ) and self.metadata.is_implicit_directory(old_path)
@@ -3169,7 +3169,6 @@ class NexusFS(  # type: ignore[misc]
                     if hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
-                        # Stale metadata — file gone from backend, clean up
                         logger.warning(
                             "Cleaning up stale metadata for %s (file not in backend storage)",
                             new_path,
@@ -3178,21 +3177,18 @@ class NexusFS(  # type: ignore[misc]
                     else:
                         raise FileExistsError(f"Destination path already exists: {new_path}")
 
-                # ── Metadata rename (under lock) ──
-                # Rename is a pure metadata operation — get/put/delete on
-                # MetastoreABC primitives. Put-first for crash safety (#3062).
+                # Metadata rename (put-first for crash safety)
                 from dataclasses import replace as _replace
 
                 _old_meta = old_route.metastore.get(old_path)
                 if _old_meta is not None:
-                    # Single entry (file or explicit directory)
                     _new_meta = _replace(_old_meta, path=new_path)
                     new_route.metastore.put(_new_meta)
                     old_route.metastore.delete(old_path)
                 elif not is_directory:
                     raise NexusFileNotFoundError(old_path)
 
-                # Rename children (for directories — explicit or implicit)
+                # Rename children (directories)
                 if is_directory:
                     _prefix = old_path.rstrip("/") + "/"
                     for child in old_route.metastore.list(_prefix, recursive=True):
@@ -3201,10 +3197,7 @@ class NexusFS(  # type: ignore[misc]
                         new_route.metastore.put(_child_new_meta)
                         old_route.metastore.delete(child.path)
 
-                # PAS backend propagation — rename physical file/dir.
-                # Reference-mode backends (LocalConnector, GCS path, S3 path) keep
-                # files in their original location; renaming in metastore must also
-                # rename on the backend so metadata stays consistent with storage.
+                # PAS backend propagation
                 if hasattr(old_route.backend, "rename"):
                     try:
                         old_route.backend.rename(
@@ -3231,9 +3224,7 @@ class NexusFS(  # type: ignore[misc]
 
             mark_released(L1_VFS)
 
-        # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
-
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
+        # Event dispatch
         await self.notify(
             FileEvent(
                 type=FileEventType.FILE_RENAME,
@@ -3244,9 +3235,7 @@ class NexusFS(  # type: ignore[misc]
             )
         )
 
-        # Issue #1682: ReBAC path update moved to post_rename hooks.
-
-        # POST-INTERCEPT: post-rename hooks (Issue #900)
+        # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import RenameHookContext
 

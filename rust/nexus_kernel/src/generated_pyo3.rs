@@ -27,7 +27,7 @@ use crate::dispatch::{MutationObserver, PathResolver};
 use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
-use crate::metastore::{FileMetadata, Metastore, MetastoreError};
+use crate::metastore::{FileMetadata, MetastoreError};
 use crate::router::{RouteError, RustRouteResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -367,90 +367,22 @@ impl ObjectStore for PyObjectStoreAdapter {
             Ok(())
         })
     }
-}
 
-// ── PyMetastoreAdapter ──────────────────────────────────────────
-
-/// Wraps Python `MetastoreABC` -> Rust `Metastore` trait.
-///
-/// Transitional adapter: Python backend via GIL (cold path).
-pub(crate) struct PyMetastoreAdapter {
-    inner: Py<PyAny>,
-}
-
-unsafe impl Send for PyMetastoreAdapter {}
-unsafe impl Sync for PyMetastoreAdapter {}
-
-impl PyMetastoreAdapter {
-    pub(crate) fn new(inner: Py<PyAny>) -> Self {
-        Self { inner }
-    }
-}
-
-impl Metastore for PyMetastoreAdapter {
-    fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError> {
+    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("get", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.get({path}): {e}")))?;
-            if result.is_none() {
-                return Ok(None);
-            }
-            extract_metadata(py, &result).map(Some)
-        })
-    }
-
-    fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let py_meta = to_python_metadata(py, &metadata)?;
-            obj.call_method1("put", (path, py_meta))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.put({path}): {e}")))?;
+            obj.call_method1("delete_file", (path,))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
             Ok(())
         })
     }
 
-    fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
         Python::attach(|py| {
             let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("delete", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.delete({path}): {e}")))?;
-            result
-                .extract::<bool>()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.delete({path}): {e}")))
-        })
-    }
-
-    fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("list", (prefix,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.list({prefix}): {e}")))?;
-            let iter = result
-                .try_iter()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.list iter: {e}")))?;
-            let mut items = Vec::new();
-            for item in iter {
-                let item =
-                    item.map_err(|e| MetastoreError::IOError(format!("metastore.list item: {e}")))?;
-                items.push(extract_metadata(py, &item)?);
-            }
-            Ok(items)
-        })
-    }
-
-    fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("exists", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.exists({path}): {e}")))?;
-            result
-                .extract::<bool>()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.exists({path}): {e}")))
+            obj.call_method1("rename", (old_path, new_path))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            Ok(())
         })
     }
 }
@@ -844,8 +776,12 @@ pub struct PySysWriteResult {
 /// Python-facing SysUnlinkResult.
 #[pyclass(name = "SysUnlinkResult", get_all)]
 pub struct PySysUnlinkResult {
+    pub hit: bool,
     pub entry_type: u8,
     pub post_hook_needed: bool,
+    pub path: String,
+    pub etag: Option<String>,
+    pub size: u64,
 }
 
 // ── PySysRenameResult ───────────────────────────────────────────
@@ -853,8 +789,10 @@ pub struct PySysUnlinkResult {
 /// Python-facing SysRenameResult.
 #[pyclass(name = "SysRenameResult", get_all)]
 pub struct PySysRenameResult {
+    pub hit: bool,
     pub success: bool,
     pub post_hook_needed: bool,
+    pub is_directory: bool,
 }
 
 // ── PySysMkdirResult ────────────────────────────────────────────
@@ -862,6 +800,7 @@ pub struct PySysRenameResult {
 /// Python-facing SysMkdirResult.
 #[pyclass(name = "SysMkdirResult", get_all)]
 pub struct PySysMkdirResult {
+    pub hit: bool,
     pub post_hook_needed: bool,
 }
 
@@ -870,7 +809,9 @@ pub struct PySysMkdirResult {
 /// Python-facing SysRmdirResult.
 #[pyclass(name = "SysRmdirResult", get_all)]
 pub struct PySysRmdirResult {
+    pub hit: bool,
     pub post_hook_needed: bool,
+    pub children_deleted: usize,
 }
 
 // ── PyRustRouteResult ───────────────────────────────────────────
@@ -938,11 +879,6 @@ impl PyKernel {
     }
 
     // ── Metastore wiring ──────────────────────────────────────────────
-
-    fn set_metastore(&mut self, metastore: Py<PyAny>) {
-        self.inner
-            .set_metastore(Box::new(PyMetastoreAdapter::new(metastore)));
-    }
 
     /// Wire RedbMetastore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.
@@ -1116,7 +1052,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1131,9 +1067,19 @@ impl PyKernel {
         py_backend: Option<Py<PyAny>>,
         backend_type: &str,
         follow_symlinks: bool,
+        grpc_addr: Option<&str>,
     ) -> PyResult<()> {
-        // Backend resolution: local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
-        let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {
+        // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
+        //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
+        //                     py_backend -> PyObjectStoreAdapter (GIL crossing)
+        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "grpc" {
+            let addr = grpc_addr.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("grpc backend requires grpc_addr")
+            })?;
+            let b = crate::grpc_backend::GrpcObjectStoreAdapter::new(addr, backend_name)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+            Some(Box::new(b))
+        } else if let Some(root) = local_root {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
@@ -1301,6 +1247,46 @@ impl PyKernel {
 
     fn observer_count(&self) -> usize {
         self.observers.lock().count()
+    }
+
+    // ── Kernel-owned observer dispatch (Phase 10) ────────────────────
+
+    /// Register observer in pure Rust kernel registry (no GIL for filter loop).
+    /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.
+    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]
+    fn register_kernel_observer(
+        &self,
+        py: Python<'_>,
+        obs: Py<PyAny>,
+        name: &str,
+        event_mask: u32,
+        is_inline: bool,
+    ) -> PyResult<()> {
+        let adapter = PyMutationObserverAdapter { inner: obs };
+        self.inner
+            .register_observer(Box::new(adapter), name.to_string(), event_mask, is_inline);
+        let _ = py;
+        Ok(())
+    }
+
+    /// Unregister observer from kernel registry by name.
+    fn unregister_kernel_observer(&self, name: &str) -> bool {
+        self.inner.unregister_observer(name)
+    }
+
+    /// Dispatch inline observers in Rust (bitmask filter without GIL).
+    fn dispatch_kernel_observers_inline(&self, event_type: u32, path: &str) {
+        self.inner.dispatch_observers_inline(event_type, path);
+    }
+
+    /// Get count of deferred observers matching event_type.
+    fn get_deferred_observer_count(&self, event_type: u32) -> usize {
+        self.inner.get_deferred_observer_indices(event_type).len()
+    }
+
+    /// Total observers in kernel registry.
+    fn kernel_observer_count(&self) -> usize {
+        self.inner.observer_count()
     }
 
     // ── Hook counts ────────────────────────────────────────────────────
@@ -1499,8 +1485,12 @@ impl PyKernel {
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {
+            hit: result.hit,
             entry_type: result.entry_type,
             post_hook_needed: result.post_hook_needed,
+            path: result.path,
+            etag: result.etag,
+            size: result.size,
         })
     }
 
@@ -1532,19 +1522,23 @@ impl PyKernel {
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysRenameResult {
+            hit: result.hit,
             success: result.success,
             post_hook_needed: result.post_hook_needed,
+            is_directory: result.is_directory,
         })
     }
 
     // ── sys_mkdir ─────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, parents=true, exist_ok=true))]
     fn sys_mkdir(
         &self,
         py: Python<'_>,
         path: &str,
         ctx: &PyOperationContext,
+        parents: bool,
+        exist_ok: bool,
     ) -> PyResult<PySysMkdirResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("mkdir") {
@@ -1558,24 +1552,26 @@ impl PyKernel {
             self.dispatch_pre_hooks_inner("mkdir", &mhc)?;
         }
 
-        // 2. Call pure Rust kernel (validate + route)
+        // 2. Call pure Rust kernel (full mkdir)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx, parents, exist_ok));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysMkdirResult {
+            hit: result.hit,
             post_hook_needed: result.post_hook_needed,
         })
     }
 
     // ── sys_rmdir ─────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, recursive=false))]
     fn sys_rmdir(
         &self,
         py: Python<'_>,
         path: &str,
         ctx: &PyOperationContext,
+        recursive: bool,
     ) -> PyResult<PySysRmdirResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("rmdir") {
@@ -1589,13 +1585,15 @@ impl PyKernel {
             self.dispatch_pre_hooks_inner("rmdir", &rhc)?;
         }
 
-        // 2. Call pure Rust kernel
+        // 2. Call pure Rust kernel (full rmdir)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysRmdirResult {
+            hit: result.hit,
             post_hook_needed: result.post_hook_needed,
+            children_deleted: result.children_deleted,
         })
     }
 
@@ -1678,8 +1676,12 @@ impl PyKernel {
         Ok(results
             .into_iter()
             .map(|r| PySysUnlinkResult {
+                hit: r.hit,
                 entry_type: r.entry_type,
                 post_hook_needed: r.post_hook_needed,
+                path: r.path,
+                etag: r.etag,
+                size: r.size,
             })
             .collect())
     }

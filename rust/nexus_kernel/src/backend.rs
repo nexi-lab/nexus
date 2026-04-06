@@ -122,6 +122,24 @@ pub(crate) trait ObjectStore: Send + Sync {
         let _ = (path, recursive);
         Err(StorageError::NotSupported("rmdir"))
     }
+
+    /// Delete a file by path (PAS backends — reference-mode).
+    ///
+    /// CAS backends return `NotSupported` (content-addressed blobs are GC'd).
+    /// PAS backends delete the physical file at the given path.
+    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+        let _ = path;
+        Err(StorageError::NotSupported("delete_file"))
+    }
+
+    /// Rename/move a file or directory (PAS backends — reference-mode).
+    ///
+    /// CAS backends return `NotSupported` (paths are virtual, not physical).
+    /// PAS backends rename the physical file on the host filesystem.
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
+        let _ = (old_path, new_path);
+        Err(StorageError::NotSupported("rename"))
+    }
 }
 
 /// CAS + Local transport backend (Rust equivalent of Python CASLocalBackend).
@@ -302,6 +320,27 @@ impl ObjectStore for PathLocalBackend {
             fs::remove_dir(&dir_path).map_err(StorageError::IOError)
         }
     }
+
+    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+        let file_path = self.resolve_path(path)?;
+        fs::remove_file(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
+        let old = self.resolve_path(old_path)?;
+        let new = self.resolve_path(new_path)?;
+        // Ensure parent directory of destination exists
+        if let Some(parent) = new.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        fs::rename(&old, &new).map_err(StorageError::IOError)
+    }
 }
 
 // ── LocalConnectorBackend ──────────────────────────────────────────
@@ -458,6 +497,26 @@ impl ObjectStore for LocalConnectorBackend {
         } else {
             fs::remove_dir(&dir_path).map_err(StorageError::IOError)
         }
+    }
+
+    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+        let file_path = self.resolve_path(path)?;
+        fs::remove_file(&file_path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                StorageError::NotFound(path.to_string())
+            } else {
+                StorageError::IOError(e)
+            }
+        })
+    }
+
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
+        let old = self.resolve_path(old_path)?;
+        let new = self.resolve_path(new_path)?;
+        if let Some(parent) = new.parent() {
+            fs::create_dir_all(parent).map_err(StorageError::IOError)?;
+        }
+        fs::rename(&old, &new).map_err(StorageError::IOError)
     }
 }
 

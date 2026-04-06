@@ -147,6 +147,62 @@ impl PathRouter {
             .ok()
     }
 
+    /// Delete a file via the storage backend attached to a mount.
+    ///
+    /// PAS backends delete the physical file. CAS backends return None (no-op).
+    pub(crate) fn delete_file(&self, mount_point: &str, backend_path: &str) -> Option<()> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.backend.as_ref()?.delete_file(backend_path).ok()
+    }
+
+    /// Rename a file via the storage backend attached to a mount.
+    ///
+    /// PAS backends rename the physical file. CAS backends return None (no-op).
+    pub(crate) fn rename_file(
+        &self,
+        mount_point: &str,
+        old_backend_path: &str,
+        new_backend_path: &str,
+    ) -> Option<()> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry
+            .backend
+            .as_ref()?
+            .rename(old_backend_path, new_backend_path)
+            .ok()
+    }
+
+    /// Create a directory via the storage backend attached to a mount.
+    pub(crate) fn mkdir(
+        &self,
+        mount_point: &str,
+        backend_path: &str,
+        parents: bool,
+        exist_ok: bool,
+    ) -> Option<()> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry
+            .backend
+            .as_ref()?
+            .mkdir(backend_path, parents, exist_ok)
+            .ok()
+    }
+
+    /// Remove a directory via the storage backend attached to a mount.
+    pub(crate) fn rmdir(
+        &self,
+        mount_point: &str,
+        backend_path: &str,
+        recursive: bool,
+    ) -> Option<()> {
+        let mounts = self.mounts.read();
+        let entry = mounts.get(mount_point)?;
+        entry.backend.as_ref()?.rmdir(backend_path, recursive).ok()
+    }
+
     // ── Mount management (called via Kernel proxy methods) ──────────────
 
     /// Register a mount at a zone-canonical key.

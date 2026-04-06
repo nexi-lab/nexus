@@ -13,6 +13,7 @@ mod dcache;
 mod dispatch;
 mod generated_pyo3;
 mod glob;
+mod grpc_backend;
 mod hash;
 mod hook_registry;
 mod io;

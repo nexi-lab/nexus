@@ -830,15 +830,9 @@ PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
         # name() → cached field at construction time
         "cached_name": "backend_name",
     },
-    "Metastore": {
-        "adapter": "PyMetastoreAdapter",
-        # Methods with default impls that delegate to single-op methods — skip in adapter
-        "skip_methods": {"put_batch", "get_batch"},
-        "error": "MetastoreError",
-        "error_mod": "crate::metastore",
-        "trait_mod": "crate::metastore",
-        "cached_name": "",
-    },
+    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses RedbMetastore directly.
+    # set_metastore_path() opens redb; no Python metastore fallback needed.
+    # "Metastore": { ... },
 }
 
 # Methods that need special handling beyond simple call_method1 + extract.
@@ -864,9 +858,9 @@ def _rust_err_map(config: dict[str, str], method_name: str, first_param: str) ->
     if config["error"] == "StorageError":
         return "StorageError::IOError(io::Error::other(e.to_string()))"
     else:
-        return (
-            f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}}}): {{e}}"))'
-        )
+        # Use :? for slice params (e.g. paths: &[String]) since &[T] doesn't impl Display
+        fmt_spec = ":?" if first_param in ("paths", "items") else ""
+        return f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
 
 
 def _generate_adapter_method(
@@ -1101,7 +1095,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "use std::io;",
         "",
         "use crate::backend::{ObjectStore, StorageError};",
-        "use crate::metastore::{FileMetadata, Metastore, MetastoreError};",
+        "use crate::metastore::{FileMetadata, MetastoreError};",
         "",
         "// ── FileMetadata conversion helpers (PyO3-specific) ──────────────────────",
         "",
@@ -1632,7 +1626,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
-            "use crate::metastore::{FileMetadata, Metastore, MetastoreError};",
+            "use crate::metastore::{FileMetadata, MetastoreError};",
             "use crate::router::{RouteError, RustRouteResult};",
         ]
     )
@@ -1978,8 +1972,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysUnlinkResult.",
             '#[pyclass(name = "SysUnlinkResult", get_all)]',
             "pub struct PySysUnlinkResult {",
+            "    pub hit: bool,",
             "    pub entry_type: u8,",
             "    pub post_hook_needed: bool,",
+            "    pub path: String,",
+            "    pub etag: Option<String>,",
+            "    pub size: u64,",
             "}",
             "",
             "// ── PySysRenameResult ───────────────────────────────────────────",
@@ -1987,8 +1985,10 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysRenameResult.",
             '#[pyclass(name = "SysRenameResult", get_all)]',
             "pub struct PySysRenameResult {",
+            "    pub hit: bool,",
             "    pub success: bool,",
             "    pub post_hook_needed: bool,",
+            "    pub is_directory: bool,",
             "}",
             "",
             "// ── PySysMkdirResult ────────────────────────────────────────────",
@@ -1996,6 +1996,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysMkdirResult.",
             '#[pyclass(name = "SysMkdirResult", get_all)]',
             "pub struct PySysMkdirResult {",
+            "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
             "}",
             "",
@@ -2004,7 +2005,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysRmdirResult.",
             '#[pyclass(name = "SysRmdirResult", get_all)]',
             "pub struct PySysRmdirResult {",
+            "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
+            "    pub children_deleted: usize,",
             "}",
             "",
             "// ── PyRustRouteResult ───────────────────────────────────────────",
@@ -2078,11 +2081,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    }",
             "",
             "    // ── Metastore wiring ──────────────────────────────────────────────",
-            "",
-            "    fn set_metastore(&mut self, metastore: Py<PyAny>) {",
-            "        self.inner",
-            "            .set_metastore(Box::new(PyMetastoreAdapter::new(metastore)));",
-            "    }",
             "",
             "    /// Wire RedbMetastore by path — Rust kernel opens redb directly.",
             "    /// Eliminates GIL crossing on every metastore.get/put.",
@@ -2256,7 +2254,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    // ── Router proxy methods ───────────────────────────────────────────",
             "",
-            '    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true))]',
+            '    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None))]',
             "    #[allow(clippy::too_many_arguments)]",
             "    fn add_mount(",
             "        &self,",
@@ -2271,9 +2269,19 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        py_backend: Option<Py<PyAny>>,",
             "        backend_type: &str,",
             "        follow_symlinks: bool,",
+            "        grpc_addr: Option<&str>,",
             "    ) -> PyResult<()> {",
-            "        // Backend resolution: local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend",
-            "        let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {",
+            "        // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)",
+            "        //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend",
+            "        //                     py_backend -> PyObjectStoreAdapter (GIL crossing)",
+            '        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "grpc" {',
+            "            let addr = grpc_addr.ok_or_else(|| {",
+            '                pyo3::exceptions::PyValueError::new_err("grpc backend requires grpc_addr")',
+            "            })?;",
+            "            let b = crate::grpc_backend::GrpcObjectStoreAdapter::new(addr, backend_name)",
+            "                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
+            "            Some(Box::new(b))",
+            "        } else if let Some(root) = local_root {",
             '            if backend_type == "local_connector" {',
             "                let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)",
             "                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;",
@@ -2441,6 +2449,50 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    fn observer_count(&self) -> usize {",
             "        self.observers.lock().count()",
+            "    }",
+            "",
+            "    // ── Kernel-owned observer dispatch (Phase 10) ────────────────────",
+            "",
+            "    /// Register observer in pure Rust kernel registry (no GIL for filter loop).",
+            "    /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.",
+            "    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]",
+            "    fn register_kernel_observer(",
+            "        &self,",
+            "        py: Python<'_>,",
+            "        obs: Py<PyAny>,",
+            "        name: &str,",
+            "        event_mask: u32,",
+            "        is_inline: bool,",
+            "    ) -> PyResult<()> {",
+            "        let adapter = PyMutationObserverAdapter { inner: obs };",
+            "        self.inner.register_observer(",
+            "            Box::new(adapter),",
+            "            name.to_string(),",
+            "            event_mask,",
+            "            is_inline,",
+            "        );",
+            "        let _ = py;",
+            "        Ok(())",
+            "    }",
+            "",
+            "    /// Unregister observer from kernel registry by name.",
+            "    fn unregister_kernel_observer(&self, name: &str) -> bool {",
+            "        self.inner.unregister_observer(name)",
+            "    }",
+            "",
+            "    /// Dispatch inline observers in Rust (bitmask filter without GIL).",
+            "    fn dispatch_kernel_observers_inline(&self, event_type: u32, path: &str) {",
+            "        self.inner.dispatch_observers_inline(event_type, path);",
+            "    }",
+            "",
+            "    /// Get count of deferred observers matching event_type.",
+            "    fn get_deferred_observer_count(&self, event_type: u32) -> usize {",
+            "        self.inner.get_deferred_observer_indices(event_type).len()",
+            "    }",
+            "",
+            "    /// Total observers in kernel registry.",
+            "    fn kernel_observer_count(&self) -> usize {",
+            "        self.inner.observer_count()",
             "    }",
             "",
             "    // ── Hook counts ────────────────────────────────────────────────────",
@@ -2639,8 +2691,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysUnlinkResult {",
+            "            hit: result.hit,",
             "            entry_type: result.entry_type,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            path: result.path,",
+            "            etag: result.etag,",
+            "            size: result.size,",
             "        })",
             "    }",
             "",
@@ -2672,19 +2728,23 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysRenameResult {",
+            "            hit: result.hit,",
             "            success: result.success,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            is_directory: result.is_directory,",
             "        })",
             "    }",
             "",
             "    // ── sys_mkdir ─────────────────────────────────────────────────────",
             "",
-            "    #[pyo3(signature = (path, ctx))]",
+            "    #[pyo3(signature = (path, ctx, parents=true, exist_ok=true))]",
             "    fn sys_mkdir(",
             "        &self,",
             "        py: Python<'_>,",
             "        path: &str,",
             "        ctx: &PyOperationContext,",
+            "        parents: bool,",
+            "        exist_ok: bool,",
             "    ) -> PyResult<PySysMkdirResult> {",
             "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
             '        if self.inner.has_hooks("mkdir") {',
@@ -2698,24 +2758,26 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '            self.dispatch_pre_hooks_inner("mkdir", &mhc)?;',
             "        }",
             "",
-            "        // 2. Call pure Rust kernel (validate + route)",
+            "        // 2. Call pure Rust kernel (full mkdir)",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx));",
+            "        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx, parents, exist_ok));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysMkdirResult {",
+            "            hit: result.hit,",
             "            post_hook_needed: result.post_hook_needed,",
             "        })",
             "    }",
             "",
             "    // ── sys_rmdir ─────────────────────────────────────────────────────",
             "",
-            "    #[pyo3(signature = (path, ctx))]",
+            "    #[pyo3(signature = (path, ctx, recursive=false))]",
             "    fn sys_rmdir(",
             "        &self,",
             "        py: Python<'_>,",
             "        path: &str,",
             "        ctx: &PyOperationContext,",
+            "        recursive: bool,",
             "    ) -> PyResult<PySysRmdirResult> {",
             "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
             '        if self.inner.has_hooks("rmdir") {',
@@ -2729,13 +2791,15 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;',
             "        }",
             "",
-            "        // 2. Call pure Rust kernel",
+            "        // 2. Call pure Rust kernel (full rmdir)",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx));",
+            "        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysRmdirResult {",
+            "            hit: result.hit,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            children_deleted: result.children_deleted,",
             "        })",
             "    }",
             "",
@@ -2818,8 +2882,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        Ok(results",
             "            .into_iter()",
             "            .map(|r| PySysUnlinkResult {",
+            "                hit: r.hit,",
             "                entry_type: r.entry_type,",
             "                post_hook_needed: r.post_hook_needed,",
+            "                path: r.path,",
+            "                etag: r.etag,",
+            "                size: r.size,",
             "            })",
             "            .collect())",
             "    }",
@@ -2986,12 +3054,20 @@ def main() -> int:
 
         ruff = shutil.which("ruff")
 
+        rustfmt = shutil.which("rustfmt")
+
         def _ruff_format(content: str, suffix: str) -> str:
             if ruff and suffix in (".py", ".pyi"):
                 with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
                     f.write(content)
                     f.flush()
                     subprocess.run([ruff, "format", f.name], capture_output=True)
+                    return Path(f.name).read_text()
+            if rustfmt and suffix == ".rs":
+                with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
+                    f.write(content)
+                    f.flush()
+                    subprocess.run([rustfmt, f.name], capture_output=True)
                     return Path(f.name).read_text()
             return content
 
@@ -3037,6 +3113,18 @@ def main() -> int:
 
                 subprocess.run(
                     [ruff, "format", *[str(p) for p in py_files]],
+                    capture_output=True,
+                )
+        # Auto-format generated Rust files so codegen --check matches cargo fmt
+        rs_files = [p for p, _ in outputs if p.suffix == ".rs"]
+        if rs_files:
+            import shutil
+            import subprocess
+
+            rustfmt = shutil.which("rustfmt")
+            if rustfmt:
+                subprocess.run(
+                    [rustfmt, *[str(p) for p in rs_files]],
                     capture_output=True,
                 )
         return 0

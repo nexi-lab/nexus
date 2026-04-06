@@ -1090,7 +1090,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1109,6 +1109,18 @@ impl PyKernel {
         openai_base_url: Option<&str>,
         openai_api_key: Option<&str>,
         openai_model: Option<&str>,
+        s3_bucket: Option<&str>,
+        s3_prefix: Option<&str>,
+        aws_region: Option<&str>,
+        aws_access_key: Option<&str>,
+        aws_secret_key: Option<&str>,
+        s3_endpoint: Option<&str>,
+        gcs_bucket: Option<&str>,
+        gcs_prefix: Option<&str>,
+        access_token: Option<&str>,
+        root_folder_id: Option<&str>,
+        bot_token: Option<&str>,
+        default_channel: Option<&str>,
     ) -> PyResult<()> {
         // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
         //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
@@ -1121,6 +1133,92 @@ impl PyKernel {
                 let key = openai_api_key.unwrap_or("");
                 let model = openai_model.unwrap_or("gpt-4o");
                 let b = crate::openai_backend::OpenAIBackend::new(backend_name, base, key, model)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "s3" {
+            #[cfg(feature = "connectors")]
+            {
+                let bucket = s3_bucket.unwrap_or("");
+                let prefix = s3_prefix.unwrap_or("");
+                let region = aws_region.unwrap_or("us-east-1");
+                let ak = aws_access_key.unwrap_or("");
+                let sk = aws_secret_key.unwrap_or("");
+                let b = crate::s3_backend::S3Backend::new(
+                    backend_name,
+                    bucket,
+                    prefix,
+                    region,
+                    ak,
+                    sk,
+                    s3_endpoint,
+                )
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "gcs" {
+            #[cfg(feature = "connectors")]
+            {
+                let bucket = gcs_bucket.unwrap_or("");
+                let prefix = gcs_prefix.unwrap_or("");
+                let token = access_token.unwrap_or("");
+                let b = crate::gcs_backend::GcsBackend::new(backend_name, bucket, prefix, token)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "gdrive" {
+            #[cfg(feature = "connectors")]
+            {
+                let token = access_token.unwrap_or("");
+                let folder = root_folder_id.unwrap_or("root");
+                let b = crate::gdrive_backend::GDriveBackend::new(backend_name, token, folder)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "gmail" {
+            #[cfg(feature = "connectors")]
+            {
+                let token = access_token.unwrap_or("");
+                let b = crate::gmail_backend::GmailBackend::new(backend_name, token)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "slack" {
+            #[cfg(feature = "connectors")]
+            {
+                let token = bot_token.unwrap_or("");
+                let channel = default_channel.unwrap_or("");
+                let b = crate::slack_backend::SlackBackend::new(backend_name, token, channel)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
                 Some(Box::new(b))
             }

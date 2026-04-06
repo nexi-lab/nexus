@@ -13,8 +13,14 @@ mod cas_transport;
 mod dcache;
 mod dispatch;
 mod file_watch;
+#[cfg(feature = "connectors")]
+mod gcs_backend;
+#[cfg(feature = "connectors")]
+mod gdrive_backend;
 mod generated_pyo3;
 mod glob;
+#[cfg(feature = "connectors")]
+mod gmail_backend;
 mod grpc_backend;
 mod hash;
 mod hook_registry;
@@ -30,7 +36,10 @@ mod path_utils;
 mod pipe;
 mod prefix;
 mod rebac;
+mod replication;
 mod router;
+#[cfg(feature = "connectors")]
+mod s3_backend;
 mod search;
 mod semaphore;
 #[cfg(unix)]
@@ -38,6 +47,8 @@ mod shm_pipe;
 #[cfg(unix)]
 mod shm_stream;
 mod simd;
+#[cfg(feature = "connectors")]
+mod slack_backend;
 mod stream;
 mod trigram;
 mod volume_engine;

@@ -15,10 +15,12 @@
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{MutationObserver, Trie};
+use crate::file_watch::FileWatchRegistry;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
 use crate::router::{PathRouter, RouteError, RustRouteResult};
-use parking_lot::Mutex;
+use dashmap::DashMap;
+use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -294,6 +296,29 @@ impl KernelObserverRegistry {
     }
 }
 
+// ── Zone Revision Entry ─────────────────────────────────────────────────
+
+/// Per-zone monotonic revision counter + condvar for waiters.
+/// AtomicU64 increment = ~1ns (Relaxed ordering).
+/// Condvar notify_all only fires when waiters exist (check has_waiters flag).
+pub(crate) struct ZoneRevisionEntry {
+    revision: AtomicU64,
+    has_waiters: AtomicU64,
+    mutex: parking_lot::Mutex<()>,
+    condvar: Condvar,
+}
+
+impl ZoneRevisionEntry {
+    fn new() -> Self {
+        Self {
+            revision: AtomicU64::new(0),
+            has_waiters: AtomicU64::new(0),
+            mutex: parking_lot::Mutex::new(()),
+            condvar: Condvar::new(),
+        }
+    }
+}
+
 // ── Kernel ──────────────────────────────────────────────────────────────
 
 /// Rust kernel — owns all core state directly.
@@ -329,6 +354,12 @@ pub struct Kernel {
     write_batch_hook_count: AtomicU64,
     // Observer registry (owned by kernel — bitmask matching without GIL)
     observers: Mutex<KernelObserverRegistry>,
+    // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
+    zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
+    // File watch registry — Rust-native pattern matching (§10 A3)
+    file_watches: FileWatchRegistry,
+    // Agent registry — DashMap backing store (§10 B1)
+    pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
 }
 
 impl Kernel {
@@ -354,6 +385,9 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
+            zone_revisions: DashMap::new(),
+            file_watches: FileWatchRegistry::new(),
+            agent_registry: crate::agent_registry::AgentRegistry::new(),
         }
     }
 
@@ -707,6 +741,110 @@ impl Kernel {
     /// Number of registered observers.
     pub fn observer_count(&self) -> usize {
         self.observers.lock().count()
+    }
+
+    // ── Zone revision counter (§10 A2) ────────────────────────────────
+
+    /// Get or create zone revision entry.
+    fn zone_entry(&self, zone_id: &str) -> Arc<ZoneRevisionEntry> {
+        self.zone_revisions
+            .entry(zone_id.to_string())
+            .or_insert_with(|| Arc::new(ZoneRevisionEntry::new()))
+            .clone()
+    }
+
+    /// Increment zone revision (called after successful metastore write).
+    /// Returns the new revision value.
+    pub fn increment_zone_revision(&self, zone_id: &str) -> u64 {
+        let entry = self.zone_entry(zone_id);
+        let new_rev = entry.revision.fetch_add(1, Ordering::Relaxed) + 1;
+        // Only notify if waiters exist (zero cost on non-waited paths)
+        if entry.has_waiters.load(Ordering::Relaxed) > 0 {
+            let _guard = entry.mutex.lock();
+            entry.condvar.notify_all();
+        }
+        new_rev
+    }
+
+    /// Notify a specific zone revision (monotonic: only updates if greater).
+    pub fn notify_zone_revision(&self, zone_id: &str, revision: u64) {
+        let entry = self.zone_entry(zone_id);
+        // CAS loop for monotonic update
+        loop {
+            let current = entry.revision.load(Ordering::Relaxed);
+            if revision <= current {
+                break;
+            }
+            if entry
+                .revision
+                .compare_exchange_weak(current, revision, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
+            }
+        }
+        if entry.has_waiters.load(Ordering::Relaxed) > 0 {
+            let _guard = entry.mutex.lock();
+            entry.condvar.notify_all();
+        }
+    }
+
+    /// Get current zone revision (0 if unknown).
+    pub fn get_zone_revision(&self, zone_id: &str) -> u64 {
+        self.zone_revisions
+            .get(zone_id)
+            .map(|e| e.revision.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// Wait until zone revision >= min_revision, or timeout.
+    /// Pure Rust condvar wait — zero GIL (caller must release GIL before calling).
+    /// Returns true if revision reached, false on timeout.
+    pub fn wait_zone_revision(&self, zone_id: &str, min_revision: u64, timeout_ms: u64) -> bool {
+        let entry = self.zone_entry(zone_id);
+        // Fast check before blocking
+        if entry.revision.load(Ordering::Relaxed) >= min_revision {
+            return true;
+        }
+        // Register waiter
+        entry.has_waiters.fetch_add(1, Ordering::Relaxed);
+        let timeout = std::time::Duration::from_millis(timeout_ms);
+        let mut guard = entry.mutex.lock();
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if entry.revision.load(Ordering::Relaxed) >= min_revision {
+                entry.has_waiters.fetch_sub(1, Ordering::Relaxed);
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                entry.has_waiters.fetch_sub(1, Ordering::Relaxed);
+                return false;
+            }
+            let result = entry.condvar.wait_for(&mut guard, remaining);
+            if result.timed_out() && entry.revision.load(Ordering::Relaxed) < min_revision {
+                entry.has_waiters.fetch_sub(1, Ordering::Relaxed);
+                return false;
+            }
+        }
+    }
+
+    // ── File watch registry (§10 A3) ──────────────────────────────────
+
+    /// Register a file watch pattern. Returns watch ID.
+    pub fn register_watch(&self, pattern: &str) -> u64 {
+        self.file_watches.register(pattern)
+    }
+
+    /// Unregister a file watch by ID.
+    pub fn unregister_watch(&self, watch_id: u64) -> bool {
+        self.file_watches.unregister(watch_id)
+    }
+
+    /// Match a path against all registered watch patterns.
+    /// Returns list of matching watch IDs.
+    pub fn match_watches(&self, path: &str) -> Vec<u64> {
+        self.file_watches.match_path(path)
     }
 
     // ── sys_read ───────────────────────────────────────────────────────

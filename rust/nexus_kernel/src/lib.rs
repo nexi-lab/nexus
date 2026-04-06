@@ -4,6 +4,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod agent_registry;
 mod backend;
 mod bitmap;
 mod bloom;
@@ -11,6 +12,7 @@ mod cas_engine;
 mod cas_transport;
 mod dcache;
 mod dispatch;
+mod file_watch;
 mod generated_pyo3;
 mod glob;
 mod grpc_backend;
@@ -47,6 +49,9 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rebac::compute_permission_single, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::expand_subjects, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::list_objects_for_subject, m)?)?;
+    // ReBAC bitmap intersection (§10 C1)
+    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap, m)?)?;
+    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap_batch, m)?)?;
     // Search
     m.add_function(wrap_pyfunction!(search::grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(search::grep_files_mmap, m)?)?;

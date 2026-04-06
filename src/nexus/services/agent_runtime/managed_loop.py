@@ -270,8 +270,11 @@ class ManagedAgentLoop:
 
         response_text = "".join(tokens)
 
-        # TODO: parse tool_calls from streaming response
-        tool_calls: list[dict[str, Any]] = []
+        # Extract tool_calls from the "done" control message metadata.
+        # CASOpenAIBackend.generate_streaming() accumulates incremental
+        # tool_call fragments and includes the complete list in the final
+        # metadata, which _run_stream() forwards in the "done" message.
+        tool_calls: list[dict[str, Any]] = (meta or {}).get("tool_calls", [])
 
         return response_text, tool_calls, meta
 

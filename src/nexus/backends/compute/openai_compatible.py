@@ -286,20 +286,25 @@ class CASOpenAIBackend(CASAddressingEngine):
                 request_bytes=request_bytes,
                 response_content=full_response.decode("utf-8"),
                 model=meta.get("model", ""),
-                finish_reason="stop",
+                finish_reason=meta.get("finish_reason", "stop"),
                 usage=meta.get("usage", {}),
                 latency_ms=meta.get("latency_ms", 0),
             )
 
-            done_msg = json.dumps(
-                {
-                    "type": "done",
-                    "session_hash": result.content_id,
-                    "model": meta.get("model", ""),
-                    "latency_ms": meta.get("latency_ms", 0),
-                },
-                separators=(",", ":"),
-            )
+            done_payload: dict[str, Any] = {
+                "type": "done",
+                "session_hash": result.content_id,
+                "model": meta.get("model", ""),
+                "latency_ms": meta.get("latency_ms", 0),
+                "finish_reason": meta.get("finish_reason", "stop"),
+                "usage": meta.get("usage", {}),
+            }
+            # Include tool_calls in the done message so ManagedAgentLoop can extract them
+            tool_calls = meta.get("tool_calls", [])
+            if tool_calls:
+                done_payload["tool_calls"] = tool_calls
+
+            done_msg = json.dumps(done_payload, separators=(",", ":"))
             sm.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
             sm.signal_close(stream_path)
 
@@ -379,6 +384,12 @@ class CASOpenAIBackend(CASAddressingEngine):
         start_time = time.perf_counter()
         collected_model = model
         usage: dict[str, int] = {}
+        finish_reason: str | None = None
+
+        # Accumulate tool_calls across streaming chunks.
+        # OpenAI streams tool_calls incrementally: each chunk carries an index
+        # and a partial function name or arguments fragment that must be concatenated.
+        tool_calls_accum: dict[int, dict[str, Any]] = {}
 
         try:
             stream = self._client.chat.completions.create(
@@ -400,12 +411,39 @@ class CASOpenAIBackend(CASAddressingEngine):
                 if chunk.model:
                     collected_model = chunk.model
 
-                # Yield content tokens
                 if chunk.choices:
-                    delta = chunk.choices[0].delta
-                    token = (delta.content or "") if delta else ""
-                    if token:
-                        yield (token, None)
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+
+                    # Capture finish_reason (arrives on the final choice chunk)
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+
+                    if delta:
+                        # Yield content tokens
+                        if delta.content:
+                            yield (delta.content, None)
+
+                        # Accumulate tool_calls (incremental argument fragments)
+                        if delta.tool_calls:
+                            for tc_chunk in delta.tool_calls:
+                                idx = tc_chunk.index
+                                if idx not in tool_calls_accum:
+                                    tool_calls_accum[idx] = {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                entry = tool_calls_accum[idx]
+                                if tc_chunk.id:
+                                    entry["id"] = tc_chunk.id
+                                if tc_chunk.function:
+                                    if tc_chunk.function.name:
+                                        entry["function"]["name"] += tc_chunk.function.name
+                                    if tc_chunk.function.arguments:
+                                        entry["function"]["arguments"] += (
+                                            tc_chunk.function.arguments
+                                        )
 
                 # Capture usage from final chunk (stream_options.include_usage)
                 if chunk.usage:
@@ -422,6 +460,11 @@ class CASOpenAIBackend(CASAddressingEngine):
 
         elapsed_ms = (time.perf_counter() - start_time) * 1000
 
+        # Build sorted tool_calls list from accumulated fragments
+        tool_calls: list[dict[str, Any]] = (
+            [tool_calls_accum[i] for i in sorted(tool_calls_accum)] if tool_calls_accum else []
+        )
+
         # Final metadata message
         yield (
             "",
@@ -429,6 +472,8 @@ class CASOpenAIBackend(CASAddressingEngine):
                 "model": collected_model,
                 "usage": usage,
                 "latency_ms": round(elapsed_ms, 1),
+                "finish_reason": finish_reason or "stop",
+                "tool_calls": tool_calls,
             },
         )
 

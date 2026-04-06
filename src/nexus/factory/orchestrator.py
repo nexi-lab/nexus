@@ -604,8 +604,18 @@ async def _register_vfs_hooks(
     # Remote watcher (EventBus) wired later by federation or other services.
     await _enlist("file_watcher", nx._file_watcher)
 
-    # EventBus: self-contained lib, created on demand.
-    # Kernel-knows: stored on NexusFS._event_bus, wired into FileWatcher + EventBusObserver.
+    # Remote watcher: default StreamRemoteWatcher (DT_STREAM, no external deps).
+    # If EventBus (NATS/Dragonfly) is configured, use EventBusRemoteWatcher instead.
+    from nexus.core.remote_watcher import StreamEventObserver, StreamRemoteWatcher
+
+    _stream_watcher = StreamRemoteWatcher(nx._stream_manager)
+    _stream_observer = StreamEventObserver(_stream_watcher)
+    nx._file_watcher.set_remote_watcher(_stream_watcher)
+    await _enlist("stream_event_observer", _stream_observer)
+
+    # EventBus (optional): NATS/Dragonfly for distributed pub/sub.
+    # When configured, replaces StreamRemoteWatcher with EventBusRemoteWatcher
+    # and EventBusObserver for network-based event delivery.
     _event_bus = None
     _dist_cfg = getattr(nx, "_distributed_config", None)
     if _dist_cfg and getattr(_dist_cfg, "enable_events", False):
@@ -614,13 +624,13 @@ async def _register_vfs_hooks(
 
             _event_bus = create_event_bus()
             nx._event_bus = _event_bus
-            nx._file_watcher.set_remote_watcher(_event_bus)
+
+            from nexus.core.remote_watcher import EventBusRemoteWatcher
+
+            nx._file_watcher.set_remote_watcher(EventBusRemoteWatcher(_event_bus))
         except Exception as exc:
             logger.warning("EventBus creation skipped: %s", exc)
 
-    # EventBusObserver: forwards FileEvents to distributed EventBus (Redis/NATS).
-    # When event_bus is None (no distributed infra), the observer is a no-op.
-    # Tests use swap_service() to replace.
     from nexus.services.event_bus.observer import EventBusObserver
 
     _bus_observer = EventBusObserver(event_bus=_event_bus)

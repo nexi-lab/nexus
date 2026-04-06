@@ -3521,45 +3521,6 @@ class NexusFS(  # type: ignore[misc]
 
         return result
 
-    # ------------------------------------------------------------------
-    # llm_call — Tier 2 LLM streaming convenience (Issue #1589)
-    # ------------------------------------------------------------------
-
-    @rpc_expose(description="Start LLM streaming call")
-    async def llm_call(
-        self,
-        path: str,
-        request: dict[str, Any],
-        *,
-        context: OperationContext | None = None,
-    ) -> dict[str, Any]:
-        """Start an LLM streaming call, returning a DT_STREAM path for reading tokens.
-
-        Routes to the CASOpenAIBackend at the mount point covering ``path``
-        and calls ``backend.start_streaming()`` which creates a DT_STREAM,
-        spawns a background streaming task, and returns immediately.
-
-        Callers read tokens via ``sys_read(stream_path, offset=N)`` (blocking).
-        """
-        import json as _json
-
-        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
-
-        route = self.router.route(path, zone_id=self._zone_id)
-        if not isinstance(route.backend, CASOpenAIBackend):
-            raise BackendError(
-                f"No LLM backend at {path} — expected CASOpenAIBackend, "
-                f"got {type(route.backend).__name__}"
-            )
-
-        request_bytes = _json.dumps(request, separators=(",", ":")).encode("utf-8")
-        stream_path = path  # caller provides stream path
-
-        return await route.backend.start_streaming(
-            request_bytes=request_bytes,
-            stream_path=stream_path,
-        )
-
     @rpc_expose(description="Get file metadata without reading content")
     def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """

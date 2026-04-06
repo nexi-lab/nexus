@@ -90,11 +90,27 @@ def llm(
         _stream_path = stream_path or f"/root/llm/.streams/{uuid.uuid4().hex[:12]}"
 
         try:
-            _llm_call = getattr(nx, "llm_call", None)
-            if _llm_call is None:
-                click.echo("Error: LLM streaming not available (NexusFS required)", err=True)
+            from nexus.backends.compute.openai_compatible import CASOpenAIBackend
+
+            _router = getattr(nx, "router", None)
+            if _router is None:
+                click.echo(
+                    "Error: LLM streaming requires a local NexusFS (no router on remote client)",
+                    err=True,
+                )
                 return
-            result = await _llm_call(_stream_path, request)
+            route = _router.route(_stream_path)
+            if not isinstance(route.backend, CASOpenAIBackend):
+                click.echo(
+                    f"Error: No LLM backend at {_stream_path} (got {type(route.backend).__name__})",
+                    err=True,
+                )
+                return
+            request_bytes = json.dumps(request, separators=(",", ":")).encode("utf-8")
+            result = await route.backend.start_streaming(
+                request_bytes=request_bytes,
+                stream_path=_stream_path,
+            )
         except Exception as e:
             handle_error(e)
             return

@@ -429,6 +429,19 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
   mount's factory; if set, creates a custom backend instead of default memory.
 
+**io_profile — Backend Selection via sys_setattr:**
+
+``sys_setattr(path, entry_type=DT_PIPE|DT_STREAM, io_profile=...)`` selects the
+backend implementation at creation time:
+
+| io_profile | DT_PIPE Backend | DT_STREAM Backend |
+|---|---|---|
+| ``"memory"`` (default) | MemoryPipeBackend (~0.5μs) | MemoryStreamBackend (~0.5μs) |
+| ``"shared_memory"`` | SharedMemoryPipeBackend (mmap, ~1-5μs) | SharedMemoryStreamBackend (mmap, ~1-5μs) |
+
+``"shared_memory"`` enables cross-process IPC via mmap'd shared memory.
+Mount-level ``stream_backend_factory`` takes precedence over io_profile for DT_STREAM.
+
 See `federation-memo.md` §7j for design rationale.
 
 ### 4.3 FileWatcher + FileEvent — File Change Notification

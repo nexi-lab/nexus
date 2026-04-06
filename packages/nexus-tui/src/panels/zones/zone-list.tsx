@@ -27,36 +27,23 @@ function truncate(value: string, maxLen: number): string {
   return `${value.slice(0, maxLen - 2)}..`;
 }
 
-export function ZoneList({
-  zones,
-  selectedIndex,
-  loading,
-}: ZoneListProps): JSX.Element {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading zones...</text>
-      </box>
-    );
-  }
-
-  if (zones.length === 0) {
-    return <EmptyState message="No zones found." hint="Press n to create a zone." />;
-  }
-
+export function ZoneList(props: ZoneListProps): JSX.Element {
+  // Unconditional rendering — ternary instead of if/return (evaluates once in Match)
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  ZONE ID            NAME             DOMAIN           PHASE     ACTIVE  CREATED"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  -----------------  ---------------  ---------------  --------  ------  -------------------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>{props.loading ? "Loading zones..." : props.zones.length === 0 ? "No zones found. Press n to create a zone." : ""}</text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  ZONE ID            NAME             DOMAIN           PHASE     ACTIVE  CREATED"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  -----------------  ---------------  ---------------  --------  ------  -------------------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {zones.map((zone, i) => {
-        const isSelected = i === selectedIndex;
+        {/* Rows */}
+        {props.zones.map((zone, i) => {
+          const isSelected = i === props.selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         const activeLabel = zone.is_active ? "yes" : "no";
 
@@ -69,5 +56,6 @@ export function ZoneList({
         );
       })}
     </scrollbox>
+    </box>
   );
 }

@@ -71,7 +71,6 @@ except (ImportError, AttributeError):
 
 # Python wrappers for multi-zone federation
 from nexus.raft.zone_manager import ZoneManager
-from nexus.raft.zone_path_resolver import ZonePathResolver
 
 
 def require_metastore() -> None:
@@ -96,7 +95,6 @@ __all__ = [
     "Metastore",
     # Multi-zone federation
     "ZoneManager",
-    "ZonePathResolver",
     "ZoneHandle",
     # Lock types
     "LockState",

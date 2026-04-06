@@ -31,7 +31,6 @@ from nexus.core.file_events import FileEvent, FileEventType
 from nexus.core.hash_fast import hash_content
 from nexus.core.metastore import MetastoreABC
 from nexus.core.nexus_fs_dispatch import DispatchMixin
-from nexus.core.nexus_fs_ipc import IPCMixin
 from nexus.core.nexus_fs_lock import LockMixin
 from nexus.core.nexus_fs_watch import WatchMixin
 from nexus.core.path_utils import validate_path
@@ -64,7 +63,6 @@ class _WriteContentResult(NamedTuple):
 class NexusFS(  # type: ignore[misc]
     DispatchMixin,
     LockMixin,
-    IPCMixin,
     WatchMixin,
 ):
     """
@@ -190,9 +188,6 @@ class NexusFS(  # type: ignore[misc]
 
         import os as _os_ipc
 
-        from nexus.core.pipe_manager import PipeManager
-        from nexus.core.stream_manager import StreamManager
-
         _ipc_self_addr = _os_ipc.environ.get("NEXUS_ADVERTISE_ADDR")
 
         self._transport_pool = None
@@ -210,19 +205,8 @@ class NexusFS(  # type: ignore[misc]
             transport_pool=self._transport_pool,
         )
 
-        self._pipe_manager = PipeManager(
-            metadata_store,
-            self_address=_ipc_self_addr,
-            transport_pool=self._transport_pool,
-        )
-        self._stream_manager = StreamManager(
-            metadata_store,
-            self_address=_ipc_self_addr,
-        )
         # IPC waiters for blocking path (asyncio.Event pairs per pipe/stream)
-        from nexus.core.ipc_waiter import IPCWaiter
-
-        self._ipc_waiters: dict[str, IPCWaiter] = {}
+        self._ipc_waiters: dict[str, Any] = {}
         # Custom backends for SHM/remote pipes/streams (non-standard, keep in Python)
         self._custom_pipe_backends: dict[str, Any] = {}
         self._custom_stream_backends: dict[str, Any] = {}
@@ -232,7 +216,7 @@ class NexusFS(  # type: ignore[misc]
         self._file_watcher = FileWatcher()
 
         logger.info(
-            "IPC primitives initialized: DriverCoordinator + PipeManager + StreamManager + FileWatcher (self_address=%s)",
+            "IPC primitives initialized: DriverCoordinator + FileWatcher (self_address=%s)",
             _ipc_self_addr or "none/single-node",
         )
 
@@ -869,10 +853,22 @@ class NexusFS(  # type: ignore[misc]
             if meta.entry_type == requested_type and requested_type == DT_MOUNT:
                 return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_PIPE:
-                self._pipe_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                # Idempotent open: re-create Rust buffer if lost after restart
+                if not self._kernel.has_pipe(path):
+                    self._kernel.create_pipe(path, attrs.get("capacity", 65_536))
+                if path not in self._ipc_waiters:
+                    from nexus.core.ipc_waiter import IPCWaiter
+
+                    self._ipc_waiters[path] = IPCWaiter()
                 return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_STREAM:
-                self._stream_manager.open(path, capacity=attrs.get("capacity", 65_536))
+                # Idempotent open: re-create Rust buffer if lost after restart
+                if not self._kernel.has_stream(path):
+                    self._kernel.create_stream(path, attrs.get("capacity", 65_536))
+                if path not in self._ipc_waiters:
+                    from nexus.core.ipc_waiter import IPCWaiter
+
+                    self._ipc_waiters[path] = IPCWaiter()
                 return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_DIR:
                 return {"path": path, "created": False, "entry_type": requested_type}
@@ -900,7 +896,6 @@ class NexusFS(  # type: ignore[misc]
         from nexus.contracts.metadata import DT_MOUNT, DT_PIPE, DT_STREAM
 
         capacity = attrs.get("capacity", 65_536)
-        owner_id = attrs.get("owner_id")
 
         if entry_type == DT_MOUNT:
             # Mount a backend to this path via DriverLifecycleCoordinator.
@@ -961,13 +956,13 @@ class NexusFS(  # type: ignore[misc]
                     pipe_backend, _shm_path, _data_rd_fd, _space_rd_fd = (
                         SharedMemoryPipeBackend.create(capacity)
                     )
-                    self._pipe_manager.create_from_backend(path, pipe_backend, owner_id=owner_id)
                     self._custom_pipe_backends[path] = pipe_backend
+                    # Rust kernel tracks the inode (metastore + dcache)
+                    self._kernel.create_pipe(path, capacity)
                 else:
                     # Standard memory pipe → Rust kernel IPC registry
                     self._kernel.create_pipe(path, capacity)
-                    self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
-            except PipeError as exc:
+            except (PipeError, Exception) as exc:
                 raise BackendError(str(exc)) from exc
             self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
@@ -986,23 +981,20 @@ class NexusFS(  # type: ignore[misc]
             try:
                 if _factory is not None:
                     backend = _factory(path, capacity)
-                    self._stream_manager.create_from_backend(path, backend, owner_id=owner_id)
                     self._custom_stream_backends[path] = backend
+                    self._kernel.create_stream(path, capacity)
                 elif io_profile == "shared_memory":
                     from nexus.core.shm_stream import SharedMemoryStreamBackend
 
                     stream_backend, _shm_path, _data_rd_fd = SharedMemoryStreamBackend.create(
                         capacity
                     )
-                    self._stream_manager.create_from_backend(
-                        path, stream_backend, owner_id=owner_id
-                    )
                     self._custom_stream_backends[path] = stream_backend
+                    self._kernel.create_stream(path, capacity)
                 else:
                     # Standard memory stream → Rust kernel IPC registry
                     self._kernel.create_stream(path, capacity)
-                    self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
-            except StreamError as exc:
+            except (StreamError, Exception) as exc:
                 raise BackendError(str(exc)) from exc
             self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
@@ -4658,6 +4650,109 @@ class NexusFS(  # type: ignore[misc]
             coord._unregister_all_hooks()
         self.close()
 
+    # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
+
+    async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_PIPE — async blocking via IPCWaiter + Rust nowait retry."""
+        _waiter = self._ipc_waiters.get(path)
+        if _waiter is not None:
+            while True:
+                _data = self._kernel.pipe_read_nowait(path)
+                if _data is not None:
+                    _waiter.signal_not_full()
+                    if offset or count is not None:
+                        _data = (
+                            _data[offset : offset + count] if count is not None else _data[offset:]
+                        )
+                    return bytes(_data)
+                await _waiter.wait_readable()
+
+        # Custom backend fallback (SHM/remote)
+        _buf = self._custom_pipe_backends.get(path)
+        if _buf is not None:
+            from nexus.core.pipe import PipeClosedError, PipeEmptyError
+
+            try:
+                data: bytes = _buf.read_nowait()
+            except PipeEmptyError:
+                data = await _buf.read(blocking=True)
+            except PipeClosedError:
+                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+            if offset or count is not None:
+                data = data[offset : offset + count] if count is not None else data[offset:]
+            return data
+
+        raise NexusFileNotFoundError(path, f"Pipe not found: {path}")
+
+    def _pipe_write(self, path: str, data: bytes) -> int:
+        """Write to DT_PIPE — non-blocking via Rust kernel."""
+        n: int = self._kernel.pipe_write_nowait(path, data)
+        _waiter = self._ipc_waiters.get(path)
+        if _waiter is not None:
+            _waiter.signal_not_empty()
+        return n
+
+    def _pipe_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_PIPE — close Rust buffer + clean up Python state."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._kernel.destroy_pipe(path)
+        _buf = self._custom_pipe_backends.pop(path, None)
+        if _buf is not None:
+            _buf.close()
+        self._ipc_waiters.pop(path, None)
+        return {}
+
+    async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
+        """Read from DT_STREAM — async blocking via IPCWaiter + Rust nowait retry."""
+        _waiter = self._ipc_waiters.get(path)
+        if _waiter is not None:
+            while True:
+                _result = self._kernel.stream_read_at(path, offset)
+                if _result is not None:
+                    return bytes(_result[0])
+                await _waiter.wait_readable()
+
+        # Custom backend fallback
+        _buf = self._custom_stream_backends.get(path)
+        if _buf is not None:
+            from nexus.core.stream import StreamClosedError, StreamEmptyError
+
+            try:
+                if count is not None and count > 1:
+                    items, _ = await _buf.read_batch_blocking(offset, count, blocking=True)
+                    return b"".join(items)
+                sdata: bytes
+                sdata, _ = await _buf.read(offset, blocking=True)
+                return sdata
+            except StreamEmptyError:
+                raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
+            except StreamClosedError:
+                raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
+
+        raise NexusFileNotFoundError(path, f"Stream not found: {path}")
+
+    def _stream_write(self, path: str, data: bytes) -> int:
+        """Write to DT_STREAM — non-blocking via Rust kernel, returns byte offset."""
+        _off: int = self._kernel.stream_write_nowait(path, data)
+        _waiter = self._ipc_waiters.get(path)
+        if _waiter is not None:
+            _waiter.signal_not_empty()
+        return _off
+
+    def _stream_destroy(self, path: str) -> dict[str, Any]:
+        """Destroy DT_STREAM — close Rust buffer + clean up Python state."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._kernel.destroy_stream(path)
+        _buf = self._custom_stream_backends.pop(path, None)
+        if _buf is not None:
+            _buf.close()
+        self._ipc_waiters.pop(path, None)
+        return {}
+
     def close(self) -> None:
         """Close the filesystem and release resources."""
         # Issue #1793/#1789/#1792: Service close via factory-registered callbacks.
@@ -4669,13 +4764,9 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("close: callback failed (best-effort): %s", exc)
 
-        # Close IPC primitives — Rust kernel + Python managers (§4.2)
+        # Close IPC primitives — Rust kernel (§4.2)
         self._kernel.close_all_pipes()
         self._kernel.close_all_streams()
-        if hasattr(self, "_pipe_manager"):
-            self._pipe_manager.close_all()
-        if hasattr(self, "_stream_manager"):
-            self._stream_manager.close_all()
         self._ipc_waiters.clear()
         self._custom_pipe_backends.clear()
         self._custom_stream_backends.clear()

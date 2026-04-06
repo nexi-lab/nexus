@@ -134,13 +134,9 @@ class AcpService:
         self._on_terminate_callbacks.append((callback_id, callback))
 
     def bind_pipe_manager(self, pipe_manager: Any) -> None:
-        """Bind PipeManager for DT_PIPE registration of agent stdio.
-
-        Called after NexusFS construction (factory ``_wired.py`` phase).
-        When not bound, agent pipes are not visible in the VFS (degraded).
-        """
-        self._pipe_manager = pipe_manager
-        logger.debug("AcpService: PipeManager bound for DT_PIPE registration")
+        """Legacy shim — no longer needed. Pipe registration uses NexusFS._kernel directly."""
+        # No-op: PipeManager deleted. Agent stdio pipes registered via NexusFS.
+        pass
 
     # ------------------------------------------------------------------
     # Public API
@@ -251,11 +247,16 @@ class AcpService:
             stderr_pipe = StdioPipe(reader=proc.stderr, writer=None)
 
             # Register DT_PIPEs in VFS (graceful degradation)
-            if self._pipe_manager is not None:
+            if self._nexus_fs is not None:
                 try:
-                    self._pipe_manager.create_from_backend(fd0_path, stdin_pipe, owner_id=owner_id)
-                    self._pipe_manager.create_from_backend(fd1_path, stdout_pipe, owner_id=owner_id)
-                    self._pipe_manager.create_from_backend(fd2_path, stderr_pipe, owner_id=owner_id)
+                    _nx: Any = self._nexus_fs
+                    for fd_path, pipe_backend in (
+                        (fd0_path, stdin_pipe),
+                        (fd1_path, stdout_pipe),
+                        (fd2_path, stderr_pipe),
+                    ):
+                        _nx._custom_pipe_backends[fd_path] = pipe_backend
+                        _nx._kernel.create_pipe(fd_path, 65_536)
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 
@@ -365,10 +366,11 @@ class AcpService:
         if active.proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 active.proc.kill()
-        if self._pipe_manager is not None:
+        if self._nexus_fs is not None:
+            _nx_any: Any = self._nexus_fs
             for fd_path in (active.fd0_path, active.fd1_path, active.fd2_path):
                 with contextlib.suppress(Exception):
-                    self._pipe_manager.destroy(fd_path)
+                    _nx_any._pipe_destroy(fd_path)
 
     def kill_agent(self, pid: str) -> AgentDescriptor:
         """Kill a running agent connection and mark TERMINATED in AgentRegistry."""

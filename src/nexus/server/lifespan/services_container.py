@@ -58,7 +58,7 @@ class LifespanServices:
     eviction_manager: Any = None
     write_observer: Any = None
     zone_lifecycle: Any = None
-    pipe_manager: Any = None  # DT_PIPE manager — kernel-internal primitive (§4.2)
+    pipe_manager: Any = None  # Legacy — kept for backward compat, always None
 
     # --- Scheduler (from ServiceRegistry) ----
     scheduler_service: "SchedulerProtocol | None" = None
@@ -130,7 +130,7 @@ class LifespanServices:
             eviction_manager=_svc("eviction_manager"),
             write_observer=_svc("write_observer"),
             zone_lifecycle=_svc("zone_lifecycle"),
-            pipe_manager=(getattr(nx, "_pipe_manager", None) if nx else None),
+            pipe_manager=None,  # PipeManager deleted — Rust kernel handles IPC
             zoekt_pipe_consumer=_svc("zoekt_pipe_consumer"),
             task_dispatch_consumer=_svc("task_dispatch_consumer"),
             scheduler_service=_svc("scheduler_service"),

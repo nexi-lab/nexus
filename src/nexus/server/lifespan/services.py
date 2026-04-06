@@ -590,14 +590,8 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
     1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
     2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
 
-    Consumers support two deferred-injection styles:
-    1. Legacy DT_PIPE consumers expect ``set_pipe_manager(pipe_manager)``
-    2. Current syscall-backed consumers expect ``bind_fs(nexus_fs)``
-
-    Lifespan startup handles both so write-observer/search indexing does
-    not silently stop when the implementation migrates away from PipeManager.
+    All consumers use NexusFS sys_read/sys_write for pipe I/O (Rust kernel).
     """
-    pipe_manager = svc.pipe_manager
     nx = svc.nexus_fs
 
     # Issue #809: PipedRecordStoreWriteObserver
@@ -606,8 +600,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         try:
             if hasattr(wo, "bind_fs") and nx is not None:
                 wo.bind_fs(nx)
-            elif hasattr(wo, "set_pipe_manager") and pipe_manager is not None:
-                wo.set_pipe_manager(pipe_manager)
             else:
                 raise RuntimeError("write observer missing startup binding hook")
             await wo.start()
@@ -632,8 +624,6 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
         try:
             if hasattr(zpc, "bind_fs") and nx is not None:
                 zpc.bind_fs(nx)
-            elif hasattr(zpc, "set_pipe_manager") and pipe_manager is not None:
-                zpc.set_pipe_manager(pipe_manager)
             else:
                 raise RuntimeError("zoekt consumer missing startup binding hook")
             await zpc.start()
@@ -670,9 +660,9 @@ async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> No
                 logger.info("[PIPE] TaskDispatchPipeConsumer created (lifespan fallback)")
         except Exception as e:
             logger.warning("[PIPE] TaskDispatchPipeConsumer fallback failed: %s", e)
-    if tdc is not None and hasattr(tdc, "set_pipe_manager") and pipe_manager is not None:
+    if tdc is not None and nx is not None:
         try:
-            tdc.set_pipe_manager(pipe_manager)
+            tdc.set_nx(nx)
             # Inject server base URL so enriched worker prompts can reference the API
             if hasattr(tdc, "set_server_info"):
                 _port = os.environ.get("NEXUS_PORT", "2026")

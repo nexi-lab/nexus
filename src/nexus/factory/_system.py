@@ -446,7 +446,7 @@ def _boot_pre_kernel_services(
 
     # (Federation is wired at link time in _lifecycle.py via the federation parameter.)
 
-    # (PipeManager + StreamManager are kernel-owned primitives in NexusFS.__init__.
+    # (IPC primitives are kernel-owned: Rust DashMap + metastore/dcache integration.
     # AgentRegistry is lazy-constructed by the first consumer via sys_setattr.
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 

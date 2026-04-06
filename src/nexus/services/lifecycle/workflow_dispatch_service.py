@@ -1,13 +1,13 @@
 """Workflow dispatch service (#625).
 
-Dispatches workflow trigger events via PipeManager (userspace API
-over DT_PIPE kernel IPC) and broadcasts to webhook subscriptions.
+Dispatches workflow trigger events via Rust kernel DT_PIPE IPC
+and broadcasts to webhook subscriptions.
 
 Implements ``VFSObserver`` — registered in KernelDispatch's OBSERVE phase so
 the kernel fires a single ``FileEvent`` without knowing about workflows.
 
 DI dependencies (no god-object access):
-    - pipe_manager: PipeManager for kernel IPC ring buffers
+    - nx: NexusFS for Rust-kernel pipe I/O
     - workflow_engine: WorkflowProtocol for firing workflow events
     - subscription_manager: Optional webhook broadcast (injected late by server)
     - enable_workflows: Feature flag from DistributedConfig
@@ -22,22 +22,24 @@ import asyncio
 import contextlib
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.workflows.protocol import WorkflowProtocol
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.file_events import ALL_FILE_EVENTS, FileEvent
-from nexus.core.pipe_manager import PipeManager
+
+if TYPE_CHECKING:
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
-# PipeManager VFS path and capacity for workflow events (Task #808)
+# VFS path and capacity for workflow events (Task #808)
 _WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
 _WORKFLOW_PIPE_CAPACITY = 65_536  # 64KB
 
 
 class WorkflowDispatchService:
-    """Dispatches workflow trigger events via PipeManager and webhook subscriptions.
+    """Dispatches workflow trigger events via Rust kernel DT_PIPE and webhook subscriptions.
 
     Implements ``WorkflowDispatchProtocol`` and ``VFSObserver``.
     """
@@ -47,12 +49,13 @@ class WorkflowDispatchService:
     def __init__(
         self,
         *,
-        pipe_manager: PipeManager | None,
+        nx: "NexusFS | None" = None,
         workflow_engine: WorkflowProtocol | None,
         subscription_manager: Any = None,
         enable_workflows: bool = True,
+        **_kwargs: Any,
     ) -> None:
-        self._pipe_manager = pipe_manager
+        self._nx = nx
         self._workflow_engine = workflow_engine
         self._subscription_manager = subscription_manager
         self._enable_workflows = enable_workflows
@@ -154,18 +157,19 @@ class WorkflowDispatchService:
     async def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
         """Async fire for direct callers (not from OBSERVE path).
 
-        Uses PipeManager userspace API — never touches MemoryPipeBackend directly.
+        Uses Rust kernel pipe_write_nowait — never touches Python backends directly.
         """
         if not (self._enable_workflows and self._workflow_engine):
             return
 
-        from nexus.core.pipe import PipeClosedError, PipeFullError
-
-        if self._pipe_manager is not None and self._pipe_ready:
+        if self._nx is not None and self._pipe_ready:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
-                self._pipe_manager.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
-            except (PipeClosedError, PipeFullError):
+                self._nx._kernel.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
+                _waiter = self._nx._ipc_waiters.get(_WORKFLOW_PIPE_PATH)
+                if _waiter is not None:
+                    _waiter.signal_not_empty()
+            except Exception:
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
             await self._workflow_engine.fire_event(trigger_type, event_context)
@@ -183,26 +187,23 @@ class WorkflowDispatchService:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Create workflow pipe via PipeManager and start background consumer (idempotent)."""
+        """Create workflow pipe via sys_setattr and start background consumer (idempotent)."""
         if self._pipe_ready:
             return
 
-        if self._pipe_manager is None:
-            return  # CLI mode — no pipe manager
+        if self._nx is None:
+            return  # CLI mode — no NexusFS
 
-        from nexus.core.pipe import PipeError, PipeExistsError
+        from nexus.contracts.metadata import DT_PIPE
 
         try:
-            self._pipe_manager.create(
+            await self._nx.sys_setattr(
                 _WORKFLOW_PIPE_PATH,
+                entry_type=DT_PIPE,
                 capacity=_WORKFLOW_PIPE_CAPACITY,
                 owner_id="kernel",
             )
-        except PipeExistsError:
-            # Pipe already exists (e.g., restart recovery) — open it
-            self._pipe_manager.open(_WORKFLOW_PIPE_PATH, capacity=_WORKFLOW_PIPE_CAPACITY)
-        except PipeError as exc:
-            # Rust IPC unavailable — degrade gracefully, workflow dispatch disabled.
+        except Exception as exc:
             logger.warning("[WORKFLOW-DISPATCH] pipe unavailable, dispatch disabled: %s", exc)
             return
 
@@ -214,9 +215,9 @@ class WorkflowDispatchService:
         """Graceful shutdown: signal pipe closed, drain remaining events, then stop."""
         if self._consumer_task is not None and not self._consumer_task.done():
             # Signal close — wakes blocked consumer, allows drain of remaining messages
-            if self._pipe_manager is not None and self._pipe_ready:
+            if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    self._pipe_manager.signal_close(_WORKFLOW_PIPE_PATH)
+                    self._nx._kernel.close_pipe(_WORKFLOW_PIPE_PATH)
 
             # Let consumer drain naturally, with timeout
             try:
@@ -234,21 +235,20 @@ class WorkflowDispatchService:
     # ------------------------------------------------------------------
 
     async def _consume(self) -> None:
-        """Background consumer for workflow events via PipeManager (#808).
+        """Background consumer for workflow events via sys_read (#808).
 
-        Reads from PipeManager by VFS path (userspace API).
+        Reads from Rust kernel pipe by VFS path.
         Deserializes JSON messages and fires workflow engine events.
         """
-        from nexus.core.pipe import PipeClosedError, PipeNotFoundError
+        from nexus.contracts.exceptions import NexusFileNotFoundError
 
-        assert self._pipe_manager is not None  # guaranteed by start()
+        assert self._nx is not None  # guaranteed by start()
         assert self._workflow_engine is not None  # guaranteed by constructor guard
-        pipe_mgr = self._pipe_manager
         engine = self._workflow_engine
         while True:
             try:
-                data = await pipe_mgr.pipe_read(_WORKFLOW_PIPE_PATH)
-            except (PipeClosedError, PipeNotFoundError):
+                data = await self._nx.sys_read(_WORKFLOW_PIPE_PATH)
+            except NexusFileNotFoundError:
                 logger.debug("Workflow pipe closed, consumer exiting")
                 break
             try:

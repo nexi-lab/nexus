@@ -1882,22 +1882,23 @@ class NexusFS(  # type: ignore[misc]
                     self._ensure_parent_directories(path, ctx)
                 return
 
-        # Rust kernel: full mkdir (PRE hooks + backend + metastore + dcache)
+        # PRE-INTERCEPT hooks via Rust kernel
         _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
         _mkdir_result = self._kernel.sys_mkdir(path, _rust_ctx, parents, exist_ok)
 
-        if not _mkdir_result.hit:
-            # Fallback: Rust didn't complete (shouldn't happen for mkdir, but safety)
-            route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
-            if parents:
-                self._ensure_parent_directories(path, ctx)
-            self._setattr_create(
-                path,
-                DT_DIR,
-                {
-                    "zone_id": ctx.zone_id or ROOT_ZONE_ID,
-                },
-            )
+        # Python always does metastore + backend (authoritative metadata with timestamps/backend_key)
+        route.backend.mkdir(route.backend_path, parents=parents, exist_ok=True, context=ctx)
+
+        if parents:
+            self._ensure_parent_directories(path, ctx)
+
+        self._setattr_create(
+            path,
+            DT_DIR,
+            {
+                "zone_id": ctx.zone_id or ROOT_ZONE_ID,
+            },
+        )
 
         # Issue #900/#3391: Unified two-phase dispatch — OBSERVE then INTERCEPT
         await self.notify(
@@ -2939,36 +2940,38 @@ class NexusFS(  # type: ignore[misc]
 
         # ── File branch: regular unlink ──────────────────────────────
 
-        # Rust kernel: full unlink (PRE hooks + VFS lock + metastore + backend + dcache)
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _unlink_result = self._kernel.sys_unlink(path, _rust_ctx)
 
-        if not _unlink_result.hit:
-            # Fallback: Rust didn't complete (DT_PIPE/DT_STREAM/DT_MOUNT)
-            with self._vfs_locked(path, "write"):
-                route.metastore.delete(path)
-                if hasattr(route.backend, "delete"):
-                    try:
-                        route.backend.delete(route.backend_path, context=context)
-                    except Exception as _be:
-                        logger.warning(
-                            "Backend file delete %s failed (metadata already deleted): %s",
-                            route.backend_path,
-                            _be,
-                        )
-
         # POST-INTERCEPT hooks
-        if _unlink_result.post_hook_needed:
-            from nexus.contracts.vfs_hooks import DeleteHookContext
+        from nexus.contracts.vfs_hooks import DeleteHookContext
 
-            _delete_ctx = DeleteHookContext(
-                path=path,
-                context=context,
-                zone_id=zone_id,
-                agent_id=agent_id,
-                metadata=meta,
-            )
+        _delete_ctx = DeleteHookContext(
+            path=path,
+            context=context,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            metadata=meta,
+        )
+        if _unlink_result.post_hook_needed:
             self._kernel.dispatch_post_hooks("delete", _delete_ctx)
+
+        # Python always does metastore + backend delete under VFS lock
+        # (Rust kernel has the capability for FUSE/gRPC bypass)
+        with self._vfs_locked(path, "write"):
+            route.metastore.delete(path)
+
+            # PAS backend propagation
+            if hasattr(route.backend, "delete"):
+                try:
+                    route.backend.delete(route.backend_path, context=context)
+                except Exception as _be:
+                    logger.warning(
+                        "Backend file delete %s failed (metadata already deleted): %s",
+                        route.backend_path,
+                        _be,
+                    )
 
         # Event dispatch
         await self.notify(
@@ -2977,8 +2980,8 @@ class NexusFS(  # type: ignore[misc]
                 path=path,
                 zone_id=zone_id or ROOT_ZONE_ID,
                 agent_id=agent_id,
-                etag=_unlink_result.etag or (meta.etag if meta else None),
-                size=_unlink_result.size if _unlink_result.hit else (meta.size if meta else 0),
+                etag=meta.etag,
+                size=meta.size,
             )
         )
 
@@ -2998,47 +3001,49 @@ class NexusFS(  # type: ignore[misc]
         Handles DT_MOUNT unmount, ENOTEMPTY check, recursive child delete,
         backend rmdir, sparse index cleanup, and rmdir hook dispatch.
         """
+        import errno
+
         ctx = self._resolve_cred(context)
+
+        from nexus.contracts.vfs_hooks import RmdirHookContext
+
+        self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
 
         # DT_MOUNT / DT_EXTERNAL_STORAGE: unmount via DriverLifecycleCoordinator + delete metadata
         if meta.is_mount or meta.is_external_storage:
-            from nexus.contracts.vfs_hooks import RmdirHookContext
-
-            self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
             removed = self._driver_coordinator.unmount(path)
             if removed:
                 route.metastore.delete(path)
                 logger.info("sys_unlink: unmounted %s", path)
             return {}
 
-        # Rust kernel: full rmdir (PRE hooks + children check + batch delete + backend + dcache)
-        _rust_ctx = self._build_rust_ctx(ctx, ctx.is_admin)
-        _rmdir_result = self._kernel.sys_rmdir(path, _rust_ctx, recursive)
+        # Python always does full rmdir (Rust kernel has the capability for FUSE/gRPC bypass)
+        dir_path = path if path.endswith("/") else path + "/"
+        files_in_dir = route.metastore.list(dir_path)
 
-        if not _rmdir_result.hit:
-            # Fallback (shouldn't happen for regular dirs, but safety)
-            import errno
+        if files_in_dir:
+            if not recursive:
+                raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
+            # Recursive: batch delete all children
+            file_paths = [file_meta.path for file_meta in files_in_dir]
+            route.metastore.delete_batch(file_paths)
 
-            from nexus.contracts.vfs_hooks import RmdirHookContext
+        # Remove directory in backend (suppress errors — CAS may not have physical dir)
+        with contextlib.suppress(NexusFileNotFoundError):
+            route.backend.rmdir(route.backend_path, recursive=recursive)
 
-            self._kernel.dispatch_pre_hooks("rmdir", RmdirHookContext(path=path, context=ctx))
+        # Delete directory's own metadata entry
+        try:
+            route.metastore.delete(path)
+        except Exception as e:
+            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
 
-            dir_path = path if path.endswith("/") else path + "/"
-            files_in_dir = route.metastore.list(dir_path)
-
-            if files_in_dir:
-                if not recursive:
-                    raise OSError(errno.ENOTEMPTY, f"Directory not empty: {path}")
-                file_paths = [file_meta.path for file_meta in files_in_dir]
-                route.metastore.delete_batch(file_paths)
-
-            with contextlib.suppress(NexusFileNotFoundError):
-                route.backend.rmdir(route.backend_path, recursive=recursive)
-
+        # Clean up sparse directory index entries
+        if hasattr(route.metastore, "delete_directory_entries_recursive"):
             try:
-                route.metastore.delete(path)
+                route.metastore.delete_directory_entries_recursive(path)
             except Exception as e:
-                logger.debug("Failed to delete directory metadata for %s: %s", path, e)
+                logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
         # OBSERVE then INTERCEPT (Issue #3391)
         await self.notify(
@@ -3050,19 +3055,16 @@ class NexusFS(  # type: ignore[misc]
                 user_id=ctx.user_id,
             )
         )
-        if _rmdir_result.post_hook_needed:
-            from nexus.contracts.vfs_hooks import RmdirHookContext
-
-            self._kernel.dispatch_post_hooks(
-                "rmdir",
-                RmdirHookContext(
-                    path=path,
-                    context=ctx,
-                    zone_id=ctx.zone_id,
-                    agent_id=ctx.agent_id,
-                    recursive=recursive,
-                ),
-            )
+        self._kernel.dispatch_post_hooks(
+            "rmdir",
+            RmdirHookContext(
+                path=path,
+                context=ctx,
+                zone_id=ctx.zone_id,
+                agent_id=ctx.agent_id,
+                recursive=recursive,
+            ),
+        )
 
         return {}
 
@@ -3137,64 +3139,87 @@ class NexusFS(  # type: ignore[misc]
             meta and meta.mime_type == "inode/directory"
         ) or self.metadata.is_implicit_directory(old_path)
 
-        # Rust kernel: full rename (PRE hooks + VFS lock + metastore + backend + dcache)
+        # PRE-INTERCEPT hooks dispatched by Rust kernel
         _rust_ctx = self._build_rust_ctx(context, is_admin)
         _rename_result = self._kernel.sys_rename(old_path, new_path, _rust_ctx)
 
-        if not _rename_result.hit:
-            # Fallback: Rust didn't complete (DT_MOUNT/DT_PIPE/DT_STREAM)
-            # Do the full Python rename under VFS lock
-            _first, _second = sorted([old_path, new_path])
-            _h1 = self._vfs_acquire(_first, "write")
+        # Python always does full metastore rename under VFS lock
+        # (Rust kernel has the capability for FUSE/gRPC bypass, but Python
+        # wrapper continues to use route.metastore for authoritative metadata)
+        _first, _second = sorted([old_path, new_path])
+        _h1 = self._vfs_acquire(_first, "write")
+        try:
+            _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
             try:
-                _h2 = self._vfs_acquire(_second, "write") if _first != _second else 0
-                try:
-                    from dataclasses import replace as _replace
+                # Authoritative checks (under lock, TOCTOU-safe)
+                is_implicit_dir = not old_route.metastore.exists(
+                    old_path
+                ) and self.metadata.is_implicit_directory(old_path)
+                if not old_route.metastore.exists(old_path) and not is_implicit_dir:
+                    raise NexusFileNotFoundError(old_path)
 
-                    _old_meta = old_route.metastore.get(old_path)
-                    if _old_meta is not None:
-                        _new_meta = _replace(_old_meta, path=new_path)
-                        new_route.metastore.put(_new_meta)
-                        old_route.metastore.delete(old_path)
-                    elif not is_directory:
-                        raise NexusFileNotFoundError(old_path)
+                meta = old_route.metastore.get(old_path)
+                is_directory = is_implicit_dir or (meta and meta.mime_type == "inode/directory")
 
-                    if is_directory:
-                        _prefix = old_path.rstrip("/") + "/"
-                        for child in old_route.metastore.list(_prefix, recursive=True):
-                            _child_new = new_path + child.path[len(old_path) :]
-                            _child_new_meta = _replace(child, path=_child_new)
-                            new_route.metastore.put(_child_new_meta)
-                            old_route.metastore.delete(child.path)
+                # Check destination — use backend.file_exists() for PAS backends
+                if new_route.metastore.exists(new_path):
+                    if hasattr(new_route.backend, "file_exists"):
+                        if new_route.backend.file_exists(new_route.backend_path):
+                            raise FileExistsError(f"Destination path already exists: {new_path}")
+                        logger.warning(
+                            "Cleaning up stale metadata for %s (file not in backend storage)",
+                            new_path,
+                        )
+                        new_route.metastore.delete(new_path)
+                    else:
+                        raise FileExistsError(f"Destination path already exists: {new_path}")
 
-                    if hasattr(old_route.backend, "rename"):
-                        try:
-                            old_route.backend.rename(
-                                old_route.backend_path,
-                                new_route.backend_path,
-                                context=context,
-                            )
-                        except Exception as _be:
-                            logger.warning(
-                                "Backend rename %s → %s failed: %s",
-                                old_route.backend_path,
-                                new_route.backend_path,
-                                _be,
-                            )
-                finally:
-                    if _h2:
-                        self._vfs_lock_manager.release(_h2)
-                        from nexus.lib.lock_order import L1_VFS, mark_released
+                # Metadata rename (put-first for crash safety)
+                from dataclasses import replace as _replace
 
-                        mark_released(L1_VFS)
+                _old_meta = old_route.metastore.get(old_path)
+                if _old_meta is not None:
+                    _new_meta = _replace(_old_meta, path=new_path)
+                    new_route.metastore.put(_new_meta)
+                    old_route.metastore.delete(old_path)
+                elif not is_directory:
+                    raise NexusFileNotFoundError(old_path)
+
+                # Rename children (directories)
+                if is_directory:
+                    _prefix = old_path.rstrip("/") + "/"
+                    for child in old_route.metastore.list(_prefix, recursive=True):
+                        _child_new = new_path + child.path[len(old_path) :]
+                        _child_new_meta = _replace(child, path=_child_new)
+                        new_route.metastore.put(_child_new_meta)
+                        old_route.metastore.delete(child.path)
+
+                # PAS backend propagation
+                if hasattr(old_route.backend, "rename"):
+                    try:
+                        old_route.backend.rename(
+                            old_route.backend_path,
+                            new_route.backend_path,
+                            context=context,
+                        )
+                    except Exception as _be:
+                        logger.warning(
+                            "Backend rename %s → %s failed (metadata already updated): %s",
+                            old_route.backend_path,
+                            new_route.backend_path,
+                            _be,
+                        )
             finally:
-                self._vfs_lock_manager.release(_h1)
-                from nexus.lib.lock_order import L1_VFS, mark_released
+                if _h2:
+                    self._vfs_lock_manager.release(_h2)
+                    from nexus.lib.lock_order import L1_VFS, mark_released
 
-                mark_released(L1_VFS)
+                    mark_released(L1_VFS)
+        finally:
+            self._vfs_lock_manager.release(_h1)
+            from nexus.lib.lock_order import L1_VFS, mark_released
 
-        # Use Rust result's is_directory if hit, else Python-side check
-        _is_dir = _rename_result.is_directory if _rename_result.hit else bool(is_directory)
+            mark_released(L1_VFS)
 
         # Event dispatch
         await self.notify(
@@ -3217,7 +3242,7 @@ class NexusFS(  # type: ignore[misc]
                 context=context,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                is_directory=_is_dir,
+                is_directory=bool(is_directory),
                 metadata=meta,
             )
             self._kernel.dispatch_post_hooks("rename", _rename_ctx)

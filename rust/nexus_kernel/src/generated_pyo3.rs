@@ -1342,6 +1342,46 @@ impl PyKernel {
         self.observers.lock().count()
     }
 
+    // ── Kernel-owned observer dispatch (Phase 10) ────────────────────
+
+    /// Register observer in pure Rust kernel registry (no GIL for filter loop).
+    /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.
+    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]
+    fn register_kernel_observer(
+        &self,
+        py: Python<'_>,
+        obs: Py<PyAny>,
+        name: &str,
+        event_mask: u32,
+        is_inline: bool,
+    ) -> PyResult<()> {
+        let adapter = PyMutationObserverAdapter { inner: obs };
+        self.inner
+            .register_observer(Box::new(adapter), name.to_string(), event_mask, is_inline);
+        let _ = py;
+        Ok(())
+    }
+
+    /// Unregister observer from kernel registry by name.
+    fn unregister_kernel_observer(&self, name: &str) -> bool {
+        self.inner.unregister_observer(name)
+    }
+
+    /// Dispatch inline observers in Rust (bitmask filter without GIL).
+    fn dispatch_kernel_observers_inline(&self, event_type: u32, path: &str) {
+        self.inner.dispatch_observers_inline(event_type, path);
+    }
+
+    /// Get count of deferred observers matching event_type.
+    fn get_deferred_observer_count(&self, event_type: u32) -> usize {
+        self.inner.get_deferred_observer_indices(event_type).len()
+    }
+
+    /// Total observers in kernel registry.
+    fn kernel_observer_count(&self) -> usize {
+        self.inner.observer_count()
+    }
+
     // ── Hook counts ────────────────────────────────────────────────────
 
     fn set_hook_count(&self, op: &str, count: u64) {

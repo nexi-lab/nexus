@@ -14,10 +14,11 @@
 //! Issue #1868: Phase H — kernel boundary collapse.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
-use crate::dispatch::Trie;
+use crate::dispatch::{MutationObserver, Trie};
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::{Metastore, RedbMetastore};
 use crate::router::{PathRouter, RouteError, RustRouteResult};
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -212,6 +213,87 @@ pub struct StatResult {
     pub zone_id: Option<String>,
 }
 
+// ── KernelObserverRegistry — pure Rust observer dispatch ────────────────
+
+/// Observer entry — pure Rust, no PyO3 dependency.
+///
+/// Stores `Box<dyn MutationObserver>` (either Rust-native or PyMutationObserverAdapter).
+/// The event_mask bitmask matching happens without GIL.
+struct KernelObserverEntry {
+    observer: Box<dyn MutationObserver>,
+    name: String,
+    event_mask: u32,
+    is_inline: bool,
+}
+
+/// Pure Rust observer registry — event-type bitmask filtering without GIL.
+///
+/// Moved from PyKernel (Phase 10). PyMutationObserverAdapter implements
+/// MutationObserver, so Python observers work transparently.
+/// Future: Rust-native observers (audit logger, search indexer) get zero-crossing dispatch.
+struct KernelObserverRegistry {
+    observers: Vec<KernelObserverEntry>,
+}
+
+impl KernelObserverRegistry {
+    fn new() -> Self {
+        Self {
+            observers: Vec::new(),
+        }
+    }
+
+    /// Register observer with event_mask + is_inline flag.
+    fn register(
+        &mut self,
+        observer: Box<dyn MutationObserver>,
+        name: String,
+        event_mask: u32,
+        is_inline: bool,
+    ) {
+        self.observers.push(KernelObserverEntry {
+            observer,
+            name,
+            event_mask,
+            is_inline,
+        });
+    }
+
+    /// Unregister by name (identity not available for trait objects).
+    fn unregister(&mut self, name: &str) -> bool {
+        if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
+            self.observers.remove(pos);
+            return true;
+        }
+        false
+    }
+
+    /// Dispatch matching observers inline (bitmask filter + on_mutation call).
+    /// No GIL needed for the filter loop. PyMutationObserverAdapter acquires GIL
+    /// only inside on_mutation().
+    fn dispatch_inline(&self, event_type: u32, path: &str) {
+        for entry in &self.observers {
+            if entry.is_inline && entry.event_mask & event_type != 0 {
+                entry.observer.on_mutation(event_type, path);
+            }
+        }
+    }
+
+    /// Return indices of deferred (non-inline) observers matching event_type.
+    /// Caller (PyKernel) uses indices to get Py<PyAny> refs for asyncio.create_task().
+    fn get_deferred_indices(&self, event_type: u32) -> Vec<usize> {
+        self.observers
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.is_inline && e.event_mask & event_type != 0)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn count(&self) -> usize {
+        self.observers.len()
+    }
+}
+
 // ── Kernel ──────────────────────────────────────────────────────────────
 
 /// Rust kernel — owns all core state directly.
@@ -245,6 +327,8 @@ pub struct Kernel {
     copy_hook_count: AtomicU64,
     access_hook_count: AtomicU64,
     write_batch_hook_count: AtomicU64,
+    // Observer registry (owned by kernel — bitmask matching without GIL)
+    observers: Mutex<KernelObserverRegistry>,
 }
 
 impl Kernel {
@@ -269,6 +353,7 @@ impl Kernel {
             copy_hook_count: AtomicU64::new(0),
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
+            observers: Mutex::new(KernelObserverRegistry::new()),
         }
     }
 
@@ -594,6 +679,41 @@ impl Kernel {
             "write_batch" => self.write_batch_hook_count.load(Ordering::Relaxed) > 0,
             _ => false,
         }
+    }
+
+    // ── Observer registry (Phase 10) ────────────────────────────────────
+
+    /// Register a mutation observer (pure Rust or PyMutationObserverAdapter).
+    pub fn register_observer(
+        &self,
+        observer: Box<dyn MutationObserver>,
+        name: String,
+        event_mask: u32,
+        is_inline: bool,
+    ) {
+        self.observers
+            .lock()
+            .register(observer, name, event_mask, is_inline);
+    }
+
+    /// Unregister observer by name.
+    pub fn unregister_observer(&self, name: &str) -> bool {
+        self.observers.lock().unregister(name)
+    }
+
+    /// Dispatch inline observers matching event_type (no GIL for filter loop).
+    pub fn dispatch_observers_inline(&self, event_type: u32, path: &str) {
+        self.observers.lock().dispatch_inline(event_type, path);
+    }
+
+    /// Get indices of deferred observers matching event_type.
+    pub fn get_deferred_observer_indices(&self, event_type: u32) -> Vec<usize> {
+        self.observers.lock().get_deferred_indices(event_type)
+    }
+
+    /// Number of registered observers.
+    pub fn observer_count(&self) -> usize {
+        self.observers.lock().count()
     }
 
     // ── sys_read ───────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod agent_registry;
 mod backend;
 mod bitmap;
 mod bloom;
@@ -11,8 +12,15 @@ mod cas_engine;
 mod cas_transport;
 mod dcache;
 mod dispatch;
+mod file_watch;
+#[cfg(feature = "connectors")]
+mod gcs_backend;
+#[cfg(feature = "connectors")]
+mod gdrive_backend;
 mod generated_pyo3;
 mod glob;
+#[cfg(feature = "connectors")]
+mod gmail_backend;
 mod grpc_backend;
 mod hash;
 mod hook_registry;
@@ -20,11 +28,18 @@ mod io;
 mod kernel;
 mod lock;
 mod metastore;
+#[cfg(feature = "connectors")]
+mod openai_backend;
+#[cfg(feature = "connectors")]
+mod openai_inference;
 mod path_utils;
 mod pipe;
 mod prefix;
 mod rebac;
+mod replication;
 mod router;
+#[cfg(feature = "connectors")]
+mod s3_backend;
 mod search;
 mod semaphore;
 #[cfg(unix)]
@@ -32,6 +47,8 @@ mod shm_pipe;
 #[cfg(unix)]
 mod shm_stream;
 mod simd;
+#[cfg(feature = "connectors")]
+mod slack_backend;
 mod stream;
 mod trigram;
 mod volume_engine;
@@ -47,6 +64,21 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rebac::compute_permission_single, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::expand_subjects, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::list_objects_for_subject, m)?)?;
+    // ReBAC bitmap intersection (§10 C1)
+    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap, m)?)?;
+    m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap_batch, m)?)?;
+    // OpenAI inference (§10 D3) — GIL-free HTTP calls
+    #[cfg(feature = "connectors")]
+    {
+        m.add_function(wrap_pyfunction!(
+            openai_inference::openai_chat_completion,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            openai_inference::openai_chat_completion_stream,
+            m
+        )?)?;
+    }
     // Search
     m.add_function(wrap_pyfunction!(search::grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(search::grep_files_mmap, m)?)?;

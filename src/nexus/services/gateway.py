@@ -659,8 +659,8 @@ class NexusFSGateway:
         """Record a read operation for dependency tracking (Issue #1166).
 
         Delegates to ``OperationContext.record_read()`` when read-tracking
-        is enabled.  The revision is fetched from the RevisionNotifier
-        injected by factory (Issue #1382).
+        is enabled.  The revision is fetched from the kernel zone revision
+        counter (§10 A2 — pure Rust AtomicU64, replaces RevisionNotifier).
 
         Args:
             context: Operation context (may contain dependency tracker)
@@ -670,9 +670,9 @@ class NexusFSGateway:
         """
         if context is None or not context.track_reads:
             return
-        notifier = getattr(self._fs, "_revision_notifier", None)
+        kernel = getattr(self._fs, "_kernel", None)
         zone_id = getattr(context, "zone_id", None) or "root"
-        revision = notifier.get_latest_revision(zone_id) if notifier else 0
+        revision = kernel.get_zone_revision(zone_id) if kernel else 0
         context.record_read(resource_type, resource_id, revision, access_type)
 
     @property

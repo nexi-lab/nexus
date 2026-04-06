@@ -626,14 +626,9 @@ async def _register_vfs_hooks(
     _bus_observer = EventBusObserver(event_bus=_event_bus)
     await _enlist("event_bus_observer", _bus_observer)
 
-    # RevisionTrackingObserver: feeds RevisionNotifier on versioned mutations.
-    # Replaces the old kernel-internal _increment_vfs_revision() (Issue #1382).
-    from nexus.lib.revision_notifier import RevisionNotifier
-    from nexus.services.lifecycle.revision_tracking_observer import RevisionTrackingObserver
-
-    _rev_notifier = RevisionNotifier()
-    _rev_observer = RevisionTrackingObserver(revision_notifier=_rev_notifier)
-    await _enlist("revision_tracking", _rev_observer)
+    # RevisionTrackingObserver deleted (§10 A2): zone revision counter is now
+    # a kernel primitive (AtomicU64 per zone). The kernel auto-increments on
+    # sys_write/sys_unlink/sys_rename/sys_mkdir/sys_rmdir. No observer needed.
 
     # ── CAS GC (Issue #1320, #1772) ────────────────────────────────────
     # ref_count eliminated; reachability-based GC via CASGarbageCollector.

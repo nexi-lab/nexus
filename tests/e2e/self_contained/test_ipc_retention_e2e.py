@@ -1,9 +1,10 @@
-"""E2E tests for IPC retention/compaction features via real KernelVFSAdapter.
+"""E2E tests for IPC retention/compaction features via InMemoryStorageDriver.
 
-Tests the full stack: KernelVFSAdapter → NexusFS → LocalConnector backend.
+Tests the full IPC stack: InMemoryStorageDriver provides NexusFS-compatible
+interface for IPC provisioning, sweep, and delivery.
 
-Correctness tests use real NexusFS with a 1-second retention window + asyncio.sleep
-so files genuinely age past the cutoff — no mtime mocking, no InMemoryVFS.
+Correctness tests use a short retention window + asyncio.sleep
+so files genuinely age past the cutoff.
 
 Performance tests measure actual throughput at production-representative scale.
 """
@@ -12,10 +13,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import tempfile
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
@@ -29,12 +28,12 @@ from nexus.bricks.ipc.conventions import (
 from nexus.bricks.ipc.delivery import MessageProcessor, MessageSender
 from nexus.bricks.ipc.envelope import MessageEnvelope, MessageType
 from nexus.bricks.ipc.exceptions import DLQReason
-from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.sweep import (
     TTLSweeper,
 )
 from nexus.contracts.constants import ROOT_ZONE_ID
+from tests.unit.bricks.ipc.fakes import InMemoryStorageDriver
 
 ZONE = ROOT_ZONE_ID
 
@@ -50,36 +49,12 @@ _SLEEP_SECS = 2.0
 
 
 @pytest.fixture
-async def nx():
-    """Real NexusFS with LocalConnector backend in a temp directory."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        from nexus.backends.storage.local_connector import LocalConnectorBackend
-        from nexus.core.config import PermissionConfig
-        from nexus.factory import create_nexus_fs
-        from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-        backend = LocalConnectorBackend(local_path=tmpdir)
-        db_file = Path(tmpdir) / "metadata"
-        metadata_store = RaftMetadataStore.embedded(str(db_file))
-
-        _nx = await create_nexus_fs(
-            backend=backend,
-            metadata_store=metadata_store,
-            permissions=PermissionConfig(enforce=False),
-        )
-        yield _nx
-        _nx.close()
+async def adapter():
+    """InMemoryStorageDriver with NexusFS-compatible interface."""
+    return InMemoryStorageDriver()
 
 
-@pytest.fixture
-async def adapter(nx):
-    """KernelVFSAdapter bound to a real NexusFS."""
-    a = KernelVFSAdapter(zone_id=ZONE)
-    a.bind(nx)
-    return a
-
-
-async def _provision(adapter: KernelVFSAdapter, *agent_ids: str) -> None:
+async def _provision(adapter: InMemoryStorageDriver, *agent_ids: str) -> None:
     prov = AgentProvisioner(adapter, zone_id=ZONE)
     for aid in agent_ids:
         await prov.provision(aid)
@@ -105,7 +80,7 @@ class TestFileMtimeReal:
     """Verify file_mtime() returns real server-observed timestamps via NexusFS."""
 
     @pytest.mark.asyncio
-    async def test_mtime_non_none_after_write(self, adapter: KernelVFSAdapter) -> None:
+    async def test_mtime_non_none_after_write(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         path = f"{inbox_path('agent:bob')}/msg_mtime_check.json"
 
@@ -118,7 +93,7 @@ class TestFileMtimeReal:
         assert before <= mtime <= after + timedelta(seconds=2)
 
     @pytest.mark.asyncio
-    async def test_mtime_advances_on_overwrite(self, adapter: KernelVFSAdapter) -> None:
+    async def test_mtime_advances_on_overwrite(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         path = f"{inbox_path('agent:bob')}/msg_overwrite.json"
         await adapter.write(path, b"v1", ZONE)
@@ -132,7 +107,7 @@ class TestFileMtimeReal:
         assert mtime2 >= mtime1
 
     @pytest.mark.asyncio
-    async def test_mtime_none_for_missing_file(self, adapter: KernelVFSAdapter) -> None:
+    async def test_mtime_none_for_missing_file(self, adapter: InMemoryStorageDriver) -> None:
         mtime = await adapter.file_mtime("/agents/nobody/inbox/ghost.json", ZONE)
         assert mtime is None
 
@@ -146,7 +121,7 @@ class TestPruneRetentionReal:
     """Write real files, age them past a tiny retention window, verify deletion."""
 
     @pytest.mark.asyncio
-    async def test_prune_processed_deletes_aged_files(self, adapter: KernelVFSAdapter) -> None:
+    async def test_prune_processed_deletes_aged_files(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         proc = processed_path("agent:bob")
 
@@ -173,7 +148,7 @@ class TestPruneRetentionReal:
         )
 
     @pytest.mark.asyncio
-    async def test_prune_outbox_deletes_aged_files(self, adapter: KernelVFSAdapter) -> None:
+    async def test_prune_outbox_deletes_aged_files(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         out = outbox_path("agent:bob")
 
@@ -190,7 +165,7 @@ class TestPruneRetentionReal:
         assert len(files_after) == 0
 
     @pytest.mark.asyncio
-    async def test_prune_does_not_delete_fresh_files(self, adapter: KernelVFSAdapter) -> None:
+    async def test_prune_does_not_delete_fresh_files(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         proc = processed_path("agent:bob")
         await adapter.write(f"{proc}/20260101T000000_fresh.json", b'{"id":"fresh"}', ZONE)
@@ -213,7 +188,9 @@ class TestStaleInboxDrainReal:
     """Write no-TTL inbox messages, age them, verify drain fires correctly."""
 
     @pytest.mark.asyncio
-    async def test_drain_dead_letters_aged_no_ttl_message(self, adapter: KernelVFSAdapter) -> None:
+    async def test_drain_dead_letters_aged_no_ttl_message(
+        self, adapter: InMemoryStorageDriver
+    ) -> None:
         await _provision(adapter, "agent:bob")
         inbox = inbox_path("agent:bob")
         dl = dead_letter_path("agent:bob")
@@ -247,7 +224,7 @@ class TestStaleInboxDrainReal:
         assert reason["reason"] == DLQReason.STALE_INBOX
 
     @pytest.mark.asyncio
-    async def test_drain_skips_fresh_messages(self, adapter: KernelVFSAdapter) -> None:
+    async def test_drain_skips_fresh_messages(self, adapter: InMemoryStorageDriver) -> None:
         await _provision(adapter, "agent:bob")
         inbox = inbox_path("agent:bob")
 
@@ -265,7 +242,7 @@ class TestStaleInboxDrainReal:
         assert len(inbox_files) == 1
 
     @pytest.mark.asyncio
-    async def test_drain_skips_messages_with_ttl(self, adapter: KernelVFSAdapter) -> None:
+    async def test_drain_skips_messages_with_ttl(self, adapter: InMemoryStorageDriver) -> None:
         """Messages with TTL are handled by _sweep_agent, not the stale drain."""
         await _provision(adapter, "agent:bob")
         inbox = inbox_path("agent:bob")
@@ -286,7 +263,9 @@ class TestStaleInboxDrainReal:
         assert len(inbox_files) == 1
 
     @pytest.mark.asyncio
-    async def test_drain_claim_prevents_double_dead_letter(self, adapter: KernelVFSAdapter) -> None:
+    async def test_drain_claim_prevents_double_dead_letter(
+        self, adapter: InMemoryStorageDriver
+    ) -> None:
         """Two concurrent drain calls for the same message only dead-letter once."""
         await _provision(adapter, "agent:bob")
         inbox = inbox_path("agent:bob")
@@ -325,7 +304,7 @@ class TestDeadLetterCompactionReal:
 
     @pytest.mark.asyncio
     async def test_compaction_preserve_originals_creates_archive(
-        self, adapter: KernelVFSAdapter
+        self, adapter: InMemoryStorageDriver
     ) -> None:
         await _provision(adapter, "agent:bob")
         dl = dead_letter_path("agent:bob")
@@ -378,7 +357,7 @@ class TestDeadLetterCompactionReal:
 
     @pytest.mark.asyncio
     async def test_compaction_delete_originals_removes_source_files(
-        self, adapter: KernelVFSAdapter
+        self, adapter: InMemoryStorageDriver
     ) -> None:
         await _provision(adapter, "agent:bob")
         dl = dead_letter_path("agent:bob")
@@ -417,7 +396,7 @@ class TestDeadLetterCompactionReal:
         assert len(jsonl_files) == 1
 
     @pytest.mark.asyncio
-    async def test_preserve_originals_idempotent(self, adapter: KernelVFSAdapter) -> None:
+    async def test_preserve_originals_idempotent(self, adapter: InMemoryStorageDriver) -> None:
         """Second sweep must not re-archive files already marked .archived."""
         await _provision(adapter, "agent:bob")
         dl = dead_letter_path("agent:bob")
@@ -444,7 +423,7 @@ class TestDeadLetterCompactionReal:
         assert archived2 == 0, "Second compaction must be idempotent (0 re-archived)"
 
     @pytest.mark.asyncio
-    async def test_compaction_skips_fresh_files(self, adapter: KernelVFSAdapter) -> None:
+    async def test_compaction_skips_fresh_files(self, adapter: InMemoryStorageDriver) -> None:
         """Files younger than min_age must not be compacted."""
         await _provision(adapter, "agent:bob")
         dl = dead_letter_path("agent:bob")
@@ -474,7 +453,7 @@ class TestFullSweepOnceReal:
     """Run sweep_once() end-to-end with all retention features enabled."""
 
     @pytest.mark.asyncio
-    async def test_sweep_once_prunes_all_directories(self, adapter: KernelVFSAdapter) -> None:
+    async def test_sweep_once_prunes_all_directories(self, adapter: InMemoryStorageDriver) -> None:
         """sweep_once() with all retention enabled cleans processed, outbox, drains inbox."""
         await _provision(adapter, "agent:alice", "agent:bob")
 
@@ -538,7 +517,7 @@ class TestProcClaimReal:
     """Verify .proc_ claim mechanism works through real VFS."""
 
     @pytest.mark.asyncio
-    async def test_full_roundtrip_with_proc_claim(self, adapter: KernelVFSAdapter) -> None:
+    async def test_full_roundtrip_with_proc_claim(self, adapter: InMemoryStorageDriver) -> None:
         """Full send → claim → handler → processed lifecycle via real adapter."""
         from tests.unit.bricks.ipc.fakes import InMemoryEventPublisher
 
@@ -567,7 +546,9 @@ class TestProcClaimReal:
         assert any("msg_proc_real" in f for f in proc_files)
 
     @pytest.mark.asyncio
-    async def test_proc_claim_prevents_concurrent_drain(self, adapter: KernelVFSAdapter) -> None:
+    async def test_proc_claim_prevents_concurrent_drain(
+        self, adapter: InMemoryStorageDriver
+    ) -> None:
         """Processor claims file; concurrent drain cannot dead-letter it."""
         await _provision(adapter, "agent:bob")
         inbox = inbox_path("agent:bob")
@@ -600,10 +581,10 @@ class TestProcClaimReal:
 
 
 class TestPerformanceReal:
-    """Performance benchmarks using real KernelVFSAdapter + NexusFS."""
+    """Performance benchmarks using real InMemoryStorageDriver + NexusFS."""
 
     @pytest.mark.asyncio
-    async def test_file_mtime_latency_20_files(self, adapter: KernelVFSAdapter) -> None:
+    async def test_file_mtime_latency_20_files(self, adapter: InMemoryStorageDriver) -> None:
         """file_mtime() per-call latency via real NexusFS must average < 20ms."""
         await _provision(adapter, "agent:perf_mtime")
 
@@ -626,7 +607,7 @@ class TestPerformanceReal:
         assert avg_ms < 20.0, f"Avg mtime latency {avg_ms:.1f}ms > 20ms budget"
 
     @pytest.mark.asyncio
-    async def test_prune_50_processed_files_real(self, adapter: KernelVFSAdapter) -> None:
+    async def test_prune_50_processed_files_real(self, adapter: InMemoryStorageDriver) -> None:
         """Prune 50 processed files through real NexusFS in < 10 seconds."""
         await _provision(adapter, "agent:perf_prune")
         proc = processed_path("agent:perf_prune")
@@ -649,7 +630,7 @@ class TestPerformanceReal:
         assert elapsed < 10.0, f"Prune of 50 files took {elapsed:.2f}s > 10s budget"
 
     @pytest.mark.asyncio
-    async def test_compact_30_dlq_files_real(self, adapter: KernelVFSAdapter) -> None:
+    async def test_compact_30_dlq_files_real(self, adapter: InMemoryStorageDriver) -> None:
         """Compact 30 DLQ files through real NexusFS in < 10 seconds."""
         await _provision(adapter, "agent:perf_compact")
         dl = dead_letter_path("agent:perf_compact")
@@ -693,7 +674,9 @@ class TestPerformanceReal:
         assert elapsed < 10.0, f"Compact of 30 files took {elapsed:.2f}s > 10s budget"
 
     @pytest.mark.asyncio
-    async def test_sweep_once_10_agents_5_files_each_real(self, adapter: KernelVFSAdapter) -> None:
+    async def test_sweep_once_10_agents_5_files_each_real(
+        self, adapter: InMemoryStorageDriver
+    ) -> None:
         """Full sweep_once() across 10 agents × 5 files via real NexusFS < 15s."""
         N_AGENTS = 10
         N_FILES = 5

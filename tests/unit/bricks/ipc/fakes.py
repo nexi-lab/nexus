@@ -157,6 +157,10 @@ class InMemoryStorageDriver:
         del self._files[key]
         self._mtimes.pop(key, None)
 
+    async def file_mtime(self, path: str, zone_id: str) -> datetime | None:
+        """Return the mtime of a file, or None if it doesn't exist."""
+        return self._mtimes.get((path, zone_id))
+
     def set_mtime(self, path: str, zone_id: str, mtime: datetime) -> None:
         """Test helper: override the mtime of an existing file."""
         self._mtimes[(path, zone_id)] = mtime

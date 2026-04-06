@@ -219,6 +219,13 @@ class NexusFS(  # type: ignore[misc]
             metadata_store,
             self_address=_ipc_self_addr,
         )
+        # IPC waiters for blocking path (asyncio.Event pairs per pipe/stream)
+        from nexus.core.ipc_waiter import IPCWaiter
+
+        self._ipc_waiters: dict[str, IPCWaiter] = {}
+        # Custom backends for SHM/remote pipes/streams (non-standard, keep in Python)
+        self._custom_pipe_backends: dict[str, Any] = {}
+        self._custom_stream_backends: dict[str, Any] = {}
 
         from nexus.core.file_watcher import FileWatcher
 
@@ -943,6 +950,7 @@ class NexusFS(  # type: ignore[misc]
             }
 
         if entry_type == DT_PIPE:
+            from nexus.core.ipc_waiter import IPCWaiter
             from nexus.core.pipe import PipeError
 
             io_profile = attrs.get("io_profile", "memory")
@@ -954,13 +962,18 @@ class NexusFS(  # type: ignore[misc]
                         SharedMemoryPipeBackend.create(capacity)
                     )
                     self._pipe_manager.create_from_backend(path, pipe_backend, owner_id=owner_id)
+                    self._custom_pipe_backends[path] = pipe_backend
                 else:
+                    # Standard memory pipe → Rust kernel IPC registry
+                    self._kernel.create_pipe(path, capacity)
                     self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
             except PipeError as exc:
                 raise BackendError(str(exc)) from exc
+            self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
         if entry_type == DT_STREAM:
+            from nexus.core.ipc_waiter import IPCWaiter
             from nexus.core.stream import StreamError
 
             io_profile = attrs.get("io_profile", "memory")
@@ -974,6 +987,7 @@ class NexusFS(  # type: ignore[misc]
                 if _factory is not None:
                     backend = _factory(path, capacity)
                     self._stream_manager.create_from_backend(path, backend, owner_id=owner_id)
+                    self._custom_stream_backends[path] = backend
                 elif io_profile == "shared_memory":
                     from nexus.core.shm_stream import SharedMemoryStreamBackend
 
@@ -983,10 +997,14 @@ class NexusFS(  # type: ignore[misc]
                     self._stream_manager.create_from_backend(
                         path, stream_backend, owner_id=owner_id
                     )
+                    self._custom_stream_backends[path] = stream_backend
                 else:
+                    # Standard memory stream → Rust kernel IPC registry
+                    self._kernel.create_stream(path, capacity)
                     self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
             except StreamError as exc:
                 raise BackendError(str(exc)) from exc
+            self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
         if entry_type == DT_DIR:
@@ -1163,13 +1181,14 @@ class NexusFS(  # type: ignore[misc]
         DT_PIPE/DT_STREAM, resolve, and hooks are [INTERMEDIATE] — migrates
         to Rust dispatch middleware in PR 7.
         """
-        # [INTERMEDIATE] DT_PIPE fast-path (~400ns vs ~20+μs)
-        _pbuf = self._pipe_manager._buffers.get(path) if self._pipe_manager is not None else None
-        if _pbuf is not None:
+        # DT_PIPE: Rust IPC registry handles hot path.  Check custom backends
+        # (SHM/remote) first; standard memory pipes are in Rust kernel.
+        _custom_pbuf = self._custom_pipe_backends.get(path)
+        if _custom_pbuf is not None:
             from nexus.core.pipe import PipeClosedError, PipeEmptyError
 
             try:
-                data = _pbuf.read_nowait()
+                data = _custom_pbuf.read_nowait()
             except PipeEmptyError:
                 return await self._pipe_read(path, count=count, offset=offset)
             except PipeClosedError:
@@ -1178,18 +1197,16 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        # [INTERMEDIATE] DT_STREAM fast-path
-        _sbuf = (
-            self._stream_manager._buffers.get(path) if self._stream_manager is not None else None
-        )
-        if _sbuf is not None:
+        # DT_STREAM: custom backends (SHM/factory-provided)
+        _custom_sbuf = self._custom_stream_backends.get(path)
+        if _custom_sbuf is not None:
             from nexus.core.stream import StreamClosedError, StreamEmptyError
 
             try:
                 if count is not None and count > 1:
-                    items, _ = await _sbuf.read_batch_blocking(offset, count, blocking=True)
+                    items, _ = await _custom_sbuf.read_batch_blocking(offset, count, blocking=True)
                     return b"".join(items)
-                data, _ = await _sbuf.read(offset, blocking=True)
+                data, _ = await _custom_sbuf.read(offset, blocking=True)
                 return data
             except StreamEmptyError:
                 raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}") from None
@@ -1246,6 +1263,51 @@ class NexusFS(  # type: ignore[misc]
         # ── KERNEL (Rust — pre-hooks + route + backend read) ──
         _rust_ctx = self._build_rust_ctx(context, _is_admin)
         result = self._kernel.sys_read(path, _rust_ctx)
+
+        # DT_PIPE: Rust returns hit=true if data popped, hit=false if empty
+        if result.entry_type == 3:  # DT_PIPE
+            if result.hit:
+                data = result.data or b""
+                # Signal waiter: space freed → wake blocked writers
+                _waiter = self._ipc_waiters.get(path)
+                if _waiter is not None:
+                    _waiter.signal_not_full()
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
+            # Empty pipe — blocking retry via IPCWaiter
+            _waiter = self._ipc_waiters.get(path)
+            if _waiter is not None:
+                while True:
+                    await _waiter.wait_readable()
+                    _data = self._kernel.pipe_read_nowait(path)
+                    if _data is not None:
+                        _waiter.signal_not_full()
+                        if offset or count is not None:
+                            _data = (
+                                _data[offset : offset + count]
+                                if count is not None
+                                else _data[offset:]
+                            )
+                        return _data
+            raise NexusFileNotFoundError(path, f"Pipe not found: {path}")
+
+        # DT_STREAM: blocking reads with offset tracking
+        if result.entry_type == 4:  # DT_STREAM
+            _result = self._kernel.stream_read_at(path, offset)
+            if _result is not None:
+                data, _next = _result
+                return bytes(data)
+            # Empty — blocking retry
+            _waiter = self._ipc_waiters.get(path)
+            if _waiter is not None:
+                while True:
+                    await _waiter.wait_readable()
+                    _result = self._kernel.stream_read_at(path, offset)
+                    if _result is not None:
+                        return bytes(_result[0])
+            raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}")
+
         if not result.hit:
             raise NexusFileNotFoundError(path)
         data = result.data or b""
@@ -1777,22 +1839,18 @@ class NexusFS(  # type: ignore[misc]
         zero GIL). Metastore.put stays in Python [INTERMEDIATE] — migrates to
         Rust metastore in PR 7.
         """
-        # [INTERMEDIATE] DT_PIPE fast-path
-        _pm = self._pipe_manager
-        if _pm is not None:
-            _buf = _pm._buffers.get(path)
-            if _buf is not None:
-                n = _buf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
-                return {"path": path, "bytes_written": n}
+        # DT_PIPE: custom backends (SHM/remote) checked first
+        _custom_pbuf = self._custom_pipe_backends.get(path)
+        if _custom_pbuf is not None:
+            n = _custom_pbuf.write_nowait(buf if isinstance(buf, bytes) else buf.encode("utf-8"))
+            return {"path": path, "bytes_written": n}
 
-        # [INTERMEDIATE] DT_STREAM fast-path
-        _sbuf = (
-            self._stream_manager._buffers.get(path) if self._stream_manager is not None else None
-        )
-        if _sbuf is not None:
+        # DT_STREAM: custom backends (SHM/factory-provided)
+        _custom_sbuf = self._custom_stream_backends.get(path)
+        if _custom_sbuf is not None:
             if isinstance(buf, str):
                 buf = buf.encode("utf-8")
-            _off = _sbuf.write_nowait(buf)
+            _off = _custom_sbuf.write_nowait(buf)
             return {"path": path, "bytes_written": len(buf), "offset": _off}
 
         # Normalize input
@@ -1810,13 +1868,20 @@ class NexusFS(  # type: ignore[misc]
                 base.update(_result)
             return base
 
-        # [INTERMEDIATE] File-exists check via metastore (migrates to Rust in PR 7)
+        # IPC write: Rust sys_write handles DT_PIPE/DT_STREAM inline.
+        # If Rust returns hit=true for IPC, signal waiter and return.
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
-            n = self._pipe_write(path, buf)
+            n = self._kernel.pipe_write_nowait(path, buf)
+            _waiter = self._ipc_waiters.get(path)
+            if _waiter is not None:
+                _waiter.signal_not_empty()
             return {"path": path, "bytes_written": n}
         if _meta is not None and _meta.is_stream:
-            _off = self._stream_write(path, buf)
+            _off = self._kernel.stream_write_nowait(path, buf)
+            _waiter = self._ipc_waiters.get(path)
+            if _waiter is not None:
+                _waiter.signal_not_empty()
             return {"path": path, "bytes_written": len(buf), "offset": _off}
         if _meta is None:
             raise NexusFileNotFoundError(
@@ -2919,11 +2984,11 @@ class NexusFS(  # type: ignore[misc]
                 "Standalone hook removal via /__sys__/hooks/ not yet supported."
             )
 
-        # DT_PIPE fast-path: skip validate/zone_check/resolve/metastore.get
-        if self._pipe_manager is not None and path in self._pipe_manager._buffers:
+        # DT_PIPE fast-path: check Rust IPC registry + custom backends
+        if self._kernel.has_pipe(path) or path in self._custom_pipe_backends:
             return self._pipe_destroy(path)
-        # DT_STREAM fast-path: same rationale — StreamManager._buffers is authoritative.
-        if path in self._stream_manager._buffers:
+        # DT_STREAM fast-path: check Rust IPC registry + custom backends
+        if self._kernel.has_stream(path) or path in self._custom_stream_backends:
             return self._stream_destroy(path)
 
         path = self._validate_path(path)
@@ -4604,11 +4669,16 @@ class NexusFS(  # type: ignore[misc]
             except Exception as exc:
                 logger.debug("close: callback failed (best-effort): %s", exc)
 
-        # Close IPC primitives — kernel-internal (§4.2)
+        # Close IPC primitives — Rust kernel + Python managers (§4.2)
+        self._kernel.close_all_pipes()
+        self._kernel.close_all_streams()
         if hasattr(self, "_pipe_manager"):
             self._pipe_manager.close_all()
         if hasattr(self, "_stream_manager"):
             self._stream_manager.close_all()
+        self._ipc_waiters.clear()
+        self._custom_pipe_backends.clear()
+        self._custom_stream_backends.clear()
         # Close transport pool (persistent gRPC connections)
         if hasattr(self, "_transport_pool") and self._transport_pool is not None:
             self._transport_pool.close_all()

@@ -168,161 +168,91 @@ export default function AgentsPanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
-  useKeyboard(overlayActive ? {} : {
-    j: () => {
-      if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(
-          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
-        );
+  useKeyboard((): Record<string, () => void> => {
+    if (useUiStore.getState().overlayActive) return {};
+    const s = useAgentsStore.getState();
+    const move = (delta: number) => () => {
+      if (s.activeTab === "delegations") {
+        const next = Math.max(0, Math.min(s.selectedDelegationIndex + delta, s.delegations.length - 1));
+        setSelectedDelegationIndex(next);
       } else {
-        if (displayAgentIds.length === 0) return;
-        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
+        const ids = displayAgentIds;
+        if (ids.length === 0) return;
+        const next = Math.max(0, Math.min(s.selectedAgentIndex + delta, ids.length - 1));
+        setSelectedAgentIndex(next);
+        const agentId = ids[next];
         if (agentId) setSelectedAgentId(agentId);
       }
-    },
-    down: () => {
-      if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(
-          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
-        );
-      } else {
-        if (displayAgentIds.length === 0) return;
-        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    k: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      } else {
-        const newIdx = Math.max(0, selectedAgentIndex - 1);
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    up: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      } else {
-        const newIdx = Math.max(0, selectedAgentIndex - 1);
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    tab: () => {
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
-    "shift+tab": () => toggleFocus("agents"),
-    r: () => refreshCurrentView(),
-    d: async () => {
-      if (activeTab !== "delegations" || !client) return;
-      const selected = delegations[selectedDelegationIndex];
-      if (selected && selected.status === "active") {
-        const ok = await confirm("Revoke delegation?", `Revoke delegation ${selected.delegation_id}. The agent will lose delegated access.`);
-        if (!ok) return;
-        revokeDelegation(selected.delegation_id, client);
-      }
-    },
-    return: () => {
-      if (activeTab === "delegations") {
-        // Toggle delegation detail drill-down
-        const selected = delegations[selectedDelegationIndex];
-        if (selected) {
-          setExpandedDelegation(
-            expandedDelegation()?.delegation_id === selected.delegation_id ? null : selected,
-          );
+    };
+    return {
+      j: move(1), down: move(1), k: move(-1), up: move(-1),
+      tab: () => {
+        const ids = visibleTabs.map((t) => t.id);
+        const currentIdx = ids.indexOf(s.activeTab);
+        const nextIdx = (currentIdx + 1) % ids.length;
+        const nextTab = ids[nextIdx];
+        if (nextTab) setActiveTab(nextTab);
+      },
+      "shift+tab": () => toggleFocus("agents"),
+      r: () => refreshCurrentView(),
+      d: async () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab !== "delegations" || !client) return;
+        const selected = st.delegations[st.selectedDelegationIndex];
+        if (selected && selected.status === "active") {
+          const ok = await confirm("Revoke delegation?", `Revoke delegation ${selected.delegation_id}. The agent will lose delegated access.`);
+          if (!ok) return;
+          revokeDelegation(selected.delegation_id, client);
         }
-        return;
-      }
-      // If an agent is highlighted in the agents list, select it
-      const agent = displayAgentIds[selectedAgentIndex];
-      if (agent) {
-        setSelectedAgentId(agent);
-        addKnownAgent(agent);
-      }
-    },
-    escape: () => {
-      if (expandedDelegation()) {
-        setExpandedDelegation(null);
-      }
-    },
-    "shift+w": async () => {
-      if (!client || !selectedAgentId) return;
-      setOperationLoading("Warming up agent...");
-      try {
-        await warmupAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    "shift+e": async () => {
-      if (!client || !selectedAgentId) return;
-      // Only evict if agent is not already evicted
-      const agentEntry = agents.find((a) => a.agent_id === selectedAgentId);
-      if (agentEntry && agentEntry.state === "evicted") return;
-      setOperationLoading("Evicting agent...");
-      try {
-        await evictAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    "shift+v": async () => {
-      if (!client || !selectedAgentId) return;
-      setOperationLoading("Verifying agent...");
-      try {
-        await verifyAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    g: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(jumpToStart());
-      } else {
-        setSelectedAgentIndex(jumpToStart());
-        const firstAgent = displayAgentIds[0];
-        if (firstAgent) {
-          setSelectedAgentId(firstAgent);
+      },
+      return: () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") {
+          const selected = st.delegations[st.selectedDelegationIndex];
+          if (selected) {
+            setExpandedDelegation(
+              expandedDelegation()?.delegation_id === selected.delegation_id ? null : selected,
+            );
+          }
+          return;
         }
-      }
-    },
-    "shift+g": () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(jumpToEnd(delegations.length));
-      } else {
-        const lastIdx = jumpToEnd(displayAgentIds.length);
-        setSelectedAgentIndex(lastIdx);
-        const lastAgent = displayAgentIds[lastIdx];
-        if (lastAgent) {
-          setSelectedAgentId(lastAgent);
-        }
-      }
-    },
-    y: () => {
-      if (selectedAgentId) {
-        copy(selectedAgentId);
-      }
-    },
-    // Issue #3078: spawn new agent via local CLI command
-    n: () => {
-      useCommandRunnerStore.getState().reset();
-      executeLocalCommand("agent", ["spawn"]);
-    },
+        const agent = displayAgentIds[st.selectedAgentIndex];
+        if (agent) { setSelectedAgentId(agent); addKnownAgent(agent); }
+      },
+      escape: () => { if (expandedDelegation()) setExpandedDelegation(null); },
+      "shift+w": async () => {
+        const aid = useAgentsStore.getState().selectedAgentId;
+        if (!client || !aid) return;
+        setOperationLoading("Warming up agent...");
+        try { await warmupAgent(aid, client); } finally { setOperationLoading(null); }
+      },
+      "shift+e": async () => {
+        const st = useAgentsStore.getState();
+        if (!client || !st.selectedAgentId) return;
+        const entry = st.agents.find((a) => a.agent_id === st.selectedAgentId);
+        if (entry && entry.state === "evicted") return;
+        setOperationLoading("Evicting agent...");
+        try { await evictAgent(st.selectedAgentId, client); } finally { setOperationLoading(null); }
+      },
+      "shift+v": async () => {
+        const aid = useAgentsStore.getState().selectedAgentId;
+        if (!client || !aid) return;
+        setOperationLoading("Verifying agent...");
+        try { await verifyAgent(aid, client); } finally { setOperationLoading(null); }
+      },
+      g: () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") { setSelectedDelegationIndex(jumpToStart()); }
+        else { setSelectedAgentIndex(jumpToStart()); const a = displayAgentIds[0]; if (a) setSelectedAgentId(a); }
+      },
+      "shift+g": () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") { setSelectedDelegationIndex(jumpToEnd(st.delegations.length)); }
+        else { const idx = jumpToEnd(displayAgentIds.length); setSelectedAgentIndex(idx); const a = displayAgentIds[idx]; if (a) setSelectedAgentId(a); }
+      },
+      y: () => { const aid = useAgentsStore.getState().selectedAgentId; if (aid) copy(aid); },
+      n: () => { useCommandRunnerStore.getState().reset(); executeLocalCommand("agent", ["spawn"]); },
+    };
   });
 
   return (
@@ -376,7 +306,7 @@ export default function AgentsPanel(): JSX.Element {
           <box height={1} width="100%">
             <text>
               {visibleTabs.map((tab) => {
-                return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
+                return tab.id === useAgentsStore((s) => s.activeTab) ? `[${tab.label}]` : ` ${tab.label} `;
               }).join(" ")}
             </text>
           </box>

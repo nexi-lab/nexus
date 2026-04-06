@@ -627,7 +627,7 @@ def create_async_files_router(
                 # --- Gate on CAS-capable backend ---
                 from nexus.contracts.backend_features import BackendFeature as _BF
 
-                if not route.backend.has_capability(_BF.CAS):
+                if not route.backend.has_feature(_BF.CAS):
                     raise HTTPException(
                         status_code=422,
                         detail=(

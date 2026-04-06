@@ -1,3 +1,4 @@
+import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 /**
  * Agent status detail view: phase badge, conditions, resource usage, identity.
@@ -40,157 +41,137 @@ function renderUsageBar(pct: number, width: number): string {
   return `[${"#".repeat(filled)}${"-".repeat(empty)}] ${pct.toFixed(0)}%`;
 }
 
-export function AgentStatusView({
-  status,
-  spec,
-  identity,
-  loading,
-  trustScore,
-  reputation,
-}: AgentStatusViewProps): JSX.Element {
-  if (loading) {
-    return <LoadingIndicator message="Loading agent status..." />;
-  }
-
-  if (!status) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Select an agent to view status</text>
-      </box>
-    );
-  }
-
-  const badge = PHASE_BADGES[status.phase] ?? `[${status.phase.toUpperCase()}]`;
-
-  return (
-    <scrollbox height="100%" width="100%">
-      {/* Phase and generation */}
-      <box height={1} width="100%">
-        <text>{`Phase: ${badge} ${status.phase}  |  Generation: ${status.observed_generation}`}</text>
-      </box>
-
-      {/* Timestamps */}
-      <box height={1} width="100%">
-        <text>{`Last heartbeat: ${formatTimestamp(status.last_heartbeat)}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`Last activity:  ${formatTimestamp(status.last_activity)}`}</text>
-      </box>
-
-      {/* Inbox and context */}
-      <box height={1} width="100%">
-        <text>{`Inbox depth: ${status.inbox_depth}  |  Context usage: ${status.context_usage_pct}%`}</text>
-      </box>
-
-      {/* Resource usage */}
-      <box height={1} width="100%" marginTop={1}>
-        <text>--- Resource Usage ---</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`Tokens used:    ${status.resource_usage.tokens_used}`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`Storage:        ${status.resource_usage.storage_used_mb} MB`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{`Context:        ${renderUsageBar(status.resource_usage.context_usage_pct, 20)}`}</text>
-      </box>
-
-      {/* Conditions */}
-      {status.conditions.length > 0 && (
-        <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Conditions ---</text>
-          </box>
-          {status.conditions.map((cond, i) => (
-            <box key={`cond-${i}`} height={1} width="100%">
-              <text>{`[${cond.status}] ${cond.type}: ${cond.reason} - ${cond.message}`}</text>
-            </box>
-          ))}
-        </>
-      )}
-
-      {/* Spec info */}
-      {spec && (
-        <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Spec ---</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Type: ${spec.agent_type}  |  QoS: ${spec.qos_class}  |  Gen: ${spec.spec_generation}`}</text>
-          </box>
-          {spec.zone_affinity && (
-            <box height={1} width="100%">
-              <text>{`Zone affinity: ${spec.zone_affinity}`}</text>
-            </box>
-          )}
-          {spec.capabilities.length > 0 && (
-            <box height={1} width="100%">
-              <text>{`Capabilities: ${spec.capabilities.join(", ")}`}</text>
-            </box>
-          )}
-        </>
-      )}
-
-      {/* Identity */}
-      {identity && (
-        <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Identity ---</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`DID: ${identity.did}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Key ID: ${identity.key_id}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Algorithm: ${identity.algorithm}`}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Public key: ${truncateHex(identity.public_key_hex)}`}</text>
-          </box>
-          {identity.created_at && (
-            <box height={1} width="100%">
-              <text>{`Created: ${formatTimestamp(identity.created_at)}`}</text>
-            </box>
-          )}
-          {identity.expires_at && (
-            <box height={1} width="100%">
-              <text>{`Expires: ${formatTimestamp(identity.expires_at)}`}</text>
-            </box>
-          )}
-        </>
-      )}
-
-      {/* Trust Score */}
-      {trustScore != null && (
-        <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Trust ---</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`Trust score: ${trustScore.toFixed(2)} ${renderUsageBar(trustScore * 100, 20)}`}</text>
-          </box>
-        </>
-      )}
-
-      {/* Reputation */}
-      {reputation != null && (
-        <>
-          <box height={1} width="100%" marginTop={1}>
-            <text>--- Reputation ---</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{`${JSON.stringify(reputation, null, 2)}`}</text>
-          </box>
-        </>
-      )}
-    </scrollbox>
-  );
+function truncateHex(hex: string | null | undefined, len = 16): string {
+  if (!hex) return "n/a";
+  return hex.length > len ? hex.slice(0, len) + "..." : hex;
 }
 
-function truncateHex(hex: string): string {
-  if (hex.length <= 20) return hex;
-  return `${hex.slice(0, 10)}...${hex.slice(-10)}`;
+export function AgentStatusView(props: AgentStatusViewProps): JSX.Element {
+  return (
+    <Show when={!props.loading} fallback={<LoadingIndicator message="Loading agent status..." />}>
+      <Show when={props.status} fallback={
+        <box height="100%" width="100%" justifyContent="center" alignItems="center">
+          <text>Select an agent to view status</text>
+        </box>
+      }>
+        {(status) => {
+          const badge = PHASE_BADGES[status().phase] ?? `[${status().phase.toUpperCase()}]`;
+          return (
+            <scrollbox height="100%" width="100%">
+              <box height={1} width="100%">
+                <text>{`Phase: ${badge} ${status().phase}  |  Generation: ${status().observed_generation}`}</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Last heartbeat: ${formatTimestamp(status().last_heartbeat)}`}</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Last activity:  ${formatTimestamp(status().last_activity)}`}</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Inbox depth: ${status().inbox_depth}  |  Context usage: ${status().context_usage_pct}%`}</text>
+              </box>
+              <box height={1} width="100%" marginTop={1}>
+                <text>--- Resource Usage ---</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Tokens used:    ${status().resource_usage.tokens_used}`}</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Storage:        ${status().resource_usage.storage_used_mb} MB`}</text>
+              </box>
+              <box height={1} width="100%">
+                <text>{`Context:        ${renderUsageBar(status().resource_usage.context_usage_pct, 20)}`}</text>
+              </box>
+
+              {status().conditions.length > 0 && (
+                <>
+                  <box height={1} width="100%" marginTop={1}>
+                    <text>--- Conditions ---</text>
+                  </box>
+                  {status().conditions.map((cond, i) => (
+                    <box key={`cond-${i}`} height={1} width="100%">
+                      <text>{`[${cond.status}] ${cond.type}: ${cond.reason} - ${cond.message}`}</text>
+                    </box>
+                  ))}
+                </>
+              )}
+
+              {props.spec && (
+                <>
+                  <box height={1} width="100%" marginTop={1}>
+                    <text>--- Spec ---</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`Type: ${props.spec.agent_type}  |  QoS: ${props.spec.qos_class}  |  Gen: ${props.spec.spec_generation}`}</text>
+                  </box>
+                  {props.spec.zone_affinity && (
+                    <box height={1} width="100%">
+                      <text>{`Zone affinity: ${props.spec.zone_affinity}`}</text>
+                    </box>
+                  )}
+                  {props.spec.capabilities.length > 0 && (
+                    <box height={1} width="100%">
+                      <text>{`Capabilities: ${props.spec.capabilities.join(", ")}`}</text>
+                    </box>
+                  )}
+                </>
+              )}
+
+              {props.identity && (
+                <>
+                  <box height={1} width="100%" marginTop={1}>
+                    <text>--- Identity ---</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`DID: ${props.identity.did}`}</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`Key ID: ${props.identity.key_id}`}</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`Algorithm: ${props.identity.algorithm}`}</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`Public key: ${truncateHex(props.identity.public_key_hex)}`}</text>
+                  </box>
+                  {props.identity.created_at && (
+                    <box height={1} width="100%">
+                      <text>{`Created: ${formatTimestamp(props.identity.created_at)}`}</text>
+                    </box>
+                  )}
+                  {props.identity.expires_at && (
+                    <box height={1} width="100%">
+                      <text>{`Expires: ${formatTimestamp(props.identity.expires_at)}`}</text>
+                    </box>
+                  )}
+                </>
+              )}
+
+              {props.trustScore != null && (
+                <>
+                  <box height={1} width="100%" marginTop={1}>
+                    <text>--- Trust ---</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`Trust score: ${props.trustScore.toFixed(2)} ${renderUsageBar(props.trustScore * 100, 20)}`}</text>
+                  </box>
+                </>
+              )}
+
+              {props.reputation != null && (
+                <>
+                  <box height={1} width="100%" marginTop={1}>
+                    <text>--- Reputation ---</text>
+                  </box>
+                  <box height={1} width="100%">
+                    <text>{`${JSON.stringify(props.reputation, null, 2)}`}</text>
+                  </box>
+                </>
+              )}
+            </scrollbox>
+          );
+        }}
+      </Show>
+    </Show>
+  );
 }

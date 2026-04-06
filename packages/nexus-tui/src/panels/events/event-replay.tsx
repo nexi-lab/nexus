@@ -1,4 +1,4 @@
-import { Show, For, createSignal, onCleanup } from "solid-js";
+import { Show, For } from "solid-js";
 import type { JSX } from "solid-js";
 /**
  * Historical event replay sub-view.
@@ -20,15 +20,10 @@ export interface EventReplayProps {
 }
 
 export function EventReplay(props: EventReplayProps): JSX.Element {
-  const [_kRev, _setKRev] = createSignal(0);
-  const unsub = useKnowledgeStore.subscribe(() => _setKRev((r) => r + 1));
-  onCleanup(unsub);
-  const ks = () => { void _kRev(); return useKnowledgeStore.getState(); };
-
-  const entries = () => ks().eventReplayEntries;
-  const loading = () => ks().eventReplayLoading;
-  const hasMore = () => ks().eventReplayHasMore;
-  const error = () => ks().error;
+  const entries = () => useKnowledgeStore((s) => s.eventReplayEntries);
+  const loading = () => useKnowledgeStore((s) => s.eventReplayLoading);
+  const hasMore = () => useKnowledgeStore((s) => s.eventReplayHasMore);
+  const error = () => useKnowledgeStore((s) => s.error);
 
   const needle = () => (props.typeFilter ?? "").toLowerCase();
   const filtered = () => {

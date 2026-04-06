@@ -5,7 +5,7 @@
  * Extracted from events-panel.tsx (Issue 2A: split into per-tab sub-panels).
  */
 
-import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import { createSignal, createEffect, Show, For } from "solid-js";
 import type { JSX } from "solid-js";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -36,29 +36,21 @@ interface EventsTabProps {
 }
 
 export function EventsTab(props: EventsTabProps): JSX.Element {
-  // Subscribe to stores for reactivity
-  const [_gRev, _setGRev] = createSignal(0);
-  const unsubGlobal = useGlobalStore.subscribe(() => _setGRev((r) => r + 1));
-  onCleanup(unsubGlobal);
-  const config = () => { void _gRev(); return useGlobalStore.getState().config; };
+  // Reactive store accessors (direct reads via jsx:preserve)
+  const config = () => useGlobalStore((s) => s.config);
 
-  const [_eRev, _setERev] = createSignal(0);
-  const unsubEvents = useEventsStore.subscribe(() => _setERev((r) => r + 1));
-  onCleanup(unsubEvents);
-  const es = () => { void _eRev(); return useEventsStore.getState(); };
-
-  const connected = () => es().connected;
-  const events = () => es().filteredEvents;
-  const reconnectCount = () => es().reconnectCount;
-  const reconnectExhausted = () => es().reconnectExhausted;
-  const filters = () => es().filters;
-  const eventsOverflowed = () => es().eventsOverflowed;
-  const evictedCount = () => es().evictedCount;
-  const eventsBuffer = () => es().eventsBuffer;
-  const connect = useEventsStore.getState().connect;
-  const disconnect = useEventsStore.getState().disconnect;
-  const clearEvents = useEventsStore.getState().clearEvents;
-  const setFilter = useEventsStore.getState().setFilter;
+  const connected = () => useEventsStore((s) => s.connected);
+  const events = () => useEventsStore((s) => s.filteredEvents);
+  const reconnectCount = () => useEventsStore((s) => s.reconnectCount);
+  const reconnectExhausted = () => useEventsStore((s) => s.reconnectExhausted);
+  const filters = () => useEventsStore((s) => s.filters);
+  const eventsOverflowed = () => useEventsStore((s) => s.eventsOverflowed);
+  const evictedCount = () => useEventsStore((s) => s.evictedCount);
+  const eventsBuffer = () => useEventsStore((s) => s.eventsBuffer);
+  const connect = useEventsStore((s) => s.connect);
+  const disconnect = useEventsStore((s) => s.disconnect);
+  const clearEvents = useEventsStore((s) => s.clearEvents);
+  const setFilter = useEventsStore((s) => s.setFilter);
 
   const { copy, copied } = useCopy();
 

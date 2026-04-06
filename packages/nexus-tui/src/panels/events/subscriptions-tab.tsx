@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -20,20 +20,15 @@ interface SubscriptionsTabProps {
 
 export function SubscriptionsTab(props: SubscriptionsTabProps): JSX.Element {
   const client = useApi();
-  const confirm = useConfirmStore.getState().confirm;
+  const confirm = useConfirmStore((s) => s.confirm);
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const subscriptions = () => inf().subscriptions;
-  const subscriptionsLoading = () => inf().subscriptionsLoading;
-  const selectedSubscriptionIndex = () => inf().selectedSubscriptionIndex;
-  const setSelectedSubscriptionIndex = useInfraStore.getState().setSelectedSubscriptionIndex;
-  const fetchSubscriptions = useInfraStore.getState().fetchSubscriptions;
-  const deleteSubscription = useInfraStore.getState().deleteSubscription;
-  const testSubscription = useInfraStore.getState().testSubscription;
+  const subscriptions = () => useInfraStore((s) => s.subscriptions);
+  const subscriptionsLoading = () => useInfraStore((s) => s.subscriptionsLoading);
+  const selectedSubscriptionIndex = () => useInfraStore((s) => s.selectedSubscriptionIndex);
+  const setSelectedSubscriptionIndex = useInfraStore((s) => s.setSelectedSubscriptionIndex);
+  const fetchSubscriptions = useInfraStore((s) => s.fetchSubscriptions);
+  const deleteSubscription = useInfraStore((s) => s.deleteSubscription);
+  const testSubscription = useInfraStore((s) => s.testSubscription);
 
   createEffect(() => {
     if (client) fetchSubscriptions(client);

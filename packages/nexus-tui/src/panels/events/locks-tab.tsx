@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -21,21 +21,16 @@ interface LocksTabProps {
 
 export function LocksTab(props: LocksTabProps): JSX.Element {
   const client = useApi();
-  const confirm = useConfirmStore.getState().confirm;
+  const confirm = useConfirmStore((s) => s.confirm);
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const locks = () => inf().locks;
-  const locksLoading = () => inf().locksLoading;
-  const selectedLockIndex = () => inf().selectedLockIndex;
-  const setSelectedLockIndex = useInfraStore.getState().setSelectedLockIndex;
-  const fetchLocks = useInfraStore.getState().fetchLocks;
-  const acquireLock = useInfraStore.getState().acquireLock;
-  const releaseLock = useInfraStore.getState().releaseLock;
-  const extendLock = useInfraStore.getState().extendLock;
+  const locks = () => useInfraStore((s) => s.locks);
+  const locksLoading = () => useInfraStore((s) => s.locksLoading);
+  const selectedLockIndex = () => useInfraStore((s) => s.selectedLockIndex);
+  const setSelectedLockIndex = useInfraStore((s) => s.setSelectedLockIndex);
+  const fetchLocks = useInfraStore((s) => s.fetchLocks);
+  const acquireLock = useInfraStore((s) => s.acquireLock);
+  const releaseLock = useInfraStore((s) => s.releaseLock);
+  const extendLock = useInfraStore((s) => s.extendLock);
 
   createEffect(() => {
     if (client) fetchLocks(client);

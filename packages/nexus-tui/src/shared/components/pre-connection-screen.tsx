@@ -124,12 +124,8 @@ export function PreConnectionScreen(): JSX.Element {
     initConfig({ baseUrl: url });
   };
 
-  // Subscribe to command runner store for reactive updates (OpenTUI needs signal-driven rendering)
-  const [commandStatus, setCommandStatus] = createSignal(useCommandRunnerStore.getState().status);
-  const unsubCmd = useCommandRunnerStore.subscribe((state) => {
-    setCommandStatus(state.status);
-  });
-  onCleanup(unsubCmd);
+  // Reactive store accessors (direct reads via jsx:preserve)
+  const commandStatus = () => useCommandRunnerStore((s) => s.status);
   const isCommandRunning = () => commandStatus() === "running";
   const hasCommandOutput = () => {
     const s = commandStatus();

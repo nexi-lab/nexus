@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createSignal, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -21,14 +21,9 @@ export function SecretsTab(props: SecretsTabProps): JSX.Element {
   const client = useApi();
   const [secretsFilter, setSecretsFilter] = createSignal("");
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const secretAuditEntries = () => inf().secretAuditEntries;
-  const secretsLoading = () => inf().secretsLoading;
-  const fetchSecretAudit = useInfraStore.getState().fetchSecretAudit;
+  const secretAuditEntries = () => useInfraStore((s) => s.secretAuditEntries);
+  const secretsLoading = () => useInfraStore((s) => s.secretsLoading);
+  const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
 
   createEffect(() => {
     if (client) fetchSecretAudit(client);

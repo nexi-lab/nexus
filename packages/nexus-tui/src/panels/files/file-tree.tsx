@@ -9,7 +9,7 @@
  * @see Issue #3102, Decisions 1A (virtualization) + 4A (React.memo on children)
  */
 
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { useFilesStore, type TreeNode } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -58,18 +58,11 @@ export function FileTree(props: FileTreeProps): JSX.Element {
   const filterQuery = () => props.filterQuery ?? "";
   const effectiveSelection = () => props.effectiveSelection;
 
-  // OpenTUI's renderer doesn't re-render on Solid store proxy changes.
-  // Use explicit subscription to a signal so <Show> / JSX re-evaluates.
-  const [revision, setRevision] = createSignal(useFilesStore.getState().fileCacheRevision);
-  const [currentPath, setCurrentPath] = createSignal(useFilesStore.getState().currentPath);
-  const [selectedIndex, setSelectedIdx] = createSignal(useFilesStore.getState().selectedIndex);
-  const unsub = useFilesStore.subscribe((state) => {
-    if (state.fileCacheRevision !== revision()) setRevision(state.fileCacheRevision);
-    if (state.currentPath !== currentPath()) setCurrentPath(state.currentPath);
-    if (state.selectedIndex !== selectedIndex()) setSelectedIdx(state.selectedIndex);
-  });
-  onCleanup(unsub);
-  const treeNodes = () => useFilesStore.getState().treeNodes;
+  // Reactive store accessors (direct reads via jsx:preserve)
+  const revision = () => useFilesStore((s) => s.fileCacheRevision);
+  const currentPath = () => useFilesStore((s) => s.currentPath);
+  const selectedIndex = () => useFilesStore((s) => s.selectedIndex);
+  const treeNodes = () => useFilesStore((s) => s.treeNodes);
 
   // Initialize root on mount
   createEffect(() => {

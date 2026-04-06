@@ -5,7 +5,7 @@
  * Issue #2930.
  */
 
-import { createEffect, createSignal, onCleanup, Show, For } from "solid-js";
+import { createEffect, Show, For } from "solid-js";
 import type { JSX } from "solid-js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -20,17 +20,12 @@ export interface MclReplayProps {
 export function MclReplay(props: MclReplayProps): JSX.Element {
   const client = useApi();
 
-  const [_kRev, _setKRev] = createSignal(0);
-  const unsub = useKnowledgeStore.subscribe(() => _setKRev((r) => r + 1));
-  onCleanup(unsub);
-  const ks = () => { void _kRev(); return useKnowledgeStore.getState(); };
-
-  const entries = () => ks().replayEntries;
-  const loading = () => ks().replayLoading;
-  const hasMore = () => ks().replayHasMore;
-  const error = () => ks().error;
-  const fetchReplay = useKnowledgeStore.getState().fetchReplay;
-  const clearReplay = useKnowledgeStore.getState().clearReplay;
+  const entries = () => useKnowledgeStore((s) => s.replayEntries);
+  const loading = () => useKnowledgeStore((s) => s.replayLoading);
+  const hasMore = () => useKnowledgeStore((s) => s.replayHasMore);
+  const error = () => useKnowledgeStore((s) => s.error);
+  const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
+  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
 
   const urnFilter = () => props.urnFilter ?? "";
   const aspectFilter = () => props.aspectFilter ?? "";

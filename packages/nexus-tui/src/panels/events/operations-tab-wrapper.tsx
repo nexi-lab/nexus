@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -20,16 +20,11 @@ interface OperationsTabWrapperProps {
 export function OperationsTabWrapper(props: OperationsTabWrapperProps): JSX.Element {
   const client = useApi();
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const operations = () => inf().operations;
-  const operationsLoading = () => inf().operationsLoading;
-  const selectedOperationIndex = () => inf().selectedOperationIndex;
-  const setSelectedOperationIndex = useInfraStore.getState().setSelectedOperationIndex;
-  const fetchOperations = useInfraStore.getState().fetchOperations;
+  const operations = () => useInfraStore((s) => s.operations);
+  const operationsLoading = () => useInfraStore((s) => s.operationsLoading);
+  const selectedOperationIndex = () => useInfraStore((s) => s.selectedOperationIndex);
+  const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
+  const fetchOperations = useInfraStore((s) => s.fetchOperations);
 
   createEffect(() => {
     if (client) fetchOperations(client);

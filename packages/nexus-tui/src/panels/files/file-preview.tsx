@@ -2,7 +2,7 @@
  * File content preview panel with syntax highlighting.
  */
 
-import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import { createMemo, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { useFilesStore } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -53,18 +53,11 @@ export function FilePreview(): JSX.Element {
   const client = useApi();
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
 
-  // Subscribe to store for reactive updates (OpenTUI needs signal-driven rendering)
-  const [previewPath, setPreviewPath] = createSignal(useFilesStore.getState().previewPath);
-  const [previewContent, setPreviewContent] = createSignal(useFilesStore.getState().previewContent);
-  const [previewLoading, setPreviewLoading] = createSignal(useFilesStore.getState().previewLoading);
-  const [previewError, setPreviewError] = createSignal(useFilesStore.getState().error);
-  const unsub = useFilesStore.subscribe((state) => {
-    setPreviewPath(state.previewPath);
-    setPreviewContent(state.previewContent);
-    setPreviewLoading(state.previewLoading);
-    setPreviewError(state.error);
-  });
-  onCleanup(unsub);
+  // Reactive store accessors (direct reads via jsx:preserve)
+  const previewPath = () => useFilesStore((s) => s.previewPath);
+  const previewContent = () => useFilesStore((s) => s.previewContent);
+  const previewLoading = () => useFilesStore((s) => s.previewLoading);
+  const previewError = () => useFilesStore((s) => s.error);
 
   const ext = () => previewPath()?.split(".").pop()?.toLowerCase() ?? "";
   const language = () => extensionToLanguage(ext());

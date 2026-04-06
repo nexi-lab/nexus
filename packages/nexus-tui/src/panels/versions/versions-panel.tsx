@@ -33,27 +33,22 @@ export default function VersionsPanel(): JSX.Element {
   const columns = () => termDims().width;
   const isNarrow = () => columns() < 120;
 
-  // Rendering trigger — incremented on every store change so memos/JSX re-evaluate.
-  const [_rev, _setRev] = createSignal(0);
-  const unsubVersions = useVersionsStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsubVersions);
-
-  // Read store values through getState() with _rev() dependency for reactivity
-  const vs = () => { void _rev(); return useVersionsStore.getState(); };
-  const transactions = () => vs().transactions;
-  const selectedIndex = () => vs().selectedIndex;
-  const isLoading = () => vs().isLoading;
-  const error = () => vs().error;
-  const entries = () => vs().entries;
-  const entriesLoading = () => vs().entriesLoading;
-  const conflicts = () => vs().conflicts;
-  const conflictsLoading = () => vs().conflictsLoading;
-  const showConflicts = () => vs().showConflicts;
-  const transactionDetail = () => vs().transactionDetail;
-  const transactionDetailLoading = () => vs().transactionDetailLoading;
-  const diffContent = () => vs().diffContent;
-  const diffLoading = () => vs().diffLoading;
-  const statusFilter = () => vs().statusFilter;
+  // With jsx:"preserve", store reads through useVersionsStore() are reactive
+  // via Solid's compiled getters. No subscribe-to-signal needed.
+  const transactions = () => useVersionsStore((s) => s.transactions);
+  const selectedIndex = () => useVersionsStore((s) => s.selectedIndex);
+  const isLoading = () => useVersionsStore((s) => s.isLoading);
+  const error = () => useVersionsStore((s) => s.error);
+  const entries = () => useVersionsStore((s) => s.entries);
+  const entriesLoading = () => useVersionsStore((s) => s.entriesLoading);
+  const conflicts = () => useVersionsStore((s) => s.conflicts);
+  const conflictsLoading = () => useVersionsStore((s) => s.conflictsLoading);
+  const showConflicts = () => useVersionsStore((s) => s.showConflicts);
+  const transactionDetail = () => useVersionsStore((s) => s.transactionDetail);
+  const transactionDetailLoading = () => useVersionsStore((s) => s.transactionDetailLoading);
+  const diffContent = () => useVersionsStore((s) => s.diffContent);
+  const diffLoading = () => useVersionsStore((s) => s.diffLoading);
+  const statusFilter = () => useVersionsStore((s) => s.statusFilter);
   const fetchTransactionDetail = useVersionsStore((s) => s.fetchTransactionDetail);
 
   const fetchTransactions = useVersionsStore((s) => s.fetchTransactions);
@@ -71,14 +66,10 @@ export default function VersionsPanel(): JSX.Element {
   // Clipboard copy
   const { copy, copied } = useCopy();
 
-  // Focus pane (ui-store) — subscribe for reactivity
-  const [_uiRev, _setUiRev] = createSignal(0);
-  const unsubUi = useUiStore.subscribe(() => _setUiRev((r) => r + 1));
-  onCleanup(unsubUi);
-  const uiState = () => { void _uiRev(); return useUiStore.getState(); };
-  const uiFocusPane = () => uiState().getFocusPane("versions");
-  const toggleFocus = useUiStore.getState().toggleFocusPane;
-  const overlayActive = () => uiState().overlayActive;
+  // Focus pane (ui-store)
+  const uiFocusPane = () => useUiStore((s) => s.getFocusPane("versions"));
+  const toggleFocus = useUiStore((s) => s.toggleFocusPane);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
 
   // Entry selection within the right pane
   const [selectedEntryIndex, setSelectedEntryIndex] = createSignal(0);

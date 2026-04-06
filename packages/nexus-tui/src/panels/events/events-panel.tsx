@@ -47,43 +47,11 @@ import {
 export default function EventsPanel(): JSX.Element {
   const apiClient = useApi();
 
-  // ---- Subscribe to all zustand stores for reactivity ----
-  const [_evRev, _setEvRev] = createSignal(0);
-  const unsubEvents = useEventsStore.subscribe(() => _setEvRev((r) => r + 1));
-  onCleanup(unsubEvents);
-
-  const [_irRev, _setIrRev] = createSignal(0);
-  const unsubInfra = useInfraStore.subscribe(() => _setIrRev((r) => r + 1));
-  onCleanup(unsubInfra);
-
-  const [_gRev, _setGRev] = createSignal(0);
-  const unsubGlobal = useGlobalStore.subscribe(() => _setGRev((r) => r + 1));
-  onCleanup(unsubGlobal);
-
-  const [_uiRev, _setUiRev] = createSignal(0);
-  const unsubUi = useUiStore.subscribe(() => _setUiRev((r) => r + 1));
-  onCleanup(unsubUi);
-
-  const [_kRev, _setKRev] = createSignal(0);
-  const unsubKnowledge = useKnowledgeStore.subscribe(() => _setKRev((r) => r + 1));
-  onCleanup(unsubKnowledge);
-
-  const [_cRev, _setCRev] = createSignal(0);
-  const unsubConfirm = useConfirmStore.subscribe(() => _setCRev((r) => r + 1));
-  onCleanup(unsubConfirm);
-
-  // ---- Reactive store accessors ----
-  const evs = () => { void _evRev(); return useEventsStore.getState(); };
-  const inf = () => { void _irRev(); return useInfraStore.getState(); };
-  const glb = () => { void _gRev(); return useGlobalStore.getState(); };
-  const ui = () => { void _uiRev(); return useUiStore.getState(); };
-  const knw = () => { void _kRev(); return useKnowledgeStore.getState(); };
-  const cnf = () => { void _cRev(); return useConfirmStore.getState(); };
-
-  const confirm = cnf().confirm;
-  const overlayActive = () => ui().overlayActive;
+  // ---- Reactive store accessors (direct reads via jsx:preserve) ----
+  const confirm = useConfirmStore((s) => s.confirm);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(EVENTS_TABS);
-  const config = () => glb().config;
+  const config = () => useGlobalStore((s) => s.config);
 
   // Clipboard copy
   const { copy, copied } = useCopy();
@@ -112,62 +80,62 @@ export default function EventsPanel(): JSX.Element {
   // Audit selected index
   const [selectedAuditIndex, setSelectedAuditIndex] = createSignal(0);
 
-  // ---- Reactive store values (derived from subscriptions) ----
-  const connected = () => evs().connected;
-  const events = () => evs().filteredEvents;
-  const reconnectCount = () => evs().reconnectCount;
-  const reconnectExhausted = () => evs().reconnectExhausted;
-  const filters = () => evs().filters;
-  const eventsOverflowed = () => evs().eventsOverflowed;
-  const evictedCount = () => evs().evictedCount;
-  const eventsBuffer = () => evs().eventsBuffer;
+  // ---- Reactive store values (direct reads via jsx:preserve) ----
+  const connected = () => useEventsStore((s) => s.connected);
+  const events = () => useEventsStore((s) => s.filteredEvents);
+  const reconnectCount = () => useEventsStore((s) => s.reconnectCount);
+  const reconnectExhausted = () => useEventsStore((s) => s.reconnectExhausted);
+  const filters = () => useEventsStore((s) => s.filters);
+  const eventsOverflowed = () => useEventsStore((s) => s.eventsOverflowed);
+  const evictedCount = () => useEventsStore((s) => s.evictedCount);
+  const eventsBuffer = () => useEventsStore((s) => s.eventsBuffer);
 
-  // Actions (stable references)
-  const connect = useEventsStore.getState().connect;
-  const disconnect = useEventsStore.getState().disconnect;
-  const clearEvents = useEventsStore.getState().clearEvents;
-  const setFilter = useEventsStore.getState().setFilter;
+  // Actions (stable function references)
+  const connect = useEventsStore((s) => s.connect);
+  const disconnect = useEventsStore((s) => s.disconnect);
+  const clearEvents = useEventsStore((s) => s.clearEvents);
+  const setFilter = useEventsStore((s) => s.setFilter);
 
-  const activeTab = () => inf().activePanelTab;
-  const setActiveTab = useInfraStore.getState().setActivePanelTab;
-  const connectors = () => inf().connectors;
-  const connectorsLoading = () => inf().connectorsLoading;
-  const selectedConnectorIndex = () => inf().selectedConnectorIndex;
-  const subscriptions = () => inf().subscriptions;
-  const subscriptionsLoading = () => inf().subscriptionsLoading;
-  const selectedSubscriptionIndex = () => inf().selectedSubscriptionIndex;
-  const locks = () => inf().locks;
-  const locksLoading = () => inf().locksLoading;
-  const selectedLockIndex = () => inf().selectedLockIndex;
-  const secretAuditEntries = () => inf().secretAuditEntries;
-  const secretsLoading = () => inf().secretsLoading;
-  const operations = () => inf().operations;
-  const operationsLoading = () => inf().operationsLoading;
-  const selectedOperationIndex = () => inf().selectedOperationIndex;
-  const infraError = () => inf().error;
-  const connectorCapabilities = () => inf().connectorCapabilities;
-  const capabilitiesLoading = () => inf().capabilitiesLoading;
-  const auditTransactions = () => inf().auditTransactions;
-  const auditLoading = () => inf().auditLoading;
-  const auditHasMore = () => inf().auditHasMore;
-  const auditNextCursor = () => inf().auditNextCursor;
+  const activeTab = () => useInfraStore((s) => s.activePanelTab);
+  const setActiveTab = useInfraStore((s) => s.setActivePanelTab);
+  const connectors = () => useInfraStore((s) => s.connectors);
+  const connectorsLoading = () => useInfraStore((s) => s.connectorsLoading);
+  const selectedConnectorIndex = () => useInfraStore((s) => s.selectedConnectorIndex);
+  const subscriptions = () => useInfraStore((s) => s.subscriptions);
+  const subscriptionsLoading = () => useInfraStore((s) => s.subscriptionsLoading);
+  const selectedSubscriptionIndex = () => useInfraStore((s) => s.selectedSubscriptionIndex);
+  const locks = () => useInfraStore((s) => s.locks);
+  const locksLoading = () => useInfraStore((s) => s.locksLoading);
+  const selectedLockIndex = () => useInfraStore((s) => s.selectedLockIndex);
+  const secretAuditEntries = () => useInfraStore((s) => s.secretAuditEntries);
+  const secretsLoading = () => useInfraStore((s) => s.secretsLoading);
+  const operations = () => useInfraStore((s) => s.operations);
+  const operationsLoading = () => useInfraStore((s) => s.operationsLoading);
+  const selectedOperationIndex = () => useInfraStore((s) => s.selectedOperationIndex);
+  const infraError = () => useInfraStore((s) => s.error);
+  const connectorCapabilities = () => useInfraStore((s) => s.connectorCapabilities);
+  const capabilitiesLoading = () => useInfraStore((s) => s.capabilitiesLoading);
+  const auditTransactions = () => useInfraStore((s) => s.auditTransactions);
+  const auditLoading = () => useInfraStore((s) => s.auditLoading);
+  const auditHasMore = () => useInfraStore((s) => s.auditHasMore);
+  const auditNextCursor = () => useInfraStore((s) => s.auditNextCursor);
 
-  const fetchConnectors = useInfraStore.getState().fetchConnectors;
-  const fetchSubscriptions = useInfraStore.getState().fetchSubscriptions;
-  const deleteSubscription = useInfraStore.getState().deleteSubscription;
-  const testSubscription = useInfraStore.getState().testSubscription;
-  const fetchLocks = useInfraStore.getState().fetchLocks;
-  const acquireLock = useInfraStore.getState().acquireLock;
-  const releaseLock = useInfraStore.getState().releaseLock;
-  const extendLock = useInfraStore.getState().extendLock;
-  const fetchSecretAudit = useInfraStore.getState().fetchSecretAudit;
-  const fetchOperations = useInfraStore.getState().fetchOperations;
-  const fetchConnectorCapabilities = useInfraStore.getState().fetchConnectorCapabilities;
-  const fetchAuditTransactions = useInfraStore.getState().fetchAuditTransactions;
-  const setSelectedOperationIndex = useInfraStore.getState().setSelectedOperationIndex;
-  const setSelectedConnectorIndex = useInfraStore.getState().setSelectedConnectorIndex;
-  const setSelectedSubscriptionIndex = useInfraStore.getState().setSelectedSubscriptionIndex;
-  const setSelectedLockIndex = useInfraStore.getState().setSelectedLockIndex;
+  const fetchConnectors = useInfraStore((s) => s.fetchConnectors);
+  const fetchSubscriptions = useInfraStore((s) => s.fetchSubscriptions);
+  const deleteSubscription = useInfraStore((s) => s.deleteSubscription);
+  const testSubscription = useInfraStore((s) => s.testSubscription);
+  const fetchLocks = useInfraStore((s) => s.fetchLocks);
+  const acquireLock = useInfraStore((s) => s.acquireLock);
+  const releaseLock = useInfraStore((s) => s.releaseLock);
+  const extendLock = useInfraStore((s) => s.extendLock);
+  const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
+  const fetchOperations = useInfraStore((s) => s.fetchOperations);
+  const fetchConnectorCapabilities = useInfraStore((s) => s.fetchConnectorCapabilities);
+  const fetchAuditTransactions = useInfraStore((s) => s.fetchAuditTransactions);
+  const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
+  const setSelectedConnectorIndex = useInfraStore((s) => s.setSelectedConnectorIndex);
+  const setSelectedSubscriptionIndex = useInfraStore((s) => s.setSelectedSubscriptionIndex);
+  const setSelectedLockIndex = useInfraStore((s) => s.setSelectedLockIndex);
 
   useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
@@ -191,10 +159,10 @@ export default function EventsPanel(): JSX.Element {
   });
 
   // Knowledge store (MCL replay + event replay)
-  const fetchReplay = useKnowledgeStore.getState().fetchReplay;
-  const clearReplay = useKnowledgeStore.getState().clearReplay;
-  const fetchEventReplay = useKnowledgeStore.getState().fetchEventReplay;
-  const clearEventReplay = useKnowledgeStore.getState().clearEventReplay;
+  const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
+  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
+  const fetchEventReplay = useKnowledgeStore((s) => s.fetchEventReplay);
+  const clearEventReplay = useKnowledgeStore((s) => s.clearEventReplay);
 
   // Fetch infra data when switching tabs
   createEffect(() => {

@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import { createSignal, createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -21,16 +21,11 @@ export function AuditTab(props: AuditTabProps): JSX.Element {
   const client = useApi();
   const [selectedAuditIndex, setSelectedAuditIndex] = createSignal(0);
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const auditTransactions = () => inf().auditTransactions;
-  const auditLoading = () => inf().auditLoading;
-  const auditHasMore = () => inf().auditHasMore;
-  const auditNextCursor = () => inf().auditNextCursor;
-  const fetchAuditTransactions = useInfraStore.getState().fetchAuditTransactions;
+  const auditTransactions = () => useInfraStore((s) => s.auditTransactions);
+  const auditLoading = () => useInfraStore((s) => s.auditLoading);
+  const auditHasMore = () => useInfraStore((s) => s.auditHasMore);
+  const auditNextCursor = () => useInfraStore((s) => s.auditNextCursor);
+  const fetchAuditTransactions = useInfraStore((s) => s.fetchAuditTransactions);
 
   createEffect(() => {
     if (client) void fetchAuditTransactions({}, client);

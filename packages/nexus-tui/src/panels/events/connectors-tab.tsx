@@ -4,7 +4,7 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import { createSignal, createEffect, onCleanup, Show } from "solid-js";
+import { createSignal, createEffect, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -25,19 +25,14 @@ export function ConnectorsTab(props: ConnectorsTabProps): JSX.Element {
   const client = useApi();
   const [detailView, setDetailView] = createSignal(false);
 
-  const [_rev, _setRev] = createSignal(0);
-  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
-  onCleanup(unsub);
-  const inf = () => { void _rev(); return useInfraStore.getState(); };
-
-  const connectors = () => inf().connectors;
-  const connectorsLoading = () => inf().connectorsLoading;
-  const selectedConnectorIndex = () => inf().selectedConnectorIndex;
-  const connectorCapabilities = () => inf().connectorCapabilities;
-  const capabilitiesLoading = () => inf().capabilitiesLoading;
-  const setSelectedConnectorIndex = useInfraStore.getState().setSelectedConnectorIndex;
-  const fetchConnectors = useInfraStore.getState().fetchConnectors;
-  const fetchConnectorCapabilities = useInfraStore.getState().fetchConnectorCapabilities;
+  const connectors = () => useInfraStore((s) => s.connectors);
+  const connectorsLoading = () => useInfraStore((s) => s.connectorsLoading);
+  const selectedConnectorIndex = () => useInfraStore((s) => s.selectedConnectorIndex);
+  const connectorCapabilities = () => useInfraStore((s) => s.connectorCapabilities);
+  const capabilitiesLoading = () => useInfraStore((s) => s.capabilitiesLoading);
+  const setSelectedConnectorIndex = useInfraStore((s) => s.setSelectedConnectorIndex);
+  const fetchConnectors = useInfraStore((s) => s.fetchConnectors);
+  const fetchConnectorCapabilities = useInfraStore((s) => s.fetchConnectorCapabilities);
 
   createEffect(() => {
     if (client) { fetchConnectors(client); setDetailView(false); }

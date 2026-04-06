@@ -12,14 +12,15 @@ export function CacheTab(): JSX.Element {
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <text>{loading() ? "Loading cache stats..." : !stats() ? "No cache data available." : "--- Cache Statistics ---"}</text>
-      <text>{stats() ? `  Tracked paths:   ${stats()!.tracked_paths ?? stats()!.total_entries ?? 0}` : ""}</text>
-      <text>{stats() ? `  Total accesses:  ${stats()!.total_accesses ?? 0}` : ""}</text>
-      <text>{stats() ? `  Total entries:   ${stats()!.total_entries ?? 0}` : ""}</text>
-      <text>{stats() ? `  Total size:      ${stats()!.total_size_bytes ?? 0} bytes` : ""}</text>
-      <text>{stats() ? `  Hit rate:        ${((stats()!.hit_rate as number ?? 0) * 100).toFixed(1)}%` : ""}</text>
-      <text>{stats() ? `  Window:          ${stats()!.window_seconds ?? 300}s` : ""}</text>
-      <text>{stats() ? `  Hot threshold:   ${stats()!.hot_threshold ?? 10} accesses` : ""}</text>
+      <text>{loading() ? "Loading cache stats..." : !stats() ? "No cache data available." : "--- File Access Tracker ---"}</text>
+      <text>{stats() ? `  Tracked hot paths:  ${stats()!.tracked_paths ?? stats()!.total_entries ?? 0}` : ""}</text>
+      <text>{stats() ? `  Total accesses:     ${stats()!.total_accesses ?? 0}` : ""}</text>
+      <text>{stats() ? `  Window:             ${stats()!.window_seconds ?? 300}s` : ""}</text>
+      <text>{stats() ? `  Hot threshold:      ${stats()!.hot_threshold ?? 10} accesses` : ""}</text>
+      <text>{""}</text>
+      <text>{"--- Dragonfly Cache (backend) ---"}</text>
+      <text>{"  Use 'docker exec <dragonfly> redis-cli INFO' for full stats."}</text>
+      <text>{"  Cache is active — stats not exposed via HTTP API yet."}</text>
       <text>{""}</text>
       <text>{hotFiles().length > 0 ? "--- Hot Files ---" : "No hot files tracked yet."}</text>
       {hotFiles().slice(0, 10).map((f, i) => (

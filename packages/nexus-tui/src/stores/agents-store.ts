@@ -244,12 +244,13 @@ export const useAgentsStore = create<AgentsState>((set, get) => ({
   fetchDelegations: createApiAction<AgentsState, [string, FetchClient]>(set, {
     loadingKey: "delegationsLoading",
     source: SOURCE,
-    action: async (agentId, client) => {
-      const agentParam = agentId ? `&agent_id=${encodeURIComponent(agentId)}` : "";
+    action: async (_agentId, client) => {
+      // Query all delegations (admin view) — the agent_id param filters by
+      // coordinator, not worker. We fetch all and show the full delegation tree.
       const response = await client.get<{
         readonly delegations: readonly DelegationItem[];
         readonly total: number;
-      }>(`/api/v2/agents/delegate?limit=50&offset=0${agentParam}`);
+      }>("/api/v2/agents/delegate?limit=50&offset=0");
       return { delegations: response.delegations, selectedDelegationIndex: 0 };
     },
   }),

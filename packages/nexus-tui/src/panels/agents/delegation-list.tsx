@@ -89,27 +89,12 @@ function formatExpiry(ts: string | null): string {
   }
 }
 
-export function DelegationList({
-  delegations,
-  selectedIndex,
-  loading,
-  expandedDelegation,
-}: DelegationListProps): JSX.Element {
-  if (loading) {
-    return <LoadingIndicator message="Loading delegations..." />;
-  }
-
-  if (delegations.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No delegations found</text>
-      </box>
-    );
-  }
-
+export function DelegationList(props: DelegationListProps): JSX.Element {
+  // Unconditional rendering — avoid if/return which evaluates once in Match branches.
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <scrollbox flexGrow={expandedDelegation ? 0 : 1} width="100%">
+      <text>{props.loading ? "Loading delegations..." : props.delegations.length === 0 ? "No delegations found" : ""}</text>
+      <scrollbox flexGrow={props.expandedDelegation ? 0 : 1} width="100%">
         {/* Header */}
         <box height={1} width="100%">
           <text>{"  ST  ID          MODE    AGENT->PARENT        INTENT               DEPTH  EXPIRES"}</text>
@@ -119,8 +104,8 @@ export function DelegationList({
         </box>
 
         {/* Rows */}
-        {delegations.map((d, i) => {
-          const isSelected = i === selectedIndex;
+        {props.delegations.map((d, i) => {
+          const isSelected = i === props.selectedIndex;
           const badge = STATUS_BADGES[d.status] ?? "?";
           const badgeColor = delegationStatusColor[d.status] ?? statusColor.dim;
           const modeColor = delegationModeColor[d.delegation_mode] ?? statusColor.dim;
@@ -147,8 +132,8 @@ export function DelegationList({
       </scrollbox>
 
       {/* Expanded delegation detail */}
-      {expandedDelegation && (
-        <DelegationDetail delegation={expandedDelegation} />
+      {props.expandedDelegation && (
+        <DelegationDetail delegation={props.expandedDelegation!} />
       )}
     </box>
   );

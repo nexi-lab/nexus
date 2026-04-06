@@ -91,6 +91,58 @@ impl From<KernelError> for PyErr {
             }
             KernelError::IOError(msg) => pyo3::exceptions::PyIOError::new_err(msg),
             KernelError::TrieError(msg) => pyo3::exceptions::PyValueError::new_err(msg),
+            // IPC error variants
+            KernelError::PipeFull(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("PipeFull:{msg}"))
+            }
+            KernelError::PipeEmpty(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("PipeEmpty:{msg}"))
+            }
+            KernelError::PipeClosed(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("PipeClosed:{msg}"))
+            }
+            KernelError::PipeExists(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("PipeExists:{msg}"))
+            }
+            KernelError::PipeNotFound(path) => Python::attach(|py| {
+                if let Some(cache) = get_exception_cache(py) {
+                    cache
+                        .file_not_found
+                        .bind(py)
+                        .call1((&path,))
+                        .map(PyErr::from_value)
+                        .unwrap_or_else(|_| pyo3::exceptions::PyFileNotFoundError::new_err(path))
+                } else {
+                    pyo3::exceptions::PyFileNotFoundError::new_err(path)
+                }
+            }),
+            KernelError::StreamFull(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("StreamFull:{msg}"))
+            }
+            KernelError::StreamEmpty(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("StreamEmpty:{msg}"))
+            }
+            KernelError::StreamClosed(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("StreamClosed:{msg}"))
+            }
+            KernelError::StreamExists(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("StreamExists:{msg}"))
+            }
+            KernelError::StreamNotFound(path) => Python::attach(|py| {
+                if let Some(cache) = get_exception_cache(py) {
+                    cache
+                        .file_not_found
+                        .bind(py)
+                        .call1((&path,))
+                        .map(PyErr::from_value)
+                        .unwrap_or_else(|_| pyo3::exceptions::PyFileNotFoundError::new_err(path))
+                } else {
+                    pyo3::exceptions::PyFileNotFoundError::new_err(path)
+                }
+            }),
+            KernelError::WouldBlock(msg) => {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("WouldBlock:{msg}"))
+            }
         }
     }
 }
@@ -1090,7 +1142,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None, s3_bucket=None, s3_prefix=None, aws_region=None, aws_access_key=None, aws_secret_key=None, s3_endpoint=None, gcs_bucket=None, gcs_prefix=None, access_token=None, root_folder_id=None, bot_token=None, default_channel=None, metastore_path=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1121,6 +1173,7 @@ impl PyKernel {
         root_folder_id: Option<&str>,
         bot_token: Option<&str>,
         default_channel: Option<&str>,
+        metastore_path: Option<&str>,
     ) -> PyResult<()> {
         // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
         //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
@@ -1264,6 +1317,7 @@ impl PyKernel {
                 io_profile,
                 backend_name,
                 backend,
+                metastore_path,
             )
             .map_err(Into::into)
     }
@@ -1291,6 +1345,108 @@ impl PyKernel {
 
     fn get_mount_points(&self) -> Vec<String> {
         self.inner.get_mount_points()
+    }
+
+    // ── IPC Registry — Pipe methods ──────────────────────────────────
+
+    fn create_pipe(&self, path: &str, capacity: usize) -> PyResult<()> {
+        self.inner.create_pipe(path, capacity).map_err(Into::into)
+    }
+
+    fn destroy_pipe(&self, path: &str) -> PyResult<()> {
+        self.inner.destroy_pipe(path).map_err(Into::into)
+    }
+
+    fn close_pipe(&self, path: &str) -> PyResult<()> {
+        self.inner.close_pipe(path).map_err(Into::into)
+    }
+
+    fn has_pipe(&self, path: &str) -> bool {
+        self.inner.has_pipe(path)
+    }
+
+    fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> PyResult<usize> {
+        self.inner.pipe_write_nowait(path, data).map_err(Into::into)
+    }
+
+    fn pipe_read_nowait<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+    ) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        match self.inner.pipe_read_nowait(path) {
+            Ok(Some(data)) => Ok(Some(PyBytes::new(py, &data))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn list_pipes(&self) -> Vec<String> {
+        self.inner.list_pipes()
+    }
+
+    fn close_all_pipes(&self) {
+        self.inner.close_all_pipes()
+    }
+
+    // ── IPC Registry — Stream methods ────────────────────────────────
+
+    fn create_stream(&self, path: &str, capacity: usize) -> PyResult<()> {
+        self.inner.create_stream(path, capacity).map_err(Into::into)
+    }
+
+    fn destroy_stream(&self, path: &str) -> PyResult<()> {
+        self.inner.destroy_stream(path).map_err(Into::into)
+    }
+
+    fn close_stream(&self, path: &str) -> PyResult<()> {
+        self.inner.close_stream(path).map_err(Into::into)
+    }
+
+    fn has_stream(&self, path: &str) -> bool {
+        self.inner.has_stream(path)
+    }
+
+    fn stream_write_nowait(&self, path: &str, data: &[u8]) -> PyResult<usize> {
+        self.inner
+            .stream_write_nowait(path, data)
+            .map_err(Into::into)
+    }
+
+    fn stream_read_at<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        offset: usize,
+    ) -> PyResult<Option<(Bound<'py, PyBytes>, usize)>> {
+        match self.inner.stream_read_at(path, offset) {
+            Ok(Some((data, next))) => Ok(Some((PyBytes::new(py, &data), next))),
+            Ok(None) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn stream_read_batch<'py>(
+        &self,
+        py: Python<'py>,
+        path: &str,
+        offset: usize,
+        count: usize,
+    ) -> PyResult<(Vec<Bound<'py, PyBytes>>, usize)> {
+        let (msgs, next) = self
+            .inner
+            .stream_read_batch(path, offset, count)
+            .map_err(|e| -> PyErr { e.into() })?;
+        let py_msgs: Vec<Bound<'py, PyBytes>> = msgs.iter().map(|m| PyBytes::new(py, m)).collect();
+        Ok((py_msgs, next))
+    }
+
+    fn list_streams(&self) -> Vec<String> {
+        self.inner.list_streams()
+    }
+
+    fn close_all_streams(&self) {
+        self.inner.close_all_streams()
     }
 
     // ── Trie proxy methods ─────────────────────────────────────────────

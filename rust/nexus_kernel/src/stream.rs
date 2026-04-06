@@ -52,7 +52,7 @@ unsafe impl Sync for StreamBufferCore {}
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-enum StreamError {
+pub(crate) enum StreamError {
     Closed(&'static str),
     Full(usize, usize),
     Empty,
@@ -62,12 +62,12 @@ enum StreamError {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Internal helpers — pub(crate) for direct Kernel IPC registry access
 // ---------------------------------------------------------------------------
 
 impl StreamBufferCore {
     /// Push raw bytes into the buffer. Returns byte offset where message starts.
-    fn push_inner(&self, data: &[u8]) -> Result<usize, StreamError> {
+    pub(crate) fn push_inner(&self, data: &[u8]) -> Result<usize, StreamError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(StreamError::Closed("write to closed stream"));
         }
@@ -106,8 +106,11 @@ impl StreamBufferCore {
         Ok(msg_offset)
     }
 
-    /// Read one message at the given byte offset. Returns (payload, next_offset).
-    fn read_at_inner(&self, byte_offset: usize) -> Result<(usize, usize, usize), StreamError> {
+    /// Read one message at the given byte offset. Returns (payload_start, payload_len, next_offset).
+    pub(crate) fn read_at_inner(
+        &self,
+        byte_offset: usize,
+    ) -> Result<(usize, usize, usize), StreamError> {
         let tail = self.tail.load(Ordering::Acquire);
 
         if byte_offset >= tail {
@@ -137,6 +140,65 @@ impl StreamBufferCore {
         }
 
         Ok((payload_start, payload_len, next_offset))
+    }
+
+    /// Read one message at byte offset, returning owned bytes and next offset.
+    pub(crate) fn read_at_raw(&self, byte_offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
+        let (payload_start, payload_len, next_offset) = self.read_at_inner(byte_offset)?;
+        let buf = unsafe { &*self.buf.get() };
+        let data = buf[payload_start..payload_start + payload_len].to_vec();
+        Ok((data, next_offset))
+    }
+
+    /// Read up to `count` messages starting from byte offset.
+    /// Returns (messages, next_offset after last message).
+    pub(crate) fn read_batch_raw(
+        &self,
+        byte_offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
+        let mut results = Vec::with_capacity(count);
+        let mut offset = byte_offset;
+        for _ in 0..count {
+            match self.read_at_raw(offset) {
+                Ok((data, next)) => {
+                    results.push(data);
+                    offset = next;
+                }
+                Err(StreamError::Empty) | Err(StreamError::ClosedEmpty) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok((results, offset))
+    }
+
+    /// Check if the stream is closed.
+    #[allow(dead_code)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Create a new StreamBufferCore (pub(crate), no PyO3).
+    pub(crate) fn new_inner(capacity: usize) -> Self {
+        Self {
+            buf: UnsafeCell::new(vec![0u8; capacity]),
+            capacity,
+            tail: AtomicUsize::new(0),
+            closed: AtomicBool::new(false),
+            push_count: AtomicU64::new(0),
+            msg_count: AtomicUsize::new(0),
+        }
+    }
+
+    /// Signal close.
+    pub(crate) fn close_inner(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    /// Current write position (monotonic tail offset).
+    #[allow(dead_code)]
+    pub(crate) fn tail_offset(&self) -> usize {
+        self.tail.load(Ordering::Acquire)
     }
 }
 

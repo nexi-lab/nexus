@@ -171,6 +171,8 @@ class MountTable:
         # so Rust wraps Python backend via PyObjectStoreAdapter.
         if self._kernel is not None:
             with contextlib.suppress(Exception):
+                _ms = self._entries[canonical].metastore
+                _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
                 self._kernel.add_mount(
                     mount_point,
                     zone_id,
@@ -181,6 +183,7 @@ class MountTable:
                     _local_root,
                     True,
                     py_backend=backend,
+                    metastore_path=str(_ms_path) if _ms_path else None,
                 )
 
     def remove(self, mount_point: str, zone_id: str = ROOT_ZONE_ID) -> bool:

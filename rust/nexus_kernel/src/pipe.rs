@@ -58,7 +58,7 @@ unsafe impl Sync for RingBufferCore {}
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-enum RingError {
+pub(crate) enum RingError {
     Closed(&'static str),
     Full(usize, usize),
     Empty,
@@ -67,12 +67,12 @@ enum RingError {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers (not exposed to Python)
+// Internal helpers — pub(crate) for direct Kernel IPC registry access
 // ---------------------------------------------------------------------------
 
 impl RingBufferCore {
     /// Push raw bytes into the ring. Returns payload length on success.
-    fn push_inner(&self, data: &[u8]) -> Result<usize, RingError> {
+    pub(crate) fn push_inner(&self, data: &[u8]) -> Result<usize, RingError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(RingError::Closed("write to closed pipe"));
         }
@@ -128,7 +128,7 @@ impl RingBufferCore {
 
     /// Find the next message position without advancing head.
     /// Returns (payload_start_ring_idx, payload_len, total_bytes_to_advance_head).
-    fn pop_position(&self) -> Result<(usize, usize, usize), RingError> {
+    pub(crate) fn pop_position(&self) -> Result<(usize, usize, usize), RingError> {
         let mut head = self.head.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Acquire);
 
@@ -165,12 +165,50 @@ impl RingBufferCore {
     }
 
     /// Advance head after data has been copied out.
-    fn commit_pop(&self, total_advance: usize, payload_len: usize) {
+    pub(crate) fn commit_pop(&self, total_advance: usize, payload_len: usize) {
         let head = self.head.load(Ordering::Relaxed);
         self.head.store(head + total_advance, Ordering::Release);
         self.msg_count.fetch_sub(1, Ordering::Relaxed);
         self.used_bytes.fetch_sub(payload_len, Ordering::Relaxed);
         self.pop_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Pop one message from the ring, returning owned bytes (no PyBytes dependency).
+    /// Combines pop_position + ring copy + commit_pop.
+    pub(crate) fn pop_inner(&self) -> Result<Vec<u8>, RingError> {
+        let (payload_start, payload_len, total_advance) = self.pop_position()?;
+        let ring = unsafe { &*self.ring.get() };
+        let data = ring[payload_start..payload_start + payload_len].to_vec();
+        self.commit_pop(total_advance, payload_len);
+        Ok(data)
+    }
+
+    /// Check if the pipe is closed.
+    #[allow(dead_code)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Create a new RingBufferCore (pub(crate), no PyO3).
+    pub(crate) fn new_inner(capacity: usize) -> Self {
+        let ring_cap = capacity * 2;
+        Self {
+            ring: UnsafeCell::new(vec![0u8; ring_cap]),
+            ring_cap,
+            user_capacity: capacity,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+            closed: AtomicBool::new(false),
+            push_count: AtomicU64::new(0),
+            pop_count: AtomicU64::new(0),
+            msg_count: AtomicUsize::new(0),
+            used_bytes: AtomicUsize::new(0),
+        }
+    }
+
+    /// Signal close.
+    pub(crate) fn close_inner(&self) {
+        self.closed.store(true, Ordering::Release);
     }
 }
 

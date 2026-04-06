@@ -311,21 +311,21 @@ function HealthSummary({
 
 export default function StackPanel(): JSX.Element {
   const client = useApi();
-  const overlayActive = useUiStore((s) => s.overlayActive);
-  const serverVersion = useGlobalStore((s) => s.serverVersion);
-  const uptime = useGlobalStore((s) => s.uptime);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
+  const serverVersion = () => useGlobalStore((s) => s.serverVersion);
+  const uptime = () => useGlobalStore((s) => s.uptime);
 
-  const activeTab = useStackStore((s) => s.activeTab);
+  const activeTab = () => useStackStore((s) => s.activeTab);
   const setActiveTab = useStackStore((s) => s.setActiveTab);
-  const containers = useStackStore((s) => s.containers);
-  const containersLoading = useStackStore((s) => s.containersLoading);
-  const configYaml = useStackStore((s) => s.configYaml);
-  const configLoading = useStackStore((s) => s.configLoading);
-  const stateJson = useStackStore((s) => s.stateJson);
-  const stateLoading = useStackStore((s) => s.stateLoading);
-  const healthDetails = useStackStore((s) => s.healthDetails);
-  const paths = useStackStore((s) => s.paths);
-  const error = useStackStore((s) => s.error);
+  const containers = () => useStackStore((s) => s.containers);
+  const containersLoading = () => useStackStore((s) => s.containersLoading);
+  const configYaml = () => useStackStore((s) => s.configYaml);
+  const configLoading = () => useStackStore((s) => s.configLoading);
+  const stateJson = () => useStackStore((s) => s.stateJson);
+  const stateLoading = () => useStackStore((s) => s.stateLoading);
+  const healthDetails = () => useStackStore((s) => s.healthDetails);
+  const paths = () => useStackStore((s) => s.paths);
+  const error = () => useStackStore((s) => s.error);
   const refreshAll = useStackStore((s) => s.refreshAll);
 
   const [selectedIndex, setSelectedIndex] = createSignal(0);
@@ -336,15 +336,15 @@ export default function StackPanel(): JSX.Element {
   // so there is no render cycle where hasLoaded=true but loading=false and
   // data is still empty (which would flash misleading "no containers" state).
   const [hasLoaded, setHasLoaded] = createSignal(false);
-  const anyLoading = containersLoading || configLoading || stateLoading;
+  const anyLoading = () => containersLoading() || configLoading() || stateLoading();
   createEffect(() => {
-    if (!hasLoaded && anyLoading) {
+    if (!hasLoaded() && anyLoading()) {
       setHasLoaded(true);
     }
   });
 
   // Derive project name from state.json
-  const projectName = stateJson?.project_name as string | null ?? null;
+  const projectName = () => (stateJson()?.project_name as string | null) ?? null;
 
   // Auto-fetch on client connect so the panel surfaces real state on entry.
   // hasLoaded is set by the anyLoading effect above once refreshAll raises
@@ -361,47 +361,51 @@ export default function StackPanel(): JSX.Element {
     setScrollOffset(0);
   });
 
-  // List length for current tab
-  const listLength = activeTab === "containers"
-    ? containers.length
-    : activeTab === "config"
-    ? configYaml.split("\n").length
-    : stateJson
-    ? Object.keys(stateJson).length * 3 // approximate
-    : 0;
+  // List length for current tab (read fresh from store for keyboard handler)
+  const listLength = (): number => {
+    const s = useStackStore.getState();
+    if (s.activeTab === "containers") return s.containers.length;
+    if (s.activeTab === "config") return s.configYaml.split("\n").length;
+    return s.stateJson ? Object.keys(s.stateJson).length * 3 : 0;
+  };
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : {
+    (): Record<string, () => void> => {
+      if (useUiStore.getState().overlayActive) return {};
+      return {
           tab: () => {
-            const idx = TAB_ORDER.indexOf(activeTab);
+            const tab = useStackStore.getState().activeTab;
+            const idx = TAB_ORDER.indexOf(tab);
             const next = TAB_ORDER[(idx + 1) % TAB_ORDER.length]!;
             setActiveTab(next);
           },
           j: () => {
-            if (activeTab === "containers") {
-              setSelectedIndex((i) => Math.min(i + 1, containers.length - 1));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex((i) => Math.min(i + 1, useStackStore.getState().containers.length - 1));
             } else {
-              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength - 5, 0)));
+              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength() - 5, 0)));
             }
           },
           down: () => {
-            if (activeTab === "containers") {
-              setSelectedIndex((i) => Math.min(i + 1, containers.length - 1));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex((i) => Math.min(i + 1, useStackStore.getState().containers.length - 1));
             } else {
-              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength - 5, 0)));
+              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength() - 5, 0)));
             }
           },
           k: () => {
-            if (activeTab === "containers") {
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
               setSelectedIndex((i) => Math.max(i - 1, 0));
             } else {
               setScrollOffset((o) => Math.max(o - 1, 0));
             }
           },
           up: () => {
-            if (activeTab === "containers") {
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
               setSelectedIndex((i) => Math.max(i - 1, 0));
             } else {
               setScrollOffset((o) => Math.max(o - 1, 0));
@@ -415,13 +419,15 @@ export default function StackPanel(): JSX.Element {
             setScrollOffset(0);
           },
           "shift+g": () => {
-            if (activeTab === "containers") {
-              setSelectedIndex(Math.max(containers.length - 1, 0));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex(Math.max(useStackStore.getState().containers.length - 1, 0));
             } else {
-              setScrollOffset(Math.max(listLength - 5, 0));
+              setScrollOffset(Math.max(listLength() - 5, 0));
             }
           },
-        },
+        };
+    },
   );
 
   return (
@@ -431,54 +437,54 @@ export default function StackPanel(): JSX.Element {
         <text>
           {TAB_ORDER.map((tab) => {
             const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+            return tab === activeTab() ? `[${label}]` : ` ${label} `;
           }).join(" ")}
         </text>
       </box>
 
       {/* Error display */}
-      {error && (
+      {error() && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.error}>{`  Error: ${error}`}</text>
+          <text foregroundColor={statusColor.error}>{`  Error: ${error()}`}</text>
         </box>
       )}
 
       {/* Health summary (always visible) */}
       <HealthSummary
-        healthDetails={healthDetails}
-        uptime={uptime}
-        serverVersion={serverVersion}
+        healthDetails={healthDetails()}
+        uptime={uptime()}
+        serverVersion={serverVersion()}
       />
 
       {/* File paths */}
-      <PathsBar paths={paths} />
+      <PathsBar paths={paths()} />
 
       {/* Main content */}
       <box flexGrow={1} borderStyle="single">
-        {!hasLoaded && !containersLoading && !configLoading && !stateLoading && (
+        {!hasLoaded() && !containersLoading() && !configLoading() && !stateLoading() && (
           <box height="100%" width="100%" justifyContent="center" alignItems="center">
             <text dimColor>{"  Press r to load stack info"}</text>
           </box>
         )}
-        {(hasLoaded() || containersLoading || configLoading || stateLoading) && activeTab === "containers" && (
+        {(hasLoaded() || containersLoading() || configLoading() || stateLoading()) && activeTab() === "containers" && (
           <ContainerList
-            containers={containers}
-            loading={containersLoading}
+            containers={containers()}
+            loading={containersLoading()}
             selectedIndex={selectedIndex()}
           />
         )}
-        {(hasLoaded() || configLoading) && activeTab === "config" && (
+        {(hasLoaded() || configLoading()) && activeTab() === "config" && (
           <ConfigView
-            yaml={configYaml}
-            loading={configLoading}
+            yaml={configYaml()}
+            loading={configLoading()}
             scrollOffset={scrollOffset()}
           />
         )}
-        {(hasLoaded() || stateLoading) && activeTab === "state" && (
+        {(hasLoaded() || stateLoading()) && activeTab() === "state" && (
           <StateView
-            stateJson={stateJson}
-            loading={stateLoading}
-            projectName={projectName}
+            stateJson={stateJson()}
+            loading={stateLoading()}
+            projectName={projectName()}
             scrollOffset={scrollOffset()}
           />
         )}

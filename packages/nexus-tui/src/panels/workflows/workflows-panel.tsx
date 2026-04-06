@@ -34,20 +34,20 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
 export default function WorkflowsPanel(): JSX.Element {
   const client = useApi();
 
-  const workflows = useWorkflowsStore((s) => s.workflows);
-  const selectedWorkflowIndex = useWorkflowsStore((s) => s.selectedWorkflowIndex);
-  const workflowsLoading = useWorkflowsStore((s) => s.workflowsLoading);
-  const selectedWorkflow = useWorkflowsStore((s) => s.selectedWorkflow);
-  const detailLoading = useWorkflowsStore((s) => s.detailLoading);
-  const executions = useWorkflowsStore((s) => s.executions);
-  const selectedExecutionIndex = useWorkflowsStore((s) => s.selectedExecutionIndex);
-  const executionsLoading = useWorkflowsStore((s) => s.executionsLoading);
-  const selectedExecution = useWorkflowsStore((s) => s.selectedExecution);
-  const executionDetailLoading = useWorkflowsStore((s) => s.executionDetailLoading);
-  const schedulerMetrics = useWorkflowsStore((s) => s.schedulerMetrics);
-  const schedulerLoading = useWorkflowsStore((s) => s.schedulerLoading);
-  const activeTab = useWorkflowsStore((s) => s.activeTab);
-  const error = useWorkflowsStore((s) => s.error);
+  const workflows = () => useWorkflowsStore((s) => s.workflows);
+  const selectedWorkflowIndex = () => useWorkflowsStore((s) => s.selectedWorkflowIndex);
+  const workflowsLoading = () => useWorkflowsStore((s) => s.workflowsLoading);
+  const selectedWorkflow = () => useWorkflowsStore((s) => s.selectedWorkflow);
+  const detailLoading = () => useWorkflowsStore((s) => s.detailLoading);
+  const executions = () => useWorkflowsStore((s) => s.executions);
+  const selectedExecutionIndex = () => useWorkflowsStore((s) => s.selectedExecutionIndex);
+  const executionsLoading = () => useWorkflowsStore((s) => s.executionsLoading);
+  const selectedExecution = () => useWorkflowsStore((s) => s.selectedExecution);
+  const executionDetailLoading = () => useWorkflowsStore((s) => s.executionDetailLoading);
+  const schedulerMetrics = () => useWorkflowsStore((s) => s.schedulerMetrics);
+  const schedulerLoading = () => useWorkflowsStore((s) => s.schedulerLoading);
+  const activeTab = () => useWorkflowsStore((s) => s.activeTab);
+  const error = () => useWorkflowsStore((s) => s.error);
 
   const fetchWorkflows = useWorkflowsStore((s) => s.fetchWorkflows);
   const fetchWorkflowDetail = useWorkflowsStore((s) => s.fetchWorkflowDetail);
@@ -63,9 +63,9 @@ export default function WorkflowsPanel(): JSX.Element {
   const setSelectedWorkflowIndex = useWorkflowsStore((s) => s.setSelectedWorkflowIndex);
   const setSelectedExecutionIndex = useWorkflowsStore((s) => s.setSelectedExecutionIndex);
 
-  const overlayActive = useUiStore((s) => s.overlayActive);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(WORKFLOW_TABS);
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
   // Track in-flight workflow execution
   const [executing, setExecuting] = createSignal(false);
@@ -75,7 +75,8 @@ export default function WorkflowsPanel(): JSX.Element {
 
   const handleConfirmDelete = () => {
     if (!client) return;
-    const wf = workflows[selectedWorkflowIndex];
+    const s = useWorkflowsStore.getState();
+    const wf = s.workflows[s.selectedWorkflowIndex];
     if (wf) {
       deleteWorkflow(wf.name, client);
     }
@@ -94,15 +95,16 @@ export default function WorkflowsPanel(): JSX.Element {
   // sees the latest value without making it a dependency.
   const refreshCurrentView = (): void => {
     if (!client) return;
+    const tab = useWorkflowsStore.getState().activeTab;
 
-    if (activeTab === "workflows") {
+    if (tab === "workflows") {
       fetchWorkflows(client);
-    } else if (activeTab === "executions") {
+    } else if (tab === "executions") {
       const { workflows: currentWorkflows, selectedWorkflowIndex: currentIdx } =
         useWorkflowsStore.getState();
       const wf = currentWorkflows[currentIdx];
       if (wf) fetchExecutions(wf.name, client);
-    } else if (activeTab === "scheduler") {
+    } else if (tab === "scheduler") {
       fetchSchedulerMetrics(client);
     }
   };
@@ -112,56 +114,63 @@ export default function WorkflowsPanel(): JSX.Element {
     refreshCurrentView();
   });
 
-  // Resolve the list length for current tab navigation
+  // Resolve the list length for current tab navigation (read fresh from store)
   const currentListLength = (): number => {
-    if (activeTab === "workflows") return workflows.length;
-    if (activeTab === "executions") return executions.length;
+    const s = useWorkflowsStore.getState();
+    if (s.activeTab === "workflows") return s.workflows.length;
+    if (s.activeTab === "executions") return s.executions.length;
     return 0;
   };
 
   const currentIndex = (): number => {
-    if (activeTab === "workflows") return selectedWorkflowIndex;
-    if (activeTab === "executions") return selectedExecutionIndex;
+    const s = useWorkflowsStore.getState();
+    if (s.activeTab === "workflows") return s.selectedWorkflowIndex;
+    if (s.activeTab === "executions") return s.selectedExecutionIndex;
     return 0;
   };
 
   const setCurrentIndex = (index: number): void => {
-    if (activeTab === "workflows") {
+    const tab = useWorkflowsStore.getState().activeTab;
+    if (tab === "workflows") {
       setSelectedWorkflowIndex(index);
-    } else if (activeTab === "executions") {
+    } else if (tab === "executions") {
       setSelectedExecutionIndex(index);
     }
   };
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : confirmDelete()
-      ? {} // ConfirmDialog handles its own keys when visible
-      : {
+    (): Record<string, () => void> => {
+      if (useUiStore.getState().overlayActive) return {};
+      if (confirmDelete()) return {}; // ConfirmDialog handles its own keys when visible
+
+      const tab = useWorkflowsStore.getState().activeTab;
+      return {
           ...listNavigationBindings({
             getIndex: currentIndex,
             setIndex: setCurrentIndex,
             getLength: currentListLength,
           }),
-          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, tab, setActiveTab),
           r: () => refreshCurrentView(),
           e: () => {
-            if (activeTab !== "workflows" || !client) return;
-            const wf = workflows[selectedWorkflowIndex];
+            const s = useWorkflowsStore.getState();
+            if (s.activeTab !== "workflows" || !client) return;
+            const wf = s.workflows[s.selectedWorkflowIndex];
             if (wf && wf.enabled) {
               setExecuting(true);
               executeWorkflow(wf.name, client).finally(() => setExecuting(false));
             }
           },
           d: () => {
-            if (activeTab !== "workflows") return;
-            const wf = workflows[selectedWorkflowIndex];
+            const s = useWorkflowsStore.getState();
+            if (s.activeTab !== "workflows") return;
+            const wf = s.workflows[s.selectedWorkflowIndex];
             if (wf) setConfirmDelete(true);
           },
           p: () => {
-            if (activeTab !== "workflows" || !client) return;
-            const wf = workflows[selectedWorkflowIndex];
+            const s = useWorkflowsStore.getState();
+            if (s.activeTab !== "workflows" || !client) return;
+            const wf = s.workflows[s.selectedWorkflowIndex];
             if (wf) {
               if (wf.enabled) disableWorkflow(wf.name, client);
               else enableWorkflow(wf.name, client);
@@ -169,17 +178,18 @@ export default function WorkflowsPanel(): JSX.Element {
           },
           return: () => {
             if (!client) return;
+            const s = useWorkflowsStore.getState();
 
-            if (activeTab === "workflows") {
-              const wf = workflows[selectedWorkflowIndex];
+            if (s.activeTab === "workflows") {
+              const wf = s.workflows[s.selectedWorkflowIndex];
               if (wf) {
                 fetchWorkflowDetail(wf.name, client);
               }
-            } else if (activeTab === "executions") {
-              const ex = executions[selectedExecutionIndex];
+            } else if (s.activeTab === "executions") {
+              const ex = s.executions[s.selectedExecutionIndex];
               if (ex) {
                 // Toggle: if detail is shown for this execution, clear it
-                if (selectedExecution?.execution_id === ex.execution_id) {
+                if (s.selectedExecution?.execution_id === ex.execution_id) {
                   clearExecutionDetail();
                 } else {
                   fetchExecutionDetail(ex.execution_id, client);
@@ -189,11 +199,13 @@ export default function WorkflowsPanel(): JSX.Element {
           },
           escape: () => {
             // Clear expanded detail views
-            if (activeTab === "executions" && selectedExecution) {
+            const s = useWorkflowsStore.getState();
+            if (s.activeTab === "executions" && s.selectedExecution) {
               clearExecutionDetail();
             }
           },
-        },
+        };
+    },
   );
 
   return (
@@ -201,12 +213,12 @@ export default function WorkflowsPanel(): JSX.Element {
       <box height="100%" width="100%" flexDirection="column">
         <Tooltip tooltipKey="workflows-panel" message="Tip: Press ? for keybinding help" />
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Error display */}
-        {error && (
+        {error() && (
           <box height={1} width="100%">
-            <text>{`Error: ${error}`}</text>
+            <text>{`Error: ${error()}`}</text>
           </box>
         )}
 
@@ -219,42 +231,42 @@ export default function WorkflowsPanel(): JSX.Element {
 
         {/* Detail content */}
         <box flexGrow={1} borderStyle="single">
-          {activeTab === "workflows" && (
+          {activeTab() === "workflows" && (
             <WorkflowList
-              workflows={workflows}
-              selectedIndex={selectedWorkflowIndex}
-              loading={workflowsLoading}
+              workflows={workflows()}
+              selectedIndex={selectedWorkflowIndex()}
+              loading={workflowsLoading()}
             />
           )}
-          {activeTab === "executions" && (
+          {activeTab() === "executions" && (
             <ExecutionList
-              executions={executions}
-              selectedIndex={selectedExecutionIndex}
-              loading={executionsLoading}
+              executions={executions()}
+              selectedIndex={selectedExecutionIndex()}
+              loading={executionsLoading()}
             />
           )}
-          {activeTab === "scheduler" && (
+          {activeTab() === "scheduler" && (
             <SchedulerView
-              metrics={schedulerMetrics}
-              loading={schedulerLoading}
+              metrics={schedulerMetrics()}
+              loading={schedulerLoading()}
             />
           )}
         </box>
 
         {/* Execution detail overlay when loaded */}
-        {activeTab === "executions" && executionDetailLoading && (
+        {activeTab() === "executions" && executionDetailLoading() && (
           <box height={1} width="100%">
             <LoadingIndicator message="Loading execution detail..." centered={false} />
           </box>
         )}
-        {activeTab === "executions" && selectedExecution && !executionDetailLoading && (
-          <box height={Math.min((selectedExecution.steps?.length ?? 0) + 3, 12)} width="100%" borderStyle="single" flexDirection="column">
+        {activeTab() === "executions" && selectedExecution() && !executionDetailLoading() && (
+          <box height={Math.min((selectedExecution()!.steps?.length ?? 0) + 3, 12)} width="100%" borderStyle="single" flexDirection="column">
             <text>
-              {`Execution: ${selectedExecution.execution_id} | ${selectedExecution.status} | ${selectedExecution.actions_completed}/${selectedExecution.actions_total} actions`}
+              {`Execution: ${selectedExecution()!.execution_id} | ${selectedExecution()!.status} | ${selectedExecution()!.actions_completed}/${selectedExecution()!.actions_total} actions`}
             </text>
-            {(selectedExecution.steps ?? []).length > 0 ? (
+            {(selectedExecution()!.steps ?? []).length > 0 ? (
               <scrollbox flexGrow={1} width="100%">
-                {(selectedExecution.steps ?? []).map((step, i) => (
+                {(selectedExecution()!.steps ?? []).map((step, i) => (
                   <box height={1} width="100%">
                     <text>
                       {`  ${String(step.step_index).padEnd(3)} ${(step.action_name ?? "").padEnd(20)} ${step.status.padEnd(10)} ${step.error_message ? `ERR: ${step.error_message}` : ""}`}
@@ -269,24 +281,24 @@ export default function WorkflowsPanel(): JSX.Element {
         )}
 
         {/* Workflow detail overlay when loaded */}
-        {selectedWorkflow && activeTab === "workflows" && !detailLoading && (
+        {selectedWorkflow() && activeTab() === "workflows" && !detailLoading() && (
           <box height={3} width="100%">
             <text>
-              {`Detail: ${selectedWorkflow.name} | v${selectedWorkflow.version} | ${selectedWorkflow.enabled ? "enabled" : "disabled"} | ${selectedWorkflow.triggers.length} triggers | ${selectedWorkflow.actions.length} actions`}
+              {`Detail: ${selectedWorkflow()!.name} | v${selectedWorkflow()!.version} | ${selectedWorkflow()!.enabled ? "enabled" : "disabled"} | ${selectedWorkflow()!.triggers.length} triggers | ${selectedWorkflow()!.actions.length} actions`}
             </text>
           </box>
         )}
 
         {/* Help bar */}
         <box height={1} width="100%">
-          <text>{HELP_TEXT[activeTab] ?? ""}</text>
+          <text>{HELP_TEXT[activeTab()] ?? ""}</text>
         </box>
 
         {/* Delete confirmation dialog */}
         <ConfirmDialog
           visible={confirmDelete()}
           title="Delete Workflow"
-          message={`Permanently delete "${workflows[selectedWorkflowIndex]?.name ?? ""}"? This cannot be undone.`}
+          message={`Permanently delete "${workflows()[selectedWorkflowIndex()]?.name ?? ""}"? This cannot be undone.`}
           onConfirm={handleConfirmDelete}
           onCancel={handleCancelDelete}
         />

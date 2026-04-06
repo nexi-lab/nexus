@@ -54,39 +54,39 @@ export default function SearchPanel(): JSX.Element {
   const serverZoneId = useGlobalStore((s) => s.zoneId);
   const effectiveZoneId = configZoneId ?? serverZoneId ?? undefined;
 
-  const searchQuery = useSearchStore((s) => s.searchQuery);
-  const searchResults = useSearchStore((s) => s.searchResults);
-  const expandedContent = useSearchStore((s) => s.expandedContent);
-  const expandedPath = useSearchStore((s) => s.expandedPath);
-  const searchTotal = useSearchStore((s) => s.searchTotal);
-  const selectedResultIndex = useSearchStore((s) => s.selectedResultIndex);
-  const searchLoading = useSearchStore((s) => s.searchLoading);
-  const selectedEntity = useSearchStore((s) => s.selectedEntity);
-  const neighbors = useSearchStore((s) => s.neighbors);
-  const knowledgeSearchResult = useSearchStore((s) => s.knowledgeSearchResult);
-  const knowledgeLoading = useSearchStore((s) => s.knowledgeLoading);
-  const memories = useSearchStore((s) => s.memories);
-  const selectedMemoryIndex = useSearchStore((s) => s.selectedMemoryIndex);
-  const memoriesLoading = useSearchStore((s) => s.memoriesLoading);
-  const memoryHistory = useSearchStore((s) => s.memoryHistory);
-  const memoryHistoryLoading = useSearchStore((s) => s.memoryHistoryLoading);
-  const memoryDiff = useSearchStore((s) => s.memoryDiff);
-  const memoryDiffLoading = useSearchStore((s) => s.memoryDiffLoading);
-  const playbooks = useSearchStore((s) => s.playbooks);
-  const selectedPlaybookIndex = useSearchStore((s) => s.selectedPlaybookIndex);
-  const playbooksLoading = useSearchStore((s) => s.playbooksLoading);
-  const rlmAnswer = useSearchStore((s) => s.rlmAnswer);
-  const rlmLoading = useSearchStore((s) => s.rlmLoading);
-  const rlmContextPaths = useSearchStore((s) => s.rlmContextPaths);
-  const activeTab = useSearchStore((s) => s.activeTab);
-  const error = useSearchStore((s) => s.error);
+  const searchQuery = () => useSearchStore((s) => s.searchQuery);
+  const searchResults = () => useSearchStore((s) => s.searchResults);
+  const expandedContent = () => useSearchStore((s) => s.expandedContent);
+  const expandedPath = () => useSearchStore((s) => s.expandedPath);
+  const searchTotal = () => useSearchStore((s) => s.searchTotal);
+  const selectedResultIndex = () => useSearchStore((s) => s.selectedResultIndex);
+  const searchLoading = () => useSearchStore((s) => s.searchLoading);
+  const selectedEntity = () => useSearchStore((s) => s.selectedEntity);
+  const neighbors = () => useSearchStore((s) => s.neighbors);
+  const knowledgeSearchResult = () => useSearchStore((s) => s.knowledgeSearchResult);
+  const knowledgeLoading = () => useSearchStore((s) => s.knowledgeLoading);
+  const memories = () => useSearchStore((s) => s.memories);
+  const selectedMemoryIndex = () => useSearchStore((s) => s.selectedMemoryIndex);
+  const memoriesLoading = () => useSearchStore((s) => s.memoriesLoading);
+  const memoryHistory = () => useSearchStore((s) => s.memoryHistory);
+  const memoryHistoryLoading = () => useSearchStore((s) => s.memoryHistoryLoading);
+  const memoryDiff = () => useSearchStore((s) => s.memoryDiff);
+  const memoryDiffLoading = () => useSearchStore((s) => s.memoryDiffLoading);
+  const playbooks = () => useSearchStore((s) => s.playbooks);
+  const selectedPlaybookIndex = () => useSearchStore((s) => s.selectedPlaybookIndex);
+  const playbooksLoading = () => useSearchStore((s) => s.playbooksLoading);
+  const rlmAnswer = () => useSearchStore((s) => s.rlmAnswer);
+  const rlmLoading = () => useSearchStore((s) => s.rlmLoading);
+  const rlmContextPaths = () => useSearchStore((s) => s.rlmContextPaths);
+  const activeTab = () => useSearchStore((s) => s.activeTab);
+  const error = () => useSearchStore((s) => s.error);
 
   // Knowledge store (column search)
-  const columnSearchResults = useKnowledgeStore((s) => s.columnSearchResults);
-  const columnSearchLoading = useKnowledgeStore((s) => s.columnSearchLoading);
+  const columnSearchResults = () => useKnowledgeStore((s) => s.columnSearchResults);
+  const columnSearchLoading = () => useKnowledgeStore((s) => s.columnSearchLoading);
   const searchByColumn = useKnowledgeStore((s) => s.searchByColumn);
 
-  const searchMode = useSearchStore((s) => s.searchMode);
+  const searchMode = () => useSearchStore((s) => s.searchMode);
   const cycleSearchMode = useSearchStore((s) => s.cycleSearchMode);
 
   const search = useSearchStore((s) => s.search);
@@ -112,23 +112,24 @@ export default function SearchPanel(): JSX.Element {
   const setSelectedMemoryIndex = useSearchStore((s) => s.setSelectedMemoryIndex);
   const setSearchQuery = useSearchStore((s) => s.setSearchQuery);
 
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
   const submitSearch = (query: string) => {
       if (!client || !query.trim()) return;
+      const tab = useSearchStore.getState().activeTab;
 
       setSearchQuery(query.trim());
-      if (activeTab === "search") {
+      if (tab === "search") {
         search(query.trim(), client);
-      } else if (activeTab === "knowledge") {
+      } else if (tab === "knowledge") {
         searchKnowledge(query.trim(), client);
-      } else if (activeTab === "memories") {
+      } else if (tab === "memories") {
         fetchMemories(query.trim(), client);
-      } else if (activeTab === "playbooks") {
+      } else if (tab === "playbooks") {
         fetchPlaybooks(query.trim(), client);
-      } else if (activeTab === "ask") {
+      } else if (tab === "ask") {
         askRlm(query.trim(), client, effectiveZoneId);
-      } else if (activeTab === "columns") {
+      } else if (tab === "columns") {
         void searchByColumn(query.trim(), client);
       }
     };
@@ -136,19 +137,20 @@ export default function SearchPanel(): JSX.Element {
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
     if (!client) return;
+    const s = useSearchStore.getState();
 
-    if (activeTab === "search" && searchQuery) {
-      search(searchQuery, client);
-    } else if (activeTab === "knowledge" && searchQuery) {
-      searchKnowledge(searchQuery, client);
-    } else if (activeTab === "memories") {
+    if (s.activeTab === "search" && s.searchQuery) {
+      search(s.searchQuery, client);
+    } else if (s.activeTab === "knowledge" && s.searchQuery) {
+      searchKnowledge(s.searchQuery, client);
+    } else if (s.activeTab === "memories") {
       fetchMemories("", client);
-    } else if (activeTab === "playbooks") {
-      fetchPlaybooks(searchQuery || "", client);
-    } else if (activeTab === "ask" && searchQuery) {
-      askRlm(searchQuery, client, effectiveZoneId);
-    } else if (activeTab === "columns" && searchQuery) {
-      void searchByColumn(searchQuery, client);
+    } else if (s.activeTab === "playbooks") {
+      fetchPlaybooks(s.searchQuery || "", client);
+    } else if (s.activeTab === "ask" && s.searchQuery) {
+      askRlm(s.searchQuery, client, effectiveZoneId);
+    } else if (s.activeTab === "columns" && s.searchQuery) {
+      void searchByColumn(s.searchQuery, client);
     }
   };
 
@@ -162,22 +164,26 @@ export default function SearchPanel(): JSX.Element {
   });
 
   // Shared list navigation (j/k/up/down/g/G) — switches per active tab
+  // Callbacks read from getState() for fresh values at action time
   const listNav = listNavigationBindings({
     getIndex: () => {
-      if (activeTab === "search") return selectedResultIndex;
-      if (activeTab === "memories") return selectedMemoryIndex;
-      if (activeTab === "playbooks") return selectedPlaybookIndex;
+      const s = useSearchStore.getState();
+      if (s.activeTab === "search") return s.selectedResultIndex;
+      if (s.activeTab === "memories") return s.selectedMemoryIndex;
+      if (s.activeTab === "playbooks") return s.selectedPlaybookIndex;
       return 0;
     },
     setIndex: (i) => {
-      if (activeTab === "search") setSelectedResultIndex(i);
-      else if (activeTab === "memories") setSelectedMemoryIndex(i);
-      else if (activeTab === "playbooks") setSelectedPlaybookIndex(i);
+      const tab = useSearchStore.getState().activeTab;
+      if (tab === "search") setSelectedResultIndex(i);
+      else if (tab === "memories") setSelectedMemoryIndex(i);
+      else if (tab === "playbooks") setSelectedPlaybookIndex(i);
     },
     getLength: () => {
-      if (activeTab === "search") return searchResults.length;
-      if (activeTab === "memories") return memories.length;
-      if (activeTab === "playbooks") return playbooks.length;
+      const s = useSearchStore.getState();
+      if (s.activeTab === "search") return s.searchResults.length;
+      if (s.activeTab === "memories") return s.memories.length;
+      if (s.activeTab === "playbooks") return s.playbooks.length;
       return 0;
     },
   });
@@ -260,71 +266,71 @@ export default function SearchPanel(): JSX.Element {
         <text>
           {textInput.active
             ? `Search: ${textInput.buffer}█`
-            : `Query: ${searchQuery || "(press / to search)"}  [${MODE_LABELS[searchMode]}]`}
+            : `Query: ${searchQuery() || "(press / to search)"}  [${MODE_LABELS[searchMode()]}]`}
         </text>
       </box>
 
       {/* Tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Error display */}
-      {error && (
+      {error() && (
         <box height={1} width="100%">
-          <text>{`Error: ${error}`}</text>
+          <text>{`Error: ${error()}`}</text>
         </box>
       )}
 
       {/* Tab content */}
       <box flexGrow={1} borderStyle="single">
-        {activeTab === "search" && expandedContent !== null && (
+        {activeTab() === "search" && expandedContent() !== null && (
           <box height="100%" width="100%" flexDirection="column">
             <box height={1} width="100%">
-              <text bold>{`── ${expandedPath} ── (Escape to close)`}</text>
+              <text bold>{`── ${expandedPath()} ── (Escape to close)`}</text>
             </box>
             <scrollbox flexGrow={1} width="100%">
-              <text>{expandedContent}</text>
+              <text>{expandedContent()}</text>
             </scrollbox>
           </box>
         )}
-        {activeTab === "search" && expandedContent === null && (
+        {activeTab() === "search" && expandedContent() === null && (
           <SearchResults
-            results={searchResults}
-            total={searchTotal}
-            selectedIndex={selectedResultIndex}
-            loading={searchLoading}
+            results={searchResults()}
+            total={searchTotal()}
+            selectedIndex={selectedResultIndex()}
+            loading={searchLoading()}
           />
         )}
-        {activeTab === "knowledge" && (
+        {activeTab() === "knowledge" && (
           <KnowledgeView
-            entity={selectedEntity}
-            neighbors={neighbors}
-            knowledgeSearchResult={knowledgeSearchResult}
-            loading={knowledgeLoading}
+            entity={selectedEntity()}
+            neighbors={neighbors()}
+            knowledgeSearchResult={knowledgeSearchResult()}
+            loading={knowledgeLoading()}
           />
         )}
-        {activeTab === "memories" && (
+        {activeTab() === "memories" && (
           <MemoryList
-            memories={memories}
-            selectedIndex={selectedMemoryIndex}
-            loading={memoriesLoading}
-            memoryHistory={memoryHistory}
-            memoryHistoryLoading={memoryHistoryLoading}
-            memoryDiff={memoryDiff}
-            memoryDiffLoading={memoryDiffLoading}
+            memories={memories()}
+            selectedIndex={selectedMemoryIndex()}
+            loading={memoriesLoading()}
+            memoryHistory={memoryHistory()}
+            memoryHistoryLoading={memoryHistoryLoading()}
+            memoryDiff={memoryDiff()}
+            memoryDiffLoading={memoryDiffLoading()}
           />
         )}
-        {activeTab === "playbooks" && (
+        {activeTab() === "playbooks" && (
           <PlaybookList
-            playbooks={playbooks}
-            selectedIndex={selectedPlaybookIndex}
-            loading={playbooksLoading}
+            playbooks={playbooks()}
+            selectedIndex={selectedPlaybookIndex()}
+            loading={playbooksLoading()}
           />
         )}
-        {activeTab === "ask" && (
-          <RlmAnswerView answer={rlmAnswer} loading={rlmLoading} contextPaths={rlmContextPaths} />
+        {activeTab() === "ask" && (
+          <RlmAnswerView answer={rlmAnswer()} loading={rlmLoading()} contextPaths={rlmContextPaths()} />
         )}
-        {activeTab === "columns" && (
-          <ColumnSearch results={columnSearchResults} loading={columnSearchLoading} />
+        {activeTab() === "columns" && (
+          <ColumnSearch results={columnSearchResults()} loading={columnSearchLoading()} />
         )}
       </box>
 
@@ -333,7 +339,7 @@ export default function SearchPanel(): JSX.Element {
         <text>
           {textInput.active
             ? "Type query, Enter:submit, Escape:cancel, Backspace:delete"
-            : HELP_TEXT[activeTab] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
+            : HELP_TEXT[activeTab()] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
         </text>
       </box>
     </box>

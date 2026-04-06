@@ -5,7 +5,6 @@
  * Gated on "mount" brick availability.
  */
 
-import { createEffect } from "solid-js";
 import type { JSX } from "solid-js";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import type { ConnectorsTab } from "../../stores/connectors-store.js";
@@ -41,21 +40,23 @@ const ALL_TABS: readonly TabDef<ConnectorsTab>[] = [
 
 export default function ConnectorsPanel(): JSX.Element {
   const client = useApi();
-  const overlayActive = useUiStore((s) => s.overlayActive);
-  const activeTab = useConnectorsStore((s) => s.activeTab);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
+  const activeTab = () => useConnectorsStore((s) => s.activeTab);
   const setActiveTab = useConnectorsStore((s) => s.setActiveTab);
 
   const visibleTabs = useVisibleTabs(ALL_TABS);
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
   // Only the panel root handles Tab key for sub-tab cycling.
   // All other keys are delegated to the active sub-tab component.
   useKeyboard(
-    overlayActive
-      ? {}
-      : {
-          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
-        },
+    (): Record<string, () => void> => {
+      if (useUiStore.getState().overlayActive) return {};
+      const tab = useConnectorsStore.getState().activeTab;
+      return {
+          ...subTabCycleBindings(visibleTabs, tab, setActiveTab),
+        };
+    },
   );
 
   if (!client) {
@@ -66,21 +67,21 @@ export default function ConnectorsPanel(): JSX.Element {
     <BrickGate brick="storage">
       <box height="100%" width="100%" flexDirection="column">
         {/* Sub-tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Active tab content */}
         <box flexGrow={1}>
-          {activeTab === "available" && (
-            <AvailableTab client={client} overlayActive={overlayActive} />
+          {activeTab() === "available" && (
+            <AvailableTab client={client} overlayActive={overlayActive()} />
           )}
-          {activeTab === "mounted" && (
-            <MountedTab client={client} overlayActive={overlayActive} />
+          {activeTab() === "mounted" && (
+            <MountedTab client={client} overlayActive={overlayActive()} />
           )}
-          {activeTab === "skills" && (
-            <SkillsTab client={client} overlayActive={overlayActive} />
+          {activeTab() === "skills" && (
+            <SkillsTab client={client} overlayActive={overlayActive()} />
           )}
-          {activeTab === "write" && (
-            <WriteTab client={client} overlayActive={overlayActive} />
+          {activeTab() === "write" && (
+            <WriteTab client={client} overlayActive={overlayActive()} />
           )}
         </box>
       </box>

@@ -130,6 +130,15 @@ export default function AgentsPanel(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
+  // Auto-select first agent when list loads
+  createEffect(() => {
+    const ids = displayAgentIds();
+    if (ids.length > 0 && !selectedAgentId()) {
+      setSelectedAgentId(ids[0]!);
+      setSelectedAgentIndex(0);
+    }
+  });
+
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
   createEffect(() => {
@@ -149,14 +158,11 @@ export default function AgentsPanel(): JSX.Element {
         `/api/v2/agents/${encodeURIComponent(aid)}/permissions`,
       ).then((r) => useAgentsStore.setState({ agentPermissions: r.permissions }))
         .catch(() => useAgentsStore.setState({ agentPermissions: [] }));
-      const selectedAgent = agents().find((a) => a.agent_id === aid);
-      if (selectedAgent && selectedAgent.state !== "registered" && selectedAgent.state !== "delegated") {
-        fetchAgentStatus(aid, client);
-        fetchAgentSpec(aid, client);
-        fetchAgentIdentity(aid, client);
-        fetchTrustScore(aid, client);
-        fetchAgentReputation(aid, client);
-      }
+      fetchAgentStatus(aid, client);
+      fetchAgentSpec(aid, client);
+      fetchAgentIdentity(aid, client);
+      fetchTrustScore(aid, client);
+      fetchAgentReputation(aid, client);
     } else if (tab === "delegations" && aid) {
       fetchDelegations(aid, client);
     } else if (tab === "inbox" && aid) {

@@ -171,7 +171,7 @@ class ZoektClient:
         results = []
 
         result = data.get("result", {})
-        file_matches = result.get("FileMatches", [])
+        file_matches = result.get("FileMatches") or []
 
         for file_info in file_matches:
             file_name = file_info.get("FileName", "")

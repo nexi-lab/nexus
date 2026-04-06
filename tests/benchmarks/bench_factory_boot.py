@@ -348,7 +348,7 @@ class TestPerTierBreakdown:
             "workflow_engine",
             "api_key_creator",
             "snapshot_service",
-            "ipc_storage_driver",
+            "ipc_zone_id",
             "ipc_vfs_driver",
             "ipc_provisioner",
             "skill_service",

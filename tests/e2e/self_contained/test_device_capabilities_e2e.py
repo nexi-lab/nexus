@@ -169,6 +169,5 @@ class TestComputeFeaturesInfoAutoProfile:
 
         info: Any = app.state.features_info
         assert info.profile == "lite"
-        assert "storage" in info.enabled_bricks
         assert "search" not in info.enabled_bricks
         assert "search" in info.disabled_bricks

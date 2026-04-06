@@ -990,18 +990,15 @@ impl Kernel {
         let buf = crate::pipe::RingBufferCore::new(capacity);
         self.pipe_buffers.insert(path.to_string(), Arc::new(buf));
 
-        // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests)
+        // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
+        // route_impl returns a canonical mount_point (e.g. "/root/workspace") —
+        // use directly as with_metastore key, do NOT re-canonicalize.
         let mount_point = self
             .router
             .route_impl(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
-        let ms_key = if mount_point.is_empty() {
-            String::new()
-        } else {
-            canonicalize(&mount_point, "root")
-        };
-        self.with_metastore(&ms_key, |ms| {
+        self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
                 path: path.to_string(),
                 backend_name: "pipe".to_string(),
@@ -1048,12 +1045,7 @@ impl Kernel {
                     .route_impl(path, "root", true, false)
                     .map(|r| r.mount_point)
                     .unwrap_or_default();
-                let ms_key = if mount_point.is_empty() {
-                    String::new()
-                } else {
-                    canonicalize(&mount_point, "root")
-                };
-                self.with_metastore(&ms_key, |ms| {
+                self.with_metastore(&mount_point, |ms| {
                     let _ = ms.delete(path);
                 });
                 self.dcache.evict(path);
@@ -1139,18 +1131,14 @@ impl Kernel {
         let buf = crate::stream::StreamBufferCore::new(capacity);
         self.stream_buffers.insert(path.to_string(), Arc::new(buf));
 
-        // Persist DT_STREAM inode (best-effort — metastore may not be wired in tests)
+        // Persist DT_STREAM inode (best-effort — metastore may not be wired in tests).
+        // route_impl returns canonical mount_point — use directly, do NOT re-canonicalize.
         let mount_point = self
             .router
             .route_impl(path, "root", true, false)
             .map(|r| r.mount_point)
             .unwrap_or_default();
-        let ms_key = if mount_point.is_empty() {
-            String::new()
-        } else {
-            canonicalize(&mount_point, "root")
-        };
-        self.with_metastore(&ms_key, |ms| {
+        self.with_metastore(&mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
                 path: path.to_string(),
                 backend_name: "stream".to_string(),
@@ -1197,12 +1185,7 @@ impl Kernel {
                     .route_impl(path, "root", true, false)
                     .map(|r| r.mount_point)
                     .unwrap_or_default();
-                let ms_key = if mount_point.is_empty() {
-                    String::new()
-                } else {
-                    canonicalize(&mount_point, "root")
-                };
-                self.with_metastore(&ms_key, |ms| {
+                self.with_metastore(&mount_point, |ms| {
                     let _ = ms.delete(path);
                 });
                 self.dcache.evict(path);

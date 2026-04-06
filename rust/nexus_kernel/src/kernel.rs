@@ -987,7 +987,7 @@ impl Kernel {
         if self.pipe_buffers.contains_key(path) {
             return Err(KernelError::PipeExists(path.to_string()));
         }
-        let buf = crate::pipe::RingBufferCore::new_inner(capacity);
+        let buf = crate::pipe::RingBufferCore::new(capacity);
         self.pipe_buffers.insert(path.to_string(), Arc::new(buf));
 
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests)
@@ -1040,7 +1040,7 @@ impl Kernel {
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
         match self.pipe_buffers.remove(path) {
             Some((_, buf)) => {
-                buf.close_inner();
+                buf.close();
 
                 // Remove DT_PIPE inode (best-effort)
                 let mount_point = self
@@ -1068,7 +1068,7 @@ impl Kernel {
     pub fn close_pipe(&self, path: &str) -> Result<(), KernelError> {
         match self.pipe_buffers.get(path) {
             Some(buf) => {
-                buf.close_inner();
+                buf.close();
                 Ok(())
             }
             None => Err(KernelError::PipeNotFound(path.to_string())),
@@ -1086,7 +1086,7 @@ impl Kernel {
             .pipe_buffers
             .get(path)
             .ok_or_else(|| KernelError::PipeNotFound(path.to_string()))?;
-        buf.push_inner(data).map_err(|e| match e {
+        buf.push(data).map_err(|e| match e {
             crate::pipe::RingError::Full(u, c) => {
                 KernelError::PipeFull(format!("{u}/{c} bytes used"))
             }
@@ -1104,7 +1104,7 @@ impl Kernel {
             .pipe_buffers
             .get(path)
             .ok_or_else(|| KernelError::PipeNotFound(path.to_string()))?;
-        match buf.pop_inner() {
+        match buf.pop() {
             Ok(data) => Ok(Some(data)),
             Err(crate::pipe::RingError::Empty) => Ok(None),
             Err(crate::pipe::RingError::ClosedEmpty) => {
@@ -1122,7 +1122,7 @@ impl Kernel {
     /// Close all pipes (shutdown).
     pub fn close_all_pipes(&self) {
         for entry in self.pipe_buffers.iter() {
-            entry.value().close_inner();
+            entry.value().close();
         }
     }
 
@@ -1136,7 +1136,7 @@ impl Kernel {
         if self.stream_buffers.contains_key(path) {
             return Err(KernelError::StreamExists(path.to_string()));
         }
-        let buf = crate::stream::StreamBufferCore::new_inner(capacity);
+        let buf = crate::stream::StreamBufferCore::new(capacity);
         self.stream_buffers.insert(path.to_string(), Arc::new(buf));
 
         // Persist DT_STREAM inode (best-effort — metastore may not be wired in tests)
@@ -1189,7 +1189,7 @@ impl Kernel {
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
         match self.stream_buffers.remove(path) {
             Some((_, buf)) => {
-                buf.close_inner();
+                buf.close();
 
                 // Remove DT_STREAM inode (best-effort)
                 let mount_point = self
@@ -1217,7 +1217,7 @@ impl Kernel {
     pub fn close_stream(&self, path: &str) -> Result<(), KernelError> {
         match self.stream_buffers.get(path) {
             Some(buf) => {
-                buf.close_inner();
+                buf.close();
                 Ok(())
             }
             None => Err(KernelError::StreamNotFound(path.to_string())),
@@ -1235,7 +1235,7 @@ impl Kernel {
             .stream_buffers
             .get(path)
             .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        buf.push_inner(data).map_err(|e| match e {
+        buf.push(data).map_err(|e| match e {
             crate::stream::StreamError::Full(u, c) => {
                 KernelError::StreamFull(format!("{u}/{c} bytes used"))
             }
@@ -1257,7 +1257,7 @@ impl Kernel {
             .stream_buffers
             .get(path)
             .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        match buf.read_at_raw(offset) {
+        match buf.read_at(offset) {
             Ok((data, next)) => Ok(Some((data, next))),
             Err(crate::stream::StreamError::Empty) => Ok(None),
             Err(crate::stream::StreamError::ClosedEmpty) => {
@@ -1278,7 +1278,7 @@ impl Kernel {
             .stream_buffers
             .get(path)
             .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        buf.read_batch_raw(offset, count)
+        buf.read_batch(offset, count)
             .map_err(|e| KernelError::IOError(format!("stream batch: {e:?}")))
     }
 
@@ -1293,7 +1293,7 @@ impl Kernel {
     /// Close all streams (shutdown).
     pub fn close_all_streams(&self) {
         for entry in self.stream_buffers.iter() {
-            entry.value().close_inner();
+            entry.value().close();
         }
     }
 
@@ -1370,7 +1370,7 @@ impl Kernel {
         // DT_PIPE — try Rust IPC registry (nowait pop)
         if entry.entry_type == DT_PIPE {
             if let Some(buf) = self.pipe_buffers.get(path) {
-                match buf.pop_inner() {
+                match buf.pop() {
                     Ok(data) => {
                         return Ok(SysReadResult {
                             hit: true,
@@ -1512,7 +1512,7 @@ impl Kernel {
         if let Some(entry) = self.dcache.get_entry(path) {
             if entry.entry_type == DT_PIPE {
                 if let Some(buf) = self.pipe_buffers.get(path) {
-                    match buf.push_inner(content) {
+                    match buf.push(content) {
                         Ok(n) => {
                             return Ok(SysWriteResult {
                                 hit: true,
@@ -1536,7 +1536,7 @@ impl Kernel {
             }
             if entry.entry_type == DT_STREAM {
                 if let Some(buf) = self.stream_buffers.get(path) {
-                    match buf.push_inner(content) {
+                    match buf.push(content) {
                         Ok(offset) => {
                             return Ok(SysWriteResult {
                                 hit: true,

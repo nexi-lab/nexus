@@ -133,8 +133,8 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
     m.add_class::<lock::VFSLockManager>()?;
-    m.add_class::<pipe::RingBufferCore>()?;
-    m.add_class::<stream::StreamBufferCore>()?;
+    // RingBufferCore/StreamBufferCore are kernel-internal only (no #[pyclass]).
+    // Python accesses IPC buffers through kernel.create_pipe/create_stream.
     #[cfg(unix)]
     m.add_class::<shm_pipe::SharedRingBufferCore>()?;
     #[cfg(unix)]

@@ -99,8 +99,9 @@ class StreamRemoteWatcher:
                 return None
 
             try:
-                data, new_offset = await self._sm.stream_read(
-                    _EVENT_STREAM_PATH, offset, blocking=True
+                data, new_offset = await asyncio.wait_for(
+                    self._sm.stream_read(_EVENT_STREAM_PATH, offset, blocking=True),
+                    timeout=remaining,
                 )
                 offset = new_offset
                 self._offsets[zone_id] = offset
@@ -121,6 +122,8 @@ class StreamRemoteWatcher:
 
                 return event
 
+            except TimeoutError:
+                return None
             except Exception:
                 # StreamEmpty/StreamClosed — wait briefly and retry
                 remaining = deadline - asyncio.get_event_loop().time()

@@ -12,7 +12,10 @@ DI dependencies (no god-object access):
     - subscription_manager: Optional webhook broadcast (injected late by server)
     - enable_workflows: Feature flag from DistributedConfig
 
-Issue #1812: async on_mutation + event_mask filtering.
+Issue #1812: event_mask filtering.
+Issue #3646: sync on_mutation — pipe_write_nowait is already sync; fallback
+and webhook broadcast fire-and-forget via create_task. Enables full Rust
+OBSERVE dispatch.
 """
 
 import asyncio
@@ -68,8 +71,12 @@ class WorkflowDispatchService:
     # VFSObserver — called by KernelDispatch OBSERVE phase
     # ------------------------------------------------------------------
 
-    async def on_mutation(self, event: FileEvent) -> None:
-        """Translate kernel FileEvent into workflow fire + webhook broadcast."""
+    def on_mutation(self, event: FileEvent) -> None:
+        """Translate kernel FileEvent into workflow fire + webhook broadcast.
+
+        Sync (Issue #3646) — pipe_write_nowait is ~0.5μs; fallback and
+        webhook broadcast fire-and-forget via create_task.
+        """
         from nexus.core.file_events import FileEventType
 
         trigger_type = (
@@ -99,14 +106,53 @@ class WorkflowDispatchService:
             ctx["created"] = event.is_new
 
         label = f"{trigger_type}:{event.path}"
-        await self.fire(trigger_type, ctx, label)
+        self._fire_sync(trigger_type, ctx, label)
 
     # ------------------------------------------------------------------
-    # fire() — async, called from on_mutation or directly
+    # _fire_sync() — sync fast path, called from on_mutation
+    # ------------------------------------------------------------------
+
+    def _fire_sync(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
+        """Sync dispatch: pipe_write_nowait + fire-and-forget async work."""
+        if not (self._enable_workflows and self._workflow_engine):
+            return
+
+        from nexus.core.pipe import PipeClosedError, PipeFullError
+
+        if self._pipe_manager is not None and self._pipe_ready:
+            try:
+                data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
+                self._pipe_manager.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
+            except (PipeClosedError, PipeFullError):
+                logger.warning("Workflow pipe full/closed, dropping event: %s", label)
+        else:
+            # Fallback: fire-and-forget async call (CLI mode or pre-startup)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._workflow_engine.fire_event(trigger_type, event_context))
+            except RuntimeError:
+                pass  # no event loop
+
+        if self._subscription_manager:
+            event_type = label.split(":")[0] if ":" in label else label
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._subscription_manager.broadcast(
+                        event_type,
+                        event_context,
+                        event_context.get("zone_id", ROOT_ZONE_ID),
+                    )
+                )
+            except RuntimeError:
+                pass  # no event loop
+
+    # ------------------------------------------------------------------
+    # fire() — async, called directly by external callers (not from OBSERVE)
     # ------------------------------------------------------------------
 
     async def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
-        """Fire a workflow event and broadcast to webhook subscriptions.
+        """Async fire for direct callers (not from OBSERVE path).
 
         Uses PipeManager userspace API — never touches MemoryPipeBackend directly.
         """
@@ -122,7 +168,6 @@ class WorkflowDispatchService:
             except (PipeClosedError, PipeFullError):
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
-            # Fallback: direct async call (CLI mode or pre-startup, no pipe yet)
             await self._workflow_engine.fire_event(trigger_type, event_context)
 
         if self._subscription_manager:

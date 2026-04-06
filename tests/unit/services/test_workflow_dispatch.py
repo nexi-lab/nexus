@@ -156,7 +156,7 @@ class TestOnMutation:
             version=3,
             is_new=True,
         )
-        await svc.on_mutation(event)
+        svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         assert data is not None
@@ -179,7 +179,7 @@ class TestOnMutation:
             zone_id="root",
             version=43,
         )
-        await svc.on_mutation(event)
+        svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         msg = json.loads(data)
@@ -201,7 +201,7 @@ class TestOnMutation:
             version=44,
             new_path="/new/path.txt",
         )
-        await svc.on_mutation(event)
+        svc.on_mutation(event)
 
         data = pm.pipe_peek("/nexus/pipes/workflow-events")
         msg = json.loads(data)

@@ -8,13 +8,16 @@ with a direct ``event_bus`` reference at factory time — no late-binding needed
 Tests that need a different bus use ``await nx.swap_service("event_bus_observer",
 EventBusObserver(event_bus=shared_bus))`` to hot-swap the observer atomically.
 
-Issue #1812: async on_mutation — directly awaits bus.publish() instead of
-fire_and_forget, since KernelDispatch.notify() now dispatches observers as
-a single asyncio.Task via gather().
+Issue #3646: sync on_mutation — fire-and-forget ``bus.publish()`` via
+``create_task``. OBSERVE is fire-and-forget by contract; the async network
+I/O (Redis/NATS) runs as a background task, not on the OBSERVE critical path.
+This enables full Rust OBSERVE dispatch (all observers sync → no Python
+asyncio scheduling needed).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -31,9 +34,9 @@ logger = logging.getLogger(__name__)
 class EventBusObserver:
     """Forward kernel FileEvents to the distributed EventBus (Redis/NATS).
 
-    ``on_mutation()`` is async — awaits ``bus.publish()`` directly.
-    KernelDispatch.notify() dispatches all observers concurrently via
-    ``gather()`` in a single ``create_task``.
+    ``on_mutation()`` is sync — fire-and-forget ``bus.publish()`` via
+    ``create_task``. OBSERVE contract is fire-and-forget; network I/O
+    runs as a background task outside the OBSERVE critical path.
 
     Constructed with a direct ``event_bus`` reference (Issue #1701).
     Use ``await nx.swap_service("event_bus_observer", EventBusObserver(...))``
@@ -41,7 +44,8 @@ class EventBusObserver:
     """
 
     event_mask: int = ALL_FILE_EVENTS
-    OBSERVE_INLINE: bool = False  # Issue #3391: network I/O → background task
+    # Sync on_mutation → safe to run inline on caller's path (Issue #3646).
+    # The actual network I/O is fire-and-forget via create_task.
 
     # ── Hook spec (duck-typed) (Issue #1616) ──────────────────────────
 
@@ -53,11 +57,20 @@ class EventBusObserver:
     def __init__(self, event_bus: "EventBusProtocol | None" = None) -> None:
         self._event_bus = event_bus
 
-    async def on_mutation(self, event: "FileEvent") -> None:
+    def on_mutation(self, event: "FileEvent") -> None:
         if self._event_bus is None:
             return
 
         bus = self._event_bus
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._publish(bus, event))
+        except RuntimeError:
+            pass  # no event loop (e.g. test teardown)
+
+    @staticmethod
+    async def _publish(bus: "EventBusProtocol", event: "FileEvent") -> None:
+        """Background task: publish event to EventBus (Redis/NATS)."""
         try:
             bus_started = getattr(bus, "_started", False)
             if not bus_started:

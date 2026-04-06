@@ -85,13 +85,9 @@ class TestHookSpecConformance:
         hook = EventBusObserver()
         assert hasattr(hook, "hook_spec")
 
-    def test_revision_tracking_observer(self) -> None:
-        from nexus.services.lifecycle.revision_tracking_observer import (
-            RevisionTrackingObserver,
-        )
-
-        hook = RevisionTrackingObserver(revision_notifier=MagicMock())
-        assert hasattr(hook, "hook_spec")
+    def test_revision_tracking_deleted(self) -> None:
+        """RevisionTrackingObserver deleted (§10 A2) — kernel primitive."""
+        pass
 
     def test_task_write_hook(self) -> None:
         from nexus.bricks.task_manager.write_hook import TaskWriteHook
@@ -200,15 +196,9 @@ class TestHookSpecDeclarations:
         assert spec.observers == (hook,)
         assert spec.total_hooks == 1
 
-    def test_revision_observer_1_channel(self) -> None:
-        from nexus.services.lifecycle.revision_tracking_observer import (
-            RevisionTrackingObserver,
-        )
-
-        hook = RevisionTrackingObserver(revision_notifier=MagicMock())
-        spec = hook.hook_spec()
-        assert spec.observers == (hook,)
-        assert spec.total_hooks == 1
+    def test_revision_observer_deleted(self) -> None:
+        """RevisionTrackingObserver deleted (§10 A2) — kernel primitive."""
+        pass
 
     def test_task_write_1_channel(self) -> None:
         from nexus.bricks.task_manager.write_hook import TaskWriteHook

@@ -1239,8 +1239,9 @@ impl Kernel {
             (Some(m), _) => (m.entry_type == DT_DIR, m.entry_type),
             (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
             (None, None) => {
+                // Not found in Rust metastore/dcache — let Python handle under VFS lock
                 release_locks(&self.vfs_lock, lock1, lock2);
-                return Err(KernelError::FileNotFound(old_path.to_string()));
+                return miss();
             }
         };
 
@@ -1258,13 +1259,12 @@ impl Kernel {
             _ => {}
         }
 
-        // 5. Destination conflict check
+        // 5. Destination conflict check — let Python handle under VFS lock
+        //    (Python has richer stale-metadata cleanup logic with backend.file_exists)
         if let Some(ref ms) = self.metastore {
             if ms.exists(new_path).unwrap_or(false) {
                 release_locks(&self.vfs_lock, lock1, lock2);
-                return Err(KernelError::IOError(format!(
-                    "Destination path already exists: {new_path}"
-                )));
+                return miss();
             }
         }
 

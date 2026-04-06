@@ -27,7 +27,7 @@ use crate::dispatch::{MutationObserver, PathResolver};
 use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};
 use crate::kernel::{Kernel, KernelError, OperationContext};
 use crate::lock::VFSLockManager;
-use crate::metastore::{FileMetadata, Metastore, MetastoreError};
+use crate::metastore::{FileMetadata, MetastoreError};
 use crate::router::{RouteError, RustRouteResult};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -383,104 +383,6 @@ impl ObjectStore for PyObjectStoreAdapter {
             obj.call_method1("rename", (old_path, new_path))
                 .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
             Ok(())
-        })
-    }
-}
-
-// ── PyMetastoreAdapter ──────────────────────────────────────────
-
-/// Wraps Python `MetastoreABC` -> Rust `Metastore` trait.
-///
-/// Transitional adapter: Python backend via GIL (cold path).
-pub(crate) struct PyMetastoreAdapter {
-    inner: Py<PyAny>,
-}
-
-unsafe impl Send for PyMetastoreAdapter {}
-unsafe impl Sync for PyMetastoreAdapter {}
-
-impl PyMetastoreAdapter {
-    pub(crate) fn new(inner: Py<PyAny>) -> Self {
-        Self { inner }
-    }
-}
-
-impl Metastore for PyMetastoreAdapter {
-    fn get(&self, path: &str) -> Result<Option<FileMetadata>, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("get", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.get({path}): {e}")))?;
-            if result.is_none() {
-                return Ok(None);
-            }
-            extract_metadata(py, &result).map(Some)
-        })
-    }
-
-    fn put(&self, path: &str, metadata: FileMetadata) -> Result<(), MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let py_meta = to_python_metadata(py, &metadata)?;
-            obj.call_method1("put", (path, py_meta))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.put({path}): {e}")))?;
-            Ok(())
-        })
-    }
-
-    fn delete(&self, path: &str) -> Result<bool, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("delete", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.delete({path}): {e}")))?;
-            result
-                .extract::<bool>()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.delete({path}): {e}")))
-        })
-    }
-
-    fn list(&self, prefix: &str) -> Result<Vec<FileMetadata>, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("list", (prefix,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.list({prefix}): {e}")))?;
-            let iter = result
-                .try_iter()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.list iter: {e}")))?;
-            let mut items = Vec::new();
-            for item in iter {
-                let item =
-                    item.map_err(|e| MetastoreError::IOError(format!("metastore.list item: {e}")))?;
-                items.push(extract_metadata(py, &item)?);
-            }
-            Ok(items)
-        })
-    }
-
-    fn exists(&self, path: &str) -> Result<bool, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj
-                .call_method1("exists", (path,))
-                .map_err(|e| MetastoreError::IOError(format!("metastore.exists({path}): {e}")))?;
-            result
-                .extract::<bool>()
-                .map_err(|e| MetastoreError::IOError(format!("metastore.exists({path}): {e}")))
-        })
-    }
-
-    fn delete_batch(&self, paths: &[String]) -> Result<usize, MetastoreError> {
-        Python::attach(|py| {
-            let obj = self.inner.bind(py);
-            let result = obj.call_method1("delete_batch", (paths,)).map_err(|e| {
-                MetastoreError::IOError(format!("metastore.delete_batch({paths:?}): {e}"))
-            })?;
-            result.extract::<usize>().map_err(|e| {
-                MetastoreError::IOError(format!("metastore.delete_batch({paths:?}): {e}"))
-            })
         })
     }
 }
@@ -977,11 +879,6 @@ impl PyKernel {
     }
 
     // ── Metastore wiring ──────────────────────────────────────────────
-
-    fn set_metastore(&mut self, metastore: Py<PyAny>) {
-        self.inner
-            .set_metastore(Box::new(PyMetastoreAdapter::new(metastore)));
-    }
 
     /// Wire RedbMetastore by path — Rust kernel opens redb directly.
     /// Eliminates GIL crossing on every metastore.get/put.

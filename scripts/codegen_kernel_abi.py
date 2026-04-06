@@ -830,15 +830,9 @@ PILLAR_ADAPTERS: dict[str, dict[str, str]] = {
         # name() → cached field at construction time
         "cached_name": "backend_name",
     },
-    "Metastore": {
-        "adapter": "PyMetastoreAdapter",
-        # Methods with default impls that delegate to single-op methods — skip in adapter
-        "skip_methods": {"put_batch", "get_batch"},
-        "error": "MetastoreError",
-        "error_mod": "crate::metastore",
-        "trait_mod": "crate::metastore",
-        "cached_name": "",
-    },
+    # PyMetastoreAdapter removed (Phase 9) — Rust kernel uses RedbMetastore directly.
+    # set_metastore_path() opens redb; no Python metastore fallback needed.
+    # "Metastore": { ... },
 }
 
 # Methods that need special handling beyond simple call_method1 + extract.
@@ -1101,7 +1095,7 @@ def generate_pillar_adapters(traits: list[TraitDef]) -> str:
         "use std::io;",
         "",
         "use crate::backend::{ObjectStore, StorageError};",
-        "use crate::metastore::{FileMetadata, Metastore, MetastoreError};",
+        "use crate::metastore::{FileMetadata, MetastoreError};",
         "",
         "// ── FileMetadata conversion helpers (PyO3-specific) ──────────────────────",
         "",
@@ -1632,7 +1626,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
-            "use crate::metastore::{FileMetadata, Metastore, MetastoreError};",
+            "use crate::metastore::{FileMetadata, MetastoreError};",
             "use crate::router::{RouteError, RustRouteResult};",
         ]
     )
@@ -2087,11 +2081,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    }",
             "",
             "    // ── Metastore wiring ──────────────────────────────────────────────",
-            "",
-            "    fn set_metastore(&mut self, metastore: Py<PyAny>) {",
-            "        self.inner",
-            "            .set_metastore(Box::new(PyMetastoreAdapter::new(metastore)));",
-            "    }",
             "",
             "    /// Wire RedbMetastore by path — Rust kernel opens redb directly.",
             "    /// Eliminates GIL crossing on every metastore.get/put.",

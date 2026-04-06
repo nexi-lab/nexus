@@ -16,7 +16,7 @@
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
 use crate::dispatch::{MutationObserver, Trie};
 use crate::lock::{LockMode, VFSLockManagerInner};
-use crate::metastore::{Metastore, RedbMetastore};
+use crate::metastore::RedbMetastore;
 use crate::router::{PathRouter, RouteError, RustRouteResult};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -313,7 +313,7 @@ pub struct Kernel {
     // VFS Lock (Arc-shared with VFSLockManager for blocking acquire)
     vfs_lock: Option<Arc<VFSLockManagerInner>>,
     // Metastore (Box<dyn Metastore>)
-    metastore: Option<Box<dyn Metastore>>,
+    metastore: Option<Box<dyn crate::metastore::Metastore>>,
     // VFS lock timeout for blocking acquire (ms)
     vfs_lock_timeout_ms: u64,
     // Hook counts (atomics for lock-free hot-path check)
@@ -371,15 +371,8 @@ impl Kernel {
 
     // ── Metastore wiring ──────────────────────────────────────────────
 
-    /// Wire a Metastore impl (PyMetastoreAdapter, redb, gRPC, etc.).
-    pub fn set_metastore(&mut self, metastore: Box<dyn Metastore>) {
-        self.metastore = Some(metastore);
-    }
-
     /// Wire RedbMetastore by path — Rust kernel opens redb directly.
-    ///
-    /// Preferred over `set_metastore(PyMetastoreAdapter)` — eliminates
-    /// GIL crossing on every metastore.get/put in the hot path.
+    /// Only metastore wiring method (PyMetastoreAdapter removed in Phase 9).
     pub fn set_metastore_path(&mut self, path: &str) -> Result<(), KernelError> {
         let ms = RedbMetastore::open(std::path::Path::new(path))
             .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;

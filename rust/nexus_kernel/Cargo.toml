@@ -33,11 +33,17 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
+tonic = { version = "0.13", features = ["transport"] }
+prost = "0.13"
+tokio = { version = "1", features = ["rt", "net", "sync"] }
 mimalloc = { workspace = true, optional = true }
 
 [features]
 default = ["mimalloc"]
 mimalloc = ["dep:mimalloc"]
+
+[build-dependencies]
+tonic-build = "0.13"
 
 [dev-dependencies]
 criterion = "0.5"

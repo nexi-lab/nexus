@@ -1155,7 +1155,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1170,9 +1170,19 @@ impl PyKernel {
         py_backend: Option<Py<PyAny>>,
         backend_type: &str,
         follow_symlinks: bool,
+        grpc_addr: Option<&str>,
     ) -> PyResult<()> {
-        // Backend resolution: local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
-        let backend: Option<Box<dyn ObjectStore>> = if let Some(root) = local_root {
+        // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
+        //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
+        //                     py_backend -> PyObjectStoreAdapter (GIL crossing)
+        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "grpc" {
+            let addr = grpc_addr.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err("grpc backend requires grpc_addr")
+            })?;
+            let b = crate::grpc_backend::GrpcObjectStoreAdapter::new(addr, backend_name)
+                .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+            Some(Box::new(b))
+        } else if let Some(root) = local_root {
             if backend_type == "local_connector" {
                 let b = LocalConnectorBackend::new(Path::new(root), follow_symlinks, fsync)
                     .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;

@@ -330,7 +330,7 @@ export default function SearchPanel(): JSX.Element {
           <RlmAnswerView answer={rlmAnswer()} loading={rlmLoading()} contextPaths={rlmContextPaths()} />
         )}
         {activeTab() === "columns" && (
-          <ColumnSearch results={columnSearchResults()} loading={columnSearchLoading()} />
+          <ColumnSearch />
         )}
       </box>
 

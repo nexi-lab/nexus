@@ -5,7 +5,6 @@ import type { JSX } from "solid-js";
  */
 
 import type { ExecutionSummary } from "../../stores/workflows-store.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
 
 const VIEWPORT_HEIGHT = 20;
@@ -35,50 +34,37 @@ function truncate(text: string, maxLen: number): string {
   return `${text.slice(0, maxLen - 3)}...`;
 }
 
-export function ExecutionList({
-  executions,
-  selectedIndex,
-  loading,
-}: ExecutionListProps): JSX.Element {
-  if (loading) {
+export function ExecutionList(props: ExecutionListProps): JSX.Element {
+  const renderExecution = (ex: ExecutionSummary, i: number) => {
+    const isSelected = i === props.selectedIndex;
+    const id = shortId(ex.execution_id);
+    const status = truncate(ex.status, 9);
+    const trigger = truncate(ex.trigger_type, 12);
+    const progress = `${ex.actions_completed}/${ex.actions_total}`;
+    const errorText = ex.error_message
+      ? truncate(ex.error_message, 20)
+      : "";
+    const prefix = isSelected ? "> " : "  ";
+
     return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading executions...</text>
+      <box height={1} width="100%">
+        <text>
+          {`${prefix}${id.padEnd(10)}  ${status.padEnd(9)}  ${trigger.padEnd(12)}  ${progress.padEnd(8)}  ${formatTimestamp(ex.started_at).padEnd(19)}  ${errorText}`}
+        </text>
       </box>
     );
-  }
-
-  if (executions.length === 0) {
-    return (
-      <EmptyState
-        message="No executions found."
-        hint="Select a workflow and press e to execute it."
-      />
-    );
-  }
-
-  const renderExecution = (ex: ExecutionSummary, i: number) => {
-      const isSelected = i === selectedIndex;
-      const id = shortId(ex.execution_id);
-      const status = truncate(ex.status, 9);
-      const trigger = truncate(ex.trigger_type, 12);
-      const progress = `${ex.actions_completed}/${ex.actions_total}`;
-      const errorText = ex.error_message
-        ? truncate(ex.error_message, 20)
-        : "";
-      const prefix = isSelected ? "> " : "  ";
-
-      return (
-        <box height={1} width="100%">
-          <text>
-            {`${prefix}${id.padEnd(10)}  ${status.padEnd(9)}  ${trigger.padEnd(12)}  ${progress.padEnd(8)}  ${formatTimestamp(ex.started_at).padEnd(19)}  ${errorText}`}
-          </text>
-        </box>
-      );
-    };
+  };
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading executions..."
+          : props.executions.length === 0
+            ? "No executions found. Select a workflow and press e to execute it."
+            : `${props.executions.length} executions`}
+      </text>
+
       {/* Header */}
       <box height={1} width="100%">
         <text>{"  ID          STATUS     TRIGGER       PROGRESS  STARTED              ERROR"}</text>
@@ -89,10 +75,10 @@ export function ExecutionList({
 
       {/* Rows */}
       <VirtualList
-        items={executions}
+        items={props.executions}
         renderItem={renderExecution}
         viewportHeight={VIEWPORT_HEIGHT}
-        selectedIndex={selectedIndex}
+        selectedIndex={props.selectedIndex}
       />
     </box>
   );

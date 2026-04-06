@@ -52,162 +52,165 @@ const HEALTH_COLOR: Record<string, string> = {
 // Sub-components
 // =============================================================================
 
-function ContainerList({
-  containers,
-  loading,
-  selectedIndex,
-}: {
+function ContainerList(props: {
   containers: readonly ContainerInfo[];
   loading: boolean;
   selectedIndex: number;
 }): JSX.Element {
-  if (loading) {
-    return <LoadingIndicator message="Querying Docker..." />;
-  }
-
-  if (containers.length === 0) {
-    return <EmptyState message="No containers found." hint="Start the stack with: nexus up" />;
-  }
-
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  CONTAINER NAME                      SERVICE       STATE       HEALTH      PORTS                    IMAGE"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  ------------------------------------  -----------  ----------  ----------  -----------------------  -------------------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Querying Docker..."
+          : props.containers.length === 0
+            ? "No containers found. Start the stack with: nexus up"
+            : `${props.containers.length} containers`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  CONTAINER NAME                      SERVICE       STATE       HEALTH      PORTS                    IMAGE"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  ------------------------------------  -----------  ----------  ----------  -----------------------  -------------------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {containers.map((c, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
-        const stateColor = CONTAINER_STATE_COLOR[c.state] ?? statusColor.dim;
-        const hColor = HEALTH_COLOR[c.health] ?? statusColor.dim;
-        const name = c.name.length > 36 ? c.name.slice(0, 33) + "..." : c.name;
-        const image = c.image.length > 25 ? c.image.slice(0, 22) + "..." : c.image;
-        const ports = c.ports.length > 23 ? c.ports.slice(0, 20) + "..." : c.ports;
+        {/* Rows */}
+        {props.containers.map((c, i) => {
+          const isSelected = i === props.selectedIndex;
+          const prefix = isSelected ? "> " : "  ";
+          const stateColor = CONTAINER_STATE_COLOR[c.state] ?? statusColor.dim;
+          const hColor = HEALTH_COLOR[c.health] ?? statusColor.dim;
+          const name = c.name.length > 36 ? c.name.slice(0, 33) + "..." : c.name;
+          const image = c.image.length > 25 ? c.image.slice(0, 22) + "..." : c.image;
+          const ports = c.ports.length > 23 ? c.ports.slice(0, 20) + "..." : c.ports;
 
-        return (
-          <box height={1} width="100%">
-            <text>
-              {`${prefix}${name.padEnd(36)}  ${c.service.padEnd(11)}  `}
-              <span foregroundColor={stateColor}>{c.state.padEnd(10)}</span>
-              {"  "}
-              <span foregroundColor={hColor}>{(c.health || "-").padEnd(10)}</span>
-              {`  ${ports.padEnd(23)}  ${image}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box height={1} width="100%">
+              <text>
+                {`${prefix}${name.padEnd(36)}  ${c.service.padEnd(11)}  `}
+                <span foregroundColor={stateColor}>{c.state.padEnd(10)}</span>
+                {"  "}
+                <span foregroundColor={hColor}>{(c.health || "-").padEnd(10)}</span>
+                {`  ${ports.padEnd(23)}  ${image}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 }
 
-function ConfigView({
-  yaml,
-  loading,
-  scrollOffset,
-}: {
+function ConfigView(props: {
   yaml: string;
   loading: boolean;
   scrollOffset: number;
 }): JSX.Element {
-  if (loading) {
-    return <LoadingIndicator message="Reading nexus.yaml..." />;
-  }
-
-  if (!yaml) {
-    return <EmptyState message="No nexus.yaml found." hint="Run: nexus init --preset shared" />;
-  }
-
-  const lines = yaml.split("\n");
-
   return (
-    <scrollbox height="100%" width="100%">
-      <box height={1} width="100%">
-        <text foregroundColor={statusColor.info}>{"  nexus.yaml"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text dimColor>{"  " + "─".repeat(60)}</text>
-      </box>
-      {lines.slice(scrollOffset).map((line, i) => (
-        <box height={1} width="100%">
-          <text>
-            <span dimColor>{`  ${String(scrollOffset + i + 1).padStart(3)}  `}</span>
-            {line}
-          </text>
-        </box>
-      ))}
-    </scrollbox>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Reading nexus.yaml..."
+          : !props.yaml
+            ? "No nexus.yaml found. Run: nexus init --preset shared"
+            : "nexus.yaml"}
+      </text>
+
+      {(() => {
+        if (props.loading || !props.yaml) return null;
+        const lines = props.yaml.split("\n");
+
+        return (
+          <scrollbox flexGrow={1} width="100%">
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.info}>{"  nexus.yaml"}</text>
+            </box>
+            <box height={1} width="100%">
+              <text dimColor>{"  " + "─".repeat(60)}</text>
+            </box>
+            {lines.slice(props.scrollOffset).map((line, i) => (
+              <box height={1} width="100%">
+                <text>
+                  <span dimColor>{`  ${String(props.scrollOffset + i + 1).padStart(3)}  `}</span>
+                  {line}
+                </text>
+              </box>
+            ))}
+          </scrollbox>
+        );
+      })()}
+    </box>
   );
 }
 
-function StateView({
-  stateJson,
-  loading,
-  projectName,
-  scrollOffset,
-}: {
+function StateView(props: {
   stateJson: Record<string, unknown> | null;
   loading: boolean;
   projectName: string | null;
   scrollOffset: number;
 }): JSX.Element {
-  if (loading) {
-    return <LoadingIndicator message="Reading .state.json..." />;
-  }
-
-  if (!stateJson) {
-    return <EmptyState message="No .state.json found." hint="Start the stack first." />;
-  }
-
-  // Render key-value pairs with nested object support
-  const lines: { key: string; value: string; indent: number }[] = [];
-
-  function flatten(obj: Record<string, unknown>, indent: number): void {
-    for (const [key, val] of Object.entries(obj)) {
-      if (val && typeof val === "object" && !Array.isArray(val)) {
-        lines.push({ key, value: "", indent });
-        flatten(val as Record<string, unknown>, indent + 1);
-      } else {
-        lines.push({ key, value: String(val), indent });
-      }
-    }
-  }
-  flatten(stateJson, 0);
-
   return (
-    <scrollbox height="100%" width="100%">
-      <box height={1} width="100%">
-        <text foregroundColor={statusColor.info}>{"  .state.json (runtime)"}</text>
-      </box>
-      {projectName && (
-        <box height={1} width="100%">
-          <text>
-            {"  project_name: "}
-            <span foregroundColor={statusColor.identity}>{projectName}</span>
-          </text>
-        </box>
-      )}
-      <box height={1} width="100%">
-        <text dimColor>{"  " + "─".repeat(60)}</text>
-      </box>
-      {lines.slice(scrollOffset).map((line, i) => {
-        const pad = "  ".repeat(line.indent);
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Reading .state.json..."
+          : !props.stateJson
+            ? "No .state.json found. Start the stack first."
+            : ".state.json (runtime)"}
+      </text>
+
+      {(() => {
+        if (props.loading || !props.stateJson) return null;
+
+        // Render key-value pairs with nested object support
+        const lines: { key: string; value: string; indent: number }[] = [];
+
+        function flatten(obj: Record<string, unknown>, indent: number): void {
+          for (const [key, val] of Object.entries(obj)) {
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              lines.push({ key, value: "", indent });
+              flatten(val as Record<string, unknown>, indent + 1);
+            } else {
+              lines.push({ key, value: String(val), indent });
+            }
+          }
+        }
+        flatten(props.stateJson, 0);
+
         return (
-          <box height={1} width="100%">
-            <text>
-              {"  "}{pad}
-              <span foregroundColor={statusColor.info}>{line.key}</span>
-              {line.value ? ": " : ""}
-              {line.value}
-            </text>
-          </box>
+          <scrollbox flexGrow={1} width="100%">
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.info}>{"  .state.json (runtime)"}</text>
+            </box>
+            {props.projectName && (
+              <box height={1} width="100%">
+                <text>
+                  {"  project_name: "}
+                  <span foregroundColor={statusColor.identity}>{props.projectName}</span>
+                </text>
+              </box>
+            )}
+            <box height={1} width="100%">
+              <text dimColor>{"  " + "─".repeat(60)}</text>
+            </box>
+            {lines.slice(props.scrollOffset).map((line, i) => {
+              const pad = "  ".repeat(line.indent);
+              return (
+                <box height={1} width="100%">
+                  <text>
+                    {"  "}{pad}
+                    <span foregroundColor={statusColor.info}>{line.key}</span>
+                    {line.value ? ": " : ""}
+                    {line.value}
+                  </text>
+                </box>
+              );
+            })}
+          </scrollbox>
         );
-      })}
-    </scrollbox>
+      })()}
+    </box>
   );
 }
 

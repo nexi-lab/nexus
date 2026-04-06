@@ -283,12 +283,16 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       useUiStore.getState().markDataUpdated("zones");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch drift report";
+      // Suppress 404 — drift endpoint is optional
+      const is404 = message.includes("Not Found") || message.includes("404");
       set({
         driftReport: null,
         driftLoading: false,
-        error: message,
+        error: is404 ? null : message,
       });
-      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+      if (!is404) {
+        useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+      }
     }
   },
 

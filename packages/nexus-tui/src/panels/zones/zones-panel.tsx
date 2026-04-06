@@ -128,9 +128,10 @@ export default function ZonesPanel(): JSX.Element {
     },
   );
 
-  // Refresh data for the current tab
+  // Refresh data for the current tab — clear error on switch
   const refreshActiveTab = (): void => {
     if (!client) return;
+    useZonesStore.setState({ error: null });
     const tab = useZonesStore.getState().activeTab;
 
     if (tab === "zones") {

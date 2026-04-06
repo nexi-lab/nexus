@@ -1,4 +1,4 @@
-import { Show, For } from "solid-js";
+import { For } from "solid-js";
 import type { JSX } from "solid-js";
 /**
  * Operations tab: simple list of operations.
@@ -16,34 +16,33 @@ interface OperationsTabProps {
 
 export function OperationsTab(props: OperationsTabProps): JSX.Element {
   return (
-    <Show
-      when={!props.loading}
-      fallback={<text>Loading operations...</text>}
-    >
-      <Show
-        when={props.operations.length > 0}
-        fallback={<text>No operations found.</text>}
-      >
-        <scrollbox height="100%" width="100%">
-          {/* Header */}
-          <box height={1} width="100%">
-            <text>{"  OPERATION_ID       AGENT_ID         TYPE        STATUS      STARTED"}</text>
-          </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading operations..."
+          : props.operations.length === 0
+            ? "No operations found."
+            : `${props.operations.length} operations`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  OPERATION_ID       AGENT_ID         TYPE        STATUS      STARTED"}</text>
+        </box>
 
-          <For each={props.operations}>{(op, i) => {
-            const isSelected = () => i() === props.selectedIndex;
-            const prefix = () => isSelected() ? "> " : "  ";
-            const opShort = op.operation_id.slice(0, 16) + "...";
-            const agentShort = op.agent_id ? op.agent_id.slice(0, 14) : "n/a";
-            const started = op.started_at ? op.started_at.slice(0, 19) : "n/a";
-            return (
-              <box height={1} width="100%">
-                <text>{`${prefix()}${opShort}  ${agentShort.padEnd(16)}  ${op.type.padEnd(10)}  ${op.status.padEnd(10)}  ${started}`}</text>
-              </box>
-            );
-          }}</For>
-        </scrollbox>
-      </Show>
-    </Show>
+        <For each={props.operations}>{(op, i) => {
+          const isSelected = () => i() === props.selectedIndex;
+          const prefix = () => isSelected() ? "> " : "  ";
+          const opShort = op.operation_id.slice(0, 16) + "...";
+          const agentShort = op.agent_id ? op.agent_id.slice(0, 14) : "n/a";
+          const started = op.started_at ? op.started_at.slice(0, 19) : "n/a";
+          return (
+            <box height={1} width="100%">
+              <text>{`${prefix()}${opShort}  ${agentShort.padEnd(16)}  ${op.type.padEnd(10)}  ${op.status.padEnd(10)}  ${started}`}</text>
+            </box>
+          );
+        }}</For>
+      </scrollbox>
+    </box>
   );
 }

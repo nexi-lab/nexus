@@ -35,114 +35,88 @@ function formatTimestamp(ts: string): string {
   return ts.slice(0, 19).replace("T", " ");
 }
 
-function VersionHistorySection({
-  history,
-  historyLoading,
-}: {
+function VersionHistorySection(props: {
   readonly history: MemoryHistory | null;
   readonly historyLoading: boolean;
 }): JSX.Element {
-  if (historyLoading) {
-    return (
-      <box height={1} width="100%" marginLeft={4}>
-        <text>{"Loading version history..."}</text>
-      </box>
-    );
-  }
-
-  if (!history) return null;
-
   return (
     <box width="100%" flexDirection="column" marginLeft={4}>
-      <box height={1} width="100%">
-        <text>{`Version History (current: v${history.current_version})`}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"    VER  STATUS      CREATED AT"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"    ---  ----------  -------------------"}</text>
-      </box>
-      {history.versions.map((v) => {
-        const isCurrent = v.version === history.current_version;
-        const marker = isCurrent ? " *" : "  ";
-        const ver = String(v.version).padStart(3);
-        const status = v.status.padEnd(10);
-        const created = formatTimestamp(v.created_at);
+      <text>
+        {props.historyLoading
+          ? "Loading version history..."
+          : !props.history
+            ? ""
+            : `Version History (current: v${props.history.current_version})`}
+      </text>
 
+      {(() => {
+        if (props.historyLoading || !props.history) return null;
         return (
-          <box height={1} width="100%">
-            <text>{`  ${marker}${ver}  ${status}  ${created}`}</text>
-          </box>
+          <>
+            <box height={1} width="100%">
+              <text>{"    VER  STATUS      CREATED AT"}</text>
+            </box>
+            <box height={1} width="100%">
+              <text>{"    ---  ----------  -------------------"}</text>
+            </box>
+            {props.history.versions.map((v) => {
+              const isCurrent = v.version === props.history!.current_version;
+              const marker = isCurrent ? " *" : "  ";
+              const ver = String(v.version).padStart(3);
+              const status = v.status.padEnd(10);
+              const created = formatTimestamp(v.created_at);
+
+              return (
+                <box height={1} width="100%">
+                  <text>{`  ${marker}${ver}  ${status}  ${created}`}</text>
+                </box>
+              );
+            })}
+          </>
         );
-      })}
+      })()}
     </box>
   );
 }
 
-function DiffSection({
-  diff,
-  diffLoading,
-}: {
+function DiffSection(props: {
   readonly diff: MemoryDiff | null;
   readonly diffLoading: boolean;
 }): JSX.Element {
-  if (diffLoading) {
-    return (
-      <box height={1} width="100%" marginLeft={4}>
-        <text>{"Loading diff..."}</text>
-      </box>
-    );
-  }
-
-  if (!diff) return null;
-
   return (
-    <box width="100%" height={10} flexDirection="column" marginLeft={2}>
-      <box height={1} width="100%">
-        <text>{`Diff v${diff.v1} → v${diff.v2} (${diff.mode})`}</text>
-      </box>
-      <scrollbox flexGrow={1} width="100%">
-        <diff diff={diff.diff} showLineNumbers />
-      </scrollbox>
+    <box width="100%" flexDirection="column" marginLeft={2}>
+      <text>
+        {props.diffLoading
+          ? "Loading diff..."
+          : !props.diff
+            ? ""
+            : `Diff v${props.diff.v1} → v${props.diff.v2} (${props.diff.mode})`}
+      </text>
+
+      {(() => {
+        if (props.diffLoading || !props.diff) return null;
+        return (
+          <scrollbox height={9} width="100%">
+            <diff diff={props.diff.diff} showLineNumbers />
+          </scrollbox>
+        );
+      })()}
     </box>
   );
 }
 
-export function MemoryList({
-  memories,
-  selectedIndex,
-  loading,
-  memoryHistory,
-  memoryHistoryLoading,
-  memoryDiff,
-  memoryDiffLoading,
-}: MemoryListProps): JSX.Element {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading memories...</text>
-      </box>
-    );
-  }
-
-  if (memories.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No memories found</text>
-      </box>
-    );
-  }
-
-  // Determine which memory has history expanded (matches memoryHistory.memory_id)
-  const expandedMemoryId = memoryHistory?.memory_id ?? null;
-
+export function MemoryList(props: MemoryListProps): JSX.Element {
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading memories..."
+          : props.memories.length === 0
+            ? "No memories found"
+            : `Memories: ${props.memories.length}`}
+      </text>
+
       {/* Header */}
-      <box height={1} width="100%">
-        <text>{`Memories: ${memories.length}`}</text>
-      </box>
       <box height={1} width="100%">
         <text>{"  ID            TYPE       CONTENT"}</text>
       </box>
@@ -152,9 +126,10 @@ export function MemoryList({
 
       {/* Rows */}
       <scrollbox flexGrow={1} width="100%">
-        {memories.map((m, i) => {
-          const isSelected = i === selectedIndex;
+        {props.memories.map((m, i) => {
+          const isSelected = i === props.selectedIndex;
           const memId = String(getMemoryField(m, "memory_id") ?? "");
+          const expandedMemoryId = props.memoryHistory?.memory_id ?? null;
           const hasHistory = memId === expandedMemoryId;
           const historyIndicator = hasHistory ? " [H]" : "";
           const prefix = isSelected ? "> " : "  ";
@@ -172,16 +147,16 @@ export function MemoryList({
                   {`${prefix}${memoryIdDisplay}  ${memType}  ${content}${historyIndicator}`}
                 </text>
               </box>
-              {isSelected && (hasHistory || memoryHistoryLoading) && (
+              {isSelected && (hasHistory || props.memoryHistoryLoading) && (
                 <VersionHistorySection
-                  history={memoryHistory}
-                  historyLoading={memoryHistoryLoading}
+                  history={props.memoryHistory}
+                  historyLoading={props.memoryHistoryLoading}
                 />
               )}
-              {isSelected && (memoryDiff !== null || memoryDiffLoading) && (
+              {isSelected && (props.memoryDiff !== null || props.memoryDiffLoading) && (
                 <DiffSection
-                  diff={memoryDiff}
-                  diffLoading={memoryDiffLoading}
+                  diff={props.memoryDiff}
+                  diffLoading={props.memoryDiffLoading}
                 />
               )}
             </>

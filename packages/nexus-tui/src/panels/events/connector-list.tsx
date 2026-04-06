@@ -1,12 +1,9 @@
-import { Show } from "solid-js";
 import type { JSX } from "solid-js";
 /**
  * Connector list view: shows registered connectors with status and capabilities.
  */
 
 import type { Connector } from "../../stores/infra-store.js";
-import { Spinner } from "../../shared/components/spinner.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
 
 const VIEWPORT_HEIGHT = 20;
@@ -37,33 +34,26 @@ export function ConnectorList(props: {
   };
 
   return (
-    <Show
-      when={!props.loading}
-      fallback={<Spinner label="Loading connectors..." />}
-    >
-      <Show
-        when={props.connectors.length > 0}
-        fallback={
-          <EmptyState
-            message="No connectors registered."
-            hint="Register a connector via the API: POST /api/v2/connectors"
-          />
-        }
-      >
-        <box height="100%" width="100%" flexDirection="column">
-          {/* Header */}
-          <box height={1} width="100%">
-            <text>{"  St  Name                 Type          Capabilities"}</text>
-          </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading connectors..."
+          : props.connectors.length === 0
+            ? "No connectors registered. Register a connector via the API: POST /api/v2/connectors"
+            : `${props.connectors.length} connectors`}
+      </text>
 
-          <VirtualList
-            items={props.connectors}
-            renderItem={renderConnector}
-            viewportHeight={VIEWPORT_HEIGHT}
-            selectedIndex={props.selectedIndex}
-          />
-        </box>
-      </Show>
-    </Show>
+      {/* Header */}
+      <box height={1} width="100%">
+        <text>{"  St  Name                 Type          Capabilities"}</text>
+      </box>
+
+      <VirtualList
+        items={props.connectors}
+        renderItem={renderConnector}
+        viewportHeight={VIEWPORT_HEIGHT}
+        selectedIndex={props.selectedIndex}
+      />
+    </box>
   );
 }

@@ -530,11 +530,7 @@ export default function ZonesPanel(): JSX.Element {
         )}
 
         {activeTab() === "cache" && (
-          <CacheTab
-            stats={cacheStats()}
-            hotFiles={hotFiles()}
-            loading={cacheStatsLoading() || hotFilesLoading()}
-          />
+          <CacheTab />
         )}
       </box>
 

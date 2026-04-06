@@ -233,7 +233,21 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     source: SOURCE,
     errorMessage: "Failed to fetch cache stats",
     action: async (client) => {
-      const stats = await client.get<unknown>("/api/v2/cache/stats");
+      const raw = await client.get<{
+        file_access_tracker?: { tracked_paths?: number; total_accesses?: number; window_seconds?: number; hot_threshold?: number };
+        total_entries?: number; total_size_bytes?: number; hit_rate?: number;
+      }>("/api/v2/cache/stats");
+      // Normalize: server may return file_access_tracker wrapper or flat fields
+      const fat = raw.file_access_tracker;
+      const stats = {
+        total_entries: raw.total_entries ?? fat?.tracked_paths ?? 0,
+        total_size_bytes: raw.total_size_bytes ?? 0,
+        hit_rate: raw.hit_rate ?? 0,
+        tracked_paths: fat?.tracked_paths ?? 0,
+        total_accesses: fat?.total_accesses ?? 0,
+        window_seconds: fat?.window_seconds ?? 300,
+        hot_threshold: fat?.hot_threshold ?? 10,
+      };
       return { cacheStats: stats };
     },
   }),

@@ -6,7 +6,7 @@ Tests cover:
   - write_content(): inherited from CASAddressingEngine (pure CAS, no LLM call)
   - generate_streaming(): pure LLM compute, yields tokens
   - persist_session(): CAS persist request + response + session envelope
-- LLMStreamingService: DT_STREAM orchestration + CAS flush
+  - start_streaming(): DT_STREAM orchestration + CAS flush (via set_stream_manager)
 """
 
 from __future__ import annotations
@@ -334,12 +334,12 @@ class TestCASOpenAIBackend:
 
 
 # =============================================================================
-# LLMStreamingService tests
+# CASOpenAIBackend streaming tests
 # =============================================================================
 
 
-class TestLLMStreamingService:
-    """Test DT_STREAM orchestration with mock backend + stream manager."""
+class TestCASOpenAIBackendStreaming:
+    """Test DT_STREAM orchestration via backend.start_streaming()."""
 
     @pytest.fixture()
     def mock_stream_manager(self) -> MagicMock:
@@ -365,50 +365,22 @@ class TestLLMStreamingService:
         return sm
 
     @pytest.fixture()
-    def mock_backend(self) -> MagicMock:
-        """Create a mock CASOpenAIBackend."""
-        backend = MagicMock()
-
-        def _generate_streaming(request: dict) -> list[tuple[str, dict | None]]:
-            return [
-                ("Hello", None),
-                (" world", None),
-                ("!", None),
-                (
-                    "",
-                    {
-                        "model": "gpt-4o",
-                        "usage": {
-                            "prompt_tokens": 10,
-                            "completion_tokens": 3,
-                            "total_tokens": 13,
-                        },
-                        "latency_ms": 50.0,
-                    },
-                ),
-            ]
-
-        backend.generate_streaming.side_effect = _generate_streaming
-
-        persist_result = MagicMock()
-        persist_result.content_id = "abc123deadbeef"
-        backend.persist_session.return_value = persist_result
-
+    def streaming_backend(self, mock_stream_manager: MagicMock) -> Any:
+        """Create a real CASOpenAIBackend with mocked OpenAI client + stream manager."""
+        client = MagicMock()
+        mock_chunks = _mock_streaming_chunks(["Hello", " world", "!"])
+        client.chat.completions.create.return_value = iter(mock_chunks)
+        backend, _ = _make_backend(client)
+        backend.set_stream_manager(mock_stream_manager)
         return backend
 
     @pytest.mark.asyncio()
-    async def test_start_stream(
-        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+    async def test_start_streaming(
+        self, mock_stream_manager: MagicMock, streaming_backend: Any
     ) -> None:
-        """start_stream creates DT_STREAM and returns immediately."""
-        from nexus.services.llm_streaming_service import (
-            LLMStreamingService,
-        )
-
-        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
-
+        """start_streaming creates DT_STREAM and returns immediately."""
         request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        result = await service.start_stream(request, "/zone/llm/.streams/s1")
+        result = await streaming_backend.start_streaming(request, "/zone/llm/.streams/s1")
 
         assert result["status"] == "streaming"
         assert result["stream_path"] == "/zone/llm/.streams/s1"
@@ -419,17 +391,11 @@ class TestLLMStreamingService:
 
     @pytest.mark.asyncio()
     async def test_stream_delivers_tokens(
-        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+        self, mock_stream_manager: MagicMock, streaming_backend: Any
     ) -> None:
         """Tokens are pushed to DT_STREAM, then CAS persist + signal_close."""
-        from nexus.services.llm_streaming_service import (
-            LLMStreamingService,
-        )
-
-        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
-
         request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        await service.start_stream(request, "/zone/llm/.streams/s2")
+        await streaming_backend.start_streaming(request, "/zone/llm/.streams/s2")
 
         # Wait for background task
         await asyncio.sleep(0.15)
@@ -445,13 +411,7 @@ class TestLLMStreamingService:
         # Verify done message
         done_msg = json.loads(written[-1])
         assert done_msg["type"] == "done"
-        assert done_msg["session_hash"] == "abc123deadbeef"
-
-        # Verify CAS persist was called
-        mock_backend.persist_session.assert_called_once()
-        call_kwargs = mock_backend.persist_session.call_args
-        assert call_kwargs.kwargs["response_content"] == "Hello world!"
-        assert call_kwargs.kwargs["model"] == "gpt-4o"
+        assert "session_hash" in done_msg
 
         # Verify stream was closed
         assert mock_stream_manager._closed
@@ -459,19 +419,14 @@ class TestLLMStreamingService:
     @pytest.mark.asyncio()
     async def test_stream_error_handling(self, mock_stream_manager: MagicMock) -> None:
         """On LLM failure, error is written to stream and stream is closed."""
-        from nexus.services.llm_streaming_service import (
-            LLMStreamingService,
-        )
-
-        backend = MagicMock()
-        backend.generate_streaming.side_effect = BackendError(
-            "API down", backend="openai_compatible"
-        )
-
-        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=backend)
+        # Create backend with a client that raises on create
+        client = MagicMock()
+        client.chat.completions.create.side_effect = Exception("API down")
+        backend, _ = _make_backend(client)
+        backend.set_stream_manager(mock_stream_manager)
 
         request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        await service.start_stream(request, "/zone/llm/.streams/err")
+        await backend.start_streaming(request, "/zone/llm/.streams/err")
 
         # Wait for background task
         await asyncio.sleep(0.15)
@@ -488,50 +443,40 @@ class TestLLMStreamingService:
     @pytest.mark.asyncio()
     async def test_cancel_stream(self, mock_stream_manager: MagicMock) -> None:
         """cancel_stream cancels the background task and destroys the stream."""
-        from nexus.services.llm_streaming_service import (
-            LLMStreamingService,
-        )
+        # Create backend with a slow client that blocks
+        client = MagicMock()
 
-        # Slow backend that blocks
-        backend = MagicMock()
-
-        def _slow_generate(request: dict) -> list[tuple[str, dict | None]]:
+        def _slow_create(**kwargs: Any) -> list:
             import time
 
             time.sleep(10)
-            return [("x", None), ("", {"model": "m", "usage": {}, "latency_ms": 0})]
+            return []
 
-        backend.generate_streaming.side_effect = _slow_generate
-
-        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=backend)
+        client.chat.completions.create.side_effect = _slow_create
+        backend, _ = _make_backend(client)
+        backend.set_stream_manager(mock_stream_manager)
 
         request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        await service.start_stream(request, "/zone/llm/.streams/cancel")
+        await backend.start_streaming(request, "/zone/llm/.streams/cancel")
 
-        assert "/zone/llm/.streams/cancel" in service.active_streams
-        cancelled = await service.cancel_stream("/zone/llm/.streams/cancel")
+        assert "/zone/llm/.streams/cancel" in backend.active_streams
+        cancelled = await backend.cancel_stream("/zone/llm/.streams/cancel")
         assert cancelled
-        assert "/zone/llm/.streams/cancel" not in service.active_streams
+        assert "/zone/llm/.streams/cancel" not in backend.active_streams
 
     @pytest.mark.asyncio()
     async def test_active_streams(
-        self, mock_stream_manager: MagicMock, mock_backend: MagicMock
+        self, mock_stream_manager: MagicMock, streaming_backend: Any
     ) -> None:
         """active_streams tracks running streams."""
-        from nexus.services.llm_streaming_service import (
-            LLMStreamingService,
-        )
-
-        service = LLMStreamingService(stream_manager=mock_stream_manager, backend=mock_backend)
-
-        assert service.active_streams == []
+        assert streaming_backend.active_streams == []
 
         request = json.dumps({"messages": [{"role": "user", "content": "Hi"}]}).encode()
-        await service.start_stream(request, "/zone/llm/.streams/track")
+        await streaming_backend.start_streaming(request, "/zone/llm/.streams/track")
 
         # Task is active briefly
-        assert "/zone/llm/.streams/track" in service.active_streams
+        assert "/zone/llm/.streams/track" in streaming_backend.active_streams
 
         # Wait for completion
         await asyncio.sleep(0.15)
-        assert "/zone/llm/.streams/track" not in service.active_streams
+        assert "/zone/llm/.streams/track" not in streaming_backend.active_streams

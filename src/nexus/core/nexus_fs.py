@@ -3535,39 +3535,29 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Start an LLM streaming call, returning a DT_STREAM path for reading tokens.
 
-        Creates a DT_STREAM at *path*, starts background LLM generation via
-        :class:`~nexus.services.llm_streaming_service.LLMStreamingService`,
-        and returns immediately.  Callers read tokens via
-        ``sys_read(stream_path, offset=N)``.
+        Routes to the CASOpenAIBackend at the mount point covering ``path``
+        and calls ``backend.start_streaming()`` which creates a DT_STREAM,
+        spawns a background streaming task, and returns immediately.
 
-        If no LLM backend is mounted yet, the service is lazily created on
-        first call by probing the router for a ``CASOpenAIBackend``.
-
-        Args:
-            path: VFS path for the DT_STREAM (e.g.
-                ``/root/llm/.streams/my-session``).
-            request: LLM request dict with at least ``{"messages": [...]}``.
-            context: Optional operation context for permission checks.
-
-        Returns:
-            ``{"stream_path": ..., "status": "streaming"}``
-
-        Raises:
-            BackendError: If no LLM streaming service or backend is available.
+        Callers read tokens via ``sys_read(stream_path, offset=N)`` (blocking).
         """
         import json as _json
 
-        svc = self.service("llm_streaming")
-        if svc is None:
+        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
+
+        route = self.router.route(path, zone_id=self._zone_id)
+        if not isinstance(route.backend, CASOpenAIBackend):
             raise BackendError(
-                "LLM streaming service not available. "
-                "Mount an OpenAI-compatible backend first: "
-                'nexus mount /llm --backend=openai_compatible --config=\'{"api_key":"..."}\''
+                f"No LLM backend at {path} — expected CASOpenAIBackend, "
+                f"got {type(route.backend).__name__}"
             )
 
-        return await svc.start_stream(
-            request_bytes=_json.dumps(request, separators=(",", ":")).encode("utf-8"),
-            stream_path=path,
+        request_bytes = _json.dumps(request, separators=(",", ":")).encode("utf-8")
+        stream_path = path  # caller provides stream path
+
+        return await route.backend.start_streaming(
+            request_bytes=request_bytes,
+            stream_path=stream_path,
         )
 
     @rpc_expose(description="Get file metadata without reading content")

@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM backend — CAS addressing + LLM transport.
+"""OpenAI-compatible LLM backend — CAS addressing + LLM transport + streaming.
 
 Thin CASAddressingEngine subclass: registration + CONNECTION_ARGS + OpenAI client.
 Follows the same composition pattern as CASLocalBackend (CAS + LocalTransport)
@@ -9,15 +9,17 @@ and CASGCSBackend (CAS + GCSTransport).
     nexus mount /zone/llm/local  --backend=openai_compatible \
         --config='{"base_url":"http://localhost:11434/v1"}'
 
-write_content() is inherited from CASAddressingEngine — pure CAS storage,
-no LLM logic. LLM call orchestration lives in the service layer
-(LLMStreamingService), not in the storage driver.
+write_content() is inherited from CASAddressingEngine — pure CAS storage.
+LLM streaming orchestration is owned by the backend via ``start_streaming()``:
+StreamManager is injected at mount time by the factory/DLC layer.
 
-LLM-specific methods (additions, not overrides):
+LLM-specific methods:
     generate_streaming(request) → Iterator[(token, metadata)]
         Pure compute — yields tokens from OpenAI streaming API.
     persist_session(request, response, ...) → WriteResult
         CAS persist: request + response + session envelope.
+    start_streaming(request_bytes, stream_path) → dict
+        Orchestrates: create DT_STREAM → pump tokens → CAS persist → close.
 
 References:
     - Task #1589: LLM backend driver design
@@ -25,11 +27,14 @@ References:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
+import queue
 import time
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from nexus.backends.base.cas_addressing_engine import CASAddressingEngine
 from nexus.backends.base.registry import ArgType, ConnectionArg, register_connector
@@ -40,6 +45,7 @@ from nexus.core.object_store import WriteResult
 
 if TYPE_CHECKING:
     from nexus.contracts.types import OperationContext
+    from nexus.core.stream_manager import StreamManager
 
 logger = logging.getLogger(__name__)
 
@@ -68,29 +74,31 @@ def _build_openai_client(base_url: str, api_key: str, timeout: float) -> Any:
     requires=["openai"],
 )
 class CASOpenAIBackend(CASAddressingEngine):
-    """CAS addressing + OpenAI-compatible LLM transport.
+    """CAS addressing + OpenAI-compatible LLM transport + streaming orchestration.
 
     Thin subclass for connector registration and OpenAI client holder.
-    ``write_content()`` is inherited from CASAddressingEngine — pure CAS, no override.
-    LLM orchestration lives in ``LLMStreamingService``.
+    ``write_content()`` is inherited from CASAddressingEngine — pure CAS.
+    Streaming orchestration is owned by the backend via ``start_streaming()``.
 
-    LLM-specific methods (additions, not overrides):
+    StreamManager is injected at mount time via ``set_stream_manager()``
+    by the factory/DLC layer. Without it, ``start_streaming()`` raises.
+
+    LLM-specific methods:
 
     - ``generate_streaming()`` — pure compute, yields tokens
     - ``persist_session()`` — CAS persist request + response + envelope
+    - ``start_streaming()`` — full orchestration: DT_STREAM → tokens → CAS
 
     Usage::
 
         backend = CASOpenAIBackend(
             base_url="https://api.sudorouter.ai", api_key="sk-...",
         )
-        # Standard CAS write (inherited, no LLM call):
-        backend.write_content(b"raw data")
+        backend.set_stream_manager(stream_manager)  # injected at mount
 
-        # LLM streaming (service orchestrates):
-        for token, meta in backend.generate_streaming(request_dict):
-            stream.push(token)
-        backend.persist_session(req_bytes, full_resp, **meta)
+        # Streaming LLM call (backend owns lifecycle):
+        result = await backend.start_streaming(request_bytes, stream_path)
+        # Client reads tokens via sys_read(stream_path, offset=N)
     """
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
@@ -141,6 +149,10 @@ class CASOpenAIBackend(CASAddressingEngine):
 
         super().__init__(transport, backend_name="openai_compatible")
 
+        # StreamManager injected at mount time for DT_STREAM orchestration
+        self._stream_manager: StreamManager | None = None
+        self._active_tasks: dict[str, asyncio.Task[None]] = {}
+
         # Wire message-boundary CDC for LLM conversation dedup (Issue #1826).
         # Must be after super().__init__ since MessageBoundaryStrategy needs
         # self as CASAddressingEngine.
@@ -155,6 +167,182 @@ class CASOpenAIBackend(CASAddressingEngine):
         return "openai_compatible"
 
     # ------------------------------------------------------------------
+    # StreamManager injection (DI at mount time)
+    # ------------------------------------------------------------------
+
+    def set_stream_manager(self, stream_manager: "StreamManager") -> None:
+        """Inject StreamManager for DT_STREAM orchestration.
+
+        Called by factory/DLC at mount time — backend cannot create streams
+        without this. Follows the same late-injection pattern as metastore.
+        """
+        self._stream_manager = stream_manager
+
+    # ------------------------------------------------------------------
+    # Streaming orchestration (owns full lifecycle)
+    # ------------------------------------------------------------------
+
+    # Default stream capacity: 8MB for LLM responses
+    _DEFAULT_STREAM_CAPACITY = 8 * 1024 * 1024
+
+    async def start_streaming(
+        self,
+        request_bytes: bytes,
+        stream_path: str,
+        *,
+        capacity: int = _DEFAULT_STREAM_CAPACITY,
+        owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Start a streaming LLM call, delivering tokens via DT_STREAM.
+
+        Creates a DT_STREAM at ``stream_path``, spawns a background task
+        that iterates the sync generator and pushes tokens to the stream.
+        Returns immediately — callers read tokens via
+        ``sys_read(stream_path, offset=N)``.
+
+        Raises:
+            BackendError: If StreamManager is not injected.
+        """
+        from nexus.core.stream import StreamError
+
+        if self._stream_manager is None:
+            raise BackendError(
+                "LLM streaming unavailable: StreamManager not injected. "
+                "Ensure backend is mounted via DLC.",
+                backend="openai_compatible",
+            )
+
+        try:
+            self._stream_manager.create(stream_path, capacity=capacity, owner_id=owner_id)
+        except StreamError as exc:
+            raise BackendError(f"LLM streaming unavailable: {exc}") from exc
+
+        task = asyncio.create_task(
+            self._run_stream(request_bytes, stream_path),
+            name=f"llm-stream:{stream_path}",
+        )
+        self._active_tasks[stream_path] = task
+
+        return {"stream_path": stream_path, "status": "streaming"}
+
+    async def cancel_stream(self, stream_path: str) -> bool:
+        """Cancel an active streaming LLM call."""
+        task = self._active_tasks.pop(stream_path, None)
+        if task is None:
+            return False
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        if self._stream_manager is not None:
+            with contextlib.suppress(Exception):
+                self._stream_manager.destroy(stream_path)
+
+        logger.info("LLM stream cancelled: %s", stream_path)
+        return True
+
+    async def _run_stream(self, request_bytes: bytes, stream_path: str) -> None:
+        """Background task: pump tokens from LLM to DT_STREAM, then CAS persist."""
+        sm = self._stream_manager
+        assert sm is not None  # guaranteed by start_streaming() guard
+
+        _SENTINEL: object = object()
+        token_q: queue.Queue[tuple[str, dict[str, Any] | None] | object | Exception] = queue.Queue(
+            maxsize=4096
+        )
+
+        def _producer() -> None:
+            try:
+                request = json.loads(request_bytes)
+                for item in self.generate_streaming(request):
+                    token_q.put(item)
+                token_q.put(_SENTINEL)
+            except Exception as exc:
+                token_q.put(exc)
+
+        loop = asyncio.get_running_loop()
+        producer_fut = loop.run_in_executor(None, _producer)
+
+        meta: dict[str, Any] = {}
+        try:
+            while True:
+                item = await loop.run_in_executor(None, token_q.get)
+                if item is _SENTINEL:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+
+                token_item = cast(tuple[str, dict[str, Any] | None], item)
+                token: str = token_item[0]
+                token_meta: dict[str, Any] | None = token_item[1]
+                if token:
+                    sm.stream_write_nowait(stream_path, token.encode("utf-8"))
+                if token_meta is not None:
+                    meta = token_meta
+
+            full_response = sm.collect_all(stream_path)
+            result = self.persist_session(
+                request_bytes=request_bytes,
+                response_content=full_response.decode("utf-8"),
+                model=meta.get("model", ""),
+                finish_reason="stop",
+                usage=meta.get("usage", {}),
+                latency_ms=meta.get("latency_ms", 0),
+            )
+
+            done_msg = json.dumps(
+                {
+                    "type": "done",
+                    "session_hash": result.content_id,
+                    "model": meta.get("model", ""),
+                    "latency_ms": meta.get("latency_ms", 0),
+                },
+                separators=(",", ":"),
+            )
+            sm.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
+            sm.signal_close(stream_path)
+
+            logger.info(
+                "LLM stream completed: %s model=%s session=%s",
+                stream_path,
+                meta.get("model", ""),
+                result.content_id[:16],
+            )
+
+        except asyncio.CancelledError:
+            logger.info("LLM stream cancelled: %s", stream_path)
+            with contextlib.suppress(Exception):
+                sm.signal_close(stream_path)
+            raise
+
+        except Exception as exc:
+            logger.error("LLM stream failed: %s error=%s", stream_path, exc)
+            error_msg = json.dumps(
+                {"type": "error", "message": str(exc)},
+                separators=(",", ":"),
+            )
+            with contextlib.suppress(Exception):
+                sm.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
+                sm.signal_close(stream_path)
+
+        finally:
+            with contextlib.suppress(Exception):
+                await producer_fut
+            self._active_tasks.pop(stream_path, None)
+
+    @property
+    def active_streams(self) -> list[str]:
+        """Return VFS paths of currently active streaming LLM calls."""
+        return list(self._active_tasks.keys())
+
+    async def shutdown_streams(self) -> None:
+        """Cancel all active streams. Called on kernel shutdown."""
+        paths = list(self._active_tasks.keys())
+        for path in paths:
+            await self.cancel_stream(path)
+
+    # ------------------------------------------------------------------
     # Streaming — pure compute, no kernel IPC
     # ------------------------------------------------------------------
 
@@ -164,7 +352,7 @@ class CASOpenAIBackend(CASAddressingEngine):
         """Yield ``(token, None)`` per chunk, ``("", metadata)`` at end.
 
         Pure LLM compute — no kernel IPC, no StreamManager dependency.
-        The service layer (LLMStreamingService) bridges these tokens
+        The backend's ``start_streaming()`` bridges these tokens
         to DT_STREAM for real-time fan-out.
 
         Args:
@@ -260,7 +448,7 @@ class CASOpenAIBackend(CASAddressingEngine):
     ) -> WriteResult:
         """Persist request + response + session envelope in CAS.
 
-        Called by LLMStreamingService after DT_STREAM flush, or
+        Called by ``_run_stream()`` after DT_STREAM flush, or
         directly by callers for sync (non-streaming) LLM calls.
         Uses inherited ``write_content()`` (pure CAS) internally.
 

@@ -138,9 +138,9 @@ def _make_vfs_loop(
 
             raise StreamClosedError("stream closed") from None
 
-    # Mock LLMStreamingService
-    llm_service = MagicMock()
-    llm_service.start_stream = AsyncMock(
+    # Mock CASOpenAIBackend
+    llm_backend = MagicMock()
+    llm_backend.start_streaming = AsyncMock(
         return_value={"stream_path": "/zone/llm/.streams/test", "status": "streaming"}
     )
 
@@ -152,7 +152,7 @@ def _make_vfs_loop(
         sys_read=sys_read_mock,
         sys_write=sys_write_mock,
         stream_read=stream_read_mock,
-        llm_service=llm_service,
+        llm_backend=llm_backend,
         agent_path="/zone/agents/test-agent",
         llm_path="/zone/llm/openai",
         conv_path="/zone/agents/test-agent/conversation",
@@ -164,7 +164,7 @@ def _make_vfs_loop(
         "sys_read": sys_read_mock,
         "sys_write": sys_write_mock,
         "stream_read": stream_read_mock,
-        "llm_service": llm_service,
+        "llm_backend": llm_backend,
         "write_store": write_store,
         "read_store": read_store,
     }
@@ -193,15 +193,15 @@ class TestManagedAgentLoop:
 
     @pytest.mark.asyncio()
     async def test_run_calls_llm_via_streaming_service(self) -> None:
-        """LLM call goes through LLMStreamingService (not backend directly)."""
+        """LLM call goes through CASOpenAIBackend.start_streaming()."""
         loop, mocks = _make_vfs_loop()
         await loop.initialize()
 
         await loop.run("Hi")
 
-        # LLMStreamingService.start_stream was called
-        mocks["llm_service"].start_stream.assert_called_once()
-        call_args = mocks["llm_service"].start_stream.call_args
+        # CASOpenAIBackend.start_streaming was called
+        mocks["llm_backend"].start_streaming.assert_called_once()
+        call_args = mocks["llm_backend"].start_streaming.call_args
         request_bytes = call_args[0][0]
         request = json.loads(request_bytes)
         assert "messages" in request

@@ -19,7 +19,7 @@ Reuses AgentObserver for notification accumulation (shared with
 DI dependencies (kernel syscall callables):
     - sys_read:  NexusFS.sys_read wrapper
     - sys_write: NexusFS.sys_write wrapper
-    - llm_streaming_service: LLMStreamingService for DT_STREAM delivery
+    - llm_backend: CASOpenAIBackend for LLM streaming + CAS
     - agent_path: VFS path for agent config (SYSTEM.md, tools.json)
     - llm_path: VFS mount path for LLM backend
     - conv_path: VFS path for conversation persistence (CAS)
@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.services.agent_runtime.observer import AgentObserver, AgentTurnResult
 
 if TYPE_CHECKING:
-    from nexus.services.llm_streaming_service import LLMStreamingService
+    from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ class ManagedAgentLoop:
 
     Every I/O operation goes through kernel VFS syscalls:
 
-    - LLM calls via ``LLMStreamingService`` (DT_STREAM delivery)
+    - LLM calls via ``CASOpenAIBackend`` (DT_STREAM delivery)
     - Token reads via ``sys_read`` on DT_STREAM (kernel IPC)
     - Conversation via ``sys_write`` to CAS-addressed VFS path
     - Config (system prompt, tools) via ``sys_read`` from VFS
@@ -78,7 +78,7 @@ class ManagedAgentLoop:
         sys_read: SysReadFn,
         sys_write: SysWriteFn,
         stream_read: StreamReadFn,
-        llm_service: "LLMStreamingService",
+        llm_backend: "CASOpenAIBackend",
         agent_path: str,
         llm_path: str,
         conv_path: str,
@@ -89,7 +89,7 @@ class ManagedAgentLoop:
         self._sys_read = sys_read
         self._sys_write = sys_write
         self._stream_read = stream_read
-        self._llm_service = llm_service
+        self._llm_backend = llm_backend
         self._agent_path = agent_path  # /{zone}/agents/{id}
         self._llm_path = llm_path  # /{zone}/llm/openai
         self._conv_path = conv_path  # /{zone}/agents/{id}/conversation
@@ -153,7 +153,7 @@ class ManagedAgentLoop:
 
         All I/O through VFS:
             1. Append user message → persist conversation (sys_write)
-            2. Start LLM stream (LLMStreamingService → DT_STREAM)
+            2. Start LLM stream (CASOpenAIBackend → DT_STREAM)
             3. Read tokens from DT_STREAM (sys_read / stream_read)
             4. Parse response: tool_calls? → execute via VFS → loop
                                text? → persist result → return
@@ -224,7 +224,7 @@ class ManagedAgentLoop:
         """Call LLM through kernel VFS path.
 
         1. Build request from conversation state
-        2. LLMStreamingService.start_stream() → creates DT_STREAM
+        2. CASOpenAIBackend.start_streaming() → creates DT_STREAM
         3. Read tokens from DT_STREAM via stream_read (kernel IPC)
         4. Parse final "done" message for session hash + metadata
         """
@@ -238,7 +238,7 @@ class ManagedAgentLoop:
         stream_path = f"{self._llm_path}/.streams/{self._session_id}-{uuid.uuid4().hex[:8]}"
 
         # Start LLM streaming via kernel service
-        await self._llm_service.start_stream(request_bytes, stream_path)
+        await self._llm_backend.start_streaming(request_bytes, stream_path)
 
         # Read tokens from DT_STREAM (kernel IPC, non-destructive)
         tokens: list[str] = []

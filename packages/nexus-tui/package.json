@@ -11,8 +11,8 @@
     "README.md"
   ],
   "scripts": {
-    "dev": "bun run src/index.tsx",
-    "start": "bun run src/index.tsx",
+    "dev": "bun run --conditions=browser src/index.tsx",
+    "start": "bun run --conditions=browser src/index.tsx",
     "test": "bun test",
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -20,14 +20,13 @@
   "dependencies": {
     "@nexus-ai-fs/api-client": "file:../nexus-api-client",
     "@opentui/core": "0.1.96",
-    "@opentui/react": "0.1.96",
+    "@opentui/solid": "0.1.96",
     "anser": "^2.3.5",
-    "react": "^19.0.0",
+    "solid-js": "^1.9.12",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",
-    "@types/react": "^19.0.0",
     "typescript": "^5.5.0"
   },
   "keywords": [

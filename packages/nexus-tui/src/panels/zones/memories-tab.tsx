@@ -1,9 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Memories sub-tab for the Zones panel.
  * Displays registered memory directories with selection highlighting.
  */
 
-import React from "react";
 import type { MemoryInfo } from "../../stores/workspace-store.js";
 
 interface MemoriesTabProps {
@@ -16,7 +16,7 @@ export function MemoriesTab({
   memories,
   selectedIndex,
   loading,
-}: MemoriesTabProps): React.ReactNode {
+}: MemoriesTabProps): JSX.Element {
   if (loading) return <text>Loading memories...</text>;
   if (memories.length === 0)
     return <text>No memory directories registered. Press 'n' to register one.</text>;
@@ -27,7 +27,7 @@ export function MemoriesTab({
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         return (
-          <box key={mem.path} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{`${prefix}${mem.name}  ${mem.path}  ${mem.scope}  ${mem.created_by ?? ""}`}</text>
           </box>
         );

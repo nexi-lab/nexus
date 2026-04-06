@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Scheduler metrics dashboard: queued, running, completed, failed, throughput.
  */
 
-import React from "react";
 import type { SchedulerMetrics } from "../../stores/workflows-store.js";
 
 interface SchedulerViewProps {
@@ -15,7 +15,7 @@ function formatMs(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-export function SchedulerView({ metrics, loading }: SchedulerViewProps): React.ReactNode {
+export function SchedulerView({ metrics, loading }: SchedulerViewProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -74,7 +74,7 @@ export function SchedulerView({ metrics, loading }: SchedulerViewProps): React.R
             <text>{"  Queue by Priority:"}</text>
           </box>
           {metrics.queue_by_class.map((c, i) => (
-            <box key={i} height={1} width="100%">
+            <box height={1} width="100%">
               <text>{`    ${(c.priority_class ?? "unknown").padEnd(12)} ${c.count} tasks`}</text>
             </box>
           ))}
@@ -91,7 +91,7 @@ export function SchedulerView({ metrics, loading }: SchedulerViewProps): React.R
             <text>{"  Fair Share Allocation:"}</text>
           </box>
           {Object.entries(metrics.fair_share).map(([agent, share], i) => (
-            <box key={i} height={1} width="100%">
+            <box height={1} width="100%">
               <text>{`    ${agent.padEnd(20)} ${JSON.stringify(share)}`}</text>
             </box>
           ))}

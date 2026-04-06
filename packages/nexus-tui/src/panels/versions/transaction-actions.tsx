@@ -4,31 +4,31 @@
  * Shows available keyboard shortcuts based on transaction status.
  */
 
-import React from "react";
+import { Show } from "solid-js";
 import type { Transaction } from "../../stores/versions-store.js";
 
 interface TransactionActionsProps {
   readonly transaction: Transaction | null;
 }
 
-export function TransactionActions({
-  transaction,
-}: TransactionActionsProps): React.ReactNode {
-  if (!transaction) {
-    return <text>{"n:new transaction  f:filter  q:quit"}</text>;
-  }
-
-  if (transaction.status === "active") {
-    return (
-      <text>
-        {"Enter:commit  Backspace:rollback  n:new transaction  f:filter  q:quit"}
-      </text>
-    );
-  }
-
+export function TransactionActions(props: TransactionActionsProps) {
   return (
-    <text>
-      {"(read-only)  n:new transaction  f:filter  q:quit"}
-    </text>
+    <Show
+      when={props.transaction}
+      fallback={<text>{"n:new transaction  f:filter  q:quit"}</text>}
+    >
+      <Show
+        when={props.transaction!.status === "active"}
+        fallback={
+          <text>
+            {"(read-only)  n:new transaction  f:filter  q:quit"}
+          </text>
+        }
+      >
+        <text>
+          {"Enter:commit  Backspace:rollback  n:new transaction  f:filter  q:quit"}
+        </text>
+      </Show>
+    </Show>
   );
 }

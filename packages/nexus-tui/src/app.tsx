@@ -5,7 +5,8 @@
  * Shows PreConnectionScreen when the server is unavailable (Decision 3A).
  */
 
-import React, { lazy, Suspense, useState, useCallback, useEffect, useRef } from "react";
+import { createEffect, createMemo, createSignal, ErrorBoundary, lazy, Match, onCleanup, Show, Suspense, Switch } from "solid-js";
+import type { JSX } from "solid-js";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { useErrorStore } from "./stores/error-store.js";
@@ -14,9 +15,9 @@ import { SideNav } from "./shared/components/side-nav.js";
 import { StatusBar } from "./shared/components/status-bar.js";
 import { ErrorBar } from "./shared/components/error-bar.js";
 import { AnnouncementBar } from "./shared/components/announcement-bar.js";
-import { ErrorBoundary } from "./shared/components/error-boundary.js";
 import { Spinner } from "./shared/components/spinner.js";
 import { useKeyboard } from "./shared/hooks/use-keyboard.js";
+import type { KeyBindings } from "./shared/hooks/use-keyboard.js";
 import { IdentitySwitcher } from "./shared/components/identity-switcher.js";
 import { AppConfirmDialog } from "./shared/components/app-confirm-dialog.js";
 import { HelpOverlay } from "./shared/components/help-overlay.js";
@@ -38,24 +39,25 @@ import {
 } from "./shared/accessibility-announcements.js";
 
 // Lazy-loaded panels
-const FileExplorerPanel = lazy(() => import("./panels/files/file-explorer-panel.js"));
-const VersionsPanel = lazy(() => import("./panels/versions/versions-panel.js"));
-const AgentsPanel = lazy(() => import("./panels/agents/agents-panel.js"));
-const ZonesPanel = lazy(() => import("./panels/zones/zones-panel.js"));
-const AccessPanel = lazy(() => import("./panels/access/access-panel.js"));
-const PaymentsPanel = lazy(() => import("./panels/payments/payments-panel.js"));
-const SearchPanel = lazy(() => import("./panels/search/search-panel.js"));
-const WorkflowsPanel = lazy(() => import("./panels/workflows/workflows-panel.js"));
-const EventsPanel = lazy(() => import("./panels/events/events-panel.js"));
-const ApiConsolePanel = lazy(() => import("./panels/api-console/api-console-panel.js"));
-const ConnectorsPanel = lazy(() => import("./panels/connectors/connectors-panel.js"));
-const StackPanel = lazy(() => import("./panels/stack/stack-panel.js"));
+// Direct imports — lazy() + Suspense prevents <Show keyed> from re-mounting panels.
+import FileExplorerPanel from "./panels/files/file-explorer-panel.js";
+import VersionsPanel from "./panels/versions/versions-panel.js";
+import AgentsPanel from "./panels/agents/agents-panel.js";
+import ZonesPanel from "./panels/zones/zones-panel.js";
+import AccessPanel from "./panels/access/access-panel.js";
+import PaymentsPanel from "./panels/payments/payments-panel.js";
+import SearchPanel from "./panels/search/search-panel.js";
+import WorkflowsPanel from "./panels/workflows/workflows-panel.js";
+import EventsPanel from "./panels/events/events-panel.js";
+import ApiConsolePanel from "./panels/api-console/api-console-panel.js";
+import ConnectorsPanel from "./panels/connectors/connectors-panel.js";
+import StackPanel from "./panels/stack/stack-panel.js";
 
 /**
  * Exhaustive panel route map — adding a new PanelId without a matching entry
  * here is a compile-time error (Record<PanelId, ...> enforces completeness).
  */
-export const PANEL_ROUTES: Record<PanelId, () => React.ReactNode> = {
+export const PANEL_ROUTES: Record<PanelId, () => unknown> = {
   files:          () => <FileExplorerPanel />,
   versions:       () => <VersionsPanel />,
   agents:         () => <AgentsPanel />,
@@ -70,9 +72,25 @@ export const PANEL_ROUTES: Record<PanelId, () => React.ReactNode> = {
   stack:          () => <StackPanel />,
 };
 
-function PanelRouter(): React.ReactNode {
-  const activePanel = useGlobalStore((s) => s.activePanel);
-  return PANEL_ROUTES[activePanel]();
+// PanelRouter is rendered inside App. The panel signal and polling are
+// created in App (not PanelRouter) so they survive <Switch> branch disposal.
+function PanelRouter(props: { panel: () => PanelId }) {
+  return (
+    <Switch fallback={<text>Loading panel...</text>}>
+      <Match when={props.panel() === "files"}><FileExplorerPanel /></Match>
+      <Match when={props.panel() === "versions"}><VersionsPanel /></Match>
+      <Match when={props.panel() === "agents"}><AgentsPanel /></Match>
+      <Match when={props.panel() === "zones"}><ZonesPanel /></Match>
+      <Match when={props.panel() === "access"}><AccessPanel /></Match>
+      <Match when={props.panel() === "payments"}><PaymentsPanel /></Match>
+      <Match when={props.panel() === "search"}><SearchPanel /></Match>
+      <Match when={props.panel() === "workflows"}><WorkflowsPanel /></Match>
+      <Match when={props.panel() === "infrastructure"}><EventsPanel /></Match>
+      <Match when={props.panel() === "console"}><ApiConsolePanel /></Match>
+      <Match when={props.panel() === "connectors"}><ConnectorsPanel /></Match>
+      <Match when={props.panel() === "stack"}><StackPanel /></Match>
+    </Switch>
+  );
 }
 
 /**
@@ -89,9 +107,17 @@ function shutdown(): void {
   process.exit(0);
 }
 
-export function App(): React.ReactNode {
+export function App() {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
+
+  // Panel signal for PanelRouter — created in App scope so it survives
+  // <Switch> branch disposal in PanelRouter.
+  const [panelSignal, setPanelSignal] = createSignal<PanelId>(useGlobalStore.getState().activePanel);
+  setInterval(() => {
+    const ap = useGlobalStore.getState().activePanel as PanelId;
+    if (ap !== panelSignal()) setPanelSignal(ap);
+  }, 50);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
   const connectionError = useGlobalStore((s) => s.connectionError);
   const config = useGlobalStore((s) => s.config);
@@ -99,89 +125,99 @@ export function App(): React.ReactNode {
   const announce = useAnnouncementStore((s) => s.announce);
   const toggleZoom = useUiStore((s) => s.toggleZoom);
   const zoomedPanel = useUiStore((s) => s.zoomedPanel);
-  const [identitySwitcherOpen, setIdentitySwitcherOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [sideNavVisible, setSideNavVisible] = useState(true);
+  const [identitySwitcherOpen, setIdentitySwitcherOpen] = createSignal(false);
+  const [helpOpen, setHelpOpen] = createSignal(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
+  const [sideNavVisible, setSideNavVisible] = createSignal(true);
   const visibleTabs = useVisibleTabs(NAV_ITEMS);
   const { isFresh } = useFreshServer();
-  const [welcomeDismissed, setWelcomeDismissed] = useState(false);
-  const showWelcome = isFresh === true && !welcomeDismissed;
+  const [welcomeDismissed, setWelcomeDismissed] = createSignal(false);
+  const showWelcome = () => isFresh === true && !welcomeDismissed();
 
-  // Determine if we should show the pre-connection screen (Decision 3A)
-  // Only hide it when fully connected — "connecting" still shows the pre-connection
-  // screen with a spinner to avoid flashing the main UI during connection attempts.
-  const connState = detectConnectionState(connectionStatus, connectionError, config);
-  const showPreConnection = connState !== "ready";
-  const previousPanelRef = useRef<PanelId | null>(null);
-  const previousConnectionRef = useRef(connectionStatus);
-  const lastErrorIdRef = useRef<string | null>(null);
-  const panelLabel = PANEL_DESCRIPTORS[activePanel]?.breadcrumbLabel ?? activePanel;
+  // Determine if we should show the pre-connection screen (Decision 3A).
+  // Must be a createMemo so the Show in JSX re-evaluates when connectionStatus changes.
+  const showPreConnection = createMemo(() => {
+    const cs = useGlobalStore((s) => s.connectionStatus);
+    const ce = useGlobalStore((s) => s.connectionError);
+    const cfg = useGlobalStore((s) => s.config);
+    return detectConnectionState(cs, ce, cfg) !== "ready";
+  });
+  let previousPanel: PanelId | null = null;
+  let previousConnection = connectionStatus;
+  let lastErrorId: string | null = null;
+  const panelLabel = createMemo(() => PANEL_DESCRIPTORS[useGlobalStore((s) => s.activePanel)]?.breadcrumbLabel ?? useGlobalStore((s) => s.activePanel));
 
   const setOverlayActive = useUiStore((s) => s.setOverlayActive);
-  useEffect(() => {
-    setOverlayActive(identitySwitcherOpen || helpOpen || commandPaletteOpen || showWelcome);
-  }, [identitySwitcherOpen, helpOpen, commandPaletteOpen, showWelcome, setOverlayActive]);
+  createEffect(() => {
+    setOverlayActive(identitySwitcherOpen() || helpOpen() || commandPaletteOpen() || showWelcome());
+  });
 
-  useEffect(() => {
+  createEffect(() => {
     const visibleIds = visibleTabs.map((tab) => tab.id);
-    if (visibleIds.length > 0 && !visibleIds.includes(activePanel)) {
+    const ap = useGlobalStore((s) => s.activePanel);
+    if (visibleIds.length > 0 && !visibleIds.includes(ap)) {
       setActivePanel(visibleIds[0]!);
     }
-  }, [activePanel, setActivePanel, visibleTabs]);
+  });
 
-  useEffect(() => {
-    if (previousPanelRef.current !== null && previousPanelRef.current !== activePanel) {
-      announce(formatPanelAnnouncement(panelLabel));
+  createEffect(() => {
+    const ap = useGlobalStore((s) => s.activePanel);
+    if (previousPanel !== null && previousPanel !== ap) {
+      announce(formatPanelAnnouncement(panelLabel()));
     }
-    previousPanelRef.current = activePanel;
-  }, [activePanel, panelLabel, announce]);
+    previousPanel = ap;
+  });
 
-  useEffect(() => {
-    if (previousConnectionRef.current !== connectionStatus) {
+  createEffect(() => {
+    const cs = useGlobalStore((s) => s.connectionStatus);
+    const ce = useGlobalStore((s) => s.connectionError);
+    if (previousConnection !== cs) {
       announce(
-        formatConnectionAnnouncement(connectionStatus, connectionError),
-        connectionStatus === "error" ? "error" : connectionStatus === "connected" ? "success" : "info",
+        formatConnectionAnnouncement(cs, ce),
+        cs === "error" ? "error" : cs === "connected" ? "success" : "info",
       );
     }
-    previousConnectionRef.current = connectionStatus;
-  }, [connectionStatus, connectionError, announce]);
+    previousConnection = cs;
+  });
 
-  useEffect(() => {
-    if (!latestError || lastErrorIdRef.current === latestError.id) return;
-    lastErrorIdRef.current = latestError.id;
+  createEffect(() => {
+    const err = useErrorStore((s) => (s.errors.length > 0 ? s.errors[s.errors.length - 1] : null));
+    if (!err || lastErrorId === err.id) return;
+    lastErrorId = err.id;
+    const cs = useGlobalStore((s) => s.connectionStatus);
+    const ce = useGlobalStore((s) => s.connectionError);
     if (
-      latestError.source === "global"
-      && connectionStatus === "error"
-      && latestError.message === connectionError
+      err.source === "global"
+      && cs === "error"
+      && err.message === ce
     ) {
       return;
     }
-    announce(formatErrorAnnouncement(latestError.message), "error");
-  }, [latestError, connectionStatus, connectionError, announce]);
+    announce(formatErrorAnnouncement(err.message), "error");
+  });
 
   // Centralized panel navigation — rejects panels not in the current visible set
   // so that disabled-brick panels cannot be entered via keyboard shortcuts.
-  const navigateToPanel = useCallback((panelId: PanelId): void => {
+  const navigateToPanel = (panelId: PanelId): void => {
     if (useUiStore.getState().fileEditorOpen) return;
     if (visibleTabs.some((t) => t.id === panelId)) {
       setActivePanel(panelId);
     }
-  }, [visibleTabs, setActivePanel]);
+  };
 
-  const toggleIdentitySwitcher = useCallback(() => {
+  const toggleIdentitySwitcher = () => {
     setIdentitySwitcherOpen((prev) => !prev);
-  }, []);
+  };
 
-  const closeIdentitySwitcher = useCallback(() => {
+  const closeIdentitySwitcher = () => {
     setIdentitySwitcherOpen(false);
-  }, []);
+  };
 
-  const closeCommandPalette = useCallback(() => {
+  const closeCommandPalette = () => {
     setCommandPaletteOpen(false);
-  }, []);
+  };
 
-  const commandPaletteItems = React.useMemo<readonly CommandPaletteItem[]>(() => {
+  const commandPaletteItems = createMemo<readonly CommandPaletteItem[]>(() => {
     // Only show panels that are currently brick-enabled so hidden panels
     // cannot be navigated to through the command palette.
     const visiblePanelIds = new Set(visibleTabs.map((t) => t.id));
@@ -240,20 +276,24 @@ export function App(): React.ReactNode {
     ];
 
     return [...appCommands, ...panelCommands];
-  }, [visibleTabs, setActivePanel, zoomedPanel, activePanel, toggleZoom]);
+  });
 
-  useKeyboard(
-    showPreConnection
-      ? {
+  const keyBindings = createMemo((): KeyBindings => {
+    if (showPreConnection()) {
+      return {
           // Pre-connection screen handles its own keybindings
           "q": shutdown,
-        }
-      : identitySwitcherOpen || helpOpen || commandPaletteOpen || showWelcome
-      ? {
+        };
+    }
+
+    if (identitySwitcherOpen() || helpOpen() || commandPaletteOpen() || showWelcome()) {
+      return {
           // When an overlay is open, only dismiss keys work from app level.
           "ctrl+i": toggleIdentitySwitcher,
-        }
-      : {
+        };
+    }
+
+    return {
           // navigateToPanel checks both fileEditorOpen and brick visibility,
           // so disabled-brick panels cannot be entered via keyboard shortcuts.
           "1": () => navigateToPanel("files"),
@@ -279,56 +319,47 @@ export function App(): React.ReactNode {
             // Disconnect and go back to setup menu
             useGlobalStore.getState().setConnectionStatus("error", "Disconnected by user");
           },
-          "z": () => { if (!useUiStore.getState().fileEditorOpen) toggleZoom(activePanel); },
+          "z": () => { if (!useUiStore.getState().fileEditorOpen) toggleZoom(useGlobalStore.getState().activePanel); },
           "?": () => { if (!useUiStore.getState().fileEditorOpen) setHelpOpen(true); },
           "q": () => { if (!useUiStore.getState().fileEditorOpen) shutdown(); },
-        },
-  );
+        };
+  });
 
-  // Pre-connection screen (Decision 3A): shown when server is unavailable
-  if (showPreConnection) {
-    return (
-      <box height="100%" width="100%" flexDirection="column">
-        <PreConnectionScreen />
-        <StatusBar />
-      </box>
-    );
-  }
+  useKeyboard(keyBindings);
 
+  // Render both main UI and pre-connection screen. Use <Show> to toggle
+  // visibility, NOT to conditionally mount/unmount. This ensures the main
+  // UI's reactive scope (signals, effects, intervals) is never disposed.
   return (
     <box height="100%" width="100%" flexDirection="column">
-      {/* Main row: sidebar + panel content */}
-      <box flexGrow={1} flexDirection="row">
-        {/* Side navigation (Ctrl+B toggles, hidden when zoomed or terminal too narrow) */}
-        <SideNav activePanel={activePanel} visible={sideNavVisible && !zoomedPanel} onSelect={setActivePanel} />
+      {/* Pre-connection overlay — shown on top when not connected */}
+      <Show when={showPreConnection()}>
+        <PreConnectionScreen />
+        <StatusBar />
+      </Show>
 
-        {/* Panel content */}
-        <box flexGrow={1}>
-          <ErrorBoundary>
-            <Suspense
-              fallback={
-                <box height="100%" width="100%" justifyContent="center" alignItems="center">
-                  <Spinner label="Loading panel..." />
-                </box>
-              }
-            >
-              <PanelRouter />
-            </Suspense>
-          </ErrorBoundary>
+      {/* Main UI — always rendered, hidden when pre-connection is shown */}
+      <Show when={!showPreConnection()}>
+        {/* Main row: sidebar + panel content */}
+        <box flexGrow={1} flexDirection="row">
+          <SideNav activePanel={useGlobalStore((s) => s.activePanel)} visible={sideNavVisible() && !useUiStore((s) => s.zoomedPanel)} onSelect={setActivePanel} />
+          <box flexGrow={1}>
+            <PanelRouter panel={panelSignal} />
+          </box>
         </box>
-      </box>
 
-      {/* Overlays */}
-      {showWelcome && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
-      <IdentitySwitcher visible={identitySwitcherOpen} onClose={closeIdentitySwitcher} />
-      <CommandPalette visible={commandPaletteOpen} commands={commandPaletteItems} onClose={closeCommandPalette} />
-      <AppConfirmDialog />
-      <HelpOverlay visible={helpOpen} panel={activePanel} onDismiss={() => setHelpOpen(false)} />
+        {/* Overlays */}
+        {showWelcome() && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
+        <IdentitySwitcher visible={identitySwitcherOpen()} onClose={closeIdentitySwitcher} />
+        <CommandPalette visible={commandPaletteOpen()} commands={commandPaletteItems()} onClose={closeCommandPalette} />
+        <AppConfirmDialog />
+        <HelpOverlay visible={helpOpen()} panel={useGlobalStore((s) => s.activePanel)} onDismiss={() => setHelpOpen(false)} />
 
-      {/* Error bar + Status bar */}
-      <AnnouncementBar />
-      <ErrorBar />
-      <StatusBar />
+        {/* Error bar + Status bar */}
+        <AnnouncementBar />
+        <ErrorBar />
+        <StatusBar />
+      </Show>
     </box>
   );
 }

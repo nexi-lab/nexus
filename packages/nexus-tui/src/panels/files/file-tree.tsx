@@ -9,7 +9,8 @@
  * @see Issue #3102, Decisions 1A (virtualization) + 4A (React.memo on children)
  */
 
-import React, { useCallback, useEffect, useMemo } from "react";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import { useFilesStore, type TreeNode } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { FileTreeNode } from "./file-tree-node.js";
@@ -46,92 +47,107 @@ interface FileTreeProps {
   readonly effectiveSelection?: ReadonlySet<string>;
 }
 
-export function FileTree({ filterQuery = "", effectiveSelection }: FileTreeProps): React.ReactNode {
+export function FileTree(props: FileTreeProps): JSX.Element {
   const client = useApi();
-  const treeNodes = useFilesStore((s) => s.treeNodes);
-  const currentPath = useFilesStore((s) => s.currentPath);
-  const selectedIndex = useFilesStore((s) => s.selectedIndex);
   const setSelectedIndex = useFilesStore((s) => s.setSelectedIndex);
   const toggleNode = useFilesStore((s) => s.toggleNode);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
   const expandNode = useFilesStore((s) => s.expandNode);
   const loadMoreChildren = useFilesStore((s) => s.loadMoreChildren);
 
+  const filterQuery = () => props.filterQuery ?? "";
+  const effectiveSelection = () => props.effectiveSelection;
+
+  // OpenTUI's renderer doesn't re-render on Solid store proxy changes.
+  // Use explicit subscription to a signal so <Show> / JSX re-evaluates.
+  const [revision, setRevision] = createSignal(useFilesStore.getState().fileCacheRevision);
+  const [currentPath, setCurrentPath] = createSignal(useFilesStore.getState().currentPath);
+  const [selectedIndex, setSelectedIdx] = createSignal(useFilesStore.getState().selectedIndex);
+  const unsub = useFilesStore.subscribe((state) => {
+    if (state.fileCacheRevision !== revision()) setRevision(state.fileCacheRevision);
+    if (state.currentPath !== currentPath()) setCurrentPath(state.currentPath);
+    if (state.selectedIndex !== selectedIndex()) setSelectedIdx(state.selectedIndex);
+  });
+  onCleanup(unsub);
+  const treeNodes = () => useFilesStore.getState().treeNodes;
+
   // Initialize root on mount
-  useEffect(() => {
-    if (client && !treeNodes.has(currentPath)) {
-      expandNode(currentPath, client);
+  createEffect(() => {
+    void revision(); // trigger when store updates
+    const path = currentPath();
+    const nodes = treeNodes();
+    if (client && !nodes.has(path)) {
+      expandNode(path, client);
     }
-  }, [client, currentPath, treeNodes, expandNode]);
+  });
 
   // Flatten visible tree nodes, then apply filter (Decision 13A).
   // Inserts "load more" sentinel nodes at the end of paginated directories.
-  const visibleNodes = useMemo(() => {
-    const all = flattenVisibleNodes(currentPath, treeNodes);
-    if (!filterQuery) return all;
-    const lowerQuery = filterQuery.toLowerCase();
+  const visibleNodes = createMemo(() => {
+    void revision(); // trigger re-evaluation when store updates
+    const all = flattenVisibleNodes(currentPath(), treeNodes());
+    const fq = filterQuery();
+    if (!fq) return all;
+    const lowerQuery = fq.toLowerCase();
     return all.filter((node) => fuzzyMatch(node.name.toLowerCase(), lowerQuery));
-  }, [currentPath, treeNodes, filterQuery]);
+  });
 
   // Auto-load more: when the selected node is a "load more" sentinel, trigger fetch
-  useEffect(() => {
+  createEffect(() => {
     if (!client) return;
-    const selectedNode = visibleNodes[selectedIndex];
+    const nodes = visibleNodes();
+    const idx = selectedIndex();
+    const selectedNode = nodes[idx];
     if (!selectedNode || !selectedNode.path.endsWith(LOAD_MORE_SENTINEL)) return;
 
     // Extract the parent path from the sentinel node
     const parentPath = selectedNode.path.slice(0, -(LOAD_MORE_SENTINEL.length + 1));
-    const parentNode = treeNodes.get(parentPath);
+    const parentNode = treeNodes().get(parentPath);
     if (parentNode?.hasMore && !parentNode.loadingMore) {
       loadMoreChildren(parentPath, client);
     }
-  }, [client, selectedIndex, visibleNodes, treeNodes, loadMoreChildren]);
+  });
 
   // Stable render callback for VirtualList (avoids inline closure per-render)
-  const renderNode = useCallback(
-    (node: TreeNode, index: number) => (
+  const renderNode = (node: TreeNode, index: number) => (
       <FileTreeNode
-        key={node.path}
         node={node}
-        selected={index === selectedIndex}
-        marked={effectiveSelection?.has(node.path) ?? false}
+        selected={index === selectedIndex()}
+        marked={effectiveSelection()?.has(node.path) ?? false}
       />
-    ),
-    [selectedIndex, effectiveSelection],
-  );
-
-  if (!client) {
-    return <text>No connection configured</text>;
-  }
-
-  if (visibleNodes.length === 0) {
-    const rootNode = treeNodes.get(currentPath);
-    if (rootNode?.loading) {
-      return <Spinner label="Loading..." />;
-    }
-    return <text>{filterQuery ? "No matches" : "Empty directory"}</text>;
-  }
+    );
 
   return (
-    <ScrollIndicator selectedIndex={selectedIndex} totalItems={visibleNodes.length} visibleItems={VIEWPORT_HEIGHT}>
-      <VirtualList
-        items={visibleNodes}
-        renderItem={renderNode}
-        viewportHeight={VIEWPORT_HEIGHT}
-        selectedIndex={selectedIndex}
-        overscan={5}
-        onSelect={(index) => {
-          setSelectedIndex(index);
-          const node = visibleNodes[index];
-          if (!node || node.path.endsWith(LOAD_MORE_SENTINEL) || !client) return;
-          if (node.isDirectory) {
-            void toggleNode(node.path, client);
-          } else {
-            void fetchPreview(node.path, client);
-          }
-        }}
-      />
-    </ScrollIndicator>
+    <Show when={client} fallback={<text>No connection configured</text>}>
+      <Show
+        when={visibleNodes().length > 0}
+        fallback={
+          <Show when={treeNodes().get(currentPath())?.loading} fallback={<text>{filterQuery() ? "No matches" : "Empty directory"}</text>}>
+            <Spinner label="Loading..." />
+          </Show>
+        }
+      >
+        <ScrollIndicator selectedIndex={selectedIndex()} totalItems={visibleNodes().length} visibleItems={VIEWPORT_HEIGHT}>
+          <VirtualList
+            items={visibleNodes()}
+            renderItem={renderNode}
+            viewportHeight={VIEWPORT_HEIGHT}
+            selectedIndex={selectedIndex()}
+            overscan={5}
+            onSelect={(index) => {
+              setSelectedIndex(index);
+              const node = visibleNodes()[index];
+              if (!node || node.path.endsWith(LOAD_MORE_SENTINEL) || !client) return;
+              if (node.isDirectory) {
+                void toggleNode(node.path, client);
+              } else {
+                void fetchPreview(node.path, client);
+              }
+            }}
+          />
+        </ScrollIndicator>
+      </Show>
+    </Show>
   );
 }
 

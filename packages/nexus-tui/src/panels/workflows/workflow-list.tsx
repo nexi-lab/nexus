@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Workflow list view: name, version, enabled, triggers count, actions count, description.
  */
 
-import React, { useCallback } from "react";
 import type { WorkflowSummary } from "../../stores/workflows-store.js";
 import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
@@ -26,7 +26,7 @@ export function WorkflowList({
   workflows,
   selectedIndex,
   loading,
-}: WorkflowListProps): React.ReactNode {
+}: WorkflowListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -44,8 +44,7 @@ export function WorkflowList({
     );
   }
 
-  const renderWorkflow = useCallback(
-    (w: WorkflowSummary, i: number) => {
+  const renderWorkflow = (w: WorkflowSummary, i: number) => {
       const isSelected = i === selectedIndex;
       const enabledBadge = w.enabled ? "[ON]" : "[--]";
       const name = truncate(w.name, 19);
@@ -54,7 +53,7 @@ export function WorkflowList({
       const prefix = isSelected ? "> " : "  ";
 
       return (
-        <box key={w.name} height={1} width="100%">
+        <box height={1} width="100%">
           <text>
             <span>{prefix}</span>
             <span style={textStyle({ fg: w.enabled ? statusColor.healthy : statusColor.dim })}>{enabledBadge.padEnd(5)}</span>
@@ -62,9 +61,7 @@ export function WorkflowList({
           </text>
         </box>
       );
-    },
-    [selectedIndex],
-  );
+    };
 
   return (
     <box height="100%" width="100%" flexDirection="column">

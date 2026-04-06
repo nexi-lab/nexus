@@ -1,9 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Uploads tab: displays upload sessions with progress bars,
  * filename, progress (offset/length), status, and expiry.
  */
 
-import React from "react";
 import type { UploadSession } from "../../stores/upload-store.js";
 
 interface UploadsTabProps {
@@ -21,7 +21,7 @@ function formatProgress(offset: number, length: number): string {
   return `[${bar}] ${pct}% (${offset}/${length})`;
 }
 
-export function UploadsTab({ sessions, selectedIndex, loading }: UploadsTabProps): React.ReactNode {
+export function UploadsTab({ sessions, selectedIndex, loading }: UploadsTabProps): JSX.Element {
   if (loading) return <text>Loading upload sessions...</text>;
   if (sessions.length === 0) return <text>No active upload sessions.</text>;
 
@@ -34,7 +34,7 @@ export function UploadsTab({ sessions, selectedIndex, loading }: UploadsTabProps
         const progress = formatProgress(session.offset, session.length);
         const expiry = session.expires_at ? `expires ${session.expires_at}` : "no expiry";
         return (
-          <box key={session.id} height={2} width="100%" flexDirection="column">
+          <box height={2} width="100%" flexDirection="column">
             <text>{`${prefix}${filename}  ${session.id.slice(0, 8)}...  ${expiry}`}</text>
             <text>{`    ${progress}`}</text>
           </box>

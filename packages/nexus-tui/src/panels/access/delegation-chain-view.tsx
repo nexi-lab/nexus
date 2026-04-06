@@ -5,7 +5,8 @@
  * Escape closes.
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAccessStore } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -18,18 +19,18 @@ interface DelegationChainViewProps {
 export function DelegationChainView({
   delegationId,
   onClose,
-}: DelegationChainViewProps): React.ReactNode {
+}: DelegationChainViewProps): JSX.Element {
   const client = useApi();
   const chain = useAccessStore((s) => s.delegationChain);
   const loading = useAccessStore((s) => s.delegationChainLoading);
   const error = useAccessStore((s) => s.error);
   const fetchDelegationChain = useAccessStore((s) => s.fetchDelegationChain);
 
-  useEffect(() => {
+  createEffect(() => {
     if (client) {
       fetchDelegationChain(delegationId, client);
     }
-  }, [delegationId, client, fetchDelegationChain]);
+  });
 
   useKeyboard({ escape: onClose });
 
@@ -93,7 +94,7 @@ export function DelegationChainView({
             : entry.intent;
 
           return (
-            <box key={entry.delegation_id} height={1} width="100%">
+            <box height={1} width="100%">
               <text>
                 {`${indent}  ${String(entry.depth).padEnd(5)}  ${agent.padEnd(15)}  ${parent.padEnd(15)}  ${entry.delegation_mode.padEnd(9)}  ${entry.status.padEnd(9)}  ${intentStr}`}
               </text>

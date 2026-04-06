@@ -9,7 +9,8 @@
  * new credentials against the server.
  */
 
-import React, { useState, useCallback } from "react";
+import { createSignal, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 
@@ -28,21 +29,16 @@ const FIELD_LABELS: Readonly<Record<FieldName, string>> = {
   zoneId: "Zone ID",
 };
 
-export function IdentitySwitcher({
-  visible,
-  onClose,
-}: IdentitySwitcherProps): React.ReactNode {
-  const config = useGlobalStore((s) => s.config);
-
-  const [activeField, setActiveField] = useState<FieldName>("agentId");
-  const [fields, setFields] = useState<Readonly<Record<FieldName, string>>>({
-    agentId: config.agentId ?? "",
-    subject: config.subject ?? "",
-    zoneId: config.zoneId ?? "",
+export function IdentitySwitcher(props: IdentitySwitcherProps): JSX.Element {
+  const [activeField, setActiveField] = createSignal<FieldName>("agentId");
+  const [fields, setFields] = createSignal<Readonly<Record<FieldName, string>>>({
+    agentId: "",
+    subject: "",
+    zoneId: "",
   });
 
   // Reset fields to current config values when the dialog opens
-  const resetFields = useCallback(() => {
+  const resetFields = () => {
     const currentConfig = useGlobalStore.getState().config;
     setFields({
       agentId: currentConfig.agentId ?? "",
@@ -50,62 +46,59 @@ export function IdentitySwitcher({
       zoneId: currentConfig.zoneId ?? "",
     });
     setActiveField("agentId");
-  }, []);
+  };
 
-  const handleConfirm = useCallback(() => {
+  const handleConfirm = () => {
     const store = useGlobalStore.getState();
-    // Pass all fields explicitly — empty string becomes undefined to clear the header
+    // Pass all fields explicitly -- empty string becomes undefined to clear the header
     store.setIdentity({
-      agentId: fields.agentId.trim() || undefined,
-      subject: fields.subject.trim() || undefined,
-      zoneId: fields.zoneId.trim() || undefined,
+      agentId: fields().agentId.trim() || undefined,
+      subject: fields().subject.trim() || undefined,
+      zoneId: fields().zoneId.trim() || undefined,
     });
     store.testConnection();
-    onClose();
-  }, [fields, onClose]);
+    props.onClose();
+  };
 
-  const handleCancel = useCallback(() => {
+  const handleCancel = () => {
     resetFields();
-    onClose();
-  }, [resetFields, onClose]);
+    props.onClose();
+  };
 
-  const handleTab = useCallback(() => {
-    const currentIdx = FIELD_ORDER.indexOf(activeField);
+  const handleTab = () => {
+    const currentIdx = FIELD_ORDER.indexOf(activeField());
     const nextIdx = (currentIdx + 1) % FIELD_ORDER.length;
     const nextField = FIELD_ORDER[nextIdx];
     if (nextField) {
       setActiveField(nextField);
     }
-  }, [activeField]);
+  };
 
-  const handleBackspace = useCallback(() => {
+  const handleBackspace = () => {
     setFields((prev) => ({
       ...prev,
-      [activeField]: prev[activeField].slice(0, -1),
+      [activeField()]: prev[activeField()].slice(0, -1),
     }));
-  }, [activeField]);
+  };
 
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      if (!visible) return;
-      // Single printable character
-      if (keyName.length === 1) {
-        setFields((prev) => ({
-          ...prev,
-          [activeField]: prev[activeField] + keyName,
-        }));
-      } else if (keyName === "space") {
-        setFields((prev) => ({
-          ...prev,
-          [activeField]: prev[activeField] + " ",
-        }));
-      }
-    },
-    [visible, activeField],
-  );
+  const handleUnhandledKey = (keyName: string) => {
+    if (!props.visible) return;
+    // Single printable character
+    if (keyName.length === 1) {
+      setFields((prev) => ({
+        ...prev,
+        [activeField()]: prev[activeField()] + keyName,
+      }));
+    } else if (keyName === "space") {
+      setFields((prev) => ({
+        ...prev,
+        [activeField()]: prev[activeField()] + " ",
+      }));
+    }
+  };
 
   useKeyboard(
-    visible
+    (): Record<string, () => void> => props.visible
       ? {
           return: handleConfirm,
           escape: handleCancel,
@@ -113,45 +106,47 @@ export function IdentitySwitcher({
           backspace: handleBackspace,
         }
       : {},
-    visible ? handleUnhandledKey : undefined,
+    () => props.visible ? handleUnhandledKey : undefined,
   );
 
-  if (!visible) return null;
+  const currentConfig = () => useGlobalStore.getState().config;
 
   return (
-    <box
-      height="100%"
-      width="100%"
-      justifyContent="center"
-      alignItems="center"
-    >
+    <Show when={props.visible}>
       <box
-        flexDirection="column"
-        borderStyle="double"
-        width={60}
-        height={11}
-        padding={1}
+        height="100%"
+        width="100%"
+        justifyContent="center"
+        alignItems="center"
       >
-        <text>{"Switch Identity (Tab:next  Enter:confirm  Esc:cancel)"}</text>
-        <text>{""}</text>
+        <box
+          flexDirection="column"
+          borderStyle="double"
+          width={60}
+          height={11}
+          padding={1}
+        >
+          <text>{"Switch Identity (Tab:next  Enter:confirm  Esc:cancel)"}</text>
+          <text>{""}</text>
 
-        {FIELD_ORDER.map((field) => {
-          const isActive = field === activeField;
-          const label = FIELD_LABELS[field];
-          const value = fields[field];
-          const cursor = isActive ? "\u2588" : "";
-          const prefix = isActive ? "\u25b8 " : "  ";
-          return (
-            <box key={field} height={1} width="100%">
-              <text>{`${prefix}${label}: ${value}${cursor}`}</text>
-            </box>
-          );
-        })}
+          {FIELD_ORDER.map((field) => {
+            const isActive = () => field === activeField();
+            const label = FIELD_LABELS[field];
+            const value = () => fields()[field];
+            const cursor = () => isActive() ? "\u2588" : "";
+            const prefix = () => isActive() ? "\u25b8 " : "  ";
+            return (
+              <box height={1} width="100%">
+                <text>{`${prefix()}${label}: ${value()}${cursor()}`}</text>
+              </box>
+            );
+          })}
 
-        <text>{""}</text>
-        <text>{"Current: " + formatCurrentIdentity(config)}</text>
+          <text>{""}</text>
+          <text>{"Current: " + formatCurrentIdentity(currentConfig())}</text>
+        </box>
       </box>
-    </box>
+    </Show>
   );
 }
 

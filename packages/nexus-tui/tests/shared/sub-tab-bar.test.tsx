@@ -12,8 +12,7 @@
  */
 
 import { describe, it, expect, mock, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import { testRender } from "../helpers/render.js";
 import { SubTabBar } from "../../src/shared/components/sub-tab-bar.js";
 
 // =============================================================================
@@ -30,7 +29,7 @@ async function renderSubTabBar(
   onSelect?: (id: string) => void,
 ): Promise<TestSetup> {
   setup = await testRender(
-    <SubTabBar tabs={tabs} activeTab={activeTab} onSelect={onSelect} />,
+    () => <SubTabBar tabs={tabs} activeTab={activeTab} onSelect={onSelect} />,
     { width: 80, height: 3 },
   );
   await setup.renderOnce();

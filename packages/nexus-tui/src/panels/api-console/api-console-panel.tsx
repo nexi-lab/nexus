@@ -6,7 +6,8 @@
  * Arrow up/down navigates command history in input mode.
  */
 
-import React, { useEffect, useCallback } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
@@ -21,7 +22,7 @@ import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { Tooltip } from "../../shared/components/tooltip.js";
 
-export default function ApiConsolePanel(): React.ReactNode {
+export default function ApiConsolePanel(): JSX.Element {
   const client = useApi();
   // Reactive subscription to command runner status (Codex finding 2)
   const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
@@ -47,11 +48,11 @@ export default function ApiConsolePanel(): React.ReactNode {
   const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Auto-load endpoints from OpenAPI spec on mount
-  useEffect(() => {
+  createEffect(() => {
     if (client && endpoints.length === 0) {
       fetchOpenApiSpec(client);
     }
-  }, [client, endpoints.length, fetchOpenApiSpec]);
+  });
 
   // Find current selection index
   const selectedIdx = selectedEndpoint
@@ -75,17 +76,14 @@ export default function ApiConsolePanel(): React.ReactNode {
   });
 
   // Handle printable characters in command input mode
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
+  const handleUnhandledKey = (keyName: string) => {
       if (!commandInputMode) return;
       if (keyName.length === 1) {
         setCommandInputBuffer(commandInputBuffer + keyName);
       } else if (keyName === "space") {
         setCommandInputBuffer(commandInputBuffer + " ");
       }
-    },
-    [commandInputMode, commandInputBuffer, setCommandInputBuffer],
-  );
+    };
 
   useKeyboard(
     overlayActive

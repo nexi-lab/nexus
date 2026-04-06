@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Playbook list: displays playbook records with name, scope, tags, usage, and success rate.
  */
 
-import React from "react";
 import type { PlaybookRecord } from "../../stores/search-store.js";
 import { truncateText } from "../../shared/utils/format-text.js";
 
@@ -21,7 +21,7 @@ export function PlaybookList({
   playbooks,
   selectedIndex,
   loading,
-}: PlaybookListProps): React.ReactNode {
+}: PlaybookListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -64,7 +64,7 @@ export function PlaybookList({
           const rate = formatRate(p.success_rate);
 
           return (
-            <box key={p.playbook_id} height={1} width="100%">
+            <box height={1} width="100%">
               <text>
                 {`${prefix}${name}  ${scope}  ${vis}  ${ver}  ${used}  ${rate}`}
               </text>

@@ -10,8 +10,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import type { JSX } from "solid-js";
+import { testRender } from "../helpers/render.js";
 import { BrickGate } from "../../src/shared/components/brick-gate.js";
 import { useGlobalStore } from "../../src/stores/global-store.js";
 
@@ -25,11 +25,11 @@ let setup: TestSetup;
 
 async function renderGate(
   brick: string | readonly string[],
-  children: React.ReactNode,
-  fallback?: React.ReactNode,
+  children: JSX.Element,
+  fallback?: JSX.Element,
 ): Promise<string> {
   setup = await testRender(
-    <BrickGate brick={brick} fallback={fallback}>
+    () => <BrickGate brick={brick} fallback={fallback}>
       {children}
     </BrickGate>,
     { width: 80, height: 10 },

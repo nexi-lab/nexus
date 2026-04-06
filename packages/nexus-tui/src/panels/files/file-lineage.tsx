@@ -4,7 +4,8 @@
  * Issue #3417.
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import crypto from "node:crypto";
 import type { FileItem } from "../../stores/files-store.js";
 import { useLineageStore } from "../../stores/lineage-store.js";
@@ -30,7 +31,7 @@ function truncate(value: string, max: number = 20): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-export function FileLineage({ item }: FileLineageProps): React.ReactNode {
+export function FileLineage({ item }: FileLineageProps): JSX.Element {
   const client = useApi();
   const lineageCache = useLineageStore((s) => s.lineageCache);
   const downstreamCache = useLineageStore((s) => s.downstreamCache);
@@ -39,11 +40,11 @@ export function FileLineage({ item }: FileLineageProps): React.ReactNode {
 
   const urn = item ? computeUrn(item) : null;
 
-  useEffect(() => {
+  createEffect(() => {
     if (client && urn && item?.path) {
       fetchLineage(urn, item.path, client);
     }
-  }, [client, urn, item?.path, fetchLineage]);
+  });
 
   if (!item) {
     return <text>No file selected</text>;

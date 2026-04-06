@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Drift view: shows the global drift reconciliation report
  * from GET /api/v2/bricks/drift.
@@ -6,7 +7,6 @@
  * last_reconcile_at, reconcile_count, and a table of drifted items.
  */
 
-import React from "react";
 import type { DriftReportResponse } from "../../stores/zones-store.js";
 
 interface DriftViewProps {
@@ -23,7 +23,7 @@ function formatEpoch(epoch: number | null): string {
   }
 }
 
-export function DriftView({ drift, loading }: DriftViewProps): React.ReactNode {
+export function DriftView({ drift, loading }: DriftViewProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">

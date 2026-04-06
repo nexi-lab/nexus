@@ -5,7 +5,8 @@
  * Gated on "mount" brick availability.
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import type { ConnectorsTab } from "../../stores/connectors-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -38,7 +39,7 @@ const ALL_TABS: readonly TabDef<ConnectorsTab>[] = [
 // Panel component
 // =============================================================================
 
-export default function ConnectorsPanel(): React.ReactNode {
+export default function ConnectorsPanel(): JSX.Element {
   const client = useApi();
   const overlayActive = useUiStore((s) => s.overlayActive);
   const activeTab = useConnectorsStore((s) => s.activeTab);

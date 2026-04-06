@@ -1,15 +1,15 @@
+import type { JSX } from "solid-js";
 /**
  * Displays the API response with syntax highlighting and status info.
  */
 
-import React from "react";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { httpStatusColor } from "../../shared/theme.js";
 import { StyledText } from "../../shared/components/styled-text.js";
 import { textStyle } from "../../shared/text-style.js";
 import { defaultSyntaxStyle } from "../../shared/syntax-style.js";
 
-export function ResponseViewer(): React.ReactNode {
+export function ResponseViewer(): JSX.Element {
   const response = useApiConsoleStore((s) => s.response);
 
   if (!response) {

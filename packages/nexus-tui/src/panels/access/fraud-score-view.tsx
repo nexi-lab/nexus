@@ -1,9 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Fraud score list: displays per-agent fraud scores with component breakdown.
  * Data from GET /api/v2/governance/fraud-scores.
  */
 
-import React from "react";
 import type { FraudScore } from "../../stores/access-store.js";
 
 interface FraudScoreViewProps {
@@ -29,7 +29,7 @@ export function FraudScoreView({
   scores,
   selectedIndex,
   loading,
-}: FraudScoreViewProps): React.ReactNode {
+}: FraudScoreViewProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">

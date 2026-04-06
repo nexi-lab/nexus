@@ -5,7 +5,8 @@
  * Issue #2930.
  */
 
-import React, { useEffect } from "react";
+import { createEffect, createSignal, onCleanup, Show, For } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 
@@ -16,62 +17,78 @@ export interface MclReplayProps {
   readonly aspectFilter?: string;
 }
 
-export function MclReplay(props: MclReplayProps): React.ReactNode {
+export function MclReplay(props: MclReplayProps): JSX.Element {
   const client = useApi();
-  const entries = useKnowledgeStore((s) => s.replayEntries);
-  const loading = useKnowledgeStore((s) => s.replayLoading);
-  const hasMore = useKnowledgeStore((s) => s.replayHasMore);
-  const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
-  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
-  const error = useKnowledgeStore((s) => s.error);
 
-  const urnFilter = props.urnFilter ?? "";
-  const aspectFilter = props.aspectFilter ?? "";
+  const [_kRev, _setKRev] = createSignal(0);
+  const unsub = useKnowledgeStore.subscribe(() => _setKRev((r) => r + 1));
+  onCleanup(unsub);
+  const ks = () => { void _kRev(); return useKnowledgeStore.getState(); };
+
+  const entries = () => ks().replayEntries;
+  const loading = () => ks().replayLoading;
+  const hasMore = () => ks().replayHasMore;
+  const error = () => ks().error;
+  const fetchReplay = useKnowledgeStore.getState().fetchReplay;
+  const clearReplay = useKnowledgeStore.getState().clearReplay;
+
+  const urnFilter = () => props.urnFilter ?? "";
+  const aspectFilter = () => props.aspectFilter ?? "";
 
   // Re-fetch from server when filters change (or on initial mount)
-  useEffect(() => {
+  createEffect(() => {
+    const uf = urnFilter();
+    const af = aspectFilter();
     if (client) {
-      clearReplay();
-      void fetchReplay(client, 0, 200, urnFilter || undefined, aspectFilter || undefined);
+      queueMicrotask(() => {
+        clearReplay();
+        void fetchReplay(client, 0, 200, uf || undefined, af || undefined);
+      });
     }
-  }, [client, urnFilter, aspectFilter, fetchReplay, clearReplay]);
-
-  // Apply filters client-side
-  const filtered = entries.filter((e) => {
-    if (urnFilter && !e.entityUrn.includes(urnFilter)) return false;
-    if (aspectFilter && !e.aspectName.includes(aspectFilter)) return false;
-    return true;
   });
 
-  if (loading && entries.length === 0) {
-    return <text>Loading MCL entries...</text>;
-  }
-
-  if (error) {
-    return <text>{`Error: ${error}`}</text>;
-  }
-
-  if (entries.length === 0) {
-    return <text>No MCL records found</text>;
-  }
+  // Apply filters client-side
+  const filtered = () => {
+    const uf = urnFilter();
+    const af = aspectFilter();
+    return entries().filter((e) => {
+      if (uf && !e.entityUrn.includes(uf)) return false;
+      if (af && !e.aspectName.includes(af)) return false;
+      return true;
+    });
+  };
 
   return (
-    <box flexDirection="column" height="100%" width="100%">
-      {/* Filter bar */}
-      <box height={1} width="100%">
-        <text>
-          {`  Filters: URN=${urnFilter || "*"}  Aspect=${aspectFilter || "*"}  (${filtered.length}/${entries.length} shown)`}
-        </text>
-      </box>
-      <text>
-        {"  Seq  Change       Aspect               Entity URN"}
-      </text>
-      {filtered.slice(0, 100).map((e) => (
-        <text key={e.sequenceNumber}>
-          {`  ${String(e.sequenceNumber).padStart(5)}  ${e.changeType.padEnd(12)} ${e.aspectName.padEnd(20)} ${e.entityUrn}`}
-        </text>
-      ))}
-      {hasMore && <text>{"  ... more records available"}</text>}
-    </box>
+    <Show
+      when={!(loading() && entries().length === 0)}
+      fallback={<text>Loading MCL entries...</text>}
+    >
+      <Show when={!error()} fallback={<text>{`Error: ${error()}`}</text>}>
+        <Show
+          when={entries().length > 0}
+          fallback={<text>No MCL records found</text>}
+        >
+          <box flexDirection="column" height="100%" width="100%">
+            {/* Filter bar */}
+            <box height={1} width="100%">
+              <text>
+                {`  Filters: URN=${urnFilter() || "*"}  Aspect=${aspectFilter() || "*"}  (${filtered().length}/${entries().length} shown)`}
+              </text>
+            </box>
+            <text>
+              {"  Seq  Change       Aspect               Entity URN"}
+            </text>
+            <For each={filtered().slice(0, 100)}>{(e) => (
+              <text>
+                {`  ${String(e.sequenceNumber).padStart(5)}  ${e.changeType.padEnd(12)} ${e.aspectName.padEnd(20)} ${e.entityUrn}`}
+              </text>
+            )}</For>
+            <Show when={hasMore()}>
+              <text>{"  ... more records available"}</text>
+            </Show>
+          </box>
+        </Show>
+      </Show>
+    </Show>
   );
 }

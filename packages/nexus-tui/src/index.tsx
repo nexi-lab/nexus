@@ -11,7 +11,7 @@
  */
 
 import { createCliRenderer } from "@opentui/core";
-import { createRoot } from "@opentui/react";
+import { render } from "@opentui/solid";
 import { resolveConfig } from "@nexus-ai-fs/api-client";
 import { useGlobalStore } from "./stores/global-store.js";
 import { App } from "./app.js";
@@ -106,18 +106,20 @@ async function main(): Promise<void> {
   // when a client is available (consolidates health + features + auth check, Decision 5A)
   useGlobalStore.getState().initConfig(config);
 
-  // Create OpenTUI renderer and mount the React tree
+  // Create OpenTUI renderer and mount the Solid tree
   const renderer = await createCliRenderer({
     exitOnCtrlC: true,
-    useAlternateScreen: true,
+    screenMode: "alternate-screen",
   });
 
-  createRoot(renderer).render(<App />);
+  await render(() => <App />, renderer);
 }
 
 main().catch((err) => {
   // Restore terminal state in case OpenTUI already enabled raw mode / alternate screen.
   resetTerminal();
+  const fs = require("fs");
+  fs.appendFileSync("/tmp/tui-fatal.log", "FATAL: " + String(err) + "\n" + (err?.stack ?? "") + "\n");
   console.error("Fatal error:", err);
   process.exit(1);
 });

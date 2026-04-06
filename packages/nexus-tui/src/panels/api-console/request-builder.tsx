@@ -1,12 +1,12 @@
+import type { JSX } from "solid-js";
 /**
  * Dynamic form for building API requests.
  */
 
-import React from "react";
 import { useApiConsoleStore } from "../../stores/api-console-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 
-export function RequestBuilder(): React.ReactNode {
+export function RequestBuilder(): JSX.Element {
   const request = useApiConsoleStore((s) => s.request);
   const selectedEndpoint = useApiConsoleStore((s) => s.selectedEndpoint);
   const isLoading = useApiConsoleStore((s) => s.isLoading);
@@ -41,7 +41,7 @@ export function RequestBuilder(): React.ReactNode {
         <box flexDirection="column">
           <text>{"─── Path Parameters ───"}</text>
           {pathParamNames.map((name) => (
-            <box key={name} height={1} width="100%">
+            <box height={1} width="100%">
               <text>{`  ${name}: ${request.pathParams[name] ?? ""}`}</text>
             </box>
           ))}

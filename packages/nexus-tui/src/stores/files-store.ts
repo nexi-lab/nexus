@@ -5,7 +5,7 @@
  *      sortFileItems helper (Decision 6A), cursor pagination + infinite scroll.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";

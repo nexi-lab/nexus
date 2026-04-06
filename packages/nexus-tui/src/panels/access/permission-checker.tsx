@@ -10,7 +10,8 @@
  * Escape cancels and returns to normal mode.
  */
 
-import React, { useState, useCallback } from "react";
+import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAccessStore } from "../../stores/access-store.js";
 import type { PermissionCheck, GovernanceCheckResult } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -36,17 +37,17 @@ export function PermissionChecker({
   governanceCheckLoading,
   zoneId,
   onClose,
-}: PermissionCheckerProps): React.ReactNode {
+}: PermissionCheckerProps): JSX.Element {
   const client = useApi();
   const checkPermission = useAccessStore((s) => s.checkPermission);
   const checkGovernanceEdge = useAccessStore((s) => s.checkGovernanceEdge);
   const manifests = useAccessStore((s) => s.manifests);
 
-  const [manifestId, setManifestId] = useState(initialManifestId);
-  const [toolName, setToolName] = useState("");
-  const [fromAgentId, setFromAgentId] = useState("");
-  const [toAgentId, setToAgentId] = useState("");
-  const [activeField, setActiveField] = useState<ActiveField>("toolName");
+  const [manifestId, setManifestId] = createSignal(initialManifestId);
+  const [toolName, setToolName] = createSignal("");
+  const [fromAgentId, setFromAgentId] = createSignal("");
+  const [toAgentId, setToAgentId] = createSignal("");
+  const [activeField, setActiveField] = createSignal<ActiveField>("toolName");
 
   const FIELD_ORDER: readonly ActiveField[] = ["manifestId", "toolName", "fromAgentId", "toAgentId"];
 
@@ -57,39 +58,36 @@ export function PermissionChecker({
     toAgentId: (fn) => setToAgentId((b) => fn(b)),
   };
 
-  const handleSubmit = useCallback(() => {
+  const handleSubmit = () => {
     if (!client) return;
     // Manifest permission check (requires both fields)
-    if (manifestId.trim() && toolName.trim()) {
-      checkPermission(manifestId.trim(), toolName.trim(), client);
+    if (manifestId().trim() && toolName().trim()) {
+      checkPermission(manifestId().trim(), toolName().trim(), client);
     }
     // Governance edge check (requires both agent IDs)
-    if (fromAgentId.trim() && toAgentId.trim()) {
-      checkGovernanceEdge(fromAgentId.trim(), toAgentId.trim(), zoneId, client);
+    if (fromAgentId().trim() && toAgentId().trim()) {
+      checkGovernanceEdge(fromAgentId().trim(), toAgentId().trim(), zoneId, client);
     }
-  }, [client, manifestId, toolName, fromAgentId, toAgentId, zoneId, checkPermission, checkGovernanceEdge]);
+  };
 
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      const setter = setters[activeField];
+  const handleUnhandledKey = (keyName: string) => {
+      const setter = setters[activeField()];
       if (keyName.length === 1) {
         setter((b) => b + keyName);
       } else if (keyName === "space") {
         setter((b) => b + " ");
       }
-    },
-    [activeField],
-  );
+    };
 
   useKeyboard(
     {
       return: handleSubmit,
       escape: onClose,
       backspace: () => {
-        setters[activeField]((b) => b.slice(0, -1));
+        setters[activeField()]((b) => b.slice(0, -1));
       },
       tab: () => {
-        const currentIdx = FIELD_ORDER.indexOf(activeField);
+        const currentIdx = FIELD_ORDER.indexOf(activeField());
         const nextIdx = (currentIdx + 1) % FIELD_ORDER.length;
         const next = FIELD_ORDER[nextIdx];
         if (next) {
@@ -111,10 +109,10 @@ export function PermissionChecker({
   const trace = lastResult?.trace ?? null;
 
   const fields: readonly { readonly key: ActiveField; readonly label: string; readonly value: string; readonly hint?: string }[] = [
-    { key: "manifestId", label: "Manifest ID  ", value: manifestId },
-    { key: "toolName", label: "Tool Name    ", value: toolName },
-    { key: "fromAgentId", label: "From Agent ID", value: fromAgentId, hint: "governance check" },
-    { key: "toAgentId", label: "To Agent ID  ", value: toAgentId, hint: "governance check" },
+    { key: "manifestId", label: "Manifest ID  ", value: manifestId() },
+    { key: "toolName", label: "Tool Name    ", value: toolName() },
+    { key: "fromAgentId", label: "From Agent ID", value: fromAgentId(), hint: "governance check" },
+    { key: "toAgentId", label: "To Agent ID  ", value: toAgentId(), hint: "governance check" },
   ];
 
   return (
@@ -123,7 +121,7 @@ export function PermissionChecker({
       {fields.map((f) => (
         <box key={f.key} height={1} width="100%">
           <text>
-            {activeField === f.key
+            {activeField() === f.key
               ? `> ${f.label}: ${f.value}${cursor}${f.hint ? `  (${f.hint})` : ""}`
               : `  ${f.label}: ${f.value}${f.hint && !f.value ? `  (${f.hint})` : ""}`}
           </text>

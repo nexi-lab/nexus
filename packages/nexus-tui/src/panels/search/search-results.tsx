@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Search results list: path, chunk_text (truncated), score, line range.
  */
 
-import React, { useCallback } from "react";
 import type { SearchResult } from "../../stores/search-store.js";
 import { textStyle } from "../../shared/text-style.js";
 import { statusColor } from "../../shared/theme.js";
@@ -48,7 +48,7 @@ export function SearchResults({
   total,
   selectedIndex,
   loading,
-}: SearchResultsProps): React.ReactNode {
+}: SearchResultsProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -66,8 +66,7 @@ export function SearchResults({
     );
   }
 
-  const renderResult = useCallback(
-    (result: SearchResult, i: number) => {
+  const renderResult = (result: SearchResult, i: number) => {
       const isSelected = i === selectedIndex;
       const prefix = isSelected ? "> " : "  ";
       const score = formatScore(result.score).padEnd(5);
@@ -87,9 +86,7 @@ export function SearchResults({
           </text>
         </box>
       );
-    },
-    [selectedIndex],
-  );
+    };
 
   return (
     <box height="100%" width="100%" flexDirection="column">

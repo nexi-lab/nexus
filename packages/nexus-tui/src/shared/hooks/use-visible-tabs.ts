@@ -5,7 +5,6 @@
  * shared type, per-panel ownership).
  */
 
-import { useMemo } from "react";
 import { useGlobalStore } from "../../stores/global-store.js";
 
 /**
@@ -55,7 +54,5 @@ export function useVisibleTabs<T extends string>(
   const enabledBricks = useGlobalStore((s) => s.enabledBricks);
   const featuresLoaded = useGlobalStore((s) => s.featuresLoaded);
 
-  return useMemo(() => {
-    return filterTabs(allTabs, enabledBricks, featuresLoaded);
-  }, [allTabs, enabledBricks, featuresLoaded]);
+  return filterTabs(allTabs, enabledBricks, featuresLoaded);
 }

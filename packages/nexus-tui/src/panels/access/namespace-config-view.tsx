@@ -11,7 +11,8 @@
  * Ctrl+D removes the last item from the focused list.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAccessStore } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -35,7 +36,7 @@ interface NamespaceConfigViewProps {
 export function NamespaceConfigView({
   delegationId,
   onClose,
-}: NamespaceConfigViewProps): React.ReactNode {
+}: NamespaceConfigViewProps): JSX.Element {
   const client = useApi();
   const namespaceDetail = useAccessStore((s) => s.namespaceDetail);
   const namespaceDetailLoading = useAccessStore((s) => s.namespaceDetailLoading);
@@ -43,17 +44,17 @@ export function NamespaceConfigView({
   const fetchNamespaceDetail = useAccessStore((s) => s.fetchNamespaceDetail);
   const updateNamespaceConfig = useAccessStore((s) => s.updateNamespaceConfig);
 
-  const [editing, setEditing] = useState(false);
-  const [activeField, setActiveField] = useState<EditField>("scopePrefix");
-  const [scopePrefix, setScopePrefix] = useState("");
-  const [addGrant, setAddGrant] = useState("");
-  const [removeGrant, setRemoveGrant] = useState("");
-  const [readonlyPath, setReadonlyPath] = useState("");
+  const [editing, setEditing] = createSignal(false);
+  const [activeField, setActiveField] = createSignal<EditField>("scopePrefix");
+  const [scopePrefix, setScopePrefix] = createSignal("");
+  const [addGrant, setAddGrant] = createSignal("");
+  const [removeGrant, setRemoveGrant] = createSignal("");
+  const [readonlyPath, setReadonlyPath] = createSignal("");
 
   // Editable local copies of list arrays (populated on edit enter)
-  const [editRemovedGrants, setEditRemovedGrants] = useState<readonly string[]>([]);
-  const [editAddedGrants, setEditAddedGrants] = useState<readonly string[]>([]);
-  const [editReadonlyPaths, setEditReadonlyPaths] = useState<readonly string[]>([]);
+  const [editRemovedGrants, setEditRemovedGrants] = createSignal<readonly string[]>([]);
+  const [editAddedGrants, setEditAddedGrants] = createSignal<readonly string[]>([]);
+  const [editReadonlyPaths, setEditReadonlyPaths] = createSignal<readonly string[]>([]);
 
   // Resolved access: actual files + manifest permissions for this agent
   interface ResolvedFile {
@@ -63,17 +64,17 @@ export function NamespaceConfigView({
     canWrite: boolean;
     blocked: boolean;
   }
-  const [resolvedFiles, setResolvedFiles] = useState<readonly ResolvedFile[]>([]);
-  const [manifestEntries, setManifestEntries] = useState<readonly { tool_pattern: string; permission: string }[]>([]);
+  const [resolvedFiles, setResolvedFiles] = createSignal<readonly ResolvedFile[]>([]);
+  const [manifestEntries, setManifestEntries] = createSignal<readonly { tool_pattern: string; permission: string }[]>([]);
 
-  useEffect(() => {
+  createEffect(() => {
     if (client && delegationId) {
       fetchNamespaceDetail(delegationId, client);
     }
-  }, [client, delegationId, fetchNamespaceDetail]);
+  });
 
   // Fetch resolved files and manifest when namespace loads
-  useEffect(() => {
+  createEffect(() => {
     if (!client || !namespaceDetail) return;
     const agentId = namespaceDetail.agent_id;
     const scopePath = namespaceDetail.scope_prefix || "/";
@@ -131,16 +132,16 @@ export function NamespaceConfigView({
       });
       setResolvedFiles(resolved);
     });
-  }, [client, namespaceDetail]);
+  });
 
   // Populate edit fields from fetched data
-  useEffect(() => {
+  createEffect(() => {
     if (namespaceDetail) {
       setScopePrefix(namespaceDetail.scope_prefix ?? "");
     }
-  }, [namespaceDetail]);
+  });
 
-  const enterEditMode = useCallback(() => {
+  const enterEditMode = () => {
     if (!namespaceDetail) return;
     setEditing(true);
     setActiveField("scopePrefix");
@@ -151,7 +152,7 @@ export function NamespaceConfigView({
     setAddGrant("");
     setRemoveGrant("");
     setReadonlyPath("");
-  }, [namespaceDetail]);
+  };
 
   const setters: Readonly<Record<EditField, (fn: (b: string) => string) => void>> = {
     scopePrefix: (fn) => setScopePrefix((b) => fn(b)),
@@ -160,18 +161,18 @@ export function NamespaceConfigView({
     readonlyPath: (fn) => setReadonlyPath((b) => fn(b)),
   };
 
-  const handleDeleteFromList = useCallback(() => {
+  const handleDeleteFromList = () => {
     if (!editing) return;
-    if (activeField === "removeGrant") {
+    if (activeField() === "removeGrant") {
       setEditRemovedGrants((prev) => prev.slice(0, -1));
-    } else if (activeField === "addGrant") {
+    } else if (activeField() === "addGrant") {
       setEditAddedGrants((prev) => prev.slice(0, -1));
-    } else if (activeField === "readonlyPath") {
+    } else if (activeField() === "readonlyPath") {
       setEditReadonlyPaths((prev) => prev.slice(0, -1));
     }
-  }, [editing, activeField]);
+  };
 
-  const handleSave = useCallback(() => {
+  const handleSave = () => {
     if (!client || !namespaceDetail) return;
 
     const update: {
@@ -182,22 +183,22 @@ export function NamespaceConfigView({
     } = {};
 
     // scope_prefix: send "" to clear, non-empty to set, omit to leave unchanged
-    const newPrefix = scopePrefix.trim();
+    const newPrefix = scopePrefix().trim();
     const oldPrefix = namespaceDetail.scope_prefix ?? "";
     if (newPrefix !== oldPrefix) {
       update.scope_prefix = newPrefix;
     }
 
     // Build final arrays: local editable copy + any new text input
-    const finalRemoved = removeGrant.trim()
-      ? [...editRemovedGrants, removeGrant.trim()]
-      : [...editRemovedGrants];
-    const finalAdded = addGrant.trim()
-      ? [...editAddedGrants, addGrant.trim()]
-      : [...editAddedGrants];
-    const finalReadonly = readonlyPath.trim()
-      ? [...editReadonlyPaths, readonlyPath.trim()]
-      : [...editReadonlyPaths];
+    const finalRemoved = removeGrant().trim()
+      ? [...editRemovedGrants(), removeGrant().trim()]
+      : [...editRemovedGrants()];
+    const finalAdded = addGrant().trim()
+      ? [...editAddedGrants(), addGrant().trim()]
+      : [...editAddedGrants()];
+    const finalReadonly = readonlyPath().trim()
+      ? [...editReadonlyPaths(), readonlyPath().trim()]
+      : [...editReadonlyPaths()];
 
     // Send full replacement arrays if they differ from server state
     if (JSON.stringify(finalRemoved) !== JSON.stringify(namespaceDetail.removed_grants)) {
@@ -218,30 +219,22 @@ export function NamespaceConfigView({
     setRemoveGrant("");
     setReadonlyPath("");
     setEditing(false);
-  }, [
-    client, delegationId, namespaceDetail, scopePrefix,
-    addGrant, removeGrant, readonlyPath,
-    editRemovedGrants, editAddedGrants, editReadonlyPaths,
-    updateNamespaceConfig,
-  ]);
+  };
 
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
+  const handleUnhandledKey = (keyName: string) => {
       if (!editing) return;
-      const setter = setters[activeField];
+      const setter = setters[activeField()];
       if (keyName.length === 1) {
         setter((b) => b + keyName);
       } else if (keyName === "space") {
         setter((b) => b + " ");
       }
-    },
-    [editing, activeField],
-  );
+    };
 
   useKeyboard(
     {
       escape: () => {
-        if (editing) {
+        if (editing()) {
           setEditing(false);
         } else {
           onClose();
@@ -253,18 +246,18 @@ export function NamespaceConfigView({
         }
       },
       return: () => {
-        if (editing) {
+        if (editing()) {
           handleSave();
         }
       },
       backspace: () => {
-        if (editing) {
-          setters[activeField]((b) => b.slice(0, -1));
+        if (editing()) {
+          setters[activeField()]((b) => b.slice(0, -1));
         }
       },
       tab: () => {
-        if (editing) {
-          const currentIdx = EDIT_FIELD_ORDER.indexOf(activeField);
+        if (editing()) {
+          const currentIdx = EDIT_FIELD_ORDER.indexOf(activeField());
           const nextIdx = (currentIdx + 1) % EDIT_FIELD_ORDER.length;
           const next = EDIT_FIELD_ORDER[nextIdx];
           if (next) {
@@ -283,14 +276,14 @@ export function NamespaceConfigView({
   const cursor = "\u2588";
 
   // In edit mode, show local editable arrays; in view mode, show server data
-  const displayRemovedGrants = editing ? editRemovedGrants : (ns?.removed_grants ?? []);
-  const displayAddedGrants = editing ? editAddedGrants : (ns?.added_grants ?? []);
-  const displayReadonlyPaths = editing ? editReadonlyPaths : (ns?.readonly_paths ?? []);
+  const displayRemovedGrants = editing() ? editRemovedGrants() : (ns?.removed_grants ?? []);
+  const displayAddedGrants = editing() ? editAddedGrants() : (ns?.added_grants ?? []);
+  const displayReadonlyPaths = editing() ? editReadonlyPaths() : (ns?.readonly_paths ?? []);
 
   return (
     <box height="100%" width="100%" flexDirection="column">
       <box height={1} width="100%">
-        <text>{`--- Namespace Config${editing ? " [EDITING]" : ""}: ${delegationId} ---`}</text>
+        <text>{`--- Namespace Config${editing() ? " [EDITING]" : ""}: ${delegationId} ---`}</text>
       </box>
 
       {namespaceDetailLoading && (
@@ -339,7 +332,7 @@ export function NamespaceConfigView({
               <box height={1} width="100%">
                 <text bold foregroundColor={statusColor.info}>{"  Tool permissions (from manifest):"}</text>
               </box>
-              {manifestEntries.map((e, i) => (
+              {manifestEntries().map((e, i) => (
                 <box key={`me-${i}`} height={1} width="100%">
                   <text>
                     <span foregroundColor={e.permission === "allow" ? statusColor.success : statusColor.error}>
@@ -360,15 +353,15 @@ export function NamespaceConfigView({
           </box>
           {(() => {
             const scope = ns.scope_prefix || "(all paths)";
-            const canRead = manifestEntries.some((e) => e.permission === "allow" && /^file\.\*$|^file\.read$|^file\.list$/.test(e.tool_pattern));
-            const canWrite = manifestEntries.some((e) => e.permission === "allow" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
-            const writeDenied = manifestEntries.some((e) => e.permission === "deny" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
+            const canRead = manifestEntries().some((e) => e.permission === "allow" && /^file\.\*$|^file\.read$|^file\.list$/.test(e.tool_pattern));
+            const canWrite = manifestEntries().some((e) => e.permission === "allow" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
+            const writeDenied = manifestEntries().some((e) => e.permission === "deny" && /^file\.\*$|^file\.write$/.test(e.tool_pattern));
             const effectiveWrite = canWrite && !writeDenied;
             const badge = effectiveWrite ? "[RW]" : canRead ? "[R-]" : "[--]";
             const badgeColor = effectiveWrite ? statusColor.success : canRead ? statusColor.info : statusColor.dim;
-            const fileCount = resolvedFiles.filter((f) => !f.blocked).length;
-            const dirCount = resolvedFiles.filter((f) => f.isDirectory && !f.blocked).length;
-            const blockedCount = resolvedFiles.filter((f) => f.blocked).length;
+            const fileCount = resolvedFiles().filter((f) => !f.blocked).length;
+            const dirCount = resolvedFiles().filter((f) => f.isDirectory && !f.blocked).length;
+            const blockedCount = resolvedFiles().filter((f) => f.blocked).length;
 
             return (
               <>
@@ -420,10 +413,10 @@ export function NamespaceConfigView({
           </box>
 
           {/* Scope prefix — editable */}
-          {editing ? (
+          {editing() ? (
             <box height={1} width="100%">
               <text>
-                {activeField === "scopePrefix"
+                {activeField() === "scopePrefix"
                   ? `> Prefix:   ${scopePrefix}${cursor}`
                   : `  Prefix:   ${scopePrefix}`}
               </text>
@@ -447,10 +440,10 @@ export function NamespaceConfigView({
               <text>{`    - ${g}`}</text>
             </box>
           ))}
-          {editing && (
+          {editing() && (
             <box height={1} width="100%">
               <text>
-                {activeField === "removeGrant"
+                {activeField() === "removeGrant"
                   ? `> + remove: ${removeGrant}${cursor}`
                   : `  + remove: ${removeGrant}`}
               </text>
@@ -466,10 +459,10 @@ export function NamespaceConfigView({
               <text>{`    + ${g}`}</text>
             </box>
           ))}
-          {editing && (
+          {editing() && (
             <box height={1} width="100%">
               <text>
-                {activeField === "addGrant"
+                {activeField() === "addGrant"
                   ? `> + add:    ${addGrant}${cursor}`
                   : `  + add:    ${addGrant}`}
               </text>
@@ -485,10 +478,10 @@ export function NamespaceConfigView({
               <text>{`    [RO] ${p}`}</text>
             </box>
           ))}
-          {editing && (
+          {editing() && (
             <box height={1} width="100%">
               <text>
-                {activeField === "readonlyPath"
+                {activeField() === "readonlyPath"
                   ? `> + readonly: ${readonlyPath}${cursor}`
                   : `  + readonly: ${readonlyPath}`}
               </text>
@@ -515,7 +508,7 @@ export function NamespaceConfigView({
 
       <box height={1} width="100%">
         <text>
-          {editing
+          {editing()
             ? "Tab:next field  Enter:save  Escape:cancel  Backspace:delete char  Ctrl+D:remove last item"
             : "e:edit  Escape:close"}
         </text>

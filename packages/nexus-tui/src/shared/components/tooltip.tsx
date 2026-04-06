@@ -11,7 +11,6 @@
  * (j/k/tab/etc.) continue to work while the tooltip is visible.
  */
 
-import React from "react";
 import { useFirstRunStore } from "../../stores/first-run-store.js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { statusColor } from "../theme.js";
@@ -24,11 +23,11 @@ interface TooltipProps {
   readonly message: string;
 }
 
-export function Tooltip({ tooltipKey, message }: TooltipProps): React.ReactNode {
+export function Tooltip(props: TooltipProps) {
   const shouldShow = useFirstRunStore((s) => s.shouldShow);
   const dismiss = useFirstRunStore((s) => s.dismiss);
 
-  const visible = shouldShow(tooltipKey);
+  const visible = shouldShow(props.tooltipKey);
 
   // Dismiss on any keypress via onUnhandled only -- no explicit key bindings
   // so we don't intercept j/k/tab/etc. from the parent panel.
@@ -36,7 +35,7 @@ export function Tooltip({ tooltipKey, message }: TooltipProps): React.ReactNode 
     {},
     visible
       ? (keyName: string) => {
-          if (keyName) dismiss(tooltipKey);
+          if (keyName) dismiss(props.tooltipKey);
         }
       : undefined,
   );
@@ -46,7 +45,7 @@ export function Tooltip({ tooltipKey, message }: TooltipProps): React.ReactNode 
   return (
     <box height={1} width="100%">
       <text style={textStyle({ fg: statusColor.info })}>
-        {`${message}  (press any key to dismiss)`}
+        {`${props.message}  (press any key to dismiss)`}
       </text>
     </box>
   );

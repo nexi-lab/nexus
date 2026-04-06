@@ -7,7 +7,7 @@
  * @see Issue #3066, Phase E10
  */
 
-import React from "react";
+import { Show } from "solid-js";
 import { statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
 
@@ -18,7 +18,7 @@ interface EmptyStateProps {
   readonly hint?: string;
 }
 
-export function EmptyState({ message, hint }: EmptyStateProps): React.ReactNode {
+export function EmptyState(props: EmptyStateProps) {
   return (
     <box
       height="100%"
@@ -27,10 +27,10 @@ export function EmptyState({ message, hint }: EmptyStateProps): React.ReactNode 
       alignItems="center"
       flexDirection="column"
     >
-      <text style={textStyle({ dim: true })}>{message}</text>
-      {hint && (
-        <text style={textStyle({ fg: statusColor.dim })}>{hint}</text>
-      )}
+      <text style={textStyle({ dim: true })}>{props.message}</text>
+      <Show when={props.hint}>
+        <text style={textStyle({ fg: statusColor.dim })}>{props.hint}</text>
+      </Show>
     </box>
   );
 }

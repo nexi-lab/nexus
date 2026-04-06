@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Governance alert list with severity icons and selection for resolve action.
  */
 
-import React from "react";
 import type { GovernanceAlert } from "../../stores/access-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -26,7 +26,7 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): React.ReactNode {
+export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -65,7 +65,7 @@ export function AlertList({ alerts, selectedIndex, loading }: AlertListProps): R
         const time = alert.created_at ? formatTimestamp(alert.created_at) : "-";
 
         return (
-          <box key={alert.alert_id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`${prefix}${icon}  ${alert.alert_type.padEnd(15)}  ${agent.padEnd(15)}  ${details.padEnd(37)}  ${status.padEnd(9)}  ${time}`}
             </text>

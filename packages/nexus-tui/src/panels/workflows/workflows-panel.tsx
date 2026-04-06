@@ -3,7 +3,8 @@
  * and scheduler metrics views.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useWorkflowsStore } from "../../stores/workflows-store.js";
 import type { WorkflowTab } from "../../stores/workflows-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -30,7 +31,7 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
   scheduler: "Tab:switch tab  r:refresh  q:quit",
 };
 
-export default function WorkflowsPanel(): React.ReactNode {
+export default function WorkflowsPanel(): JSX.Element {
   const client = useApi();
 
   const workflows = useWorkflowsStore((s) => s.workflows);
@@ -67,23 +68,23 @@ export default function WorkflowsPanel(): React.ReactNode {
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight workflow execution
-  const [executing, setExecuting] = useState(false);
+  const [executing, setExecuting] = createSignal(false);
 
   // Confirmation dialog state for destructive delete action
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
 
-  const handleConfirmDelete = useCallback(() => {
+  const handleConfirmDelete = () => {
     if (!client) return;
     const wf = workflows[selectedWorkflowIndex];
     if (wf) {
       deleteWorkflow(wf.name, client);
     }
     setConfirmDelete(false);
-  }, [client, workflows, selectedWorkflowIndex, deleteWorkflow]);
+  };
 
-  const handleCancelDelete = useCallback(() => {
+  const handleCancelDelete = () => {
     setConfirmDelete(false);
-  }, []);
+  };
 
   // Refresh current view based on active tab.
   // 'workflows' is intentionally excluded from deps — it is the fetch result,
@@ -91,7 +92,7 @@ export default function WorkflowsPanel(): React.ReactNode {
   // callback identity changes → effect re-fires → fetch again). We read from
   // the store via getState() at call time so the executions branch always
   // sees the latest value without making it a dependency.
-  const refreshCurrentView = useCallback((): void => {
+  const refreshCurrentView = (): void => {
     if (!client) return;
 
     if (activeTab === "workflows") {
@@ -104,12 +105,12 @@ export default function WorkflowsPanel(): React.ReactNode {
     } else if (activeTab === "scheduler") {
       fetchSchedulerMetrics(client);
     }
-  }, [client, activeTab, fetchWorkflows, fetchExecutions, fetchSchedulerMetrics]);
+  };
 
   // Auto-fetch when tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshCurrentView();
-  }, [refreshCurrentView]);
+  });
 
   // Resolve the list length for current tab navigation
   const currentListLength = (): number => {
@@ -135,7 +136,7 @@ export default function WorkflowsPanel(): React.ReactNode {
   useKeyboard(
     overlayActive
       ? {}
-      : confirmDelete
+      : confirmDelete()
       ? {} // ConfirmDialog handles its own keys when visible
       : {
           ...listNavigationBindings({
@@ -210,7 +211,7 @@ export default function WorkflowsPanel(): React.ReactNode {
         )}
 
         {/* Execution in-flight indicator */}
-        {executing && (
+        {executing() && (
           <box height={1} width="100%">
             <LoadingIndicator message="Executing workflow..." centered={false} />
           </box>
@@ -254,7 +255,7 @@ export default function WorkflowsPanel(): React.ReactNode {
             {(selectedExecution.steps ?? []).length > 0 ? (
               <scrollbox flexGrow={1} width="100%">
                 {(selectedExecution.steps ?? []).map((step, i) => (
-                  <box key={i} height={1} width="100%">
+                  <box height={1} width="100%">
                     <text>
                       {`  ${String(step.step_index).padEnd(3)} ${(step.action_name ?? "").padEnd(20)} ${step.status.padEnd(10)} ${step.error_message ? `ERR: ${step.error_message}` : ""}`}
                     </text>
@@ -283,7 +284,7 @@ export default function WorkflowsPanel(): React.ReactNode {
 
         {/* Delete confirmation dialog */}
         <ConfirmDialog
-          visible={confirmDelete}
+          visible={confirmDelete()}
           title="Delete Workflow"
           message={`Permanently delete "${workflows[selectedWorkflowIndex]?.name ?? ""}"? This cannot be undone.`}
           onConfirm={handleConfirmDelete}

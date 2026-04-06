@@ -2,7 +2,8 @@
  * Delegation list table with status badges and expandable detail view.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import type { DelegationItem } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -29,17 +30,17 @@ interface PermTuple {
   readonly object_id: string;
 }
 
-function DelegationDetail({ delegation }: { delegation: DelegationItem }): React.ReactNode {
+function DelegationDetail({ delegation }: { delegation: DelegationItem }): JSX.Element {
   const client = useApi();
-  const [perms, setPerms] = useState<readonly PermTuple[]>([]);
+  const [perms, setPerms] = createSignal<readonly PermTuple[]>([]);
 
-  useEffect(() => {
+  createEffect(() => {
     if (!client) return;
     client.get<{ permissions: PermTuple[] }>(
       `/api/v2/agents/${encodeURIComponent(delegation.agent_id)}/permissions`,
     ).then((r) => setPerms(r.permissions))
       .catch(() => setPerms([]));
-  }, [client, delegation.agent_id]);
+  });
 
   return (
     <box height={11 + Math.max(perms.length, 1)} width="100%" borderStyle="single" flexDirection="column">
@@ -56,7 +57,7 @@ function DelegationDetail({ delegation }: { delegation: DelegationItem }): React
       {perms.length === 0 ? (
         <text style={textStyle({ dim: true })}>{"    (none or loading...)"}</text>
       ) : (
-        perms.map((p, i) => {
+        perms().map((p, i) => {
           const tool = p.object_id.replace("/tools/", "");
           const accessLevel = p.relation.replace("direct_", "");
           const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
@@ -93,7 +94,7 @@ export function DelegationList({
   selectedIndex,
   loading,
   expandedDelegation,
-}: DelegationListProps): React.ReactNode {
+}: DelegationListProps): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Loading delegations..." />;
   }

@@ -2,7 +2,7 @@
  * Approval list: displays spending approval requests with status coloring.
  */
 
-import React from "react";
+import { For } from "solid-js";
 import type { ApprovalRequest } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -33,16 +33,12 @@ const STATUS_COLOR: Record<string, string> = {
   rejected: statusColor.error,
 };
 
-export function ApprovalList({
-  approvals,
-  selectedIndex,
-  loading,
-}: ApprovalListProps): React.ReactNode {
-  if (loading) {
+export function ApprovalList(props: ApprovalListProps) {
+  if (props.loading) {
     return <LoadingIndicator message="Loading approvals..." />;
   }
 
-  if (approvals.length === 0) {
+  if (props.approvals.length === 0) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text style={textStyle({ dim: true })}>No approval requests found</text>
@@ -61,23 +57,21 @@ export function ApprovalList({
       </box>
 
       {/* Rows */}
-      {approvals.map((a, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
+      <For each={props.approvals}>{(a, i) => {
         const amount = String(a.amount).padEnd(11);
         const purpose = (a.purpose.length > 25 ? a.purpose.slice(0, 22) + "..." : a.purpose).padEnd(25);
         const color = STATUS_COLOR[a.status];
 
         return (
-          <box key={a.id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
-              {`${prefix}${shortId(a.id).padEnd(10)}  ${amount}  ${purpose}  `}
+              {`${i() === props.selectedIndex ? "> " : "  "}${shortId(a.id).padEnd(10)}  ${amount}  ${purpose}  `}
               <span style={color ? textStyle({ fg: color }) : undefined}>{a.status.padEnd(9)}</span>
               {`  ${shortId(a.requester_id).padEnd(12)}  ${formatTime(a.created_at)}`}
             </text>
           </box>
         );
-      })}
+      }}</For>
     </scrollbox>
   );
 }

@@ -2,7 +2,7 @@
  * Policy list: displays spending policy records with limits and enabled status.
  */
 
-import React from "react";
+import { For } from "solid-js";
 import type { PolicyRecord } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
@@ -18,16 +18,12 @@ function shortId(id: string): string {
   return `${id.slice(0, 8)}..`;
 }
 
-export function PolicyList({
-  policies,
-  selectedIndex,
-  loading,
-}: PolicyListProps): React.ReactNode {
-  if (loading) {
+export function PolicyList(props: PolicyListProps) {
+  if (props.loading) {
     return <LoadingIndicator message="Loading policies..." />;
   }
 
-  if (policies.length === 0) {
+  if (props.policies.length === 0) {
     return <EmptyState message="No policies yet." hint="Press Shift+N to create a policy." />;
   }
 
@@ -42,9 +38,8 @@ export function PolicyList({
       </box>
 
       {/* Rows */}
-      {policies.map((p, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
+      <For each={props.policies}>{(p, i) => {
+        const isSelected = () => i() === props.selectedIndex;
         const enabled = p.enabled ? "yes" : "no";
         const daily = (p.daily_limit ?? "-").padEnd(11);
         const weekly = (p.weekly_limit ?? "-").padEnd(11);
@@ -52,13 +47,13 @@ export function PolicyList({
         const perTx = (p.per_tx_limit ?? "-").padEnd(11);
 
         return (
-          <box key={p.policy_id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
-              {`${prefix}${shortId(p.policy_id).padEnd(10)}  ${daily}  ${weekly}  ${monthly}  ${perTx}  ${enabled}`}
+              {`${isSelected() ? "> " : "  "}${shortId(p.policy_id).padEnd(10)}  ${daily}  ${weekly}  ${monthly}  ${perTx}  ${enabled}`}
             </text>
           </box>
         );
-      })}
+      }}</For>
     </scrollbox>
   );
 }

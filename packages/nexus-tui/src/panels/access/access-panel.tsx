@@ -20,7 +20,8 @@
  *   r              : refresh current tab
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAccessStore } from "../../stores/access-store.js";
 import type { AccessTab } from "../../stores/access-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -60,13 +61,13 @@ type OverlayMode =
   | "manifestCreator"
   | "constraintCreator";
 
-export default function AccessPanel(): React.ReactNode {
+export default function AccessPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(ACCESS_TABS);
   const { copy, copied } = useCopy();
-  const [overlay, setOverlay] = useState<OverlayMode>("none");
+  const [overlay, setOverlay] = createSignal<OverlayMode>("none");
 
   // Zone for fraud score queries
   const configZoneId = useGlobalStore((s) => s.config.zoneId);
@@ -123,31 +124,31 @@ export default function AccessPanel(): React.ReactNode {
   const setSelectedDelegationIndex = useAccessStore((s) => s.setSelectedDelegationIndex);
 
   // Credential selection index
-  const [selectedCredentialIndex, setSelectedCredentialIndex] = useState(0);
+  const [selectedCredentialIndex, setSelectedCredentialIndex] = createSignal(0);
 
   // Clamp selectedCredentialIndex when credentials list shrinks (e.g. after revoke)
-  useEffect(() => {
-    if (credentials.length > 0 && selectedCredentialIndex >= credentials.length) {
+  createEffect(() => {
+    if (credentials.length > 0 && selectedCredentialIndex() >= credentials.length) {
       setSelectedCredentialIndex(Math.max(0, credentials.length - 1));
     }
-  }, [credentials.length, selectedCredentialIndex]);
+  });
 
   // Fraud tab: which list is focused (scores vs constraints)
-  const [fraudFocus, setFraudFocus] = useState<"scores" | "constraints">("scores");
+  const [fraudFocus, setFraudFocus] = createSignal<"scores" | "constraints">("scores");
 
   // Delegation status filter
-  const [delegationFilter, setDelegationFilter] = useState<string | null>(null);
+  const [delegationFilter, setDelegationFilter] = createSignal<string | null>(null);
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
+  createEffect(() => {
     if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
       setActiveTab(visibleIds[0]!);
     }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  });
 
   // Refresh current view based on active tab
-  const refreshCurrentView = useCallback((): void => {
+  const refreshCurrentView = (): void => {
     if (!client) return;
 
     if (activeTab === "manifests") {
@@ -166,22 +167,22 @@ export default function AccessPanel(): React.ReactNode {
       fetchFraudScores(effectiveZoneId, client);
       if (effectiveZoneId) fetchConstraints(effectiveZoneId, client);
     } else if (activeTab === "delegations") {
-      fetchDelegations(client, delegationFilter);
+      fetchDelegations(client, delegationFilter());
     }
-  }, [client, activeTab, effectiveZoneId, delegationFilter, fetchManifests, fetchAlerts, fetchCredentials, fetchFraudScores, fetchConstraints, fetchDelegations]);
+  };
 
   // Auto-fetch when tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshCurrentView();
-  }, [refreshCurrentView]);
+  });
 
   // Shared list navigation (j/k/up/down/g/G) — switches per active tab
   const listNav = listNavigationBindings({
     getIndex: () => {
       if (activeTab === "manifests") return selectedManifestIndex;
       if (activeTab === "alerts") return selectedAlertIndex;
-      if (activeTab === "credentials") return selectedCredentialIndex;
-      if (activeTab === "fraud") return fraudFocus === "scores" ? selectedFraudIndex : selectedConstraintIndex;
+      if (activeTab === "credentials") return selectedCredentialIndex();
+      if (activeTab === "fraud") return fraudFocus() === "scores" ? selectedFraudIndex : selectedConstraintIndex;
       if (activeTab === "delegations") return selectedDelegationIndex;
       return 0;
     },
@@ -190,7 +191,7 @@ export default function AccessPanel(): React.ReactNode {
       else if (activeTab === "alerts") setSelectedAlertIndex(i);
       else if (activeTab === "credentials") setSelectedCredentialIndex(i);
       else if (activeTab === "fraud") {
-        if (fraudFocus === "scores") setSelectedFraudIndex(i);
+        if (fraudFocus() === "scores") setSelectedFraudIndex(i);
         else setSelectedConstraintIndex(i);
       } else if (activeTab === "delegations") setSelectedDelegationIndex(i);
     },
@@ -198,7 +199,7 @@ export default function AccessPanel(): React.ReactNode {
       if (activeTab === "manifests") return manifests.length;
       if (activeTab === "alerts") return alerts.length;
       if (activeTab === "credentials") return credentials.length;
-      if (activeTab === "fraud") return fraudFocus === "scores" ? fraudScores.length : constraints.length;
+      if (activeTab === "fraud") return fraudFocus() === "scores" ? fraudScores.length : constraints.length;
       if (activeTab === "delegations") return delegations.length;
       return 0;
     },
@@ -208,7 +209,7 @@ export default function AccessPanel(): React.ReactNode {
     ...listNav,
     ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
     escape: () => {
-      if (overlay !== "none") {
+      if (overlay() !== "none") {
         setOverlay("none");
       }
     },
@@ -234,19 +235,19 @@ export default function AccessPanel(): React.ReactNode {
     },
     r: () => refreshCurrentView(),
     p: () => {
-      if (overlay === "none") {
+      if (overlay() === "none") {
         setOverlay("permissionChecker");
       }
     },
     n: () => {
-      if (activeTab === "delegations" && overlay === "none") {
+      if (activeTab === "delegations" && overlay() === "none") {
         setOverlay("delegationCreator");
-      } else if (activeTab === "fraud" && overlay === "none") {
+      } else if (activeTab === "fraud" && overlay() === "none") {
         setOverlay("constraintCreator");
       }
     },
     d: async () => {
-      if (activeTab === "fraud" && overlay === "none" && client) {
+      if (activeTab === "fraud" && overlay() === "none" && client) {
         const selected = constraints[selectedConstraintIndex];
         if (selected) {
           const ok = await confirm("Delete constraint?", `Delete governance constraint from ${selected.from_agent_id} to ${selected.to_agent_id} [${selected.constraint_type}].`);
@@ -256,13 +257,13 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     x: async () => {
-      if (activeTab === "delegations" && overlay === "none" && client) {
+      if (activeTab === "delegations" && overlay() === "none" && client) {
         const selected = delegations[selectedDelegationIndex];
         if (selected && selected.status === "active") {
           revokeDelegation(selected.delegation_id, client);
         }
-      } else if (activeTab === "credentials" && overlay === "none" && client) {
-        const selected = credentials[selectedCredentialIndex];
+      } else if (activeTab === "credentials" && overlay() === "none" && client) {
+        const selected = credentials[selectedCredentialIndex()];
         if (selected && selected.is_active) {
           const ok = await confirm("Revoke credential?", "Revoke this credential. The holder will lose access.");
           if (!ok) return;
@@ -271,7 +272,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     o: () => {
-      if (activeTab === "delegations" && overlay === "none") {
+      if (activeTab === "delegations" && overlay() === "none") {
         const selected = delegations[selectedDelegationIndex];
         if (selected && selected.status === "active") {
           setOverlay("delegationCompleter");
@@ -279,7 +280,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     v: () => {
-      if (activeTab === "delegations" && overlay === "none") {
+      if (activeTab === "delegations" && overlay() === "none") {
         const selected = delegations[selectedDelegationIndex];
         if (selected) {
           setOverlay("delegationChainView");
@@ -287,7 +288,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     w: () => {
-      if (activeTab === "delegations" && overlay === "none") {
+      if (activeTab === "delegations" && overlay() === "none") {
         const selected = delegations[selectedDelegationIndex];
         if (selected) {
           setOverlay("namespaceConfigView");
@@ -295,7 +296,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     c: () => {
-      if (activeTab === "manifests" && overlay === "none") {
+      if (activeTab === "manifests" && overlay() === "none") {
         setOverlay("manifestCreator");
       } else if (activeTab === "fraud" && client) {
         // Compute fraud scores
@@ -303,7 +304,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     "shift+x": async () => {
-      if (activeTab === "manifests" && overlay === "none" && client) {
+      if (activeTab === "manifests" && overlay() === "none" && client) {
         const selected = manifests[selectedManifestIndex];
         if (selected && selected.status === "active") {
           const ok = await confirm("Revoke manifest?", "Revoke this access manifest. Active sessions may be terminated.");
@@ -313,7 +314,7 @@ export default function AccessPanel(): React.ReactNode {
       }
     },
     "shift+r": () => {
-      if (!client || overlay !== "none") return;
+      if (!client || overlay() !== "none") return;
       if (activeTab === "alerts") {
         const selected = alerts[selectedAlertIndex];
         if (selected && !selected.resolved) {
@@ -324,7 +325,7 @@ export default function AccessPanel(): React.ReactNode {
     f: () => {
       if (activeTab === "delegations") {
         const cycle: (string | null)[] = [null, "active", "revoked", "expired", "completed"];
-        const idx = cycle.indexOf(delegationFilter);
+        const idx = cycle.indexOf(delegationFilter());
         const next = cycle[(idx + 1) % cycle.length] ?? null;
         setDelegationFilter(next);
         if (client) fetchDelegations(client, next);
@@ -372,7 +373,7 @@ export default function AccessPanel(): React.ReactNode {
   const initialManifestId = selectedManifest?.manifest_id ?? "";
   const selectedDelegation = delegations[selectedDelegationIndex];
 
-  const closeOverlay = (): void => setOverlay("none");
+  const closeOverlay = () => { setOverlay("none"); };
 
   const OVERLAY_LABELS: Readonly<Record<OverlayMode, string>> = {
     none: "",
@@ -384,9 +385,9 @@ export default function AccessPanel(): React.ReactNode {
     manifestCreator: " | New Manifest",
     constraintCreator: " | New Constraint",
   };
-  const overlayLabel = OVERLAY_LABELS[overlay];
+  const overlayLabel = OVERLAY_LABELS[overlay()];
 
-  if (overlay !== "none") {
+  if (overlay() !== "none") {
     return (
       <box height="100%" width="100%" flexDirection="column">
         <box height={1} width="100%">
@@ -398,7 +399,7 @@ export default function AccessPanel(): React.ReactNode {
           </text>
         </box>
         <box flexGrow={1} borderStyle="single">
-          {overlay === "permissionChecker" && (
+          {overlay() === "permissionChecker" && (
             <PermissionChecker
               initialManifestId={initialManifestId}
               lastResult={lastPermissionCheck}
@@ -409,31 +410,31 @@ export default function AccessPanel(): React.ReactNode {
               onClose={closeOverlay}
             />
           )}
-          {overlay === "delegationCreator" && (
+          {overlay() === "delegationCreator" && (
             <DelegationCreator onClose={closeOverlay} />
           )}
-          {overlay === "delegationCompleter" && (
+          {overlay() === "delegationCompleter" && (
             <DelegationCompleter
               delegationId={selectedDelegation?.delegation_id ?? ""}
               onClose={closeOverlay}
             />
           )}
-          {overlay === "delegationChainView" && (
+          {overlay() === "delegationChainView" && (
             <DelegationChainView
               delegationId={selectedDelegation?.delegation_id ?? ""}
               onClose={closeOverlay}
             />
           )}
-          {overlay === "namespaceConfigView" && (
+          {overlay() === "namespaceConfigView" && (
             <NamespaceConfigView
               delegationId={selectedDelegation?.delegation_id ?? ""}
               onClose={closeOverlay}
             />
           )}
-          {overlay === "manifestCreator" && (
+          {overlay() === "manifestCreator" && (
             <ManifestCreator onClose={closeOverlay} />
           )}
-          {overlay === "constraintCreator" && (
+          {overlay() === "constraintCreator" && (
             <ConstraintCreator
               zoneId={effectiveZoneId ?? ""}
               onClose={closeOverlay}
@@ -445,7 +446,7 @@ export default function AccessPanel(): React.ReactNode {
   }
 
   // Tab-specific help text
-  const delegationFilterLabel = delegationFilter ? ` [${delegationFilter}]` : "";
+  const delegationFilterLabel = delegationFilter() ? ` [${delegationFilter()}]` : "";
   const HELP: Readonly<Record<AccessTab, string>> = {
     manifests: "j/k:navigate  g/G:jump  Enter:show entries  c:new manifest  Shift+X:revoke  p:perm check  y:copy  Esc:close  Tab:tab  r:refresh  q:quit",
     alerts: "j/k:navigate  g/G:jump  Shift+R:resolve  Esc:close  Tab:tab  r:refresh  q:quit",

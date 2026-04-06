@@ -1,9 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Workspaces sub-tab for the Zones panel.
  * Displays registered workspace directories with selection highlighting.
  */
 
-import React from "react";
 import type { WorkspaceInfo } from "../../stores/workspace-store.js";
 
 interface WorkspacesTabProps {
@@ -16,7 +16,7 @@ export function WorkspacesTab({
   workspaces,
   selectedIndex,
   loading,
-}: WorkspacesTabProps): React.ReactNode {
+}: WorkspacesTabProps): JSX.Element {
   if (loading) return <text>Loading workspaces...</text>;
   if (workspaces.length === 0)
     return <text>No workspaces registered. Press 'n' to register one.</text>;
@@ -27,7 +27,7 @@ export function WorkspacesTab({
         const isSelected = i === selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         return (
-          <box key={ws.path} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{`${prefix}${ws.name}  ${ws.path}  ${ws.scope}  ${ws.created_by ?? ""}`}</text>
           </box>
         );

@@ -12,7 +12,8 @@
  * errors, skill doc references, and fix examples.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
@@ -32,7 +33,7 @@ interface WriteTabProps {
 
 type WriteMode = "select-mount" | "select-op" | "edit" | "result";
 
-export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactNode {
+export function WriteTab({ client, overlayActive }: WriteTabProps): JSX.Element {
   const mounts = useConnectorsStore((s) => s.mounts);
   const selectedMountIndex = useConnectorsStore((s) => s.selectedWriteMountIndex);
   const selectedOpIndex = useConnectorsStore((s) => s.selectedOperationIndex);
@@ -49,21 +50,21 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
 
   const confirm = useConfirmStore((s) => s.confirm);
 
-  const [mode, setMode] = useState<WriteMode>("select-mount");
-  const [editLine, setEditLine] = useState(0);
-  const [lineEditMode, setLineEditMode] = useState(false);
-  const [lineEditBuffer, setLineEditBuffer] = useState("");
+  const [mode, setMode] = createSignal<WriteMode>("select-mount");
+  const [editLine, setEditLine] = createSignal(0);
+  const [lineEditMode, setLineEditMode] = createSignal(false);
+  const [lineEditBuffer, setLineEditBuffer] = createSignal("");
 
   const selectedMount = mounts[selectedMountIndex];
   const operations = selectedMount?.operations ?? [];
   const selectedOp = operations[selectedOpIndex];
 
   // Auto-fetch mounts if empty
-  useEffect(() => {
+  createEffect(() => {
     if (mounts.length === 0) {
       fetchMounts(client);
     }
-  }, [client, mounts.length, fetchMounts]);
+  });
 
   // Fetch schema and generate template when operation is selected
   const { data: schemaData } = useSwr<SchemaDoc>(
@@ -81,13 +82,13 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
   );
 
   // Generate template from schema
-  useEffect(() => {
-    if (schemaData?.content && selectedOp && mode === "edit") {
+  createEffect(() => {
+    if (schemaData?.content && selectedOp && mode() === "edit") {
       const template = generateWriteTemplate(selectedOp, schemaData.content);
       setWriteTemplate(template);
       setEditLine(0);
     }
-  }, [schemaData?.content, selectedOp, mode, setWriteTemplate]);
+  });
 
   const templateLines = writeTemplate.split("\n");
 
@@ -96,8 +97,8 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
   // ---------------------------------------------------------------------------
 
   /** Enter edit mode for the current line's value (after the colon). */
-  const startLineEdit = useCallback(() => {
-    const line = templateLines[editLine];
+  const startLineEdit = () => {
+    const line = templateLines[editLine()];
     if (!line) return;
     // Extract the value portion after "key:" (skip comments-only and header lines)
     const stripped = line.replace(/^#\s*/, "");
@@ -109,11 +110,11 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
     const unquoted = rawValue.replace(/^["']|["']$/g, "");
     setLineEditBuffer(unquoted);
     setLineEditMode(true);
-  }, [templateLines, editLine]);
+  };
 
   /** Commit the edited value back into the template. */
-  const commitLineEdit = useCallback(() => {
-    const line = templateLines[editLine];
+  const commitLineEdit = () => {
+    const line = templateLines[editLine()];
     if (!line) { setLineEditMode(false); return; }
     const stripped = line.replace(/^#\s*/, "");
     const colonIdx = stripped.indexOf(":");
@@ -123,32 +124,32 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
     const commentMatch = stripped.match(/#\s*.+$/);
     const comment = commentMatch ? `  ${commentMatch[0]}` : "";
     // Build new line (uncommented — editing implies enabling)
-    const value = lineEditBuffer.includes(" ") || lineEditBuffer === ""
-      ? `"${lineEditBuffer}"`
-      : lineEditBuffer;
+    const value = lineEditBuffer().includes(" ") || lineEditBuffer() === ""
+      ? `"${lineEditBuffer()}"`
+      : lineEditBuffer();
     const newLine = `${key}: ${value}${comment}`;
     const newLines = [...templateLines];
-    newLines[editLine] = newLine;
+    newLines[editLine()] = newLine;
     setWriteTemplate(newLines.join("\n"));
     setLineEditMode(false);
-  }, [templateLines, editLine, lineEditBuffer, setWriteTemplate]);
+  };
 
   /** Toggle comment on/off for the current line. */
-  const toggleComment = useCallback(() => {
-    const line = templateLines[editLine];
+  const toggleComment = () => {
+    const line = templateLines[editLine()];
     if (!line) return;
     const newLines = [...templateLines];
     if (line.startsWith("# ")) {
       // Uncomment
-      newLines[editLine] = line.substring(2);
+      newLines[editLine()] = line.substring(2);
     } else if (!line.startsWith("#")) {
       // Comment out
-      newLines[editLine] = `# ${line}`;
+      newLines[editLine()] = `# ${line}`;
     }
     setWriteTemplate(newLines.join("\n"));
-  }, [templateLines, editLine, setWriteTemplate]);
+  };
 
-  const handleSubmit = useCallback(async () => {
+  const handleSubmit = async () => {
     if (!selectedMount || !writeTemplate.trim()) return;
     const ok = await confirm(
       "Submit write operation?",
@@ -157,7 +158,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
     if (!ok) return;
     submitWrite(selectedMount.mount_point, writeTemplate, client);
     setMode("result");
-  }, [selectedMount, selectedOp, writeTemplate, submitWrite, client, confirm]);
+  };
 
   // Parse structured error from write result
   const parsedError = writeResult?.error ? parseWriteError(writeResult.error) : null;
@@ -188,29 +189,29 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
   useKeyboard(
     overlayActive
       ? {}
-      : mode === "select-mount"
+      : mode() === "select-mount"
         ? {
             ...mountNav,
             r: () => fetchMounts(client),
           }
-        : mode === "select-op"
+        : mode() === "select-op"
           ? {
               ...opNav,
               escape: () => setMode("select-mount"),
             }
-          : mode === "edit" && lineEditMode
+          : mode() === "edit" && lineEditMode()
             ? {
                 // Line editing mode — capture typed characters
                 return: commitLineEdit,
                 escape: () => { setLineEditMode(false); setLineEditBuffer(""); },
                 backspace: () => { setLineEditBuffer((b) => b.slice(0, -1)); },
               }
-            : mode === "edit"
+            : mode() === "edit"
               ? {
-                  j: () => setEditLine(Math.min(editLine + 1, templateLines.length - 1)),
-                  k: () => setEditLine(Math.max(editLine - 1, 0)),
-                  down: () => setEditLine(Math.min(editLine + 1, templateLines.length - 1)),
-                  up: () => setEditLine(Math.max(editLine - 1, 0)),
+                  j: () => setEditLine(Math.min(editLine() + 1, templateLines.length - 1)),
+                  k: () => setEditLine(Math.max(editLine() - 1, 0)),
+                  down: () => setEditLine(Math.min(editLine() + 1, templateLines.length - 1)),
+                  up: () => setEditLine(Math.max(editLine() - 1, 0)),
                   return: startLineEdit,
                   "ctrl+s": handleSubmit,
                   "#": toggleComment,
@@ -233,7 +234,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
                   },
                 },
     // onUnhandled: capture typed characters in line edit mode
-    (!overlayActive && mode === "edit" && lineEditMode)
+    (!overlayActive && mode() === "edit" && lineEditMode())
       ? (keyName: string) => {
           if (keyName === "space") {
             setLineEditBuffer((b) => b + " ");
@@ -250,29 +251,29 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
       <box height={1} width="100%">
         <text>
           <span
-            foregroundColor={mode === "select-mount" ? statusColor.info : statusColor.dim}
-            bold={mode === "select-mount"}
+            foregroundColor={mode() === "select-mount" ? statusColor.info : statusColor.dim}
+            bold={mode() === "select-mount"}
           >
             Mount
           </span>
           <span foregroundColor={statusColor.dim}>{" → "}</span>
           <span
-            foregroundColor={mode === "select-op" ? statusColor.info : statusColor.dim}
-            bold={mode === "select-op"}
+            foregroundColor={mode() === "select-op" ? statusColor.info : statusColor.dim}
+            bold={mode() === "select-op"}
           >
             Operation
           </span>
           <span foregroundColor={statusColor.dim}>{" → "}</span>
           <span
-            foregroundColor={mode === "edit" ? statusColor.info : statusColor.dim}
-            bold={mode === "edit"}
+            foregroundColor={mode() === "edit" ? statusColor.info : statusColor.dim}
+            bold={mode() === "edit"}
           >
             Edit
           </span>
           <span foregroundColor={statusColor.dim}>{" → "}</span>
           <span
-            foregroundColor={mode === "result" ? statusColor.info : statusColor.dim}
-            bold={mode === "result"}
+            foregroundColor={mode() === "result" ? statusColor.info : statusColor.dim}
+            bold={mode() === "result"}
           >
             Result
           </span>
@@ -281,7 +282,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
 
       {/* Content area */}
       <box flexGrow={1} borderStyle="single" marginTop={1} flexDirection="column">
-        {mode === "select-mount" && (
+        {mode() === "select-mount" && (
           <box flexDirection="column" width="100%">
             <box height={1} width="100%">
               <text bold>Select a mount to write to:</text>
@@ -292,7 +293,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
               </box>
             ) : (
               mounts.map((m, i) => (
-                <box key={m.mount_point} height={1} width="100%">
+                <box height={1} width="100%">
                   <text>
                     <span foregroundColor={i === selectedMountIndex ? statusColor.info : undefined}>
                       {i === selectedMountIndex ? "▶ " : "  "}
@@ -313,7 +314,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
           </box>
         )}
 
-        {mode === "select-op" && (
+        {mode() === "select-op" && (
           <box flexDirection="column" width="100%">
             <box height={1} width="100%">
               <text bold>
@@ -326,7 +327,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
               </box>
             ) : (
               operations.map((op, i) => (
-                <box key={op} height={1} width="100%">
+                <box height={1} width="100%">
                   <text>
                     <span foregroundColor={i === selectedOpIndex ? statusColor.info : undefined}>
                       {i === selectedOpIndex ? "▶ " : "  "}
@@ -339,7 +340,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
           </box>
         )}
 
-        {mode === "edit" && (
+        {mode() === "edit" && (
           <box flexDirection="column" width="100%">
             <box height={1} width="100%">
               <text bold>{`Editing: ${selectedOp} → ${selectedMount?.mount_point}`}</text>
@@ -348,11 +349,11 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
               <LoadingIndicator message="Submitting..." />
             ) : (
               templateLines.map((line, i) => {
-                const isActive = i === editLine;
-                const isEditing = isActive && lineEditMode;
+                const isActive = i === editLine();
+                const isEditing = isActive && lineEditMode();
 
                 return (
-                  <box key={i} height={1} width="100%">
+                  <box height={1} width="100%">
                     <text>
                       <span foregroundColor={statusColor.dim}>
                         {String(i + 1).padStart(3, " ")}
@@ -395,7 +396,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
           </box>
         )}
 
-        {mode === "result" && (
+        {mode() === "result" && (
           <box flexDirection="column" width="100%">
             <box height={1} width="100%">
               <text bold>Write Result</text>
@@ -432,7 +433,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
                         <text bold foregroundColor={statusColor.warning}>Field errors:</text>
                       </box>
                       {parsedError.fieldErrors.map(({ field, error }) => (
-                        <box key={field} height={1} width="100%">
+                        <box height={1} width="100%">
                           <text>
                             <span foregroundColor={statusColor.warning}>{"  - "}</span>
                             <span foregroundColor={statusColor.info} bold>{field}</span>
@@ -461,7 +462,7 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
                         <text foregroundColor={statusColor.healthy} bold>Fix:</text>
                       </box>
                       {parsedError.fixExample.split("\n").map((fixLine, i) => (
-                        <box key={i} height={1} width="100%">
+                        <box height={1} width="100%">
                           <text foregroundColor={statusColor.dim}>{`  ${fixLine}`}</text>
                         </box>
                       ))}
@@ -498,13 +499,13 @@ export function WriteTab({ client, overlayActive }: WriteTabProps): React.ReactN
       {/* Help bar */}
       <box height={1} width="100%">
         <text foregroundColor={statusColor.dim}>
-          {mode === "select-mount"
+          {mode() === "select-mount"
             ? "j/k:navigate  Enter:select  r:refresh"
-            : mode === "select-op"
+            : mode() === "select-op"
               ? "j/k:navigate  Enter:select  Esc:back"
-              : mode === "edit" && lineEditMode
+              : mode() === "edit" && lineEditMode()
                 ? "type:edit value  Enter:confirm  Esc:cancel"
-                : mode === "edit"
+                : mode() === "edit"
                   ? "j/k:navigate  Enter:edit line  #:toggle comment  Ctrl+S:submit  Esc:back"
                   : "e:edit again  Esc:back to operations"}
         </text>

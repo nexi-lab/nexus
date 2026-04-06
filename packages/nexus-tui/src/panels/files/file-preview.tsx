@@ -2,7 +2,8 @@
  * File content preview panel with syntax highlighting.
  */
 
-import React, { useEffect, useMemo } from "react";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import { useFilesStore } from "../../stores/files-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { Spinner } from "../../shared/components/spinner.js";
@@ -48,70 +49,74 @@ export function extensionToLanguage(ext: string): string {
   return EXTENSION_TO_LANGUAGE[ext] ?? "text";
 }
 
-export function FilePreview(): React.ReactNode {
+export function FilePreview(): JSX.Element {
   const client = useApi();
-  const previewPath = useFilesStore((s) => s.previewPath);
-  const previewContent = useFilesStore((s) => s.previewContent);
-  const previewLoading = useFilesStore((s) => s.previewLoading);
-  const previewError = useFilesStore((s) => s.error);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
 
-  const ext = previewPath?.split(".").pop()?.toLowerCase() ?? "";
-  const language = extensionToLanguage(ext);
+  // Subscribe to store for reactive updates (OpenTUI needs signal-driven rendering)
+  const [previewPath, setPreviewPath] = createSignal(useFilesStore.getState().previewPath);
+  const [previewContent, setPreviewContent] = createSignal(useFilesStore.getState().previewContent);
+  const [previewLoading, setPreviewLoading] = createSignal(useFilesStore.getState().previewLoading);
+  const [previewError, setPreviewError] = createSignal(useFilesStore.getState().error);
+  const unsub = useFilesStore.subscribe((state) => {
+    setPreviewPath(state.previewPath);
+    setPreviewContent(state.previewContent);
+    setPreviewLoading(state.previewLoading);
+    setPreviewError(state.error);
+  });
+  onCleanup(unsub);
 
-  // Memoize the ANSI scan — O(n) on file content, only recalculate when
-  // content or extension changes, not on arbitrary parent re-renders.
-  // Must be before any early returns to satisfy Rules of Hooks.
-  const hasAnsi = useMemo(
-    () => ANSI_EXTENSIONS.has(ext) || (previewContent?.includes("\x1b[") ?? false),
-    [ext, previewContent],
+  const ext = () => previewPath()?.split(".").pop()?.toLowerCase() ?? "";
+  const language = () => extensionToLanguage(ext());
+
+  const hasAnsi = createMemo(
+    () => ANSI_EXTENSIONS.has(ext()) || (previewContent()?.includes("\x1b[") ?? false),
   );
 
-  useEffect(() => {
-    if (client && previewPath) {
-      fetchPreview(previewPath, client);
+  // Pretty-print JSON files for readability
+  const displayContent = createMemo(() => {
+    const raw = previewContent();
+    if (!raw) return raw;
+    if (ext() === "json") {
+      try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { /* not valid JSON */ }
     }
-  }, [client, previewPath, fetchPreview]);
+    return raw;
+  });
 
-  if (!previewPath) {
-    return (
+  // Preview is triggered by the keyboard handler (Enter/l on a file).
+  // Do NOT auto-fetch here — previewPath is already set by fetchPreview,
+  // and re-fetching on signal change creates an infinite loop.
+
+  return (
+    <Show when={previewPath()} fallback={
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>Select a file to preview</text>
       </box>
-    );
-  }
-
-  if (previewLoading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <Spinner label={`Loading ${previewPath}...`} />
-      </box>
-    );
-  }
-
-  if (previewContent === null) {
-    return (
-      <box height="100%" width="100%" flexDirection="column">
-        <text>Unable to load preview</text>
-        {previewError && (
-          <text style={textStyle({ dim: true })}>{previewError}</text>
-        )}
-      </box>
-    );
-  }
-
-  if (hasAnsi) {
-    return (
-      <scrollbox height="100%" width="100%">
-        <StyledText>{previewContent}</StyledText>
-      </scrollbox>
-    );
-  }
-
-  // Use OpenTUI's Code component for syntax highlighting
-  return (
-    <scrollbox height="100%" width="100%">
-      <code content={previewContent} filetype={language} syntaxStyle={defaultSyntaxStyle} />
-    </scrollbox>
+    }>
+      <Show when={!previewLoading()} fallback={
+        <box height="100%" width="100%" justifyContent="center" alignItems="center">
+          <Spinner label={`Loading ${previewPath()}...`} />
+        </box>
+      }>
+        <Show when={previewContent() !== null} fallback={
+          <box height="100%" width="100%" flexDirection="column">
+            <text>Unable to load preview</text>
+            {previewError() && (
+              <text style={textStyle({ dim: true })}>{previewError()}</text>
+            )}
+          </box>
+        }>
+          <Show when={!hasAnsi()} fallback={
+            <scrollbox height="100%" width="100%">
+              <StyledText>{displayContent()!}</StyledText>
+            </scrollbox>
+          }>
+            <scrollbox height="100%" width="100%">
+              <code content={displayContent()!} filetype={language()} syntaxStyle={defaultSyntaxStyle} />
+            </scrollbox>
+          </Show>
+        </Show>
+      </Show>
+    </Show>
   );
 }

@@ -4,7 +4,8 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import React, { useEffect } from "react";
+import { createSignal, createEffect, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
@@ -16,42 +17,47 @@ interface OperationsTabWrapperProps {
   readonly overlayActive: boolean;
 }
 
-export function OperationsTabWrapper({ tabBindings, overlayActive }: OperationsTabWrapperProps): React.ReactNode {
+export function OperationsTabWrapper(props: OperationsTabWrapperProps): JSX.Element {
   const client = useApi();
 
-  const operations = useInfraStore((s) => s.operations);
-  const operationsLoading = useInfraStore((s) => s.operationsLoading);
-  const selectedOperationIndex = useInfraStore((s) => s.selectedOperationIndex);
-  const setSelectedOperationIndex = useInfraStore((s) => s.setSelectedOperationIndex);
-  const fetchOperations = useInfraStore((s) => s.fetchOperations);
+  const [_rev, _setRev] = createSignal(0);
+  const unsub = useInfraStore.subscribe(() => _setRev((r) => r + 1));
+  onCleanup(unsub);
+  const inf = () => { void _rev(); return useInfraStore.getState(); };
 
-  useEffect(() => {
+  const operations = () => inf().operations;
+  const operationsLoading = () => inf().operationsLoading;
+  const selectedOperationIndex = () => inf().selectedOperationIndex;
+  const setSelectedOperationIndex = useInfraStore.getState().setSelectedOperationIndex;
+  const fetchOperations = useInfraStore.getState().fetchOperations;
+
+  createEffect(() => {
     if (client) fetchOperations(client);
-  }, [client, fetchOperations]);
-
-  const listNav = listNavigationBindings({
-    getIndex: () => selectedOperationIndex,
-    setIndex: (i) => setSelectedOperationIndex(i),
-    getLength: () => operations.length,
   });
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : {
-          ...listNav,
-          ...tabBindings,
-          r: () => { if (client) fetchOperations(client); },
-        },
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      const listNav = listNavigationBindings({
+        getIndex: () => selectedOperationIndex(),
+        setIndex: (i) => setSelectedOperationIndex(i),
+        getLength: () => operations().length,
+      });
+      return {
+        ...listNav,
+        ...props.tabBindings,
+        r: () => { if (client) fetchOperations(client); },
+      };
+    },
   );
 
   return (
     <box height="100%" width="100%" flexDirection="column">
       <box flexGrow={1} width="100%" borderStyle="single">
         <OperationsTab
-          operations={operations}
-          selectedIndex={selectedOperationIndex}
-          loading={operationsLoading}
+          operations={operations()}
+          selectedIndex={selectedOperationIndex()}
+          loading={operationsLoading()}
         />
       </box>
       <box height={1} width="100%">

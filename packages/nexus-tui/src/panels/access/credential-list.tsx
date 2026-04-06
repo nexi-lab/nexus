@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Credential list with active status badge, DIDs, and delegation depth.
  */
 
-import React from "react";
 import type { Credential } from "../../stores/access-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -28,7 +28,7 @@ function formatTimestamp(ts: string | null): string {
 export function CredentialList({
   credentials,
   loading,
-}: CredentialListProps): React.ReactNode {
+}: CredentialListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -56,7 +56,7 @@ export function CredentialList({
         const badge = cred.is_active ? "●" : "○";
 
         return (
-          <box key={cred.credential_id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`  ${badge}   ${shortId(cred.credential_id).padEnd(15)}  ${shortId(cred.issuer_did).padEnd(15)}  ${shortId(cred.subject_did).padEnd(15)}  ${String(cred.delegation_depth).padEnd(5)}  ${formatTimestamp(cred.expires_at).padEnd(17)}  ${formatTimestamp(cred.revoked_at)}`}
             </text>

@@ -29,6 +29,13 @@
 const DEFAULT_WIDTH = 120;
 const DEFAULT_HEIGHT = 40;
 const TMUX_SESSION_PREFIX = "nexus-tui-test";
+/**
+ * Use a dedicated tmux socket so that sessions are not constrained by the
+ * outer terminal's dimensions.  When a session has no attached client the
+ * specified -x / -y values are respected exactly, which is critical for
+ * tests that need a full-width terminal (≥ 80 cols) to render correctly.
+ */
+const TMUX_SOCKET = "/tmp/nexus-tui-test.sock";
 
 let sessionCounter = 0;
 
@@ -66,10 +73,11 @@ export class TmuxSession {
     const pkgDir = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
     const fullCmd = `cd ${pkgDir} && ${tuiCmd}`;
 
-    // Create detached tmux session with fixed dimensions
-    // Use shell form so cd + command work correctly
+    // Create detached tmux session with fixed dimensions.
+    // Use a dedicated socket (-S) so this session is not constrained by the
+    // outer terminal size (which would override -x/-y when a client is attached).
     const proc = Bun.spawn(
-      ["tmux", "new-session", "-d", "-s", sessionName, "-x", String(width), "-y", String(height), fullCmd],
+      ["tmux", "-S", TMUX_SOCKET, "new-session", "-d", "-s", sessionName, "-x", String(width), "-y", String(height), fullCmd],
       { stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
@@ -93,7 +101,7 @@ export class TmuxSession {
     if (this.destroyed) throw new Error("Session already destroyed");
     try {
       const proc = Bun.spawn(
-        ["tmux", "capture-pane", "-t", this.sessionName, "-p"],
+        ["tmux", "-S", TMUX_SOCKET, "capture-pane", "-t", this.sessionName, "-p"],
         { stdout: "pipe", stderr: "pipe" },
       );
       const text = await new Response(proc.stdout).text();
@@ -112,7 +120,7 @@ export class TmuxSession {
   async sendKeys(keys: string): Promise<void> {
     if (this.destroyed) throw new Error("Session already destroyed");
     const proc = Bun.spawn(
-      ["tmux", "send-keys", "-t", this.sessionName, keys],
+      ["tmux", "-S", TMUX_SOCKET, "send-keys", "-t", this.sessionName, keys],
       { stdout: "pipe", stderr: "pipe" },
     );
     await proc.exited;
@@ -210,7 +218,7 @@ export class TmuxSession {
     this.destroyed = true;
     try {
       const proc = Bun.spawn(
-        ["tmux", "kill-session", "-t", this.sessionName],
+        ["tmux", "-S", TMUX_SOCKET, "kill-session", "-t", this.sessionName],
         { stdout: "pipe", stderr: "pipe" },
       );
       await proc.exited;
@@ -238,7 +246,7 @@ function sleep(ms: number): Promise<void> {
 export async function cleanupTestSessions(): Promise<void> {
   try {
     const proc = Bun.spawn(
-      ["tmux", "list-sessions", "-F", "#S"],
+      ["tmux", "-S", TMUX_SOCKET, "list-sessions", "-F", "#S"],
       { stdout: "pipe", stderr: "pipe" },
     );
     const output = await new Response(proc.stdout).text();
@@ -250,7 +258,7 @@ export async function cleanupTestSessions(): Promise<void> {
     for (const name of testSessions) {
       if (name.trim()) {
         const kill = Bun.spawn(
-          ["tmux", "kill-session", "-t", name.trim()],
+          ["tmux", "-S", TMUX_SOCKET, "kill-session", "-t", name.trim()],
           { stdout: "pipe", stderr: "pipe" },
         );
         await kill.exited;

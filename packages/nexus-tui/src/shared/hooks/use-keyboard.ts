@@ -2,15 +2,23 @@
  * Keyboard navigation hook wrapping OpenTUI's useKeyboard.
  *
  * Provides a simple key-name -> handler abstraction with cleanup on unmount.
+ *
+ * Implementation note: we bypass @opentui/solid's useKeyboard (which
+ * defers registration inside onMount / createEffect) and instead register
+ * the handler synchronously in the component body via renderer.keyInput.on().
+ * This ensures the handler is live immediately, which is required for
+ * @opentui/solid's test renderer where user effects (createEffect / onMount)
+ * are never flushed.
  */
 
-import { useCallback, useRef } from "react";
-import { useKeyboard as useOpenTuiKeyboard } from "@opentui/react";
+import { useRenderer } from "@opentui/solid";
+import { onCleanup } from "solid-js";
 import type { KeyEvent } from "@opentui/core";
 
 export type KeyHandler = () => void;
 export type KeyBindings = Readonly<Record<string, KeyHandler>>;
 export type UnhandledKeyHandler = (key: string) => void;
+type MaybeAccessor<T> = T | (() => T);
 
 /**
  * Register keyboard shortcut handlers.
@@ -30,29 +38,34 @@ export type UnhandledKeyHandler = (key: string) => void;
  *   printable character should be captured.
  */
 export function useKeyboard(
-  bindings: KeyBindings,
-  onUnhandled?: UnhandledKeyHandler,
+  bindings: MaybeAccessor<KeyBindings>,
+  onUnhandled?: MaybeAccessor<UnhandledKeyHandler | undefined>,
 ): void {
-  const bindingsRef = useRef(bindings);
-  bindingsRef.current = bindings;
+  const renderer = useRenderer();
 
-  const onUnhandledRef = useRef(onUnhandled);
-  onUnhandledRef.current = onUnhandled;
-
-  const handler = useCallback((key: KeyEvent) => {
+  const handler = (key: KeyEvent) => {
     // Build normalized key string
     let keyStr = key.name;
     if (key.ctrl) keyStr = `ctrl+${keyStr}`;
     if (key.shift) keyStr = `shift+${keyStr}`;
     if (key.meta) keyStr = `meta+${keyStr}`;
 
-    const fn = bindingsRef.current[keyStr];
+    const currentBindings = typeof bindings === "function" ? bindings() : bindings;
+    const fn = currentBindings[keyStr];
     if (fn) {
       fn();
-    } else if (onUnhandledRef.current) {
-      onUnhandledRef.current(key.name);
+    } else {
+      const currentUnhandled = typeof onUnhandled === "function" && onUnhandled.length === 0
+        ? (onUnhandled as () => UnhandledKeyHandler | undefined)()
+        : onUnhandled as UnhandledKeyHandler | undefined;
+      if (currentUnhandled) {
+        currentUnhandled(key.name);
+      }
     }
-  }, []);
+  };
 
-  useOpenTuiKeyboard(handler);
+  renderer.keyInput.on("keypress", handler);
+  onCleanup(() => {
+    renderer.keyInput.off("keypress", handler);
+  });
 }

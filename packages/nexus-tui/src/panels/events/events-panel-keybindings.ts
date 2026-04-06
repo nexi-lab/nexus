@@ -8,7 +8,7 @@
  * @see Issue #3623
  */
 
-import type { Dispatch, SetStateAction } from "react";
+import type { Setter } from "solid-js";
 import type { SseEvent } from "@nexus-ai-fs/api-client";
 import type { FetchClient, NexusClientOptions } from "@nexus-ai-fs/api-client";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
@@ -57,15 +57,15 @@ export interface EventsBindingContext {
   // Filter state
   readonly filterMode: FilterMode;
   readonly filterBuffer: string;
-  readonly setFilterMode: Dispatch<SetStateAction<FilterMode>>;
-  readonly setFilterBuffer: Dispatch<SetStateAction<string>>;
+  readonly setFilterMode: Setter<FilterMode>;
+  readonly setFilterBuffer: Setter<string>;
 
   // Events (SSE)
   readonly events: readonly SseEvent[];
   readonly selectedEventIndex: number;
-  readonly setSelectedEventIndex: Dispatch<SetStateAction<number>>;
+  readonly setSelectedEventIndex: Setter<number>;
   readonly expandedEventIndex: number | null;
-  readonly setExpandedEventIndex: Dispatch<SetStateAction<number | null>>;
+  readonly setExpandedEventIndex: Setter<number | null>;
   readonly filters: EventFilters;
   readonly setFilter: (filters: Partial<EventFilters>) => void;
   readonly clearEvents: () => void;
@@ -78,15 +78,15 @@ export interface EventsBindingContext {
 
   // MCL
   readonly mclUrnFilter: string;
-  readonly setMclUrnFilter: Dispatch<SetStateAction<string>>;
+  readonly setMclUrnFilter: Setter<string>;
   readonly mclAspectFilter: string;
-  readonly setMclAspectFilter: Dispatch<SetStateAction<string>>;
+  readonly setMclAspectFilter: Setter<string>;
   readonly clearReplay: () => void;
   readonly fetchReplay: (client: FetchClient, offset: number, limit: number) => Promise<void>;
 
   // Replay
   readonly replayTypeFilter: string;
-  readonly setReplayTypeFilter: Dispatch<SetStateAction<string>>;
+  readonly setReplayTypeFilter: Setter<string>;
   readonly clearEventReplay: () => void;
   readonly fetchEventReplay: (params: Record<string, unknown>, client: FetchClient) => Promise<void>;
 
@@ -95,7 +95,7 @@ export interface EventsBindingContext {
   readonly selectedConnectorIndex: number;
   readonly setSelectedConnectorIndex: (index: number) => void;
   readonly connectorDetailView: boolean;
-  readonly setConnectorDetailView: Dispatch<SetStateAction<boolean>>;
+  readonly setConnectorDetailView: Setter<boolean>;
   readonly fetchConnectors: (client: FetchClient) => Promise<void>;
   readonly fetchConnectorCapabilities: (connectorName: string, client: FetchClient) => Promise<void>;
 
@@ -118,7 +118,7 @@ export interface EventsBindingContext {
 
   // Secrets
   readonly secretsFilter: string;
-  readonly setSecretsFilter: Dispatch<SetStateAction<string>>;
+  readonly setSecretsFilter: Setter<string>;
   readonly fetchSecretAudit: (client: FetchClient) => Promise<void>;
 
   // Operations
@@ -130,7 +130,7 @@ export interface EventsBindingContext {
   // Audit
   readonly auditTransactions: readonly AuditTransaction[];
   readonly selectedAuditIndex: number;
-  readonly setSelectedAuditIndex: Dispatch<SetStateAction<number>>;
+  readonly setSelectedAuditIndex: Setter<number>;
   readonly auditHasMore: boolean;
   readonly auditNextCursor: string | null;
   readonly fetchAuditTransactions: (filters: { cursor?: string; limit?: number }, client: FetchClient) => Promise<void>;
@@ -441,7 +441,7 @@ export function getEventsKeyBindings(
  */
 export function handleEventsUnhandledKey(
   filterMode: FilterMode,
-  setFilterBuffer: Dispatch<SetStateAction<string>>,
+  setFilterBuffer: Setter<string>,
   keyName: string,
 ): void {
   if (filterMode === "none") return;

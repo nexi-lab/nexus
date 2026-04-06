@@ -2,7 +2,8 @@
  * Welcome screen shown on fresh servers.
  * Offers to seed demo data or start with empty server.
  */
-import React, { useState } from "react";
+import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { statusColor } from "../theme.js";
@@ -13,15 +14,15 @@ interface WelcomeScreenProps {
   readonly onDismiss: () => void;
 }
 
-export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNode {
+export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): JSX.Element {
   const client = useGlobalStore((s) => s.client);
   const config = useGlobalStore((s) => s.config);
   const serverVersion = useGlobalStore((s) => s.serverVersion);
-  const [seeding, setSeeding] = useState(false);
-  const [seedError, setSeedError] = useState<string | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [seeding, setSeeding] = createSignal(false);
+  const [seedError, setSeedError] = createSignal<string | null>(null);
+  const [showDetails, setShowDetails] = createSignal(false);
 
-  useKeyboard(seeding ? {} : {
+  useKeyboard(seeding() ? {} : {
     "y": async () => {
       if (!client) return;
       setSeeding(true);
@@ -70,7 +71,7 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
         <text>{"  This server has no data yet. Would you like"}</text>
         <text>{"  to seed demo content?"}</text>
         <text>{""}</text>
-        {seeding ? (
+        {seeding() ? (
           <Spinner label="  Seeding demo data..." />
         ) : (
           <>
@@ -88,13 +89,13 @@ export function WelcomeScreen({ onDismiss }: WelcomeScreenProps): React.ReactNod
             </text>
           </>
         )}
-        {seedError && (
+        {seedError() && (
           <>
             <text>{""}</text>
-            <text style={textStyle({ fg: statusColor.error })}>{"  "}{seedError}</text>
+            <text style={textStyle({ fg: statusColor.error })}>{"  "}{seedError()}</text>
           </>
         )}
-        {showDetails && (
+        {showDetails() && (
           <>
             <text>{""}</text>
             <text style={textStyle({ dim: true })}>{"  Demo data includes:"}</text>

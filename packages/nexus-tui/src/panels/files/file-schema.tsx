@@ -4,7 +4,8 @@
  * Issue #2930.
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import type { FileItem } from "../../stores/files-store.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -29,17 +30,17 @@ function isDataFile(item: FileItem): boolean {
   return DATA_EXTENSIONS.has(ext);
 }
 
-export function FileSchema({ item }: FileSchemaProps): React.ReactNode {
+export function FileSchema({ item }: FileSchemaProps): JSX.Element {
   const client = useApi();
   const schemaCache = useKnowledgeStore((s) => s.schemaCache);
   const loading = useKnowledgeStore((s) => s.schemaLoading);
   const fetchSchema = useKnowledgeStore((s) => s.fetchSchema);
 
-  useEffect(() => {
+  createEffect(() => {
     if (client && item && isDataFile(item)) {
       fetchSchema(item.path, client);
     }
-  }, [client, item, fetchSchema]);
+  });
 
   if (!item) {
     return <text>No file selected</text>;
@@ -80,7 +81,7 @@ export function FileSchema({ item }: FileSchemaProps): React.ReactNode {
       <text> </text>
       <text>{"  Column                Type         Nullable"}</text>
       {schema.columns.map((col) => (
-        <text key={col.name}>
+        <text>
           {`  ${col.name.padEnd(20)} ${col.type.padEnd(12)} ${col.nullable}`}
         </text>
       ))}

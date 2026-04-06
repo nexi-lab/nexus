@@ -8,7 +8,7 @@
  * @see Issue #3498
  */
 
-import React from "react";
+import { For, Show } from "solid-js";
 import type { SubTab } from "./sub-tab-bar-utils.js";
 
 export interface SubTabBarProps {
@@ -25,22 +25,22 @@ export interface SubTabBarProps {
  *
  * Example output: `[Zones]  Bricks   Drift   Reindex`
  */
-export function SubTabBar({ tabs, activeTab, onSelect }: SubTabBarProps): React.ReactNode {
-  if (tabs.length === 0) return null;
-
+export function SubTabBar(props: SubTabBarProps) {
   return (
-    <box height={1} width="100%" flexDirection="row">
-      {tabs.map((tab, index) => {
-        const isActive = tab.id === activeTab;
-        const isLast = index === tabs.length - 1;
-        const label = isActive ? `[${tab.label}]` : ` ${tab.label} `;
-        const content = isLast ? label : `${label} `;
-        return (
-          <box key={tab.id} height={1} onMouseDown={() => onSelect?.(tab.id)}>
-            <text>{content}</text>
-          </box>
-        );
-      })}
-    </box>
+    <Show when={props.tabs.length > 0}>
+      <box height={1} width="100%" flexDirection="row">
+        <For each={props.tabs}>{(tab, index) => {
+          const isActive = () => tab.id === props.activeTab;
+          const isLast = () => index() === props.tabs.length - 1;
+          const label = () => isActive() ? `[${tab.label}]` : ` ${tab.label} `;
+          const content = () => isLast() ? label() : `${label()} `;
+          return (
+            <box height={1} onMouseDown={() => props.onSelect?.(tab.id)}>
+              <text>{content()}</text>
+            </box>
+          );
+        }}</For>
+      </box>
+    </Show>
   );
 }

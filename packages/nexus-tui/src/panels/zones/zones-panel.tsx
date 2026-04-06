@@ -5,7 +5,8 @@
  * current state are active and displayed in the help bar.
  */
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createEffect, createMemo, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useZonesStore } from "../../stores/zones-store.js";
 import { useWorkspaceStore } from "../../stores/workspace-store.js";
 import { useMcpStore } from "../../stores/mcp-store.js";
@@ -30,7 +31,7 @@ import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { focusColor } from "../../shared/theme.js";
 import { ZONE_TABS } from "../../shared/navigation.js";
-export default function ZonesPanel(): React.ReactNode {
+export default function ZonesPanel(): JSX.Element {
   const client = useApi();
   const visibleTabs = useVisibleTabs(ZONE_TABS);
 
@@ -94,38 +95,38 @@ export default function ZonesPanel(): React.ReactNode {
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Track in-flight brick operations (mount, unmount, reset, etc.)
-  const [operationInProgress, setOperationInProgress] = useState(false);
+  const [operationInProgress, setOperationInProgress] = createSignal(false);
 
   // Input mode state for create/register flows (multi-field forms)
-  const [inputMode, setInputMode] = useState<"none" | "workspace" | "mcpMount">("none");
-  const [inputFields, setInputFields] = useState<Record<string, string>>({});
-  const [inputActiveField, setInputActiveField] = useState(0);
+  const [inputMode, setInputMode] = createSignal<"none" | "workspace" | "mcpMount">("none");
+  const [inputFields, setInputFields] = createSignal<Record<string, string>>({});
+  const [inputActiveField, setInputActiveField] = createSignal(0);
 
   const WS_FIELDS = ["path", "name", "description", "scope", "ttl_seconds"] as const;
   const MCP_FIELDS = ["name", "command_or_url", "description"] as const;
 
-  const currentFields = inputMode === "workspace" ? WS_FIELDS
-    : inputMode === "mcpMount" ? MCP_FIELDS : [] as const;
-  const currentFieldName = currentFields[inputActiveField] ?? "";
+  const currentFields = inputMode() === "workspace" ? WS_FIELDS
+    : inputMode() === "mcpMount" ? MCP_FIELDS : [] as const;
+  const currentFieldName = currentFields[inputActiveField()] ?? "";
 
   // Confirmation dialog state for destructive actions
-  const [confirmUnregister, setConfirmUnregister] = useState(false);
-  const [confirmWorkspaceUnregister, setConfirmWorkspaceUnregister] = useState(false);
-  const [confirmMcpUnmount, setConfirmMcpUnmount] = useState(false);
+  const [confirmUnregister, setConfirmUnregister] = createSignal(false);
+  const [confirmWorkspaceUnregister, setConfirmWorkspaceUnregister] = createSignal(false);
+  const [confirmMcpUnmount, setConfirmMcpUnmount] = createSignal(false);
 
-  const anyDialogOpen = confirmUnregister || confirmWorkspaceUnregister || confirmMcpUnmount;
+  const anyDialogOpen = confirmUnregister() || confirmWorkspaceUnregister() || confirmMcpUnmount();
 
   // Currently selected brick (if on bricks tab)
   const selectedBrick = activeTab === "bricks" ? bricks[selectedIndex] ?? null : null;
 
   // Allowed actions for the selected brick's current state
-  const allowed = useMemo(
+  const allowed = createMemo(
     () => (selectedBrick ? allowedActionsForState(selectedBrick.state) : new Set<string>()),
     [selectedBrick?.state],
   );
 
   // Refresh data for the current tab
-  const refreshActiveTab = useCallback((): void => {
+  const refreshActiveTab = (): void => {
     if (!client) return;
 
     if (activeTab === "zones") {
@@ -142,90 +143,90 @@ export default function ZonesPanel(): React.ReactNode {
       fetchCacheStats(client);
       fetchHotFiles(client);
     }
-  }, [activeTab, client, fetchZones, fetchBricks, fetchDrift, fetchWorkspaces, fetchMcpMounts, fetchCacheStats, fetchHotFiles]);
+  };
 
   // Auto-fetch data on mount and when tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshActiveTab();
-  }, [refreshActiveTab]);
+  });
 
   // Fetch brick detail when selection changes in bricks tab
-  useEffect(() => {
+  createEffect(() => {
     if (!client || activeTab !== "bricks") return;
     const brick = bricks[selectedIndex];
     if (brick) {
       fetchBrickDetail(brick.name, client);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedIndex, bricks, activeTab, client]);
+  });
 
   // Confirmation handlers
-  const handleConfirmUnregister = useCallback(() => {
+  const handleConfirmUnregister = () => {
     if (!client || !selectedBrick) return;
     unregisterBrick(selectedBrick.name, client);
     setConfirmUnregister(false);
-  }, [client, selectedBrick, unregisterBrick]);
+  };
 
-  const handleCancelUnregister = useCallback(() => {
+  const handleCancelUnregister = () => {
     setConfirmUnregister(false);
-  }, []);
+  };
 
   // Workspace unregister confirmation handlers
-  const handleConfirmWorkspaceUnregister = useCallback(() => {
+  const handleConfirmWorkspaceUnregister = () => {
     if (!client) return;
     const ws = workspaces[selectedWorkspaceIndex];
     if (ws) {
       unregisterWorkspace(ws.path, client);
     }
     setConfirmWorkspaceUnregister(false);
-  }, [client, workspaces, selectedWorkspaceIndex, unregisterWorkspace]);
+  };
 
-  const handleCancelWorkspaceUnregister = useCallback(() => {
+  const handleCancelWorkspaceUnregister = () => {
     setConfirmWorkspaceUnregister(false);
-  }, []);
+  };
 
   // MCP unmount confirmation handlers
-  const handleConfirmMcpUnmount = useCallback(() => {
+  const handleConfirmMcpUnmount = () => {
     if (!client) return;
     const mount = mcpMounts[selectedMountIndex];
     if (mount) {
       unmountServer(mount.name, client);
     }
     setConfirmMcpUnmount(false);
-  }, [client, mcpMounts, selectedMountIndex, unmountServer]);
+  };
 
-  const handleCancelMcpUnmount = useCallback(() => {
+  const handleCancelMcpUnmount = () => {
     setConfirmMcpUnmount(false);
-  }, []);
+  };
 
   // Build context-aware help text for the bricks tab
-  const brickHelpText = useMemo(() => {
+  const brickHelpText = createMemo(() => {
     const parts: string[] = ["j/k:navigate", "Tab:switch tab"];
-    if (allowed.has("mount")) parts.push("M:mount");
-    if (allowed.has("remount")) parts.push("m:remount");
-    if (allowed.has("unmount")) parts.push("U:unmount");
-    if (allowed.has("unregister")) parts.push("D:unregister");
-    if (allowed.has("reset")) parts.push("x:reset");
+    if (allowed().has("mount")) parts.push("M:mount");
+    if (allowed().has("remount")) parts.push("m:remount");
+    if (allowed().has("unmount")) parts.push("U:unmount");
+    if (allowed().has("unregister")) parts.push("D:unregister");
+    if (allowed().has("reset")) parts.push("x:reset");
     parts.push("r:refresh", "q:quit");
     return parts.join("  ");
-  }, [allowed]);
+  });
 
   // Compute current list length and set-index for navigation across all tabs
-  const currentListLength = useCallback((): number => {
+  const currentListLength = (): number => {
     if (activeTab === "zones") return zones.length;
     if (activeTab === "bricks") return bricks.length;
     if (activeTab === "workspaces") return workspaces.length;
     if (activeTab === "mcp") return mcpMounts.length;
     return 0;
-  }, [activeTab, zones.length, bricks.length, workspaces.length, mcpMounts.length]);
+  };
 
-  const currentNavIndex = useCallback((): number => {
+  const currentNavIndex = (): number => {
     if (activeTab === "workspaces") return selectedWorkspaceIndex;
     if (activeTab === "mcp") return selectedMountIndex;
     return selectedIndex;
-  }, [activeTab, selectedIndex, selectedWorkspaceIndex, selectedMountIndex]);
+  };
 
-  const setCurrentNavIndex = useCallback((index: number): void => {
+  const setCurrentNavIndex = (index: number): void => {
     if (activeTab === "workspaces") {
       setSelectedWorkspaceIndex(index);
     } else if (activeTab === "mcp") {
@@ -233,12 +234,11 @@ export default function ZonesPanel(): React.ReactNode {
     } else {
       setSelectedIndex(index);
     }
-  }, [activeTab, setSelectedIndex, setSelectedWorkspaceIndex, setSelectedMountIndex]);
+  };
 
   // In input mode, capture printable characters into the active field
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      if (inputMode === "none") return;
+  const handleUnhandledKey = (keyName: string) => {
+      if (inputMode() === "none") return;
       const field = currentFieldName;
       if (!field) return;
       if (keyName.length === 1) {
@@ -246,21 +246,19 @@ export default function ZonesPanel(): React.ReactNode {
       } else if (keyName === "space") {
         setInputFields((f) => ({ ...f, [field]: (f[field] ?? "") + " " }));
       }
-    },
-    [inputMode, currentFieldName],
-  );
+    };
 
   useKeyboard(
     overlayActive
       ? {}
       : anyDialogOpen
       ? {} // ConfirmDialog handles its own keys when visible
-      : inputMode !== "none"
+      : inputMode() !== "none"
         ? {
             return: () => {
               if (!client) { setInputMode("none"); return; }
-              const f = inputFields;
-              if (inputMode === "workspace") {
+              const f = inputFields();
+              if (inputMode() === "workspace") {
                 const path = (f.path ?? "").trim();
                 if (!path) { setInputMode("none"); return; }
                 registerWorkspace({
@@ -270,7 +268,7 @@ export default function ZonesPanel(): React.ReactNode {
                   scope: (f.scope ?? "").trim() || undefined,
                   ttl_seconds: f.ttl_seconds?.trim() ? parseInt(f.ttl_seconds.trim(), 10) : undefined,
                 }, client);
-              } else if (inputMode === "mcpMount") {
+              } else if (inputMode() === "mcpMount") {
                 const val = (f.command_or_url ?? "").trim();
                 const name = (f.name ?? "").trim() || val.split(/[\s/]/).pop() || "mcp-server";
                 if (!val) { setInputMode("none"); return; }
@@ -334,30 +332,30 @@ export default function ZonesPanel(): React.ReactNode {
             },
             // M (shift+m): Mount — valid for registered/unmounted
             "shift+m": () => {
-              if (!client || !selectedBrick || !allowed.has("mount")) return;
+              if (!client || !selectedBrick || !allowed().has("mount")) return;
               setOperationInProgress(true);
               mountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // U: Unmount — valid for active
             "shift+u": () => {
-              if (!client || !selectedBrick || !allowed.has("unmount")) return;
+              if (!client || !selectedBrick || !allowed().has("unmount")) return;
               setOperationInProgress(true);
               unmountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // D: Unregister — valid for unmounted (with confirmation)
             "shift+d": () => {
-              if (!client || !selectedBrick || !allowed.has("unregister")) return;
+              if (!client || !selectedBrick || !allowed().has("unregister")) return;
               setConfirmUnregister(true);
             },
             // m: Remount (existing) — valid for unmounted only
             m: () => {
-              if (!client || !selectedBrick || !allowed.has("remount")) return;
+              if (!client || !selectedBrick || !allowed().has("remount")) return;
               setOperationInProgress(true);
               remountBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
             // x: Reset (existing) — valid for failed
             x: () => {
-              if (!client || !selectedBrick || !allowed.has("reset")) return;
+              if (!client || !selectedBrick || !allowed().has("reset")) return;
               setOperationInProgress(true);
               resetBrick(selectedBrick.name, client).finally(() => setOperationInProgress(false));
             },
@@ -402,32 +400,32 @@ export default function ZonesPanel(): React.ReactNode {
               setCurrentNavIndex(jumpToEnd(len));
             },
           },
-    !overlayActive && inputMode !== "none" ? handleUnhandledKey : undefined,
+    !overlayActive && inputMode() !== "none" ? handleUnhandledKey : undefined,
   );
 
   // Context-aware help text per tab
-  const helpText = useMemo((): string => {
+  const helpText = createMemo((): string => {
     const base = "j/k:navigate  Tab:switch tab  r:refresh  q:quit";
-    if (activeTab === "bricks") return brickHelpText;
+    if (activeTab === "bricks") return brickHelpText();
     if (activeTab === "workspaces") return "j/k:navigate  n:register  d:unregister  Tab:tab  r:refresh  q:quit";
     if (activeTab === "mcp") return "j/k:navigate  n:mount  d:unmount  s:sync  Enter:tools  Tab:tab  r:refresh  q:quit";
     if (activeTab === "cache") return "w:warmup hot files  Tab:tab  r:refresh  q:quit";
     return base;
-  }, [activeTab, brickHelpText]);
+  });
 
   return (
     <box height="100%" width="100%" flexDirection="column">
       <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Multi-field input form for register/mount */}
-      {inputMode !== "none" && (
+      {inputMode() !== "none" && (
         <box flexDirection="column" width="100%">
           {currentFields.map((field, i) => {
-            const isActive = i === inputActiveField;
-            const val = inputFields[field] ?? "";
+            const isActive = i === inputActiveField();
+            const val = inputFields()[field] ?? "";
             const hint = field === "scope" ? " (persistent|session)" : field === "ttl_seconds" ? " (seconds, blank=none)" : field === "command_or_url" ? " (URL for SSE, command for stdio)" : "";
             return (
-              <box key={field} height={1} width="100%">
+              <box height={1} width="100%">
                 <text>{isActive ? `> ${field}: ${val}\u2588${hint}` : `  ${field}: ${val}`}</text>
               </box>
             );
@@ -446,7 +444,7 @@ export default function ZonesPanel(): React.ReactNode {
       )}
 
       {/* Brick operation in-flight indicator */}
-      {operationInProgress && (
+      {operationInProgress() && (
         <box height={1} width="100%">
           <LoadingIndicator message="Operation in progress..." centered={false} />
         </box>
@@ -522,15 +520,15 @@ export default function ZonesPanel(): React.ReactNode {
       {/* Context-aware help bar */}
       <box height={1} width="100%">
         <text>
-          {inputMode !== "none"
-            ? `${inputMode === "workspace" ? "Register Workspace" : "Mount MCP Server"} — Tab:field  Enter:submit  Escape:cancel`
+          {inputMode() !== "none"
+            ? `${inputMode() === "workspace" ? "Register Workspace" : "Mount MCP Server"} — Tab:field  Enter:submit  Escape:cancel`
             : helpText}
         </text>
       </box>
 
       {/* Unregister confirmation dialog */}
       <ConfirmDialog
-        visible={confirmUnregister}
+        visible={confirmUnregister()}
         title="Unregister Brick"
         message={`Permanently unregister "${selectedBrick?.name ?? ""}"? This cannot be undone.`}
         onConfirm={handleConfirmUnregister}
@@ -539,7 +537,7 @@ export default function ZonesPanel(): React.ReactNode {
 
       {/* Workspace unregister confirmation dialog */}
       <ConfirmDialog
-        visible={confirmWorkspaceUnregister}
+        visible={confirmWorkspaceUnregister()}
         title="Unregister Workspace"
         message={`Unregister workspace "${workspaces[selectedWorkspaceIndex]?.name ?? ""}"?`}
         onConfirm={handleConfirmWorkspaceUnregister}
@@ -548,7 +546,7 @@ export default function ZonesPanel(): React.ReactNode {
 
       {/* MCP unmount confirmation dialog */}
       <ConfirmDialog
-        visible={confirmMcpUnmount}
+        visible={confirmMcpUnmount()}
         title="Unmount MCP Server"
         message={`Unmount MCP server "${mcpMounts[selectedMountIndex]?.name ?? ""}"?`}
         onConfirm={handleConfirmMcpUnmount}

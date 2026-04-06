@@ -1,3 +1,5 @@
+import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Full-screen keybinding reference overlay.
  *
@@ -7,13 +9,12 @@
  * @see Issue #3066, Phase E9
  */
 
-import React from "react";
+
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
 import type { PanelId } from "../../stores/global-store.js";
 import {
-  type KeyBinding,
   GLOBAL_BINDINGS,
   NAV_BINDINGS,
   PANEL_BINDINGS,
@@ -25,75 +26,68 @@ interface HelpOverlayProps {
   readonly onDismiss: () => void;
 }
 
-export function HelpOverlay({
-  visible,
-  panel,
-  onDismiss,
-}: HelpOverlayProps): React.ReactNode {
+export function HelpOverlay(props: HelpOverlayProps): JSX.Element {
   useKeyboard(
-    visible
+    (): Record<string, () => void> => props.visible
       ? {
-          escape: onDismiss,
-          "?": onDismiss,
-          // Dismiss on any other key via onUnhandled
+          escape: () => props.onDismiss(),
+          "?": () => props.onDismiss(),
         }
       : {},
-    visible ? () => onDismiss() : undefined,
+    () => props.visible ? () => props.onDismiss() : undefined,
   );
 
-  if (!visible) return null;
-
-  const panelBindings = PANEL_BINDINGS[panel] ?? [];
+  const panelBindings = () => PANEL_BINDINGS[props.panel] ?? [];
 
   return (
-    <box
-      height="100%"
-      width="100%"
-      justifyContent="center"
-      alignItems="center"
-    >
+    <Show when={props.visible}>
       <box
-        flexDirection="column"
-        borderStyle="double"
-        width={60}
-        padding={1}
+        height="100%"
+        width="100%"
+        justifyContent="center"
+        alignItems="center"
       >
-        <text style={textStyle({ bold: true })}>Keybinding Reference</text>
-        <text>{""}</text>
+        <box
+          flexDirection="column"
+          borderStyle="double"
+          width={60}
+          padding={1}
+        >
+          <text style={textStyle({ bold: true })}>Keybinding Reference</text>
+          <text>{""}</text>
 
-        <text style={textStyle({ fg: statusColor.info, bold: true })}>{"─── Global ───"}</text>
-        {GLOBAL_BINDINGS.map((b) => (
-          <text key={b.key}>
-            <span style={textStyle({ fg: statusColor.info })}>{`  ${b.key.padEnd(12)}`}</span>
-            <span>{b.action}</span>
-          </text>
-        ))}
+          <text style={textStyle({ fg: statusColor.info, bold: true })}>{"--- Global ---"}</text>
+          {GLOBAL_BINDINGS.map((b) => (
+            <text>
+              <span style={textStyle({ fg: statusColor.info })}>{`  ${b.key.padEnd(12)}`}</span>
+              <span>{b.action}</span>
+            </text>
+          ))}
 
-        <text>{""}</text>
-        <text style={textStyle({ fg: statusColor.info, bold: true })}>{"─── Navigation ───"}</text>
-        {NAV_BINDINGS.map((b) => (
-          <text key={b.key}>
-            <span style={textStyle({ fg: statusColor.info })}>{`  ${b.key.padEnd(12)}`}</span>
-            <span>{b.action}</span>
-          </text>
-        ))}
+          <text>{""}</text>
+          <text style={textStyle({ fg: statusColor.info, bold: true })}>{"--- Navigation ---"}</text>
+          {NAV_BINDINGS.map((b) => (
+            <text>
+              <span style={textStyle({ fg: statusColor.info })}>{`  ${b.key.padEnd(12)}`}</span>
+              <span>{b.action}</span>
+            </text>
+          ))}
 
-        {panelBindings.length > 0 && (
-          <>
+          <Show when={panelBindings().length > 0}>
             <text>{""}</text>
-            <text style={textStyle({ fg: statusColor.info, bold: true })}>{`─── ${panel} ───`}</text>
-            {panelBindings.map((b) => (
-              <text key={b.key}>
+            <text style={textStyle({ fg: statusColor.info, bold: true })}>{`--- ${props.panel} ---`}</text>
+            {panelBindings().map((b) => (
+              <text>
                 <span style={textStyle({ fg: statusColor.info })}>{`  ${b.key.padEnd(12)}`}</span>
                 <span>{b.action}</span>
               </text>
             ))}
-          </>
-        )}
+          </Show>
 
-        <text>{""}</text>
-        <text style={textStyle({ dim: true })}>Press any key to dismiss</text>
+          <text>{""}</text>
+          <text style={textStyle({ dim: true })}>Press any key to dismiss</text>
+        </box>
       </box>
-    </box>
+    </Show>
   );
 }

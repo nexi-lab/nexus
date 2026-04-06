@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Knowledge graph view: entity detail (as dict) and neighbors list with depth info.
  */
 
-import React from "react";
 import type { KnowledgeEntity, NeighborEntry } from "../../stores/search-store.js";
 
 interface KnowledgeViewProps {
@@ -31,7 +31,7 @@ export function KnowledgeView({
   neighbors,
   knowledgeSearchResult,
   loading,
-}: KnowledgeViewProps): React.ReactNode {
+}: KnowledgeViewProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -57,7 +57,7 @@ export function KnowledgeView({
             <text>--- Entity Detail ---</text>
           </box>
           {Object.entries(entity).map(([key, value]) => (
-            <box key={key} height={1} width="100%">
+            <box height={1} width="100%">
               <text>{`  ${key}: ${truncateValue(value, 60)}`}</text>
             </box>
           ))}
@@ -74,7 +74,7 @@ export function KnowledgeView({
             const entitySummary = formatEntityDict(n.entity);
             const pathStr = n.path.join(" -> ");
             return (
-              <box key={i} height={1} width="100%">
+              <box height={1} width="100%">
                 <text>{`  [depth=${n.depth}] ${truncateValue(entitySummary, 50)}  path: ${pathStr}`}</text>
               </box>
             );
@@ -89,7 +89,7 @@ export function KnowledgeView({
             <text>--- Graph Search Result ---</text>
           </box>
           {Object.entries(knowledgeSearchResult).map(([key, value]) => (
-            <box key={key} height={1} width="100%">
+            <box height={1} width="100%">
               <text>{`  ${key}: ${truncateValue(value, 60)}`}</text>
             </box>
           ))}

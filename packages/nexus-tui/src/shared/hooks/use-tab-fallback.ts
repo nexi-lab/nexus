@@ -8,7 +8,7 @@
  * @see Issue #3498
  */
 
-import { useEffect } from "react";
+import { createEffect } from "solid-js";
 import { tabFallback } from "../components/sub-tab-bar-utils.js";
 
 /**
@@ -22,11 +22,9 @@ export function useTabFallback<T extends string>(
   activeTab: T,
   setActiveTab: (tab: T) => void,
 ): void {
-  const visibleIds = visibleTabs.map((t) => t.id);
-
-  useEffect(() => {
+  createEffect(() => {
+    const visibleIds = visibleTabs.map((t) => t.id);
     const target = tabFallback(visibleIds, activeTab);
     if (target !== null) setActiveTab(target);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIds.join(","), activeTab]);
+  });
 }

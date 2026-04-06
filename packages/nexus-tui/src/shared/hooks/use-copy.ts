@@ -2,30 +2,32 @@
  * Hook for clipboard copy with visual feedback.
  * Shows "Copied!" flash in the status area briefly.
  */
-import { useState, useCallback, useRef, useEffect } from "react";
+import { createSignal, onCleanup } from "solid-js";
 import { copyToClipboard } from "../lib/clipboard.js";
 import { useAnnouncementStore } from "../../stores/announcement-store.js";
 import { formatSuccessAnnouncement } from "../accessibility-announcements.js";
 
 export function useCopy() {
-  const [copied, setCopied] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copied, setCopied] = createSignal(false);
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const announce = useAnnouncementStore((s) => s.announce);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, []);
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
+  });
 
-  const copy = useCallback((text: string) => {
+  const copy = (text: string) => {
     copyToClipboard(text);
     announce(formatSuccessAnnouncement("Copied to clipboard"), "success");
     setCopied(true);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => setCopied(false), 1500);
-  }, [announce]);
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => setCopied(false), 1500);
+  };
 
-  return { copy, copied };
+  return {
+    copy,
+    get copied() {
+      return copied();
+    },
+  };
 }

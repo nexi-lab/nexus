@@ -2,7 +2,7 @@
  * Zustand store for real-time SSE events.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { SseEvent } from "@nexus-ai-fs/api-client";
 import { SseClient } from "@nexus-ai-fs/api-client";
 import { CircularBuffer } from "../shared/lib/circular-buffer.js";
@@ -73,38 +73,42 @@ export const useEventsStore = create<EventsState>((set, get) => ({
     });
 
     client.onEvent((newEvents) => {
-      set((state) => {
-        // Note: eventsBuffer is mutated in-place (push), but consumers read
-        // the derived `events` array (new ref each time), so shallow-comparison
-        // subscribers re-render correctly. Do NOT subscribe to eventsBuffer directly.
-        const buf = state.eventsBuffer;
-        for (const event of newEvents) {
-          buf.push(event);
-        }
-        const allEvents = buf.toArray();
-        return {
-          events: allEvents,
-          filteredEvents: applyFilters(allEvents, state.filters),
-          eventsOverflowed: buf.hasOverflowed,
-          evictedCount: buf.evictedCount,
-          connected: true, // confirmed connected on first event
-          reconnectCount: 0,
-          reconnectExhausted: false,
-        };
+      // Defer state update to avoid setting store inside a reactive computation
+      // (SolidJS throws runUpdates/completeUpdates recursion if set() is called
+      // inside an already-flushing reactive batch).
+      queueMicrotask(() => {
+        set((state) => {
+          const buf = state.eventsBuffer;
+          for (const event of newEvents) {
+            buf.push(event);
+          }
+          const allEvents = buf.toArray();
+          return {
+            events: allEvents,
+            filteredEvents: applyFilters(allEvents, state.filters),
+            eventsOverflowed: buf.hasOverflowed,
+            evictedCount: buf.evictedCount,
+            connected: true,
+            reconnectCount: 0,
+            reconnectExhausted: false,
+          };
+        });
       });
     });
 
     client.onReconnect((attempt) => {
-      if (attempt >= MAX_RECONNECT_ATTEMPTS) {
-        client.disconnect();
-        set({ connected: false, reconnectExhausted: true, sseClient: null, reconnectCount: attempt });
-      } else {
-        set({ reconnectCount: attempt });
-      }
+      queueMicrotask(() => {
+        if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+          client.disconnect();
+          set({ connected: false, reconnectExhausted: true, sseClient: null, reconnectCount: attempt });
+        } else {
+          set({ reconnectCount: attempt });
+        }
+      });
     });
 
     client.onError(() => {
-      set({ connected: false });
+      queueMicrotask(() => set({ connected: false }));
     });
 
     set({
@@ -117,7 +121,7 @@ export const useEventsStore = create<EventsState>((set, get) => ({
 
     // Connect async — don't await (fire and forget)
     client.connect("/api/v2/events/stream").catch(() => {
-      set({ connected: false });
+      queueMicrotask(() => set({ connected: false }));
     });
   },
 

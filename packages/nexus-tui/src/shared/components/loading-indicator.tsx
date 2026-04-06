@@ -7,7 +7,6 @@
  * @see Issue #3066, Phase E5
  */
 
-import React from "react";
 import { Spinner } from "./spinner.js";
 
 interface LoadingIndicatorProps {
@@ -17,13 +16,10 @@ interface LoadingIndicatorProps {
   readonly centered?: boolean;
 }
 
-export function LoadingIndicator({
-  message = "Loading...",
-  centered = true,
-}: LoadingIndicatorProps): React.ReactNode {
-  const content = <Spinner label={message} />;
+export function LoadingIndicator(props: LoadingIndicatorProps) {
+  const content = <Spinner label={props.message ?? "Loading..."} />;
 
-  if (centered) {
+  if (props.centered ?? true) {
     return (
       <box
         height="100%"

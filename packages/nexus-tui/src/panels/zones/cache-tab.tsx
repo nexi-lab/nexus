@@ -1,4 +1,5 @@
-import React from "react";
+import type { JSX } from "solid-js";
+
 import { textStyle } from "../../shared/text-style.js";
 import { formatSize } from "../../shared/utils/format-size.js";
 import { statusColor } from "../../shared/theme.js";
@@ -34,7 +35,7 @@ function hitRateColor(rate: number): string | undefined {
   return statusColor.error;
 }
 
-export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.ReactNode {
+export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): JSX.Element {
   if (loading) return <text>Loading cache stats...</text>;
   if (!stats) return <text>No cache data available.</text>;
 

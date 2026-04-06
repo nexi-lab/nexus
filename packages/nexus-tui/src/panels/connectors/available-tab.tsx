@@ -10,7 +10,8 @@
  * pre-filled from the connector's connection_args.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import { createSignal, createEffect, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -60,7 +61,7 @@ interface AvailableTabProps {
 
 const AUTH_POLL_INTERVAL = 3000;
 
-export function AvailableTab({ client, overlayActive }: AvailableTabProps): React.ReactNode {
+export function AvailableTab({ client, overlayActive }: AvailableTabProps): JSX.Element {
   const connectors = useConnectorsStore((s) => s.availableConnectors);
   const loading = useConnectorsStore((s) => s.availableLoading);
   const selectedIndex = useConnectorsStore((s) => s.selectedAvailableIndex);
@@ -76,57 +77,53 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
 
   const config = useGlobalStore((s) => s.config);
   const { copy, copied } = useCopy();
-  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  let pollTimerRef: ReturnType<typeof setInterval> | null = null;
 
   // Show CLI mount guide for selected connector
-  const [showMountGuide, setShowMountGuide] = useState(false);
+  const [showMountGuide, setShowMountGuide] = createSignal(false);
 
   // Auto-fetch on mount
-  useEffect(() => {
+  createEffect(() => {
     if (connectors.length === 0) {
       fetchAvailable(client);
     }
-  }, [client, connectors.length, fetchAvailable]);
+  });
 
   // Auth polling lifecycle
-  useEffect(() => {
+  createEffect(() => {
     if (authFlow.status === "polling" || authFlow.status === "waiting") {
-      pollTimerRef.current = setInterval(() => {
+      pollTimerRef = setInterval(() => {
         pollAuthStatus(client);
       }, AUTH_POLL_INTERVAL);
 
-      return () => {
-        if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-      };
+      onCleanup(() => {
+        if (pollTimerRef) clearInterval(pollTimerRef);
+      });
+    } else if (pollTimerRef) {
+      clearInterval(pollTimerRef);
+      pollTimerRef = null;
     }
+  });
 
-    if (pollTimerRef.current) {
-      clearInterval(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  }, [authFlow.status, client, pollAuthStatus]);
+  onCleanup(() => {
+    if (pollTimerRef) clearInterval(pollTimerRef);
+  });
 
-  useEffect(() => {
-    return () => {
-      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-    };
-  }, []);
-
-  const handleAuth = useCallback(() => {
+  const handleAuth = () => {
     const selected = connectors[selectedIndex];
     if (selected) {
       initiateAuth(selected.name, client);
     }
-  }, [connectors, selectedIndex, initiateAuth, client]);
+  };
 
   /** Build mount command for storage connectors that need config. */
-  const getMountCommand = useCallback((): string => {
+  const getMountCommand = (): string => {
     const selected = connectors[selectedIndex];
     if (!selected) return "";
     const baseName = selected.name.replace(/_connector$/, "");
     const mountPath = `/mnt/${baseName}`;
-    const url = (config as Record<string, unknown>).baseUrl as string | undefined;
-    const apiKey = (config as Record<string, unknown>).apiKey as string | undefined;
+    const url = (config as unknown as Record<string, unknown>).baseUrl as string | undefined;
+    const apiKey = (config as unknown as Record<string, unknown>).apiKey as string | undefined;
 
     // Build config template based on connector type
     let configJson = "'{}'";
@@ -144,20 +141,20 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
       ? `cd ${process.env.NEXUS_DATA_DIR.replace(/\/nexus-data$/, "")} && `
       : "";
     return `${nexusDir}eval $(nexus env) && nexus mounts add ${mountPath} ${selected.name} ${configJson}`;
-  }, [connectors, selectedIndex, config]);
+  };
 
   /** Check if connector can be mounted directly (no config needed). */
-  const canDirectMount = useCallback((): boolean => {
+  const canDirectMount = (): boolean => {
     const selected = connectors[selectedIndex];
     if (!selected) return false;
     return selected.category === "cli" || selected.category === "oauth" || selected.category === "api";
-  }, [connectors, selectedIndex]);
+  };
 
   // Mount success flash
-  const [mountFlash, setMountFlash] = useState<string | null>(null);
+  const [mountFlash, setMountFlash] = createSignal<string | null>(null);
 
   /** Mount directly via API for connectors that need no config. */
-  const handleDirectMount = useCallback(async () => {
+  const handleDirectMount = async () => {
     const selected = connectors[selectedIndex];
     if (!selected) return;
     if (selected.mount_path) {
@@ -171,16 +168,16 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
     await mountConnector(selected.name, `/mnt/${baseName}`, client);
     setMountFlash(`✓ Mounted at /mnt/${baseName}`);
     setTimeout(() => setMountFlash(null), 2000);
-  }, [connectors, selectedIndex, mountConnector, client]);
+  };
 
   /** Enter/m: direct mount if no config needed, otherwise show CLI guide. */
-  const handleMountAction = useCallback(() => {
+  const handleMountAction = () => {
     if (canDirectMount()) {
       handleDirectMount();
     } else {
       setShowMountGuide(!showMountGuide);
     }
-  }, [canDirectMount, handleDirectMount, showMountGuide]);
+  };
 
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,
@@ -198,7 +195,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
           m: handleMountAction,
           r: () => fetchAvailable(client),
           y: () => {
-            if (showMountGuide) {
+            if (showMountGuide()) {
               const cmd = getMountCommand();
               copyCommand(cmd);
               copy(cmd);
@@ -208,7 +205,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
             }
           },
           escape: () => {
-            if (showMountGuide) {
+            if (showMountGuide()) {
               setShowMountGuide(false);
             } else if (authFlow.status !== "idle") {
               cancelAuth();
@@ -226,16 +223,16 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
   return (
     <box flexDirection="column" height="100%" width="100%">
       {/* Mount flash */}
-      {mountFlash && (
+      {mountFlash() && (
         <box height={1} width="100%" marginBottom={1}>
-          <text foregroundColor={mountFlash.startsWith("✓") ? statusColor.healthy : statusColor.info}>
-            {mountFlash}
+          <text foregroundColor={mountFlash()!.startsWith("✓") ? statusColor.healthy : statusColor.info}>
+            {mountFlash()}
           </text>
         </box>
       )}
 
       {/* Mount CLI guide */}
-      {showMountGuide && selectedConnector && (
+      {showMountGuide() && selectedConnector && (
         <box flexDirection="column" width="100%" borderStyle="single" marginBottom={1}>
           <box height={1} width="100%">
             <text bold foregroundColor={statusColor.info}>
@@ -326,7 +323,7 @@ export function AvailableTab({ client, overlayActive }: AvailableTabProps): Reac
         ) : (
           connectors.map((c, i) => (
             <ConnectorRow
-              key={c.name}
+
               name={c.name}
               category={c.category}
               authStatus={c.auth_status}

@@ -3,7 +3,7 @@
  * pagination controls, and integrity verification result.
  */
 
-import React from "react";
+import { For, Show } from "solid-js";
 import type { TransactionRecord, IntegrityResult } from "../../stores/payments-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
@@ -35,24 +35,16 @@ function formatAmount(amount: string, currency: string): string {
   return `${amount} ${currency}`;
 }
 
-export function TransactionList({
-  transactions,
-  selectedIndex,
-  loading,
-  hasMore,
-  hasPrev,
-  currentPage,
-  integrityResult,
-}: TransactionListProps): React.ReactNode {
-  if (loading) {
+export function TransactionList(props: TransactionListProps) {
+  if (props.loading) {
     return <LoadingIndicator message="Loading transactions..." />;
   }
 
-  if (transactions.length === 0) {
+  if (props.transactions.length === 0) {
     return <EmptyState message="No transactions yet." hint="Press t to create a transfer." />;
   }
 
-  const selectedTx = transactions[selectedIndex];
+  const selectedTx = () => props.transactions[props.selectedIndex];
 
   return (
     <box height="100%" width="100%" flexDirection="column">
@@ -66,36 +58,34 @@ export function TransactionList({
 
       {/* Rows */}
       <scrollbox flexGrow={1} width="100%">
-        {transactions.map((tx, i) => {
-          const isSelected = i === selectedIndex;
-          const prefix = isSelected ? "> " : "  ";
+        <For each={props.transactions}>{(tx, i) => {
           const flow = `${shortId(tx.buyer_agent_id)}->${shortId(tx.seller_agent_id)}`;
 
           return (
-            <box key={tx.id} height={1} width="100%">
+            <box height={1} width="100%">
               <text>
-                {`${prefix}${shortId(tx.id).padEnd(10)}  ${formatTimestamp(tx.created_at).padEnd(19)}  ${formatAmount(tx.amount, tx.currency).padEnd(14)}  ${tx.status.padEnd(9)}  ${flow}`}
+                {`${i() === props.selectedIndex ? "> " : "  "}${shortId(tx.id).padEnd(10)}  ${formatTimestamp(tx.created_at).padEnd(19)}  ${formatAmount(tx.amount, tx.currency).padEnd(14)}  ${tx.status.padEnd(9)}  ${flow}`}
               </text>
             </box>
           );
-        })}
+        }}</For>
       </scrollbox>
 
       {/* Integrity verification result */}
-      {integrityResult && selectedTx && integrityResult.record_id === selectedTx.id && (
+      <Show when={props.integrityResult && selectedTx() && props.integrityResult.record_id === selectedTx()!.id}>
         <box height={1} width="100%">
           <text>
-            {integrityResult.is_valid
-              ? `Integrity OK: ${shortId(integrityResult.record_hash)} (valid)`
-              : `INTEGRITY FAIL: ${shortId(integrityResult.record_hash)} (TAMPERED)`}
+            {props.integrityResult!.is_valid
+              ? `Integrity OK: ${shortId(props.integrityResult!.record_hash)} (valid)`
+              : `INTEGRITY FAIL: ${shortId(props.integrityResult!.record_hash)} (TAMPERED)`}
           </text>
         </box>
-      )}
+      </Show>
 
       {/* Pagination status */}
       <box height={1} width="100%">
         <text>
-          {`  Page ${currentPage}${hasMore ? "+" : ""}  ${hasPrev ? "[p:prev]" : ""}  ${hasMore ? "[n:next]" : "(end)"}  ${transactions.length} shown`}
+          {`  Page ${props.currentPage}${props.hasMore ? "+" : ""}  ${props.hasPrev ? "[p:prev]" : ""}  ${props.hasMore ? "[n:next]" : "(end)"}  ${props.transactions.length} shown`}
         </text>
       </box>
     </box>

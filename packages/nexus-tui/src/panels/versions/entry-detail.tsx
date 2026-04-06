@@ -5,7 +5,7 @@
  * Supports keyboard selection (selectedEntryIndex) and mouse clicks.
  */
 
-import React from "react";
+import { For, Show } from "solid-js";
 import { textStyle } from "../../shared/text-style.js";
 import { focusColor } from "../../shared/theme.js";
 import type { SnapshotEntry, Transaction } from "../../stores/versions-store.js";
@@ -38,69 +38,70 @@ interface EntryDetailProps {
   readonly focused: boolean;
 }
 
-export function EntryDetail({
-  transaction,
-  entries,
-  isLoading,
-  selectedEntryIndex,
-  onSelectEntry,
-  focused,
-}: EntryDetailProps): React.ReactNode {
-  if (!transaction) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Select a transaction to view entries</text>
-      </box>
-    );
-  }
-
+export function EntryDetail(props: EntryDetailProps) {
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Header */}
-      <box height={2} width="100%" flexDirection="column">
-        <text>{`Transaction: ${transaction.transaction_id}`}</text>
-        <text>{`Status: ${transaction.status}  Entries: ${transaction.entry_count}`}</text>
-      </box>
-
-      {/* Entry list */}
-      {isLoading ? (
-        <box flexGrow={1} justifyContent="center" alignItems="center">
-          <text>Loading entries...</text>
+    <Show
+      when={props.transaction}
+      fallback={
+        <box height="100%" width="100%" justifyContent="center" alignItems="center">
+          <text>Select a transaction to view entries</text>
         </box>
-      ) : entries.length === 0 ? (
-        <box flexGrow={1} justifyContent="center" alignItems="center">
-          <text>No entries in this transaction</text>
+      }
+    >
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Header */}
+        <box height={2} width="100%" flexDirection="column">
+          <text>{`Transaction: ${props.transaction!.transaction_id}`}</text>
+          <text>{`Status: ${props.transaction!.status}  Entries: ${props.transaction!.entry_count}`}</text>
         </box>
-      ) : (
-        <scrollbox flexGrow={1} width="100%">
-          {/* Column headers */}
-          <box height={1} width="100%">
-            <text>{"  OP  PATH                             OLD_HASH    NEW_HASH"}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{"  --  -------------------------------  ----------  ----------"}</text>
-          </box>
-          {entries.map((entry, index) => {
-            const badge = OPERATION_BADGE[entry.operation];
-            const original = truncateHash(entry.original_hash);
-            const next = truncateHash(entry.new_hash);
-            const isSelected = index === selectedEntryIndex;
 
-            return (
-              <box
-                key={entry.entry_id}
-                height={1}
-                width="100%"
-                onMouseDown={() => onSelectEntry(index)}
-              >
-                <text style={isSelected ? textStyle({ fg: focusColor.activeBorder, bold: true }) : undefined}>
-                  {`${isSelected && focused ? "▶" : " "} [${badge}] ${entry.path}  ${original}  ${next}`}
-                </text>
+        {/* Entry list */}
+        <Show
+          when={!props.isLoading}
+          fallback={
+          <box flexGrow={1} justifyContent="center" alignItems="center">
+            <text>Loading entries...</text>
+          </box>
+          }
+        >
+          <Show
+            when={props.entries.length > 0}
+            fallback={
+              <box flexGrow={1} justifyContent="center" alignItems="center">
+                <text>No entries in this transaction</text>
               </box>
-            );
-          })}
-        </scrollbox>
-      )}
-    </box>
+            }
+          >
+          <scrollbox flexGrow={1} width="100%">
+            {/* Column headers */}
+            <box height={1} width="100%">
+              <text>{"  OP  PATH                             OLD_HASH    NEW_HASH"}</text>
+            </box>
+            <box height={1} width="100%">
+              <text>{"  --  -------------------------------  ----------  ----------"}</text>
+            </box>
+            <For each={props.entries}>{(entry, index) => {
+              const badge = OPERATION_BADGE[entry.operation];
+              const original = truncateHash(entry.original_hash);
+              const next = truncateHash(entry.new_hash);
+              const isSelected = () => index() === props.selectedEntryIndex;
+
+              return (
+                <box
+                  height={1}
+                  width="100%"
+                  onMouseDown={() => props.onSelectEntry(index())}
+                >
+                  <text style={isSelected() ? textStyle({ fg: focusColor.activeBorder, bold: true }) : undefined}>
+                    {`${isSelected() && props.focused ? "▶" : " "} [${badge}] ${entry.path}  ${original}  ${next}`}
+                  </text>
+                </box>
+              );
+            }}</For>
+          </scrollbox>
+          </Show>
+        </Show>
+      </box>
+    </Show>
   );
 }

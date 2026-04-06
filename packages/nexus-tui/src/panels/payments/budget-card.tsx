@@ -2,7 +2,7 @@
  * Budget card: displays spending limits vs spent vs remaining for each period.
  */
 
-import React from "react";
+import { Show } from "solid-js";
 import type { BudgetSummary } from "../../stores/payments-store.js";
 
 interface BudgetCardProps {
@@ -10,8 +10,8 @@ interface BudgetCardProps {
   readonly loading: boolean;
 }
 
-export function BudgetCard({ budget, loading }: BudgetCardProps): React.ReactNode {
-  if (loading) {
+export function BudgetCard(props: BudgetCardProps) {
+  if (props.loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>Loading budget...</text>
@@ -19,7 +19,7 @@ export function BudgetCard({ budget, loading }: BudgetCardProps): React.ReactNod
     );
   }
 
-  if (!budget) {
+  if (!props.budget) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>No budget data available. Press b to fetch.</text>
@@ -27,7 +27,7 @@ export function BudgetCard({ budget, loading }: BudgetCardProps): React.ReactNod
     );
   }
 
-  if (!budget.has_policy) {
+  if (!props.budget.has_policy) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
         <text>No spending policy configured</text>
@@ -51,20 +51,20 @@ export function BudgetCard({ budget, loading }: BudgetCardProps): React.ReactNod
 
       {/* Rows */}
       <box height={1} width="100%">
-        <text>{`${"Daily".padEnd(9)}  ${budget.limits.daily.padEnd(13)}  ${budget.spent.daily.padEnd(13)}  ${budget.remaining.daily}`}</text>
+        <text>{`${"Daily".padEnd(9)}  ${props.budget.limits.daily.padEnd(13)}  ${props.budget.spent.daily.padEnd(13)}  ${props.budget.remaining.daily}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`${"Weekly".padEnd(9)}  ${budget.limits.weekly.padEnd(13)}  ${budget.spent.weekly.padEnd(13)}  ${budget.remaining.weekly}`}</text>
+        <text>{`${"Weekly".padEnd(9)}  ${props.budget.limits.weekly.padEnd(13)}  ${props.budget.spent.weekly.padEnd(13)}  ${props.budget.remaining.weekly}`}</text>
       </box>
       <box height={1} width="100%">
-        <text>{`${"Monthly".padEnd(9)}  ${budget.limits.monthly.padEnd(13)}  ${budget.spent.monthly.padEnd(13)}  ${budget.remaining.monthly}`}</text>
+        <text>{`${"Monthly".padEnd(9)}  ${props.budget.limits.monthly.padEnd(13)}  ${props.budget.spent.monthly.padEnd(13)}  ${props.budget.remaining.monthly}`}</text>
       </box>
 
-      {budget.policy_id && (
+      <Show when={props.budget.policy_id}>
         <box height={1} width="100%" marginTop={1}>
-          <text>{`Policy: ${budget.policy_id}`}</text>
+          <text>{`Policy: ${props.budget.policy_id}`}</text>
         </box>
-      )}
+      </Show>
     </scrollbox>
   );
 }

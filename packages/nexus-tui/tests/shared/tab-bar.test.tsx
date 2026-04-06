@@ -10,8 +10,7 @@
  */
 
 import { describe, it, expect, mock, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import { testRender } from "../helpers/render.js";
 import { TabBar, type Tab } from "../../src/shared/components/tab-bar.js";
 
 // =============================================================================
@@ -28,7 +27,7 @@ async function renderTabBar(
   onSelect: (id: string) => void,
 ): Promise<TestSetup> {
   setup = await testRender(
-    <TabBar tabs={tabs} activeTab={activeTab} onSelect={onSelect} />,
+    () => <TabBar tabs={tabs} activeTab={activeTab} onSelect={onSelect} />,
     { width: 120, height: 2 },
   );
   await setup.renderOnce();

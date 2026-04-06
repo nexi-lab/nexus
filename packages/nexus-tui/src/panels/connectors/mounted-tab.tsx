@@ -4,7 +4,8 @@
  * Supports: mount list navigation, sync trigger, unmount, sync status display.
  */
 
-import React, { useEffect, useCallback } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
@@ -18,7 +19,7 @@ interface MountedTabProps {
   readonly overlayActive: boolean;
 }
 
-export function MountedTab({ client, overlayActive }: MountedTabProps): React.ReactNode {
+export function MountedTab({ client, overlayActive }: MountedTabProps): JSX.Element {
   const mounts = useConnectorsStore((s) => s.mounts);
   const loading = useConnectorsStore((s) => s.mountsLoading);
   const selectedIndex = useConnectorsStore((s) => s.selectedMountIndex);
@@ -34,20 +35,20 @@ export function MountedTab({ client, overlayActive }: MountedTabProps): React.Re
   const confirm = useConfirmStore((s) => s.confirm);
 
   // Auto-fetch on mount
-  useEffect(() => {
+  createEffect(() => {
     if (mounts.length === 0) {
       fetchMounts(client);
     }
-  }, [client, mounts.length, fetchMounts]);
+  });
 
-  const handleSync = useCallback(() => {
+  const handleSync = () => {
     const selected = mounts[selectedIndex];
     if (selected) {
       triggerSync(selected.mount_point, client);
     }
-  }, [mounts, selectedIndex, triggerSync, client]);
+  };
 
-  const handleUnmount = useCallback(async () => {
+  const handleUnmount = async () => {
     const selected = mounts[selectedIndex];
     if (!selected) return;
     const ok = await confirm(
@@ -56,7 +57,7 @@ export function MountedTab({ client, overlayActive }: MountedTabProps): React.Re
     );
     if (!ok) return;
     unmountConnector(selected.mount_point, client);
-  }, [mounts, selectedIndex, unmountConnector, client, confirm]);
+  };
 
   const listNav = listNavigationBindings({
     getIndex: () => selectedIndex,
@@ -110,7 +111,7 @@ export function MountedTab({ client, overlayActive }: MountedTabProps): React.Re
             const prefix = selected ? "▶ " : "  ";
 
             return (
-              <box key={m.mount_point} height={1} width="100%">
+              <box height={1} width="100%">
                 <text>
                   <span foregroundColor={selected ? statusColor.info : undefined}>{prefix}</span>
                   <span bold={selected} foregroundColor={statusColor.reference}>{m.mount_point}</span>

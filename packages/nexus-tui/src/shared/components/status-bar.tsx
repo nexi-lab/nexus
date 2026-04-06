@@ -7,7 +7,7 @@
  * inline styled segments inside a <text>.
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, onCleanup } from "solid-js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useEventsStore } from "../../stores/events-store.js";
 import { connectionColor, palette, statusColor } from "../theme.js";
@@ -23,7 +23,7 @@ const STATUS_ICONS: Record<string, string> = {
   error: "✗",
 };
 
-export function StatusBar(): React.ReactNode {
+export function StatusBar() {
   const status = useGlobalStore((s) => s.connectionStatus);
   const config = useGlobalStore((s) => s.config);
   const serverVersion = useGlobalStore((s) => s.serverVersion);
@@ -39,17 +39,15 @@ export function StatusBar(): React.ReactNode {
   const hasActiveFilter = eventFilters.eventType !== null || eventFilters.search !== null;
 
   // Terminal size guard (#3245)
-  const [terminalTooSmall, setTerminalTooSmall] = useState(false);
-  useEffect(() => {
-    const check = () => {
-      const cols = process.stdout.columns ?? 80;
-      const rows = process.stdout.rows ?? 24;
-      setTerminalTooSmall(cols < MIN_COLS || rows < MIN_ROWS);
-    };
-    check();
-    process.stdout.on("resize", check);
-    return () => { process.stdout.off("resize", check); };
-  }, []);
+  const [terminalTooSmall, setTerminalTooSmall] = createSignal(false);
+  const check = () => {
+    const cols = process.stdout.columns ?? 80;
+    const rows = process.stdout.rows ?? 24;
+    setTerminalTooSmall(cols < MIN_COLS || rows < MIN_ROWS);
+  };
+  check();
+  process.stdout.on("resize", check);
+  onCleanup(() => { process.stdout.off("resize", check); });
 
   const icon = STATUS_ICONS[status] ?? "?";
   const baseUrl = config.baseUrl ?? "localhost:2026";
@@ -75,7 +73,7 @@ export function StatusBar(): React.ReactNode {
       flexDirection="row"
     >
       <text>
-        {terminalTooSmall ? (
+        {terminalTooSmall() ? (
           <span style={textStyle({ fg: statusColor.warning })}>{`⚠ Terminal too small (need ${MIN_COLS}×${MIN_ROWS}) `}</span>
         ) : ""}
         <span style={textStyle({ fg: connectionColor[status] })}>{icon}</span>

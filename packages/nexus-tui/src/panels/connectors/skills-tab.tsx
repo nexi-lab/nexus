@@ -5,7 +5,8 @@
  * Select a mount first, then browse its skill docs and schemas.
  */
 
-import React, { useEffect, useCallback } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useConnectorsStore } from "../../stores/connectors-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -19,7 +20,7 @@ interface SkillsTabProps {
   readonly overlayActive: boolean;
 }
 
-export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.ReactNode {
+export function SkillsTab({ client, overlayActive }: SkillsTabProps): JSX.Element {
   const mounts = useConnectorsStore((s) => s.mounts);
   const selectedMountIndex = useConnectorsStore((s) => s.selectedSkillMountIndex);
   const skillDoc = useConnectorsStore((s) => s.skillDoc);
@@ -41,31 +42,28 @@ export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.Reac
   const selectedMount = mounts[selectedMountIndex];
 
   // Auto-fetch mounts if empty
-  useEffect(() => {
+  createEffect(() => {
     if (mounts.length === 0) {
       fetchMounts(client);
     }
-  }, [client, mounts.length, fetchMounts]);
+  });
 
   // Auto-fetch skill doc when mount selection changes
-  useEffect(() => {
+  createEffect(() => {
     if (selectedMount && viewMode === "doc") {
       fetchSkillDoc(selectedMount.mount_point, client);
     }
-  }, [selectedMount?.mount_point, viewMode, client, fetchSkillDoc]);
+  });
 
   // Fetch schema when schema selection changes
-  const handleSchemaSelect = useCallback(
-    (index: number) => {
+  const handleSchemaSelect = (index: number) => {
       if (!selectedMount || !skillDoc) return;
       const operation = skillDoc.schemas[index];
       if (operation) {
         setSelectedSchemaIndex(index);
         fetchSchema(selectedMount.mount_point, operation, client);
       }
-    },
-    [selectedMount, skillDoc, setSelectedSchemaIndex, fetchSchema, client],
-  );
+    };
 
   // Build navigation bindings based on view mode
   const mountNav = listNavigationBindings({
@@ -125,7 +123,7 @@ export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.Reac
           ) : (
             mounts.map((m, i) => (
               <span
-                key={m.mount_point}
+
                 foregroundColor={i === selectedMountIndex ? statusColor.info : statusColor.dim}
                 bold={i === selectedMountIndex}
               >
@@ -152,7 +150,7 @@ export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.Reac
           ) : skillDoc?.content ? (
             <box flexDirection="column" width="100%">
               {skillDoc.content.split("\n").slice(0, 30).map((line, i) => (
-                <box key={i} height={1} width="100%">
+                <box height={1} width="100%">
                   <text>{line}</text>
                 </box>
               ))}
@@ -176,7 +174,7 @@ export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.Reac
                 <text bold foregroundColor={statusColor.info}>Operations</text>
               </box>
               {skillDoc?.schemas.map((op, i) => (
-                <box key={op} height={1} width="100%">
+                <box height={1} width="100%">
                   <text>
                     <span foregroundColor={i === selectedSchemaIndex ? statusColor.info : undefined}>
                       {i === selectedSchemaIndex ? `▶ ${op}` : `  ${op}`}
@@ -201,7 +199,7 @@ export function SkillsTab({ client, overlayActive }: SkillsTabProps): React.Reac
                     <text bold>{schemaDoc.operation}</text>
                   </box>
                   {schemaDoc.content.split("\n").slice(0, 25).map((line, i) => (
-                    <box key={i} height={1} width="100%">
+                    <box height={1} width="100%">
                       <text foregroundColor={statusColor.dim}>{line}</text>
                     </box>
                   ))}

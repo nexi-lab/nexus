@@ -5,7 +5,8 @@
  * Extracted from events-panel.tsx (Issue 2A: split into per-tab sub-panels).
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, createEffect, onCleanup, Show, For } from "solid-js";
+import type { JSX } from "solid-js";
 import { useEventsStore } from "../../stores/events-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -34,45 +35,44 @@ interface EventsTabProps {
   readonly overlayActive: boolean;
 }
 
-export function EventsTab({ tabBindings, overlayActive }: EventsTabProps): React.ReactNode {
-  const config = useGlobalStore((s) => s.config);
+export function EventsTab(props: EventsTabProps): JSX.Element {
+  // Subscribe to stores for reactivity
+  const [_gRev, _setGRev] = createSignal(0);
+  const unsubGlobal = useGlobalStore.subscribe(() => _setGRev((r) => r + 1));
+  onCleanup(unsubGlobal);
+  const config = () => { void _gRev(); return useGlobalStore.getState().config; };
+
+  const [_eRev, _setERev] = createSignal(0);
+  const unsubEvents = useEventsStore.subscribe(() => _setERev((r) => r + 1));
+  onCleanup(unsubEvents);
+  const es = () => { void _eRev(); return useEventsStore.getState(); };
+
+  const connected = () => es().connected;
+  const events = () => es().filteredEvents;
+  const reconnectCount = () => es().reconnectCount;
+  const reconnectExhausted = () => es().reconnectExhausted;
+  const filters = () => es().filters;
+  const eventsOverflowed = () => es().eventsOverflowed;
+  const evictedCount = () => es().evictedCount;
+  const eventsBuffer = () => es().eventsBuffer;
+  const connect = useEventsStore.getState().connect;
+  const disconnect = useEventsStore.getState().disconnect;
+  const clearEvents = useEventsStore.getState().clearEvents;
+  const setFilter = useEventsStore.getState().setFilter;
+
   const { copy, copied } = useCopy();
 
-  // SSE state
-  const connected = useEventsStore((s) => s.connected);
-  const events = useEventsStore((s) => s.filteredEvents);
-  const reconnectCount = useEventsStore((s) => s.reconnectCount);
-  const reconnectExhausted = useEventsStore((s) => s.reconnectExhausted);
-  const filters = useEventsStore((s) => s.filters);
-  const eventsOverflowed = useEventsStore((s) => s.eventsOverflowed);
-  const evictedCount = useEventsStore((s) => s.evictedCount);
-  const eventsBuffer = useEventsStore((s) => s.eventsBuffer);
-  const connect = useEventsStore((s) => s.connect);
-  const disconnect = useEventsStore((s) => s.disconnect);
-  const clearEvents = useEventsStore((s) => s.clearEvents);
-  const setFilter = useEventsStore((s) => s.setFilter);
-
   // Selection and expansion
-  const [selectedEventIndex, setSelectedEventIndex] = useState(-1);
-  const [expandedEventIndex, setExpandedEventIndex] = useState<number | null>(null);
+  const [selectedEventIndex, setSelectedEventIndex] = createSignal(-1);
+  const [expandedEventIndex, setExpandedEventIndex] = createSignal<number | null>(null);
 
   // Reset expanded event when events change (index may become stale)
-  const eventsLength = events.length;
-  useEffect(() => {
+  createEffect(() => {
+    void events().length;
     setExpandedEventIndex(null);
-  }, [eventsLength]);
+  });
 
-  // Auto-connect SSE on mount
-  useEffect(() => {
-    if (config.apiKey && config.baseUrl) {
-      connect(config.baseUrl, config.apiKey, {
-        agentId: config.agentId,
-        subject: config.subject,
-        zoneId: config.zoneId,
-      });
-    }
-    return () => disconnect();
-  }, [config.apiKey, config.baseUrl, config.agentId, config.subject, config.zoneId, connect, disconnect]);
+  // SSE connection is managed by the parent EventsPanel — no duplicate connect here.
 
   // Text inputs for type and search filters
   const typeFilter = useTextInput({
@@ -81,53 +81,62 @@ export function EventsTab({ tabBindings, overlayActive }: EventsTabProps): React
   const searchFilter = useTextInput({
     onSubmit: (val) => setFilter({ search: val || null }),
   });
-  const anyFilterActive = typeFilter.active || searchFilter.active;
 
   // List navigation
   const listNav = listNavigationBindings({
-    getIndex: () => selectedEventIndex,
+    getIndex: () => selectedEventIndex(),
     setIndex: (i) => setSelectedEventIndex(i),
-    getLength: () => events.length,
+    getLength: () => events().length,
   });
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : anyFilterActive
-      ? (typeFilter.active ? typeFilter.inputBindings : searchFilter.inputBindings)
-      : {
-          ...listNav,
-          ...tabBindings,
-          return: () => {
-            if (selectedEventIndex >= 0 && selectedEventIndex < events.length) {
-              setExpandedEventIndex((prev) => prev === selectedEventIndex ? null : selectedEventIndex);
-            }
-          },
-          escape: () => {
-            if (expandedEventIndex !== null) setExpandedEventIndex(null);
-          },
-          c: () => clearEvents(),
-          r: () => {
-            if (config.apiKey && config.baseUrl) {
-              disconnect();
-              connect(config.baseUrl, config.apiKey, {
-                agentId: config.agentId,
-                subject: config.subject,
-                zoneId: config.zoneId,
-              });
-            }
-          },
-          f: () => typeFilter.activate(filters.eventType ?? ""),
-          s: () => searchFilter.activate(filters.search ?? ""),
-          y: () => {
-            const idx = selectedEventIndex >= 0 ? selectedEventIndex : events.length - 1;
-            const event = events[idx];
-            if (event) copy(event.data);
-          },
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      const anyFilterActive = typeFilter.active || searchFilter.active;
+      if (anyFilterActive) {
+        return typeFilter.active ? typeFilter.inputBindings : searchFilter.inputBindings;
+      }
+      const evts = events();
+      const f = filters();
+      const cfg = config();
+      return {
+        ...listNav,
+        ...props.tabBindings,
+        return: () => {
+          if (selectedEventIndex() >= 0 && selectedEventIndex() < evts.length) {
+            setExpandedEventIndex((prev) => prev === selectedEventIndex() ? null : selectedEventIndex());
+          }
         },
-    overlayActive ? undefined : anyFilterActive
-      ? (typeFilter.active ? typeFilter.onUnhandled : searchFilter.onUnhandled)
-      : undefined,
+        escape: () => {
+          if (expandedEventIndex() !== null) setExpandedEventIndex(null);
+        },
+        c: () => clearEvents(),
+        r: () => {
+          if (cfg.apiKey && cfg.baseUrl) {
+            disconnect();
+            connect(cfg.baseUrl, cfg.apiKey, {
+              agentId: cfg.agentId,
+              subject: cfg.subject,
+              zoneId: cfg.zoneId,
+            });
+          }
+        },
+        f: () => typeFilter.activate(f.eventType ?? ""),
+        s: () => searchFilter.activate(f.search ?? ""),
+        y: () => {
+          const idx = selectedEventIndex() >= 0 ? selectedEventIndex() : evts.length - 1;
+          const event = evts[idx];
+          if (event) copy(event.data);
+        },
+      };
+    },
+    () => {
+      if (props.overlayActive) return undefined;
+      const anyFilterActive = typeFilter.active || searchFilter.active;
+      return anyFilterActive
+        ? (typeFilter.active ? typeFilter.onUnhandled : searchFilter.onUnhandled)
+        : undefined;
+    },
   );
 
   return (
@@ -139,7 +148,7 @@ export function EventsTab({ tabBindings, overlayActive }: EventsTabProps): React
             ? `Filter type: ${typeFilter.buffer}\u2588`
             : searchFilter.active
               ? `Filter search: ${searchFilter.buffer}\u2588`
-              : `Filter: type=${filters.eventType ?? "*"} search=${filters.search ?? "*"}`}
+              : `Filter: type=${filters().eventType ?? "*"} search=${filters().search ?? "*"}`}
         </text>
       </box>
 
@@ -149,63 +158,72 @@ export function EventsTab({ tabBindings, overlayActive }: EventsTabProps): React
           {/* SSE status */}
           <box height={1} width="100%">
             <text>
-              {connected
-                ? `● Connected — ${events.length} events`
-                : reconnectExhausted
-                  ? `✕ Reconnect failed after ${reconnectCount} attempts — press r to retry`
-                  : reconnectCount > 0
-                    ? `◐ Auto-reconnecting (attempt ${reconnectCount}/10)...`
+              {connected()
+                ? `● Connected — ${events().length} events`
+                : reconnectExhausted()
+                  ? `✕ Reconnect failed after ${reconnectCount()} attempts — press r to retry`
+                  : reconnectCount() > 0
+                    ? `◐ Auto-reconnecting (attempt ${reconnectCount()}/10)...`
                     : "○ Disconnected"}
             </text>
           </box>
 
           {/* Overflow indicator */}
-          {eventsOverflowed && (
+          <Show when={eventsOverflowed()}>
             <box height={1} width="100%">
               <text dimColor>
-                {`Showing latest ${eventsBuffer.size} of ${eventsBuffer.totalAdded} events (${evictedCount} evicted)`}
+                {`Showing latest ${eventsBuffer().size} of ${eventsBuffer().totalAdded} events (${evictedCount()} evicted)`}
               </text>
             </box>
-          )}
+          </Show>
 
           {/* Event stream */}
-          {expandedEventIndex !== null && expandedEventIndex < events.length ? (
+          <Show
+            when={expandedEventIndex() !== null && expandedEventIndex()! < events().length}
+            fallback={
+              <ScrollIndicator selectedIndex={selectedEventIndex() >= 0 ? selectedEventIndex() : events().length - 1} totalItems={events().length} visibleItems={20}>
+                <scrollbox flexGrow={1} width="100%">
+                  <Show
+                    when={events().length > 0}
+                    fallback={
+                      <EmptyState
+                        message="Listening for events..."
+                        hint="Waiting for activity on the server."
+                      />
+                    }
+                  >
+                    <For each={events()}>{(event, index) => (
+                      <box height={1} width="100%" flexDirection="row">
+                        <text inverse={index() === selectedEventIndex() || undefined}>
+                          {`[${event.event}] ${event.data}`}
+                        </text>
+                      </box>
+                    )}</For>
+                  </Show>
+                </scrollbox>
+              </ScrollIndicator>
+            }
+          >
             <box flexGrow={1} width="100%" flexDirection="column">
               <box height={1} width="100%">
-                <text bold>{`[${events[expandedEventIndex]!.event}] — Event #${expandedEventIndex} (Escape to close)`}</text>
+                <text bold>{`[${events()[expandedEventIndex()!]!.event}] — Event #${expandedEventIndex()} (Escape to close)`}</text>
               </box>
               <scrollbox flexGrow={1} width="100%">
-                <text>{formatEventData(events[expandedEventIndex]!.data)}</text>
+                <text>{formatEventData(events()[expandedEventIndex()!]!.data)}</text>
               </scrollbox>
             </box>
-          ) : (
-            <ScrollIndicator selectedIndex={selectedEventIndex >= 0 ? selectedEventIndex : events.length - 1} totalItems={events.length} visibleItems={20}>
-              <scrollbox flexGrow={1} width="100%">
-                {events.length === 0 ? (
-                  <EmptyState
-                    message="Listening for events..."
-                    hint="Waiting for activity on the server."
-                  />
-                ) : (
-                  events.map((event, index) => (
-                    <box key={event.id ?? index} height={1} width="100%" flexDirection="row">
-                      <text inverse={index === selectedEventIndex || undefined}>
-                        {`[${event.event}] ${event.data}`}
-                      </text>
-                    </box>
-                  ))
-                )}
-              </scrollbox>
-            </ScrollIndicator>
-          )}
+          </Show>
         </box>
       </box>
 
       {/* Help bar */}
       <box height={1} width="100%">
-        {copied
-          ? <text foregroundColor={statusColor.success}>Copied!</text>
-          : <text>{anyFilterActive ? HELP_INPUT : HELP_NORMAL}</text>}
+        <Show
+          when={!copied}
+          fallback={<text foregroundColor={statusColor.success}>Copied!</text>}
+        >
+          <text>{(typeFilter.active || searchFilter.active) ? HELP_INPUT : HELP_NORMAL}</text>
+        </Show>
       </box>
     </box>
   );

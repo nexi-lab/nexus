@@ -6,7 +6,8 @@
  * Keybindings: Tab to switch, r to refresh, j/k to scroll.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useStackStore, type StackTab, type ContainerInfo, type StackPaths } from "../../stores/stack-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -59,7 +60,7 @@ function ContainerList({
   containers: readonly ContainerInfo[];
   loading: boolean;
   selectedIndex: number;
-}): React.ReactNode {
+}): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Querying Docker..." />;
   }
@@ -89,7 +90,7 @@ function ContainerList({
         const ports = c.ports.length > 23 ? c.ports.slice(0, 20) + "..." : c.ports;
 
         return (
-          <box key={c.name} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`${prefix}${name.padEnd(36)}  ${c.service.padEnd(11)}  `}
               <span foregroundColor={stateColor}>{c.state.padEnd(10)}</span>
@@ -112,7 +113,7 @@ function ConfigView({
   yaml: string;
   loading: boolean;
   scrollOffset: number;
-}): React.ReactNode {
+}): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Reading nexus.yaml..." />;
   }
@@ -132,7 +133,7 @@ function ConfigView({
         <text dimColor>{"  " + "─".repeat(60)}</text>
       </box>
       {lines.slice(scrollOffset).map((line, i) => (
-        <box key={i} height={1} width="100%">
+        <box height={1} width="100%">
           <text>
             <span dimColor>{`  ${String(scrollOffset + i + 1).padStart(3)}  `}</span>
             {line}
@@ -153,7 +154,7 @@ function StateView({
   loading: boolean;
   projectName: string | null;
   scrollOffset: number;
-}): React.ReactNode {
+}): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Reading .state.json..." />;
   }
@@ -196,7 +197,7 @@ function StateView({
       {lines.slice(scrollOffset).map((line, i) => {
         const pad = "  ".repeat(line.indent);
         return (
-          <box key={i} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {"  "}{pad}
               <span foregroundColor={statusColor.info}>{line.key}</span>
@@ -210,7 +211,7 @@ function StateView({
   );
 }
 
-function PathsBar({ paths }: { paths: StackPaths | null }): React.ReactNode {
+function PathsBar({ paths }: { paths: StackPaths | null }): JSX.Element {
   if (!paths) return null;
 
   return (
@@ -250,7 +251,7 @@ function HealthSummary({
   healthDetails: { status: string; components: Record<string, { status: string; detail?: string }> } | null;
   uptime: number | null;
   serverVersion: string | null;
-}): React.ReactNode {
+}): JSX.Element {
   if (!healthDetails) return null;
 
   const color = healthDetails.status === "healthy"
@@ -287,7 +288,7 @@ function HealthSummary({
               ? statusColor.warning
               : statusColor.error;
             return (
-              <box key={name} height={1} width="100%">
+              <box height={1} width="100%">
                 <text>
                   {"    "}
                   <span foregroundColor={cColor}>{"●"}</span>
@@ -308,7 +309,7 @@ function HealthSummary({
 // Main panel
 // =============================================================================
 
-export default function StackPanel(): React.ReactNode {
+export default function StackPanel(): JSX.Element {
   const client = useApi();
   const overlayActive = useUiStore((s) => s.overlayActive);
   const serverVersion = useGlobalStore((s) => s.serverVersion);
@@ -327,20 +328,20 @@ export default function StackPanel(): React.ReactNode {
   const error = useStackStore((s) => s.error);
   const refreshAll = useStackStore((s) => s.refreshAll);
 
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [scrollOffset, setScrollOffset] = useState(0);
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const [scrollOffset, setScrollOffset] = createSignal(0);
 
   // Tracks whether any fetch has ever started on this mount.
   // Set reactively when loading flags first go true — NOT at the call site —
   // so there is no render cycle where hasLoaded=true but loading=false and
   // data is still empty (which would flash misleading "no containers" state).
-  const [hasLoaded, setHasLoaded] = useState(false);
+  const [hasLoaded, setHasLoaded] = createSignal(false);
   const anyLoading = containersLoading || configLoading || stateLoading;
-  useEffect(() => {
+  createEffect(() => {
     if (!hasLoaded && anyLoading) {
       setHasLoaded(true);
     }
-  }, [anyLoading, hasLoaded]);
+  });
 
   // Derive project name from state.json
   const projectName = stateJson?.project_name as string | null ?? null;
@@ -348,17 +349,17 @@ export default function StackPanel(): React.ReactNode {
   // Auto-fetch on client connect so the panel surfaces real state on entry.
   // hasLoaded is set by the anyLoading effect above once refreshAll raises
   // loading flags — do NOT set it here to avoid the pre-load empty-state flash.
-  useEffect(() => {
+  createEffect(() => {
     if (client) {
       refreshAll(client);
     }
-  }, [client, refreshAll]);
+  });
 
   // Reset selection/scroll on tab change
-  useEffect(() => {
+  createEffect(() => {
     setSelectedIndex(0);
     setScrollOffset(0);
-  }, [activeTab]);
+  });
 
   // List length for current tab
   const listLength = activeTab === "containers"
@@ -459,26 +460,26 @@ export default function StackPanel(): React.ReactNode {
             <text dimColor>{"  Press r to load stack info"}</text>
           </box>
         )}
-        {(hasLoaded || containersLoading || configLoading || stateLoading) && activeTab === "containers" && (
+        {(hasLoaded() || containersLoading || configLoading || stateLoading) && activeTab === "containers" && (
           <ContainerList
             containers={containers}
             loading={containersLoading}
-            selectedIndex={selectedIndex}
+            selectedIndex={selectedIndex()}
           />
         )}
-        {(hasLoaded || configLoading) && activeTab === "config" && (
+        {(hasLoaded() || configLoading) && activeTab === "config" && (
           <ConfigView
             yaml={configYaml}
             loading={configLoading}
-            scrollOffset={scrollOffset}
+            scrollOffset={scrollOffset()}
           />
         )}
-        {(hasLoaded || stateLoading) && activeTab === "state" && (
+        {(hasLoaded() || stateLoading) && activeTab === "state" && (
           <StateView
             stateJson={stateJson}
             loading={stateLoading}
             projectName={projectName}
-            scrollOffset={scrollOffset}
+            scrollOffset={scrollOffset()}
           />
         )}
       </box>

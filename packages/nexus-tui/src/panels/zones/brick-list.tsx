@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Brick list sidebar: state indicator + name + protocol for each brick.
  */
 
-import React from "react";
 import type { BrickStatusResponse } from "../../stores/zones-store.js";
 import { stateIndicator, stateColor } from "../../shared/brick-states.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
@@ -18,7 +18,7 @@ export function BrickList({
   bricks,
   selectedIndex,
   loading,
-}: BrickListProps): React.ReactNode {
+}: BrickListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -44,7 +44,7 @@ export function BrickList({
         const indicator = stateIndicator(brick.state);
 
         return (
-          <box key={brick.name} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{prefix}</text>
             <text style={textStyle({ fg: stateColor(brick.state) })}>{indicator}</text>
             <text>{` ${brick.name} (${brick.protocol_name})`}</text>

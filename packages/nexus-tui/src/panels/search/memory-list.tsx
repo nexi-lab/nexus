@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Memory list: displays memory dicts from search results.
  *
@@ -5,7 +6,6 @@
  * appears below that memory row showing each version.
  */
 
-import React from "react";
 import type { Memory, MemoryHistory, MemoryDiff } from "../../stores/search-store.js";
 import { truncateText } from "../../shared/utils/format-text.js";
 
@@ -41,7 +41,7 @@ function VersionHistorySection({
 }: {
   readonly history: MemoryHistory | null;
   readonly historyLoading: boolean;
-}): React.ReactNode {
+}): JSX.Element {
   if (historyLoading) {
     return (
       <box height={1} width="100%" marginLeft={4}>
@@ -71,7 +71,7 @@ function VersionHistorySection({
         const created = formatTimestamp(v.created_at);
 
         return (
-          <box key={v.version} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{`  ${marker}${ver}  ${status}  ${created}`}</text>
           </box>
         );
@@ -86,7 +86,7 @@ function DiffSection({
 }: {
   readonly diff: MemoryDiff | null;
   readonly diffLoading: boolean;
-}): React.ReactNode {
+}): JSX.Element {
   if (diffLoading) {
     return (
       <box height={1} width="100%" marginLeft={4}>
@@ -117,7 +117,7 @@ export function MemoryList({
   memoryHistoryLoading,
   memoryDiff,
   memoryDiffLoading,
-}: MemoryListProps): React.ReactNode {
+}: MemoryListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -166,7 +166,7 @@ export function MemoryList({
           );
 
           return (
-            <React.Fragment key={i}>
+            <>
               <box height={1} width="100%">
                 <text>
                   {`${prefix}${memoryIdDisplay}  ${memType}  ${content}${historyIndicator}`}
@@ -184,7 +184,7 @@ export function MemoryList({
                   diffLoading={memoryDiffLoading}
                 />
               )}
-            </React.Fragment>
+            </>
           );
         })}
       </scrollbox>

@@ -3,7 +3,8 @@
  * Policies, and Approvals views.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -37,16 +38,16 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
   approvals: "j/k:navigate  n:new request  a:approve  x:reject  Tab:switch tab  r:refresh  q:quit",
 };
 
-export default function PaymentsPanel(): React.ReactNode {
+export default function PaymentsPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
   const { copy, copied } = useCopy();
-  const [showTransfer, setShowTransfer] = useState(false);
-  const [approvalInputMode, setApprovalInputMode] = useState(false);
-  const [approvalAmountBuffer, setApprovalAmountBuffer] = useState("");
-  const [approvalPurposeBuffer, setApprovalPurposeBuffer] = useState("");
-  const [approvalField, setApprovalField] = useState<"amount" | "purpose">("amount");
+  const [showTransfer, setShowTransfer] = createSignal(false);
+  const [approvalInputMode, setApprovalInputMode] = createSignal(false);
+  const [approvalAmountBuffer, setApprovalAmountBuffer] = createSignal("");
+  const [approvalPurposeBuffer, setApprovalPurposeBuffer] = createSignal("");
+  const [approvalField, setApprovalField] = createSignal<"amount" | "purpose">("amount");
 
   const balance = usePaymentsStore((s) => s.balance);
   const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
@@ -95,36 +96,33 @@ export default function PaymentsPanel(): React.ReactNode {
   const setSelectedTransactionIndex = usePaymentsStore(
     (s) => s.setSelectedTransactionIndex,
   );
-  const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
+  const [selectedPolicyIndex, setSelectedPolicyIndex] = createSignal(0);
 
   const visibleTabs = useVisibleTabs(PAYMENTS_TABS);
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
   // Clamp selectedPolicyIndex when policies list shrinks (e.g. after delete)
-  useEffect(() => {
-    if (policies.length > 0 && selectedPolicyIndex >= policies.length) {
+  createEffect(() => {
+    if (policies.length > 0 && selectedPolicyIndex() >= policies.length) {
       setSelectedPolicyIndex(Math.max(0, policies.length - 1));
     }
-  }, [policies.length, selectedPolicyIndex]);
+  });
 
-  const handleTransferSubmit = useCallback(
-    async (to: string, amount: string, memo: string) => {
+  const handleTransferSubmit = async (to: string, amount: string, memo: string) => {
       if (!client) return;
       const ok = await confirm("Transfer funds?", `Transfer ${amount} credits to ${to}. This cannot be undone.`);
       if (!ok) return;
       transfer(to, amount, memo, client);
       setShowTransfer(false);
-    },
-    [client, transfer, confirm],
-  );
+    };
 
-  const handleTransferCancel = useCallback(() => {
+  const handleTransferCancel = () => {
     setShowTransfer(false);
-  }, []);
+  };
 
   // Refresh current view based on active tab.
   // Reservations are tracked locally, so no fetch is needed for that tab.
-  const refreshCurrentView = useCallback((): void => {
+  const refreshCurrentView = (): void => {
     if (!client) return;
 
     if (activeTab === "balance") {
@@ -136,12 +134,12 @@ export default function PaymentsPanel(): React.ReactNode {
     } else if (activeTab === "approvals") {
       fetchApprovals(client);
     }
-  }, [client, activeTab, fetchBalance, fetchTransactions, fetchPolicies, fetchApprovals]);
+  };
 
   // Auto-fetch when tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshCurrentView();
-  }, [refreshCurrentView]);
+  });
 
   // Text input for afford check (numbers-only)
   const affordInput = useTextInput({
@@ -163,7 +161,7 @@ export default function PaymentsPanel(): React.ReactNode {
     getIndex: () => {
       if (activeTab === "reservations") return selectedReservationIndex;
       if (activeTab === "transactions") return selectedTransactionIndex;
-      if (activeTab === "policies") return selectedPolicyIndex;
+      if (activeTab === "policies") return selectedPolicyIndex();
       if (activeTab === "approvals") return selectedApprovalIndex;
       return 0;
     },
@@ -188,17 +186,17 @@ export default function PaymentsPanel(): React.ReactNode {
   useKeyboard(
     overlayActive
       ? {}
-      : showTransfer
+      : showTransfer()
       ? {}
       : affordInput.active
         ? affordInput.inputBindings
         : policyInput.active
           ? policyInput.inputBindings
-          : approvalInputMode
+          : approvalInputMode()
             ? {
                 return: () => {
-                  const amount = parseFloat(approvalAmountBuffer.trim());
-                  const purpose = approvalPurposeBuffer.trim();
+                  const amount = parseFloat(approvalAmountBuffer().trim());
+                  const purpose = approvalPurposeBuffer().trim();
                   if (Number.isFinite(amount) && purpose && client) {
                     requestApproval(amount, purpose, client);
                   }
@@ -214,7 +212,7 @@ export default function PaymentsPanel(): React.ReactNode {
                   setApprovalField("amount");
                 },
                 backspace: () => {
-                  if (approvalField === "amount") {
+                  if (approvalField() === "amount") {
                     setApprovalAmountBuffer((b) => b.slice(0, -1));
                   } else {
                     setApprovalPurposeBuffer((b) => b.slice(0, -1));
@@ -257,7 +255,7 @@ export default function PaymentsPanel(): React.ReactNode {
           },
           d: async () => {
             if (activeTab !== "policies" || !client) return;
-            const selected = policies[selectedPolicyIndex];
+            const selected = policies[selectedPolicyIndex()];
             if (selected) {
               const ok = await confirm("Delete policy?", "Delete spending policy. This cannot be undone.");
               if (!ok) return;
@@ -320,13 +318,13 @@ export default function PaymentsPanel(): React.ReactNode {
         ? affordInput.onUnhandled
         : policyInput.active
           ? policyInput.onUnhandled
-          : approvalInputMode
+          : approvalInputMode()
             ? (keyName: string) => {
-                if (approvalField === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
+                if (approvalField() === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
                   setApprovalAmountBuffer((b) => b + keyName);
-                } else if (approvalField === "purpose" && keyName.length === 1) {
+                } else if (approvalField() === "purpose" && keyName.length === 1) {
                   setApprovalPurposeBuffer((b) => b + keyName);
-                } else if (approvalField === "purpose" && keyName === "space") {
+                } else if (approvalField() === "purpose" && keyName === "space") {
                   setApprovalPurposeBuffer((b) => b + " ");
                 }
               }
@@ -355,10 +353,10 @@ export default function PaymentsPanel(): React.ReactNode {
         )}
 
         {/* Approval request input (inline bar) */}
-        {approvalInputMode && (
+        {approvalInputMode() && (
           <box height={1} width="100%">
             <text>
-              {approvalField === "amount"
+              {approvalField() === "amount"
                 ? `Amount: ${approvalAmountBuffer}\u2588 \u2502 Purpose: ${approvalPurposeBuffer}  (Tab:next  Enter:submit  Esc:cancel)`
                 : `Amount: ${approvalAmountBuffer} \u2502 Purpose: ${approvalPurposeBuffer}\u2588  (Tab:next  Enter:submit  Esc:cancel)`}
             </text>
@@ -376,7 +374,7 @@ export default function PaymentsPanel(): React.ReactNode {
 
         {/* Detail content */}
         <box flexGrow={1} borderStyle="single">
-          {showTransfer ? (
+          {showTransfer() ? (
             <TransferForm
               onSubmit={handleTransferSubmit}
               onCancel={handleTransferCancel}
@@ -418,7 +416,7 @@ export default function PaymentsPanel(): React.ReactNode {
                   <BudgetCard budget={budget} loading={budgetLoading} />
                   <PolicyList
                     policies={policies}
-                    selectedIndex={selectedPolicyIndex}
+                    selectedIndex={selectedPolicyIndex()}
                     loading={policiesLoading}
                   />
                 </box>
@@ -439,7 +437,7 @@ export default function PaymentsPanel(): React.ReactNode {
           {copied
             ? <text style={textStyle({ fg: "green" })}>Copied!</text>
             : <text>
-            {showTransfer
+            {showTransfer()
               ? "Tab:next field  Enter:submit  Escape:cancel"
               : HELP_TEXT[activeTab] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
           </text>}

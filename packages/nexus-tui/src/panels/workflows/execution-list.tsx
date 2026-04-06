@@ -1,9 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Execution list view: execution_id, trigger_type, status, started_at,
  * completed_at, actions progress, error_message.
  */
 
-import React, { useCallback } from "react";
 import type { ExecutionSummary } from "../../stores/workflows-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { VirtualList } from "../../shared/components/virtual-list.js";
@@ -39,7 +39,7 @@ export function ExecutionList({
   executions,
   selectedIndex,
   loading,
-}: ExecutionListProps): React.ReactNode {
+}: ExecutionListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -57,8 +57,7 @@ export function ExecutionList({
     );
   }
 
-  const renderExecution = useCallback(
-    (ex: ExecutionSummary, i: number) => {
+  const renderExecution = (ex: ExecutionSummary, i: number) => {
       const isSelected = i === selectedIndex;
       const id = shortId(ex.execution_id);
       const status = truncate(ex.status, 9);
@@ -70,15 +69,13 @@ export function ExecutionList({
       const prefix = isSelected ? "> " : "  ";
 
       return (
-        <box key={ex.execution_id} height={1} width="100%">
+        <box height={1} width="100%">
           <text>
             {`${prefix}${id.padEnd(10)}  ${status.padEnd(9)}  ${trigger.padEnd(12)}  ${progress.padEnd(8)}  ${formatTimestamp(ex.started_at).padEnd(19)}  ${errorText}`}
           </text>
         </box>
       );
-    },
-    [selectedIndex],
-  );
+    };
 
   return (
     <box height="100%" width="100%" flexDirection="column">

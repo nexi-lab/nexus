@@ -1,10 +1,9 @@
+import type { JSX } from "solid-js";
 /**
  * Column search results sub-view.
  * Displays datasets matching a column name query via the knowledge store.
  * Issue #2930.
  */
-
-import React from "react";
 
 interface ColumnResult {
   readonly entityUrn: string;
@@ -34,7 +33,7 @@ function formatUrn(urn: string): string {
 export function ColumnSearch({
   results,
   loading,
-}: ColumnSearchProps): React.ReactNode {
+}: ColumnSearchProps): JSX.Element {
   if (loading) {
     return <text>Searching columns...</text>;
   }
@@ -64,7 +63,7 @@ export function ColumnSearch({
           .map((c) => c.name)
           .join(", ");
         return (
-          <text key={i}>
+          <text>
             {`  ${r.columnName.padEnd(20)} ${r.columnType.padEnd(12)} ${filePath.padEnd(40)} ${format.padEnd(7)} ${rows.padEnd(5)} ${otherCols}`}
           </text>
         );

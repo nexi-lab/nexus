@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * File metadata sidebar displaying path, size, etag, version, owner, permissions, etc.
  */
 
-import React from "react";
 import type { FileItem } from "../../stores/files-store.js";
 import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
@@ -24,7 +24,7 @@ function truncate(value: string | null | undefined, max: number = 30): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-function MetaRow({ label, value, color }: { label: string; value: string; color?: string }): React.ReactNode {
+function MetaRow({ label, value, color }: { label: string; value: string; color?: string }): JSX.Element {
   return (
     <box height={1} width="100%">
       <text>
@@ -35,7 +35,7 @@ function MetaRow({ label, value, color }: { label: string; value: string; color?
   );
 }
 
-export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
+export function FileMetadata({ item }: FileMetadataProps): JSX.Element {
   if (!item) {
     return (
       <box height="100%" width="100%">

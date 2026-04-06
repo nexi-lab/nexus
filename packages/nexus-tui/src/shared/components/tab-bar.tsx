@@ -8,7 +8,7 @@
  * Enhanced with semantic colors (Phase A1).
  */
 
-import React from "react";
+import { For, Show } from "solid-js";
 import { palette } from "../theme.js";
 import { textStyle } from "../text-style.js";
 
@@ -24,30 +24,33 @@ interface TabBarProps {
   readonly onSelect: (id: string) => void;
 }
 
-export function TabBar({ tabs, activeTab, onSelect }: TabBarProps): React.ReactNode {
+export function TabBar(props: TabBarProps) {
   return (
     <box height={1} width="100%" flexDirection="row">
-      {tabs.map((tab, index) => {
-        const isActive = tab.id === activeTab;
-        const suffix = index < tabs.length - 1 ? " │ " : "";
+      <For each={props.tabs}>{(tab, index) => {
+        const isActive = () => tab.id === props.activeTab;
+        const suffix = () => index() < props.tabs.length - 1 ? " │ " : "";
         return (
-          <box key={tab.id} height={1} onMouseDown={() => onSelect(tab.id)}>
-            {isActive ? (
+          <box height={1} onMouseDown={() => props.onSelect(tab.id)}>
+            <Show
+              when={isActive()}
+              fallback={
+                <text>
+                  <span style={textStyle({ fg: palette.muted })}>{`  ${tab.shortcut}:${tab.label}`}</span>
+                  <span style={textStyle({ fg: palette.faint })}>{suffix()}</span>
+                </text>
+              }
+            >
               <text>
                 <span style={textStyle({ fg: palette.accent, bold: true })}>{"▸ "}</span>
                 <span style={textStyle({ fg: palette.muted })}>{`${tab.shortcut}:`}</span>
                 <span style={textStyle({ fg: palette.accent, bold: true })}>{tab.label}</span>
-                <span style={textStyle({ fg: palette.faint })}>{suffix}</span>
+                <span style={textStyle({ fg: palette.faint })}>{suffix()}</span>
               </text>
-            ) : (
-              <text>
-                <span style={textStyle({ fg: palette.muted })}>{`  ${tab.shortcut}:${tab.label}`}</span>
-                <span style={textStyle({ fg: palette.faint })}>{suffix}</span>
-              </text>
-            )}
+            </Show>
           </box>
         );
-      })}
+      }}</For>
     </box>
   );
 }

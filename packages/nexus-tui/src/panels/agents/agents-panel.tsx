@@ -2,7 +2,8 @@
  * Agents panel: left sidebar with agent list, right pane with tabbed detail views.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -39,7 +40,7 @@ const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
   trajectories: "Trajectories",
 };
 
-export default function AgentsPanel(): React.ReactNode {
+export default function AgentsPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
@@ -102,10 +103,10 @@ export default function AgentsPanel(): React.ReactNode {
   const { copy, copied } = useCopy();
 
   // Local loading state for async warmup/evict/verify operations
-  const [operationLoading, setOperationLoading] = useState<string | null>(null);
+  const [operationLoading, setOperationLoading] = createSignal<string | null>(null);
 
   // Expanded delegation detail
-  const [expandedDelegation, setExpandedDelegation] = useState<DelegationItem | null>(null);
+  const [expandedDelegation, setExpandedDelegation] = createSignal<DelegationItem | null>(null);
 
   // Merge fetched agents into a display list: fetched agents + any manually added knownAgents not in the fetched list
   const fetchedAgentIds = agents.map((a) => a.agent_id);
@@ -113,20 +114,20 @@ export default function AgentsPanel(): React.ReactNode {
   const displayAgentIds = [...fetchedAgentIds, ...extraKnown];
 
   // Fetch agents on mount when zone is available
-  useEffect(() => {
+  createEffect(() => {
     if (client && effectiveZoneId) {
       fetchAgents(effectiveZoneId, client);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, effectiveZoneId]);
+  });
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
+  createEffect(() => {
     if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
       setActiveTab(visibleIds[0]!);
     }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  });
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
@@ -162,10 +163,10 @@ export default function AgentsPanel(): React.ReactNode {
   };
 
   // Auto-fetch when agent or tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshCurrentView();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgentId, activeTab, client]);
+  });
 
   useKeyboard(overlayActive ? {} : {
     j: () => {
@@ -242,7 +243,7 @@ export default function AgentsPanel(): React.ReactNode {
         const selected = delegations[selectedDelegationIndex];
         if (selected) {
           setExpandedDelegation(
-            expandedDelegation?.delegation_id === selected.delegation_id ? null : selected,
+            expandedDelegation()?.delegation_id === selected.delegation_id ? null : selected,
           );
         }
         return;
@@ -255,7 +256,7 @@ export default function AgentsPanel(): React.ReactNode {
       }
     },
     escape: () => {
-      if (expandedDelegation) {
+      if (expandedDelegation()) {
         setExpandedDelegation(null);
       }
     },
@@ -383,7 +384,7 @@ export default function AgentsPanel(): React.ReactNode {
           {/* Operation in-progress feedback */}
           {operationLoading && (
             <box height={1} width="100%">
-              <LoadingIndicator message={operationLoading} centered={false} />
+              <LoadingIndicator message={operationLoading() ?? undefined} centered={false} />
             </box>
           )}
 
@@ -451,7 +452,7 @@ export default function AgentsPanel(): React.ReactNode {
                 delegations={delegations}
                 selectedIndex={selectedDelegationIndex}
                 loading={delegationsLoading}
-                expandedDelegation={expandedDelegation}
+                expandedDelegation={expandedDelegation()}
               />
             )}
             {activeTab === "inbox" && (

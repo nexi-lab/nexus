@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Search & Knowledge panel: tabbed layout with search, knowledge graph,
  * and memories views.
@@ -5,7 +6,6 @@
  * Press / to enter search input mode, type query, Enter to submit, Escape to cancel.
  */
 
-import React, { useCallback } from "react";
 import { useSearchStore } from "../../stores/search-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import type { SearchMode } from "../../stores/search-store.js";
@@ -44,7 +44,7 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
   columns: "/:search column  Tab:switch tab  r:refresh  q:quit",
 };
 
-export default function SearchPanel(): React.ReactNode {
+export default function SearchPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = useUiStore((s) => s.overlayActive);
@@ -114,8 +114,7 @@ export default function SearchPanel(): React.ReactNode {
 
   useTabFallback(visibleTabs, activeTab, setActiveTab);
 
-  const submitSearch = useCallback(
-    (query: string) => {
+  const submitSearch = (query: string) => {
       if (!client || !query.trim()) return;
 
       setSearchQuery(query.trim());
@@ -132,12 +131,10 @@ export default function SearchPanel(): React.ReactNode {
       } else if (activeTab === "columns") {
         void searchByColumn(query.trim(), client);
       }
-    },
-    [client, activeTab, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, searchByColumn, setSearchQuery, effectiveZoneId],
-  );
+    };
 
   // Refresh current view based on active tab
-  const refreshCurrentView = useCallback((): void => {
+  const refreshCurrentView = (): void => {
     if (!client) return;
 
     if (activeTab === "search" && searchQuery) {
@@ -153,7 +150,7 @@ export default function SearchPanel(): React.ReactNode {
     } else if (activeTab === "columns" && searchQuery) {
       void searchByColumn(searchQuery, client);
     }
-  }, [client, activeTab, searchQuery, search, searchKnowledge, fetchMemories, fetchPlaybooks, askRlm, searchByColumn, effectiveZoneId]);
+  };
 
   // Text input for search bar
   const textInput = useTextInput({
@@ -185,135 +182,74 @@ export default function SearchPanel(): React.ReactNode {
     },
   });
 
+  // Wrap in function so useKeyboard re-evaluates textInput.active on each keypress
   useKeyboard(
-    overlayActive
-      ? {}
-      : textInput.active
-      ? textInput.inputBindings
-      : {
+    () => {
+      const ov = useUiStore.getState().overlayActive;
+      if (ov) return {};
+      if (textInput.active) return textInput.inputBindings;
+
+      const ss = useSearchStore.getState();
+      const tab = ss.activeTab;
+      return {
           ...listNav,
-          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, tab, setActiveTab),
           r: () => refreshCurrentView(),
           m: () => cycleSearchMode(),
-          "/": () => textInput.activate(searchQuery),
+          "/": () => textInput.activate(ss.searchQuery),
           return: () => {
             if (!client) return;
-
-            if (activeTab === "search") {
-              const result = searchResults[selectedResultIndex];
+            if (tab === "search") {
+              const result = ss.searchResults[ss.selectedResultIndex];
               if (result) {
-                // Read the full file and show as expanded content
                 client.get<{ content: string }>(`/api/v2/files/read?path=${encodeURIComponent(result.path)}`)
-                  .then((r) => {
-                    useSearchStore.setState({ expandedContent: r.content, expandedPath: result.path });
-                  })
+                  .then((r) => { useSearchStore.setState({ expandedContent: r.content, expandedPath: result.path }); })
                   .catch(() => {});
               }
-            } else if (activeTab === "knowledge") {
-              if (selectedEntity) {
-                const entityId = String(
-                  (selectedEntity as Record<string, unknown>).entity_id ?? "",
-                );
-                if (entityId) {
-                  fetchNeighbors(entityId, client);
-                }
+            } else if (tab === "knowledge") {
+              if (ss.selectedEntity) {
+                const entityId = String((ss.selectedEntity as Record<string, unknown>).entity_id ?? "");
+                if (entityId) fetchNeighbors(entityId, client);
               }
-            } else if (activeTab === "memories") {
-              const memory = memories[selectedMemoryIndex];
+            } else if (tab === "memories") {
+              const memory = ss.memories[ss.selectedMemoryIndex];
               if (memory) {
-                const memId = String(
-                  (memory as Record<string, unknown>).memory_id ?? "",
-                );
+                const memId = String((memory as Record<string, unknown>).memory_id ?? "");
                 if (memId) {
-                  if (memoryHistory?.memory_id === memId) {
-                    clearMemoryHistory();
-                    clearMemoryDiff();
-                  } else {
-                    clearMemoryDiff();
-                    fetchMemoryHistory(memId, client);
-                  }
+                  if (ss.memoryHistory?.memory_id === memId) { clearMemoryHistory(); clearMemoryDiff(); }
+                  else { clearMemoryDiff(); fetchMemoryHistory(memId, client); }
                 }
               }
             }
           },
           v: () => {
-            if (!client || activeTab !== "memories") return;
-
-            const memory = memories[selectedMemoryIndex];
+            if (!client || tab !== "memories") return;
+            const memory = ss.memories[ss.selectedMemoryIndex];
             if (!memory) return;
-
-            const memId = String(
-              (memory as Record<string, unknown>).memory_id ?? "",
-            );
+            const memId = String((memory as Record<string, unknown>).memory_id ?? "");
             if (!memId) return;
-
-            if (memoryHistory && memoryHistory.memory_id === memId && memoryHistory.current_version >= 2) {
-              fetchMemoryDiff(
-                memId,
-                memoryHistory.current_version - 1,
-                memoryHistory.current_version,
-                client,
-              );
+            if (ss.memoryHistory && ss.memoryHistory.memory_id === memId && ss.memoryHistory.current_version >= 2) {
+              fetchMemoryDiff(memId, ss.memoryHistory.current_version - 1, ss.memoryHistory.current_version, client);
             }
           },
           d: async () => {
             if (!client) return;
-            if (activeTab === "playbooks") {
-              const playbook = playbooks[selectedPlaybookIndex];
-              if (playbook) {
-                const ok = await confirm("Delete playbook?", "This cannot be undone.");
-                if (!ok) return;
-                deletePlaybook(playbook.playbook_id, client);
-              }
-            } else if (activeTab === "memories") {
-              const memory = memories[selectedMemoryIndex];
-              if (memory) {
-                const memId = String((memory as Record<string, unknown>).memory_id ?? "");
-                if (memId) {
-                  const ok = await confirm("Delete memory?", "This cannot be undone.");
-                  if (!ok) return;
-                  deleteMemory(memId, client);
-                }
-              }
+            const s = useSearchStore.getState();
+            if (s.activeTab === "playbooks") {
+              const playbook = s.playbooks[s.selectedPlaybookIndex];
+              if (playbook) { const ok = await confirm("Delete playbook?", "This cannot be undone."); if (!ok) return; deletePlaybook(playbook.playbook_id, client); }
+            } else if (s.activeTab === "memories") {
+              const memory = s.memories[s.selectedMemoryIndex];
+              if (memory) { const memId = String((memory as Record<string, unknown>).memory_id ?? ""); if (memId) { const ok = await confirm("Delete memory?", "This cannot be undone."); if (!ok) return; deleteMemory(memId, client); } }
             }
           },
-          n: () => {
-            if (activeTab === "memories" && client && searchQuery.trim()) {
-              createMemory(searchQuery.trim(), {}, client);
-            }
-          },
-          u: () => {
-            if (activeTab === "memories" && client && searchQuery.trim()) {
-              const memory = memories[selectedMemoryIndex];
-              if (memory) {
-                const memId = String((memory as Record<string, unknown>).memory_id ?? "");
-                if (memId) updateMemory(memId, searchQuery.trim(), client);
-              }
-            }
-          },
-          a: () => {
-            if (activeTab === "search") {
-              const result = searchResults[selectedResultIndex];
-              if (result) {
-                addRlmContextPath(result.path);
-              }
-            } else if (activeTab === "ask") {
-              clearRlmContextPaths();
-            }
-          },
-          escape: () => {
-            // Close expanded file content
-            if (expandedContent !== null) {
-              useSearchStore.setState({ expandedContent: null, expandedPath: null });
-              return;
-            }
-            if (activeTab === "memories" && (memoryHistory || memoryDiff)) {
-              clearMemoryHistory();
-              clearMemoryDiff();
-            }
-          },
-        },
-    overlayActive ? undefined : textInput.active ? textInput.onUnhandled : undefined,
+          n: () => { const s = useSearchStore.getState(); if (s.activeTab === "memories" && client && s.searchQuery.trim()) createMemory(s.searchQuery.trim(), {}, client); },
+          u: () => { const s = useSearchStore.getState(); if (s.activeTab === "memories" && client && s.searchQuery.trim()) { const memory = s.memories[s.selectedMemoryIndex]; if (memory) { const memId = String((memory as Record<string, unknown>).memory_id ?? ""); if (memId) updateMemory(memId, s.searchQuery.trim(), client); } } },
+          a: () => { const s = useSearchStore.getState(); if (s.activeTab === "search") { const result = s.searchResults[s.selectedResultIndex]; if (result) addRlmContextPath(result.path); } else if (s.activeTab === "ask") { clearRlmContextPaths(); } },
+          escape: () => { const s = useSearchStore.getState(); if (s.expandedContent !== null) { useSearchStore.setState({ expandedContent: null, expandedPath: null }); return; } if (s.activeTab === "memories" && (s.memoryHistory || s.memoryDiff)) { clearMemoryHistory(); clearMemoryDiff(); } },
+        };
+    },
+    () => useUiStore.getState().overlayActive ? undefined : textInput.active ? textInput.onUnhandled : undefined,
   );
 
   return (

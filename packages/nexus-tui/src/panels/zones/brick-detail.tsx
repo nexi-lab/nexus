@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Brick detail view: shows individual brick info from GET /api/v2/bricks/{name}.
  *
@@ -5,7 +6,6 @@
  * real FSM transition history, and available actions.
  */
 
-import React from "react";
 import type { BrickDetailResponse } from "../../stores/zones-store.js";
 import { stateIndicator, allowedActionsForState } from "../../shared/brick-states.js";
 
@@ -31,7 +31,7 @@ const ACTION_KEYS: Readonly<Record<string, string>> = {
   reset: "x",
 };
 
-export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNode {
+export function BrickDetail({ brick, loading }: BrickDetailProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -118,7 +118,7 @@ export function BrickDetail({ brick, loading }: BrickDetailProps): React.ReactNo
         </box>
       ) : (
         brick.transitions.map((t, i) => (
-          <box key={i} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{`  ${formatEpoch(t.timestamp)}  ${t.from_state} → ${t.to_state}  (${t.event})`}</text>
           </box>
         ))

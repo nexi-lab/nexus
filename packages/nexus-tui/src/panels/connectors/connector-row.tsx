@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Shared connector row component used by Available and Mounted tabs.
  *
@@ -5,14 +6,13 @@
  * mount path, and sync status. Props control column visibility per tab.
  */
 
-import React from "react";
 import { statusColor } from "../../shared/theme.js";
 
 // =============================================================================
 // Auth status indicator
 // =============================================================================
 
-const AUTH_INDICATORS: Record<string, { icon: string; color: string }> = {
+const AUTH_INDICATORS: Readonly<Record<string, { icon: string; color: string }>> = {
   authed: { icon: "●", color: statusColor.healthy },
   expired: { icon: "●", color: statusColor.warning },
   no_auth: { icon: "○", color: statusColor.dim },
@@ -24,7 +24,7 @@ const AUTH_INDICATORS: Record<string, { icon: string; color: string }> = {
 // Sync status indicator
 // =============================================================================
 
-const SYNC_INDICATORS: Record<string, { label: string; color: string }> = {
+const SYNC_INDICATORS: Readonly<Record<string, { label: string; color: string }>> = {
   synced: { label: "synced", color: statusColor.healthy },
   syncing: { label: "syncing", color: statusColor.warning },
   error: { label: "error", color: statusColor.error },
@@ -69,16 +69,16 @@ export function ConnectorRow({
   showAuth = true,
   showSync = true,
   isSyncing = false,
-}: ConnectorRowProps): React.ReactNode {
+}: ConnectorRowProps): JSX.Element {
   const prefix = selected ? "▶ " : "  ";
-  const auth = AUTH_INDICATORS[authStatus] ?? AUTH_INDICATORS.unknown;
+  const auth = AUTH_INDICATORS[authStatus] ?? AUTH_INDICATORS.unknown!;
   const displayName = name.replace(/_connector$/, "");
   const categoryLabel = category ? ` (${category})` : "";
   const mountLabel = mountPath ?? "—";
 
   // Build sync label
   let syncLabel = "";
-  let syncColor = statusColor.dim;
+  let syncColor: string = statusColor.dim;
   if (isSyncing) {
     syncLabel = "syncing…";
     syncColor = statusColor.warning;

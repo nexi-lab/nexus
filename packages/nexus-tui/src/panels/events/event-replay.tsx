@@ -1,3 +1,5 @@
+import { Show, For, createSignal, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Historical event replay sub-view.
  *
@@ -5,9 +7,8 @@
  * event type, path pattern, agent ID, and since timestamp.
  */
 
-import React from "react";
+
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
-import type { EventReplayEntry } from "../../stores/knowledge-store.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -18,63 +19,73 @@ export interface EventReplayProps {
   readonly typeFilter?: string;
 }
 
-export function EventReplay({ typeFilter }: EventReplayProps): React.ReactNode {
-  const entries = useKnowledgeStore((s) => s.eventReplayEntries);
-  const loading = useKnowledgeStore((s) => s.eventReplayLoading);
-  const hasMore = useKnowledgeStore((s) => s.eventReplayHasMore);
-  const error = useKnowledgeStore((s) => s.error);
+export function EventReplay(props: EventReplayProps): JSX.Element {
+  const [_kRev, _setKRev] = createSignal(0);
+  const unsub = useKnowledgeStore.subscribe(() => _setKRev((r) => r + 1));
+  onCleanup(unsub);
+  const ks = () => { void _kRev(); return useKnowledgeStore.getState(); };
 
-  const needle = (typeFilter ?? "").toLowerCase();
-  const filtered: readonly EventReplayEntry[] = needle
-    ? entries.filter((e) => e.event_type.toLowerCase().includes(needle))
-    : entries;
+  const entries = () => ks().eventReplayEntries;
+  const loading = () => ks().eventReplayLoading;
+  const hasMore = () => ks().eventReplayHasMore;
+  const error = () => ks().error;
 
-  if (loading && entries.length === 0) {
-    return <Spinner label="Loading event replay..." />;
-  }
-
-  if (error) {
-    return <text>{`Error: ${error}`}</text>;
-  }
-
-  if (entries.length === 0) {
-    return (
-      <EmptyState
-        message="No historical events found."
-        hint="Adjust filters or wait for events to be recorded."
-      />
-    );
-  }
+  const needle = () => (props.typeFilter ?? "").toLowerCase();
+  const filtered = () => {
+    const n = needle();
+    return n
+      ? entries().filter((e) => e.event_type.toLowerCase().includes(n))
+      : entries();
+  };
 
   return (
-    <box flexDirection="column" height="100%" width="100%">
-      {/* Summary */}
-      <box height={1} width="100%">
-        <text style={textStyle({ dim: true })}>
-          {`  ${filtered.length} event${filtered.length !== 1 ? "s" : ""}${needle ? ` matching "${typeFilter}"` : ""}`}
-        </text>
-      </box>
-
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  Event Type         Agent            Path                          Time"}</text>
-      </box>
-
-      {/* Rows */}
-      <scrollbox flexGrow={1} width="100%">
-        {filtered.slice(0, 200).map((e) => {
-          const eventType = e.event_type.padEnd(20).slice(0, 20);
-          const agent = (e.agent_id ?? "—").padEnd(16).slice(0, 16);
-          const path = (e.path ?? "—").padEnd(30).slice(0, 30);
-          const time = formatTimestamp(e.timestamp);
-          return (
-            <box key={e.event_id} height={1} width="100%">
-              <text>{`  ${eventType} ${agent} ${path} ${time}`}</text>
+    <Show
+      when={!(loading() && entries().length === 0)}
+      fallback={<Spinner label="Loading event replay..." />}
+    >
+      <Show when={!error()} fallback={<text>{`Error: ${error()}`}</text>}>
+        <Show
+          when={entries().length > 0}
+          fallback={
+            <EmptyState
+              message="No historical events found."
+              hint="Adjust filters or wait for events to be recorded."
+            />
+          }
+        >
+          <box flexDirection="column" height="100%" width="100%">
+            {/* Summary */}
+            <box height={1} width="100%">
+              <text style={textStyle({ dim: true })}>
+                {`  ${filtered().length} event${filtered().length !== 1 ? "s" : ""}${needle() ? ` matching "${props.typeFilter}"` : ""}`}
+              </text>
             </box>
-          );
-        })}
-        {hasMore && <text style={textStyle({ dim: true })}>{"  ... more events available"}</text>}
-      </scrollbox>
-    </box>
+
+            {/* Header */}
+            <box height={1} width="100%">
+              <text>{"  Event Type         Agent            Path                          Time"}</text>
+            </box>
+
+            {/* Rows */}
+            <scrollbox flexGrow={1} width="100%">
+              <For each={filtered().slice(0, 200)}>{(e) => {
+                const eventType = e.event_type.padEnd(20).slice(0, 20);
+                const agent = (e.agent_id ?? "\u2014").padEnd(16).slice(0, 16);
+                const path = (e.path ?? "\u2014").padEnd(30).slice(0, 30);
+                const time = formatTimestamp(e.timestamp);
+                return (
+                  <box height={1} width="100%">
+                    <text>{`  ${eventType} ${agent} ${path} ${time}`}</text>
+                  </box>
+                );
+              }}</For>
+              <Show when={hasMore()}>
+                <text style={textStyle({ dim: true })}>{"  ... more events available"}</text>
+              </Show>
+            </scrollbox>
+          </box>
+        </Show>
+      </Show>
+    </Show>
   );
 }

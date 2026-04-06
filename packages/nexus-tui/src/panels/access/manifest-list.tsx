@@ -1,10 +1,10 @@
+import type { JSX } from "solid-js";
 /**
  * Access manifest list: shows manifests with name, agent, zone, status, entries count, validity.
  * When entries are loaded (via fetchManifestDetail), shows the tuple entries inline
  * for the selected manifest — this serves as the tuple browser.
  */
 
-import React from "react";
 import type { AccessManifest } from "../../stores/access-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -31,7 +31,7 @@ export function ManifestList({
   manifests,
   selectedIndex,
   loading,
-}: ManifestListProps): React.ReactNode {
+}: ManifestListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">

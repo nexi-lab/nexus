@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * IPC message view for an agent — inbox, processed, and dead_letter.
  */
 
-import React from "react";
 import type { InboxMessage } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { statusColor } from "../../shared/theme.js";
@@ -26,7 +26,7 @@ function parseFilename(filename: string): { label: string; ext: string } {
   return { label, ext };
 }
 
-function MessageList({ messages, emptyText }: { messages: readonly InboxMessage[]; emptyText: string }): React.ReactNode {
+function MessageList({ messages, emptyText }: { messages: readonly InboxMessage[]; emptyText: string }): JSX.Element {
   if (messages.length === 0) {
     return <text style={textStyle({ dim: true })}>{`  ${emptyText}`}</text>;
   }
@@ -45,7 +45,7 @@ function MessageList({ messages, emptyText }: { messages: readonly InboxMessage[
   );
 }
 
-export function InboxView({ messages, count, processedMessages, deadLetterMessages, loading }: InboxViewProps): React.ReactNode {
+export function InboxView({ messages, count, processedMessages, deadLetterMessages, loading }: InboxViewProps): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Loading messages..." />;
   }

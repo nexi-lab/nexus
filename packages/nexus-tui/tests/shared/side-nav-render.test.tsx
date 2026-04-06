@@ -12,8 +12,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import { testRender } from "../helpers/render.js";
 import { SideNav } from "../../src/shared/components/side-nav.js";
 import { NAV_ITEMS } from "../../src/shared/nav-items.js";
 import { useFilesStore } from "../../src/stores/files-store.js";
@@ -44,7 +43,7 @@ async function renderSideNav(
   options?: { width?: number; height?: number },
 ) {
   setup = await testRender(
-    <SideNav
+    () => <SideNav
       activePanel={(props.activePanel ?? "files") as any}
       visible={props.visible ?? true}
     />,

@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Agent status detail view: phase badge, conditions, resource usage, identity.
  */
 
-import React from "react";
 import type { AgentStatus, AgentSpec, AgentIdentity, AgentPhase } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 
@@ -47,7 +47,7 @@ export function AgentStatusView({
   loading,
   trustScore,
   reputation,
-}: AgentStatusViewProps): React.ReactNode {
+}: AgentStatusViewProps): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Loading agent status..." />;
   }

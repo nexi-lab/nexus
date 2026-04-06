@@ -1,10 +1,10 @@
+import type { JSX } from "solid-js";
 /**
  * Zone list view: shows zones from GET /api/zones.
  *
  * Displays: zone_id, name, domain, phase, is_active, created_at.
  */
 
-import React from "react";
 import type { ZoneResponse } from "../../stores/zones-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -31,7 +31,7 @@ export function ZoneList({
   zones,
   selectedIndex,
   loading,
-}: ZoneListProps): React.ReactNode {
+}: ZoneListProps): JSX.Element {
   if (loading) {
     return (
       <box height="100%" width="100%" justifyContent="center" alignItems="center">
@@ -61,7 +61,7 @@ export function ZoneList({
         const activeLabel = zone.is_active ? "yes" : "no";
 
         return (
-          <box key={zone.zone_id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`${prefix}${truncate(zone.zone_id, 17).padEnd(17)}  ${truncate(zone.name, 15).padEnd(15)}  ${truncate(zone.domain ?? "-", 15).padEnd(15)}  ${zone.phase.padEnd(8)}  ${activeLabel.padEnd(6)}  ${formatTimestamp(zone.created_at)}`}
             </text>

@@ -9,7 +9,8 @@
  * nexus.yaml.  Also auto-reloads config when a local command completes.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { createSignal, createEffect, createMemo, onCleanup, Show } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { detectConnectionState } from "../hooks/use-connection-state.js";
@@ -23,36 +24,37 @@ import { textStyle } from "../text-style.js";
 
 const AUTO_POLL_INTERVAL = 5_000; // 5 seconds (Decision 14A)
 
-export function PreConnectionScreen(): React.ReactNode {
+export function PreConnectionScreen(): JSX.Element {
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
   const connectionError = useGlobalStore((s) => s.connectionError);
   const config = useGlobalStore((s) => s.config);
   const initConfig = useGlobalStore((s) => s.initConfig);
 
-  const commandStatus = useCommandRunnerStore((s) => s.status);
+  // connState must be a memo so effects/JSX react when connectionStatus changes
+  const connState = createMemo(() =>
+    detectConnectionState(
+      useGlobalStore((s) => s.connectionStatus),
+      useGlobalStore((s) => s.connectionError),
+      useGlobalStore((s) => s.config),
+    )
+  );
 
-  const connState = detectConnectionState(connectionStatus, connectionError, config);
+  const [autoPoll, setAutoPoll] = createSignal(false);
+  const [retryCount, setRetryCount] = createSignal(0);
+  const [urlInput, setUrlInput] = createSignal("");
+  const [editingUrl, setEditingUrl] = createSignal(false);
+  const [apiKeyWarning, setApiKeyWarning] = createSignal<string | null>(null);
 
-  const [autoPoll, setAutoPoll] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [urlInput, setUrlInput] = useState("");
-  const [editingUrl, setEditingUrl] = useState(false);
-  const [apiKeyWarning, setApiKeyWarning] = useState<string | null>(null);
-
-  // Track previous commandStatus to detect completion
-  const prevCommandStatus = useRef(commandStatus);
+  // Track previous commandStatus to detect completion (read reactively inside effect)
+  let prevCommandStatus = useCommandRunnerStore.getState().status;
   // Track API key before init commands to detect changes
-  const prevApiKey = useRef<string | undefined>(undefined);
+  let prevApiKey: string | undefined = undefined;
 
   // When a local command finishes (success or error), re-read config from disk.
-  // Behavior depends on command type:
-  //   - "nexus up" success → auto-reconnect (server just started)
-  //   - "nexus init" success + API key changed → warn user to restart server
-  //   - "nexus demo" / "nexus up" success → clear file cache (data may have changed)
-  //   - All others → stay disconnected, user presses R when ready
-  useEffect(() => {
-    const prev = prevCommandStatus.current;
-    prevCommandStatus.current = commandStatus;
+  createEffect(() => {
+    const commandStatus = useCommandRunnerStore((s) => s.status);
+    const prev = prevCommandStatus;
+    prevCommandStatus = commandStatus;
 
     if (
       (prev === "running") &&
@@ -63,25 +65,20 @@ export function PreConnectionScreen(): React.ReactNode {
       const isDataCommand = label.startsWith("nexus demo") || isUpCommand;
       const isInitCommand = label.startsWith("nexus init");
 
-      // Re-read config from disk without triggering connection test.
-      // resolveConfig() picks up new api_key/ports from nexus.yaml.
       const newConfig = resolveConfig({ transformKeys: false });
       const client = new FetchClient(newConfig);
 
-      // #3: Detect API key change after init commands
-      if (commandStatus === "success" && isInitCommand && prevApiKey.current !== undefined) {
-        if (newConfig.apiKey && newConfig.apiKey !== prevApiKey.current) {
+      if (commandStatus === "success" && isInitCommand && prevApiKey !== undefined) {
+        if (newConfig.apiKey && newConfig.apiKey !== prevApiKey) {
           setApiKeyWarning("API key changed. Restart server (Shift+U) to apply.");
         }
       }
-      prevApiKey.current = undefined;
+      prevApiKey = undefined;
 
-      // #6: Clear file cache after data-mutating commands
       if (commandStatus === "success" && isDataCommand) {
         useFilesStore.getState().clearCache();
       }
 
-      // #1: Auto-reconnect after "nexus up" succeeds
       if (commandStatus === "success" && isUpCommand && client) {
         useGlobalStore.setState({ config: newConfig, client });
         initConfig();
@@ -89,81 +86,82 @@ export function PreConnectionScreen(): React.ReactNode {
         useGlobalStore.setState({
           config: newConfig,
           client,
-          // Stay disconnected — user presses R when ready
           connectionStatus: "error",
           connectionError: "Press R to connect after setup",
         });
       }
     }
-  }, [commandStatus, initConfig]);
+  });
 
-  // Manual retry: re-read config from disk + test connection.
-  // This is critical for the no-config → init → retry flow: after nexus init
-  // writes nexus.yaml, we must call initConfig() (not just testConnection())
-  // because testConnection() returns immediately when client=null.
-  const handleRetry = useCallback(() => {
+  const handleRetry = () => {
     setRetryCount((c) => c + 1);
     initConfig();
-  }, [initConfig]);
+  };
 
-  // Auto-poll: also uses initConfig() so it picks up new config from disk
-  useEffect(() => {
-    if (!autoPoll || connState === "ready") return;
+  // Auto-poll: opt-in (user presses A). Uses onCleanup — NOT return value —
+  // because SolidJS createEffect does not treat return values as cleanup.
+  createEffect(() => {
+    if (!autoPoll() || connState() === "ready") return;
 
     const timer = setInterval(() => {
       initConfig();
     }, AUTO_POLL_INTERVAL);
 
-    return () => clearInterval(timer);
-  }, [autoPoll, connState, initConfig]);
+    onCleanup(() => clearInterval(timer));
+  });
 
   // Stop auto-poll when connected
-  useEffect(() => {
-    if (connState === "ready") {
+  createEffect(() => {
+    if (connState() === "ready") {
       setAutoPoll(false);
     }
-  }, [connState]);
+  });
 
-  // Connect to a different URL
-  const handleConnectUrl = useCallback(() => {
-    const url = urlInput.trim();
+  const handleConnectUrl = () => {
+    const url = urlInput().trim();
     if (!url) return;
     setEditingUrl(false);
     initConfig({ baseUrl: url });
-  }, [urlInput, initConfig]);
+  };
 
-  const isCommandRunning = commandStatus === "running";
-  const hasCommandOutput = commandStatus === "success" || commandStatus === "error";
+  // Subscribe to command runner store for reactive updates (OpenTUI needs signal-driven rendering)
+  const [commandStatus, setCommandStatus] = createSignal(useCommandRunnerStore.getState().status);
+  const unsubCmd = useCommandRunnerStore.subscribe((state) => {
+    setCommandStatus(state.status);
+  });
+  onCleanup(unsubCmd);
+  const isCommandRunning = () => commandStatus() === "running";
+  const hasCommandOutput = () => {
+    const s = commandStatus();
+    return s === "success" || s === "error";
+  };
 
   // Handle printable chars when editing URL
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
+  const handleUnhandledKey = (keyName: string) => {
       if (!editingUrl) return;
       if (keyName.length === 1) {
         setUrlInput((u) => u + keyName);
       } else if (keyName === "space") {
         setUrlInput((u) => u + " ");
       }
-    },
-    [editingUrl],
-  );
+    };
 
   // Dismiss command output and return to menu
-  const dismissOutput = useCallback(() => {
+  const dismissOutput = () => {
     useCommandRunnerStore.getState().reset();
-  }, []);
+  };
 
   useKeyboard(
-    isCommandRunning
+    isCommandRunning()
       ? {}
-      : hasCommandOutput
+      : hasCommandOutput()
       ? {
           // After a command finishes, only allow Esc to dismiss or re-run shortcuts
           escape: dismissOutput,
           backspace: dismissOutput,
           r: handleRetry,
         }
-      : editingUrl
+      : editingUrl()
       ? {
           return: handleConnectUrl,
           escape: () => { setEditingUrl(false); setUrlInput(""); },
@@ -173,19 +171,19 @@ export function PreConnectionScreen(): React.ReactNode {
           r: handleRetry,
           a: () => setAutoPoll((prev) => !prev),
           i: () => {
-            prevApiKey.current = config.apiKey;
+            prevApiKey = config.apiKey;
             setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", []);
           },
           s: () => {
-            prevApiKey.current = config.apiKey;
+            prevApiKey = config.apiKey;
             setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", ["--preset", "shared"]);
           },
           d: () => {
-            prevApiKey.current = config.apiKey;
+            prevApiKey = config.apiKey;
             setApiKeyWarning(null);
             useCommandRunnerStore.getState().reset();
             executeLocalCommand("init", ["--preset", "demo", "--force"]);
@@ -208,51 +206,16 @@ export function PreConnectionScreen(): React.ReactNode {
           c: () => {
             // Connect to a different URL
             setEditingUrl(true);
-            setUrlInput(config.baseUrl ?? "http://localhost:2026");
+            setUrlInput(useGlobalStore.getState().config.baseUrl ?? "http://localhost:2026");
           },
         },
-    isCommandRunning ? undefined : editingUrl ? handleUnhandledKey : undefined,
+    isCommandRunning() ? undefined : editingUrl() ? handleUnhandledKey : undefined,
   );
 
-  // Full-screen command output view when a command is running or has output
-  if (commandStatus !== "idle") {
-    return (
-      <box height="100%" width="100%" flexDirection="column">
-        <scrollbox flexGrow={1}>
-          <box flexDirection="column" width="100%" padding={1}>
-            <CommandOutput />
-          </box>
-        </scrollbox>
-        <box height={1} width="100%">
-          {commandStatus === "success" ? (
-            <text>
-              <span style={textStyle({ fg: "#4dff88", bold: true })}>{"  ✓ Done"}</span>
-              <span style={textStyle({ fg: "#666666" })}>{"  │  "}</span>
-              <span style={textStyle({ fg: "#00d4ff" })}>{"Esc"}</span>
-              <span style={textStyle({ fg: "#888888" })}>{":back  "}</span>
-              <span style={textStyle({ fg: "#00d4ff" })}>{"R"}</span>
-              <span style={textStyle({ fg: "#888888" })}>{":retry"}</span>
-            </text>
-          ) : commandStatus === "error" ? (
-            <text>
-              <span style={textStyle({ fg: "#ff4444", bold: true })}>{"  ✗ Failed"}</span>
-              <span style={textStyle({ fg: "#666666" })}>{"  │  "}</span>
-              <span style={textStyle({ fg: "#00d4ff" })}>{"Esc"}</span>
-              <span style={textStyle({ fg: "#888888" })}>{":back  "}</span>
-              <span style={textStyle({ fg: "#00d4ff" })}>{"R"}</span>
-              <span style={textStyle({ fg: "#888888" })}>{":retry"}</span>
-            </text>
-          ) : (
-            <text>
-              <span style={textStyle({ fg: "#ffaa00" })}>{"  ◐ Running..."}</span>
-            </text>
-          )}
-        </box>
-      </box>
-    );
-  }
-
+  // Full-screen command output view when a command is running or has output.
+  // Use <Show> for reactive switching (SolidJS: if/return evaluates once).
   return (
+    <Show when={commandStatus() !== "idle"} fallback={
     <box height="100%" width="100%" justifyContent="center" alignItems="center">
       <box
         flexDirection="column"
@@ -279,7 +242,7 @@ export function PreConnectionScreen(): React.ReactNode {
         <text>{""}</text>
 
         {/* Status-specific message */}
-        {connState === "no-config" && (
+        {connState() === "no-config" && (
           <>
             <text>
               <span style={textStyle({ fg: "#ffaa00", bold: true })}>{"  ⚠ "}</span>
@@ -291,51 +254,51 @@ export function PreConnectionScreen(): React.ReactNode {
           </>
         )}
 
-        {connState === "no-server" && (
+        {connState() === "no-server" && (
           <>
             <text>
               <span style={textStyle({ fg: "#ff4444", bold: true })}>{"  ✗ "}</span>
               <span style={textStyle({ fg: "#ff4444", bold: true })}>{"Cannot connect to server"}</span>
             </text>
             <text>{""}</text>
-            <text style={textStyle({ fg: "#888888" })}>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
-            {connectionError && (
-              <text style={textStyle({ fg: "#ff6666" })}>{`  Error: ${connectionError}`}</text>
+            <text style={textStyle({ fg: "#888888" })}>{`  URL: ${useGlobalStore((s) => s.config).baseUrl ?? "http://localhost:2026"}`}</text>
+            {useGlobalStore((s) => s.connectionError) && (
+              <text style={textStyle({ fg: "#ff6666" })}>{`  Error: ${useGlobalStore((s) => s.connectionError)}`}</text>
             )}
           </>
         )}
 
-        {connState === "auth-failed" && (
+        {connState() === "auth-failed" && (
           <>
             <text>
               <span style={textStyle({ fg: "#ff4444", bold: true })}>{"  ✗ "}</span>
               <span style={textStyle({ fg: "#ff4444", bold: true })}>{"Authentication failed"}</span>
             </text>
             <text>{""}</text>
-            <text style={textStyle({ fg: "#888888" })}>{`  URL: ${config.baseUrl ?? "http://localhost:2026"}`}</text>
+            <text style={textStyle({ fg: "#888888" })}>{`  URL: ${useGlobalStore((s) => s.config).baseUrl ?? "http://localhost:2026"}`}</text>
             <text style={textStyle({ fg: "#ff6666" })}>{"  Check your API key or credentials."}</text>
           </>
         )}
 
-        {connState === "connecting" && (
+        {connState() === "connecting" && (
           <Spinner label="  Connecting..." />
         )}
 
-        {apiKeyWarning && (
+        {apiKeyWarning() && (
           <>
             <text>{""}</text>
-            <text style={textStyle({ fg: "#ffaa00" })}>{`  ⚠ ${apiKeyWarning}`}</text>
+            <text style={textStyle({ fg: "#ffaa00" })}>{`  ⚠ ${apiKeyWarning()}`}</text>
           </>
         )}
 
         <text>{""}</text>
 
         {/* URL editor */}
-        {editingUrl && (
+        {editingUrl() && (
           <>
             <text style={textStyle({ fg: "#00d4ff" })}>{"  Enter server URL:"}</text>
             <box height={1} width="100%">
-              <text style={textStyle({ fg: "#ffffff" })}>{`  > ${urlInput}\u2588`}</text>
+              <text style={textStyle({ fg: "#ffffff" })}>{`  > ${urlInput()}\u2588`}</text>
             </box>
             <text style={textStyle({ fg: "#666666" })}>{"  Enter to connect, Esc to cancel"}</text>
             <text>{""}</text>
@@ -343,7 +306,7 @@ export function PreConnectionScreen(): React.ReactNode {
         )}
 
         {/* Actions */}
-        {connState !== "connecting" && !editingUrl && (
+        {connState() !== "connecting" && !editingUrl() && (
           <>
             <text style={textStyle({ fg: "#888888", bold: true })}>{"  Setup"}</text>
             <text>
@@ -384,15 +347,49 @@ export function PreConnectionScreen(): React.ReactNode {
             </text>
             <text>
               <span style={textStyle({ fg: "#b44dff", bold: true })}>{"  [R] "}</span>
-              <span style={textStyle({ fg: "#cccccc" })}>{`Retry connection${retryCount > 0 ? ` (${retryCount})` : ""}`}</span>
+              <span style={textStyle({ fg: "#cccccc" })}>{`Retry connection${retryCount() > 0 ? ` (${retryCount()})` : ""}`}</span>
             </text>
             <text>
-              <span style={textStyle({ fg: autoPoll ? "#4dff88" : "#888888", bold: true })}>{"  [A] "}</span>
-              <span style={textStyle({ fg: autoPoll ? "#4dff88" : "#cccccc" })}>{autoPoll ? "Auto-check: ON (every 5s)" : "Enable auto-check (every 5s)"}</span>
+              <span style={textStyle({ fg: autoPoll() ? "#4dff88" : "#888888", bold: true })}>{"  [A] "}</span>
+              <span style={textStyle({ fg: autoPoll() ? "#4dff88" : "#cccccc" })}>{autoPoll() ? "Auto-check: ON (every 5s)" : "Enable auto-check (every 5s)"}</span>
             </text>
           </>
         )}
       </box>
     </box>
+    }>
+      <box height="100%" width="100%" flexDirection="column">
+        <scrollbox flexGrow={1}>
+          <box flexDirection="column" width="100%" padding={1}>
+            <CommandOutput />
+          </box>
+        </scrollbox>
+        <box height={1} width="100%">
+          {commandStatus() === "success" ? (
+            <text>
+              <span style={textStyle({ fg: "#4dff88", bold: true })}>{"  ✓ Done"}</span>
+              <span style={textStyle({ fg: "#666666" })}>{"  │  "}</span>
+              <span style={textStyle({ fg: "#00d4ff" })}>{"Esc"}</span>
+              <span style={textStyle({ fg: "#888888" })}>{":back  "}</span>
+              <span style={textStyle({ fg: "#00d4ff" })}>{"R"}</span>
+              <span style={textStyle({ fg: "#888888" })}>{":retry"}</span>
+            </text>
+          ) : commandStatus() === "error" ? (
+            <text>
+              <span style={textStyle({ fg: "#ff4444", bold: true })}>{"  ✗ Failed"}</span>
+              <span style={textStyle({ fg: "#666666" })}>{"  │  "}</span>
+              <span style={textStyle({ fg: "#00d4ff" })}>{"Esc"}</span>
+              <span style={textStyle({ fg: "#888888" })}>{":back  "}</span>
+              <span style={textStyle({ fg: "#00d4ff" })}>{"R"}</span>
+              <span style={textStyle({ fg: "#888888" })}>{":retry"}</span>
+            </text>
+          ) : (
+            <text>
+              <span style={textStyle({ fg: "#ffaa00" })}>{"  ◐ Running..."}</span>
+            </text>
+          )}
+        </box>
+      </box>
+    </Show>
   );
 }

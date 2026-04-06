@@ -1,3 +1,5 @@
+import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Connector capabilities detail view.
  *
@@ -5,7 +7,7 @@
  * Fetches and displays capabilities from GET /api/v2/connectors/{name}/capabilities.
  */
 
-import React from "react";
+
 import { Spinner } from "../../shared/components/spinner.js";
 
 export interface ConnectorDetailProps {
@@ -14,36 +16,36 @@ export interface ConnectorDetailProps {
   readonly loading: boolean;
 }
 
-export function ConnectorDetail({
-  connectorName,
-  capabilities,
-  loading,
-}: ConnectorDetailProps): React.ReactNode {
-  if (loading) {
-    return <Spinner label={`Loading capabilities for ${connectorName}...`} />;
-  }
-
-  if (capabilities === null || capabilities === undefined) {
-    return <text>{`No capabilities data for ${connectorName}`}</text>;
-  }
-
-  // Render capabilities as formatted JSON lines (truncated to prevent huge renders)
-  const json = JSON.stringify(capabilities, null, 2);
-  const display = json.length > 5000 ? json.slice(0, 5000) + "\n... (truncated)" : json;
-  const lines = display.split("\n");
+export function ConnectorDetail(props: ConnectorDetailProps): JSX.Element {
+  const displayLines = () => {
+    if (props.capabilities === null || props.capabilities === undefined) return null;
+    const json = JSON.stringify(props.capabilities, null, 2);
+    const display = json.length > 5000 ? json.slice(0, 5000) + "\n... (truncated)" : json;
+    return display.split("\n");
+  };
 
   return (
-    <box flexDirection="column" height="100%" width="100%">
-      <box height={1} width="100%">
-        <text>{`Capabilities: ${connectorName}`}</text>
-      </box>
-      <scrollbox flexGrow={1} width="100%">
-        {lines.map((line, i) => (
-          <box key={i} height={1} width="100%">
-            <text>{`  ${line}`}</text>
+    <Show
+      when={!props.loading}
+      fallback={<Spinner label={`Loading capabilities for ${props.connectorName}...`} />}
+    >
+      <Show
+        when={displayLines()}
+        fallback={<text>{`No capabilities data for ${props.connectorName}`}</text>}
+      >
+        <box flexDirection="column" height="100%" width="100%">
+          <box height={1} width="100%">
+            <text>{`Capabilities: ${props.connectorName}`}</text>
           </box>
-        ))}
-      </scrollbox>
-    </box>
+          <scrollbox flexGrow={1} width="100%">
+            {displayLines()!.map((line, _i) => (
+              <box height={1} width="100%">
+                <text>{`  ${line}`}</text>
+              </box>
+            ))}
+          </scrollbox>
+        </box>
+      </Show>
+    </Show>
   );
 }

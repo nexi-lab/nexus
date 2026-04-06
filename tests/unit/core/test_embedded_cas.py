@@ -202,7 +202,7 @@ async def test_cas_list_files(embedded_cas: NexusFS) -> None:
     await embedded_cas.write("/dir2/file3.txt", b"Content 3")
 
     all_files = [f for f in await embedded_cas.sys_readdir() if f not in _SYSTEM_PATHS]
-    assert len(all_files) == 4
+    assert len(all_files) == 3
     assert "/dir1/file1.txt" in all_files
     assert "/dir1/file2.txt" in all_files
     assert "/dir2/file3.txt" in all_files

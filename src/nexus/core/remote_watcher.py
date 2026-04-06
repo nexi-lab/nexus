@@ -51,18 +51,21 @@ class StreamRemoteWatcher:
         self._initialized = False
 
     def _ensure_stream(self) -> None:
-        """Lazily create the event DT_STREAM on first use."""
+        """Lazily create the event DT_STREAM on first use.
+
+        Registers a MemoryStreamBackend directly in StreamManager._buffers
+        WITHOUT writing a DT_STREAM inode to metastore.  This keeps the
+        kernel-internal event stream invisible to glob/list (no VFS inode)
+        while remaining fully usable for stream_write/stream_read.
+        """
         if self._initialized:
             return
-        try:
-            self._sm.create(
-                _EVENT_STREAM_PATH,
+        if _EVENT_STREAM_PATH not in self._sm._buffers:
+            from nexus.core.stream import MemoryStreamBackend
+
+            self._sm._buffers[_EVENT_STREAM_PATH] = MemoryStreamBackend(
                 capacity=_EVENT_STREAM_CAPACITY,
             )
-        except Exception:
-            # Stream may already exist (idempotent)
-            with contextlib.suppress(Exception):
-                self._sm.open(_EVENT_STREAM_PATH)
         self._initialized = True
 
     def publish(self, event: "FileEvent") -> None:

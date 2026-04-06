@@ -474,7 +474,7 @@ async def _boot_post_kernel_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
 
-    # Inject StreamManager into OpenAI-compatible LLM backends for DT_STREAM orchestration.
+    # Inject StreamManager into LLM backends for DT_STREAM orchestration.
     try:
         from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
@@ -484,6 +484,19 @@ async def _boot_post_kernel_services(
                 if isinstance(_candidate, CASOpenAIBackend):
                     _candidate.set_stream_manager(nx._stream_manager)
                     logger.debug("Injected StreamManager into CASOpenAIBackend at %s", _llm_prefix)
+    except Exception:
+        pass
+    try:
+        from nexus.backends.compute.anthropic_native import CASAnthropicBackend
+
+        for _llm_prefix in ("/llm/anthropic", "/root/llm/anthropic"):
+            with contextlib.suppress(Exception):
+                _candidate = nx.router.route(_llm_prefix).backend
+                if isinstance(_candidate, CASAnthropicBackend):
+                    _candidate.set_stream_manager(nx._stream_manager)
+                    logger.debug(
+                        "Injected StreamManager into CASAnthropicBackend at %s", _llm_prefix
+                    )
     except Exception:
         pass
 

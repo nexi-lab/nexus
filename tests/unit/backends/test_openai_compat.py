@@ -139,6 +139,7 @@ def _mock_streaming_chunks(
     model: str = "gpt-4o",
     prompt_tokens: int = 10,
     completion_tokens: int = 20,
+    tool_calls: list[dict[str, Any]] | None = None,
 ) -> list[MagicMock]:
     """Build mock OpenAI streaming chunks."""
     chunks = []
@@ -148,10 +149,17 @@ def _mock_streaming_chunks(
         chunk.usage = None
         delta = MagicMock()
         delta.content = token
+        delta.tool_calls = None
         choice = MagicMock()
         choice.delta = delta
+        choice.finish_reason = None
         chunk.choices = [choice]
         chunks.append(chunk)
+
+    # Set finish_reason on the last token chunk
+    if chunks:
+        last_choice = chunks[-1].choices[0]
+        last_choice.finish_reason = "tool_calls" if tool_calls else "stop"
 
     # Final chunk with usage (stream_options.include_usage)
     final = MagicMock()
@@ -253,6 +261,113 @@ class TestCASOpenAIBackend:
         call_kwargs = client.chat.completions.create.call_args.kwargs
         assert call_kwargs["temperature"] == 0.7
         assert call_kwargs["max_tokens"] == 100
+
+    def test_generate_streaming_tool_calls(self) -> None:
+        """Tool calls are accumulated from incremental streaming chunks."""
+        client = MagicMock()
+
+        # Build chunks that simulate an OpenAI tool_call streaming response:
+        # Chunk 1: text content "I'll read the file."
+        # Chunk 2: tool_call start (id + function name)
+        # Chunk 3: tool_call argument fragment 1
+        # Chunk 4: tool_call argument fragment 2 + finish_reason
+        # Chunk 5: usage (no choices)
+        chunks: list[MagicMock] = []
+
+        # Chunk 1: text content
+        c1 = MagicMock()
+        c1.model = "gpt-4o"
+        c1.usage = None
+        c1.choices = [MagicMock()]
+        c1.choices[0].finish_reason = None
+        c1.choices[0].delta = MagicMock()
+        c1.choices[0].delta.content = "I'll read it."
+        c1.choices[0].delta.tool_calls = None
+        chunks.append(c1)
+
+        # Chunk 2: tool_call start (id + name)
+        c2 = MagicMock()
+        c2.model = "gpt-4o"
+        c2.usage = None
+        c2.choices = [MagicMock()]
+        c2.choices[0].finish_reason = None
+        c2.choices[0].delta = MagicMock()
+        c2.choices[0].delta.content = None
+        tc_start = MagicMock()
+        tc_start.index = 0
+        tc_start.id = "call_abc123"
+        tc_start.function = MagicMock()
+        tc_start.function.name = "read_file"
+        tc_start.function.arguments = ""
+        c2.choices[0].delta.tool_calls = [tc_start]
+        chunks.append(c2)
+
+        # Chunk 3: tool_call argument fragment
+        c3 = MagicMock()
+        c3.model = "gpt-4o"
+        c3.usage = None
+        c3.choices = [MagicMock()]
+        c3.choices[0].finish_reason = None
+        c3.choices[0].delta = MagicMock()
+        c3.choices[0].delta.content = None
+        tc_frag1 = MagicMock()
+        tc_frag1.index = 0
+        tc_frag1.id = None
+        tc_frag1.function = MagicMock()
+        tc_frag1.function.name = None
+        tc_frag1.function.arguments = '{"path":'
+        c3.choices[0].delta.tool_calls = [tc_frag1]
+        chunks.append(c3)
+
+        # Chunk 4: tool_call argument fragment + finish_reason
+        c4 = MagicMock()
+        c4.model = "gpt-4o"
+        c4.usage = None
+        c4.choices = [MagicMock()]
+        c4.choices[0].finish_reason = "tool_calls"
+        c4.choices[0].delta = MagicMock()
+        c4.choices[0].delta.content = None
+        tc_frag2 = MagicMock()
+        tc_frag2.index = 0
+        tc_frag2.id = None
+        tc_frag2.function = MagicMock()
+        tc_frag2.function.name = None
+        tc_frag2.function.arguments = '"main.py"}'
+        c4.choices[0].delta.tool_calls = [tc_frag2]
+        chunks.append(c4)
+
+        # Chunk 5: usage
+        c5 = MagicMock()
+        c5.model = "gpt-4o"
+        c5.choices = []
+        usage_mock = MagicMock()
+        usage_mock.prompt_tokens = 10
+        usage_mock.completion_tokens = 20
+        usage_mock.total_tokens = 30
+        c5.usage = usage_mock
+        chunks.append(c5)
+
+        client.chat.completions.create.return_value = iter(chunks)
+        backend, _ = _make_backend(client)
+
+        request = {"messages": [{"role": "user", "content": "Read main.py"}]}
+        results = list(backend.generate_streaming(request))
+
+        # Text token
+        tokens = [(t, m) for t, m in results if t]
+        assert len(tokens) == 1
+        assert tokens[0][0] == "I'll read it."
+
+        # Final metadata should include tool_calls
+        meta = results[-1][1]
+        assert meta is not None
+        assert meta["finish_reason"] == "tool_calls"
+        assert len(meta["tool_calls"]) == 1
+
+        tc = meta["tool_calls"][0]
+        assert tc["id"] == "call_abc123"
+        assert tc["function"]["name"] == "read_file"
+        assert json.loads(tc["function"]["arguments"]) == {"path": "main.py"}
 
     def test_generate_streaming_missing_messages_raises(self) -> None:
         backend, _ = _make_backend()

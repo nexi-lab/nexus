@@ -427,53 +427,28 @@ class SessionManager:
 
 ## Current Scope
 
-### To implement (in order):
+### Done (merged or in PR #3660):
 
-1. **Tool call parsing** (§1.4)
-   - Modify `CASOpenAIBackend.generate_streaming()` — accumulate tool_calls from streaming chunks
-   - Modify `ManagedAgentLoop._call_llm_via_kernel()` — extract tool_calls from meta
+1. ~~**Tool call parsing** (§1.4)~~ — DONE (PR #3660)
+2. ~~**Built-in tools (Tier A)** (§1.5)~~ — DONE (PR #3660, ToolRegistry + 6 tools)
+3. ~~**CASAnthropicBackend** (§1.2)~~ — DONE (PR #3660)
+4. ~~**Retry wrapper** (§1.3)~~ — DONE (PR #3660)
+5. ~~**Session Manager** (§1.7)~~ — DONE (PR #3660)
 
-2. **Built-in tools (Tier A)** (§1.5)
-   - read_file → `sys_read` (exists)
-   - write_file → `sys_write` (exists)
-   - edit_file → `nx.edit()` (exists, Tier-2 RPC, fuzzy match + OCC)
-   - bash → SubprocessRunner (new, extracted from AcpService's DT_PIPE pattern)
-   - grep → `SearchService.grep()` via `nx.service("search")` (exists, Rust-accelerated, all profiles)
-   - glob → `SearchService.glob()` via `nx.service("search")` (exists, Rust-accelerated, all profiles)
+### To design & implement next:
 
-3. **External tool discovery (Tier B)** (§1.5)
-   - Mount external tool directories into VFS at `/{zone}/tools/{toolset-name}/`
-   - LLM discovers via ls + --help; executes via bash built-in tool
-   - No schema translation — filesystem IS the registry
-
-4. **CASAnthropicBackend** (§1.2)
-   - Native Anthropic SDK, no translation overhead for Claude models
-   - Tool calls as complete JSON (no incremental concatenation)
-   - Mount alongside CASOpenAIBackend: `nexus mount /llm/anthropic --backend=anthropic`
-
-5. **Retry wrapper** (§1.3)
-   - `_call_llm_with_retry()` in ManagedAgentLoop
-
-6. **Session Manager** (§1.7)
-   - `/{zone}/agents/{id}/sessions/{session-id}/conversation`
-   - CLI: --continue, --resume, --fork-session
-
-7. **Context Compression** (§4.1)
-   - micro_compact, auto_compact, manual compact
-
-8. **System Prompt Assembly** (§4.2)
-   - Match CC's system prompt comprehensiveness
-
-9. **REPL + Basic CLI** (§11.2 + §13.2)
-   - Main loop + slash commands + CLI args
+6. **Context Compression** (§4.1) — needs design discussion
+7. **System Prompt Assembly** (§4.2) — needs design discussion
+8. **REPL + Basic CLI** (§11.2 + §13.2) — needs design discussion
+9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs
 
 ### Deferred Items (not in current scope):
-- Multi-agent teams (P1)
-- Skill loading (P1)
-- MCP (P2)
-- TUI polish (P1)
-- Worktree isolation (P1)
-- Feature flags (P2)
+- Multi-agent teams (§5.2, P1)
+- Skill loading (§7.1, P1)
+- MCP integration (§10.1, P2)
+- TUI polish (§11.1, P1)
+- Worktree isolation (§8.1, P1)
+- Feature flags (§12.1, P2)
 - Semantic search in CLUSTER profile (P1 — needs BRICK_SEARCH opt-in)
 
 ---

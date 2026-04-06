@@ -33,18 +33,25 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from nexus.contracts.exceptions import BackendError
 from nexus.services.agent_runtime.observer import AgentObserver, AgentTurnResult
+from nexus.services.agent_runtime.tool_registry import ToolRegistry
 
 if TYPE_CHECKING:
     from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
 logger = logging.getLogger(__name__)
+
+# Default retry settings (matching CC's withRetry.ts pattern)
+_DEFAULT_MAX_RETRIES = 5
+_DEFAULT_BASE_DELAY = 1.0  # seconds
 
 # Kernel syscall callables (injected from NexusFS).
 SysReadFn = Callable[[str], Awaitable[bytes]]
@@ -85,6 +92,8 @@ class ManagedAgentLoop:
         proc_path: str,
         model: str | None = None,
         max_turns: int = _MAX_TURNS,
+        tool_registry: ToolRegistry | None = None,
+        max_retries: int = _DEFAULT_MAX_RETRIES,
     ) -> None:
         self._sys_read = sys_read
         self._sys_write = sys_write
@@ -96,7 +105,9 @@ class ManagedAgentLoop:
         self._proc_path = proc_path  # /{zone}/proc/{pid}
         self._model = model
         self._max_turns = max_turns
+        self._max_retries = max_retries
         self._session_id = str(uuid.uuid4())
+        self._tool_registry = tool_registry
 
         # Shared observer (same logic as AcpConnection)
         self._observer = AgentObserver()
@@ -136,13 +147,16 @@ class ManagedAgentLoop:
         except Exception:
             logger.debug("No system prompt at %s/SYSTEM.md", self._agent_path)
 
-        # Tool definitions from VFS
+        # Tool definitions: prefer ToolRegistry schemas, fall back to VFS config.
         self._tools: list[dict[str, Any]] = []
-        try:
-            tools_bytes = await self._sys_read(f"{self._agent_path}/tools.json")
-            self._tools = json.loads(tools_bytes)
-        except Exception:
-            logger.debug("No tools config at %s/tools.json", self._agent_path)
+        if self._tool_registry:
+            self._tools = self._tool_registry.schemas()
+        if not self._tools:
+            try:
+                tools_bytes = await self._sys_read(f"{self._agent_path}/tools.json")
+                self._tools = json.loads(tools_bytes)
+            except Exception:
+                logger.debug("No tools config at %s/tools.json", self._agent_path)
 
     # ------------------------------------------------------------------
     # Main reasoning loop
@@ -166,8 +180,8 @@ class ManagedAgentLoop:
         while turns < self._max_turns:
             turns += 1
 
-            # Call LLM via kernel (DT_STREAM)
-            response_text, tool_calls, meta = await self._call_llm_via_kernel()
+            # Call LLM via kernel (DT_STREAM) with retry
+            response_text, tool_calls, meta = await self._call_llm_with_retry()
 
             # Emit observations (same format as AcpConnection)
             if response_text:
@@ -213,6 +227,59 @@ class ManagedAgentLoop:
         result = self._observer.finish_turn(stop_reason="max_turns")
         await self._persist_result(result)
         return result
+
+    # ------------------------------------------------------------------
+    # LLM call with retry (exponential backoff)
+    # ------------------------------------------------------------------
+
+    async def _call_llm_with_retry(
+        self,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
+        """Call LLM with exponential backoff retry on transient failures.
+
+        Retry policy (matching CC's withRetry.ts):
+        - Rate limit (429) / server error (5xx): retry with exponential backoff
+        - Auth error: fail immediately (no retry)
+        - Network error: retry with exponential backoff
+        - Other errors: fail immediately
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries):
+            try:
+                return await self._call_llm_via_kernel()
+            except BackendError as exc:
+                err_msg = str(exc).lower()
+                # Auth errors: fail immediately
+                if "auth" in err_msg or "api key" in err_msg or "unauthorized" in err_msg:
+                    raise
+                # Transient errors: retry with backoff
+                last_exc = exc
+                delay = _DEFAULT_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    self._max_retries,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+            except (TimeoutError, OSError) as exc:
+                # Network / timeout errors: retry
+                last_exc = exc
+                delay = _DEFAULT_BASE_DELAY * (2**attempt)
+                logger.warning(
+                    "LLM call failed (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1,
+                    self._max_retries,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+
+        raise BackendError(
+            f"LLM call failed after {self._max_retries} retries: {last_exc}",
+            backend="llm",
+        )
 
     # ------------------------------------------------------------------
     # LLM call via kernel (DT_STREAM)
@@ -270,21 +337,31 @@ class ManagedAgentLoop:
 
         response_text = "".join(tokens)
 
-        # TODO: parse tool_calls from streaming response
-        tool_calls: list[dict[str, Any]] = []
+        # Extract tool_calls from the "done" control message metadata.
+        # CASOpenAIBackend.generate_streaming() accumulates incremental
+        # tool_call fragments and includes the complete list in the final
+        # metadata, which _run_stream() forwards in the "done" message.
+        tool_calls: list[dict[str, Any]] = (meta or {}).get("tool_calls", [])
 
         return response_text, tool_calls, meta
 
     # ------------------------------------------------------------------
-    # Tool execution via VFS syscalls
+    # Tool execution via ToolRegistry (VFS syscalls under the hood)
     # ------------------------------------------------------------------
 
     async def _execute_tool(self, tool_call: dict[str, Any]) -> str:
-        """Execute a tool call via VFS syscalls.
+        """Execute a tool call via ToolRegistry.
 
-        ALL tool I/O goes through sys_read / sys_write — observable
+        ALL built-in tool I/O goes through VFS syscalls — observable
         via kernel dispatch (PRE → INTERCEPT → OBSERVE).
+
+        Falls back to legacy hardcoded dispatch when no ToolRegistry is set
+        (backward compatibility with existing callers).
         """
+        if self._tool_registry:
+            return await self._tool_registry.execute_one(tool_call)
+
+        # Legacy fallback: hardcoded read_file / write_file
         func = tool_call.get("function", {})
         name = func.get("name", "")
         try:

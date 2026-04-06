@@ -262,15 +262,10 @@ class NexusFS(  # type: ignore[misc]
                     _vfs_rust = getattr(self._vfs_lock_manager, "_rust", None)
                     if _vfs_rust is not None:
                         self._kernel.set_vfs_lock(_vfs_rust)
-                    # PyMetastoreAdapter removed (Phase 9) — require redb path
+                    # PyMetastoreAdapter removed (Phase 9) — wire redb if available
                     _redb_path = getattr(metadata_store, "_redb_path", None)
                     if _redb_path is not None:
                         self._kernel.set_metastore_path(str(_redb_path))
-                    else:
-                        raise RuntimeError(
-                            "Rust kernel requires set_metastore_path — "
-                            "use RustMetastoreProxy or metastore with _redb_path"
-                        )
             except Exception as exc:
                 import logging as _logging
 

@@ -79,6 +79,19 @@ pub(crate) trait Metastore: Send + Sync {
         }
         Ok(results)
     }
+
+    /// Batch delete: remove metadata for multiple paths.
+    /// Returns number of entries that existed and were deleted.
+    /// Default impl loops single deletes. Override for single-transaction batch.
+    fn delete_batch(&self, paths: &[String]) -> Result<usize, MetastoreError> {
+        let mut count = 0;
+        for path in paths {
+            if self.delete(path)? {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 }
 
 // PyMetastoreAdapter + conversion helpers (extract_metadata, to_python_metadata)
@@ -370,6 +383,32 @@ impl Metastore for RedbMetastore {
         txn.commit()
             .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
         Ok(())
+    }
+
+    /// Single write transaction for all deletes — optimal for redb.
+    fn delete_batch(&self, paths: &[String]) -> Result<usize, MetastoreError> {
+        let txn = self
+            .db
+            .begin_write()
+            .map_err(|e| MetastoreError::IOError(format!("redb write txn: {e}")))?;
+        let mut count = 0;
+        {
+            let mut table = txn
+                .open_table(METADATA_TABLE)
+                .map_err(|e| MetastoreError::IOError(format!("redb open_table: {e}")))?;
+            for path in paths {
+                if table
+                    .remove(path.as_str())
+                    .map_err(|e| MetastoreError::IOError(format!("redb remove: {e}")))?
+                    .is_some()
+                {
+                    count += 1;
+                }
+            }
+        }
+        txn.commit()
+            .map_err(|e| MetastoreError::IOError(format!("redb commit: {e}")))?;
+        Ok(count)
     }
 
     /// Single read transaction for all paths.

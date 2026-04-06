@@ -367,6 +367,24 @@ impl ObjectStore for PyObjectStoreAdapter {
             Ok(())
         })
     }
+
+    fn delete_file(&self, path: &str) -> Result<(), StorageError> {
+        Python::attach(|py| {
+            let obj = self.inner.bind(py);
+            obj.call_method1("delete_file", (path,))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            Ok(())
+        })
+    }
+
+    fn rename(&self, old_path: &str, new_path: &str) -> Result<(), StorageError> {
+        Python::attach(|py| {
+            let obj = self.inner.bind(py);
+            obj.call_method1("rename", (old_path, new_path))
+                .map_err(|e| StorageError::IOError(io::Error::other(e.to_string())))?;
+            Ok(())
+        })
+    }
 }
 
 // ── PyMetastoreAdapter ──────────────────────────────────────────
@@ -451,6 +469,18 @@ impl Metastore for PyMetastoreAdapter {
             result
                 .extract::<bool>()
                 .map_err(|e| MetastoreError::IOError(format!("metastore.exists({path}): {e}")))
+        })
+    }
+
+    fn delete_batch(&self, paths: &[String]) -> Result<usize, MetastoreError> {
+        Python::attach(|py| {
+            let obj = self.inner.bind(py);
+            let result = obj.call_method1("delete_batch", (paths,)).map_err(|e| {
+                MetastoreError::IOError(format!("metastore.delete_batch({paths:?}): {e}"))
+            })?;
+            result.extract::<usize>().map_err(|e| {
+                MetastoreError::IOError(format!("metastore.delete_batch({paths:?}): {e}"))
+            })
         })
     }
 }
@@ -844,8 +874,12 @@ pub struct PySysWriteResult {
 /// Python-facing SysUnlinkResult.
 #[pyclass(name = "SysUnlinkResult", get_all)]
 pub struct PySysUnlinkResult {
+    pub hit: bool,
     pub entry_type: u8,
     pub post_hook_needed: bool,
+    pub path: String,
+    pub etag: Option<String>,
+    pub size: u64,
 }
 
 // ── PySysRenameResult ───────────────────────────────────────────
@@ -853,8 +887,10 @@ pub struct PySysUnlinkResult {
 /// Python-facing SysRenameResult.
 #[pyclass(name = "SysRenameResult", get_all)]
 pub struct PySysRenameResult {
+    pub hit: bool,
     pub success: bool,
     pub post_hook_needed: bool,
+    pub is_directory: bool,
 }
 
 // ── PySysMkdirResult ────────────────────────────────────────────
@@ -862,6 +898,7 @@ pub struct PySysRenameResult {
 /// Python-facing SysMkdirResult.
 #[pyclass(name = "SysMkdirResult", get_all)]
 pub struct PySysMkdirResult {
+    pub hit: bool,
     pub post_hook_needed: bool,
 }
 
@@ -870,7 +907,9 @@ pub struct PySysMkdirResult {
 /// Python-facing SysRmdirResult.
 #[pyclass(name = "SysRmdirResult", get_all)]
 pub struct PySysRmdirResult {
+    pub hit: bool,
     pub post_hook_needed: bool,
+    pub children_deleted: usize,
 }
 
 // ── PyRustRouteResult ───────────────────────────────────────────
@@ -1499,8 +1538,12 @@ impl PyKernel {
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysUnlinkResult {
+            hit: result.hit,
             entry_type: result.entry_type,
             post_hook_needed: result.post_hook_needed,
+            path: result.path,
+            etag: result.etag,
+            size: result.size,
         })
     }
 
@@ -1532,19 +1575,23 @@ impl PyKernel {
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysRenameResult {
+            hit: result.hit,
             success: result.success,
             post_hook_needed: result.post_hook_needed,
+            is_directory: result.is_directory,
         })
     }
 
     // ── sys_mkdir ─────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, parents=true, exist_ok=true))]
     fn sys_mkdir(
         &self,
         py: Python<'_>,
         path: &str,
         ctx: &PyOperationContext,
+        parents: bool,
+        exist_ok: bool,
     ) -> PyResult<PySysMkdirResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("mkdir") {
@@ -1558,24 +1605,26 @@ impl PyKernel {
             self.dispatch_pre_hooks_inner("mkdir", &mhc)?;
         }
 
-        // 2. Call pure Rust kernel (validate + route)
+        // 2. Call pure Rust kernel (full mkdir)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx, parents, exist_ok));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysMkdirResult {
+            hit: result.hit,
             post_hook_needed: result.post_hook_needed,
         })
     }
 
     // ── sys_rmdir ─────────────────────────────────────────────────────
 
-    #[pyo3(signature = (path, ctx))]
+    #[pyo3(signature = (path, ctx, recursive=false))]
     fn sys_rmdir(
         &self,
         py: Python<'_>,
         path: &str,
         ctx: &PyOperationContext,
+        recursive: bool,
     ) -> PyResult<PySysRmdirResult> {
         // 1. PRE-INTERCEPT hooks (GIL, abort on exception)
         if self.inner.has_hooks("rmdir") {
@@ -1589,13 +1638,15 @@ impl PyKernel {
             self.dispatch_pre_hooks_inner("rmdir", &rhc)?;
         }
 
-        // 2. Call pure Rust kernel
+        // 2. Call pure Rust kernel (full rmdir)
         let rust_ctx = ctx.to_rust();
-        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx));
+        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));
         let result = result.map_err(|e| -> PyErr { e.into() })?;
 
         Ok(PySysRmdirResult {
+            hit: result.hit,
             post_hook_needed: result.post_hook_needed,
+            children_deleted: result.children_deleted,
         })
     }
 
@@ -1678,8 +1729,12 @@ impl PyKernel {
         Ok(results
             .into_iter()
             .map(|r| PySysUnlinkResult {
+                hit: r.hit,
                 entry_type: r.entry_type,
                 post_hook_needed: r.post_hook_needed,
+                path: r.path,
+                etag: r.etag,
+                size: r.size,
             })
             .collect())
     }

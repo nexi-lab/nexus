@@ -864,9 +864,9 @@ def _rust_err_map(config: dict[str, str], method_name: str, first_param: str) ->
     if config["error"] == "StorageError":
         return "StorageError::IOError(io::Error::other(e.to_string()))"
     else:
-        return (
-            f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}}}): {{e}}"))'
-        )
+        # Use :? for slice params (e.g. paths: &[String]) since &[T] doesn't impl Display
+        fmt_spec = ":?" if first_param in ("paths", "items") else ""
+        return f'MetastoreError::IOError(format!("metastore.{method_name}({{{first_param}{fmt_spec}}}): {{e}}"))'
 
 
 def _generate_adapter_method(
@@ -1978,8 +1978,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysUnlinkResult.",
             '#[pyclass(name = "SysUnlinkResult", get_all)]',
             "pub struct PySysUnlinkResult {",
+            "    pub hit: bool,",
             "    pub entry_type: u8,",
             "    pub post_hook_needed: bool,",
+            "    pub path: String,",
+            "    pub etag: Option<String>,",
+            "    pub size: u64,",
             "}",
             "",
             "// ── PySysRenameResult ───────────────────────────────────────────",
@@ -1987,8 +1991,10 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysRenameResult.",
             '#[pyclass(name = "SysRenameResult", get_all)]',
             "pub struct PySysRenameResult {",
+            "    pub hit: bool,",
             "    pub success: bool,",
             "    pub post_hook_needed: bool,",
+            "    pub is_directory: bool,",
             "}",
             "",
             "// ── PySysMkdirResult ────────────────────────────────────────────",
@@ -1996,6 +2002,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysMkdirResult.",
             '#[pyclass(name = "SysMkdirResult", get_all)]',
             "pub struct PySysMkdirResult {",
+            "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
             "}",
             "",
@@ -2004,7 +2011,9 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "/// Python-facing SysRmdirResult.",
             '#[pyclass(name = "SysRmdirResult", get_all)]',
             "pub struct PySysRmdirResult {",
+            "    pub hit: bool,",
             "    pub post_hook_needed: bool,",
+            "    pub children_deleted: usize,",
             "}",
             "",
             "// ── PyRustRouteResult ───────────────────────────────────────────",
@@ -2639,8 +2648,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysUnlinkResult {",
+            "            hit: result.hit,",
             "            entry_type: result.entry_type,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            path: result.path,",
+            "            etag: result.etag,",
+            "            size: result.size,",
             "        })",
             "    }",
             "",
@@ -2672,19 +2685,23 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysRenameResult {",
+            "            hit: result.hit,",
             "            success: result.success,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            is_directory: result.is_directory,",
             "        })",
             "    }",
             "",
             "    // ── sys_mkdir ─────────────────────────────────────────────────────",
             "",
-            "    #[pyo3(signature = (path, ctx))]",
+            "    #[pyo3(signature = (path, ctx, parents=true, exist_ok=true))]",
             "    fn sys_mkdir(",
             "        &self,",
             "        py: Python<'_>,",
             "        path: &str,",
             "        ctx: &PyOperationContext,",
+            "        parents: bool,",
+            "        exist_ok: bool,",
             "    ) -> PyResult<PySysMkdirResult> {",
             "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
             '        if self.inner.has_hooks("mkdir") {',
@@ -2698,24 +2715,26 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '            self.dispatch_pre_hooks_inner("mkdir", &mhc)?;',
             "        }",
             "",
-            "        // 2. Call pure Rust kernel (validate + route)",
+            "        // 2. Call pure Rust kernel (full mkdir)",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx));",
+            "        let result = py.detach(|| self.inner.sys_mkdir(path, &rust_ctx, parents, exist_ok));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysMkdirResult {",
+            "            hit: result.hit,",
             "            post_hook_needed: result.post_hook_needed,",
             "        })",
             "    }",
             "",
             "    // ── sys_rmdir ─────────────────────────────────────────────────────",
             "",
-            "    #[pyo3(signature = (path, ctx))]",
+            "    #[pyo3(signature = (path, ctx, recursive=false))]",
             "    fn sys_rmdir(",
             "        &self,",
             "        py: Python<'_>,",
             "        path: &str,",
             "        ctx: &PyOperationContext,",
+            "        recursive: bool,",
             "    ) -> PyResult<PySysRmdirResult> {",
             "        // 1. PRE-INTERCEPT hooks (GIL, abort on exception)",
             '        if self.inner.has_hooks("rmdir") {',
@@ -2729,13 +2748,15 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             '            self.dispatch_pre_hooks_inner("rmdir", &rhc)?;',
             "        }",
             "",
-            "        // 2. Call pure Rust kernel",
+            "        // 2. Call pure Rust kernel (full rmdir)",
             "        let rust_ctx = ctx.to_rust();",
-            "        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx));",
+            "        let result = py.detach(|| self.inner.sys_rmdir(path, &rust_ctx, recursive));",
             "        let result = result.map_err(|e| -> PyErr { e.into() })?;",
             "",
             "        Ok(PySysRmdirResult {",
+            "            hit: result.hit,",
             "            post_hook_needed: result.post_hook_needed,",
+            "            children_deleted: result.children_deleted,",
             "        })",
             "    }",
             "",
@@ -2818,8 +2839,12 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "        Ok(results",
             "            .into_iter()",
             "            .map(|r| PySysUnlinkResult {",
+            "                hit: r.hit,",
             "                entry_type: r.entry_type,",
             "                post_hook_needed: r.post_hook_needed,",
+            "                path: r.path,",
+            "                etag: r.etag,",
+            "                size: r.size,",
             "            })",
             "            .collect())",
             "    }",
@@ -2986,12 +3011,20 @@ def main() -> int:
 
         ruff = shutil.which("ruff")
 
+        rustfmt = shutil.which("rustfmt")
+
         def _ruff_format(content: str, suffix: str) -> str:
             if ruff and suffix in (".py", ".pyi"):
                 with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
                     f.write(content)
                     f.flush()
                     subprocess.run([ruff, "format", f.name], capture_output=True)
+                    return Path(f.name).read_text()
+            if rustfmt and suffix == ".rs":
+                with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False) as f:
+                    f.write(content)
+                    f.flush()
+                    subprocess.run([rustfmt, f.name], capture_output=True)
                     return Path(f.name).read_text()
             return content
 
@@ -3037,6 +3070,18 @@ def main() -> int:
 
                 subprocess.run(
                     [ruff, "format", *[str(p) for p in py_files]],
+                    capture_output=True,
+                )
+        # Auto-format generated Rust files so codegen --check matches cargo fmt
+        rs_files = [p for p, _ in outputs if p.suffix == ".rs"]
+        if rs_files:
+            import shutil
+            import subprocess
+
+            rustfmt = shutil.which("rustfmt")
+            if rustfmt:
+                subprocess.run(
+                    [rustfmt, *[str(p) for p in rs_files]],
                     capture_output=True,
                 )
         return 0

@@ -137,32 +137,51 @@ pub struct SysWriteResult {
     pub size: u64,
 }
 
-/// Result of sys_unlink(): entry_type + post hook flag.
+/// Result of sys_unlink(): hit + metadata for event payload.
 pub struct SysUnlinkResult {
+    /// True if Rust completed the full operation (metastore + backend + dcache).
+    /// False for DT_MOUNT/DT_PIPE/DT_STREAM or when Python fallback needed.
+    pub hit: bool,
     /// Entry type of the deleted entry (DT_REG, DT_DIR, etc.).
     pub entry_type: u8,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
+    /// Path that was deleted (for event payload).
+    pub path: String,
+    /// Etag of deleted file (for event payload).
+    pub etag: Option<String>,
+    /// Size of deleted file (for event payload).
+    pub size: u64,
 }
 
-/// Result of sys_rename(): success + post hook flag.
+/// Result of sys_rename(): hit + metadata for event payload.
 pub struct SysRenameResult {
+    /// True if Rust completed the full operation (metastore + backend + dcache).
+    pub hit: bool,
     /// True if both paths validated and routed successfully.
     pub success: bool,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
+    /// True if the renamed entry is a directory.
+    pub is_directory: bool,
 }
 
-/// Result of sys_mkdir(): post hook flag.
+/// Result of sys_mkdir(): hit flag.
 pub struct SysMkdirResult {
+    /// True if Rust completed the full operation (backend + metastore + dcache).
+    pub hit: bool,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
 }
 
-/// Result of sys_rmdir(): post hook flag.
+/// Result of sys_rmdir(): hit + children info.
 pub struct SysRmdirResult {
+    /// True if Rust completed the full operation.
+    pub hit: bool,
     /// True if post-hooks should be fired by the async wrapper.
     pub post_hook_needed: bool,
+    /// Number of children deleted (when recursive).
+    pub children_deleted: usize,
 }
 
 // ── DcacheStats ──────────────────────────────────────────────────────
@@ -268,9 +287,6 @@ impl Kernel {
     // ── Metastore wiring ──────────────────────────────────────────────
 
     /// Wire a Metastore impl (PyMetastoreAdapter, redb, gRPC, etc.).
-    ///
-    /// Called once from wrapper. After this, sys_read dcache-miss
-    /// falls back to metastore.get() instead of raising FileNotFoundError.
     pub fn set_metastore(&mut self, metastore: Box<dyn Metastore>) {
         self.metastore = Some(metastore);
     }
@@ -351,6 +367,16 @@ impl Kernel {
             Some(ms) => ms
                 .get_batch(paths)
                 .map_err(|e| KernelError::IOError(format!("metastore_get_batch: {e:?}"))),
+            None => Err(KernelError::IOError("no metastore wired".into())),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
+        match &self.metastore {
+            Some(ms) => ms
+                .delete_batch(paths)
+                .map_err(|e| KernelError::IOError(format!("metastore_delete_batch: {e:?}"))),
             None => Err(KernelError::IOError("no metastore wired".into())),
         }
     }
@@ -889,149 +915,541 @@ impl Kernel {
 
     // ── sys_unlink ────────────────────────────────────────────────────
 
-    /// Rust syscall: validate + route + dcache evict for unlink.
+    /// Rust syscall: full unlink (validate → route → metastore → backend → dcache).
     ///
-    /// Returns entry_type + post_hook_needed. PRE-hooks dispatched by wrapper.
-    /// DT_PIPE/DT_STREAM -> returns entry_type for wrapper dispatch.
+    /// Returns `hit=true` when Rust completed the full operation. Python only
+    /// dispatches event notify + POST hooks.
+    /// Returns `hit=false` for DT_DIR/DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback.
     pub fn sys_unlink(
         &self,
         path: &str,
         ctx: &OperationContext,
     ) -> Result<SysUnlinkResult, KernelError> {
+        let miss = |et: u8| {
+            Ok(SysUnlinkResult {
+                hit: false,
+                entry_type: et,
+                post_hook_needed: false,
+                path: path.to_string(),
+                etag: None,
+                size: 0,
+            })
+        };
+
         // 1. Validate
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        if self
+        let route = match self
             .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)
-            .is_err()
         {
-            return Ok(SysUnlinkResult {
-                entry_type: 0,
-                post_hook_needed: false,
-            });
+            Ok(r) => r,
+            Err(_) => return miss(0),
+        };
+
+        // 3. Get metadata (dcache or metastore)
+        let meta = match self.dcache.get_entry(path) {
+            Some(e) => Some(e),
+            None => {
+                // Metastore fallback
+                if let Some(ref ms) = self.metastore {
+                    ms.get(path).ok().flatten().map(|m| CachedEntry {
+                        backend_name: m.backend_name,
+                        physical_path: m.physical_path,
+                        size: m.size,
+                        etag: m.etag,
+                        version: m.version,
+                        entry_type: m.entry_type,
+                        zone_id: m.zone_id,
+                        mime_type: m.mime_type,
+                    })
+                } else {
+                    None
+                }
+            }
+        };
+
+        let entry = match meta {
+            Some(e) => e,
+            None => return miss(0),
+        };
+
+        // 4. DT_DIR/DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback
+        match entry.entry_type {
+            DT_DIR | DT_PIPE | DT_STREAM => return miss(entry.entry_type),
+            // DT_MOUNT (2) and DT_EXTERNAL_STORAGE (5) → Python handles unmount
+            2 | 5 => return miss(entry.entry_type),
+            _ => {}
         }
 
-        // 3. DCache: get entry_type then evict
-        let entry_type = self
-            .dcache
-            .get_entry(path)
-            .map(|e| e.entry_type)
-            .unwrap_or(DT_REG);
+        // 5. VFS write lock
+        let lock_handle = if let Some(ref lm) = self.vfs_lock {
+            lm.blocking_acquire(path, LockMode::Write, self.vfs_lock_timeout_ms)
+        } else {
+            0
+        };
+        if self.vfs_lock.is_some() && lock_handle == 0 {
+            return miss(entry.entry_type);
+        }
+
+        // 6. Metastore delete
+        if let Some(ref ms) = self.metastore {
+            let _ = ms.delete(path);
+        }
+
+        // 7. Backend delete (best-effort, PAS only)
+        let _ = self
+            .router
+            .delete_file(&route.mount_point, &route.backend_path);
+
+        // 8. DCache evict
         self.dcache.evict(path);
 
+        // 9. Release VFS lock
+        if lock_handle > 0 {
+            if let Some(ref lm) = self.vfs_lock {
+                lm.do_release(lock_handle);
+            }
+        }
+
+        // 10. Return hit=true with metadata for event payload
         Ok(SysUnlinkResult {
-            entry_type,
+            hit: true,
+            entry_type: entry.entry_type,
             post_hook_needed: self.delete_hook_count.load(Ordering::Relaxed) > 0,
+            path: path.to_string(),
+            etag: entry.etag,
+            size: entry.size,
         })
     }
 
     // ── sys_rename ────────────────────────────────────────────────────
 
-    /// Rust syscall: validate + route both + dcache move for rename.
+    /// Rust syscall: full rename (validate → route → VFS lock → metastore → backend → dcache).
     ///
-    /// Returns success + post_hook_needed. PRE-hooks dispatched by wrapper.
+    /// Returns `hit=true` when Rust completed the full operation.
+    /// Returns `hit=false` for DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback.
     pub fn sys_rename(
         &self,
         old_path: &str,
         new_path: &str,
         ctx: &OperationContext,
     ) -> Result<SysRenameResult, KernelError> {
+        let miss = || {
+            Ok(SysRenameResult {
+                hit: false,
+                success: false,
+                post_hook_needed: false,
+                is_directory: false,
+            })
+        };
+
         // 1. Validate both
         validate_path_fast(old_path)?;
         validate_path_fast(new_path)?;
 
         // 2. Route both (check write access)
-        if self
+        let old_route = match self
             .router
             .route_impl(old_path, &ctx.zone_id, ctx.is_admin, true)
-            .is_err()
         {
-            return Ok(SysRenameResult {
-                success: false,
-                post_hook_needed: false,
-            });
-        }
-        if self
+            Ok(r) => r,
+            Err(_) => return miss(),
+        };
+        let new_route = match self
             .router
             .route_impl(new_path, &ctx.zone_id, ctx.is_admin, true)
-            .is_err()
         {
-            return Ok(SysRenameResult {
-                success: false,
-                post_hook_needed: false,
-            });
+            Ok(r) => r,
+            Err(_) => return miss(),
+        };
+
+        // 3. Sorted VFS lock acquire (deadlock-free: min(old,new) first)
+        let (first, second) = if old_path <= new_path {
+            (old_path, new_path)
+        } else {
+            (new_path, old_path)
+        };
+
+        let lock1 = if let Some(ref lm) = self.vfs_lock {
+            lm.blocking_acquire(first, LockMode::Write, self.vfs_lock_timeout_ms)
+        } else {
+            0
+        };
+        let lock2 = if first != second {
+            if let Some(ref lm) = self.vfs_lock {
+                lm.blocking_acquire(second, LockMode::Write, self.vfs_lock_timeout_ms)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        let release_locks = |lm: &Option<Arc<VFSLockManagerInner>>, h1: u64, h2: u64| {
+            if let Some(ref l) = lm {
+                if h2 > 0 {
+                    l.do_release(h2);
+                }
+                if h1 > 0 {
+                    l.do_release(h1);
+                }
+            }
+        };
+
+        // Lock timeout check
+        if self.vfs_lock.is_some() && lock1 == 0 {
+            release_locks(&self.vfs_lock, lock1, lock2);
+            return miss();
         }
 
-        // 3. DCache: move entry from old to new
+        // 4. Existence check: get old metadata
+        let old_meta = if let Some(ref ms) = self.metastore {
+            ms.get(old_path).ok().flatten()
+        } else {
+            None
+        };
+
+        // Also check dcache
+        let old_entry = self.dcache.get_entry(old_path);
+
+        let (is_directory, entry_type) = match (&old_meta, &old_entry) {
+            (Some(m), _) => (m.entry_type == DT_DIR, m.entry_type),
+            (None, Some(e)) => (e.entry_type == DT_DIR, e.entry_type),
+            (None, None) => {
+                release_locks(&self.vfs_lock, lock1, lock2);
+                return Err(KernelError::FileNotFound(old_path.to_string()));
+            }
+        };
+
+        // DT_MOUNT/DT_PIPE/DT_STREAM → Python fallback
+        match entry_type {
+            DT_PIPE | DT_STREAM | 2 | 5 => {
+                release_locks(&self.vfs_lock, lock1, lock2);
+                return Ok(SysRenameResult {
+                    hit: false,
+                    success: false,
+                    post_hook_needed: false,
+                    is_directory,
+                });
+            }
+            _ => {}
+        }
+
+        // 5. Destination conflict check
+        if let Some(ref ms) = self.metastore {
+            if ms.exists(new_path).unwrap_or(false) {
+                release_locks(&self.vfs_lock, lock1, lock2);
+                return Err(KernelError::IOError(format!(
+                    "Destination path already exists: {new_path}"
+                )));
+            }
+        }
+
+        // 6. Put-then-delete (crash-safe): metastore.put(new) → metastore.delete(old)
+        if let Some(ref ms) = self.metastore {
+            if let Some(ref meta) = old_meta {
+                let new_meta = crate::metastore::FileMetadata {
+                    path: new_path.to_string(),
+                    backend_name: meta.backend_name.clone(),
+                    physical_path: meta.physical_path.clone(),
+                    size: meta.size,
+                    etag: meta.etag.clone(),
+                    version: meta.version,
+                    entry_type: meta.entry_type,
+                    zone_id: meta.zone_id.clone(),
+                    mime_type: meta.mime_type.clone(),
+                };
+                let _ = ms.put(new_path, new_meta);
+                let _ = ms.delete(old_path);
+            }
+
+            // 7. Recursive child rename (directories)
+            if is_directory {
+                let prefix = format!("{}/", old_path.trim_end_matches('/'));
+                if let Ok(children) = ms.list(&prefix) {
+                    for child in &children {
+                        let child_new_path =
+                            format!("{}{}", new_path, &child.path[old_path.len()..]);
+                        let child_new_meta = crate::metastore::FileMetadata {
+                            path: child_new_path.clone(),
+                            backend_name: child.backend_name.clone(),
+                            physical_path: child.physical_path.clone(),
+                            size: child.size,
+                            etag: child.etag.clone(),
+                            version: child.version,
+                            entry_type: child.entry_type,
+                            zone_id: child.zone_id.clone(),
+                            mime_type: child.mime_type.clone(),
+                        };
+                        let _ = ms.put(&child_new_path, child_new_meta);
+                        let _ = ms.delete(&child.path);
+                    }
+                }
+            }
+        }
+
+        // 8. Backend rename (best-effort, PAS only)
+        let _ = self.router.rename_file(
+            &old_route.mount_point,
+            &old_route.backend_path,
+            &new_route.backend_path,
+        );
+
+        // 9. DCache: evict old + put new; evict children prefix for directories
         if let Some(entry) = self.dcache.get_entry(old_path) {
             self.dcache.evict(old_path);
-            self.dcache.put(
-                new_path,
-                CachedEntry {
-                    backend_name: entry.backend_name,
-                    physical_path: entry.physical_path,
-                    size: entry.size,
-                    etag: entry.etag,
-                    version: entry.version,
-                    entry_type: entry.entry_type,
-                    zone_id: entry.zone_id,
-                    mime_type: entry.mime_type,
-                },
-            );
+            self.dcache.put(new_path, entry);
+        }
+        if is_directory {
+            let prefix = format!("{}/", old_path.trim_end_matches('/'));
+            self.dcache.evict_prefix(&prefix);
         }
 
+        // 10. Release sorted locks
+        release_locks(&self.vfs_lock, lock1, lock2);
+
         Ok(SysRenameResult {
+            hit: true,
             success: true,
             post_hook_needed: self.rename_hook_count.load(Ordering::Relaxed) > 0,
+            is_directory,
         })
     }
 
     // ── sys_mkdir ──────────────────────────────────────────────────────
 
-    /// Rust syscall: validate + route for mkdir.
+    /// Rust syscall: full mkdir (validate → route → backend → metastore → dcache).
     ///
-    /// PRE-hooks dispatched by wrapper. Returns post_hook_needed flag.
-    /// Python handles actual directory creation (metastore/dcache/backend)
-    /// via _setattr_create() which has richer metadata (timestamps, hash, backend_key).
+    /// Returns `hit=true` when Rust completed the full operation.
+    /// Python only dispatches event notify + POST hooks when hit=true.
+    /// `parents=true` creates parent directories. `exist_ok=true` ignores existing.
     pub fn sys_mkdir(
         &self,
         path: &str,
         ctx: &OperationContext,
+        parents: bool,
+        exist_ok: bool,
     ) -> Result<SysMkdirResult, KernelError> {
         // 1. Validate
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        self.router
+        let route = self
+            .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
 
+        // 3. Existence check via metastore
+        if let Some(ref ms) = self.metastore {
+            if ms.exists(path).unwrap_or(false) {
+                if !exist_ok && !parents {
+                    return Err(KernelError::IOError(format!(
+                        "Directory already exists: {path}"
+                    )));
+                }
+                // Already exists — ensure parents and return
+                if parents {
+                    self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+                }
+                return Ok(SysMkdirResult {
+                    hit: true,
+                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+                });
+            }
+        }
+
+        // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
+        let _ = self
+            .router
+            .mkdir(&route.mount_point, &route.backend_path, parents, true);
+
+        // 5. Ensure parent directories
+        if parents {
+            self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+        }
+
+        // 6. Create directory metadata in metastore
+        if let Some(ref ms) = self.metastore {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: route.io_profile.clone(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_DIR,
+                zone_id: Some(ctx.zone_id.clone()),
+                mime_type: Some("inode/directory".to_string()),
+            };
+            let _ = ms.put(path, meta);
+        }
+
+        // 7. DCache put
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: route.io_profile.clone(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_DIR,
+                zone_id: Some(ctx.zone_id.clone()),
+                mime_type: Some("inode/directory".to_string()),
+            },
+        );
+
         Ok(SysMkdirResult {
+            hit: true,
             post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
         })
     }
 
+    /// Walk up path creating missing parent directory metadata.
+    fn ensure_parent_directories(
+        &self,
+        path: &str,
+        ctx: &OperationContext,
+        mount_point: &str,
+    ) -> Result<(), KernelError> {
+        let ms = match &self.metastore {
+            Some(ms) => ms,
+            None => return Ok(()),
+        };
+
+        // Walk up from parent to root, collecting missing dirs
+        let mut current = path;
+        let mut to_create = Vec::new();
+        loop {
+            match current.rfind('/') {
+                Some(0) | None => break,
+                Some(pos) => {
+                    current = &path[..pos];
+                    if current.is_empty() || current == "/" {
+                        break;
+                    }
+                    if !ms.exists(current).unwrap_or(true) {
+                        to_create.push(current.to_string());
+                    } else {
+                        break; // Existing parent found, stop
+                    }
+                }
+            }
+        }
+
+        // Create from shallowest to deepest
+        for dir_path in to_create.into_iter().rev() {
+            let meta = crate::metastore::FileMetadata {
+                path: dir_path.clone(),
+                backend_name: String::new(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: DT_DIR,
+                zone_id: Some(ctx.zone_id.clone()),
+                mime_type: Some("inode/directory".to_string()),
+            };
+            let _ = ms.put(&dir_path, meta);
+            self.dcache.put(
+                &dir_path,
+                CachedEntry {
+                    backend_name: String::new(),
+                    physical_path: String::new(),
+                    size: 0,
+                    etag: None,
+                    version: 1,
+                    entry_type: DT_DIR,
+                    zone_id: Some(ctx.zone_id.clone()),
+                    mime_type: Some("inode/directory".to_string()),
+                },
+            );
+        }
+        let _ = mount_point; // used for routing context
+        Ok(())
+    }
+
     // ── sys_rmdir ──────────────────────────────────────────────────────
 
-    /// Rust syscall: validate + route for rmdir.
+    /// Rust syscall: full rmdir (validate → route → children check → delete → dcache).
     ///
-    /// PRE-hooks dispatched by wrapper. Returns post_hook_needed flag.
-    /// Python handles actual directory removal (metastore/dcache/recursive delete).
+    /// Returns `hit=true` when Rust completed the full operation.
+    /// Returns `hit=false` for DT_MOUNT/DT_EXTERNAL_STORAGE → Python handles unmount.
     pub fn sys_rmdir(
         &self,
         path: &str,
         ctx: &OperationContext,
+        recursive: bool,
     ) -> Result<SysRmdirResult, KernelError> {
+        let miss = || {
+            Ok(SysRmdirResult {
+                hit: false,
+                post_hook_needed: false,
+                children_deleted: 0,
+            })
+        };
+
         // 1. Validate
         validate_path_fast(path)?;
 
         // 2. Route (check write access)
-        self.router
+        let route = self
+            .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
 
+        // 3. Get metadata
+        let entry_type = if let Some(ref ms) = self.metastore {
+            ms.get(path)
+                .ok()
+                .flatten()
+                .map(|m| m.entry_type)
+                .unwrap_or(DT_DIR)
+        } else {
+            DT_DIR
+        };
+
+        // DT_MOUNT(2) / DT_EXTERNAL_STORAGE(5) → Python handles unmount
+        if entry_type == 2 || entry_type == 5 {
+            return miss();
+        }
+
+        // 4. Check children
+        let mut children_deleted = 0;
+        if let Some(ref ms) = self.metastore {
+            let prefix = format!("{}/", path.trim_end_matches('/'));
+            let children = ms.list(&prefix).unwrap_or_default();
+
+            if !children.is_empty() {
+                if !recursive {
+                    return Err(KernelError::IOError(format!("Directory not empty: {path}")));
+                }
+
+                // 5. Recursive: batch delete all children
+                let child_paths: Vec<String> = children.iter().map(|c| c.path.clone()).collect();
+                children_deleted = ms.delete_batch(&child_paths).unwrap_or(0);
+            }
+        }
+
+        // 6. Backend rmdir (best-effort)
+        let _ = self
+            .router
+            .rmdir(&route.mount_point, &route.backend_path, recursive);
+
+        // 7. Delete directory metadata
+        if let Some(ref ms) = self.metastore {
+            let _ = ms.delete(path);
+        }
+
+        // 8. DCache evict + prefix evict
+        self.dcache.evict(path);
+        let prefix = format!("{}/", path.trim_end_matches('/'));
+        self.dcache.evict_prefix(&prefix);
+
         Ok(SysRmdirResult {
+            hit: true,
             post_hook_needed: self.rmdir_hook_count.load(Ordering::Relaxed) > 0,
+            children_deleted,
         })
     }
 
@@ -1105,7 +1523,9 @@ impl Kernel {
             }
         }
 
-        // 4. Write each item
+        // 4. Write each item — collect metadata for batch put
+        let mut batch_meta: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
+
         for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
             let route = match route_opt {
                 Some(r) => r,
@@ -1143,21 +1563,19 @@ impl Kernel {
                     let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
                     let new_version = old_version + 1;
 
-                    // Metastore put
-                    if let Some(ref ms) = self.metastore {
-                        let meta = crate::metastore::FileMetadata {
-                            path: path.clone(),
-                            backend_name: route.io_profile.clone(),
-                            physical_path: wr.content_id.clone(),
-                            size: wr.size,
-                            etag: Some(wr.content_id.clone()),
-                            version: new_version,
-                            entry_type: DT_REG,
-                            zone_id: Some(ctx.zone_id.clone()),
-                            mime_type: None,
-                        };
-                        let _ = ms.put(path, meta);
-                    }
+                    // Collect metadata for batch put (instead of N individual puts)
+                    let meta = crate::metastore::FileMetadata {
+                        path: path.clone(),
+                        backend_name: route.io_profile.clone(),
+                        physical_path: wr.content_id.clone(),
+                        size: wr.size,
+                        etag: Some(wr.content_id.clone()),
+                        version: new_version,
+                        entry_type: DT_REG,
+                        zone_id: Some(ctx.zone_id.clone()),
+                        mime_type: None,
+                    };
+                    batch_meta.push((path.clone(), meta));
 
                     // DCache update
                     self.dcache.put(
@@ -1195,6 +1613,13 @@ impl Kernel {
             }
         }
 
+        // 4b. Single metastore.put_batch for all successful writes
+        if !batch_meta.is_empty() {
+            if let Some(ref ms) = self.metastore {
+                let _ = ms.put_batch(&batch_meta);
+            }
+        }
+
         // 5. Release all VFS locks
         if let Some(ref lm) = self.vfs_lock {
             for handle in &lock_handles {
@@ -1207,37 +1632,39 @@ impl Kernel {
         Ok(results)
     }
 
-    /// Internal: batch read — loops sys_read logic for each path.
+    /// Internal: batch read — parallel reads using rayon.
     ///
     /// NOT a syscall — prefixed with `_`. Called by Python `read_bulk` method.
     /// Returns Vec<SysReadResult> with per-path results.
+    /// Safe because Kernel is Sync (DashMap + parking_lot).
     pub fn _read_batch(
         &self,
         paths: &[String],
         ctx: &OperationContext,
     ) -> Result<Vec<SysReadResult>, KernelError> {
-        let mut results = Vec::with_capacity(paths.len());
+        use rayon::prelude::*;
 
-        for path in paths {
-            match self.sys_read(path, ctx) {
-                Ok(r) => results.push(r),
-                Err(_) => results.push(SysReadResult {
+        let results: Vec<SysReadResult> = paths
+            .par_iter()
+            .map(|path| {
+                self.sys_read(path, ctx).unwrap_or(SysReadResult {
                     hit: false,
                     data: None,
                     post_hook_needed: false,
                     content_hash: None,
                     entry_type: 0,
-                }),
-            }
-        }
+                })
+            })
+            .collect();
 
         Ok(results)
     }
 
-    /// Internal: batch delete — loops sys_unlink logic for each path.
+    /// Internal: batch delete — full Rust + batch metastore.
     ///
     /// NOT a syscall — prefixed with `_`. Called by Python batch delete.
     /// Returns Vec<SysUnlinkResult> with per-path results.
+    /// Collects hit=true paths for a single metastore.delete_batch() call.
     pub fn _delete_batch(
         &self,
         paths: &[String],
@@ -1249,8 +1676,12 @@ impl Kernel {
             match self.sys_unlink(path, ctx) {
                 Ok(r) => results.push(r),
                 Err(_) => results.push(SysUnlinkResult {
+                    hit: false,
                     entry_type: 0,
                     post_hook_needed: false,
+                    path: path.clone(),
+                    etag: None,
+                    size: 0,
                 }),
             }
         }

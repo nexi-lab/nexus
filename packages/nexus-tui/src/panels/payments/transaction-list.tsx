@@ -5,8 +5,7 @@
 
 import { For, Show } from "solid-js";
 import type { TransactionRecord, IntegrityResult } from "../../stores/payments-store.js";
-import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
+import { textStyle } from "../../shared/text-style.js";
 
 interface TransactionListProps {
   readonly transactions: readonly TransactionRecord[];
@@ -36,18 +35,18 @@ function formatAmount(amount: string, currency: string): string {
 }
 
 export function TransactionList(props: TransactionListProps) {
-  if (props.loading) {
-    return <LoadingIndicator message="Loading transactions..." />;
-  }
-
-  if (props.transactions.length === 0) {
-    return <EmptyState message="No transactions yet." hint="Press t to create a transfer." />;
-  }
-
   const selectedTx = () => props.transactions[props.selectedIndex];
 
   return (
     <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading transactions..."
+          : props.transactions.length === 0
+            ? "No transactions yet. Press t to create a transfer."
+            : `${props.transactions.length} transactions (page ${props.currentPage})`}
+      </text>
+
       {/* Header */}
       <box height={1} width="100%">
         <text>{"  ID          DATE                 AMOUNT          STATUS     FLOW"}</text>

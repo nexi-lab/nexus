@@ -12,26 +12,27 @@ interface WorkspacesTabProps {
   readonly loading: boolean;
 }
 
-export function WorkspacesTab({
-  workspaces,
-  selectedIndex,
-  loading,
-}: WorkspacesTabProps): JSX.Element {
-  if (loading) return <text>Loading workspaces...</text>;
-  if (workspaces.length === 0)
-    return <text>No workspaces registered. Press 'n' to register one.</text>;
-
+export function WorkspacesTab(props: WorkspacesTabProps): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      {workspaces.map((ws, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
-        return (
-          <box height={1} width="100%">
-            <text>{`${prefix}${ws.name}  ${ws.path}  ${ws.scope}  ${ws.created_by ?? ""}`}</text>
-          </box>
-        );
-      })}
-    </scrollbox>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading workspaces..."
+          : props.workspaces.length === 0
+            ? "No workspaces registered. Press 'n' to register one."
+            : `${props.workspaces.length} workspaces`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {props.workspaces.map((ws, i) => {
+          const isSelected = i === props.selectedIndex;
+          const prefix = isSelected ? "> " : "  ";
+          return (
+            <box height={1} width="100%">
+              <text>{`${prefix}${ws.name}  ${ws.path}  ${ws.scope}  ${ws.created_by ?? ""}`}</text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 }

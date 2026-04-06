@@ -496,11 +496,7 @@ export default function ZonesPanel(): JSX.Element {
                 </text>
               </box>
 
-              <BrickList
-                bricks={bricks()}
-                selectedIndex={selectedIndex()}
-                loading={isLoading()}
-              />
+              <BrickList />
             </box>
 
             {/* Right pane: brick detail (70%) */}

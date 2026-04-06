@@ -5,7 +5,6 @@ import type { JSX } from "solid-js";
  */
 
 import type { DelegationItem } from "../../stores/access-store.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface DelegationListProps {
   readonly delegations: readonly DelegationItem[];
@@ -27,48 +26,41 @@ function formatExpiry(ts: string | null): string {
   }
 }
 
-export function DelegationList({
-  delegations,
-  selectedIndex,
-  loading,
-}: DelegationListProps): JSX.Element {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading delegations...</text>
-      </box>
-    );
-  }
-
-  if (delegations.length === 0) {
-    return <EmptyState message="No delegations yet." hint="Press n to create one." />;
-  }
-
+export function DelegationList(props: DelegationListProps): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  AGENT          PARENT         SCOPE PREFIX         MODE       STATUS     DEPTH  SUB-DEL  LEASE EXPIRES"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  -------------  -------------  -------------------  ---------  ---------  -----  -------  -----------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading delegations..."
+          : props.delegations.length === 0
+            ? "No delegations yet. Press n to create one."
+            : `${props.delegations.length} delegations`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  AGENT          PARENT         SCOPE PREFIX         MODE       STATUS     DEPTH  SUB-DEL  LEASE EXPIRES"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  -------------  -------------  -------------------  ---------  ---------  -----  -------  -----------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {delegations.map((d, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
-        const scope = d.scope_prefix ?? "*";
-        const subDel = d.can_sub_delegate ? "yes" : "no";
+        {/* Rows */}
+        {props.delegations.map((d, i) => {
+          const isSelected = i === props.selectedIndex;
+          const prefix = isSelected ? "> " : "  ";
+          const scope = d.scope_prefix ?? "*";
+          const subDel = d.can_sub_delegate ? "yes" : "no";
 
-        return (
-          <box height={1} width="100%">
-            <text>
-              {`${prefix}${shortId(d.agent_id).padEnd(13)}  ${shortId(d.parent_agent_id).padEnd(13)}  ${scope.padEnd(19)}  ${d.delegation_mode.padEnd(9)}  ${d.status.padEnd(9)}  ${String(d.depth).padEnd(5)}  ${subDel.padEnd(7)}  ${formatExpiry(d.lease_expires_at)}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box height={1} width="100%">
+              <text>
+                {`${prefix}${shortId(d.agent_id).padEnd(13)}  ${shortId(d.parent_agent_id).padEnd(13)}  ${scope.padEnd(19)}  ${d.delegation_mode.padEnd(9)}  ${d.status.padEnd(9)}  ${String(d.depth).padEnd(5)}  ${subDel.padEnd(7)}  ${formatExpiry(d.lease_expires_at)}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 }

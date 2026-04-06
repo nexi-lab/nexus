@@ -4,7 +4,6 @@ import type { JSX } from "solid-js";
  */
 
 import type { Credential } from "../../stores/access-store.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 
 interface CredentialListProps {
   readonly credentials: readonly Credential[];
@@ -25,44 +24,38 @@ function formatTimestamp(ts: string | null): string {
   }
 }
 
-export function CredentialList({
-  credentials,
-  loading,
-}: CredentialListProps): JSX.Element {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading credentials...</text>
-      </box>
-    );
-  }
-
-  if (credentials.length === 0) {
-    return <EmptyState message="No credentials found." hint="Press i to issue a credential." />;
-  }
-
+export function CredentialList(props: CredentialListProps): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  ST  CREDENTIAL ID     ISSUER DID       SUBJECT DID      DEPTH  EXPIRES            REVOKED"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  --  ---------------  ---------------  ---------------  -----  -----------------  -----------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Loading credentials..."
+          : props.credentials.length === 0
+            ? "No credentials found. Press i to issue a credential."
+            : `${props.credentials.length} credentials`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  ST  CREDENTIAL ID     ISSUER DID       SUBJECT DID      DEPTH  EXPIRES            REVOKED"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  --  ---------------  ---------------  ---------------  -----  -----------------  -----------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {credentials.map((cred) => {
-        const badge = cred.is_active ? "●" : "○";
+        {/* Rows */}
+        {props.credentials.map((cred) => {
+          const badge = cred.is_active ? "●" : "○";
 
-        return (
-          <box height={1} width="100%">
-            <text>
-              {`  ${badge}   ${shortId(cred.credential_id).padEnd(15)}  ${shortId(cred.issuer_did).padEnd(15)}  ${shortId(cred.subject_did).padEnd(15)}  ${String(cred.delegation_depth).padEnd(5)}  ${formatTimestamp(cred.expires_at).padEnd(17)}  ${formatTimestamp(cred.revoked_at)}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box height={1} width="100%">
+              <text>
+                {`  ${badge}   ${shortId(cred.credential_id).padEnd(15)}  ${shortId(cred.issuer_did).padEnd(15)}  ${shortId(cred.subject_did).padEnd(15)}  ${String(cred.delegation_depth).padEnd(5)}  ${formatTimestamp(cred.expires_at).padEnd(17)}  ${formatTimestamp(cred.revoked_at)}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 }

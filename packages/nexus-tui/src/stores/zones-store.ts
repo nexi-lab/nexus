@@ -194,11 +194,15 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     source: SOURCE,
     errorMessage: "Failed to fetch bricks",
     action: async (client) => {
-      const response = await client.get<BricksHealthResponse>(
-        "/api/v2/bricks/health",
-      );
+      let response: BricksHealthResponse;
+      try {
+        response = await client.get<BricksHealthResponse>("/api/v2/bricks/health");
+      } catch {
+        // Health endpoint may 404 — use empty response as fallback
+        response = { bricks: [], total: 0, active: 0, failed: 0 };
+      }
       let bricks = response.bricks ?? [];
-      // Fallback: if health endpoint returns no bricks, synthesize from features
+      // Fallback: if health endpoint returns no/empty bricks, synthesize from features
       if (bricks.length === 0) {
         try {
           const features = await client.get<{ enabled_bricks?: readonly string[] }>(

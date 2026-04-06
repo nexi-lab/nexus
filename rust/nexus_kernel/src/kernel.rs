@@ -980,20 +980,84 @@ impl Kernel {
     // ── IPC Registry — Pipe methods ─────────────────────────────────────
 
     /// Create a pipe buffer in the IPC registry.
+    ///
+    /// Persists DT_PIPE inode to metastore + dcache so sys_read/sys_write
+    /// can discover the entry_type and dispatch to the IPC fast-path.
     pub fn create_pipe(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
         if self.pipe_buffers.contains_key(path) {
             return Err(KernelError::PipeExists(path.to_string()));
         }
         let buf = crate::pipe::RingBufferCore::new_inner(capacity);
         self.pipe_buffers.insert(path.to_string(), Arc::new(buf));
+
+        // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests)
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        let ms_key = if mount_point.is_empty() {
+            String::new()
+        } else {
+            canonicalize(&mount_point, "root")
+        };
+        self.with_metastore(&ms_key, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: "pipe".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_PIPE,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(path, meta);
+        });
+
+        // Populate dcache so sys_read/sys_write see entry_type=DT_PIPE
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: "pipe".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_PIPE,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            },
+        );
+
         Ok(())
     }
 
     /// Destroy a pipe buffer.
+    ///
+    /// Removes DT_PIPE inode from metastore + dcache.
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
         match self.pipe_buffers.remove(path) {
             Some((_, buf)) => {
                 buf.close_inner();
+
+                // Remove DT_PIPE inode (best-effort)
+                let mount_point = self
+                    .router
+                    .route_impl(path, "root", true, false)
+                    .map(|r| r.mount_point)
+                    .unwrap_or_default();
+                let ms_key = if mount_point.is_empty() {
+                    String::new()
+                } else {
+                    canonicalize(&mount_point, "root")
+                };
+                self.with_metastore(&ms_key, |ms| {
+                    let _ = ms.delete(path);
+                });
+                self.dcache.evict(path);
+
                 Ok(())
             }
             None => Err(KernelError::PipeNotFound(path.to_string())),
@@ -1065,20 +1129,84 @@ impl Kernel {
     // ── IPC Registry — Stream methods ─────────────────────────────────
 
     /// Create a stream buffer in the IPC registry.
+    ///
+    /// Persists DT_STREAM inode to metastore + dcache so sys_read/sys_write
+    /// can discover the entry_type and dispatch to the IPC fast-path.
     pub fn create_stream(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
         if self.stream_buffers.contains_key(path) {
             return Err(KernelError::StreamExists(path.to_string()));
         }
         let buf = crate::stream::StreamBufferCore::new_inner(capacity);
         self.stream_buffers.insert(path.to_string(), Arc::new(buf));
+
+        // Persist DT_STREAM inode (best-effort — metastore may not be wired in tests)
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        let ms_key = if mount_point.is_empty() {
+            String::new()
+        } else {
+            canonicalize(&mount_point, "root")
+        };
+        self.with_metastore(&ms_key, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: "stream".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(path, meta);
+        });
+
+        // Populate dcache so sys_read/sys_write see entry_type=DT_STREAM
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: "stream".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            },
+        );
+
         Ok(())
     }
 
     /// Destroy a stream buffer.
+    ///
+    /// Removes DT_STREAM inode from metastore + dcache.
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
         match self.stream_buffers.remove(path) {
             Some((_, buf)) => {
                 buf.close_inner();
+
+                // Remove DT_STREAM inode (best-effort)
+                let mount_point = self
+                    .router
+                    .route_impl(path, "root", true, false)
+                    .map(|r| r.mount_point)
+                    .unwrap_or_default();
+                let ms_key = if mount_point.is_empty() {
+                    String::new()
+                } else {
+                    canonicalize(&mount_point, "root")
+                };
+                self.with_metastore(&ms_key, |ms| {
+                    let _ = ms.delete(path);
+                });
+                self.dcache.evict(path);
+
                 Ok(())
             }
             None => Err(KernelError::StreamNotFound(path.to_string())),

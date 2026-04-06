@@ -371,6 +371,7 @@ impl Kernel {
         }
     }
 
+    // Called by PyKernel.metastore_delete_batch() via PyO3 — no direct Rust caller.
     #[allow(dead_code)]
     pub fn metastore_delete_batch(&self, paths: &[String]) -> Result<usize, KernelError> {
         match &self.metastore {

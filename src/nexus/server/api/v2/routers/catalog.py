@@ -17,6 +17,7 @@ from nexus.server.api.v2.models.aspects import (
     ColumnSearchResponse,
     ColumnSearchResult,
 )
+from nexus.server.dependencies import get_auth_result, get_operation_context
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ async def get_catalog_schema(
     path: str = Path(..., description="File path"),
     catalog_and_zone: tuple[Any, str] = Depends(get_catalog_service),
     nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] | None = Depends(get_auth_result),
 ) -> CatalogSchemaResponse:
     """Get extracted schema for a data file.
 
@@ -63,11 +65,13 @@ async def get_catalog_schema(
             _urn_to_path[urn] = full_path
             return CatalogSchemaResponse(entity_urn=urn, path=full_path, schema=schema)
 
-        # Extract on-the-fly
+        # Extract on-the-fly — use caller's auth context for permission check
         try:
-            content = await nexus_fs.read(full_path)
-            if isinstance(content, str):
-                content = content.encode()
+            op_ctx = get_operation_context(auth_result) if auth_result else None
+            raw = await nexus_fs.read(full_path, context=op_ctx)
+            content = raw.encode() if isinstance(raw, str) else raw
+        except PermissionError as perm_err:
+            raise HTTPException(status_code=403, detail=f"Access denied: {full_path}") from perm_err
         except Exception as read_err:
             raise HTTPException(
                 status_code=404, detail=f"File not found: {full_path}"

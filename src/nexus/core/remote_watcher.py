@@ -1,17 +1,14 @@
-"""RemoteWatchProtocol implementations for distributed file change notification.
-
-Two implementations:
+"""Kernel-tier RemoteWatchProtocol implementations.
 
     StreamRemoteWatcher     — DT_STREAM transport (default, no external deps)
-    EventBusRemoteWatcher   — EventBus transport (NATS/Dragonfly, explicit opt-in)
+    StreamEventObserver     — OBSERVE-phase publisher for StreamRemoteWatcher
 
 StreamRemoteWatcher uses kernel DT_STREAM as transport. Events are written
-by a kernel OBSERVE observer and read by ``wait_for_event()`` via blocking
+by StreamEventObserver and read by ``wait_for_event()`` via blocking
 stream reads. No NATS or Dragonfly URL required — works out-of-the-box.
 
-EventBusRemoteWatcher wraps an EventBusBase instance for distributed
-event delivery via NATS/Dragonfly. Use when external pub/sub infra is
-available and desired.
+For EventBus-backed remote watching (NATS/Dragonfly), see
+``nexus.services.event_bus.remote_watcher.EventBusRemoteWatcher``.
 
 See: file_watcher.py for RemoteWatchProtocol, KERNEL-ARCHITECTURE.md §4.3
 """
@@ -29,7 +26,6 @@ if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
     from nexus.core.stream_manager import StreamManager
-    from nexus.services.event_bus.protocol import EventBusProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -128,33 +124,6 @@ class StreamRemoteWatcher:
                 if remaining <= 0:
                     return None
                 await asyncio.sleep(min(0.1, remaining))
-
-
-class EventBusRemoteWatcher:
-    """RemoteWatchProtocol via EventBus (NATS/Dragonfly).
-
-    Thin wrapper for naming clarity. EventBusBase already satisfies
-    RemoteWatchProtocol — this class makes the role explicit and allows
-    future extension (e.g. filtered subscriptions, backpressure).
-    """
-
-    def __init__(self, event_bus: "EventBusProtocol") -> None:
-        self._event_bus = event_bus
-
-    async def wait_for_event(
-        self,
-        zone_id: str,
-        path_pattern: str,
-        timeout: float = 30.0,
-        since_version: int | None = None,
-    ) -> "FileEvent | None":
-        """Delegate to EventBus.wait_for_event()."""
-        return await self._event_bus.wait_for_event(
-            zone_id=zone_id,
-            path_pattern=path_pattern,
-            timeout=timeout,
-            since_version=since_version,
-        )
 
 
 # ---------------------------------------------------------------------------

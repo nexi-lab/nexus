@@ -625,7 +625,7 @@ async def _register_vfs_hooks(
             _event_bus = create_event_bus()
             nx._event_bus = _event_bus
 
-            from nexus.core.remote_watcher import EventBusRemoteWatcher
+            from nexus.services.event_bus.remote_watcher import EventBusRemoteWatcher
 
             nx._file_watcher.set_remote_watcher(EventBusRemoteWatcher(_event_bus))
         except Exception as exc:

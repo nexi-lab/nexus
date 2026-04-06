@@ -76,6 +76,21 @@ class agent:
         """Conversation state (CAS-addressed): /{zone}/agents/{id}/conversation"""
         return f"/{zone_id}/agents/{agent_id}/conversation"
 
+    @staticmethod
+    def sessions_dir(zone_id: str, agent_id: str) -> str:
+        """Sessions directory: /{zone}/agents/{id}/sessions"""
+        return f"/{zone_id}/agents/{agent_id}/sessions"
+
+    @staticmethod
+    def session_conversation(zone_id: str, agent_id: str, session_id: str) -> str:
+        """Session conversation (CAS-addressed): /{zone}/agents/{id}/sessions/{session}/conversation"""
+        return f"/{zone_id}/agents/{agent_id}/sessions/{session_id}/conversation"
+
+    @staticmethod
+    def session_metadata(zone_id: str, agent_id: str, session_id: str) -> str:
+        """Session metadata: /{zone}/agents/{id}/sessions/{session}/metadata.json"""
+        return f"/{zone_id}/agents/{agent_id}/sessions/{session_id}/metadata.json"
+
 
 class llm:
     """LLM backend paths: /{zone}/llm/{provider}/..."""

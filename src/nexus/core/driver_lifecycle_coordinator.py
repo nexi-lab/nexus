@@ -23,6 +23,7 @@ Issue #1811, #1320.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -169,7 +170,7 @@ class DriverLifecycleCoordinator:
         # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
 
-    def unmount(self, mount_point: str) -> bool:
+    def unmount(self, mount_point: str, zone_id: str = "root") -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.
 
         Returns True if mount was removed, False if not found.
@@ -191,8 +192,12 @@ class DriverLifecycleCoordinator:
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
-        # 3. Remove from mount table
-        self._mount_table.remove(mount_point)
+        # 3. Remove from mount table + Rust kernel (metastore + dcache cleanup)
+        _kernel = getattr(self._mount_table, "_kernel", None)
+        if _kernel is not None:
+            with contextlib.suppress(Exception):
+                _kernel.kernel_unmount(mount_point, zone_id)
+        self._mount_table.remove(mount_point, zone_id)
         return True
 
     # ------------------------------------------------------------------

@@ -700,6 +700,84 @@ impl Kernel {
         self.router.get_mount_points()
     }
 
+    /// High-level mount: add_mount + create DT_MOUNT metastore entry.
+    ///
+    /// Encapsulates routing table update + metadata persistence in one call.
+    /// DLC calls this, then does Python-side hook registration.
+    #[allow(clippy::too_many_arguments, dead_code)]
+    pub fn kernel_mount(
+        &self,
+        mount_point: &str,
+        zone_id: &str,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: &str,
+        backend_name: &str,
+        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        metastore_path: Option<&str>,
+    ) -> Result<(), KernelError> {
+        // 1. Router + per-mount metastore
+        self.add_mount(
+            mount_point,
+            zone_id,
+            readonly,
+            admin_only,
+            io_profile,
+            backend_name,
+            backend,
+            metastore_path,
+        )?;
+
+        // 2. Create DT_MOUNT metadata entry (best-effort)
+        let canonical = canonicalize(mount_point, zone_id);
+        self.with_metastore(&canonical, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: mount_point.to_string(),
+                backend_name: backend_name.to_string(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(mount_point, meta);
+        });
+
+        // 3. DCache entry for mount point
+        self.dcache.put(
+            mount_point,
+            CachedEntry {
+                backend_name: backend_name.to_string(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// High-level unmount: remove_mount + cleanup metastore entry.
+    pub fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> Result<bool, KernelError> {
+        // 1. Cleanup metastore entry (best-effort)
+        let canonical = canonicalize(mount_point, zone_id);
+        self.with_metastore(&canonical, |ms| {
+            let _ = ms.delete(mount_point);
+        });
+
+        // 2. DCache evict
+        self.dcache.evict(mount_point);
+
+        // 3. Remove from router + per-mount metastore
+        Ok(self.remove_mount(mount_point, zone_id))
+    }
+
     // ── Trie proxy methods ─────────────────────────────────────────────
 
     /// Register a path pattern with a resolver index.

@@ -107,7 +107,7 @@ class NexusAppState:
     chunked_upload_service: Any = None
 
     # === IPC ===
-    ipc_storage_driver: Any = None
+    ipc_nexus_fs: Any = None
     ipc_provisioner: Any = None
     ipc_sweeper: Any = None
 

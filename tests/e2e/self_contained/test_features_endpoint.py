@@ -128,7 +128,6 @@ class TestFeaturesEndpointLiteProfile:
 
     def test_lite_enables_core(self, lite_client: TestClient) -> None:
         data = lite_client.get("/api/v2/features").json()
-        assert "storage" in data["enabled_bricks"]
         assert "permissions" in data["enabled_bricks"]
         assert "cache" in data["enabled_bricks"]
 
@@ -185,7 +184,6 @@ class TestComputeFeaturesInfo:
         assert info.profile == "lite"
         assert info.mode == "standalone"
         assert "search" not in info.enabled_bricks
-        assert "storage" in info.enabled_bricks
 
     def test_compute_with_enabled_bricks_override(self) -> None:
         from nexus.server.lifespan import _compute_features_info

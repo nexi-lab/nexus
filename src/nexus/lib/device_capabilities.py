@@ -97,8 +97,6 @@ BRICK_REQUIREMENTS: dict[str, BrickRequirement] = {
     "snapshot": BrickRequirement(min_memory_mb=64),
     "acp": BrickRequirement(min_memory_mb=64),
     "task_manager": BrickRequirement(min_memory_mb=32),
-    # Kernel (always on, listed for completeness)
-    "storage": BrickRequirement(min_memory_mb=0),
 }
 
 # ---------------------------------------------------------------------------
@@ -263,7 +261,6 @@ _PROFILE_INDEX: dict[str, int] = {
     "lite": 1,
     "full": 2,
     "cloud": 3,
-    "innovation": 4,
 }
 
 

@@ -5,12 +5,11 @@ Nexus combines a VFS-style filesystem interface with deployment-aware context,
 storage, and service composition for agent systems.
 
 Deployment profiles control which bricks are enabled:
-- slim: Bare VFS, storage only
-- embedded: Storage + eventlog
+- slim: Bare VFS, kernel only
+- embedded: Eventlog only
 - lite: Core services
 - full: All bricks (default)
 - cloud: All bricks + federation
-- innovation: All bricks + startup validation (experimental)
 - remote: Thin gRPC client (RemoteBackend + RemoteServiceProxy)
 
 SDK vs CLI:

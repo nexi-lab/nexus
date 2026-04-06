@@ -394,33 +394,19 @@ def _boot_independent_bricks(
             logger.debug("[BOOT:BRICK] DelegationService unavailable: %s", _del_exc)
 
     # --- IPC Brick (Issue #1727, LEGO §8: Filesystem-as-IPC) ---
-    # IPC now goes through the kernel VFS (KernelVFSAdapter → NexusFS).
-    # A LocalConnector is mounted at /agents for actual file storage;
-    # KernelVFSAdapter wraps NexusFS sync calls in asyncio.to_thread().
-    ipc_storage_driver: Any = None
+    # IPC goes through the kernel VFS (NexusFS) directly.
+    # A LocalConnector is mounted at /agents for actual file storage.
+    # NexusFS reference is injected in _initialize_wired_ipc() after kernel init.
     ipc_provisioner: Any = None
+    ipc_zone_id: str | None = None
     if not _on("ipc"):
         logger.debug("[BOOT:BRICK] IPC brick disabled by profile")
     else:
-        try:
-            from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
-            from nexus.bricks.ipc.provisioning import AgentProvisioner
-
-            _ipc_zone = ctx.zone_id or ROOT_ZONE_ID
-
-            # Lazy adapter — will be bound to NexusFS in _boot_wired_services
-            ipc_storage_driver = KernelVFSAdapter(zone_id=_ipc_zone)
-
-            ipc_provisioner = AgentProvisioner(
-                storage=ipc_storage_driver,
-                zone_id=_ipc_zone,
-            )
-            logger.debug(
-                "[BOOT:BRICK] IPC brick created (zone=%s, storage=KernelVFSAdapter, unbound)",
-                _ipc_zone,
-            )
-        except Exception as _ipc_exc:
-            logger.warning("[BOOT:BRICK] IPC brick unavailable: %s", _ipc_exc)
+        ipc_zone_id = ctx.zone_id or ROOT_ZONE_ID
+        logger.debug(
+            "[BOOT:BRICK] IPC brick pre-registered (zone=%s, NexusFS pending)",
+            ipc_zone_id,
+        )
 
     # --- Sandbox Brick: AgentEventLog (Issue #1307) ---
     agent_event_log: Any = None
@@ -508,8 +494,8 @@ def _boot_independent_bricks(
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
         "snapshot_service": snapshot_service,
-        "ipc_storage_driver": ipc_storage_driver,
         "ipc_provisioner": ipc_provisioner,
+        "ipc_zone_id": ipc_zone_id,
         "agent_event_log": agent_event_log,
         "delegation_service": delegation_service,
         "version_service": version_service,

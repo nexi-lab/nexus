@@ -90,8 +90,8 @@ class SendMessageRequest(BaseModel):
     message_id: str | None = None
 
 
-def _get_ipc_storage_driver(request: Request) -> Any:
-    return getattr(request.app.state, "ipc_storage_driver", None)
+def _get_ipc_nexus_fs(request: Request) -> Any:
+    return getattr(request.app.state, "ipc_nexus_fs", None)
 
 
 def _get_ipc_event_publisher(request: Request) -> Any:
@@ -116,7 +116,7 @@ async def send_message(
     body: SendMessageRequest,
     _request: Request,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
-    storage: Any = Depends(_get_ipc_storage_driver),
+    vfs: Any = Depends(_get_ipc_nexus_fs),
     event_publisher: Any = Depends(_get_ipc_event_publisher),
     wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
     cache_store: Any = Depends(_get_ipc_cache_store),
@@ -127,7 +127,7 @@ async def send_message(
     _check_agent_access(auth_result, body.sender)
     zone_id = _get_auth_zone_id(auth_result)
 
-    if storage is None:
+    if vfs is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")
 
     try:
@@ -143,7 +143,7 @@ async def send_message(
             envelope_data["id"] = body.message_id
         envelope = MessageEnvelope.model_validate(envelope_data)
         sender = MessageSender(
-            storage=storage,
+            vfs=vfs,
             event_publisher=event_publisher,
             zone_id=zone_id,
             wakeup_notifiers=wakeup_notifiers,
@@ -172,18 +172,21 @@ async def send_message(
 async def list_inbox(
     agent_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
-    storage: Any = Depends(_get_ipc_storage_driver),
+    vfs: Any = Depends(_get_ipc_nexus_fs),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for listing inbox messages."""
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
     zone_id = _get_auth_zone_id(auth_result)
 
-    if storage is None:
+    if vfs is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")
 
     try:
-        filenames = await storage.list_dir(inbox_path(agent_id), zone_id)
+        from nexus.contracts.types import OperationContext
+
+        _ctx = OperationContext(user_id="system", groups=[], zone_id=zone_id, is_system=True)
+        filenames = await vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -198,18 +201,22 @@ async def list_inbox(
 async def inbox_count(
     agent_id: str,
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
-    storage: Any = Depends(_get_ipc_storage_driver),
+    vfs: Any = Depends(_get_ipc_nexus_fs),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for inbox depth."""
     _validate_agent_id(agent_id)
     _check_agent_access(auth_result, agent_id)
     zone_id = _get_auth_zone_id(auth_result)
 
-    if storage is None:
+    if vfs is None:
         raise HTTPException(status_code=503, detail="IPC storage is not available")
 
     try:
-        count = await storage.count_dir(inbox_path(agent_id), zone_id)
+        from nexus.contracts.types import OperationContext
+
+        _ctx = OperationContext(user_id="system", groups=[], zone_id=zone_id, is_system=True)
+        _entries = await vfs.sys_readdir(inbox_path(agent_id), recursive=False, context=_ctx)
+        count = len(_entries)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -142,30 +142,6 @@ def _print_lifecycle_summary(nx: Any) -> None:
         pass  # best-effort — never block startup
 
 
-def _print_lifecycle_detail(nx: Any) -> None:
-    """Print detailed quadrant breakdown (innovation mode, Issue #1667).
-
-    Lists every registered service grouped by quadrant (Q1–Q4).
-    """
-    try:
-        coordinator = getattr(nx, "_lifecycle_coordinator", None)
-        if coordinator is None:
-            click.echo("  [validation] lifecycle coordinator not available — skipping")
-            return
-
-        quadrants = coordinator.classify_all()
-        by_q: dict[str, list[str]] = {}
-        for name, q in sorted(quadrants.items()):
-            by_q.setdefault(q.label, []).append(name)
-
-        click.echo("  [validation] Service quadrant report:")
-        for label in sorted(by_q):
-            names = ", ".join(by_q[label])
-            click.echo(f"    {label}: {names}")
-    except Exception as exc:
-        logger.warning("Innovation validation failed: %s", exc)
-
-
 # ---------------------------------------------------------------------------
 # CLI group — bare ``nexusd`` starts the daemon, subcommands are node-local ops
 # ---------------------------------------------------------------------------
@@ -207,7 +183,7 @@ def _print_lifecycle_detail(nx: Any) -> None:
     "deployment_profile",
     default=None,
     envvar="NEXUS_PROFILE",
-    help="Deployment profile: full, lite, embedded, cloud, innovation, auto (default: auto).",
+    help="Deployment profile: full, lite, embedded, cloud, auto (default: auto).",
 )
 @click.option(
     "--api-key",
@@ -248,13 +224,6 @@ def _print_lifecycle_detail(nx: Any) -> None:
     envvar="NEXUS_WORKERS",
     help="Number of uvicorn workers (default: 1).",
 )
-@click.option(
-    "--innovation",
-    is_flag=True,
-    default=False,
-    envvar="NEXUS_INNOVATION_MODE",
-    help="Enable innovation mode (all bricks + startup validation).",
-)
 @click.version_option(package_name="nexus-ai-fs", prog_name="nexusd")
 @click.pass_context
 def main(
@@ -270,7 +239,6 @@ def main(
     log_level: str | None,
     log_format: str,
     workers: int | None,
-    innovation: bool,
 ) -> None:
     """Nexus node daemon.
 
@@ -294,9 +262,6 @@ def main(
     port = port or 2026
     log_level = log_level or "info"
 
-    # --innovation flag overrides profile (explicit --profile wins over --innovation)
-    if innovation and deployment_profile is None:
-        deployment_profile = "innovation"
     deployment_profile = deployment_profile or "auto"
 
     # Configure logging early
@@ -339,12 +304,6 @@ def main(
         if database_url:
             click.echo(f"  DB:      {_redact_url(database_url)}")
 
-        if deployment_profile == "innovation":
-            click.echo("")
-            click.echo("  ** INNOVATION MODE **")
-            click.echo("  All bricks enabled. Experimental features active.")
-            click.echo("  Not recommended for production workloads.")
-
         click.echo("")
 
         # --- Create local NexusFS -------------------------------------------
@@ -381,8 +340,6 @@ def main(
 
         # --- Service lifecycle summary (Issue #1578) -------------------------
         _print_lifecycle_summary(nx)
-        if deployment_profile == "innovation":
-            _print_lifecycle_detail(nx)
 
         # --- Resolve auth ---------------------------------------------------
         auth_provider: Any = None

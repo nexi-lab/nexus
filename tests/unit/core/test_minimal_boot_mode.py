@@ -28,16 +28,11 @@ class TestSlimProfileBricks:
 
         assert DeploymentProfile.SLIM.value == "slim"
 
-    def test_slim_default_bricks_only_storage(self) -> None:
-        from nexus.contracts.deployment_profile import BRICK_STORAGE, DeploymentProfile
-
-        bricks = DeploymentProfile.SLIM.default_bricks()
-        assert bricks == frozenset({BRICK_STORAGE})
-
-    def test_slim_storage_is_enabled(self) -> None:
+    def test_slim_default_bricks_empty(self) -> None:
         from nexus.contracts.deployment_profile import DeploymentProfile
 
-        assert DeploymentProfile.SLIM.is_brick_enabled("storage") is True
+        bricks = DeploymentProfile.SLIM.default_bricks()
+        assert bricks == frozenset()
 
     def test_slim_eventlog_is_disabled(self) -> None:
         from nexus.contracts.deployment_profile import DeploymentProfile
@@ -51,33 +46,22 @@ class TestSlimProfileBricks:
 
     def test_resolve_with_no_overrides(self) -> None:
         from nexus.contracts.deployment_profile import (
-            BRICK_STORAGE,
             DeploymentProfile,
             resolve_enabled_bricks,
         )
 
         result = resolve_enabled_bricks(DeploymentProfile.SLIM)
-        assert result == frozenset({BRICK_STORAGE})
+        assert result == frozenset()
 
     def test_resolve_with_override_enables_extra_brick(self) -> None:
         from nexus.contracts.deployment_profile import (
             BRICK_EVENTLOG,
-            BRICK_STORAGE,
             DeploymentProfile,
             resolve_enabled_bricks,
         )
 
         result = resolve_enabled_bricks(DeploymentProfile.SLIM, overrides={"eventlog": True})
-        assert result == frozenset({BRICK_STORAGE, BRICK_EVENTLOG})
-
-    def test_resolve_with_override_disables_storage(self) -> None:
-        from nexus.contracts.deployment_profile import (
-            DeploymentProfile,
-            resolve_enabled_bricks,
-        )
-
-        result = resolve_enabled_bricks(DeploymentProfile.SLIM, overrides={"storage": False})
-        assert result == frozenset()
+        assert result == frozenset({BRICK_EVENTLOG})
 
 
 # ---------------------------------------------------------------------------
@@ -280,10 +264,10 @@ class TestSlimHierarchy:
         assert DeploymentProfile.FULL.default_bricks() <= DeploymentProfile.CLOUD.default_bricks()
 
     def test_slim_is_strict_minimum(self) -> None:
-        """SLIM has exactly 1 brick (storage)."""
+        """SLIM has exactly 0 bricks (kernel only)."""
         from nexus.contracts.deployment_profile import DeploymentProfile
 
-        assert len(DeploymentProfile.SLIM.default_bricks()) == 1
+        assert len(DeploymentProfile.SLIM.default_bricks()) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +324,7 @@ class TestSlimIntegrationViaConnect:
 
         profile = DeploymentProfile.SLIM
         enabled_bricks = resolve_enabled_bricks(profile)
-        assert enabled_bricks == frozenset({"storage"})
+        assert enabled_bricks == frozenset()
 
         nx = await create_nexus_fs(
             backend=PathLocalBackend(root_path=data_dir),

@@ -450,10 +450,6 @@ def _boot_pre_kernel_services(
     # AgentRegistry is lazy-constructed by the first consumer via sys_setattr.
     # EvictionManager + AcpService are deferred to _do_link().  See Issue #1792.)
 
-    # EventBus removed from system boot — it's a self-contained lib.
-    # Created on demand by orchestrator when DistributedConfig.enable_events is set.
-    # See services/event_bus/factory.py.
-
     # =====================================================================
     # Assemble result
     # =====================================================================

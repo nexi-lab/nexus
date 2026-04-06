@@ -321,7 +321,7 @@ class TestBrickRequirement:
             False,
             True,
             {"search", "llm"},
-            {"storage", "eventlog", "pay", "sandbox", "workflows"},
+            {"eventlog", "pay", "sandbox", "workflows"},
             id="256MB-no-gpu",
         ),
         pytest.param(

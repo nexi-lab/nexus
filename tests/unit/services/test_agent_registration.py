@@ -51,25 +51,24 @@ def mock_rebac_manager():
 
 
 @pytest.fixture()
-def mock_ipc_provisioner():
-    provisioner = AsyncMock()
-    return provisioner
+def mock_agent_registry_with_provisioner(mock_agent_registry):
+    """AgentRegistry with a mock provisioner wired in via set_provisioner()."""
+    mock_agent_registry.provision = AsyncMock(return_value=True)
+    return mock_agent_registry
 
 
 @pytest.fixture()
 def service(
     mock_record_store,
     mock_entity_registry,
-    mock_agent_registry,
+    mock_agent_registry_with_provisioner,
     mock_rebac_manager,
-    mock_ipc_provisioner,
 ):
     return AgentRegistrationService(
         record_store=mock_record_store,
         entity_registry=mock_entity_registry,
-        agent_registry=mock_agent_registry,
+        agent_registry=mock_agent_registry_with_provisioner,
         rebac_manager=mock_rebac_manager,
-        ipc_provisioner=mock_ipc_provisioner,
     )
 
 
@@ -181,7 +180,7 @@ class TestHappyPath:
         assert call_kwargs[1].get("expires_at") is None
 
     @pytest.mark.asyncio()
-    async def test_register_provisions_ipc(self, service, mock_ipc_provisioner):
+    async def test_register_provisions_ipc(self, service, mock_agent_registry_with_provisioner):
         """IPC provisioning should be called when ipc=True."""
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
             mock_key.return_value = ("key-1", "sk-key")
@@ -193,11 +192,15 @@ class TestHappyPath:
                 ipc=True,
             )
 
-        mock_ipc_provisioner.provision.assert_called_once_with("ipc-agent", name="IPC Agent")
+        mock_agent_registry_with_provisioner.provision.assert_called_once_with(
+            "ipc-agent", name="IPC Agent"
+        )
         assert result.ipc_provisioned is True
 
     @pytest.mark.asyncio()
-    async def test_register_skips_ipc_when_false(self, service, mock_ipc_provisioner):
+    async def test_register_skips_ipc_when_false(
+        self, service, mock_agent_registry_with_provisioner
+    ):
         """IPC provisioning should be skipped when ipc=False."""
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
             mock_key.return_value = ("key-1", "sk-key")
@@ -209,7 +212,7 @@ class TestHappyPath:
                 ipc=False,
             )
 
-        mock_ipc_provisioner.provision.assert_not_called()
+        mock_agent_registry_with_provisioner.provision.assert_not_called()
         assert result.ipc_provisioned is False
         assert result.ipc_inbox is None
 
@@ -310,10 +313,10 @@ class TestCompensation:
 
     @pytest.mark.asyncio()
     async def test_ipc_failure_does_not_rollback(
-        self, service, mock_ipc_provisioner, mock_entity_registry
+        self, service, mock_agent_registry_with_provisioner, mock_entity_registry
     ):
         """IPC provisioning failure should NOT roll back the registration."""
-        mock_ipc_provisioner.provision.side_effect = OSError("Disk full")
+        mock_agent_registry_with_provisioner.provision.return_value = False
 
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:
             mock_key.return_value = ("key-1", "sk-key")
@@ -389,14 +392,14 @@ class TestMissingDependencies:
 
     @pytest.mark.asyncio()
     async def test_no_rebac_manager_skips_grants(
-        self, mock_record_store, mock_entity_registry, mock_ipc_provisioner
+        self, mock_record_store, mock_entity_registry, mock_agent_registry_with_provisioner
     ):
         """If rebac_manager is None, grants are silently skipped."""
         svc = AgentRegistrationService(
             record_store=mock_record_store,
             entity_registry=mock_entity_registry,
+            agent_registry=mock_agent_registry_with_provisioner,
             rebac_manager=None,
-            ipc_provisioner=mock_ipc_provisioner,
         )
 
         grants = [GrantInput(path="/workspace/main.py", role="editor")]
@@ -417,12 +420,14 @@ class TestMissingDependencies:
     async def test_no_ipc_provisioner_skips_ipc(
         self, mock_record_store, mock_entity_registry, mock_rebac_manager
     ):
-        """If ipc_provisioner is None, IPC is skipped even when ipc=True."""
+        """If agent_registry.provision returns False, IPC is marked not provisioned."""
+        agent_reg = MagicMock()
+        agent_reg.provision = AsyncMock(return_value=False)
         svc = AgentRegistrationService(
             record_store=mock_record_store,
             entity_registry=mock_entity_registry,
+            agent_registry=agent_reg,
             rebac_manager=mock_rebac_manager,
-            ipc_provisioner=None,
         )
 
         with patch("nexus.storage.api_key_ops.create_agent_api_key") as mock_key:

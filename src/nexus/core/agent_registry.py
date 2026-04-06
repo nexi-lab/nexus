@@ -53,6 +53,45 @@ class AgentRegistry:
     def __init__(self) -> None:
         self._processes: dict[str, AgentDescriptor] = {}
         self._wait_events: dict[str, list[asyncio.Event]] = {}
+        self._provisioner: Any = None  # Optional IPC provisioner (AgentProvisioner)
+
+    # ------------------------------------------------------------------
+    # IPC provisioner hook
+    # ------------------------------------------------------------------
+
+    def set_provisioner(self, provisioner: Any) -> None:
+        """Inject IPC provisioner for automatic directory creation on register.
+
+        Called by factory after both AgentRegistry and AgentProvisioner exist.
+        When set, ``provision()`` delegates to ``provisioner.provision()``.
+        """
+        self._provisioner = provisioner
+        logger.debug("AgentRegistry: IPC provisioner set")
+
+    async def provision(
+        self,
+        agent_id: str,
+        name: str | None = None,
+        skills: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Provision IPC directories for an agent. Non-fatal.
+
+        Returns True if provisioning succeeded, False otherwise.
+        No-op (returns False) when no provisioner is configured.
+        """
+        if self._provisioner is None:
+            return False
+        try:
+            await self._provisioner.provision(agent_id, name=name, skills=skills, metadata=metadata)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "IPC provisioning failed for agent %s (non-fatal): %s",
+                agent_id,
+                exc,
+            )
+            return False
 
     # ------------------------------------------------------------------
     # PID allocation

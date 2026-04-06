@@ -11,7 +11,8 @@ Orchestrates the multi-step registration of a top-level agent:
 Steps 1-2 are compensated on failure (delete entity + unregister process).
 Step 3 is also compensated (rebac_delete_by_subject) — rebac_write_batch()
 persists immediately and must be explicitly cleaned up on rollback.
-Step 5 (IPC filesystem) runs after the DB commit; failure is non-fatal.
+Step 5 (IPC filesystem) delegates to AgentRegistry.provision(), which calls
+the injected AgentProvisioner. Runs after DB commit; failure is non-fatal.
 Step 6 (public key) is non-fatal; agent can register a key later.
 
 Design follows the DelegationService saga pattern: ordered steps with
@@ -67,9 +68,8 @@ class AgentRegistrationService:
     Args:
         record_store: RecordStoreABC for session creation (API key step).
         entity_registry: EntityRegistry for persistent agent identity.
-        agent_registry: AgentRegistry for runtime agent liveness.
+        agent_registry: AgentRegistry for runtime agent liveness + IPC provisioning.
         rebac_manager: EnhancedReBACManager for permission tuples.
-        ipc_provisioner: Optional IPC provisioner (AgentProvisioner) for IPC directories.
         key_service: Optional KeyService for Ed25519 public key storage.
     """
 
@@ -79,14 +79,12 @@ class AgentRegistrationService:
         entity_registry: "EntityRegistryProtocol | None" = None,
         agent_registry: "AgentRegistry | None" = None,
         rebac_manager: Any = None,
-        ipc_provisioner: Any = None,
         key_service: Any = None,
     ) -> None:
         self._session_factory = record_store.session_factory
         self._entity_registry = entity_registry
         self._agent_registry = agent_registry
         self._rebac_manager = rebac_manager
-        self._ipc_provisioner = ipc_provisioner
         self._key_service = key_service
         logger.info("[AgentRegistration] Initialized")
 
@@ -222,27 +220,20 @@ class AgentRegistrationService:
             raise
 
         # ── Step 5: Provision IPC (filesystem, after DB commit) ──────
+        # Provisioning is delegated to AgentRegistry.provision() which
+        # calls the injected AgentProvisioner (if configured).
         ipc_provisioned = False
         ipc_inbox: str | None = None
-        if ipc and self._ipc_provisioner is not None:
-            try:
-                t0 = time.monotonic()
-                await self._ipc_provisioner.provision(agent_id, name=name)
-                elapsed_ms = (time.monotonic() - t0) * 1000
-                ipc_provisioned = True
+        if ipc and self._agent_registry is not None:
+            t0 = time.monotonic()
+            ipc_provisioned = await self._agent_registry.provision(agent_id, name=name)
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            if ipc_provisioned:
                 ipc_inbox = f"/ipc/{agent_id}/inbox/"
                 logger.info(
                     "[AgentRegistration] IPC provisioned for %s (%.1fms)",
                     agent_id,
                     elapsed_ms,
-                )
-            except Exception as exc:
-                # Non-fatal — IPC can be re-provisioned via POST /ipc/provision/{id}
-                logger.warning(
-                    "[AgentRegistration] IPC provisioning failed for %s: %s. "
-                    "Agent registered successfully but IPC must be provisioned manually.",
-                    agent_id,
-                    exc,
                 )
 
         # ── Step 6: Register Ed25519 public key (optional) ───────────

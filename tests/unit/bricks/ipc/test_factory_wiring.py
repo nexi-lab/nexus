@@ -6,19 +6,17 @@ Validates that the factory correctly creates and wires IPC services
 Issue: #1727, #1178
 """
 
-import pytest
-
 
 class TestIPCBrickWiring:
     """Verify IPC brick is correctly wired in _boot_brick_services."""
 
     def test_ipc_fields_returned_by_brick_boot(self) -> None:
-        """Brick boot returns ipc_storage_driver and ipc_provisioner keys."""
+        """Brick boot returns ipc_provisioner and ipc_zone_id keys."""
         # BrickServices dataclass deleted — brick services are plain dicts.
         # The fields are created by _boot_independent_bricks() and enlisted
         # into ServiceRegistry. Just verify the field names are valid.
-        assert "ipc_storage_driver" == "ipc_storage_driver"
         assert "ipc_provisioner" == "ipc_provisioner"
+        assert "ipc_zone_id" == "ipc_zone_id"
 
     def test_brick_ipc_in_deployment_profiles(self) -> None:
         """BRICK_IPC is registered and included in LITE+ profiles."""
@@ -38,12 +36,6 @@ class TestIPCBrickWiring:
 
         # IPC should NOT be in EMBEDDED (too resource-constrained)
         assert not DeploymentProfile.EMBEDDED.is_brick_enabled(BRICK_IPC)
-
-    def test_kernel_vfs_adapter_importable(self) -> None:
-        """KernelVFSAdapter is importable (validates no circular deps)."""
-        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
-
-        assert KernelVFSAdapter is not None
 
     def test_ipc_provisioner_importable(self) -> None:
         """AgentProvisioner is importable (validates no circular deps)."""
@@ -65,40 +57,3 @@ class TestIPCBrickWiring:
 
         assert callable(startup_ipc)
         assert callable(shutdown_ipc)
-
-
-class TestKernelVFSAdapter:
-    """Verify KernelVFSAdapter satisfies VFSOperations protocol."""
-
-    @pytest.mark.asyncio
-    async def test_adapter_unbound_raises(self) -> None:
-        """Calling methods before bind() raises RuntimeError."""
-        import asyncio
-
-        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
-
-        adapter = KernelVFSAdapter(zone_id="test-zone")
-        assert not adapter.is_bound
-
-        with __import__("pytest").raises(RuntimeError, match="bind"):
-            asyncio.run(await adapter.sys_read("/test", "test-zone"))
-
-    def test_adapter_satisfies_vfs_operations_protocol(self) -> None:
-        """KernelVFSAdapter structurally satisfies VFSOperations."""
-        from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
-        from nexus.bricks.ipc.protocols import VFSOperations
-
-        adapter = KernelVFSAdapter(zone_id="test-zone")
-        # Protocol check: all required methods exist (sys_ prefixed names)
-        for method in (
-            "sys_read",
-            "write",
-            "list_dir",
-            "count_dir",
-            "rename",
-            "mkdir",
-            "access",
-        ):
-            assert hasattr(adapter, method), f"Missing method: {method}"
-        # Runtime checkable protocol
-        assert isinstance(adapter, VFSOperations)

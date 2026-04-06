@@ -11,10 +11,7 @@ The profile sets the *defaults*; explicit overrides always win.
 Lego Architecture reference: Part 10 — Edge Deployment.
 
 Profile hierarchy (superset relationship):
-    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation
-
-INNOVATION extends CLOUD with all bricks enabled + experimental validation.
-Requires explicit opt-in (``nexusd --innovation`` or ``--profile innovation``).
+    slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud
 
 REMOTE is orthogonal — zero local bricks, all operations proxy via RemoteBackend:
     remote  (no local bricks — NFS-client model)
@@ -32,9 +29,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Brick name constants — canonical names used across the system
 # ---------------------------------------------------------------------------
-
-# Kernel-level (always present, never gated)
-BRICK_STORAGE = "storage"
 
 # Services (gated by profile)
 BRICK_EVENTLOG = "eventlog"
@@ -78,7 +72,6 @@ BRICK_FEDERATION = "federation"
 # All brick names for validation
 ALL_BRICK_NAMES: frozenset[str] = frozenset(
     {
-        BRICK_STORAGE,
         BRICK_EVENTLOG,
         BRICK_NAMESPACE,
         BRICK_PERMISSIONS,
@@ -123,13 +116,12 @@ class DeploymentProfile(StrEnum):
     """Deployment profile controlling which bricks are enabled by default.
 
     Profiles define capability tiers for different deployment targets:
-    - slim: Bare minimum runnable — storage only (Issue #1801)
+    - slim: Bare minimum runnable — kernel only, no bricks (Issue #1801)
     - cluster: Minimal multi-node — Raft + federation, no auth/PostgreSQL
-    - embedded: MCU / WASM (<1 MB) — storage + eventlog only
+    - embedded: MCU / WASM (<1 MB) — eventlog only
     - lite: Pi, Jetson, mobile (512 MB–4 GB) — core services, no LLM/Pay
     - full: Desktop, laptop (4–32 GB) — all bricks, local inference
     - cloud: k8s, serverless (unlimited) — all + federation + multi-tenant
-    - innovation: Experimental tier — cloud + all bricks, startup validation (Issue #1667)
     - remote: Client-side proxy — zero local bricks, NFS-client model (Issue #844)
     """
 
@@ -139,7 +131,6 @@ class DeploymentProfile(StrEnum):
     LITE = "lite"
     FULL = "full"
     CLOUD = "cloud"
-    INNOVATION = "innovation"
     REMOTE = "remote"
 
     def default_bricks(self) -> frozenset[str]:
@@ -164,11 +155,7 @@ class DeploymentProfile(StrEnum):
 # Profile-to-brick mappings (frozen — immutable at runtime)
 # ---------------------------------------------------------------------------
 
-_SLIM_BRICKS: frozenset[str] = frozenset(
-    {
-        BRICK_STORAGE,
-    }
-)
+_SLIM_BRICKS: frozenset[str] = frozenset()  # kernel only — no optional bricks
 
 _CLUSTER_BRICKS: frozenset[str] = _SLIM_BRICKS | frozenset(
     {
@@ -225,10 +212,6 @@ _FULL_BRICKS: frozenset[str] = _LITE_BRICKS | frozenset(
 
 _CLOUD_BRICKS: frozenset[str] = _FULL_BRICKS | frozenset({BRICK_FEDERATION})
 
-_INNOVATION_BRICKS: frozenset[str] = (
-    _CLOUD_BRICKS  # same as cloud; future experimental bricks added here
-)
-
 _REMOTE_BRICKS: frozenset[str] = frozenset()  # no local bricks — NFS-client model
 
 _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
@@ -238,7 +221,6 @@ _PROFILE_BRICKS: dict[DeploymentProfile, frozenset[str]] = {
     DeploymentProfile.LITE: _LITE_BRICKS,
     DeploymentProfile.FULL: _FULL_BRICKS,
     DeploymentProfile.CLOUD: _CLOUD_BRICKS,
-    DeploymentProfile.INNOVATION: _INNOVATION_BRICKS,
     DeploymentProfile.REMOTE: _REMOTE_BRICKS,
 }
 

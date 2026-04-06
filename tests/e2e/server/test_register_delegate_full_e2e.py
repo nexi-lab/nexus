@@ -63,19 +63,20 @@ def ipc_storage():
 
 @pytest.fixture()
 def ipc_provisioner(ipc_storage):
-    return AgentProvisioner(storage=ipc_storage, zone_id=ZONE)
+    return AgentProvisioner(vfs=ipc_storage, zone_id=ZONE)
 
 
 @pytest.fixture()
 def registration_service(
     record_store, agent_registry, entity_registry, rebac_manager, ipc_provisioner
 ):
+    # Wire provisioner into AgentRegistry so register → provision is automatic
+    agent_registry.set_provisioner(ipc_provisioner)
     return AgentRegistrationService(
         record_store=record_store,
         agent_registry=agent_registry,
         entity_registry=entity_registry,
         rebac_manager=rebac_manager,
-        ipc_provisioner=ipc_provisioner,
     )
 
 

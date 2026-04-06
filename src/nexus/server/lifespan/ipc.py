@@ -40,8 +40,8 @@ def _resolve_ipc_cache_store(app: "FastAPI", svc: "LifespanServices") -> "CacheS
 async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Start IPC background tasks (TTLSweeper + DT_PIPE wakeup).
 
-    Reads ``ipc_storage_driver`` and ``ipc_provisioner`` from
-    ServiceRegistry and exposes them on ``app.state`` for the IPC REST router.
+    Reads ``ipc_provisioner`` from ServiceRegistry and exposes it
+    on ``app.state`` for the IPC REST router.
 
     Returns list of background tasks to cancel on shutdown.
     """
@@ -54,11 +54,10 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
     if _svc_fn is None:
         return bg_tasks
 
-    ipc_storage = _svc_fn("ipc_storage_driver")
     ipc_provisioner = _svc_fn("ipc_provisioner")
 
-    if ipc_storage is None:
-        logger.debug("[IPC] IPC storage driver not available, skipping IPC startup")
+    if ipc_provisioner is None:
+        logger.debug("[IPC] IPC provisioner not available, skipping IPC startup")
         return bg_tasks
 
     zone_id = svc.zone_id or ROOT_ZONE_ID
@@ -96,7 +95,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
             logger.warning("[IPC] DT_PIPE wakeup unavailable: %s", exc)
 
     # Expose IPC services on app.state for REST router access
-    app.state.ipc_storage_driver = ipc_storage
+    app.state.ipc_nexus_fs = svc.nexus_fs
     app.state.ipc_provisioner = ipc_provisioner
     app.state.ipc_wakeup_notifiers = wakeup_notifiers
     app.state.ipc_cache_store = cache_store
@@ -121,7 +120,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
         from nexus.bricks.ipc.sweep import TTLSweeper
 
         sweeper = TTLSweeper(
-            storage=ipc_storage,
+            vfs=svc.nexus_fs,
             zone_id=zone_id,
             interval=60,
             cache_store=cache_store,

@@ -53,7 +53,7 @@ def test_post_send_enqueues_message() -> None:
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
     app = FastAPI()
-    app.state.ipc_storage_driver = storage
+    app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
@@ -99,7 +99,7 @@ def test_post_send_generates_message_id_when_omitted() -> None:
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
     app = FastAPI()
-    app.state.ipc_storage_driver = storage
+    app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
@@ -134,7 +134,7 @@ def test_inbox_and_count_return_compatibility_shapes() -> None:
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
     app = FastAPI()
-    app.state.ipc_storage_driver = storage
+    app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
@@ -176,7 +176,7 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
     asyncio.run(provisioner.provision("agent:bob", name="Bob"))
 
     app = FastAPI()
-    app.state.ipc_storage_driver = storage
+    app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
     app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None

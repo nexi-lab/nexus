@@ -22,7 +22,6 @@ from nexus.daemon.main import (
     _is_nexusd_process,
     _JsonLogFormatter,
     _manage_pid_file,
-    _print_lifecycle_detail,
     _print_lifecycle_summary,
     _redact_url,
     main,
@@ -325,73 +324,6 @@ class TestMainCli:
         assert call_kwargs.kwargs["host"] == "127.0.0.1"
         assert call_kwargs.kwargs["port"] == 9999
 
-    def test_main_innovation_flag_sets_profile(
-        self,
-        tmp_path: Path,
-        monkeypatch,
-    ) -> None:
-        """``--innovation`` flag sets profile to 'innovation'."""
-        import sys
-        import types
-
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-
-        mock_nx = MagicMock()
-        mock_connect = AsyncMock(return_value=mock_nx)
-
-        mock_app = MagicMock()
-        mock_create_app = MagicMock(return_value=mock_app)
-        mock_run_server = MagicMock()
-
-        fake_mod = types.ModuleType("nexus.server.fastapi_server")
-        fake_mod.create_app = mock_create_app
-        fake_mod.run_server = mock_run_server
-        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
-
-        with patch("nexus.connect", mock_connect):
-            runner = CliRunner()
-            result = runner.invoke(main, ["--innovation"])
-
-        assert result.exit_code == 0, f"CLI failed: {result.output}"
-        assert "INNOVATION MODE" in result.output
-        # Profile should be "innovation" in the connect config
-        call_args = mock_connect.call_args
-        config = call_args.kwargs.get("config") or call_args.args[0]
-        assert config["profile"] == "innovation"
-
-    def test_main_innovation_flag_overridden_by_explicit_profile(
-        self,
-        tmp_path: Path,
-        monkeypatch,
-    ) -> None:
-        """Explicit --profile wins over --innovation flag."""
-        import sys
-        import types
-
-        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
-
-        mock_nx = MagicMock()
-        mock_connect = AsyncMock(return_value=mock_nx)
-
-        mock_app = MagicMock()
-        mock_create_app = MagicMock(return_value=mock_app)
-        mock_run_server = MagicMock()
-
-        fake_mod = types.ModuleType("nexus.server.fastapi_server")
-        fake_mod.create_app = mock_create_app
-        fake_mod.run_server = mock_run_server
-        monkeypatch.setitem(sys.modules, "nexus.server.fastapi_server", fake_mod)
-
-        with patch("nexus.connect", mock_connect):
-            runner = CliRunner()
-            result = runner.invoke(main, ["--innovation", "--profile", "full"])
-
-        assert result.exit_code == 0, f"CLI failed: {result.output}"
-        assert "INNOVATION MODE" not in result.output
-        call_args = mock_connect.call_args
-        config = call_args.kwargs.get("config") or call_args.args[0]
-        assert config["profile"] == "full"
-
     def test_main_lifecycle_summary_shown(
         self,
         tmp_path: Path,
@@ -435,12 +367,12 @@ class TestMainCli:
 
 
 # ---------------------------------------------------------------------------
-# _print_lifecycle_summary / _print_lifecycle_detail (Issue #1578)
+# _print_lifecycle_summary (Issue #1578)
 # ---------------------------------------------------------------------------
 
 
 class TestLifecycleReport:
-    """Unit tests for lifecycle summary and detail functions."""
+    """Unit tests for lifecycle summary functions."""
 
     def test_summary_with_coordinator(self, capsys) -> None:
         mock_q1 = MagicMock(is_persistent=True, is_hot_swappable=True)
@@ -491,24 +423,3 @@ class TestLifecycleReport:
         _print_lifecycle_summary(nx)  # should not raise
         out = capsys.readouterr().out
         assert out == ""
-
-    def test_detail_shows_quadrants(self, capsys) -> None:
-        mock_q = MagicMock(label="Q1 (restart-required)")
-        mock_q2 = MagicMock(label="Q3 (persistent)")
-        coordinator = MagicMock()
-        coordinator.classify_all.return_value = {"svc_a": mock_q, "svc_b": mock_q2}
-        nx = MagicMock()
-        nx._lifecycle_coordinator = coordinator
-
-        _print_lifecycle_detail(nx)
-        out = capsys.readouterr().out
-
-        assert "[validation] Service quadrant report:" in out
-        assert "Q1 (restart-required): svc_a" in out
-        assert "Q3 (persistent): svc_b" in out
-
-    def test_detail_no_coordinator(self, capsys) -> None:
-        nx = MagicMock(spec=[])
-        _print_lifecycle_detail(nx)
-        out = capsys.readouterr().out
-        assert "not available" in out

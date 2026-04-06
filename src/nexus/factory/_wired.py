@@ -474,39 +474,18 @@ async def _boot_post_kernel_services(
         except Exception as exc:
             logger.debug("[BOOT:WIRED] OperationsService unavailable: %s", exc)
 
-    # --- LLMStreamingService: DT_STREAM orchestration for LLM token delivery ---
-    # Backend is mounted dynamically (not at boot), so this is a lazy service:
-    # created with stream_manager only, backend resolved on first use via router.
-    llm_streaming_service: Any = None
+    # Inject StreamManager into OpenAI-compatible LLM backends for DT_STREAM orchestration.
     try:
-        from nexus.services.llm_streaming_service import LLMStreamingService
-
-        _llm_backend: Any = None
-        # Find an OpenAI-compatible LLM backend at common mount paths.
-        # Root mount (PathLocalBackend) may cover /llm via LPM — check class type.
         from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
         for _llm_prefix in ("/llm", "/root/llm"):
             with contextlib.suppress(Exception):
                 _candidate = nx.router.route(_llm_prefix).backend
                 if isinstance(_candidate, CASOpenAIBackend):
-                    _llm_backend = _candidate
-                    break
-
-        if _llm_backend is not None:
-            llm_streaming_service = LLMStreamingService(
-                stream_manager=nx._stream_manager,
-                backend=_llm_backend,
-            )
-            await nx.sys_setattr("/__sys__/services/llm_streaming", service=llm_streaming_service)
-            logger.debug("[BOOT:WIRED] LLMStreamingService created (backend available)")
-        else:
-            logger.debug(
-                "[BOOT:WIRED] LLMStreamingService deferred — no LLM backend mounted yet. "
-                "Will be created on first llm_call or after 'nexus mounts add --type openai'."
-            )
-    except Exception as exc:
-        logger.debug("[BOOT:WIRED] LLMStreamingService unavailable: %s", exc)
+                    _candidate.set_stream_manager(nx._stream_manager)
+                    logger.debug("Injected StreamManager into CASOpenAIBackend at %s", _llm_prefix)
+    except Exception:
+        pass
 
     result: dict[str, Any] = {
         "rebac_service": rebac_service,
@@ -526,7 +505,6 @@ async def _boot_post_kernel_services(
         "sandbox_rpc_service": sandbox_rpc_service,
         "metadata_export_service": metadata_export_service,
         "descendant_checker": descendant_checker,
-        "llm_streaming_service": llm_streaming_service,
     }
 
     elapsed = time.perf_counter() - t0

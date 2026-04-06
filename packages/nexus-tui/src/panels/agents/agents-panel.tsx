@@ -2,7 +2,7 @@
  * Agents panel: left sidebar with agent list, right pane with tabbed detail views.
  */
 
-import { createEffect, createSignal } from "solid-js";
+import { createEffect, createSignal, Match, Switch } from "solid-js";
 import type { JSX } from "solid-js";
 import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
@@ -172,8 +172,10 @@ export default function AgentsPanel(): JSX.Element {
 
   // Auto-fetch when agent or tab changes
   createEffect(() => {
+    // Track reactive deps so this re-runs when tab or agent changes
+    void activeTab();
+    void selectedAgentId();
     refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   });
 
   useKeyboard((): Record<string, () => void> => {
@@ -320,7 +322,7 @@ export default function AgentsPanel(): JSX.Element {
           </box>
 
           {/* Operation in-progress feedback */}
-          {operationLoading && (
+          {operationLoading() && (
             <box height={1} width="100%">
               <LoadingIndicator message={operationLoading() ?? undefined} centered={false} />
             </box>
@@ -333,48 +335,10 @@ export default function AgentsPanel(): JSX.Element {
             </box>
           )}
 
-          {/* Detail content */}
+          {/* Detail content — use Switch/Match for reactive tab switching */}
           <box flexGrow={1} borderStyle="single">
-            {activeTab() === "status" && (() => {
-              const selectedAgent = agents().find((a) => a.agent_id === selectedAgentId());
-              if (selectedAgent?.state === "registered" || selectedAgent?.state === "delegated") {
-                const perms = useAgentsStore.getState().agentPermissions;
-                return (
-                  <box height="100%" width="100%" flexDirection="column" padding={1}>
-                    <text style={textStyle({ bold: true })}>{`Agent: ${selectedAgent.agent_id}`}</text>
-                    <text>{""}</text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"State:  "}</span><span>{"registered"}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
-                    <text>{""}</text>
-                    <text style={textStyle({ fg: "cyan", bold: true })}>{"Effective Permissions:"}</text>
-                    {perms.length === 0 ? (
-                      <text style={textStyle({ dim: true })}>{"  No permissions assigned"}</text>
-                    ) : (
-                      perms.map((p, i) => {
-                        // Translate ReBAC tuples into human-readable capabilities
-                        const tool = p.object_id.replace("/tools/", "");
-                        const accessLevel = p.relation.replace("direct_", "");
-                        const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
-                        const color = icon === "R" ? "cyan" : icon === "W" ? "yellow" : "gray";
-                        return (
-                          <text key={`perm-${i}`}>
-                            <span style={textStyle({ fg: color })}>{`  [${icon}] `}</span>
-                            <span>{tool}</span>
-                            <span style={textStyle({ dim: true })}>{` (${accessLevel})`}</span>
-                          </text>
-                        );
-                      })
-                    )}
-                    <text>{""}</text>
-                    <text style={textStyle({ dim: true })}>{"  View Access panel (5) for manifests & delegations"}</text>
-                    <text>{""}</text>
-                    <text style={textStyle({ dim: true })}>{"Agent is registered but not running."}</text>
-                  </box>
-                );
-              }
-              return (
+            <Switch>
+              <Match when={activeTab() === "status"}>
                 <AgentStatusView
                   status={agentStatus()}
                   spec={agentSpec()}
@@ -383,37 +347,37 @@ export default function AgentsPanel(): JSX.Element {
                   trustScore={trustScore()}
                   reputation={reputation()}
                 />
-              );
-            })()}
-            {activeTab() === "delegations" && (
-              <DelegationList
-                delegations={delegations()}
-                selectedIndex={selectedDelegationIndex()}
-                loading={delegationsLoading()}
-                expandedDelegation={expandedDelegation()}
-              />
-            )}
-            {activeTab() === "inbox" && (
-              <InboxView
-                messages={inboxMessages()}
-                count={inboxCount()}
-                processedMessages={useAgentsStore.getState().processedMessages}
-                deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
-                loading={inboxLoading()}
-              />
-            )}
-            {activeTab() === "trajectories" && (
-              <TrajectoriesTab
-                trajectories={trajectories()}
-                loading={trajectoriesLoading()}
-              />
-            )}
+              </Match>
+              <Match when={activeTab() === "delegations"}>
+                <DelegationList
+                  delegations={delegations()}
+                  selectedIndex={selectedDelegationIndex()}
+                  loading={delegationsLoading()}
+                  expandedDelegation={expandedDelegation()}
+                />
+              </Match>
+              <Match when={activeTab() === "inbox"}>
+                <InboxView
+                  messages={inboxMessages()}
+                  count={inboxCount()}
+                  processedMessages={useAgentsStore.getState().processedMessages}
+                  deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
+                  loading={inboxLoading()}
+                />
+              </Match>
+              <Match when={activeTab() === "trajectories"}>
+                <TrajectoriesTab
+                  trajectories={trajectories()}
+                  loading={trajectoriesLoading()}
+                />
+              </Match>
+            </Switch>
           </box>
         </box>
       </box>
 
       {/* Command runner output (when agent spawn is running) */}
-      {commandRunnerStatus !== "idle" && (
+      {useCommandRunnerStore((s) => s.status) !== "idle" && (
         <box borderStyle="single" height={6} width="100%">
           <CommandOutput />
         </box>

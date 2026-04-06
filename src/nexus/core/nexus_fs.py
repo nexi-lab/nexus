@@ -218,7 +218,6 @@ class NexusFS(  # type: ignore[misc]
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            transport_pool=self._transport_pool,
         )
 
         from nexus.core.file_watcher import FileWatcher

@@ -31,7 +31,6 @@ from nexus.core.stream import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
-    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +62,9 @@ class StreamManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
-        self._transport_pool = transport_pool
         self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -147,17 +144,16 @@ class StreamManager:
 
         If the buffer is already in memory, returns it. If a DT_STREAM inode
         exists but the buffer was lost (process restart), creates a new
-        buffer for the existing inode.
+        local MemoryStreamBackend for the existing inode.
 
-        For remote streams (origin != self_address), installs a
-        RemoteStreamBackend that proxies via persistent gRPC channel.
+        Remote stream resolution is handled at mount time by DLC — not here.
 
         Args:
             path: VFS path of the stream.
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The StreamBackend for this stream (MemoryStreamBackend or RemoteStreamBackend).
+            The StreamBackend for this stream.
 
         Raises:
             StreamNotFoundError: No stream inode at this path.
@@ -172,24 +168,6 @@ class StreamManager:
         metadata = self._metastore.get(path)
         if metadata is None or metadata.entry_type != DT_STREAM:
             raise StreamNotFoundError(f"no stream at: {path}")
-
-        # Detect remote stream — install RemoteStreamBackend for fast-path
-        if self._transport_pool is not None and metadata.backend_name:
-            from nexus.contracts.backend_address import BackendAddress
-
-            addr = BackendAddress.parse(metadata.backend_name)
-            if addr.has_origin and self._self_address not in addr.origins:
-                from nexus.core.remote_stream import RemoteStreamBackend
-
-                transport = self._transport_pool.get(addr.origins[0])
-                backend: StreamBackend = RemoteStreamBackend(
-                    origin=addr.origins[0],
-                    path=path,
-                    transport=transport,
-                )
-                self._buffers[path] = backend
-                logger.debug("stream opened (remote): %s → %s", path, addr.origins[0])
-                return backend
 
         # Local: recreate buffer (restart recovery).
         # Pre-check Rust IPC — same guard as create() to produce typed error.

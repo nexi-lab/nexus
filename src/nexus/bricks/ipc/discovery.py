@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.bricks.ipc.protocols import VFSOperations
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -52,7 +51,7 @@ class AgentDiscovery:
     (CacheStore pillar: ephemeral KV with TTL).
 
     Args:
-        storage: Storage driver for IPC listing and reading.
+        vfs: NexusFS instance for IPC listing and reading.
         zone_id: Zone ID for multi-tenant isolation.
         cache_store: CacheStoreABC for ephemeral caching (optional, degrades gracefully).
         cache_ttl_seconds: TTL for the agent discovery cache.
@@ -60,15 +59,20 @@ class AgentDiscovery:
 
     def __init__(
         self,
-        storage: VFSOperations,
+        vfs: Any,
         zone_id: str = ROOT_ZONE_ID,
         cache_ttl_seconds: float = 10.0,
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
-        self._storage = storage
+        self._vfs = vfs
         self._zone_id = zone_id
         self._cache_ttl = cache_ttl_seconds
         self._cache_store = cache_store
+
+    def _ctx(self) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(user_id="system", groups=[], zone_id=self._zone_id, is_system=True)
 
     def _cache_key(self) -> str:
         """Zone-scoped cache key for agent discovery."""
@@ -81,7 +85,7 @@ class AgentDiscovery:
             List of agent directory names under ``/agents/``.
         """
         try:
-            entries = await self._storage.list_dir(AGENTS_ROOT, self._zone_id)
+            entries = await self._vfs.sys_readdir(AGENTS_ROOT, recursive=False, context=self._ctx())
             return sorted(entries)
         except Exception:
             logger.warning(
@@ -102,7 +106,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._storage.sys_read(card_path, self._zone_id)
+            data = await self._vfs.sys_read(card_path, context=self._ctx())
             card_dict = json.loads(data)
         except Exception:
             logger.debug(

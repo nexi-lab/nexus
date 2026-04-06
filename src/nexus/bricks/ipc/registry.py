@@ -58,7 +58,7 @@ class MessageProcessorRegistry:
         DT_PIPE (poll/EventBus fallback).
 
         Args:
-            storage: VFSOperations storage driver.
+            storage: NexusFS instance.
             agent_id: Agent whose inbox to process.
             handler: Async callback for each message.
             zone_id: Zone ID for multi-tenant isolation.

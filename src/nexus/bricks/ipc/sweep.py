@@ -26,7 +26,7 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.bricks.ipc.conventions import (
     AGENTS_ROOT,
@@ -41,7 +41,6 @@ from nexus.bricks.ipc.conventions import (
 from nexus.bricks.ipc.envelope import MessageEnvelope
 from nexus.bricks.ipc.exceptions import DLQReason
 from nexus.bricks.ipc.lifecycle import dead_letter_message
-from nexus.bricks.ipc.protocols import VFSOperations
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -98,7 +97,7 @@ class TTLSweeper:
         per-day JSONL archives with two-phase crash-safe commit.
 
     Args:
-        storage: Storage driver for IPC listing, reading, and renaming.
+        vfs: NexusFS instance for IPC listing, reading, and renaming.
         zone_id: Zone ID for multi-tenant isolation.
         interval: Seconds between fallback poll cycles.
         cache_store: CacheStoreABC for event-driven TTL pub/sub. Optional.
@@ -143,7 +142,7 @@ class TTLSweeper:
 
     def __init__(
         self,
-        storage: VFSOperations,
+        vfs: Any,
         zone_id: str = ROOT_ZONE_ID,
         interval: float = DEFAULT_SWEEP_INTERVAL,
         cache_store: "CacheStoreABC | None" = None,
@@ -157,7 +156,7 @@ class TTLSweeper:
         dead_letter_archive_retention_days: int | None = None,
         dead_letter_max_files_per_segment: int = DEFAULT_DEAD_LETTER_MAX_FILES_PER_SEGMENT,
     ) -> None:
-        self._storage = storage
+        self._vfs = vfs
         self._zone_id = zone_id
         self._interval = interval
         self._running = False
@@ -184,6 +183,21 @@ class TTLSweeper:
         from nexus.contracts.cache_store import NullCacheStore
 
         self._null_cache_type = NullCacheStore
+
+    def _ctx(self) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(user_id="system", groups=[], zone_id=self._zone_id, is_system=True)
+
+    async def _file_mtime(self, path: str) -> "datetime | None":
+        """Check metastore modified_at for a file."""
+        try:
+            meta = self._vfs.metadata.get(path)
+            if meta is not None:
+                return getattr(meta, "modified_at", None)
+        except Exception:
+            pass
+        return None
 
     async def start(self) -> None:
         """Start the background sweep loop and optional pub/sub listener."""
@@ -257,7 +271,9 @@ class TTLSweeper:
         """
         expired_count = 0
         try:
-            agent_ids = await self._storage.list_dir(AGENTS_ROOT, self._zone_id)
+            agent_ids = await self._vfs.sys_readdir(
+                AGENTS_ROOT, recursive=False, context=self._ctx()
+            )
         except Exception:
             logger.debug("Cannot list %s for sweep", AGENTS_ROOT)
             return 0
@@ -394,7 +410,9 @@ class TTLSweeper:
         expired = 0
 
         try:
-            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._vfs.sys_readdir(
+                agent_inbox, recursive=False, context=self._ctx()
+            )
         except Exception:
             return 0
 
@@ -408,11 +426,11 @@ class TTLSweeper:
 
             msg_path = f"{agent_inbox}/{filename}"
             try:
-                data = await self._storage.sys_read(msg_path, self._zone_id)
+                data = await self._vfs.sys_read(msg_path, context=self._ctx())
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.is_expired():
                     await dead_letter_message(
-                        self._storage,
+                        self._vfs,
                         msg_path,
                         agent_id,
                         self._zone_id,
@@ -473,7 +491,9 @@ class TTLSweeper:
         drained = 0
 
         try:
-            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._vfs.sys_readdir(
+                agent_inbox, recursive=False, context=self._ctx()
+            )
         except Exception:
             return 0
 
@@ -492,12 +512,12 @@ class TTLSweeper:
             claim_ts = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             claimed_path = f"{agent_inbox}/{filename}.drain_{claim_ts}_{run_id}"
             try:
-                await self._storage.rename(msg_path, claimed_path, self._zone_id)
+                await self._vfs.sys_rename(msg_path, claimed_path, context=self._ctx())
             except Exception:
                 continue  # processor or concurrent sweeper already moved it — skip
 
             try:
-                data = await self._storage.sys_read(claimed_path, self._zone_id)
+                data = await self._vfs.sys_read(claimed_path, context=self._ctx())
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.ttl_seconds is not None:
                     # Has TTL — restore and let _sweep_agent handle it
@@ -505,7 +525,7 @@ class TTLSweeper:
                     continue
                 # dead_letter_message renames claimed_path to its canonical DLQ path
                 await dead_letter_message(
-                    self._storage,
+                    self._vfs,
                     claimed_path,
                     agent_id,
                     self._zone_id,
@@ -570,7 +590,7 @@ class TTLSweeper:
         deleted = 0
 
         try:
-            filenames = await self._storage.list_dir(dir_path, self._zone_id)
+            filenames = await self._vfs.sys_readdir(dir_path, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -581,7 +601,7 @@ class TTLSweeper:
             if not await self._file_is_older_than(file_path, filename, cutoff):
                 continue
             try:
-                await self._storage.sys_unlink(file_path, self._zone_id)
+                await self._vfs.sys_unlink(file_path, context=self._ctx())
                 deleted += 1
             except Exception:
                 logger.debug("Failed to delete aged file %s", file_path)
@@ -623,7 +643,7 @@ class TTLSweeper:
         cutoff = datetime.now(UTC) - timedelta(hours=self._dead_letter_compact_min_age_hours)
 
         try:
-            filenames = await self._storage.list_dir(dl_path, self._zone_id)
+            filenames = await self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
         except Exception:
             return 0
 
@@ -638,7 +658,7 @@ class TTLSweeper:
                 continue
             if ".arch_" in fn:
                 continue
-            if await self._storage.access(f"{dl_path}/{fn}.archived", self._zone_id):
+            if await self._vfs.access(f"{dl_path}/{fn}.archived", context=self._ctx()):
                 continue  # already archived in a previous preserve-originals sweep
             msg_files.append(fn)
         msg_files.sort()
@@ -714,7 +734,7 @@ class TTLSweeper:
         archive_final = dead_letter_archive_segment(agent_id, day, f"{now_ts}_{run_id}")
 
         with contextlib.suppress(Exception):
-            await self._storage.mkdir(archive_dir, self._zone_id)
+            await self._vfs.mkdir(archive_dir, parents=True, exist_ok=True, context=self._ctx())
 
         if delete_originals:
             # Phase 0: atomically claim each candidate via rename so concurrent
@@ -725,7 +745,7 @@ class TTLSweeper:
                 orig = f"{dl_path}/{fn}"
                 claimed = f"{dl_path}/{fn}.arch_{claim_ts}_{run_id}"
                 try:
-                    await self._storage.rename(orig, claimed, self._zone_id)
+                    await self._vfs.sys_rename(orig, claimed, context=self._ctx())
                     claims.append((fn, orig, claimed))
                 except Exception:
                     pass  # concurrent sweeper or already deleted
@@ -746,10 +766,10 @@ class TTLSweeper:
         for fn, orig, read_path in claims:
             reason_path = f"{dl_path}/{fn}.reason.json"
             try:
-                data = await self._storage.sys_read(read_path, self._zone_id)
+                data = await self._vfs.sys_read(read_path, context=self._ctx())
                 reason_raw = b"{}"
-                if await self._storage.access(reason_path, self._zone_id):
-                    reason_raw = await self._storage.sys_read(reason_path, self._zone_id)
+                if await self._vfs.access(reason_path, context=self._ctx()):
+                    reason_raw = await self._vfs.sys_read(reason_path, context=self._ctx())
                 record = json.dumps(
                     {
                         "file": fn,
@@ -775,7 +795,7 @@ class TTLSweeper:
 
         # Phase 1: write .tmp
         try:
-            await self._storage.write(archive_tmp, archive_bytes, self._zone_id)
+            await self._vfs.write(archive_tmp, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to write archive tmp %s", archive_tmp)
             if delete_originals:
@@ -785,7 +805,7 @@ class TTLSweeper:
 
         # Phase 2: write final (archive is now durable)
         try:
-            await self._storage.write(archive_final, archive_bytes, self._zone_id)
+            await self._vfs.write(archive_final, archive_bytes, context=self._ctx())
         except Exception:
             logger.warning("Failed to commit archive %s", archive_final)
             if delete_originals:
@@ -805,7 +825,7 @@ class TTLSweeper:
             # re-archiving the same messages on every poll cycle.
             for fn, orig, _ in good_claims:
                 try:
-                    await self._storage.write(f"{orig}.archived", b"", self._zone_id)
+                    await self._vfs.write(f"{orig}.archived", b"", context=self._ctx())
                 except Exception:
                     logger.debug("Failed to write .archived marker for %s", fn)
 
@@ -838,14 +858,16 @@ class TTLSweeper:
         """
         stale_cutoff = datetime.now(UTC) - timedelta(minutes=_CLAIMED_STALE_MINUTES)
         try:
-            filenames = await self._storage.list_dir(dl_path, self._zone_id)
+            filenames = await self._vfs.sys_readdir(dl_path, recursive=False, context=self._ctx())
         except Exception:
             return
 
         # Pre-load archive listing for run_id lookup (best-effort)
         archive_files: set[str] = set()
         with contextlib.suppress(Exception):
-            archive_files = set(await self._storage.list_dir(archive_dir, self._zone_id))
+            archive_files = set(
+                await self._vfs.sys_readdir(archive_dir, recursive=False, context=self._ctx())
+            )
 
         for fn in filenames:
             if ".arch_" not in fn:
@@ -886,7 +908,9 @@ class TTLSweeper:
             (originals still intact). Delete ``.tmp``; next sweep re-compacts.
         """
         try:
-            filenames = await self._storage.list_dir(archive_dir, self._zone_id)
+            filenames = await self._vfs.sys_readdir(
+                archive_dir, recursive=False, context=self._ctx()
+            )
         except Exception:
             return
 
@@ -909,7 +933,9 @@ class TTLSweeper:
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
         try:
-            filenames = await self._storage.list_dir(archive_dir, self._zone_id)
+            filenames = await self._vfs.sys_readdir(
+                archive_dir, recursive=False, context=self._ctx()
+            )
         except Exception:
             return
 
@@ -933,7 +959,7 @@ class TTLSweeper:
         Fallback parses the creation timestamp from the second ``_``-delimited field
         rather than the day prefix, which encodes source-message date not archive age.
         """
-        mtime = await self._storage.file_mtime(path, self._zone_id)
+        mtime = await self._file_mtime(path)
         if mtime is not None:
             return mtime < cutoff
         # Fallback: parse creation timestamp from second _-delimited field
@@ -952,7 +978,7 @@ class TTLSweeper:
 
         **Never falls back to filename timestamps for retention decisions.**
         Filename timestamps are sender-controlled (derived from ``envelope.timestamp``)
-        and cannot be trusted for destructive operations. When ``file_mtime()``
+        and cannot be trusted for destructive operations. When ``_file_mtime()``
         returns ``None`` (e.g. metastore miss on ``/agents`` mounts), this method
         returns ``False`` — safe fail: no retention action is taken.
 
@@ -960,7 +986,7 @@ class TTLSweeper:
         be resolved. Operators should check VFS metadata configuration if retention
         stops working unexpectedly.
         """
-        mtime = await self._storage.file_mtime(path, self._zone_id)
+        mtime = await self._file_mtime(path)
         if mtime is None:
             logger.debug(
                 "file_mtime unavailable for %s — skipping retention check (safe fail)",
@@ -989,12 +1015,12 @@ class TTLSweeper:
         overwriting a concurrently restored copy.
         """
         try:
-            if not await self._storage.access(orig_path, self._zone_id):
-                await self._storage.rename(claimed_path, orig_path, self._zone_id)
+            if not await self._vfs.access(orig_path, context=self._ctx()):
+                await self._vfs.sys_rename(claimed_path, orig_path, context=self._ctx())
         except Exception:
             pass
 
     async def _maybe_unlink(self, path: str) -> None:
         """Delete a file, silently ignoring errors."""
         with contextlib.suppress(Exception):
-            await self._storage.sys_unlink(path, self._zone_id)
+            await self._vfs.sys_unlink(path, context=self._ctx())

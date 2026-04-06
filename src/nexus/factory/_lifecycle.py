@@ -248,7 +248,7 @@ async def _initialize_services(
     _ipc_services: dict[str, Any] = {}
     _ipc_svc_fn = getattr(nx, "service", None)
     if _ipc_svc_fn is not None:
-        for _ipc_name in ("ipc_storage_driver", "ipc_provisioner"):
+        for _ipc_name in ("ipc_provisioner",):
             _ipc_val = _ipc_svc_fn(_ipc_name)
             if _ipc_val is not None:
                 _ipc_services[_ipc_name] = _ipc_val

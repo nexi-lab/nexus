@@ -26,7 +26,6 @@ from nexus.contracts.deployment_profile import (
     BRICK_PERMISSIONS,
     BRICK_SANDBOX,
     BRICK_SEARCH,
-    BRICK_STORAGE,
     BRICK_WORKFLOWS,
     DeploymentProfile,
     resolve_enabled_bricks,
@@ -42,7 +41,6 @@ class TestDeploymentProfileEnum:
         assert DeploymentProfile.LITE == "lite"
         assert DeploymentProfile.FULL == "full"
         assert DeploymentProfile.CLOUD == "cloud"
-        assert DeploymentProfile.INNOVATION == "innovation"
         assert DeploymentProfile.REMOTE == "remote"
 
     def test_enum_from_string(self) -> None:
@@ -57,8 +55,8 @@ class TestDeploymentProfileEnum:
         for profile in DeploymentProfile:
             bricks = profile.default_bricks()
             assert isinstance(bricks, frozenset)
-            # REMOTE has zero local bricks (NFS-client model)
-            if profile != DeploymentProfile.REMOTE:
+            # SLIM and REMOTE have zero bricks (kernel-only / NFS-client model)
+            if profile not in (DeploymentProfile.SLIM, DeploymentProfile.REMOTE):
                 assert len(bricks) > 0
 
 
@@ -67,21 +65,18 @@ class TestDefaultBrickSets:
 
     def test_cluster_minimal_multinode(self) -> None:
         bricks = DeploymentProfile.CLUSTER.default_bricks()
-        assert BRICK_STORAGE in bricks
         assert BRICK_IPC in bricks
         assert BRICK_FEDERATION in bricks
         assert BRICK_EVENTLOG not in bricks  # No audit/events
-        assert len(bricks) == 3
+        assert len(bricks) == 2
 
     def test_embedded_minimal(self) -> None:
         bricks = DeploymentProfile.EMBEDDED.default_bricks()
-        assert BRICK_STORAGE in bricks
         assert BRICK_EVENTLOG in bricks
-        assert len(bricks) == 2
+        assert len(bricks) == 1
 
     def test_lite_includes_core_services(self) -> None:
         bricks = DeploymentProfile.LITE.default_bricks()
-        assert BRICK_STORAGE in bricks
         assert BRICK_EVENTLOG in bricks
         assert BRICK_NAMESPACE in bricks
         assert BRICK_PERMISSIONS in bricks
@@ -117,14 +112,13 @@ class TestDefaultBrickSets:
         assert embedded.issubset(lite)
 
     def test_hierarchy_chain(self) -> None:
-        """embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation."""
+        """embedded ⊂ lite ⊂ full ⊆ cloud."""
         embedded = DeploymentProfile.EMBEDDED.default_bricks()
         lite = DeploymentProfile.LITE.default_bricks()
         full = DeploymentProfile.FULL.default_bricks()
         cloud = DeploymentProfile.CLOUD.default_bricks()
-        innovation = DeploymentProfile.INNOVATION.default_bricks()
 
-        assert embedded < lite < full <= cloud <= innovation
+        assert embedded < lite < full <= cloud
 
     def test_is_brick_enabled(self) -> None:
         assert DeploymentProfile.FULL.is_brick_enabled(BRICK_SEARCH)
@@ -252,7 +246,7 @@ class TestNexusConfigProfile:
     def test_valid_profiles(self) -> None:
         from nexus.config import NexusConfig
 
-        for p in ["slim", "embedded", "lite", "full", "cloud", "innovation"]:
+        for p in ["slim", "embedded", "lite", "full", "cloud"]:
             cfg = NexusConfig(profile=p)
             assert cfg.profile == p
         # "remote" requires url
@@ -271,37 +265,3 @@ class TestNexusConfigProfile:
         cfg = NexusConfig(features={"semantic_search": True, "search": True})
         assert cfg.features.semantic_search is True
         assert cfg.features.search is True
-
-
-class TestInnovationProfile:
-    """Tests for the INNOVATION deployment profile (Issue #1667)."""
-
-    def test_innovation_enum_value(self) -> None:
-        assert DeploymentProfile("innovation") is DeploymentProfile.INNOVATION
-
-    def test_innovation_is_superset_of_cloud(self) -> None:
-        cloud = DeploymentProfile.CLOUD.default_bricks()
-        innovation = DeploymentProfile.INNOVATION.default_bricks()
-        assert cloud.issubset(innovation)
-
-    def test_innovation_includes_all_full_bricks(self) -> None:
-        full = DeploymentProfile.FULL.default_bricks()
-        innovation = DeploymentProfile.INNOVATION.default_bricks()
-        assert full.issubset(innovation)
-
-    def test_innovation_config_accepted(self) -> None:
-        from nexus.config import NexusConfig
-
-        cfg = NexusConfig(profile="innovation")
-        assert cfg.profile == "innovation"
-
-    def test_innovation_overrides_work(self) -> None:
-        result = resolve_enabled_bricks(
-            DeploymentProfile.INNOVATION,
-            overrides={BRICK_SEARCH: False},
-        )
-        assert BRICK_SEARCH not in result
-
-    def test_innovation_tuning_resolves(self) -> None:
-        tuning = DeploymentProfile.INNOVATION.tuning()
-        assert tuning is not None

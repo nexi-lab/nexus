@@ -10,16 +10,16 @@ Issue #3197: extracted to eliminate DRY violation between delivery.py and sweep.
 import json
 import logging
 from datetime import datetime
+from typing import Any
 
 from nexus.bricks.ipc.conventions import dead_letter_path, message_path_in_dead_letter
 from nexus.bricks.ipc.exceptions import DLQReason
-from nexus.bricks.ipc.protocols import VFSOperations
 
 logger = logging.getLogger(__name__)
 
 
 async def dead_letter_message(
-    storage: VFSOperations,
+    vfs: Any,
     msg_path: str,
     agent_id: str,
     zone_id: str,
@@ -40,6 +40,10 @@ async def dead_letter_message(
     A ``.reason.json`` sidecar is written alongside the dead-lettered
     message for programmatic triage.
     """
+    from nexus.contracts.types import OperationContext
+
+    ctx = OperationContext(user_id="system", groups=[], zone_id=zone_id, is_system=True)
+
     try:
         if msg_id is not None and timestamp is not None:
             dest = message_path_in_dead_letter(agent_id, msg_id, timestamp)
@@ -47,7 +51,7 @@ async def dead_letter_message(
             filename = msg_path.rsplit("/", 1)[-1]
             dest = f"{dead_letter_path(agent_id)}/{filename}"
 
-        await storage.rename(msg_path, dest, zone_id)
+        await vfs.sys_rename(msg_path, dest, context=ctx)
 
         # Write structured .reason.json sidecar (best-effort)
         try:
@@ -62,7 +66,7 @@ async def dead_letter_message(
                 indent=2,
             ).encode("utf-8")
             reason_path = dest + ".reason.json"
-            await storage.write(reason_path, reason_data, zone_id)
+            await vfs.write(reason_path, reason_data, context=ctx)
         except Exception:
             logger.debug(
                 "Failed to write .reason.json for dead-lettered message at %s",

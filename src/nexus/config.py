@@ -368,7 +368,6 @@ class NexusConfig(BaseModel):
             "lite",
             "full",
             "cloud",
-            "innovation",
             "remote",
             "auto",
         ]

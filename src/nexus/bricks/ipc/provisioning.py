@@ -21,7 +21,7 @@ from nexus.bricks.ipc.conventions import (
     agent_dir,
     inbox_path,
 )
-from nexus.bricks.ipc.protocols import NotifyPipeFactory, VFSOperations
+from nexus.bricks.ipc.protocols import NotifyPipeFactory
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -31,20 +31,25 @@ class AgentProvisioner:
     """Creates IPC directory structure for newly registered agents.
 
     Args:
-        storage: Storage driver for IPC directory and file creation.
+        vfs: NexusFS instance for IPC directory and file creation.
         zone_id: Zone ID for multi-zone isolation.
         notify_pipe_factory: Factory for creating DT_PIPE notification pipes. Optional.
     """
 
     def __init__(
         self,
-        storage: VFSOperations,
+        vfs: Any,
         zone_id: str = ROOT_ZONE_ID,
         notify_pipe_factory: NotifyPipeFactory | None = None,
     ) -> None:
-        self._storage = storage
+        self._vfs = vfs
         self._zone_id = zone_id
         self._notify_pipe_factory = notify_pipe_factory
+
+    def _ctx(self) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(user_id="system", groups=[], zone_id=self._zone_id, is_system=True)
 
     async def provision(
         self,
@@ -75,9 +80,11 @@ class AgentProvisioner:
         root = agent_dir(agent_id)
 
         # Create root and subdirectories
-        await self._storage.mkdir(root, self._zone_id)
+        await self._vfs.mkdir(root, parents=True, exist_ok=True, context=self._ctx())
         for subdir in AGENT_SUBDIRS:
-            await self._storage.mkdir(f"{root}/{subdir}", self._zone_id)
+            await self._vfs.mkdir(
+                f"{root}/{subdir}", parents=True, exist_ok=True, context=self._ctx()
+            )
 
         # Write AGENT.json card
         card = {
@@ -91,7 +98,7 @@ class AgentProvisioner:
         }
         card_data = json.dumps(card, indent=2).encode("utf-8")
         card_file = agent_card_path(agent_id)
-        await self._storage.write(card_file, card_data, self._zone_id)
+        await self._vfs.write(card_file, card_data, context=self._ctx())
 
         # Create DT_PIPE notification pipe (if factory provided)
         if self._notify_pipe_factory is not None:
@@ -133,7 +140,7 @@ class AgentProvisioner:
                 },
                 indent=2,
             ).encode("utf-8")
-            await self._storage.write(card_file, card_data, self._zone_id)
+            await self._vfs.write(card_file, card_data, context=self._ctx())
             logger.info("Deprovisioned IPC for agent %s", agent_id)
         except Exception:
             logger.warning(
@@ -151,4 +158,5 @@ class AgentProvisioner:
         Returns:
             True if the agent's inbox directory exists.
         """
-        return await self._storage.access(inbox_path(agent_id), self._zone_id)
+        result: bool = await self._vfs.access(inbox_path(agent_id), context=self._ctx())
+        return result

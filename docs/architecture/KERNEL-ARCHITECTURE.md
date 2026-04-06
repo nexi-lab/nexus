@@ -583,10 +583,9 @@ which bricks to enable and which drivers to inject.
 | **lite** | Pi, Jetson, mobile | redb (embedded) | Alpine |
 | **full** | Desktop, laptop | redb (embedded) | Ubuntu Desktop |
 | **cloud** | k8s, serverless | redb (Raft) | Ubuntu Server |
-| **innovation** | Experimental tier | redb (Raft) | Ubuntu + PPAs |
 | **remote** | Client-side proxy (zero local bricks) | RemoteMetastore | NFS client |
 
-Profile hierarchy: `slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud ⊆ innovation`.
+Profile hierarchy: `slim ⊂ cluster ⊂ embedded ⊂ lite ⊂ full ⊆ cloud`.
 REMOTE is orthogonal — stateless proxy, all operations via gRPC to server.
 
 Same kernel binary, different driver injection. See §1 `connect()`.

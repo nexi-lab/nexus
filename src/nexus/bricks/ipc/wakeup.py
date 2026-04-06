@@ -1,8 +1,7 @@
 """DT_PIPE wakeup signal implementations for IPC.
 
 Bridges the IPC brick's WakeupNotifier/WakeupListener/NotifyPipeFactory
-protocols to the kernel's PipeManager.  Similar to kernel_adapter.py
-bridging VFSOperations to NexusFS.
+protocols to the kernel's PipeManager.
 
 Issue #3197:
   - PipeWakeupNotifier: ms (Redis round-trip) -> us wakeup via DT_PIPE

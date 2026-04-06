@@ -4,8 +4,8 @@ Implements inbox/outbox conventions, message envelopes, agent discovery,
 delivery guarantees, and pluggable storage drivers on top of existing
 Nexus kernel primitives (VFS Router, EventBus, Agent Registry, ReBAC).
 
-IPC operations go through the kernel VFS (NexusFS) via KernelVFSAdapter,
-gaining PathRouter routing, ReBAC permission checks, MetastoreABC metadata
+IPC operations go through the kernel VFS (NexusFS) directly, gaining
+PathRouter routing, ReBAC permission checks, MetastoreABC metadata
 tracking, EventLog auditing, content caching, and Raft replication.
 
 Issues: #1411, #1243, #1178
@@ -15,7 +15,6 @@ Usage:
     from nexus.bricks.ipc import MessageEnvelope, MessageSender, MessageProcessor
     from nexus.bricks.ipc.conventions import inbox_path, outbox_path
     from nexus.bricks.ipc.discovery import AgentDiscovery
-    from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 """
 
 from nexus.bricks.ipc.conventions import (
@@ -40,7 +39,6 @@ from nexus.bricks.ipc.exceptions import (
     IPCError,
     MessageExpiredError,
 )
-from nexus.bricks.ipc.kernel_adapter import KernelVFSAdapter
 from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
@@ -75,8 +73,6 @@ __all__ = [
     "VerifyResult",
     # Discovery
     "AgentDiscovery",
-    # Kernel VFS Adapter
-    "KernelVFSAdapter",
     # Provisioning
     "AgentProvisioner",
     # Sweep

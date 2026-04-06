@@ -60,7 +60,7 @@ async def _boot_post_kernel_services(
     except Exception as exc:
         logger.warning("[BOOT:WIRED] NexusFSGateway unavailable: %s", exc)
 
-    # --- IPC KernelVFSAdapter: deferred to initialize() via _initialize_wired_ipc() ---
+    # --- IPC: deferred to initialize() via _initialize_wired_ipc() ---
 
     # --- ReBACService: Permission and access control operations ---
     rebac_service: Any = None
@@ -519,53 +519,58 @@ async def _boot_post_kernel_services(
 
 
 def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
-    """IPC adapter bind + mount — deferred from link() to initialize().
+    """IPC mount + provisioner creation — deferred from link() to initialize().
 
     Performs I/O (mkdir) so it cannot run in the pure-memory link() phase.
+    NexusFS is passed directly to IPC components (no adapter layer).
     """
-    _ipc_adapter = services.get("ipc_storage_driver")
-    if _ipc_adapter is not None and hasattr(_ipc_adapter, "bind"):
+    _ipc_zone_id = services.get("ipc_zone_id")
+    if _ipc_zone_id is None:
+        return
+
+    try:
+        # Mount a LocalConnector at /agents for IPC file storage
+        from pathlib import Path
+
+        from nexus.backends.storage.local_connector import LocalConnectorBackend
+
+        _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
+        _ipc_data_dir.mkdir(parents=True, exist_ok=True)
+        _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
+        nx._driver_coordinator.mount("/agents", _ipc_connector)
+
+        # Ensure the /agents metadata entry has target_zone_id set
         try:
-            _ipc_adapter.bind(nx)
+            from nexus.core.metadata import DT_DIR, DT_MOUNT
 
-            # Mount a LocalConnector at /agents for IPC file storage
-            from pathlib import Path
+            _zone_id = getattr(nx, "_zone_id", None) or "root"
+            existing = nx.metadata.get("/agents")
+            if existing is not None and not existing.target_zone_id:
+                from dataclasses import replace as _replace
 
-            from nexus.backends.storage.local_connector import LocalConnectorBackend
+                updated = _replace(
+                    existing,
+                    entry_type=DT_DIR | DT_MOUNT,
+                    target_zone_id=_zone_id,
+                )
+                nx.metadata.put(updated)
+                logger.debug("[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _zone_id)
+        except Exception as e:
+            logger.debug("[BOOT:WIRED] Could not set /agents target_zone_id: %s", e)
 
-            _ipc_data_dir = Path(getattr(nx, "_data_dir", "data")) / "ipc"
-            _ipc_data_dir.mkdir(parents=True, exist_ok=True)
-            _ipc_connector = LocalConnectorBackend(local_path=_ipc_data_dir)
-            # DriverLifecycleCoordinator is kernel-owned (always available).
-            # Registers hook_spec + broadcasts mount event via KernelDispatch.
-            nx._driver_coordinator.mount("/agents", _ipc_connector)
+        # Create AgentProvisioner with NexusFS directly (no adapter)
+        from nexus.bricks.ipc.provisioning import AgentProvisioner
 
-            # Ensure the /agents metadata entry has target_zone_id set so
-            # cross-zone path resolution doesn't fail on it. mkdir creates a
-            # DT_DIR entry but doesn't set target_zone_id for the mount.
-            try:
-                from nexus.core.metadata import DT_DIR, DT_MOUNT
+        services["ipc_provisioner"] = AgentProvisioner(
+            vfs=nx,
+            zone_id=_ipc_zone_id,
+        )
 
-                _zone_id = getattr(nx, "_zone_id", None) or "root"
-                existing = nx.metadata.get("/agents")
-                if existing is not None and not existing.target_zone_id:
-                    from dataclasses import replace as _replace
-
-                    updated = _replace(
-                        existing,
-                        entry_type=DT_DIR | DT_MOUNT,
-                        target_zone_id=_zone_id,
-                    )
-                    nx.metadata.put(updated)
-                    logger.debug("[BOOT:WIRED] Set target_zone_id=%s on /agents mount", _zone_id)
-            except Exception as e:
-                logger.debug("[BOOT:WIRED] Could not set /agents target_zone_id: %s", e)
-
-            logger.debug(
-                "[BOOT:WIRED] IPC KernelVFSAdapter bound + LocalConnector mounted at /agents"
-            )
-        except Exception as exc:
-            logger.warning("[BOOT:WIRED] IPC adapter bind failed: %s", exc)
+        logger.debug(
+            "[BOOT:WIRED] IPC LocalConnector mounted at /agents + AgentProvisioner created"
+        )
+    except Exception as exc:
+        logger.warning("[BOOT:WIRED] IPC mount failed: %s", exc)
 
 
 # Backward compatibility alias

@@ -38,7 +38,6 @@ from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.protocols import (
     EventPublisher,
     EventSubscriber,
-    VFSOperations,
     WakeupListener,
     WakeupNotifier,
 )
@@ -74,7 +73,7 @@ PROC_CLAIM_STALE_MINUTES: int = 1440  # 24 hours
 
 
 class MessageSender:
-    """Sends messages to agent inboxes via VFSOperations.
+    """Sends messages to agent inboxes via NexusFS.
 
     Writes messages to the recipient's inbox directory, copies to the
     sender's outbox, and fires notifications (best-effort):
@@ -83,7 +82,7 @@ class MessageSender:
       3. TTL schedule event via CacheStore pub/sub (for event-driven sweeping)
 
     Args:
-        storage: Storage driver for IPC read/write operations.
+        vfs: NexusFS instance for IPC read/write operations.
         event_publisher: EventBus publisher for cross-node notifications. Optional.
         zone_id: Zone ID for multi-tenant isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
@@ -95,7 +94,7 @@ class MessageSender:
 
     def __init__(
         self,
-        storage: VFSOperations,
+        vfs: Any,
         event_publisher: EventPublisher | None = None,
         *,
         zone_id: str,
@@ -105,7 +104,7 @@ class MessageSender:
         wakeup_notifiers: list[WakeupNotifier] | None = None,
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
-        self._storage = storage
+        self._vfs = vfs
         self._publisher = event_publisher
         self._zone_id = zone_id
         self._max_inbox_size = max_inbox_size
@@ -113,6 +112,11 @@ class MessageSender:
         self._signer = signer
         self._wakeup_notifiers = wakeup_notifiers or []
         self._cache_store = cache_store
+
+    def _ctx(self) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(user_id="system", groups=[], zone_id=self._zone_id, is_system=True)
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -153,25 +157,27 @@ class MessageSender:
     async def _send_to_inbox(self, envelope: MessageEnvelope, data: bytes) -> str:
         """Write message to inbox, copy to outbox, and notify via DT_PIPE + EventBus."""
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._storage.access(recipient_inbox, self._zone_id):
+        if not await self._vfs.access(recipient_inbox, context=self._ctx()):
             raise InboxNotFoundError(envelope.recipient)
 
-        # Check backpressure (count_dir is more efficient than list_dir)
-        inbox_count = await self._storage.count_dir(recipient_inbox, self._zone_id)
+        # Check backpressure
+        inbox_count = len(
+            await self._vfs.sys_readdir(recipient_inbox, recursive=False, context=self._ctx())
+        )
         if inbox_count >= self._max_inbox_size:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._storage.write(msg_path, data, self._zone_id)
+        await self._vfs.write(msg_path, data, context=self._ctx())
 
         # Outbox copy (best-effort)
         outbox_dir = outbox_path(envelope.sender)
         try:
-            if await self._storage.access(outbox_dir, self._zone_id):
+            if await self._vfs.access(outbox_dir, context=self._ctx()):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._storage.write(outbox_msg_path, data, self._zone_id)
+                await self._vfs.write(outbox_msg_path, data, context=self._ctx())
         except Exception as exc:
             logger.warning(
                 "Failed to write outbox copy",
@@ -181,7 +187,7 @@ class MessageSender:
                     "recipient": envelope.recipient,
                     "zone_id": self._zone_id,
                     "outbox_dir": outbox_dir,
-                    "storage_backend": type(self._storage).__name__,
+                    "storage_backend": type(self._vfs).__name__,
                     "error_type": type(exc).__name__,
                     "error_detail": str(exc),
                 },
@@ -313,7 +319,7 @@ class MessageProcessor:
     _MAX_LISTENER_RETRIES consecutive failures before stopping).
 
     Args:
-        storage: Storage driver for IPC read/write/rename.
+        vfs: NexusFS instance for IPC read/write/rename.
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
         zone_id: Zone ID for multi-tenant isolation.
@@ -329,7 +335,7 @@ class MessageProcessor:
 
     def __init__(
         self,
-        storage: VFSOperations,
+        vfs: Any,
         agent_id: str,
         handler: MessageHandler,
         *,
@@ -343,7 +349,7 @@ class MessageProcessor:
         event_subscriber: EventSubscriber | None = None,
         wakeup_listener: WakeupListener | None = None,
     ) -> None:
-        self._storage = storage
+        self._vfs = vfs
         self._agent_id = agent_id
         self._handler = handler
         self._zone_id = zone_id
@@ -357,6 +363,11 @@ class MessageProcessor:
         self._signing_mode = signing_mode
         self._max_retries = max_retries
         self._retry_delays = retry_delays
+
+    def _ctx(self) -> Any:
+        from nexus.contracts.types import OperationContext
+
+        return OperationContext(user_id="system", groups=[], zone_id=self._zone_id, is_system=True)
 
     def _dedup_key(self, msg_id: str) -> str:
         """Zone-scoped cache key for message dedup."""
@@ -506,7 +517,9 @@ class MessageProcessor:
         """
         agent_inbox = inbox_path(self._agent_id)
         try:
-            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._vfs.sys_readdir(
+                agent_inbox, recursive=False, context=self._ctx()
+            )
         except Exception:
             logger.warning(
                 "Failed to list inbox for agent %s",
@@ -538,9 +551,9 @@ class MessageProcessor:
             if claim_dt >= stale_cutoff:
                 continue  # recently claimed — active handler, do not disturb
             orig_path = f"{agent_inbox}/{orig_fn}"
-            if not await self._storage.access(orig_path, self._zone_id):
+            if not await self._vfs.access(orig_path, context=self._ctx()):
                 try:
-                    await self._storage.rename(proc_path, orig_path, self._zone_id)
+                    await self._vfs.sys_rename(proc_path, orig_path, context=self._ctx())
                     logger.info("Recovered stale .proc claim: %s → %s", fn, orig_fn)
                 except Exception:
                     pass
@@ -564,7 +577,7 @@ class MessageProcessor:
         """
         # Read and parse envelope
         try:
-            data = await self._storage.sys_read(msg_path, self._zone_id)
+            data = await self._vfs.sys_read(msg_path, context=self._ctx())
             envelope = MessageEnvelope.from_bytes(data)
         except FileNotFoundError:
             # File was already moved/processed by another processor (race condition).
@@ -596,7 +609,7 @@ class MessageProcessor:
                 dl_path = message_path_in_dead_letter(
                     self._agent_id, envelope.id, envelope.timestamp
                 )
-                await self._storage.rename(msg_path, dl_path, self._zone_id)
+                await self._vfs.sys_rename(msg_path, dl_path, context=self._ctx())
             except Exception as e:
                 logger.debug(
                     "Best-effort cleanup of duplicate message %s failed: %s", envelope.id, e
@@ -633,7 +646,7 @@ class MessageProcessor:
         proc_id = uuid.uuid4().hex[:4]
         proc_path = f"{msg_path}.proc_{claim_ts}_{proc_id}"
         try:
-            await self._storage.rename(msg_path, proc_path, self._zone_id)
+            await self._vfs.sys_rename(msg_path, proc_path, context=self._ctx())
             msg_path = proc_path  # use claimed path for all subsequent ops
         except FileNotFoundError:
             # Drain or concurrent processor already claimed/moved it — skip.
@@ -703,7 +716,7 @@ class MessageProcessor:
         # Success: move to processed
         try:
             dest = message_path_in_processed(self._agent_id, envelope.id, envelope.timestamp)
-            await self._storage.rename(msg_path, dest, self._zone_id)
+            await self._vfs.sys_rename(msg_path, dest, context=self._ctx())
         except Exception:
             logger.warning(
                 "Failed to move processed message %s (handler already succeeded)",
@@ -791,7 +804,7 @@ class MessageProcessor:
         for consistent behavior with TTLSweeper (Issue #3197, DRY).
         """
         await dead_letter_message(
-            self._storage,
+            self._vfs,
             msg_path,
             self._agent_id,
             self._zone_id,

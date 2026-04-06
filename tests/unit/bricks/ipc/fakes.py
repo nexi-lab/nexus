@@ -1,6 +1,6 @@
 """In-memory fakes for IPC brick unit testing.
 
-These satisfy the Protocol interfaces defined in ``nexus.bricks.ipc.protocols``
+These provide NexusFS-compatible interfaces for the IPC brick
 without any real I/O, enabling fast, isolated unit tests.
 """
 
@@ -9,18 +9,40 @@ from datetime import UTC, datetime
 from typing import Any
 
 
-class InMemoryStorageDriver:
-    """In-memory IPC storage driver for testing.
+class _MetadataStub:
+    """Stub metadata accessor for InMemoryStorageDriver.metadata property."""
 
-    Satisfies the ``VFSOperations`` protocol via structural subtyping.
-    """
+    def __init__(self, driver: "InMemoryStorageDriver") -> None:
+        self._driver = driver
+
+    def get(self, path: str) -> Any:
+        """Return a mock with modified_at from any zone."""
+        for (p, _z), mtime in self._driver._mtimes.items():
+            if p == path:
+                return type("Meta", (), {"modified_at": mtime})()
+        return None
+
+
+class InMemoryStorageDriver:
+    """In-memory NexusFS-compatible storage driver for testing."""
 
     def __init__(self) -> None:
         self._files: dict[tuple[str, str], bytes] = {}
         self._dirs: set[tuple[str, str]] = set()
         self._mtimes: dict[tuple[str, str], datetime] = {}
+        self._metadata_stub = _MetadataStub(self)
 
-    async def sys_read(self, path: str, zone_id: str) -> bytes:
+    def _zone_id(self, context: Any) -> str:
+        return getattr(context, "zone_id", "root") if context is not None else "root"
+
+    @property
+    def metadata(self) -> Any:
+        return self._metadata_stub
+
+    async def sys_read(
+        self, path: str, zone_id_compat: str | None = None, *, context: Any = None
+    ) -> bytes:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         key = (path, zone_id)
         if key not in self._files:
             raise FileNotFoundError(f"No such file: {path}")
@@ -29,14 +51,25 @@ class InMemoryStorageDriver:
     # Alias for backward compatibility
     read = sys_read
 
-    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+    async def write(
+        self, path: str, data: bytes, zone_id_compat: str | None = None, *, context: Any = None
+    ) -> None:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         self._files[(path, zone_id)] = data
         self._mtimes[(path, zone_id)] = datetime.now(UTC)
 
     # Alias for backward compatibility
     sys_write = write
 
-    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+    async def sys_readdir(
+        self,
+        path: str,
+        zone_id_compat: str | None = None,
+        *,
+        recursive: bool = True,
+        context: Any = None,
+    ) -> list[str]:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         if (path, zone_id) not in self._dirs:
             raise FileNotFoundError(f"No such directory: {path}")
         prefix = path.rstrip("/") + "/"
@@ -45,23 +78,32 @@ class InMemoryStorageDriver:
         for (fpath, fzone), _ in self._files.items():
             if fzone == zone_id and fpath.startswith(prefix):
                 rest = fpath[len(prefix) :]
-                if "/" not in rest:  # direct child only
+                if not recursive:
+                    if "/" not in rest:  # direct child only
+                        results.append(rest)
+                else:
                     results.append(rest)
         # Check subdirectories
         for dpath, dzone in self._dirs:
             if dzone == zone_id and dpath.startswith(prefix):
                 rest = dpath[len(prefix) :]
-                if "/" not in rest and rest:  # direct child only
-                    results.append(rest)
+                if not recursive:
+                    if "/" not in rest and rest:  # direct child only
+                        results.append(rest)
+                else:
+                    if rest:
+                        results.append(rest)
         return sorted(set(results))
 
-    async def count_dir(self, path: str, zone_id: str) -> int:
-        if (path, zone_id) not in self._dirs:
-            raise FileNotFoundError(f"No such directory: {path}")
-        entries = await self.list_dir(path, zone_id)
-        return len(entries)
+    # Alias for backward compatibility
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+        ctx = type("Ctx", (), {"zone_id": zone_id})()
+        return await self.sys_readdir(path, recursive=False, context=ctx)
 
-    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+    async def sys_rename(
+        self, src: str, dst: str, zone_id_compat: str | None = None, *, context: Any = None
+    ) -> None:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         key = (src, zone_id)
         if key not in self._files:
             raise FileNotFoundError(f"No such file: {src}")
@@ -73,29 +115,47 @@ class InMemoryStorageDriver:
         self._mtimes.pop(key, None)
         self._mtimes[(dst, zone_id)] = datetime.now(UTC)
 
-    async def mkdir(self, path: str, zone_id: str) -> None:
+    # Alias for backward compatibility
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        ctx = type("Ctx", (), {"zone_id": zone_id})()
+        await self.sys_rename(src, dst, context=ctx)
+
+    async def mkdir(
+        self,
+        path: str,
+        zone_id_compat: str | None = None,
+        *,
+        parents: bool = True,
+        exist_ok: bool = True,
+        context: Any = None,
+    ) -> None:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         self._dirs.add((path, zone_id))
         # Also create all parent directories
-        parts = path.strip("/").split("/")
-        for i in range(1, len(parts)):
-            parent = "/" + "/".join(parts[:i])
-            self._dirs.add((parent, zone_id))
+        if parents:
+            parts = path.strip("/").split("/")
+            for i in range(1, len(parts)):
+                parent = "/" + "/".join(parts[:i])
+                self._dirs.add((parent, zone_id))
 
-    async def access(self, path: str, zone_id: str) -> bool:
+    async def access(
+        self, path: str, zone_id_compat: str | None = None, *, context: Any = None
+    ) -> bool:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 
     # Alias for backward compatibility
     exists = access
 
-    async def sys_unlink(self, path: str, zone_id: str) -> None:
+    async def sys_unlink(
+        self, path: str, zone_id_compat: str | None = None, *, context: Any = None
+    ) -> None:
+        zone_id = zone_id_compat if zone_id_compat is not None else self._zone_id(context)
         key = (path, zone_id)
         if key not in self._files:
             raise FileNotFoundError(f"No such file: {path}")
         del self._files[key]
         self._mtimes.pop(key, None)
-
-    async def file_mtime(self, path: str, zone_id: str) -> datetime | None:
-        return self._mtimes.get((path, zone_id))
 
     def set_mtime(self, path: str, zone_id: str, mtime: datetime) -> None:
         """Test helper: override the mtime of an existing file."""

@@ -2,7 +2,7 @@
 
 Tests cover:
 - LLMTransport: in-memory blob operations
-- OpenAICompatibleBackend: thin CASAddressingEngine subclass (no write_content override)
+- CASOpenAIBackend: thin CASAddressingEngine subclass (no write_content override)
   - write_content(): inherited from CASAddressingEngine (pure CAS, no LLM call)
   - generate_streaming(): pure LLM compute, yields tokens
   - persist_session(): CAS persist request + response + session envelope
@@ -115,18 +115,18 @@ class TestLLMTransport:
 
 
 # =============================================================================
-# OpenAICompatibleBackend tests
+# CASOpenAIBackend tests
 # =============================================================================
 
 
 def _make_backend(mock_client: MagicMock | None = None) -> tuple[Any, MagicMock]:
     """Create backend with mocked OpenAI client."""
-    from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+    from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
     with patch("nexus.backends.compute.openai_compatible._build_openai_client") as mock_build:
         client = mock_client or MagicMock()
         mock_build.return_value = client
-        backend = OpenAICompatibleBackend(
+        backend = CASOpenAIBackend(
             base_url="https://api.test.com/v1",
             api_key="sk-test",
             default_model="gpt-4o",
@@ -167,7 +167,7 @@ def _mock_streaming_chunks(
     return chunks
 
 
-class TestOpenAICompatibleBackend:
+class TestCASOpenAIBackend:
     """Test OpenAI-compatible backend with mocked API."""
 
     def test_name(self) -> None:
@@ -366,7 +366,7 @@ class TestLLMStreamingService:
 
     @pytest.fixture()
     def mock_backend(self) -> MagicMock:
-        """Create a mock OpenAICompatibleBackend."""
+        """Create a mock CASOpenAIBackend."""
         backend = MagicMock()
 
         def _generate_streaming(request: dict) -> list[tuple[str, dict | None]]:

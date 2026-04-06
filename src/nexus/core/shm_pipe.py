@@ -1,20 +1,20 @@
-"""Cross-process DT_PIPE via shared memory (mmap) — SharedRingBuffer (#1680).
+"""Cross-process DT_PIPE via shared memory (mmap) — SharedMemoryPipeBackend (#1680).
 
 Implements ``PipeBackend`` protocol using ``SharedRingBufferCore`` (Rust, mmap)
 for cross-process SPSC communication.  OS pipes provide async wakeup via
 ``loop.add_reader(fd, callback)``.
 
-For in-process use, prefer ``RingBuffer`` from ``core/pipe.py`` (zero syscall).
+For in-process use, prefer ``MemoryPipeBackend`` from ``core/pipe.py`` (zero syscall).
 
 Usage::
 
     # Parent (nexusd)
-    buf, shm_path, data_rd_fd, space_rd_fd = SharedRingBuffer.create(65536)
+    buf, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(65536)
     # pass shm_path + fds to child via env/args
     await buf.write(b"hello")
 
     # Child (worker)
-    buf = SharedRingBuffer.attach(shm_path, data_wr_fd, space_wr_fd)
+    buf = SharedMemoryPipeBackend.attach(shm_path, data_wr_fd, space_wr_fd)
     msg = await buf.read()
 """
 
@@ -37,12 +37,12 @@ from nexus._rust_compat import SharedRingBufferCore as _SharedRingBufferCore
 logger = logging.getLogger(__name__)
 
 
-class SharedRingBuffer:
+class SharedMemoryPipeBackend:
     """Cross-process SPSC ring buffer. Implements PipeBackend protocol.
 
     Uses mmap'd shared memory for zero-copy data plane and OS pipes for
     async notification.  Each push/pop incurs ~1-2μs syscall for the
-    pipe notification (vs ~0.5μs for in-process RingBuffer).
+    pipe notification (vs ~0.5μs for in-process MemoryPipeBackend).
     """
 
     __slots__ = (

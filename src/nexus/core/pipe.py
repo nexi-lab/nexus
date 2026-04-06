@@ -87,8 +87,8 @@ class PipeBackend(Protocol):
     add per-pipe asyncio.Lock for MPMC safety).
 
     Implementations:
-        RingBuffer              — in-process SPSC ring buffer (Rust, ~0.5μs)
-        SharedRingBuffer (shm_pipe.py) — cross-process mmap'd ring buffer (~1–5μs)
+        MemoryPipeBackend              — in-process SPSC ring buffer (Rust, ~0.5μs)
+        SharedMemoryPipeBackend (shm_pipe.py) — cross-process mmap'd ring buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
@@ -107,11 +107,11 @@ class PipeBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# RingBuffer — kfifo equivalent (kernel-internal, no VFS)
+# MemoryPipeBackend — kfifo equivalent (kernel-internal, no VFS)
 # ---------------------------------------------------------------------------
 
 
-class RingBuffer:
+class MemoryPipeBackend:
     """SPSC message-oriented ring buffer for kernel IPC.
 
     Analogous to Linux kfifo: a kernel-internal FIFO with no filesystem

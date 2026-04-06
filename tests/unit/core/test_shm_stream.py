@@ -1,4 +1,4 @@
-"""Unit tests for SharedStreamBuffer — cross-process append-only log via mmap (#1680).
+"""Unit tests for SharedMemoryStreamBackend — cross-process append-only log via mmap (#1680).
 
 Same-process tests (create + attach in same process, valid because MAP_SHARED).
 """
@@ -11,7 +11,7 @@ pytest.importorskip("nexus_kernel")
 
 from nexus_kernel import SharedStreamBufferCore
 
-from nexus.core.shm_stream import SharedStreamBuffer
+from nexus.core.shm_stream import SharedMemoryStreamBackend
 from nexus.core.stream import StreamBackend, StreamEmptyError
 
 # ---------------------------------------------------------------------------
@@ -140,8 +140,8 @@ class TestSharedStreamBufferCore:
 # ---------------------------------------------------------------------------
 
 
-class TestSharedStreamBuffer:
-    """Tests for the Python SharedStreamBuffer wrapper."""
+class TestSharedMemoryStreamBackend:
+    """Tests for the Python SharedMemoryStreamBackend wrapper."""
 
     def _create_pair(self, capacity=1024):
         core_w, shm_path, dfd = SharedStreamBufferCore.create(capacity)
@@ -149,12 +149,12 @@ class TestSharedStreamBuffer:
         import os
 
         os.close(dfd)
-        writer = SharedStreamBuffer(core_w)
-        reader = SharedStreamBuffer(core_r)
+        writer = SharedMemoryStreamBackend(core_w)
+        reader = SharedMemoryStreamBackend(core_r)
         return writer, reader, shm_path
 
     def test_protocol_conformance(self):
-        """SharedStreamBuffer satisfies StreamBackend protocol."""
+        """SharedMemoryStreamBackend satisfies StreamBackend protocol."""
         writer, reader, _ = self._create_pair()
         assert isinstance(writer, StreamBackend)
         assert isinstance(reader, StreamBackend)

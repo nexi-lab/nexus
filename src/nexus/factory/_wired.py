@@ -484,12 +484,12 @@ async def _boot_post_kernel_services(
         _llm_backend: Any = None
         # Find an OpenAI-compatible LLM backend at common mount paths.
         # Root mount (PathLocalBackend) may cover /llm via LPM — check class type.
-        from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+        from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
         for _llm_prefix in ("/llm", "/root/llm"):
             with contextlib.suppress(Exception):
                 _candidate = nx.router.route(_llm_prefix).backend
-                if isinstance(_candidate, OpenAICompatibleBackend):
+                if isinstance(_candidate, CASOpenAIBackend):
                     _llm_backend = _candidate
                     break
 
@@ -563,8 +563,8 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
             nx._driver_coordinator.mount("/agents", _ipc_connector)
 
             # Ensure the /agents metadata entry has target_zone_id set so
-            # ZonePathResolver doesn't fail on it. mkdir creates a DT_DIR
-            # entry but doesn't set target_zone_id for the mount.
+            # cross-zone path resolution doesn't fail on it. mkdir creates a
+            # DT_DIR entry but doesn't set target_zone_id for the mount.
             try:
                 from nexus.core.metadata import DT_DIR, DT_MOUNT
 

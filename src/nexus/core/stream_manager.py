@@ -7,11 +7,11 @@ with per-stream locking for concurrent writers.
     core/stream_manager.py = mkstream (VFS named stream with per-stream lock)
 
 Concurrency model:
-  - StreamBuffer (kstream) is single-writer internally (linear append).
+  - MemoryStreamBackend (kstream) is single-writer internally (linear append).
   - StreamManager (mkstream) adds per-stream asyncio.Lock for concurrent
     writers. Reads are lock-free (non-destructive, offset-based).
 
-See: core/stream.py for StreamBuffer, federation-memo.md §7j
+See: core/stream.py for MemoryStreamBackend, federation-memo.md §7j
 """
 
 import asyncio
@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.stream import (
+    MemoryStreamBackend,
     StreamBackend,
-    StreamBuffer,
     StreamClosedError,
     StreamEmptyError,
     StreamError,
@@ -31,7 +31,6 @@ from nexus.core.stream import (
 
 if TYPE_CHECKING:
     from nexus.core.metastore import MetastoreABC
-    from nexus.remote.rpc_transport import RPCTransportPool
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +51,7 @@ class StreamManager:
 
     Analogous to PipeManager but for append-only streams. Each stream has
     a FileMetadata inode in MetastoreABC (entry_type=DT_STREAM) and a
-    StreamBuffer in process memory.
+    MemoryStreamBackend in process memory.
 
     Key difference from PipeManager: reads are non-destructive and lock-free.
     Multiple readers maintain independent byte offsets (fan-out). Writers
@@ -63,11 +62,9 @@ class StreamManager:
         self,
         metastore: "MetastoreABC",
         self_address: str | None = None,
-        transport_pool: "RPCTransportPool | None" = None,
     ) -> None:
         self._metastore = metastore
         self._self_address = self_address
-        self._transport_pool = transport_pool
         self._buffers: dict[str, StreamBackend] = {}
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -83,10 +80,10 @@ class StreamManager:
         capacity: int = 65_536,
         owner_id: str | None = None,
         zone_id: str = ROOT_ZONE_ID,
-    ) -> StreamBuffer:
+    ) -> MemoryStreamBackend:
         """Create a new named stream at the given VFS path.
 
-        Creates a DT_STREAM inode in MetastoreABC and a StreamBuffer in memory.
+        Creates a DT_STREAM inode in MetastoreABC and a MemoryStreamBackend in memory.
 
         Args:
             path: VFS path (e.g., "/nexus/streams/my-stream"). Must start with "/".
@@ -94,7 +91,7 @@ class StreamManager:
             owner_id: Owner for ReBAC permission checks.
 
         Returns:
-            The created StreamBuffer.
+            The created MemoryStreamBackend.
 
         Raises:
             StreamError: Stream already exists at this path.
@@ -121,7 +118,7 @@ class StreamManager:
 
         # Construct buffer BEFORE persisting metadata — if construction fails
         # (ABI mismatch, Rust error), no orphaned DT_STREAM inode is left behind.
-        buf = StreamBuffer(capacity=capacity)
+        buf = MemoryStreamBackend(capacity=capacity)
 
         # Create DT_STREAM inode in MetastoreABC.
         # Embed origin address so remote nodes can proxy stream I/O.
@@ -147,17 +144,16 @@ class StreamManager:
 
         If the buffer is already in memory, returns it. If a DT_STREAM inode
         exists but the buffer was lost (process restart), creates a new
-        buffer for the existing inode.
+        local MemoryStreamBackend for the existing inode.
 
-        For remote streams (origin != self_address), installs a
-        RemoteStreamBackend that proxies via persistent gRPC channel.
+        Remote stream resolution is handled at mount time by DLC — not here.
 
         Args:
             path: VFS path of the stream.
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The StreamBackend for this stream (StreamBuffer or RemoteStreamBackend).
+            The StreamBackend for this stream.
 
         Raises:
             StreamNotFoundError: No stream inode at this path.
@@ -173,24 +169,6 @@ class StreamManager:
         if metadata is None or metadata.entry_type != DT_STREAM:
             raise StreamNotFoundError(f"no stream at: {path}")
 
-        # Detect remote stream — install RemoteStreamBackend for fast-path
-        if self._transport_pool is not None and metadata.backend_name:
-            from nexus.contracts.backend_address import BackendAddress
-
-            addr = BackendAddress.parse(metadata.backend_name)
-            if addr.has_origin and self._self_address not in addr.origins:
-                from nexus.core.remote_stream import RemoteStreamBackend
-
-                transport = self._transport_pool.get(addr.origins[0])
-                backend: StreamBackend = RemoteStreamBackend(
-                    origin=addr.origins[0],
-                    path=path,
-                    transport=transport,
-                )
-                self._buffers[path] = backend
-                logger.debug("stream opened (remote): %s → %s", path, addr.origins[0])
-                return backend
-
         # Local: recreate buffer (restart recovery).
         # Pre-check Rust IPC — same guard as create() to produce typed error.
         from nexus._rust_compat import StreamBufferCore as _SBC
@@ -200,7 +178,7 @@ class StreamManager:
                 f"Cannot reopen stream at {path}: nexus-kernel Rust extension required. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
-        buf = StreamBuffer(capacity=capacity)
+        buf = MemoryStreamBackend(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("stream opened (recovered): %s", path)
@@ -216,7 +194,7 @@ class StreamManager:
     ) -> StreamBackend:
         """Create a named stream backed by an external StreamBackend.
 
-        Unlike ``create()`` which always uses an in-process StreamBuffer,
+        Unlike ``create()`` which always uses an in-process MemoryStreamBackend,
         this method accepts any StreamBackend implementation (e.g., a future
         SharedMemoryStreamBackend for inter-process IPC).
 
@@ -262,7 +240,7 @@ class StreamManager:
     def signal_close(self, path: str) -> None:
         """Signal a stream closed without removing from registry.
 
-        Closes the StreamBuffer (wakes blocked writers) but keeps it in
+        Closes the MemoryStreamBackend (wakes blocked writers) but keeps it in
         ``_buffers`` so readers can still read existing data at their offsets.
 
         Raises:
@@ -391,7 +369,7 @@ class StreamManager:
         is preserved — other readers at their own offsets are unaffected.
 
         This is a kernel-level read primitive. CAS persistence is the
-        responsibility of the storage layer (e.g. OpenAICompatibleBackend
+        responsibility of the storage layer (e.g. CASOpenAIBackend
         calls ``collect_all()`` then ``backend.write_content()``).
 
         Args:

@@ -78,7 +78,7 @@ class PipeWakeupListener:
     arrive before the processor reads, all 10 signals are drained in
     one shot, resulting in a single process_inbox() call.
 
-    Thread-safe: RingBuffer.write_nowait uses call_soon_threadsafe
+    Thread-safe: MemoryPipeBackend.write_nowait uses call_soon_threadsafe
     for cross-thread wakeup (RPC handler threads -> event loop thread).
 
     Args:

@@ -67,7 +67,7 @@ def _build_openai_client(base_url: str, api_key: str, timeout: float) -> Any:
     category="compute",
     requires=["openai"],
 )
-class OpenAICompatibleBackend(CASAddressingEngine):
+class CASOpenAIBackend(CASAddressingEngine):
     """CAS addressing + OpenAI-compatible LLM transport.
 
     Thin subclass for connector registration and OpenAI client holder.
@@ -81,7 +81,7 @@ class OpenAICompatibleBackend(CASAddressingEngine):
 
     Usage::
 
-        backend = OpenAICompatibleBackend(
+        backend = CASOpenAIBackend(
             base_url="https://api.sudorouter.ai", api_key="sk-...",
         )
         # Standard CAS write (inherited, no LLM call):

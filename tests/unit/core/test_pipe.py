@@ -1,6 +1,6 @@
 """Unit tests for DT_PIPE kernel IPC primitive.
 
-Tests RingBuffer (kfifo equivalent, kernel tier) and PipeManager
+Tests MemoryPipeBackend (kfifo equivalent, kernel tier) and PipeManager
 (mkfifo equivalent, system service tier).
 See: src/nexus/core/pipe.py, src/nexus/core/pipe_manager.py,
      KERNEL-ARCHITECTURE.md §6.
@@ -13,32 +13,32 @@ import pytest
 
 from nexus.contracts.metadata import DT_PIPE, DT_REG, FileMetadata
 from nexus.core.pipe import (
+    MemoryPipeBackend,
     PipeClosedError,
     PipeEmptyError,
     PipeError,
     PipeExistsError,
     PipeFullError,
     PipeNotFoundError,
-    RingBuffer,
 )
 from nexus.core.pipe_manager import PipeManager
 
 # ======================================================================
-# RingBuffer — basic operations
+# MemoryPipeBackend — basic operations
 # ======================================================================
 
 
-class TestRingBufferBasic:
+class TestMemoryPipeBackendBasic:
     @pytest.mark.asyncio
     async def test_write_read_roundtrip(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         await buf.write(b"hello")
         result = await buf.read()
         assert result == b"hello"
 
     @pytest.mark.asyncio
     async def test_fifo_ordering(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         await buf.write(b"first")
         await buf.write(b"second")
         await buf.write(b"third")
@@ -48,7 +48,7 @@ class TestRingBufferBasic:
 
     @pytest.mark.asyncio
     async def test_capacity_tracking(self) -> None:
-        buf = RingBuffer(capacity=100)
+        buf = MemoryPipeBackend(capacity=100)
         await buf.write(b"x" * 40)
         assert buf.stats["size"] == 40
         assert buf.stats["msg_count"] == 1
@@ -63,7 +63,7 @@ class TestRingBufferBasic:
 
     @pytest.mark.asyncio
     async def test_peek_returns_next_without_consuming(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         assert buf.peek() is None
 
         await buf.write(b"msg1")
@@ -73,7 +73,7 @@ class TestRingBufferBasic:
 
     @pytest.mark.asyncio
     async def test_peek_all(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         await buf.write(b"a")
         await buf.write(b"b")
         await buf.write(b"c")
@@ -82,7 +82,7 @@ class TestRingBufferBasic:
 
     @pytest.mark.asyncio
     async def test_stats(self) -> None:
-        buf = RingBuffer(capacity=256)
+        buf = MemoryPipeBackend(capacity=256)
         stats = buf.stats
         assert stats["size"] == 0
         assert stats["capacity"] == 256
@@ -91,52 +91,52 @@ class TestRingBufferBasic:
 
     @pytest.mark.asyncio
     async def test_empty_write_is_noop(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         result = await buf.write(b"")
         assert result == 0
         assert buf.stats["msg_count"] == 0
 
     def test_invalid_capacity(self) -> None:
         with pytest.raises(ValueError, match="capacity must be > 0"):
-            RingBuffer(capacity=0)
+            MemoryPipeBackend(capacity=0)
         with pytest.raises(ValueError, match="capacity must be > 0"):
-            RingBuffer(capacity=-1)
+            MemoryPipeBackend(capacity=-1)
 
 
 # ======================================================================
-# RingBuffer — capacity limits
+# MemoryPipeBackend — capacity limits
 # ======================================================================
 
 
-class TestRingBufferCapacity:
+class TestMemoryPipeBackendCapacity:
     @pytest.mark.asyncio
     async def test_oversized_message_rejected(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         with pytest.raises(ValueError, match="exceeds buffer capacity"):
             await buf.write(b"x" * 11)
 
     @pytest.mark.asyncio
     async def test_exact_capacity_message(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         await buf.write(b"x" * 10)
         assert buf.stats["size"] == 10
 
     @pytest.mark.asyncio
     async def test_non_blocking_full_raises(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         await buf.write(b"x" * 10)
         with pytest.raises(PipeFullError, match="buffer full"):
             await buf.write(b"y", blocking=False)
 
     @pytest.mark.asyncio
     async def test_non_blocking_empty_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         with pytest.raises(PipeEmptyError, match="buffer empty"):
             await buf.read(blocking=False)
 
     @pytest.mark.asyncio
     async def test_space_freed_after_read(self) -> None:
-        buf = RingBuffer(capacity=20)
+        buf = MemoryPipeBackend(capacity=20)
         await buf.write(b"x" * 15)
         await buf.read()
         # Now have 20 bytes free
@@ -145,14 +145,14 @@ class TestRingBufferCapacity:
 
 
 # ======================================================================
-# RingBuffer — blocking semantics
+# MemoryPipeBackend — blocking semantics
 # ======================================================================
 
 
-class TestRingBufferBlocking:
+class TestMemoryPipeBackendBlocking:
     @pytest.mark.asyncio
     async def test_reader_blocks_until_write(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         result = None
 
         async def reader() -> None:
@@ -168,7 +168,7 @@ class TestRingBufferBlocking:
 
     @pytest.mark.asyncio
     async def test_writer_blocks_until_read(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         await buf.write(b"x" * 10)  # fill buffer
 
         written = False
@@ -187,7 +187,7 @@ class TestRingBufferBlocking:
 
     @pytest.mark.asyncio
     async def test_multiple_messages_flow(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         received: list[bytes] = []
 
         async def producer() -> None:
@@ -210,21 +210,21 @@ class TestRingBufferBlocking:
 
 
 # ======================================================================
-# RingBuffer — close semantics
+# MemoryPipeBackend — close semantics
 # ======================================================================
 
 
-class TestRingBufferClose:
+class TestMemoryPipeBackendClose:
     @pytest.mark.asyncio
     async def test_write_after_close_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.close()
         with pytest.raises(PipeClosedError, match="write to closed pipe"):
             await buf.write(b"data")
 
     @pytest.mark.asyncio
     async def test_read_drains_remaining_then_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         await buf.write(b"last-msg")
         buf.close()
 
@@ -238,7 +238,7 @@ class TestRingBufferClose:
 
     @pytest.mark.asyncio
     async def test_close_wakes_blocked_reader(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
 
         async def blocked_reader() -> None:
             with pytest.raises(PipeClosedError):
@@ -252,7 +252,7 @@ class TestRingBufferClose:
 
     @pytest.mark.asyncio
     async def test_close_wakes_blocked_writer(self) -> None:
-        buf = RingBuffer(capacity=5)
+        buf = MemoryPipeBackend(capacity=5)
         await buf.write(b"xxxxx")  # fill
 
         async def blocked_writer() -> None:
@@ -267,7 +267,7 @@ class TestRingBufferClose:
 
     @pytest.mark.asyncio
     async def test_closed_property(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         assert buf.closed is False
         buf.close()
         assert buf.closed is True
@@ -315,7 +315,7 @@ class TestPipeManager:
             "/nexus/pipes/test", capacity=4096, owner_id="agent-1", zone_id="test-zone"
         )
 
-        assert isinstance(buf, RingBuffer)
+        assert isinstance(buf, MemoryPipeBackend)
         assert buf.stats["capacity"] == 4096
 
         # Inode created in metastore
@@ -363,7 +363,7 @@ class TestPipeManager:
         mgr._buffers.clear()
 
         buf = mgr.open("/nexus/pipes/recover", capacity=2048)
-        assert isinstance(buf, RingBuffer)
+        assert isinstance(buf, MemoryPipeBackend)
         assert buf.stats["capacity"] == 2048
 
     def test_open_nonexistent_raises(self) -> None:
@@ -489,59 +489,59 @@ class TestPipeManager:
 
 
 # ======================================================================
-# RingBuffer — write_nowait / read_nowait
+# MemoryPipeBackend — write_nowait / read_nowait
 # ======================================================================
 
 
-class TestRingBufferSyncOps:
+class TestMemoryPipeBackendSyncOps:
     def test_write_nowait_basic(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         written = buf.write_nowait(b"hello")
         assert written == 5
         assert buf.stats["size"] == 5
         assert buf.stats["msg_count"] == 1
 
     def test_write_nowait_empty_is_noop(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         assert buf.write_nowait(b"") == 0
         assert buf.stats["msg_count"] == 0
 
     def test_write_nowait_full_raises(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         buf.write_nowait(b"x" * 10)
         with pytest.raises(PipeFullError, match="buffer full"):
             buf.write_nowait(b"y")
 
     def test_write_nowait_oversized_raises(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         with pytest.raises(ValueError, match="exceeds buffer capacity"):
             buf.write_nowait(b"x" * 11)
 
     def test_write_nowait_closed_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.close()
         with pytest.raises(PipeClosedError, match="write to closed pipe"):
             buf.write_nowait(b"data")
 
     def test_read_nowait_basic(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.write_nowait(b"msg")
         assert buf.read_nowait() == b"msg"
         assert buf.stats["size"] == 0
 
     def test_read_nowait_empty_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         with pytest.raises(PipeEmptyError, match="buffer empty"):
             buf.read_nowait()
 
     def test_read_nowait_closed_empty_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.close()
         with pytest.raises(PipeClosedError, match="read from closed empty pipe"):
             buf.read_nowait()
 
     def test_read_nowait_drains_before_closed_error(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.write_nowait(b"last")
         buf.close()
         assert buf.read_nowait() == b"last"
@@ -551,7 +551,7 @@ class TestRingBufferSyncOps:
     @pytest.mark.asyncio
     async def test_write_nowait_wakes_async_reader(self) -> None:
         """Sync write should wake a blocked async reader."""
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         result = None
 
         async def reader() -> None:
@@ -567,7 +567,7 @@ class TestRingBufferSyncOps:
 
     @pytest.mark.asyncio
     async def test_wait_writable(self) -> None:
-        buf = RingBuffer(capacity=10)
+        buf = MemoryPipeBackend(capacity=10)
         buf.write_nowait(b"x" * 10)
 
         unblocked = False
@@ -586,7 +586,7 @@ class TestRingBufferSyncOps:
 
     @pytest.mark.asyncio
     async def test_wait_readable(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
 
         unblocked = False
 
@@ -604,13 +604,13 @@ class TestRingBufferSyncOps:
 
 
 # ======================================================================
-# RingBuffer — u64 fast path (L2)
+# MemoryPipeBackend — u64 fast path (L2)
 # ======================================================================
 
 
-class TestRingBufferU64:
+class TestMemoryPipeBackendU64:
     def test_write_u64_nowait_read_u64_nowait(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.write_u64_nowait(42)
         buf.write_u64_nowait(2**64 - 1)
         buf.write_u64_nowait(0)
@@ -619,7 +619,7 @@ class TestRingBufferU64:
         assert buf.read_u64_nowait() == 0
 
     def test_u64_size_tracking(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.write_u64_nowait(99)
         assert buf.stats["size"] == 8
         assert buf.stats["msg_count"] == 1
@@ -628,14 +628,14 @@ class TestRingBufferU64:
 
     @pytest.mark.asyncio
     async def test_async_write_u64_read_u64(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         await buf.write_u64(100)
         result = await buf.read_u64()
         assert result == 100
 
     @pytest.mark.asyncio
     async def test_u64_reader_blocks_until_write(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         result = None
 
         async def reader() -> None:
@@ -650,7 +650,7 @@ class TestRingBufferU64:
         assert result == 777
 
     def test_u64_closed_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.close()
         with pytest.raises(PipeClosedError):
             buf.write_u64_nowait(42)
@@ -658,12 +658,12 @@ class TestRingBufferU64:
             buf.read_u64_nowait()
 
     def test_u64_empty_raises(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         with pytest.raises(PipeEmptyError):
             buf.read_u64_nowait()
 
     def test_interleaved_bytes_and_u64(self) -> None:
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         buf.write_nowait(b"hello")
         buf.write_u64_nowait(12345)
         buf.write_nowait(b"world")
@@ -837,7 +837,7 @@ class TestSysSetAttrUpsert:
         path = "/nexus/pipes/via-setattr"
         capacity = 4096
         buf = mgr.create(path, capacity=capacity, owner_id="agent-1")
-        assert isinstance(buf, RingBuffer)
+        assert isinstance(buf, MemoryPipeBackend)
         assert buf.stats["capacity"] == capacity
         meta = ms.get(path)
         assert meta is not None
@@ -933,7 +933,7 @@ class TestPipeManagerRemoteDetection:
         assert "/nexus/pipes/remote" in mgr._buffers
 
     def test_open_local_pipe_installs_ringbuffer(self) -> None:
-        """open() on a local pipe should install RingBuffer (not RemotePipeBackend)."""
+        """open() on a local pipe should install MemoryPipeBackend (not RemotePipeBackend)."""
         mgr, ms, _ = self._make_manager_with_pool()
         meta = FileMetadata(
             path="/nexus/pipes/local",
@@ -945,10 +945,10 @@ class TestPipeManagerRemoteDetection:
         ms.put(meta)
 
         backend = mgr.open("/nexus/pipes/local")
-        assert isinstance(backend, RingBuffer)
+        assert isinstance(backend, MemoryPipeBackend)
 
     def test_open_plain_pipe_installs_ringbuffer(self) -> None:
-        """open() on a plain pipe (no origin) should install RingBuffer."""
+        """open() on a plain pipe (no origin) should install MemoryPipeBackend."""
         mgr, ms, _ = self._make_manager_with_pool()
         meta = FileMetadata(
             path="/nexus/pipes/plain",
@@ -960,10 +960,10 @@ class TestPipeManagerRemoteDetection:
         ms.put(meta)
 
         backend = mgr.open("/nexus/pipes/plain")
-        assert isinstance(backend, RingBuffer)
+        assert isinstance(backend, MemoryPipeBackend)
 
     def test_open_without_pool_always_ringbuffer(self) -> None:
-        """Without transport_pool, open() always creates RingBuffer even for remote."""
+        """Without transport_pool, open() always creates MemoryPipeBackend even for remote."""
         ms = MockMetastore()
         mgr = PipeManager(ms, self_address=SELF_ADDR)  # no transport_pool
         meta = FileMetadata(
@@ -976,7 +976,7 @@ class TestPipeManagerRemoteDetection:
         ms.put(meta)
 
         backend = mgr.open("/nexus/pipes/remote-no-pool")
-        assert isinstance(backend, RingBuffer)
+        assert isinstance(backend, MemoryPipeBackend)
 
 
 class TestPipeManagerSelfAddress:
@@ -1175,7 +1175,7 @@ class TestPipeManagerCreateFromBackend:
     def test_create_from_backend_happy_path(self) -> None:
         """create_from_backend registers the given backend and creates inode."""
         mgr, ms = self._make_manager()
-        custom_buf = RingBuffer(capacity=2048)
+        custom_buf = MemoryPipeBackend(capacity=2048)
 
         result = mgr.create_from_backend("/nexus/pipes/custom", custom_buf, owner_id="agent-x")
 
@@ -1190,7 +1190,7 @@ class TestPipeManagerCreateFromBackend:
     async def test_create_from_backend_read_write(self) -> None:
         """Data flows through a custom-backend pipe via PipeManager."""
         mgr, _ = self._make_manager()
-        buf = RingBuffer(capacity=1024)
+        buf = MemoryPipeBackend(capacity=1024)
         mgr.create_from_backend("/nexus/pipes/rw", buf)
 
         mgr.pipe_write_nowait("/nexus/pipes/rw", b"hello")
@@ -1198,9 +1198,9 @@ class TestPipeManagerCreateFromBackend:
 
     def test_create_from_backend_duplicate_buffer_raises(self) -> None:
         mgr, _ = self._make_manager()
-        mgr.create_from_backend("/nexus/pipes/dup", RingBuffer(capacity=1024))
+        mgr.create_from_backend("/nexus/pipes/dup", MemoryPipeBackend(capacity=1024))
         with pytest.raises(PipeExistsError, match="pipe already exists"):
-            mgr.create_from_backend("/nexus/pipes/dup", RingBuffer(capacity=1024))
+            mgr.create_from_backend("/nexus/pipes/dup", MemoryPipeBackend(capacity=1024))
 
     def test_create_from_backend_existing_path_raises(self) -> None:
         mgr, ms = self._make_manager()
@@ -1214,12 +1214,12 @@ class TestPipeManagerCreateFromBackend:
             )
         )
         with pytest.raises(PipeExistsError, match="path already exists"):
-            mgr.create_from_backend("/nexus/pipes/taken", RingBuffer(capacity=1024))
+            mgr.create_from_backend("/nexus/pipes/taken", MemoryPipeBackend(capacity=1024))
 
     def test_destroy_custom_backend(self) -> None:
         """destroy() works on custom-backend pipes."""
         mgr, ms = self._make_manager()
-        mgr.create_from_backend("/nexus/pipes/cust-destroy", RingBuffer(capacity=1024))
+        mgr.create_from_backend("/nexus/pipes/cust-destroy", MemoryPipeBackend(capacity=1024))
 
         mgr.destroy("/nexus/pipes/cust-destroy")
         assert "/nexus/pipes/cust-destroy" not in mgr._buffers

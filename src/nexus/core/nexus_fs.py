@@ -218,7 +218,6 @@ class NexusFS(  # type: ignore[misc]
         self._stream_manager = StreamManager(
             metadata_store,
             self_address=_ipc_self_addr,
-            transport_pool=self._transport_pool,
         )
 
         from nexus.core.file_watcher import FileWatcher
@@ -946,8 +945,17 @@ class NexusFS(  # type: ignore[misc]
         if entry_type == DT_PIPE:
             from nexus.core.pipe import PipeError
 
+            io_profile = attrs.get("io_profile", "memory")
             try:
-                self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
+                if io_profile == "shared_memory":
+                    from nexus.core.shm_pipe import SharedMemoryPipeBackend
+
+                    pipe_backend, _shm_path, _data_rd_fd, _space_rd_fd = (
+                        SharedMemoryPipeBackend.create(capacity)
+                    )
+                    self._pipe_manager.create_from_backend(path, pipe_backend, owner_id=owner_id)
+                else:
+                    self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
             except PipeError as exc:
                 raise BackendError(str(exc)) from exc
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
@@ -955,8 +963,10 @@ class NexusFS(  # type: ignore[misc]
         if entry_type == DT_STREAM:
             from nexus.core.stream import StreamError
 
+            io_profile = attrs.get("io_profile", "memory")
+
             # Check if mount provides a custom stream backend factory
-            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory StreamBuffer.
+            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory MemoryStreamBackend.
             _mount_entry = self.router.get_mount_entry_for_path(path)
             _factory = _mount_entry.stream_backend_factory if _mount_entry else None
 
@@ -964,6 +974,15 @@ class NexusFS(  # type: ignore[misc]
                 if _factory is not None:
                     backend = _factory(path, capacity)
                     self._stream_manager.create_from_backend(path, backend, owner_id=owner_id)
+                elif io_profile == "shared_memory":
+                    from nexus.core.shm_stream import SharedMemoryStreamBackend
+
+                    stream_backend, _shm_path, _data_rd_fd = SharedMemoryStreamBackend.create(
+                        capacity
+                    )
+                    self._stream_manager.create_from_backend(
+                        path, stream_backend, owner_id=owner_id
+                    )
                 else:
                     self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
             except StreamError as exc:
@@ -3522,7 +3541,7 @@ class NexusFS(  # type: ignore[misc]
         ``sys_read(stream_path, offset=N)``.
 
         If no LLM backend is mounted yet, the service is lazily created on
-        first call by probing the router for an ``OpenAICompatibleBackend``.
+        first call by probing the router for a ``CASOpenAIBackend``.
 
         Args:
             path: VFS path for the DT_STREAM (e.g.

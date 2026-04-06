@@ -1,4 +1,4 @@
-"""Unit tests for SharedRingBuffer — cross-process SPSC ring buffer via mmap (#1680).
+"""Unit tests for SharedMemoryPipeBackend — cross-process SPSC ring buffer via mmap (#1680).
 
 Same-process tests (create + attach in same process, valid because MAP_SHARED).
 """
@@ -14,7 +14,7 @@ pytest.importorskip("nexus_kernel")
 from nexus_kernel import SharedRingBufferCore
 
 from nexus.core.pipe import PipeBackend, PipeEmptyError, PipeFullError
-from nexus.core.shm_pipe import SharedRingBuffer
+from nexus.core.shm_pipe import SharedMemoryPipeBackend
 
 # ---------------------------------------------------------------------------
 # Rust core tests (bypass Python wrapper)
@@ -160,8 +160,8 @@ class TestSharedRingBufferCore:
 # ---------------------------------------------------------------------------
 
 
-class TestSharedRingBuffer:
-    """Tests for the Python SharedRingBuffer wrapper."""
+class TestSharedMemoryPipeBackend:
+    """Tests for the Python SharedMemoryPipeBackend wrapper."""
 
     def _create_pair(self, capacity=1024):
         """Create a writer + reader pair in the same process."""
@@ -172,12 +172,12 @@ class TestSharedRingBuffer:
         os.close(dfd)
         os.close(sfd)
         # Wrap in Python class without fd-based notification (same process)
-        writer = SharedRingBuffer(core_w)
-        reader = SharedRingBuffer(core_r)
+        writer = SharedMemoryPipeBackend(core_w)
+        reader = SharedMemoryPipeBackend(core_r)
         return writer, reader, shm_path
 
     def test_protocol_conformance(self):
-        """SharedRingBuffer satisfies PipeBackend protocol."""
+        """SharedMemoryPipeBackend satisfies PipeBackend protocol."""
         writer, reader, _ = self._create_pair()
         assert isinstance(writer, PipeBackend)
         assert isinstance(reader, PipeBackend)

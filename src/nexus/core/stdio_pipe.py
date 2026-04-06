@@ -9,8 +9,8 @@ Newline-framed: each ``write()`` appends ``\\n``, each ``read()``
 returns one line (matching JSON-lines ACP/IPC protocol).
 
     stdio_pipe.py = PipeBackend adapter for OS pipes
-    pipe.py       = RingBuffer (kfifo, in-process, ~0.5μs)
-    shm_pipe.py   = SharedRingBuffer (mmap, cross-process, ~1-5μs)
+    pipe.py       = MemoryPipeBackend (kfifo, in-process, ~0.5μs)
+    shm_pipe.py   = SharedMemoryPipeBackend (mmap, cross-process, ~1-5μs)
 
 See: core/pipe.py for PipeBackend protocol.
 """

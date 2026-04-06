@@ -113,11 +113,11 @@ system prompt is computed once and reused across all turns and sessions.
 ## Integration Point
 
 `MessageBoundaryStrategy` implements `ChunkingStrategy` (Protocol) and
-is injected into `OpenAICompatibleBackend` via CAS Feature DI:
+is injected into `CASOpenAIBackend` via CAS Feature DI:
 
 ```python
 cdc = MessageBoundaryStrategy(backend=backend)
-backend = OpenAICompatibleBackend(
+backend = CASOpenAIBackend(
     base_url="...", api_key="...",
     # CASBackend Feature DI:
     cdc_engine=cdc,

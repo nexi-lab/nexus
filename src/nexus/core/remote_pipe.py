@@ -27,7 +27,7 @@ class RemotePipeBackend:
     """PipeBackend that proxies read/write to a remote node via gRPC.
 
     Implements the PipeBackend protocol (core/pipe.py) so PipeManager
-    treats it identically to a local RingBuffer.
+    treats it identically to a local MemoryPipeBackend.
     """
 
     __slots__ = ("_origin", "_path", "_transport", "_closed")

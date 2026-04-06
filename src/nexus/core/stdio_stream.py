@@ -6,8 +6,8 @@ reads lines and appends to an internal buffer, enabling offset-based
 multi-reader access.
 
     stdio_stream.py = StreamBackend adapter for OS pipes
-    stream.py       = StreamBuffer (Rust linear buffer, ~0.5μs)
-    shm_stream.py   = SharedStreamBuffer (mmap, cross-process, ~1-5μs)
+    stream.py       = MemoryStreamBackend (Rust linear buffer, ~0.5μs)
+    shm_stream.py   = SharedMemoryStreamBackend (mmap, cross-process, ~1-5μs)
 
 See: core/stream.py for StreamBackend protocol.
 """

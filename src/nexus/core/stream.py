@@ -5,13 +5,13 @@ primitive from KERNEL-ARCHITECTURE.md §4.2:
 
     | Primitive  | Linux Analogue   | Nexus                | Read      |
     |------------|------------------|----------------------|-----------|
-    | DT_PIPE    | kfifo ring buffer| RingBuffer (pipe.py) | Destructive|
-    | DT_STREAM  | append-only log  | StreamBuffer         | Non-destructive|
+    | DT_PIPE    | kfifo ring buffer| MemoryPipeBackend (pipe.py)   | Destructive|
+    | DT_STREAM  | append-only log  | MemoryStreamBackend          | Non-destructive|
 
 Multiple readers maintain independent cursors (fan-out). Primary use case:
 LLM streaming I/O — realtime first consumer + replay for later consumers.
 
-    stream.py           = kernel-internal buffer (kfifo equivalent)
+    stream.py           = kernel-internal buffer (MemoryStreamBackend)
     core/stream_manager.py = VFS named stream (fs/pipe.c equivalent)
 
 Storage model (KERNEL-ARCHITECTURE.md):
@@ -74,8 +74,8 @@ class StreamBackend(Protocol):
     this interface so StreamManager is transport-agnostic.
 
     Implementations:
-        StreamBuffer            — in-process append-only buffer (Rust, ~0.5μs)
-        SharedStreamBuffer (shm_stream.py) — cross-process mmap'd linear buffer (~1–5μs)
+        MemoryStreamBackend            — in-process append-only buffer (Rust, ~0.5μs)
+        SharedMemoryStreamBackend (shm_stream.py) — cross-process mmap'd linear buffer (~1–5μs)
     """
 
     async def write(self, data: bytes, *, blocking: bool = True) -> int: ...
@@ -99,14 +99,14 @@ class StreamBackend(Protocol):
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — append-only log (kernel-internal, no VFS)
+# MemoryStreamBackend — append-only log (kernel-internal, no VFS)
 # ---------------------------------------------------------------------------
 
 
-class StreamBuffer:
+class MemoryStreamBackend:
     """Append-only log buffer with offset-based non-destructive reads.
 
-    Unlike RingBuffer (SPSC destructive FIFO), StreamBuffer is a linear
+    Unlike MemoryPipeBackend (SPSC destructive FIFO), MemoryStreamBackend is a linear
     append-only buffer where reads never consume data. Multiple readers
     maintain independent byte offsets (cursors).
 

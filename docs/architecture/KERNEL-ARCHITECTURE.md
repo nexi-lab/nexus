@@ -376,7 +376,7 @@ with them indirectly through syscalls. See §2.2 for per-syscall usage.
 | **VFSLockManager** | `core.lock_fast` | per-inode `i_rwsem` | Per-path RW lock with hierarchy-aware conflict detection. Details in §4.1 |
 | **LockManager (advisory)** | `lib.distributed_lock` | `flock(2)` | Advisory locks via `sys_lock`/`sys_unlock` (acquire+extend / release+force). Zone-agnostic (receives canonical paths from router). Local: VFSSemaphore. Federation: RaftLockManager. Details in §4.4 |
 | **Dispatch (Rust Kernel + DispatchMixin)** | `core.nexus_fs_dispatch` + `rust/nexus_kernel/src/dispatch.rs` | `security_hook_heads` + `fsnotify` | Three-phase VFS dispatch (§2.4) + driver lifecycle hooks (MOUNT/UNMOUNT). Rust Kernel owns PathTrie + HookRegistry + ObserverRegistry. DispatchMixin provides Python-side registration API. Empty = zero overhead |
-| **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (RingBuffer). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
+| **PipeManager + StreamManager** | `core.pipe_manager` + `core.stream_manager` | `pipe(2)` + append-only log | VFS named IPC. DT_PIPE: destructive FIFO (MemoryPipeBackend). DT_STREAM: non-destructive offset reads (pluggable StreamBackend). Details in §4.2 |
 | **FileWatcher + FileEvent** | `core.file_watcher` + `core.file_events` | `inotify(7)` + `fsnotify_event` | File change notification + immutable mutation records. Local OBSERVE waiters + optional RemoteWatchProtocol. Details in §4.3 |
 | **ServiceRegistry** | `core.service_registry` | `init/main.c` + `module.c` | Kernel-owned symbol table + lifecycle orchestration (enlist/swap/shutdown). PersistentService + duck-typed hook_spec() |
 | **DriverLifecycleCoordinator** | `core.driver_lifecycle_coordinator` | `register_filesystem` + `kern_mount` | Driver mount lifecycle: routing table + VFS hook registration + mount/unmount KernelDispatch notification |
@@ -400,17 +400,17 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 
 | Primitive  | Linux Analogue    | Buffer         | Read          |
 |------------|-------------------|----------------|---------------|
-| DT_PIPE    | `kfifo` ring      | RingBuffer     | Destructive   |
-| DT_STREAM  | append-only log   | StreamBuffer   | Non-destructive (offset-based) |
+| DT_PIPE    | `kfifo` ring      | MemoryPipeBackend     | Destructive   |
+| DT_STREAM  | append-only log   | MemoryStreamBackend   | Non-destructive (offset-based) |
 
-**DT_PIPE (PipeManager + RingBuffer):**
+**DT_PIPE (PipeManager + MemoryPipeBackend):**
 
 - **PipeManager (mkpipe)** — VFS named pipe lifecycle (created via `sys_setattr`
   upsert, read/write via `sys_read`/`sys_write`, destroyed via `sys_unlink`),
   per-pipe lock for MPMC safety. Reads are destructive (consumed on read).
-- **RingBuffer (kpipe)** — Lock-free **SPSC** kernel primitive (`kfifo` analogue),
+- **MemoryPipeBackend (kpipe)** — Lock-free **SPSC** kernel primitive (`kfifo` analogue),
   no internal synchronization. PipeManager wraps with per-pipe `asyncio.Lock`
-  for **MPMC** safety. Direct RingBuffer access is kernel-internal only.
+  for **MPMC** safety. Direct MemoryPipeBackend access is kernel-internal only.
 
 **DT_STREAM (StreamManager + pluggable StreamBackend):**
 
@@ -420,7 +420,7 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
 - **StreamBackend protocol** — pluggable backing store for DT_STREAM data.
   Mount configuration determines which backend is used when creating a stream
   under that mount (like Linux filesystem type determines pipe implementation).
-  Implementations: ``StreamBuffer`` (in-memory, default),
+  Implementations: ``MemoryStreamBackend`` (in-memory, default),
   ``RemoteStreamBackend`` (federation gRPC proxy),
   ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once),
   ``SHMStreamBackend`` (mmap shared memory, cross-process, ~1-5μs),
@@ -601,8 +601,8 @@ FileEvent). Not kernel-owned, but bottom-layer infrastructure.
 
 | Tier | Nexus | Built on | Topology |
 |------|-------|----------|----------|
-| **Kernel** | DT_PIPE (§4.2) | RingBuffer — destructive FIFO | Local or distributed (transparent) |
-| **Kernel** | DT_STREAM (§4.2) | StreamBuffer — append-only log | Local or distributed (transparent) |
+| **Kernel** | DT_PIPE (§4.2) | MemoryPipeBackend — destructive FIFO | Local or distributed (transparent) |
+| **Kernel** | DT_STREAM (§4.2) | MemoryStreamBackend — append-only log | Local or distributed (transparent) |
 | **System** | gRPC + IPC | PipeManager/StreamManager, consensus proto | Point-to-point |
 | **User Space** | EventBus | CacheStoreABC pub/sub + FileEvent (§4.3) | Fan-out (1:N) |
 

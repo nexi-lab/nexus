@@ -1,12 +1,12 @@
 """Tests for DT_STREAM — append-only log with offset-based non-destructive reads.
 
-Tests StreamBuffer (kstream) and StreamManager (mkstream).
+Tests MemoryStreamBackend (kstream) and StreamManager (mkstream).
 """
 
 import pytest
 
 from nexus.core.stream import (
-    StreamBuffer,
+    MemoryStreamBackend,
     StreamClosedError,
     StreamEmptyError,
     StreamFullError,
@@ -25,22 +25,22 @@ pytestmark = pytest.mark.skipif(
 )
 
 # ---------------------------------------------------------------------------
-# StreamBuffer (kstream) — basic operations
+# MemoryStreamBackend (kstream) — basic operations
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferBasic:
+class TestMemoryStreamBackendBasic:
     """Write / read_at roundtrip, ordering, stats."""
 
     def test_write_read_roundtrip(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         offset = buf.write_nowait(b"hello")
         data, next_offset = buf.read_at(offset)
         assert data == b"hello"
         assert next_offset > offset
 
     def test_write_multiple_read_in_order(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         o1 = buf.write_nowait(b"aaa")
         o2 = buf.write_nowait(b"bbb")
         o3 = buf.write_nowait(b"ccc")
@@ -55,7 +55,7 @@ class TestStreamBufferBasic:
         assert o1 < o2 < o3
 
     def test_stats(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"x")
         buf.write_nowait(b"y")
         s = buf.stats
@@ -63,7 +63,7 @@ class TestStreamBufferBasic:
         assert s["push_count"] == 2
 
     def test_tail_monotonic(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         assert buf.tail == 0
         buf.write_nowait(b"data")
         t1 = buf.tail
@@ -73,15 +73,15 @@ class TestStreamBufferBasic:
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — replay / multi-reader
+# MemoryStreamBackend — replay / multi-reader
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferReplay:
+class TestMemoryStreamBackendReplay:
     """read_at(0) replays from start, same offset re-readable."""
 
     def test_replay_from_start(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"first")
         buf.write_nowait(b"second")
 
@@ -92,18 +92,18 @@ class TestStreamBufferReplay:
         assert n1 == n2
 
     def test_same_offset_re_readable(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         offset = buf.write_nowait(b"hello")
         for _ in range(5):
             data, _ = buf.read_at(offset)
             assert data == b"hello"
 
 
-class TestStreamBufferMultiReader:
+class TestMemoryStreamBackendMultiReader:
     """Two readers at different offsets."""
 
     def test_independent_cursors(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"msg1")
         buf.write_nowait(b"msg2")
         buf.write_nowait(b"msg3")
@@ -123,15 +123,15 @@ class TestStreamBufferMultiReader:
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — batch reads
+# MemoryStreamBackend — batch reads
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferBatch:
+class TestMemoryStreamBackendBatch:
     """read_batch with various counts."""
 
     def test_batch_all(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"a")
         buf.write_nowait(b"b")
         buf.write_nowait(b"c")
@@ -141,7 +141,7 @@ class TestStreamBufferBatch:
         assert items == [b"a", b"b", b"c"]
 
     def test_batch_partial(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"a")
         buf.write_nowait(b"b")
         buf.write_nowait(b"c")
@@ -155,7 +155,7 @@ class TestStreamBufferBatch:
         assert items2 == [b"c"]
 
     def test_batch_count_one(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"only")
 
         items, _ = buf.read_batch(0, count=1)
@@ -163,20 +163,20 @@ class TestStreamBufferBatch:
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — capacity and errors
+# MemoryStreamBackend — capacity and errors
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferCapacity:
+class TestMemoryStreamBackendCapacity:
     """Oversized, exact capacity, full error."""
 
     def test_oversized_message(self):
-        buf = StreamBuffer(capacity=64)
+        buf = MemoryStreamBackend(capacity=64)
         with pytest.raises(ValueError):
             buf.write_nowait(b"x" * 1000)
 
     def test_full_error(self):
-        buf = StreamBuffer(capacity=64)
+        buf = MemoryStreamBackend(capacity=64)
         # Fill the buffer
         while True:
             try:
@@ -186,33 +186,33 @@ class TestStreamBufferCapacity:
 
     def test_capacity_must_be_positive(self):
         with pytest.raises(ValueError):
-            StreamBuffer(capacity=0)
+            MemoryStreamBackend(capacity=0)
         with pytest.raises(ValueError):
-            StreamBuffer(capacity=-1)
+            MemoryStreamBackend(capacity=-1)
 
     def test_empty_read(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         with pytest.raises(StreamEmptyError):
             buf.read_at(0)
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — close semantics
+# MemoryStreamBackend — close semantics
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferClose:
+class TestMemoryStreamBackendClose:
     """Write after close, close semantics."""
 
     def test_write_after_close(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"before")
         buf.close()
         with pytest.raises(StreamClosedError):
             buf.write_nowait(b"after")
 
     def test_read_existing_after_close(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         offset = buf.write_nowait(b"data")
         buf.close()
         # Existing data still readable after close
@@ -220,7 +220,7 @@ class TestStreamBufferClose:
         assert data == b"data"
 
     def test_closed_property(self):
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         assert not buf.closed
         buf.close()
         assert buf.closed
@@ -352,16 +352,16 @@ class TestStreamManagerFederation:
 
 
 # ---------------------------------------------------------------------------
-# StreamBuffer — async blocking reads
+# MemoryStreamBackend — async blocking reads
 # ---------------------------------------------------------------------------
 
 
-class TestStreamBufferBlockingRead:
+class TestMemoryStreamBackendBlockingRead:
     """Async blocking read waits for data, unblocks on push or close."""
 
     async def test_blocking_read_with_existing_data(self):
         """Blocking read returns immediately when data exists."""
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         buf.write_nowait(b"hello")
         data, next_off = await buf.read(0, blocking=True)
         assert data == b"hello"
@@ -371,7 +371,7 @@ class TestStreamBufferBlockingRead:
         """Blocking read blocks until producer pushes data."""
         import asyncio
 
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         results = []
 
         async def consumer():
@@ -389,7 +389,7 @@ class TestStreamBufferBlockingRead:
         """Blocking read raises StreamClosedError when buffer is closed."""
         import asyncio
 
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
 
         async def consumer():
             with pytest.raises(StreamClosedError):
@@ -403,7 +403,7 @@ class TestStreamBufferBlockingRead:
 
     async def test_non_blocking_read_raises_empty(self):
         """Non-blocking read raises StreamEmptyError immediately."""
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         with pytest.raises(StreamEmptyError):
             await buf.read(0, blocking=False)
 
@@ -411,7 +411,7 @@ class TestStreamBufferBlockingRead:
         """Blocking batch read waits until data is available."""
         import asyncio
 
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         results = []
 
         async def consumer():
@@ -430,7 +430,7 @@ class TestStreamBufferBlockingRead:
         """Multiple async readers unblock independently."""
         import asyncio
 
-        buf = StreamBuffer(capacity=1024)
+        buf = MemoryStreamBackend(capacity=1024)
         r1_result = []
         r2_result = []
 

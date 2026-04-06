@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Well-known stream path for kernel event delivery
-_EVENT_STREAM_PATH = "/__events__/watch"
+_EVENT_STREAM_PATH = "/__sys__/events/watch"
 _EVENT_STREAM_CAPACITY = 4 * 1024 * 1024  # 4MB default
 
 

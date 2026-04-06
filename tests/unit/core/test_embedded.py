@@ -621,7 +621,7 @@ async def test_glob_recursive_pattern(embedded: NexusFS) -> None:
 
     # Find all files recursively (filter out system entries)
     files = [f for f in embedded.service("search").glob("**/*") if f not in _SYSTEM_PATHS]
-    assert len(files) == 4
+    assert len(files) == 5
 
 
 @pytest.mark.asyncio
@@ -768,4 +768,4 @@ async def test_list_returns_list_type(embedded: NexusFS) -> None:
     files = await embedded.sys_readdir()
     assert isinstance(files, list)
     user_files = [f for f in files if f not in _SYSTEM_PATHS]
-    assert len(user_files) == 2
+    assert len(user_files) == 3

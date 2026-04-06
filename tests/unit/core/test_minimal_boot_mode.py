@@ -398,10 +398,10 @@ class TestSlimIntegrationViaConnect:
             enabled_bricks=resolve_enabled_bricks(DeploymentProfile.SLIM),
         )
 
-        # FileWatcher + EventBusObserver are unconditionally registered
-        # (Issue #969, #162). RevisionTrackingObserver deleted (§10 A2)
-        # — zone revision is now a kernel primitive (AtomicU64).
-        assert nx.observer_count == 2
+        # FileWatcher + StreamEventObserver + EventBusObserver are unconditionally
+        # registered. RevisionTrackingObserver deleted (§10 A2) — zone revision
+        # is now a kernel primitive (AtomicU64).
+        assert nx.observer_count == 3
 
     @pytest.mark.asyncio
     async def test_slim_profile_no_workflow_engine(self, tmp_path: "Path") -> None:

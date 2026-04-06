@@ -7,7 +7,7 @@ with VFSLockManager-backed per-pipe locking for MPMC.
     core/pipe_manager.py = fs/pipe.c (VFS named pipe with per-pipe lock)
 
 Concurrency model (aligned with Linux pipe(7)):
-  - RingBuffer (kfifo) is SPSC, no internal lock.
+  - MemoryPipeBackend (kfifo) is SPSC, no internal lock.
   - PipeManager (mkfifo) adds per-pipe VFSLockManager locks for MPMC safety
     (Issue #3198). Replaces dict[str, asyncio.Lock] with Rust-backed
     VFSLockManager (~100-200ns per acquire) for hierarchical awareness,
@@ -17,7 +17,7 @@ Concurrency model (aligned with Linux pipe(7)):
   - Sync methods (pipe_write_nowait) are atomic under asyncio event loop
     (no await points), safe for MPSC without lock.
 
-See: core/pipe.py for RingBuffer, federation-memo.md §7j
+See: core/pipe.py for MemoryPipeBackend, federation-memo.md §7j
 """
 
 import asyncio
@@ -33,6 +33,7 @@ from nexus.core.lock_fast import (
     create_vfs_lock_manager,
 )
 from nexus.core.pipe import (
+    MemoryPipeBackend,
     PipeBackend,
     PipeClosedError,
     PipeEmptyError,
@@ -40,7 +41,6 @@ from nexus.core.pipe import (
     PipeExistsError,
     PipeFullError,
     PipeNotFoundError,
-    RingBuffer,
 )
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ class PipeManager:
 
     Analogous to Linux fs/pipe.c: creates named pipes visible in the VFS
     namespace. Each pipe has a FileMetadata inode in MetastoreABC
-    (entry_type=DT_PIPE) and a RingBuffer in process memory.
+    (entry_type=DT_PIPE) and a MemoryPipeBackend in process memory.
 
     The inode provides:
       - VFS path (/nexus/pipes/{name}) for agent access via FUSE/MCP
@@ -161,10 +161,10 @@ class PipeManager:
         capacity: int = 65_536,
         owner_id: str | None = None,
         zone_id: str = ROOT_ZONE_ID,
-    ) -> RingBuffer:
+    ) -> MemoryPipeBackend:
         """Create a new named pipe at the given VFS path.
 
-        Creates a DT_PIPE inode in MetastoreABC and a RingBuffer in memory.
+        Creates a DT_PIPE inode in MetastoreABC and a MemoryPipeBackend in memory.
 
         Args:
             path: VFS path (e.g., "/nexus/pipes/my-pipe"). Must start with "/".
@@ -172,14 +172,14 @@ class PipeManager:
             owner_id: Owner for ReBAC permission checks.
 
         Returns:
-            The created RingBuffer.
+            The created MemoryPipeBackend.
 
         Raises:
             PipeExistsError: Pipe already exists at this path.
         """
-        # Validate before allocating buffer — avoids unnecessary RingBuffer
+        # Validate before allocating buffer — avoids unnecessary MemoryPipeBackend
         # construction on duplicate paths, and prevents ValueError from
-        # RingBuffer(capacity=0) masking PipeExistsError in ensure().
+        # MemoryPipeBackend(capacity=0) masking PipeExistsError in ensure().
         # Existence checks BEFORE Rust check so ensure() can still fall through
         # to open() for remote pipes on no-Rust nodes.
         if path in self._buffers:
@@ -195,7 +195,7 @@ class PipeManager:
                 "Pipe creation requires the nexus-kernel Rust extension. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
-        buf = RingBuffer(capacity=capacity)
+        buf = MemoryPipeBackend(capacity=capacity)
         self._register_pipe(path, buf, size=capacity, owner_id=owner_id, zone_id=zone_id)
         logger.debug("pipe created: %s (capacity=%d)", path, capacity)
         return buf
@@ -245,7 +245,7 @@ class PipeManager:
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The PipeBackend for this pipe (RingBuffer or RemotePipeBackend).
+            The PipeBackend for this pipe (MemoryPipeBackend or RemotePipeBackend).
 
         Raises:
             PipeNotFoundError: No pipe inode at this path.
@@ -284,7 +284,7 @@ class PipeManager:
 
         if _RBC is None:
             raise PipeError(f"Cannot reopen pipe at {path}: nexus-kernel Rust extension required.")
-        buf = RingBuffer(capacity=capacity)
+        buf = MemoryPipeBackend(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("pipe opened (recovered): %s", path)
@@ -300,7 +300,7 @@ class PipeManager:
     ) -> PipeBackend:
         """Create a named pipe backed by an external PipeBackend.
 
-        Unlike ``create()`` which always uses an in-process RingBuffer,
+        Unlike ``create()`` which always uses an in-process MemoryPipeBackend,
         this method accepts any PipeBackend implementation (e.g., a future
         SharedMemoryPipeBackend for inter-process IPC).
 
@@ -325,7 +325,7 @@ class PipeManager:
     def signal_close(self, path: str) -> None:
         """Signal a pipe closed without removing from registry.
 
-        Closes the RingBuffer (wakes blocked readers/writers) but keeps
+        Closes the MemoryPipeBackend (wakes blocked readers/writers) but keeps
         it in ``_buffers`` so ``pipe_read()`` can drain remaining messages.
         Once the buffer is empty, readers get ``PipeClosedError``.
 
@@ -473,20 +473,20 @@ class PipeManager:
     def pipe_peek(self, path: str) -> bytes | None:
         """Peek at next message in a named pipe.
 
-        Only supported for RingBuffer backends. Returns None for other backends.
+        Only supported for MemoryPipeBackend backends. Returns None for other backends.
         """
         buf = self._get_buffer(path)
-        if isinstance(buf, RingBuffer):
+        if isinstance(buf, MemoryPipeBackend):
             return buf.peek()
         return None
 
     def pipe_peek_all(self, path: str) -> list[bytes]:
         """Peek at all messages in a named pipe.
 
-        Only supported for RingBuffer backends. Returns empty list for others.
+        Only supported for MemoryPipeBackend backends. Returns empty list for others.
         """
         buf = self._get_buffer(path)
-        if isinstance(buf, RingBuffer):
+        if isinstance(buf, MemoryPipeBackend):
             return buf.peek_all()
         return []
 

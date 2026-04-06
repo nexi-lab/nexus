@@ -7,11 +7,11 @@ with per-stream locking for concurrent writers.
     core/stream_manager.py = mkstream (VFS named stream with per-stream lock)
 
 Concurrency model:
-  - StreamBuffer (kstream) is single-writer internally (linear append).
+  - MemoryStreamBackend (kstream) is single-writer internally (linear append).
   - StreamManager (mkstream) adds per-stream asyncio.Lock for concurrent
     writers. Reads are lock-free (non-destructive, offset-based).
 
-See: core/stream.py for StreamBuffer, federation-memo.md §7j
+See: core/stream.py for MemoryStreamBackend, federation-memo.md §7j
 """
 
 import asyncio
@@ -20,8 +20,8 @@ from typing import TYPE_CHECKING
 
 from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.core.stream import (
+    MemoryStreamBackend,
     StreamBackend,
-    StreamBuffer,
     StreamClosedError,
     StreamEmptyError,
     StreamError,
@@ -52,7 +52,7 @@ class StreamManager:
 
     Analogous to PipeManager but for append-only streams. Each stream has
     a FileMetadata inode in MetastoreABC (entry_type=DT_STREAM) and a
-    StreamBuffer in process memory.
+    MemoryStreamBackend in process memory.
 
     Key difference from PipeManager: reads are non-destructive and lock-free.
     Multiple readers maintain independent byte offsets (fan-out). Writers
@@ -83,10 +83,10 @@ class StreamManager:
         capacity: int = 65_536,
         owner_id: str | None = None,
         zone_id: str = ROOT_ZONE_ID,
-    ) -> StreamBuffer:
+    ) -> MemoryStreamBackend:
         """Create a new named stream at the given VFS path.
 
-        Creates a DT_STREAM inode in MetastoreABC and a StreamBuffer in memory.
+        Creates a DT_STREAM inode in MetastoreABC and a MemoryStreamBackend in memory.
 
         Args:
             path: VFS path (e.g., "/nexus/streams/my-stream"). Must start with "/".
@@ -94,7 +94,7 @@ class StreamManager:
             owner_id: Owner for ReBAC permission checks.
 
         Returns:
-            The created StreamBuffer.
+            The created MemoryStreamBackend.
 
         Raises:
             StreamError: Stream already exists at this path.
@@ -121,7 +121,7 @@ class StreamManager:
 
         # Construct buffer BEFORE persisting metadata — if construction fails
         # (ABI mismatch, Rust error), no orphaned DT_STREAM inode is left behind.
-        buf = StreamBuffer(capacity=capacity)
+        buf = MemoryStreamBackend(capacity=capacity)
 
         # Create DT_STREAM inode in MetastoreABC.
         # Embed origin address so remote nodes can proxy stream I/O.
@@ -157,7 +157,7 @@ class StreamManager:
             capacity: Buffer capacity (used only if recreating after restart).
 
         Returns:
-            The StreamBackend for this stream (StreamBuffer or RemoteStreamBackend).
+            The StreamBackend for this stream (MemoryStreamBackend or RemoteStreamBackend).
 
         Raises:
             StreamNotFoundError: No stream inode at this path.
@@ -200,7 +200,7 @@ class StreamManager:
                 f"Cannot reopen stream at {path}: nexus-kernel Rust extension required. "
                 "Install nexus-ai-fs or rebuild: pip install -e rust/nexus_pyo3"
             )
-        buf = StreamBuffer(capacity=capacity)
+        buf = MemoryStreamBackend(capacity=capacity)
         self._buffers[path] = buf
 
         logger.debug("stream opened (recovered): %s", path)
@@ -216,7 +216,7 @@ class StreamManager:
     ) -> StreamBackend:
         """Create a named stream backed by an external StreamBackend.
 
-        Unlike ``create()`` which always uses an in-process StreamBuffer,
+        Unlike ``create()`` which always uses an in-process MemoryStreamBackend,
         this method accepts any StreamBackend implementation (e.g., a future
         SharedMemoryStreamBackend for inter-process IPC).
 
@@ -262,7 +262,7 @@ class StreamManager:
     def signal_close(self, path: str) -> None:
         """Signal a stream closed without removing from registry.
 
-        Closes the StreamBuffer (wakes blocked writers) but keeps it in
+        Closes the MemoryStreamBackend (wakes blocked writers) but keeps it in
         ``_buffers`` so readers can still read existing data at their offsets.
 
         Raises:
@@ -391,7 +391,7 @@ class StreamManager:
         is preserved — other readers at their own offsets are unaffected.
 
         This is a kernel-level read primitive. CAS persistence is the
-        responsibility of the storage layer (e.g. OpenAICompatibleBackend
+        responsibility of the storage layer (e.g. CASOpenAIBackend
         calls ``collect_all()`` then ``backend.write_content()``).
 
         Args:

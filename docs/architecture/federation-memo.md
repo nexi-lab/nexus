@@ -343,7 +343,7 @@ against the Raft-replicated Metastore to find locally-held orphans.
 ### 7j. DT_PIPE / DT_STREAM Federation Design
 
 Both IPC primitives have Raft-replicated metadata but in-process heap data
-(RingBuffer for DT_PIPE, StreamBuffer for DT_STREAM). Federation extends
+(MemoryPipeBackend for DT_PIPE, StreamBuffer for DT_STREAM). Federation extends
 IPC I/O transparently via origin-aware routing. DT_STREAM uses the same
 `stream@host:port` pattern as DT_PIPE's `pipe@host:port`.
 
@@ -360,7 +360,7 @@ PipeManager embeds the creator node's advertise address in `backend_name`:
 
 `BackendAddress.parse(backend_name)` extracts the origin. NexusFS dispatches:
 
-- **Local** (`origin == self` or no origin): Direct RingBuffer via PipeManager (~0.5us)
+- **Local** (`origin == self` or no origin): Direct MemoryPipeBackend via PipeManager (~0.5us)
 - **Remote** (`origin != self`): gRPC `Call` RPC to origin node, which executes
   `sys_read`/`sys_write` locally and returns the result
 

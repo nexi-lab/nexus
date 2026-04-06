@@ -1,7 +1,7 @@
 """LLM streaming service — DT_STREAM orchestration for LLM token delivery.
 
 Bridges kernel IPC (StreamManager / DT_STREAM) and backend compute
-(OpenAICompatibleBackend), following the DT_PIPE consumer pattern
+(CASOpenAIBackend), following the DT_PIPE consumer pattern
 established by WorkflowDispatchService and TaskDispatchPipeConsumer.
 
 Architecture boundaries:
@@ -20,7 +20,7 @@ Streaming flow:
 
 DI dependencies (no god-object access):
     - stream_manager: StreamManager for kernel DT_STREAM lifecycle
-    - backend: OpenAICompatibleBackend for LLM compute + CAS persist
+    - backend: CASOpenAIBackend for LLM compute + CAS persist
 
 References:
     - Task #1589: LLM backend driver design
@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, cast
 from nexus.contracts.exceptions import BackendError
 
 if TYPE_CHECKING:
-    from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+    from nexus.backends.compute.openai_compatible import CASOpenAIBackend
     from nexus.core.stream_manager import StreamManager
 
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class LLMStreamingService:
     """Orchestrates LLM streaming via DT_STREAM + CAS persistence.
 
     Service-layer bridge between kernel IPC (StreamManager) and
-    backend compute (OpenAICompatibleBackend). Backend produces tokens
+    backend compute (CASOpenAIBackend). Backend produces tokens
     via a sync generator; this service pushes them to DT_STREAM for
     real-time fan-out, then flushes to CAS after streaming completes.
 
@@ -64,7 +64,7 @@ class LLMStreamingService:
         self,
         *,
         stream_manager: "StreamManager",
-        backend: "OpenAICompatibleBackend",
+        backend: "CASOpenAIBackend",
     ) -> None:
         self._stream_manager = stream_manager
         self._backend = backend

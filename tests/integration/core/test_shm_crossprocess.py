@@ -1,4 +1,4 @@
-"""Cross-process integration tests for SharedRingBuffer / SharedStreamBuffer (#1680).
+"""Cross-process integration tests for SharedMemoryPipeBackend / SharedMemoryStreamBackend (#1680).
 
 Uses multiprocessing.Process to verify true cross-process shared memory IPC.
 All child targets are module-level functions (required for macOS spawn start method).

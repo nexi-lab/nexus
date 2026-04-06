@@ -16,15 +16,15 @@ import pytest
 
 
 def _make_backend_and_strategy():
-    """Create OpenAICompatibleBackend + MessageBoundaryStrategy."""
+    """Create CASOpenAIBackend + MessageBoundaryStrategy."""
     from unittest.mock import MagicMock
 
     from nexus.backends.compute.message_chunking import MessageBoundaryStrategy
-    from nexus.backends.compute.openai_compatible import OpenAICompatibleBackend
+    from nexus.backends.compute.openai_compatible import CASOpenAIBackend
 
     with patch("nexus.backends.compute.openai_compatible._build_openai_client") as mock_build:
         mock_build.return_value = MagicMock()
-        backend = OpenAICompatibleBackend(
+        backend = CASOpenAIBackend(
             base_url="https://api.test.com/v1",
             api_key="sk-test",
         )

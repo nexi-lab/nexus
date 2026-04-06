@@ -956,7 +956,7 @@ class NexusFS(  # type: ignore[misc]
             from nexus.core.stream import StreamError
 
             # Check if mount provides a custom stream backend factory
-            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory StreamBuffer.
+            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory MemoryStreamBackend.
             _mount_entry = self.router.get_mount_entry_for_path(path)
             _factory = _mount_entry.stream_backend_factory if _mount_entry else None
 
@@ -3522,7 +3522,7 @@ class NexusFS(  # type: ignore[misc]
         ``sys_read(stream_path, offset=N)``.
 
         If no LLM backend is mounted yet, the service is lazily created on
-        first call by probing the router for an ``OpenAICompatibleBackend``.
+        first call by probing the router for a ``CASOpenAIBackend``.
 
         Args:
             path: VFS path for the DT_STREAM (e.g.

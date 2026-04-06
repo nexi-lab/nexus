@@ -1,4 +1,4 @@
-"""DedupWorkQueue — coalescing work queue backed by DT_PIPE RingBuffer (#2062).
+"""DedupWorkQueue — coalescing work queue backed by DT_PIPE MemoryPipeBackend (#2062).
 
 Follows the Kubernetes controller-runtime workqueue pattern:
   - 10 rapid writes to the same file → 10 events recorded (audit complete)
@@ -11,7 +11,7 @@ Three invariants maintained by add/get/done:
   3. An item can be in both ``dirty`` and ``processing`` (re-added during
      processing → will be re-queued on ``done()``).
 
-Transport: DT_PIPE RingBuffer (Rust-backed kfifo, ~0.5μs/op) replaces
+Transport: DT_PIPE MemoryPipeBackend (Rust-backed kfifo, ~0.5μs/op) replaces
 asyncio.Queue. The pipe carries 8-byte sequence tokens; actual items stay
 in a Python dict — no serialization needed. Dedup logic (dirty/processing
 sets) remains in Python.
@@ -31,7 +31,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Generic, TypeVar
 
-from nexus.core.pipe import PipeClosedError, PipeFullError, RingBuffer
+from nexus.core.pipe import MemoryPipeBackend, PipeClosedError, PipeFullError
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
-    **Transport:** Uses DT_PIPE RingBuffer (Rust-backed kfifo) for the
+    **Transport:** Uses DT_PIPE MemoryPipeBackend (Rust-backed kfifo) for the
     internal FIFO, replacing asyncio.Queue. The pipe carries 8-byte
     sequence tokens; actual items stay in a Python dict (no serialization).
     Dedup logic (dirty/processing sets) remains in Python.
@@ -77,7 +77,7 @@ class DedupWorkQueue(Generic[T]):
     """
 
     def __init__(self, *, capacity: int = 65_536) -> None:
-        self._buf = RingBuffer(capacity)
+        self._buf = MemoryPipeBackend(capacity)
         self._seq = 0  # monotonic sequence counter (pipe carries 8-byte tokens)
         self._items: dict[int, T] = {}  # seq → item (actual data stays in Python)
         self._dirty: set[T] = set()

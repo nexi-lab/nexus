@@ -1,9 +1,9 @@
-"""Cross-process DT_STREAM via shared memory (mmap) — SharedStreamBuffer (#1680).
+"""Cross-process DT_STREAM via shared memory (mmap) — SharedMemoryStreamBackend (#1680).
 
 Implements ``StreamBackend`` protocol using ``SharedStreamBufferCore`` (Rust, mmap)
 for cross-process append-only log with independent reader cursors.
 
-For in-process use, prefer ``StreamBuffer`` from ``core/stream.py`` (zero syscall).
+For in-process use, prefer ``MemoryStreamBackend`` from ``core/stream.py`` (zero syscall).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from nexus._rust_compat import SharedStreamBufferCore as _SharedStreamBufferCore
 logger = logging.getLogger(__name__)
 
 
-class SharedStreamBuffer:
+class SharedMemoryStreamBackend:
     """Cross-process append-only log buffer. Implements StreamBackend protocol.
 
     Uses mmap'd shared memory + OS pipe for writer→reader notification.

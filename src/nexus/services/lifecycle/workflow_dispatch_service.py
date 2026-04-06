@@ -108,7 +108,7 @@ class WorkflowDispatchService:
     async def fire(self, trigger_type: str, event_context: dict[str, Any], label: str) -> None:
         """Fire a workflow event and broadcast to webhook subscriptions.
 
-        Uses PipeManager userspace API — never touches RingBuffer directly.
+        Uses PipeManager userspace API — never touches MemoryPipeBackend directly.
         """
         if not (self._enable_workflows and self._workflow_engine):
             return

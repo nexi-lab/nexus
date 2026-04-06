@@ -27,7 +27,7 @@ class RemoteStreamBackend:
     """StreamBackend that proxies read/write to a remote node via gRPC.
 
     Implements the StreamBackend protocol (core/stream.py) so StreamManager
-    treats it identically to a local StreamBuffer.
+    treats it identically to a local MemoryStreamBackend.
     """
 
     __slots__ = ("_origin", "_path", "_transport", "_closed", "_tail")

@@ -112,7 +112,6 @@ def _get_registration_service(request: Request) -> Any:
         entity_registry=getattr(request.app.state, "entity_registry", None),
         agent_registry=getattr(request.app.state, "agent_registry", None),
         rebac_manager=getattr(request.app.state, "rebac_manager", None),
-        ipc_provisioner=getattr(request.app.state, "ipc_provisioner", None),
         key_service=getattr(request.app.state, "key_service", None),
     )
     request.app.state._agent_registration_service = service

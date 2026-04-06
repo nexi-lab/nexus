@@ -561,10 +561,17 @@ def _initialize_wired_ipc(nx: Any, services: dict[str, Any]) -> None:
         # Create AgentProvisioner with NexusFS directly (no adapter)
         from nexus.bricks.ipc.provisioning import AgentProvisioner
 
-        services["ipc_provisioner"] = AgentProvisioner(
+        _provisioner = AgentProvisioner(
             vfs=nx,
             zone_id=_ipc_zone_id,
         )
+        services["ipc_provisioner"] = _provisioner
+
+        # Wire provisioner into AgentRegistry so register → provision is automatic
+        _agent_reg_svc = nx._service_registry.service("agent_registry")
+        _agent_reg = _agent_reg_svc._service_instance if _agent_reg_svc is not None else None
+        if _agent_reg is not None and hasattr(_agent_reg, "set_provisioner"):
+            _agent_reg.set_provisioner(_provisioner)
 
         logger.debug(
             "[BOOT:WIRED] IPC LocalConnector mounted at /agents + AgentProvisioner created"

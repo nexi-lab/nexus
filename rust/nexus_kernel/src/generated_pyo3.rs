@@ -1090,7 +1090,7 @@ impl PyKernel {
 
     // ── Router proxy methods ───────────────────────────────────────────
 
-    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None))]
+    #[pyo3(signature = (mount_point, zone_id, readonly, admin_only, io_profile, backend_name="", local_root=None, fsync=false, py_backend=None, backend_type="cas", follow_symlinks=true, grpc_addr=None, openai_base_url=None, openai_api_key=None, openai_model=None))]
     #[allow(clippy::too_many_arguments)]
     fn add_mount(
         &self,
@@ -1106,11 +1106,31 @@ impl PyKernel {
         backend_type: &str,
         follow_symlinks: bool,
         grpc_addr: Option<&str>,
+        openai_base_url: Option<&str>,
+        openai_api_key: Option<&str>,
+        openai_model: Option<&str>,
     ) -> PyResult<()> {
         // Backend resolution: grpc_addr -> GrpcObjectStoreAdapter (zero GIL)
         //                     local_root -> CasLocalBackend/PathLocalBackend/LocalConnectorBackend
+        //                     openai_* -> OpenAIBackend (§10 D3)
         //                     py_backend -> PyObjectStoreAdapter (GIL crossing)
-        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "grpc" {
+        let backend: Option<Box<dyn ObjectStore>> = if backend_type == "openai" {
+            #[cfg(feature = "connectors")]
+            {
+                let base = openai_base_url.unwrap_or("https://api.openai.com/v1");
+                let key = openai_api_key.unwrap_or("");
+                let model = openai_model.unwrap_or("gpt-4o");
+                let b = crate::openai_backend::OpenAIBackend::new(backend_name, base, key, model)
+                    .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+                Some(Box::new(b))
+            }
+            #[cfg(not(feature = "connectors"))]
+            {
+                return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                    "connectors feature not enabled",
+                ));
+            }
+        } else if backend_type == "grpc" {
             let addr = grpc_addr.ok_or_else(|| {
                 pyo3::exceptions::PyValueError::new_err("grpc backend requires grpc_addr")
             })?;

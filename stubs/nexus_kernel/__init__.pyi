@@ -398,6 +398,9 @@ class PyKernel:
         backend_type: str = "cas",
         follow_symlinks: bool = True,
         grpc_addr: str | None = None,
+        openai_base_url: str | None = None,
+        openai_api_key: str | None = None,
+        openai_model: str | None = None,
     ) -> None: ...
     def remove_mount(self, mount_point: str, zone_id: str) -> bool: ...
     def route(self, path: str, zone_id: str, is_admin: bool, check_write: bool) -> Any: ...

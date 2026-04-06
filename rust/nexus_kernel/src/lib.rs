@@ -22,6 +22,10 @@ mod io;
 mod kernel;
 mod lock;
 mod metastore;
+#[cfg(feature = "connectors")]
+mod openai_backend;
+#[cfg(feature = "connectors")]
+mod openai_inference;
 mod path_utils;
 mod pipe;
 mod prefix;
@@ -52,6 +56,18 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // ReBAC bitmap intersection (§10 C1)
     m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap, m)?)?;
     m.add_function(wrap_pyfunction!(rebac::check_permission_bitmap_batch, m)?)?;
+    // OpenAI inference (§10 D3) — GIL-free HTTP calls
+    #[cfg(feature = "connectors")]
+    {
+        m.add_function(wrap_pyfunction!(
+            openai_inference::openai_chat_completion,
+            m
+        )?)?;
+        m.add_function(wrap_pyfunction!(
+            openai_inference::openai_chat_completion_stream,
+            m
+        )?)?;
+    }
     // Search
     m.add_function(wrap_pyfunction!(search::grep_bulk, m)?)?;
     m.add_function(wrap_pyfunction!(search::grep_files_mmap, m)?)?;

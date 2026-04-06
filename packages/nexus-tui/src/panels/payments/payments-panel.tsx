@@ -41,7 +41,7 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
 export default function PaymentsPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
-  const overlayActive = useUiStore((s) => s.overlayActive);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
   const { copy, copied } = useCopy();
   const [showTransfer, setShowTransfer] = createSignal(false);
   const [approvalInputMode, setApprovalInputMode] = createSignal(false);
@@ -49,28 +49,28 @@ export default function PaymentsPanel(): JSX.Element {
   const [approvalPurposeBuffer, setApprovalPurposeBuffer] = createSignal("");
   const [approvalField, setApprovalField] = createSignal<"amount" | "purpose">("amount");
 
-  const balance = usePaymentsStore((s) => s.balance);
-  const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
-  const reservations = usePaymentsStore((s) => s.reservations);
-  const selectedReservationIndex = usePaymentsStore((s) => s.selectedReservationIndex);
-  const reservationsLoading = usePaymentsStore((s) => s.reservationsLoading);
-  const transactions = usePaymentsStore((s) => s.transactions);
-  const transactionsLoading = usePaymentsStore((s) => s.transactionsLoading);
-  const selectedTransactionIndex = usePaymentsStore((s) => s.selectedTransactionIndex);
-  const policies = usePaymentsStore((s) => s.policies);
-  const policiesLoading = usePaymentsStore((s) => s.policiesLoading);
-  const budget = usePaymentsStore((s) => s.budget);
-  const budgetLoading = usePaymentsStore((s) => s.budgetLoading);
-  const activeTab = usePaymentsStore((s) => s.activeTab);
-  const error = usePaymentsStore((s) => s.error);
+  const balance = () => usePaymentsStore((s) => s.balance);
+  const balanceLoading = () => usePaymentsStore((s) => s.balanceLoading);
+  const reservations = () => usePaymentsStore((s) => s.reservations);
+  const selectedReservationIndex = () => usePaymentsStore((s) => s.selectedReservationIndex);
+  const reservationsLoading = () => usePaymentsStore((s) => s.reservationsLoading);
+  const transactions = () => usePaymentsStore((s) => s.transactions);
+  const transactionsLoading = () => usePaymentsStore((s) => s.transactionsLoading);
+  const selectedTransactionIndex = () => usePaymentsStore((s) => s.selectedTransactionIndex);
+  const policies = () => usePaymentsStore((s) => s.policies);
+  const policiesLoading = () => usePaymentsStore((s) => s.policiesLoading);
+  const budget = () => usePaymentsStore((s) => s.budget);
+  const budgetLoading = () => usePaymentsStore((s) => s.budgetLoading);
+  const activeTab = () => usePaymentsStore((s) => s.activeTab);
+  const error = () => usePaymentsStore((s) => s.error);
 
   const fetchBalance = usePaymentsStore((s) => s.fetchBalance);
   const transfer = usePaymentsStore((s) => s.transfer);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
   const releaseReservation = usePaymentsStore((s) => s.releaseReservation);
-  const transactionsHasMore = usePaymentsStore((s) => s.transactionsHasMore);
-  const transactionsCursorStack = usePaymentsStore((s) => s.transactionsCursorStack);
-  const integrityResult = usePaymentsStore((s) => s.integrityResult);
+  const transactionsHasMore = () => usePaymentsStore((s) => s.transactionsHasMore);
+  const transactionsCursorStack = () => usePaymentsStore((s) => s.transactionsCursorStack);
+  const integrityResult = () => usePaymentsStore((s) => s.integrityResult);
   const fetchTransactions = usePaymentsStore((s) => s.fetchTransactions);
   const fetchNextTransactions = usePaymentsStore((s) => s.fetchNextTransactions);
   const fetchPrevTransactions = usePaymentsStore((s) => s.fetchPrevTransactions);
@@ -79,7 +79,7 @@ export default function PaymentsPanel(): JSX.Element {
   const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
   const checkAfford = usePaymentsStore((s) => s.checkAfford);
-  const affordResult = usePaymentsStore((s) => s.affordResult);
+  const affordResult = () => usePaymentsStore((s) => s.affordResult);
   const createPolicy = usePaymentsStore((s) => s.createPolicy);
   const approvals = usePaymentsStore((s) => s.approvals);
   const approvalsLoading = usePaymentsStore((s) => s.approvalsLoading);

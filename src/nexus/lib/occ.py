@@ -85,5 +85,5 @@ async def occ_write(
                     current_etag=current_etag or "(no etag)",
                 )
 
-    result: dict[str, Any] = fs.write(path, buf, context=context)
+    result: dict[str, Any] = await fs.write(path, buf, context=context)
     return result

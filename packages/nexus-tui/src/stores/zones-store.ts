@@ -197,8 +197,30 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       const response = await client.get<BricksHealthResponse>(
         "/api/v2/bricks/health",
       );
-      const bricks = response.bricks ?? [];
-      return { bricksHealth: response, bricks };
+      let bricks = response.bricks ?? [];
+      // Fallback: if health endpoint returns no bricks, synthesize from features
+      if (bricks.length === 0) {
+        try {
+          const features = await client.get<{ enabled_bricks?: readonly string[] }>(
+            "/api/v2/features",
+          );
+          if (features.enabled_bricks && features.enabled_bricks.length > 0) {
+            bricks = features.enabled_bricks.map((name) => ({
+              name,
+              state: "active",
+              protocol_name: "brick",
+              error: null,
+              started_at: null,
+              stopped_at: null,
+              unmounted_at: null,
+            }));
+          }
+        } catch { /* features endpoint unavailable */ }
+      }
+      return {
+        bricksHealth: { ...response, bricks, total: bricks.length, active: bricks.length },
+        bricks,
+      };
     },
   }),
 

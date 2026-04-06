@@ -14,32 +14,14 @@ interface BrickListProps {
   readonly loading: boolean;
 }
 
-export function BrickList({
-  bricks,
-  selectedIndex,
-  loading,
-}: BrickListProps): JSX.Element {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading bricks...</text>
-      </box>
-    );
-  }
-
-  if (bricks.length === 0) {
-    return (
-      <EmptyState
-        message="No bricks registered."
-        hint="Run 'nexus brick mount <name>' to add one."
-      />
-    );
-  }
-
+export function BrickList(props: BrickListProps): JSX.Element {
   return (
-    <scrollbox flexGrow={1} width="100%">
-      {bricks.map((brick, i) => {
-        const isSelected = i === selectedIndex;
+    <box height="100%" width="100%" flexDirection="column">
+      <text>{"--- Bricks ---"}</text>
+      <text>{`Total: ${props.bricks.length}${props.loading ? " (loading...)" : ""}`}</text>
+      <scrollbox flexGrow={1} width="100%">
+        {props.bricks.map((brick, i) => {
+          const isSelected = i === props.selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         const indicator = stateIndicator(brick.state);
 
@@ -52,5 +34,6 @@ export function BrickList({
         );
       })}
     </scrollbox>
+    </box>
   );
 }

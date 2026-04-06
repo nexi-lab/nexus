@@ -151,6 +151,7 @@ export default function ZonesPanel(): JSX.Element {
 
   // Auto-fetch data on mount and when tab changes
   createEffect(() => {
+    void activeTab(); // track tab changes
     refreshActiveTab();
   });
 

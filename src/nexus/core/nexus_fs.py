@@ -946,14 +946,25 @@ class NexusFS(  # type: ignore[misc]
         if entry_type == DT_PIPE:
             from nexus.core.pipe import PipeError
 
+            io_profile = attrs.get("io_profile", "memory")
             try:
-                self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
+                if io_profile == "shared_memory":
+                    from nexus.core.shm_pipe import SharedMemoryPipeBackend
+
+                    pipe_backend, _shm_path, _data_rd_fd, _space_rd_fd = (
+                        SharedMemoryPipeBackend.create(capacity)
+                    )
+                    self._pipe_manager.create_from_backend(path, pipe_backend, owner_id=owner_id)
+                else:
+                    self._pipe_manager.create(path, capacity=capacity, owner_id=owner_id)
             except PipeError as exc:
                 raise BackendError(str(exc)) from exc
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
         if entry_type == DT_STREAM:
             from nexus.core.stream import StreamError
+
+            io_profile = attrs.get("io_profile", "memory")
 
             # Check if mount provides a custom stream backend factory
             # (e.g. CAS-backed or WAL-backed streams). Default: in-memory MemoryStreamBackend.
@@ -964,6 +975,15 @@ class NexusFS(  # type: ignore[misc]
                 if _factory is not None:
                     backend = _factory(path, capacity)
                     self._stream_manager.create_from_backend(path, backend, owner_id=owner_id)
+                elif io_profile == "shared_memory":
+                    from nexus.core.shm_stream import SharedMemoryStreamBackend
+
+                    stream_backend, _shm_path, _data_rd_fd = SharedMemoryStreamBackend.create(
+                        capacity
+                    )
+                    self._stream_manager.create_from_backend(
+                        path, stream_backend, owner_id=owner_id
+                    )
                 else:
                     self._stream_manager.create(path, capacity=capacity, owner_id=owner_id)
             except StreamError as exc:

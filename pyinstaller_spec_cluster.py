@@ -8,14 +8,14 @@ import os
 
 # Rust extension paths
 NEXUS_RAFT_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/_nexus_raft/_nexus_raft.cpython-313-darwin.so"
-NEXUS_FAST_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/nexus_fast/nexus_fast.cpython-313-darwin.so"
+NEXUS_KERNEL_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/nexus_kernel/nexus_kernel.cpython-313-darwin.so"
 
 # Hidden imports for Rust extensions and nexus modules
 hiddenimports = [
     # Rust extensions
     "_nexus_raft",
     "_nexus_raft._nexus_raft",
-    "nexus_fast",
+    "nexus_kernel",
     # Cluster profile core modules
     "nexus",
     "nexus.cli",
@@ -75,8 +75,8 @@ excludes = [
 binaries = []
 if os.path.exists(NEXUS_RAFT_SO):
     binaries.append((NEXUS_RAFT_SO, "_nexus_raft"))
-if os.path.exists(NEXUS_FAST_SO):
-    binaries.append((NEXUS_FAST_SO, "nexus_fast"))
+if os.path.exists(NEXUS_KERNEL_SO):
+    binaries.append((NEXUS_KERNEL_SO, "nexus_kernel"))
 
 a = Analysis(
     ["src/nexus/cli/main.py"],

@@ -14,161 +14,35 @@ Each item is annotated with:
 
 ---
 
-## 1. Core Agent Loop [P0 — Detailed Design]
+## 1. Core Agent Loop [P0] — DONE
 
-### 1.1 Main Loop [Production]
+### 1.1 Main Loop — DONE
+`ManagedAgentLoop.run()` — CC-equivalent `while tool_use → execute → loop`.
+See `services/agent_runtime/managed_loop.py`.
 
-**CC**: `while stop_reason == "tool_use"` — 20 lines of core logic.
+### 1.2 LLM API Call — DONE
 
-**Nexus**: `ManagedAgentLoop.run()` already has equivalent structure:
-```python
-while turns < self._max_turns:
-    text, tool_calls, meta = await self._call_llm_via_kernel()
-    if not tool_calls:
-        return finish_turn("stop")
-    for tc in tool_calls:
-        tool_result = await self._execute_tool(tc)
-    # persist + loop
-```
+Multi-provider strategy: OpenAI-compatible SDK via nova-gateway (translates all LLMs to OpenAI format) + planned `CASAnthropicBackend` for native Claude support. `CASOpenAIBackend.generate_streaming()` yields (token, metadata) through DT_STREAM.
 
-**Gap & Action**: Structure is equivalent. Remaining work:
-1. Implement tool_calls parsing (line 273 TODO) — see §1.4
-2. Expand `_execute_tool()` to full tool registry — see §1.5
-3. Add retry wrapper around `_call_llm_via_kernel()` — see §1.3
+### 1.3 Retry & Error Handling — DONE
 
-**Layer: Framework | Nexus: ManagedAgentLoop needs enhancement**
+Exponential backoff for 429/5xx/network errors, immediate fail on auth errors, tool failures returned as error strings to model.
 
-### 1.2 LLM API Call [Production]
+### 1.4 Tool Call Parsing — DONE
 
-**CC**: Anthropic SDK streaming, model selection, effort level, cost tracking.
+Incremental accumulation of OpenAI-compatible streaming tool calls: per-index argument concatenation across chunks, emitted as complete tool_calls in the "done" control message.
 
-**Nexus**:
-- `CASOpenAIBackend.generate_streaming()` — pure compute, yields (token, metadata)
-- `CASOpenAIBackend.start_streaming()` → DT_STREAM → agent reads tokens
-- OpenAI-compatible API (SudoRouter can front any LLM)
-- Backend configured via mount: `nexus mount /llm --backend=openai_compatible --config='{...}'`
-- StreamManager injected at factory boot (`_wired.py:477-488`)
+### 1.5 Tool Registry & Execution — Tier A DONE, Tier B planned
 
-**Multi-provider strategy**:
-- Current: OpenAI-compatible SDK only. Nova-gateway (SudoRouter) translates all LLMs to OpenAI format.
-- Nova-gateway uses same pattern as LangChain: canonical format (OpenAI) + per-provider Adaptor interface (`ConvertOpenAIRequest()` / `DoResponse()`). Translation happens in the proxy (Go) not in-process.
-- No native Anthropic SDK needed — nova-gateway handles Claude ↔ OpenAI format translation including tool_use ↔ tool_calls, message restructuring, and streaming format conversion.
-- Plan: add `CASAnthropicBackend` — native Anthropic SDK, tool_use as complete JSON (no incremental argument concatenation), native streaming format. Nova-gateway already exposes `/v1/messages` for Anthropic-native passthrough.
-- Benefit: eliminates translation overhead for Claude models, native extended_thinking support, native prompt caching (cache_control).
+**Key design decision — two-tier tool model**:
 
-**Gap & Action**:
-- Model selection: constructor accepts `model`, but no runtime switching. Add `/model` command.
-- Effort level: map to API extra_params (temperature, etc.)
-- Cost tracking: accumulate from `meta["usage"]` in observer.
+- **Tier A: Built-in kernel tools (eager, function-calling)** — DONE.
+  Small set (~6) of kernel-level tools bound day-1 via function-calling schema: read_file, write_file, edit_file, bash, grep, glob. Few enough (~1.2K tokens) to not dilute context.
 
-**Layer: Framework | Nexus: exists, needs enhancement**
+- **Tier B: External CLI tools (lazy, filesystem discovery)** — planned.
+  User provides tool paths (`nexus agent --tools /path/to/toolset`). LLM discovers tools on-demand via `ls /tools/` + `--help`. Benefits: unlimited tools without context explosion, no schema translation, self-describing via cli-args-ssot. Implementation: DT_MOUNT to real tool directories, filesystem IS the registry.
 
-### 1.3 Retry & Error Handling [Production]
-
-**CC**: `withRetry.ts` wrapping API calls.
-- 429 (rate limit) + 5xx → exponential backoff (1s, 2s, 4s, 8s), max 5 retries
-- Auth error → no retry, fail immediately
-- Network error → retry
-- Tool failure → return error string to model (no retry)
-
-**Nexus plan**: Framework layer, not kernel:
-```python
-async def _call_llm_with_retry(self):
-    for attempt in range(self._max_retries):
-        try:
-            return await self._call_llm_via_kernel()
-        except RateLimitError:
-            await asyncio.sleep(2 ** attempt)
-        except AuthError:
-            raise  # no retry
-        except (ServerError, NetworkError):
-            await asyncio.sleep(2 ** attempt)
-    raise MaxRetriesExceeded()
-```
-
-**Layer: Framework | Needs building**
-
-### 1.4 Tool Call Parsing [Production]
-
-**CC**: Anthropic API returns ContentBlock array with `type: "tool_use"`, each containing `id`, `name`, `input` (complete JSON).
-
-**Nexus**: Uses OpenAI-compatible streaming. Tool calls arrive incrementally:
-```json
-{"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_xxx",
-  "function": {"name": "read_file", "arguments": "{\"path\":"}}]}}]}
-```
-Arguments arrive across multiple chunks and must be concatenated.
-
-**Implementation**: Modify `CASOpenAIBackend.generate_streaming()`:
-1. Detect `delta.tool_calls` in addition to `delta.content`
-2. Accumulate tool_call arguments across chunks (per-index concatenation)
-3. On stream end, include complete tool_calls in the "done" control message:
-   `{"type": "done", "tool_calls": [...], "finish_reason": "tool_calls", ...}`
-4. ManagedAgentLoop reads tool_calls from `meta` in "done" message
-
-**Files to modify**:
-- `src/nexus/backends/compute/openai_compatible.py` — `generate_streaming()` add tool_call accumulation
-- `src/nexus/services/agent_runtime/managed_loop.py` — extract tool_calls from meta, delete TODO
-
-**Layer: Infra (backend) + Framework (loop) | Needs building**
-
-### 1.5 Tool Registry & Execution [Production]
-
-**CC Tool Interface**: `validateInput() → checkPermissions() → call()` + `isEnabled()`, `isConcurrencySafe()`, `isReadOnly()`, `isDestructive()`, `prompt()`.
-
-**Nexus plan — two-tier tool model**:
-
-**Tier A: Built-in kernel tools (eager, function-calling)**
-Small set (~6) of kernel-level tools bound day-1 via function-calling schema:
-- `read_file` → `sys_read(path)` (exists)
-- `write_file` → `sys_write(path, content)` (exists)
-- `edit_file` → `nx.edit(path, edits)` (exists, Tier-2 RPC, fuzzy match + OCC)
-- `bash` → SubprocessRunner (new, DT_PIPE pattern from AcpService)
-- `grep` → `SearchService.grep()` (exists, Rust-accelerated, all profiles)
-- `glob` → `SearchService.glob()` (exists, Rust-accelerated, all profiles)
-
-These are few enough (~6 × 200 tokens = 1.2K) to not dilute context.
-
-**Tier B: External CLI tools (lazy, filesystem discovery)**
-User provides tool paths. Tools are well-named CLI executables (e.g. built with cli-args-ssot).
-LLM discovers tools on-demand via filesystem navigation:
-```
-System prompt: "External tools available at /tools/. Use ls and --help to discover."
-
-LLM behavior:
-  ls /tools/ → ai-dev-browser/, video-uploader/, gmail-processor/
-  ls /tools/ai-dev-browser/tools/ → browser_click, browser_list, ...
-  browser_click --help → usage + params
-  bash browser_click --selector "#submit" --timeout 5000
-```
-
-Benefits over eager binding:
-- Supports unlimited tools without context window explosion
-- No context dilution (LLM only loads what it needs)
-- No schema translation needed — tools are self-describing via --help
-- Exceeds CC's approach (CC eager-binds ~40 tools; ToolSearch is a workaround)
-
-Tool path registration:
-```
-nexus agent --tools /path/to/ai-dev-browser --tools /path/to/video-uploader
-
-# Nexus mounts via DT_MOUNT:
-# sys_setattr("/{zone}/tools/ai-dev-browser", entry_type=DT_MOUNT, backend=LocalPathBackend(...))
-# sys_setattr("/{zone}/tools/video-uploader", entry_type=DT_MOUNT, backend=LocalPathBackend(...))
-# Toolset name = parent folder name
-```
-
-System prompt only needs: `"External tools are mounted at /tools/."`
-No --help hint needed — cli-args-ssot guarantees any wrong usage returns
-SSOT-formatted guidance automatically.
-
-Implementation: DT_MOUNT to real tool directories. PathRouter automatically
-routes LLM's ls/cd/exec to the correct physical path. LLM uses built-in
-bash/read_file to navigate and execute. Filesystem IS the registry.
-
-**Layer: Framework (built-in tools) + Infra (VFS mount for external) | Needs building**
-
-### 1.6 Dual Persistence Explained
+### 1.6 Dual Persistence Explained — retained (design rationale)
 
 **Not redundant** — different granularity and timing:
 
@@ -179,55 +53,20 @@ bash/read_file to navigate and execute. Filesystem IS the registry.
 | Tool results | Not directly (but included in next turn's request) | Yes |
 | Timing | After LLM response, before tool execution | After tool execution, before next LLM call |
 
-Tool results flow: CASOpenAIBackend is stateless — it only sees the request bytes passed to it.
-Tool execution happens in ManagedAgentLoop AFTER persist_session, so that iteration's session
-doesn't include tool results. However, tool results are appended to `self._messages`, and the
-NEXT iteration's `persist_session(request_bytes)` includes them as part of the new LLM request.
-So tool results ARE persisted by persist_session — just one iteration later.
+Both retained. CAS dedup ensures no wasted space.
 
-Both retained. CAS dedup ensures no wasted space. Tool execution is the only operation
-that does NOT go through CASOpenAIBackend — tools run in ManagedAgentLoop directly via
-VFS syscalls. This is why persist_session sees tool results one iteration later (as part
-of the next LLM request). No other content differences exist between the two persistence
-paths. _persist_conversation frequency is already optimal (once after all tools in a turn,
-not per-tool).
+### 1.7 Session Resume — DONE
 
-### 1.7 Session Resume [Production]
-
-**CC**: `--continue` (last session), `--resume <id>` (specific), `--fork-session` (fork).
-
-**Nexus plan**:
-
-Session path convention — under agent path per `vfs_paths.py`:
-```
-/{zone}/agents/{id}/sessions/{session-id}/conversation
-/{zone}/agents/{id}/sessions/{session-id}/metadata.json
-```
-
-This nests sessions under the agent, matching CC's `~/.claude/projects/<hash>/sessions/<id>`.
-`readdir("/{zone}/agents/{id}/sessions/")` lists all sessions for an agent.
+Session paths: `/{zone}/agents/{id}/sessions/{session-id}/conversation` and `metadata.json`.
 
 ```python
 class SessionManager:
     """Session discovery and lifecycle via VFS."""
-
-    async def latest(self) -> str | None:
-        """Find most recent session (--continue).
-        readdir → sort by metadata.updated_at → return session_id."""
-
-    async def load(self, session_id: str) -> list[dict]:
-        """Load conversation (--resume <id>).
-        sys_read → JSON deserialize → return messages[]."""
-
-    async def fork(self, source_id: str) -> str:
-        """Fork session (--fork-session).
-        CAS copy-on-write: new session, same CAS hash. Zero cost."""
-
+    async def latest(self) -> str | None:    # --continue
+    async def load(self, session_id: str) -> list[dict]:  # --resume <id>
+    async def fork(self, source_id: str) -> str:  # --fork-session (CAS copy-on-write)
     async def create(self) -> str:
-        """Create new empty session."""
 ```
-
-**Layer: Framework | Needs building**
 
 ---
 

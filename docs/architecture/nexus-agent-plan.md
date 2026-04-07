@@ -396,6 +396,22 @@ Agent REPL will be Python-native (see §11.2). TUI polish (colors, progress bars
 Default is auto-start (zero setup, like CC). `--profile` reuses existing CLI profile
 system (`~/.nexus/config.yaml`). Both modes support both connection methods.
 
+**Agent runtime modes** (see also `cli-design.md`):
+
+| Mode | NexusFS | Human interaction | Use case |
+|------|---------|-------------------|----------|
+| Embedded (`nexus chat`) | In-process CLUSTER, exclusive | stdin/stdout terminal | Local dev, CC-like |
+| Remote (`nexus chat --with addr`) | REMOTE proxy → nexusd | stdin/stdout terminal | Team/shared nexusd |
+| API spawn (nexusd internal) | nexusd's own NexusFS | API (HTTP/gRPC) | Background tasks, workflows |
+| ACP (copilot→worker) | nexusd's own NexusFS | StdioPipe + JSON-RPC | Copilot spawns specialist workers |
+
+V1 implements Embedded + Remote. API spawn and ACP already exist in infra.
+
+**Copilot / Worker model**: `nexus chat` starts a **Copilot** — the agent that
+interacts with the human. Copilot can spawn **Workers** via ACP for specialist
+tasks (CC, cursor, custom tools). Workers are subprocess agents with restricted
+tool sets.
+
 **Streaming**: Default is streaming (打字机效果) via `CASOpenAIBackend.start_streaming()`
 → DT_STREAM → REPL reads tokens in real-time. Matches CC default behavior.
 
@@ -434,11 +450,12 @@ nexus chat [--profile X] [-p "prompt"]
   ├─ --profile given?
   │   YES → nexus.connect(profile="remote", url=..., api_key=...)
   │         Returns NexusFS with RPCTransport to existing nexusd
-  │   NO  → Boot in-process:
+  │   NO  → Boot embedded NexusFS (invocation-based, exclusive to this process):
   │         1. Resolve deployment profile: --deployment-profile > NEXUS_PROFILE env > "cluster"
   │         2. create_nexus_fs(profile=resolved, backend=CASLocalBackend(~/.nexus/data))
   │         3. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
   │         4. Inject StreamManager into backend
+  │         NexusFS lifecycle = process lifetime. No nexusd required.
   │
   ├─ Create ManagedAgentLoop(
   │     sys_read=nx.sys_read, sys_write=nx.sys_write,

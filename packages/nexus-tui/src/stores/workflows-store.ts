@@ -281,9 +281,12 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       };
       set({ schedulerMetrics: metrics, schedulerLoading: false });
       useUiStore.getState().markDataUpdated("workflows");
-    } catch {
-      // Suppress — SchedulerView handles null metrics gracefully
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Scheduler metrics unavailable";
       set({ schedulerMetrics: null, schedulerLoading: false });
+      // Push to error store for observability but don't set panel-level error
+      // (SchedulerView renders a distinct "unavailable" state for null metrics)
+      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },
 

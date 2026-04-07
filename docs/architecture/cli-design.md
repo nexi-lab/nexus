@@ -4,13 +4,13 @@
 
 Nexus has two fundamentally different runtime modes:
 
-1. **Invocation-based (`nexus`)**: A NexusFS instance embedded in the
-   invoker's process. Lifecycle tied to the invoker — exits when the
+1. **In-process (invocation-style)** — `nexus`: A NexusFS instance embedded
+   in the invoker's process. Lifecycle tied to the invoker — exits when the
    invoker exits. Can operate as a REMOTE-profile RPC client (proxying
    to a nexusd) OR as a full embedded instance (e.g. CLUSTER profile
    with local storage). The invoker decides.
-2. **Persistent (`nexusd`)**: A long-running daemon process on a node,
-   exposing gRPC/HTTP. Manages local storage, serves RPC, participates
+2. **Daemon (persistent)** — `nexusd`: A long-running daemon process on a
+   node, exposing gRPC/HTTP. Manages local storage, serves RPC, participates
    in federation. Self-managed lifecycle (SIGTERM to stop).
 
 This design introduces a clean two-binary split inspired by Unix conventions
@@ -18,7 +18,7 @@ This design introduces a clean two-binary split inspired by Unix conventions
 
 ## The Two Binaries
 
-### `nexus` — Invocation-based Nexus Instance
+### `nexus` — In-process, Invocation-style
 
 Starts a NexusFS instance **in the invoker's process**. The instance's
 lifecycle is tied to the invoker — when the invoker exits, NexusFS exits.

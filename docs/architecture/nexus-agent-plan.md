@@ -390,7 +390,7 @@ Agent REPL will be Python-native (see §11.2). TUI polish (colors, progress bars
 
 | Flag | Behavior |
 |------|----------|
-| (default) | In-process auto-start: boot SLIM-profile NexusFS + LLM backend, single process |
+| (default) | In-process auto-start: boot NexusFS + LLM backend, single process |
 | `--profile X` | Connect to existing nexusd via REMOTE profile (RPCTransport + gRPC) |
 
 Default is auto-start (zero setup, like CC). `--profile` reuses existing CLI profile
@@ -413,15 +413,17 @@ Options:
   --resume ID             Resume specific session by ID
   --tools PATH...         Mount external tool directories (Tier B, §1.5)
   --profile TEXT          Connect to named nexusd profile (default: in-process)
+  --deployment-profile    Deployment profile for in-process mode (default: cluster)
 ```
 
 Config precedence (matching CC): `CLI args > env vars > config file`
 
 | Setting | CLI Flag | Env Var | Config File |
 |---------|----------|---------|-------------|
-| Model | `--model` | `NEXUS_LLM_MODEL` | `~/.nexus/config.yaml` settings.agent.model |
-| LLM URL | — | `NEXUS_LLM_BASE_URL` | Profile entry `llm-base-url` |
-| API Key | — | `NEXUS_LLM_API_KEY` | Profile entry `llm-api-key` |
+| Model | `--model` | `NEXUS_LLM_MODEL` | `settings.agent.model` |
+| LLM URL | — | `NEXUS_LLM_BASE_URL` | `settings.agent.llm-base-url` |
+| API Key | — | `NEXUS_LLM_API_KEY` | `settings.agent.llm-api-key` |
+| Deployment profile | `--deployment-profile` | `NEXUS_PROFILE` | `settings.agent.deployment-profile` |
 | Tools | `--tools` | — | `{cwd}/.nexus/agent.md` |
 
 #### Bootstrap Sequence
@@ -433,9 +435,10 @@ nexus chat [--profile X] [-p "prompt"]
   │   YES → nexus.connect(profile="remote", url=..., api_key=...)
   │         Returns NexusFS with RPCTransport to existing nexusd
   │   NO  → Boot in-process:
-  │         1. create_nexus_fs(profile=SLIM, backend=CASLocalBackend(~/.nexus/data))
-  │         2. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
-  │         3. Inject StreamManager into backend
+  │         1. Resolve deployment profile: --deployment-profile > NEXUS_PROFILE env > "cluster"
+  │         2. create_nexus_fs(profile=resolved, backend=CASLocalBackend(~/.nexus/data))
+  │         3. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
+  │         4. Inject StreamManager into backend
   │
   ├─ Create ManagedAgentLoop(
   │     sys_read=nx.sys_read, sys_write=nx.sys_write,

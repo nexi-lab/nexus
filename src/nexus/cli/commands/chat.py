@@ -35,6 +35,12 @@ import click
     default=None,
     help="Deployment profile for embedded mode (default: cluster).",
 )
+@click.option(
+    "--tools",
+    multiple=True,
+    type=click.Path(exists=True, file_okay=False, resolve_path=True),
+    help="Mount external tool directories (repeatable).",
+)
 def chat(
     prompt: str | None,
     model: str | None,
@@ -42,6 +48,7 @@ def chat(
     continue_session: bool,
     resume: str | None,
     deployment_profile: str | None,
+    tools: tuple[str, ...],
 ) -> None:
     """Start an agent chat session.
 
@@ -64,6 +71,7 @@ def chat(
             continue_session=continue_session,
             resume=resume,
             deployment_profile=deployment_profile,
+            tools=tools,
         )
     )
 
@@ -76,6 +84,7 @@ async def _run_chat(
     continue_session: bool,
     resume: str | None,
     deployment_profile: str | None,
+    tools: tuple[str, ...] = (),
 ) -> None:
     """Bootstrap NexusFS + ManagedAgentLoop, then run REPL or one-shot."""
     from pathlib import Path
@@ -120,6 +129,17 @@ async def _run_chat(
         from nexus.contracts.metadata import DT_MOUNT
 
         await nx.sys_setattr("/llm", entry_type=DT_MOUNT, backend=llm_backend)
+
+        # ── Mount external tool directories (Tier B, §1.5) ──
+        if tools:
+            from nexus.backends.storage.path_local import PathLocalBackend
+
+            for tool_path in tools:
+                tool_name = Path(tool_path).name
+                mount_point = f"/root/tools/{tool_name}"
+                tool_backend = PathLocalBackend(root_path=Path(tool_path))
+                await nx.sys_setattr(mount_point, entry_type=DT_MOUNT, backend=tool_backend)
+                click.echo(f"  tools: {tool_path} → {mount_point}")
 
         # ── Create agent loop ──
         from nexus.services.agent_runtime.compaction import DefaultCompactionStrategy

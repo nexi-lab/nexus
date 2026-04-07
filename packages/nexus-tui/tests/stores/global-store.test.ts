@@ -303,20 +303,11 @@ describe("GlobalStore", () => {
   });
 
   describe("testConnection", () => {
-    it("sets connected and userInfo on success", async () => {
+    it("sets connected on health success", async () => {
       const mockHealth = { status: "ready", uptime_seconds: 100 };
-      const mockUserInfo = {
-        user_id: "user-1",
-        email: "test@example.com",
-        username: "testuser",
-        display_name: "Test User",
-        avatar_url: null,
-        is_global_admin: false,
-        primary_auth_method: "api_key",
-      };
 
-      // testConnection calls client.get 2 times: health, features
-      // (auth/me is deferred — see global-store.ts comment)
+      // testConnection calls client.get 2 times: health, features.
+      // Deferred /auth/me fires as a 3rd call but falls through to default mock (undefined).
       const mockGet = mock()
         .mockResolvedValueOnce(mockHealth)     // health (/healthz/ready)
         .mockResolvedValueOnce(null);          // features
@@ -329,24 +320,24 @@ describe("GlobalStore", () => {
 
       expect(state.connectionStatus).toBe("connected");
       expect(state.connectionError).toBeNull();
-      // userInfo is null — /auth/me is deferred to avoid connection pool blocking
-      expect(state.userInfo).toBeNull();
     });
 
-    it("sets connected when health passes but auth/me fails", async () => {
+    it("sets connected when health passes but deferred auth/me fails", async () => {
       const mockHealth = { status: "ready", uptime_seconds: 10 };
       const mockGet = mock()
         .mockResolvedValueOnce(mockHealth)     // health OK
         .mockResolvedValueOnce(null)           // features
-        .mockRejectedValueOnce(new Error("Auth not configured")); // auth/me fails
+        .mockRejectedValueOnce(new Error("Auth not configured")); // deferred auth/me fails
 
       const mockFetchClient = { get: mockGet } as unknown as FetchClient;
       useGlobalStore.setState({ client: mockFetchClient });
 
       await useGlobalStore.getState().testConnection();
+      // Give deferred /auth/me time to settle
+      await new Promise((r) => setTimeout(r, 10));
       const state = useGlobalStore.getState();
 
-      // Server is connected if health passes, even when auth fails
+      // Server is connected if health passes, even when auth/me fails
       expect(state.connectionStatus).toBe("connected");
       expect(state.userInfo).toBeNull();
     });

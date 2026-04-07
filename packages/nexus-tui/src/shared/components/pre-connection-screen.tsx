@@ -148,64 +148,58 @@ export function PreConnectionScreen(): JSX.Element {
   };
 
   useKeyboard(
-    isCommandRunning()
-      ? {}
-      : hasCommandOutput()
-      ? {
-          // After a command finishes, only allow Esc to dismiss or re-run shortcuts
-          escape: dismissOutput,
-          backspace: dismissOutput,
-          r: handleRetry,
-        }
-      : editingUrl()
-      ? {
-          return: handleConnectUrl,
-          escape: () => { setEditingUrl(false); setUrlInput(""); },
-          backspace: () => setUrlInput((u) => u.slice(0, -1)),
-        }
-      : {
-          r: handleRetry,
-          a: () => setAutoPoll((prev) => !prev),
-          i: () => {
-            prevApiKey = config.apiKey;
-            setApiKeyWarning(null);
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("init", []);
-          },
-          s: () => {
-            prevApiKey = config.apiKey;
-            setApiKeyWarning(null);
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("init", ["--preset", "shared"]);
-          },
-          d: () => {
-            prevApiKey = config.apiKey;
-            setApiKeyWarning(null);
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("init", ["--preset", "demo", "--force"]);
-          },
-          u: () => {
-            // Start server (nexus up)
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("up", []);
-          },
-          "shift+u": () => {
-            // Start server with local build (nexus up --build)
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("up", ["--build"]);
-          },
-          p: () => {
-            // Seed demo data (nexus demo init)
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("demo", ["init"]);
-          },
-          c: () => {
-            // Connect to a different URL
-            setEditingUrl(true);
-            setUrlInput(useGlobalStore.getState().config.baseUrl ?? "http://localhost:2026");
-          },
+    (): Record<string, () => void> => {
+      if (isCommandRunning()) return {};
+      if (hasCommandOutput()) return {
+        escape: dismissOutput,
+        backspace: dismissOutput,
+        r: handleRetry,
+      };
+      if (editingUrl()) return {
+        return: handleConnectUrl,
+        escape: () => { setEditingUrl(false); setUrlInput(""); },
+        backspace: () => setUrlInput((u) => u.slice(0, -1)),
+      };
+      return {
+        r: handleRetry,
+        a: () => setAutoPoll((prev) => !prev),
+        i: () => {
+          prevApiKey = config.apiKey;
+          setApiKeyWarning(null);
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("init", []);
         },
-    isCommandRunning() ? undefined : editingUrl() ? handleUnhandledKey : undefined,
+        s: () => {
+          prevApiKey = config.apiKey;
+          setApiKeyWarning(null);
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("init", ["--preset", "shared"]);
+        },
+        d: () => {
+          prevApiKey = config.apiKey;
+          setApiKeyWarning(null);
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("init", ["--preset", "demo", "--force"]);
+        },
+        u: () => {
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("up", []);
+        },
+        "shift+u": () => {
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("up", ["--build"]);
+        },
+        p: () => {
+          useCommandRunnerStore.getState().reset();
+          executeLocalCommand("demo", ["init"]);
+        },
+        c: () => {
+          setEditingUrl(true);
+          setUrlInput(useGlobalStore.getState().config.baseUrl ?? "http://localhost:2026");
+        },
+      };
+    },
+    () => !isCommandRunning() && editingUrl() ? handleUnhandledKey : undefined,
   );
 
   // Full-screen command output view when a command is running or has output.

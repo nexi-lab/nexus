@@ -12,7 +12,7 @@
 import { createEffect, createMemo, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { useFilesStore, type TreeNode } from "../../stores/files-store.js";
-import { useApi } from "../../shared/hooks/use-api.js";
+import { useGlobalStore } from "../../stores/global-store.js";
 import { FileTreeNode } from "./file-tree-node.js";
 import { Spinner } from "../../shared/components/spinner.js";
 import { ScrollIndicator } from "../../shared/components/scroll-indicator.js";
@@ -48,7 +48,8 @@ interface FileTreeProps {
 }
 
 export function FileTree(props: FileTreeProps): JSX.Element {
-  const client = useApi();
+  // Read client fresh each time — useApi() captures once and can be null before connection.
+  const getClient = () => useGlobalStore.getState().client;
   const setSelectedIndex = useFilesStore((s) => s.setSelectedIndex);
   const toggleNode = useFilesStore((s) => s.toggleNode);
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
@@ -69,8 +70,9 @@ export function FileTree(props: FileTreeProps): JSX.Element {
     void revision(); // trigger when store updates
     const path = currentPath();
     const nodes = treeNodes();
-    if (client && !nodes.has(path)) {
-      expandNode(path, client);
+    const c = getClient();
+    if (c && !nodes.has(path)) {
+      expandNode(path, c);
     }
   });
 
@@ -87,17 +89,17 @@ export function FileTree(props: FileTreeProps): JSX.Element {
 
   // Auto-load more: when the selected node is a "load more" sentinel, trigger fetch
   createEffect(() => {
-    if (!client) return;
+    const c = getClient();
+    if (!c) return;
     const nodes = visibleNodes();
     const idx = selectedIndex();
     const selectedNode = nodes[idx];
     if (!selectedNode || !selectedNode.path.endsWith(LOAD_MORE_SENTINEL)) return;
 
-    // Extract the parent path from the sentinel node
     const parentPath = selectedNode.path.slice(0, -(LOAD_MORE_SENTINEL.length + 1));
     const parentNode = treeNodes().get(parentPath);
     if (parentNode?.hasMore && !parentNode.loadingMore) {
-      loadMoreChildren(parentPath, client);
+      loadMoreChildren(parentPath, c);
     }
   });
 
@@ -111,7 +113,7 @@ export function FileTree(props: FileTreeProps): JSX.Element {
     );
 
   return (
-    <Show when={client} fallback={<text>No connection configured</text>}>
+    <Show when={getClient()} fallback={<text>No connection configured</text>}>
       <Show
         when={visibleNodes().length > 0}
         fallback={
@@ -130,11 +132,12 @@ export function FileTree(props: FileTreeProps): JSX.Element {
             onSelect={(index) => {
               setSelectedIndex(index);
               const node = visibleNodes()[index];
-              if (!node || node.path.endsWith(LOAD_MORE_SENTINEL) || !client) return;
+              const cl = getClient();
+              if (!node || node.path.endsWith(LOAD_MORE_SENTINEL) || !cl) return;
               if (node.isDirectory) {
-                void toggleNode(node.path, client);
+                void toggleNode(node.path, cl);
               } else {
-                void fetchPreview(node.path, client);
+                void fetchPreview(node.path, cl);
               }
             }}
           />

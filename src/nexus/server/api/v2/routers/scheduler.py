@@ -263,7 +263,10 @@ async def get_metrics(
         return MetricsResponse(**data)
     except Exception as e:
         logger.error("Failed to fetch scheduler metrics: %s", e, exc_info=True)
-        return MetricsResponse(queue_by_class=[], fair_share={}, use_hrrn=False)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Scheduler metrics unavailable: {e}",
+        ) from e
 
 
 @router.post("/classify", response_model=ClassifyResponse)

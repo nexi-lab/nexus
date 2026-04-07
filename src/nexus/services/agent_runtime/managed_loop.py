@@ -99,6 +99,7 @@ class ManagedAgentLoop:
         tool_registry: ToolRegistry | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
         compactor: CompactionStrategy | None = None,
+        cwd: str = "",
     ) -> None:
         self._sys_read = sys_read
         self._sys_write = sys_write
@@ -113,6 +114,7 @@ class ManagedAgentLoop:
         self._max_retries = max_retries
         self._session_id = str(uuid.uuid4())
         self._tool_registry = tool_registry
+        self._cwd = cwd
         self._compactor: CompactionStrategy = compactor or DefaultCompactionStrategy(
             sys_write=sys_write,
             agent_path=agent_path,
@@ -143,18 +145,28 @@ class ManagedAgentLoop:
     async def initialize(self) -> None:
         """Load agent config from VFS (system prompt, tools).
 
-        Reads:
-            {agent_path}/SYSTEM.md → system prompt
-            {agent_path}/tools.json → tool definitions
+        System prompt assembled from multiple VFS sources (§4.2):
+            {agent_path}/SYSTEM.md → identity + guidelines
+            Runtime environment → platform, model, git status
+            {agent_path}/prompts/*.md → optional fragments
+            {cwd}/.nexus/agent.md → project context
         """
-        # System prompt from VFS
-        try:
-            prompt_bytes = await self._sys_read(f"{self._agent_path}/SYSTEM.md")
-            system_prompt = prompt_bytes.decode("utf-8").strip()
-            if system_prompt:
-                self._messages.append({"role": "system", "content": system_prompt})
-        except Exception:
-            logger.debug("No system prompt at %s/SYSTEM.md", self._agent_path)
+        from nexus.services.agent_runtime.system_prompt import assemble_system_prompt
+
+        # Extract zone_id and agent_id from agent_path (/{zone}/agents/{id})
+        parts = self._agent_path.strip("/").split("/")
+        zone_id = parts[0] if len(parts) >= 3 else "root"
+        agent_id = parts[2] if len(parts) >= 3 else ""
+
+        system_prompt = await assemble_system_prompt(
+            sys_read=self._sys_read,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            cwd=self._cwd,
+            model=self._model,
+        )
+        if system_prompt:
+            self._messages.append({"role": "system", "content": system_prompt})
 
         # Tool definitions: prefer ToolRegistry schemas, fall back to VFS config.
         self._tools: list[dict[str, Any]] = []

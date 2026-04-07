@@ -1207,8 +1207,7 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # Connector mount read — delegate to connector backends only,
-        # not the default Raft backend (which also has read_content).
+        # External connector mount read — only for ExternalRouteResult.
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -1221,12 +1220,7 @@ class NexusFS(  # type: ignore[misc]
         )
         _route_backend = getattr(_route, "backend", None)
         _route_backend_path = getattr(_route, "backend_path", "") or ""
-        _is_connector = isinstance(_route, ExternalRouteResult) or (
-            _route_backend is not None
-            and hasattr(_route_backend, "read_content")
-            and type(_route_backend).__name__ not in ("RaftBackend", "ObjectStore", "MetadataStore")
-        )
-        if _is_connector and _route_backend is not None:
+        if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
             _ctx = (
                 _dc_replace(context, backend_path=_route_backend_path, virtual_path=path)
                 if context
@@ -4439,9 +4433,10 @@ class NexusFS(  # type: ignore[misc]
                 return [self._format_lock_info(lk) for lk in locks]
             return [lk.path for lk in locks]
 
-        # ── Connector mount listing (S3, GCS, local, etc.) ──
-        # Only intercept for ExternalRouteResult OR connector-registered backends
-        # (not the default Raft backend which also has list_dir).
+        # ── External connector mount listing (S3, GCS, etc.) ──
+        # Only intercept ExternalRouteResult — these are mounts with
+        # is_external_storage metadata set. Plain RouteResult backends
+        # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
         if path and path != "/" and getattr(self, "router", None):
             try:
                 from nexus.core.router import ExternalRouteResult
@@ -4454,17 +4449,8 @@ class NexusFS(  # type: ignore[misc]
                 _route = self.router.route(
                     path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
                 )
-                # Only delegate to connector backends, not the default Raft metastore backend.
-                # ExternalRouteResult = static external mounts (is_external_storage metadata).
-                # Plain RouteResult with a non-default backend = runtime connector mount.
                 backend = getattr(_route, "backend", None)
-                _is_connector = isinstance(_route, ExternalRouteResult) or (
-                    backend is not None
-                    and hasattr(backend, "list_dir")
-                    and type(backend).__name__
-                    not in ("RaftBackend", "ObjectStore", "MetadataStore")
-                )
-                if _is_connector and backend is not None:
+                if isinstance(_route, ExternalRouteResult) and backend is not None:
                     backend_path = getattr(_route, "backend_path", "") or ""
                     _ctx = (
                         _dc_replace(context, backend_path=backend_path, virtual_path=path)

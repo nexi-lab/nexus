@@ -66,5 +66,4 @@ jobs:
       - run: cd ../nexus-api-client && npm install && npm run build
 
       - run: bun install
-      - run: node scripts/patch-jsx-types.cjs && rm -rf node_modules/.cache node_modules/.bun
       - run: bun test

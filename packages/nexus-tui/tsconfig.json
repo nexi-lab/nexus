@@ -7,11 +7,8 @@
       "ES2022",
       "DOM"
     ],
-    "jsx": "preserve",
-    "jsxImportSource": "@opentui/solid",
-    "customConditions": [
-      "browser"
-    ],
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -21,14 +18,17 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
+    "types": [
+      "bun-types"
+    ],
+    "customConditions": [
+      "browser"
+    ],
     "paths": {
       "@nexus-ai-fs/api-client": [
         "../nexus-api-client/src/index.ts"
       ]
-    },
-    "types": [
-      "bun-types"
-    ]
+    }
   },
   "include": [
     "src/**/*.ts",

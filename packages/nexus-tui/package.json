@@ -15,8 +15,7 @@
     "start": "bun run --conditions=browser src/index.tsx",
     "test": "bun test",
     "lint": "tsc --noEmit",
-    "clean": "rm -rf dist",
-    "postinstall": "node scripts/patch-jsx-types.cjs"
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "@nexus-ai-fs/api-client": "file:../nexus-api-client",

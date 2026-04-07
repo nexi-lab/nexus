@@ -11,7 +11,7 @@ name: Build Standalone Binary (profile=cluster)
 #
 # Build order per runner:
 #   1. pip install . (non-editable → site-packages, no local pathex needed)
-#   2. Build nexus_pyo3  → nexus_fast      (ReBAC permission computation)
+#   2. Build nexus_kernel → nexus_kernel   (ReBAC permission computation)
 #   3. Build nexus_raft  → _nexus_raft     (Raft consensus + embedded storage)
 #   4. Build nexus_tasks → _nexus_tasks    (durable task queue)
 #   5. pip install all three wheels
@@ -98,7 +98,7 @@ jobs:
         with:
           shared-key: pyinstaller-cluster-rust-${{ matrix.os }}
           workspaces: |
-            rust/nexus_pyo3
+            rust/nexus_kernel
             rust/nexus_raft
             rust/nexus_tasks
 
@@ -184,13 +184,13 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+      - name: Build nexus_kernel wheel  (rust/nexus_kernel)
         shell: bash
         run: |
           mkdir -p build/dist
           maturin build --release \
             --out build/dist \
-            -m rust/nexus_pyo3/Cargo.toml
+            -m rust/nexus_kernel/Cargo.toml
 
       - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
         shell: bash
@@ -206,6 +206,7 @@ jobs:
         shell: bash
         run: |
           maturin build --release \
+            --features mimalloc \
             --out build/dist \
             -m rust/nexus_tasks/Cargo.toml
 
@@ -222,7 +223,7 @@ jobs:
 
       # Patch all developer-local hardcoded paths in the spec file:
       #   NEXUS_RAFT_SO  → resolved via importlib (finds the installed .so in site-packages)
-      #   NEXUS_FAST_SO  → same
+      #   NEXUS_KERNEL_SO → same
       #   pathex         → $GITHUB_WORKSPACE/src
       #
       # Uses importlib.util.find_spec() which honours the Python env used by
@@ -239,7 +240,7 @@ jobs:
 
           def find_so(module_name):
               """Locate the .so/.dylib for a native extension.
-              Tries both flat (nexus_fast) and nested (nexus_fast.nexus_fast)
+              Tries both flat (nexus_kernel) and nested (nexus_kernel.nexus_kernel)
               importlib lookups, then falls back to a site-packages glob.
               """
               base = module_name.split(".")[-1]
@@ -281,18 +282,27 @@ jobs:
               )
 
           nexus_raft_so = find_so("_nexus_raft")
-          nexus_fast_so = find_so("nexus_fast")
-          src_path      = f"{workspace}/src"
+          nexus_kernel_so = find_so("nexus_kernel")
+          src_path = f"{workspace}/src"
 
           with open(spec_path) as f:
               spec = f.read()
 
-          spec = re.sub(r"NEXUS_RAFT_SO\s*=\s*'[^']*'",
-                        f"NEXUS_RAFT_SO = '{nexus_raft_so}'", spec)
-          spec = re.sub(r"NEXUS_FAST_SO\s*=\s*'[^']*'",
-                        f"NEXUS_FAST_SO = '{nexus_fast_so}'", spec)
-          spec = re.sub(r"pathex=\[.*?\]",
-                        f"pathex=['{src_path}']", spec)
+          spec = re.sub(
+              r'NEXUS_RAFT_SO\s*=\s*["\'][^"\']*["\']',
+              f'NEXUS_RAFT_SO = "{nexus_raft_so}"',
+              spec,
+          )
+          spec = re.sub(
+              r'NEXUS_KERNEL_SO\s*=\s*["\'][^"\']*["\']',
+              f'NEXUS_KERNEL_SO = "{nexus_kernel_so}"',
+              spec,
+          )
+          spec = re.sub(
+              r"pathex=\[.*?\]",
+              f'pathex=["{src_path}"]',
+              spec,
+          )
           # Patch entry point: the binary bundles nexusd (daemon), not nexus CLI.
           # nexus/daemon/main.py only defines main() but never calls it, so we
           # create a tiny wrapper that calls it (mirrors the pyproject.toml
@@ -319,11 +329,11 @@ jobs:
           with open(spec_path, "w") as f:
               f.write(spec)
 
-          print(f"Patched NEXUS_RAFT_SO -> {nexus_raft_so}")
-          print(f"Patched NEXUS_FAST_SO -> {nexus_fast_so}")
-          print(f"Patched pathex        -> {src_path}")
-          print(f"Patched entry point   -> {src_path}/nexus/daemon/main.py")
-          print(f"Injected runtime_hook -> {hook_path} (NEXUS_PROFILE=cluster)")
+          print(f"Patched NEXUS_RAFT_SO   -> {nexus_raft_so}")
+          print(f"Patched NEXUS_KERNEL_SO -> {nexus_kernel_so}")
+          print(f"Patched pathex          -> {src_path}")
+          print(f"Patched entry point     -> {src_path}/nexus/daemon/main.py")
+          print(f"Injected runtime_hook   -> {hook_path} (NEXUS_PROFILE=cluster)")
           EOF
 
       - name: Build PyInstaller binary (profile=cluster)

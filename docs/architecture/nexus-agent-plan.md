@@ -281,23 +281,112 @@ class SessionManager:
 
 ---
 
-## 4. Context Management [P0]
+## 4. Context Management [P0 — Detailed Design]
 
-### 4.1 Context Compression — 3 Layers [Production]
-1. micro_compact (silent, every turn): old tool_results → [cleared]
-2. auto_compact (token threshold ~100K): save transcript → LLM summary
-3. manual compact (/compact)
-- **Layer: Framework | P0 | Needs building**
+### 4.1 Context Compression [Production]
+
+Pluggable ABC with CC-compatible default implementation:
+
+```python
+class CompactionStrategy(Protocol):
+    async def compact(self, messages: list[dict], ctx: CompactContext) -> list[dict]: ...
+
+class CompactContext:
+    token_estimate: int        # current token count
+    max_tokens: int            # threshold for auto_compact
+    llm_call: Callable         # for strategies that need LLM summarization
+    sys_write: SysWriteFn      # for transcript persistence to VFS
+    agent_path: str            # for transcript VFS path
+```
+
+Default implementation (CC-compatible, 3 layers):
+
+**Layer 1 — micro_compact** (every turn, in ManagedAgentLoop.run() before LLM call):
+- Scan messages for role="tool" entries
+- Keep last 3 tool results at full fidelity
+- Older tool results with content > 100 chars → replace with `[cleared]`
+- In-place mutation, no LLM call needed
+
+**Layer 2 — auto_compact** (token threshold trigger, in ManagedAgentLoop.run()):
+- Trigger when `estimate_tokens(messages) > 100K`
+- Save full transcript to VFS: `/{zone}/agents/{id}/transcripts/{timestamp}.jsonl`
+- Call LLM to generate summary (last 80K chars, max 2000 tokens)
+- Replace all messages with `[Compressed]\n\n{summary}`
+- Insert compact_boundary marker
+
+**Layer 3 — manual compact** (/compact slash command or model calls compact tool):
+- Same logic as auto_compact but user/model triggered
+- Exposed as slash command in REPL and as a tool in ToolRegistry
+
+Integration point: ManagedAgentLoop.run() calls compaction before each LLM call:
+```
+while turns < max_turns:
+    self._compactor.micro_compact(self._messages)
+    if self._compactor.should_auto_compact(self._messages):
+        self._messages = await self._compactor.auto_compact(self._messages)
+    response = await self._call_llm_with_retry()
+    ...
+```
+
+**Layer: Framework | P0 | Needs building**
 
 ### 4.2 System Prompt Assembly [Production]
-- base prompt + tool descriptions + project context + skill list
-- Content stored in VFS `{agent_path}/SYSTEM.md`
-- Match CC's comprehensiveness (Agent layer concern)
-- **Layer: Framework | P0 | Needs building**
+
+CC has 19 sections in its system prompt. Nexus matches with VFS files:
+
+| # | CC Section | Nexus VFS File | Dynamic? |
+|---|-----------|----------------|----------|
+| 1 | Identity & Role | `{agent_path}/SYSTEM.md` | No |
+| 2 | Strengths | `{agent_path}/SYSTEM.md` | No |
+| 3 | Guidelines | `{agent_path}/SYSTEM.md` | No |
+| 4 | Notes | `{agent_path}/SYSTEM.md` | No |
+| 5 | Environment info | Generated at runtime | Yes |
+| 6 | Model identity | Generated at runtime | Yes |
+| 7 | Knowledge cutoff | Generated at runtime | Yes |
+| 8 | Git status | Generated at runtime | Yes |
+| 9 | Tool descriptions | `ToolRegistry.schemas()` → API tools param | Yes |
+| 10 | Output efficiency | `{agent_path}/prompts/output_efficiency.md` | No |
+| 11 | Model patches | `{agent_path}/prompts/model_patches.md` | Conditional |
+| 12 | Project context | `{cwd}/.nexus/agent.md` (equiv to CLAUDE.md) | Yes |
+| 13 | Conditional | Feature flags | Conditional |
+| 14 | JSON formatting | `{agent_path}/prompts/json_formatting.md` | No |
+| 15 | Tool batching | `{agent_path}/prompts/tool_batching.md` | No |
+
+system-reminder injections (runtime, as user messages in conversation):
+- Current date
+- Skill availability list
+- Deferred tool availability
+- Task-tool nudges
+
+Assembly in `initialize()`:
+```python
+async def _assemble_system_prompt(self) -> str:
+    parts = []
+    # Static sections from SYSTEM.md (1-4)
+    parts.append(await self._sys_read(f"{self._agent_path}/SYSTEM.md"))
+    # Dynamic environment block (5-8)
+    parts.append(self._generate_env_block())
+    # Static prompt fragments (10, 14, 15)
+    for name in ("output_efficiency", "json_formatting", "tool_batching"):
+        try:
+            parts.append(await self._sys_read(f"{self._agent_path}/prompts/{name}.md"))
+        except Exception:
+            pass
+    # Project context (12) — read from cwd
+    try:
+        parts.append(await self._sys_read(f"{self._cwd}/.nexus/agent.md"))
+    except Exception:
+        pass
+    return "\n\n".join(p.decode("utf-8").strip() for p in parts if p)
+```
+
+Tool descriptions (9) go in the API `tools` parameter, not in system prompt text.
+
+**Layer: Framework | P0 | Needs building**
 
 ### 4.3 Session Persistence [Production]
-- See §1.7 SessionManager design.
-- **Layer: Framework | P0 | Nexus CAS stronger**
+- SessionManager (§1.7) — DONE in PR #3660.
+- **Layer: Framework | P0 | DONE**
 
 ---
 
@@ -367,10 +456,77 @@ class SessionManager:
 
 ---
 
-## 11. UI & Interaction [P0/P1]
+## 11. UI & Interaction [P0/P1 — Detailed Design]
 
 ### 11.1 Terminal UI [Production] — Layer: Agent | P1 (Python: Rich/Textual)
-### 11.2 REPL + Slash Commands [Production] — Layer: Agent + Framework | P0
+
+### 11.2 REPL + Slash Commands [Production — Detailed Design]
+
+**Agent startup**: Uses same pattern as 3rd-party AcpService but with MANAGED kind:
+1. `AgentRegistry.spawn(kind=MANAGED)` → PID
+2. Create StdioPipe for user terminal ↔ agent communication
+3. Register DT_PIPEs at `/{zone}/proc/{pid}/fd/0,1,2`
+4. Start ManagedAgentLoop with session from SessionManager
+
+**CLI entry point**: `nexus chat` (click subcommand), connects to local nexusd:
+```
+nexus chat [--model MODEL] [--continue] [--resume ID] [--fork-session ID] [--tools PATH...]
+```
+
+**REPL loop**:
+```python
+while True:
+    query = input("nexus >> ")
+    if query.startswith("/"):
+        handle_slash_command(query)
+    elif query.strip():
+        result = await loop.run(query)
+        print(result.text)
+```
+
+**Slash command registry** — all CC commands listed, core ones implemented first:
+
+| Command | Status | Description |
+|---------|--------|-------------|
+| `/help` | Implement | Show help |
+| `/compact` | Implement | Manual context compression |
+| `/clear` | Implement | Clear conversation |
+| `/model` | Implement | Switch model |
+| `/quit` | Implement | Exit REPL |
+| `/sessions` | Implement | List sessions |
+| `/cost` | Implement | Show token usage / cost |
+| `/commit` | Placeholder | Skill: git commit |
+| `/review-pr` | Placeholder | Skill: PR review |
+| `/pdf` | Placeholder | Skill: PDF processing |
+| `/simplify` | Placeholder | Skill: code simplification |
+| `/loop` | Placeholder | Skill: recurring task |
+| `/schedule` | Placeholder | Skill: cron scheduling |
+| `/tasks` | Placeholder | Show task board |
+| `/team` | Placeholder | Show team roster |
+| `/inbox` | Placeholder | Check inbox |
+| `/effort` | Placeholder | Set effort level |
+| `/btw` | Placeholder | Side question |
+| `/stickers` | Placeholder | Easter egg |
+| `/thinkback` | Placeholder | Year in review |
+| `/good-claude` | Placeholder | Easter egg |
+| `/bughunter` | Placeholder | Easter egg |
+| `/fast` | Placeholder | Toggle fast mode |
+| `/verbose` | Placeholder | Toggle verbose output |
+| `/config` | Placeholder | Edit settings |
+| `/keybindings` | Placeholder | Keybinding config |
+| `/update-config` | Placeholder | Skill: config update |
+| `/claude-api` | Placeholder | Skill: API help |
+| `/doctor` | Placeholder | Diagnostics |
+| `/init` | Placeholder | Project setup |
+| `/status` | Placeholder | Agent status |
+| `/memory` | Placeholder | Memory system |
+| `/forget` | Placeholder | Remove memory |
+
+Placeholder = registered in slash command map but returns "Not implemented yet".
+Skill-backed commands will use the skill system when implemented (§7.1).
+
+**Layer: Agent + Framework | P0 | Needs building**
+
 ### 11.3 Keyboard Shortcuts [Production] — Layer: Agent | P2
 ### 11.4 Status Line [Production] — Layer: Agent | P2
 
@@ -435,11 +591,11 @@ class SessionManager:
 4. ~~**Retry wrapper** (§1.3)~~ — DONE (PR #3660)
 5. ~~**Session Manager** (§1.7)~~ — DONE (PR #3660)
 
-### To design & implement next:
+### To implement next (designed, ready for implementation):
 
-6. **Context Compression** (§4.1) — needs design discussion
-7. **System Prompt Assembly** (§4.2) — needs design discussion
-8. **REPL + Basic CLI** (§11.2 + §13.2) — needs design discussion
+6. **Context Compression** (§4.1) — pluggable CompactionStrategy ABC, CC-compatible default
+7. **System Prompt Assembly** (§4.2) — 15 sections mapped to VFS files, _assemble_system_prompt()
+8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` via click, slash command registry, StdioPipe agent
 9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs
 
 ### Deferred Items (not in current scope):

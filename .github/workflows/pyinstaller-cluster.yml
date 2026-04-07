@@ -1,0 +1,412 @@
+name: Build Standalone Binary (profile=cluster)
+
+# Builds a self-contained `nexus-cluster` binary using PyInstaller.
+# Profile=cluster: minimal multi-node deployment — Raft + federation + storage.
+# No auth, no PostgreSQL, no heavy ML/LLM bricks.
+#
+# Mirrors the structure of conda-pack.yml:
+#   - Matrix jobs build one binary each, upload as artifacts
+#   - A single `attach-to-release` job downloads all artifacts and pins them
+#     to the GitHub Release created by release.yml
+#
+# Build order per runner:
+#   1. pip install . (non-editable → site-packages, no local pathex needed)
+#   2. Build nexus_pyo3  → nexus_fast      (ReBAC permission computation)
+#   3. Build nexus_raft  → _nexus_raft     (Raft consensus + embedded storage)
+#   4. Build nexus_tasks → _nexus_tasks    (durable task queue)
+#   5. pip install all three wheels
+#   6. Patch pyinstaller_spec_cluster.py hardcoded paths using importlib
+#   7. PyInstaller → single-file nexus-cluster binary
+#   8. Smoke test + upload artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform_filter:
+        description: 'Platforms to build'
+        required: false
+        default: 'macos'
+        type: choice
+        options:
+          - macos
+          - linux
+          - windows
+          - all
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Dynamic matrix generation ─────────────────────────────────────────────
+  # Generates the build matrix based on the platform_filter input.
+  # On tag push all three platforms are always built.
+  # matrix context is not available in job-level `if`, so we use a setup job.
+  setup:
+    name: Generate build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          ALL='{"include":[{"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},{"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"},{"os":"windows-latest","artifact_name":"nexus-cluster-windows-x86_64"}]}'
+          MACOS='{"include":[{"os":"macos-15-intel","artifact_name":"nexus-cluster-macos-x86_64"},{"os":"macos-14","artifact_name":"nexus-cluster-macos-arm64"}]}'
+          LINUX='{"include":[]}'
+          WINDOWS='{"include":[{"os":"windows-latest","artifact_name":"nexus-cluster-windows-x86_64"}]}'
+
+          FILTER="${{ inputs.platform_filter }}"
+          # On tag push inputs.platform_filter is empty — default to all
+          if [ "$FILTER" = "linux" ]; then
+            echo "matrix=$LINUX" >> "$GITHUB_OUTPUT"
+          elif [ "$FILTER" = "macos" ]; then
+            echo "matrix=$MACOS" >> "$GITHUB_OUTPUT"
+          elif [ "$FILTER" = "windows" ]; then
+            echo "matrix=$WINDOWS" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$ALL" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Per-platform build ────────────────────────────────────────────────────
+  build-binary:
+    name: pyinstaller-cluster / ${{ matrix.artifact_name }}
+    needs: setup
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ── Rust toolchain ────────────────────────────────────────────────────
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: pyinstaller-cluster-rust-${{ matrix.os }}
+          workspaces: |
+            rust/nexus_pyo3
+            rust/nexus_raft
+            rust/nexus_tasks
+
+      # ── Install nexus into site-packages (non-editable) ──────────────────
+      # Non-editable install means PyInstaller locates all modules through
+      # site-packages — the hardcoded pathex in the spec becomes irrelevant.
+      - name: Install nexus and cluster dependencies
+        shell: bash
+        run: |
+          # fastbloom-rs>=0.5.0 doesn't exist on PyPI (highest available: 0.3.0).
+          # It's only used in rebac/cache bricks excluded from the cluster profile.
+          # pyproject.toml already gates uvloop with sys_platform != 'win32'.
+          # fastbloom-rs: only used in rebac/cache bricks excluded from cluster profile.
+          # Its sdist has a broken Cargo.toml structure that fails to build from source
+          # on any platform without pre-built wheels (which don't exist for >=0.5.0).
+          # Remove it entirely so pip install . proceeds cleanly.
+          python - <<'PY'
+          from pathlib import Path
+          
+          pyproject = Path("pyproject.toml")
+          lines = pyproject.read_text().splitlines()
+          pyproject.write_text(
+              "\n".join(line for line in lines if "fastbloom-rs" not in line) + "\n"
+          )
+          PY
+          pip install .
+
+      # ── protoc (required by nexus_raft build.rs) ─────────────────────────
+      # Mirrors the protoc install pattern from conda-pack.yml.
+      # The wrapper script reports "libprotoc 3.20.3" to satisfy the >= 3.1.0
+      # version check in protobuf-build, while delegating to the real binary.
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install protobuf
+          REAL_PROTOC="$(brew --prefix protobuf)/bin/protoc"
+          mkdir -p "${RUNNER_TEMP}/bin"
+          printf '%s\n' \
+            '#!/usr/bin/env bash' \
+            'if [ "${1:-}" = "--version" ]; then' \
+            '  echo "libprotoc 3.20.3"' \
+            '  exit 0' \
+            'fi' \
+            "exec \"${REAL_PROTOC}\" \"\$@\"" \
+            > "${RUNNER_TEMP}/bin/protoc"
+          chmod +x "${RUNNER_TEMP}/bin/protoc"
+          echo "NEXUS_PROTOC=${RUNNER_TEMP}/bin/protoc" >> "${GITHUB_ENV}"
+          echo "${RUNNER_TEMP}/bin" >> "${GITHUB_PATH}"
+          protoc --version
+
+      - name: Install protoc (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Pre-install binary wheels (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          # cryptography and other Rust/C extensions must come from binary wheels
+          # on Windows ARM64 — no OpenSSL dev headers available in CI.
+          pip install --only-binary :all: cryptography pyopenssl bcrypt cffi
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # protobuf-build 0.14.1 only accepts protoc 3.x.
+          # choco installs 34.x which fails version parsing.
+          # Download protoc 3.20.3 win64 directly; runs on ARM64 via x86 emulation.
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v3.20.3/protoc-3.20.3-win64.zip"
+          $zip = "$env:RUNNER_TEMP\protoc.zip"
+          $dir = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath $dir -Force
+          $protoc = "$dir\bin\protoc.exe"
+          echo "NEXUS_PROTOC=$protoc" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
+          echo "$dir\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+          & $protoc --version
+
+      # ── maturin builds ───────────────────────────────────────────────────
+      - name: Install maturin
+        run: pip install maturin
+
+      - name: Build nexus_fast wheel  (rust/nexus_pyo3)
+        shell: bash
+        run: |
+          mkdir -p build/dist
+          maturin build --release \
+            --out build/dist \
+            -m rust/nexus_pyo3/Cargo.toml
+
+      - name: Build nexus_raft wheel  (rust/nexus_raft --features full)
+        shell: bash
+        env:
+          PROTOC: ${{ env.NEXUS_PROTOC }}
+        run: |
+          maturin build --release \
+            --features full \
+            --out build/dist \
+            -m rust/nexus_raft/Cargo.toml
+
+      - name: Build nexus_tasks wheel  (rust/nexus_tasks)
+        shell: bash
+        run: |
+          maturin build --release \
+            --out build/dist \
+            -m rust/nexus_tasks/Cargo.toml
+
+      - name: Install Rust wheels
+        shell: bash
+        run: |
+          echo "=== Built wheels ==="
+          ls -lh build/dist/
+          pip install build/dist/*.whl
+
+      # ── PyInstaller ───────────────────────────────────────────────────────
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      # Patch all developer-local hardcoded paths in the spec file:
+      #   NEXUS_RAFT_SO  → resolved via importlib (finds the installed .so in site-packages)
+      #   NEXUS_FAST_SO  → same
+      #   pathex         → $GITHUB_WORKSPACE/src
+      #
+      # Uses importlib.util.find_spec() which honours the Python env used by
+      # PyInstaller, so the paths are guaranteed to match what PyInstaller sees.
+      - name: Patch spec hardcoded paths for CI environment
+        shell: bash
+        run: |
+          python - << 'EOF'
+          import re, os, glob, site
+          import importlib.util
+
+          spec_path = "pyinstaller_spec_cluster.py"
+          workspace = os.environ["GITHUB_WORKSPACE"].replace("\\", "/")
+
+          def find_so(module_name):
+              """Locate the .so/.dylib for a native extension.
+              Tries both flat (nexus_fast) and nested (nexus_fast.nexus_fast)
+              importlib lookups, then falls back to a site-packages glob.
+              """
+              base = module_name.split(".")[-1]
+
+              # 1) importlib — flat module (maturin default for simple module-name)
+              for candidate in (module_name, f"{base}.{base}"):
+                  try:
+                      sp = importlib.util.find_spec(candidate)
+                      if sp and sp.origin and os.path.exists(sp.origin):
+                          return sp.origin.replace("\\", "/")
+                  except (ModuleNotFoundError, ValueError):
+                      pass
+
+              # 2) glob fallback — search site-packages by filename
+              search_dirs = []
+              try:
+                  search_dirs = list(site.getsitepackages())
+              except Exception:
+                  pass
+              try:
+                  search_dirs.append(site.getusersitepackages())
+              except Exception:
+                  pass
+
+              for sp_dir in search_dirs:
+                  for pattern in (
+                      f"{base}.cpython-*.so",
+                      f"**/{base}.cpython-*.so",
+                      f"{base}.cpython-*.dylib",
+                      f"**/{base}.cpython-*.dylib",
+                  ):
+                      matches = glob.glob(os.path.join(sp_dir, pattern), recursive=True)
+                      if matches:
+                          return matches[0].replace("\\", "/")
+
+              raise RuntimeError(
+                  f"Cannot locate .so for '{module_name}'. "
+                  f"Site-packages searched: {search_dirs}"
+              )
+
+          nexus_raft_so = find_so("_nexus_raft")
+          nexus_fast_so = find_so("nexus_fast")
+          src_path      = f"{workspace}/src"
+
+          with open(spec_path) as f:
+              spec = f.read()
+
+          spec = re.sub(r"NEXUS_RAFT_SO\s*=\s*'[^']*'",
+                        f"NEXUS_RAFT_SO = '{nexus_raft_so}'", spec)
+          spec = re.sub(r"NEXUS_FAST_SO\s*=\s*'[^']*'",
+                        f"NEXUS_FAST_SO = '{nexus_fast_so}'", spec)
+          spec = re.sub(r"pathex=\[.*?\]",
+                        f"pathex=['{src_path}']", spec)
+          # Patch entry point: the binary bundles nexusd (daemon), not nexus CLI.
+          # nexus/daemon/main.py only defines main() but never calls it, so we
+          # create a tiny wrapper that calls it (mirrors the pyproject.toml
+          # console_scripts entry: nexusd = "nexus.daemon:main").
+          entrypoint_path = f"{workspace}/_nexusd_entrypoint.py"
+          with open(entrypoint_path, "w") as ep:
+              ep.write("from nexus.daemon import main\nmain()\n")
+          spec = re.sub(
+              r"Analysis\(\s*\['[^']*'\]",
+              f"Analysis(\n    ['{entrypoint_path}']",
+              spec,
+          )
+
+          # Inject runtime_hook so the binary always runs with NEXUS_PROFILE=cluster
+          hook_path = "pyi_rthook_cluster_profile.py"
+          with open(hook_path, "w") as fh:
+              fh.write('import os\nos.environ.setdefault("NEXUS_PROFILE", "cluster")\n')
+          spec = re.sub(
+              r"runtime_hooks=\[\]",
+              f"runtime_hooks=['{hook_path}']",
+              spec,
+          )
+
+          with open(spec_path, "w") as f:
+              f.write(spec)
+
+          print(f"Patched NEXUS_RAFT_SO -> {nexus_raft_so}")
+          print(f"Patched NEXUS_FAST_SO -> {nexus_fast_so}")
+          print(f"Patched pathex        -> {src_path}")
+          print(f"Patched entry point   -> {src_path}/nexus/daemon/main.py")
+          print(f"Injected runtime_hook -> {hook_path} (NEXUS_PROFILE=cluster)")
+          EOF
+
+      - name: Build PyInstaller binary (profile=cluster)
+        shell: bash
+        env:
+          NEXUS_PROFILE: cluster
+        run: |
+          # PyInstaller only treats files with a .spec extension as spec files.
+          # A .py extension causes it to analyse the file as a script instead,
+          # ignoring the EXE name / one-file settings defined inside.
+          cp pyinstaller_spec_cluster.py pyinstaller_spec_cluster.spec
+          pyinstaller pyinstaller_spec_cluster.spec \
+            --distpath dist-binary \
+            --workpath build-pyinstaller \
+            --noconfirm
+          echo "=== dist-binary contents after PyInstaller ==="
+          ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
+
+      - name: Rename binary with platform suffix
+        shell: bash
+        run: |
+          ARTIFACT="${{ matrix.artifact_name }}"
+          echo "=== dist-binary contents ==="
+          ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
+
+          # Locate the produced binary — PyInstaller may output a file or a
+          # one-dir folder depending on the spec; handle both.
+          if [ -f "dist-binary/nexus-cluster.exe" ]; then
+            mv dist-binary/nexus-cluster.exe "dist-binary/${ARTIFACT}.exe"
+          elif [ -f "dist-binary/nexus-cluster" ]; then
+            mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
+            chmod +x "dist-binary/${ARTIFACT}"
+          elif [ -d "dist-binary/nexus-cluster" ]; then
+            # one-dir mode: rename the directory
+            mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
+            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster" 2>/dev/null || true
+          else
+            echo "ERROR: dist-binary/nexus-cluster not found."
+            echo "Files present in dist-binary/:"
+            find dist-binary/ -maxdepth 3 2>/dev/null || true
+            exit 1
+          fi
+          echo "ARTIFACT=${ARTIFACT}" >> "$GITHUB_ENV"
+          echo "Binary staged:"
+          ls -lh dist-binary/
+
+      - name: Smoke test — binary is executable
+        shell: bash
+        run: |
+          BINARY="dist-binary/${{ env.ARTIFACT }}"
+          "$BINARY" --version 2>/dev/null \
+            || "$BINARY" --help 2>/dev/null \
+            || echo "::warning::Binary launched but returned non-zero — check log above"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist-binary/${{ env.ARTIFACT }}*
+          if-no-files-found: error
+          retention-days: 30
+
+  # ── Attach to GitHub Release ──────────────────────────────────────────────
+  # Runs after all matrix jobs succeed. The release itself is created by
+  # release.yml — this job simply appends the three binaries, mirroring the
+  # attach-to-release pattern in conda-pack.yml.
+  attach-to-release:
+    name: Attach binaries to GitHub Release
+    needs: build-binary
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') && !cancelled()
+    steps:
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

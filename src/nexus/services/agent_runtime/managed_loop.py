@@ -41,6 +41,10 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from nexus.contracts.exceptions import BackendError
+from nexus.services.agent_runtime.compaction import (
+    CompactionStrategy,
+    DefaultCompactionStrategy,
+)
 from nexus.services.agent_runtime.observer import AgentObserver, AgentTurnResult
 from nexus.services.agent_runtime.tool_registry import ToolRegistry
 
@@ -94,6 +98,7 @@ class ManagedAgentLoop:
         max_turns: int = _MAX_TURNS,
         tool_registry: ToolRegistry | None = None,
         max_retries: int = _DEFAULT_MAX_RETRIES,
+        compactor: CompactionStrategy | None = None,
     ) -> None:
         self._sys_read = sys_read
         self._sys_write = sys_write
@@ -108,6 +113,10 @@ class ManagedAgentLoop:
         self._max_retries = max_retries
         self._session_id = str(uuid.uuid4())
         self._tool_registry = tool_registry
+        self._compactor: CompactionStrategy = compactor or DefaultCompactionStrategy(
+            sys_write=sys_write,
+            agent_path=agent_path,
+        )
 
         # Shared observer (same logic as AcpConnection)
         self._observer = AgentObserver()
@@ -179,6 +188,12 @@ class ManagedAgentLoop:
         turns = 0
         while turns < self._max_turns:
             turns += 1
+
+            # Context compaction before LLM call (§4.1)
+            self._compactor.micro_compact(self._messages)
+            if self._compactor.should_auto_compact(self._messages):
+                self._messages = await self._compactor.auto_compact(self._messages)
+                await self._persist_conversation()
 
             # Call LLM via kernel (DT_STREAM) with retry
             response_text, tool_calls, meta = await self._call_llm_with_retry()

@@ -230,7 +230,7 @@ class TestAcpServiceCloseAll:
 
 
 class TestAcpServiceCallAgent:
-    """Test call_agent subprocess + StdioPipe creation."""
+    """Test call_agent subprocess + StdioPipeBackend creation."""
 
     @pytest.mark.asyncio
     async def test_call_agent_reads_config_from_vfs(self):

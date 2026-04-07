@@ -212,9 +212,6 @@ class CASOpenAIBackend(CASAddressingEngine):
 
         try:
             self._nx._kernel.create_stream(stream_path, capacity)
-            from nexus.core.ipc_waiter import IPCWaiter
-
-            self._nx._ipc_waiters[stream_path] = IPCWaiter()
         except Exception as exc:
             raise BackendError(f"LLM streaming unavailable: {exc}") from exc
 
@@ -279,9 +276,6 @@ class CASOpenAIBackend(CASAddressingEngine):
                 token_meta: dict[str, Any] | None = token_item[1]
                 if token:
                     _kernel.stream_write_nowait(stream_path, token.encode("utf-8"))
-                    _waiter = self._nx._ipc_waiters.get(stream_path)
-                    if _waiter is not None:
-                        _waiter.signal_not_empty()
                 if token_meta is not None:
                     meta = token_meta
 

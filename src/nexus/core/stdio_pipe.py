@@ -1,4 +1,4 @@
-"""StdioPipe — PipeBackend over OS subprocess pipes.
+"""StdioPipeBackend — PipeBackend over OS subprocess pipes.
 
 Wraps ``asyncio.StreamReader`` / ``asyncio.StreamWriter`` (from
 ``asyncio.create_subprocess_exec(stdin=PIPE, stdout=PIPE)``) as a
@@ -26,7 +26,7 @@ from nexus.core.pipe import PipeClosedError, PipeEmptyError
 logger = logging.getLogger(__name__)
 
 
-class StdioPipe:
+class StdioPipeBackend:
     """PipeBackend wrapping subprocess OS pipes (asyncio StreamReader/Writer).
 
     For UNMANAGED agents (3rd-party CLIs) that speak raw stdio.

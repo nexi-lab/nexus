@@ -401,10 +401,12 @@ mod tests {
         // Create entries
         let mut entries = vec![];
         for i in 1..=5 {
-            let mut entry = Entry::default();
-            entry.index = i;
-            entry.term = 1;
-            entry.data = format!("data-{}", i).into_bytes().into();
+            let entry = Entry {
+                index: i,
+                term: 1,
+                data: format!("data-{}", i).into_bytes().into(),
+                ..Default::default()
+            };
             entries.push(entry);
         }
 
@@ -428,10 +430,12 @@ mod tests {
     fn test_hard_state() {
         let (storage, _dir) = create_test_storage();
 
-        let mut hs = HardState::default();
-        hs.term = 5;
-        hs.vote = 2;
-        hs.commit = 10;
+        let hs = HardState {
+            term: 5,
+            vote: 2,
+            commit: 10,
+            ..Default::default()
+        };
 
         storage.set_hard_state(&hs).unwrap();
 
@@ -448,9 +452,11 @@ mod tests {
         // Append entries
         let mut entries = vec![];
         for i in 1..=10 {
-            let mut entry = Entry::default();
-            entry.index = i;
-            entry.term = 1;
+            let entry = Entry {
+                index: i,
+                term: 1,
+                ..Default::default()
+            };
             entries.push(entry);
         }
         storage.append(&entries).unwrap();
@@ -517,10 +523,12 @@ mod tests {
         // Append some entries first
         let mut entries = vec![];
         for i in 1..=5 {
-            let mut entry = Entry::default();
-            entry.index = i;
-            entry.term = 1;
-            entry.data = format!("data-{}", i).into_bytes().into();
+            let entry = Entry {
+                index: i,
+                term: 1,
+                data: format!("data-{}", i).into_bytes().into(),
+                ..Default::default()
+            };
             entries.push(entry);
         }
         storage.append(&entries).unwrap();

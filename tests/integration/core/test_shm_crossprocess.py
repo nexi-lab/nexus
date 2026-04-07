@@ -18,9 +18,9 @@ import time
 
 def _child_pipe_read_one(shm_path: str, result_q: multiprocessing.Queue):
     """Child: attach to shared ring buffer, poll-read one message."""
-    from nexus_kernel import SharedRingBufferCore
+    from nexus_kernel import SharedMemoryPipeBackend
 
-    reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+    reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     for _ in range(200):
         try:
             msg = reader.pop()
@@ -33,9 +33,9 @@ def _child_pipe_read_one(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_pipe_read_three(shm_path: str, result_q: multiprocessing.Queue):
     """Child: read 3 messages from shared ring buffer."""
-    from nexus_kernel import SharedRingBufferCore
+    from nexus_kernel import SharedMemoryPipeBackend
 
-    reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+    reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     results = []
     for _ in range(3):
         for _ in range(200):
@@ -50,17 +50,17 @@ def _child_pipe_read_three(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_crash(shm_path: str):
     """Child: attach then crash immediately."""
-    from nexus_kernel import SharedRingBufferCore
+    from nexus_kernel import SharedMemoryPipeBackend
 
-    _reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+    _reader = SharedMemoryPipeBackend.attach(shm_path, -1, -1)
     os._exit(1)
 
 
 def _child_stream_read_one(shm_path: str, result_q: multiprocessing.Queue):
     """Child: poll-read one message at offset 0 from shared stream buffer."""
-    from nexus_kernel import SharedStreamBufferCore
+    from nexus_kernel import SharedMemoryStreamBackend
 
-    reader = SharedStreamBufferCore.attach(shm_path, -1)
+    reader = SharedMemoryStreamBackend.attach(shm_path, -1)
     for _ in range(200):
         try:
             data, _next = reader.read_at(0)
@@ -73,9 +73,9 @@ def _child_stream_read_one(shm_path: str, result_q: multiprocessing.Queue):
 
 def _child_stream_read_at(shm_path: str, offset: int, result_q: multiprocessing.Queue):
     """Child: read one message at given offset from shared stream buffer."""
-    from nexus_kernel import SharedStreamBufferCore
+    from nexus_kernel import SharedMemoryStreamBackend
 
-    reader = SharedStreamBufferCore.attach(shm_path, -1)
+    reader = SharedMemoryStreamBackend.attach(shm_path, -1)
     for _ in range(200):
         try:
             data, _ = reader.read_at(offset)
@@ -96,9 +96,9 @@ class TestCrossProcessPipe:
 
     def test_cross_process_pipe_roundtrip(self):
         """Parent writes, child reads via separate processes."""
-        from nexus_kernel import SharedRingBufferCore
+        from nexus_kernel import SharedMemoryPipeBackend
 
-        core, shm_path, data_rd_fd, space_rd_fd = SharedRingBufferCore.create(4096)
+        core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(4096)
         os.close(data_rd_fd)
         os.close(space_rd_fd)
 
@@ -118,9 +118,9 @@ class TestCrossProcessPipe:
 
     def test_cross_process_multiple_messages(self):
         """Multiple messages through cross-process ring buffer."""
-        from nexus_kernel import SharedRingBufferCore
+        from nexus_kernel import SharedMemoryPipeBackend
 
-        core, shm_path, data_rd_fd, space_rd_fd = SharedRingBufferCore.create(4096)
+        core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(4096)
         os.close(data_rd_fd)
         os.close(space_rd_fd)
 
@@ -142,9 +142,9 @@ class TestCrossProcessPipe:
 
     def test_child_crash_cleanup(self):
         """Shared memory file persists after child crash — creator cleans up."""
-        from nexus_kernel import SharedRingBufferCore
+        from nexus_kernel import SharedMemoryPipeBackend
 
-        core, shm_path, data_rd_fd, space_rd_fd = SharedRingBufferCore.create(64)
+        core, shm_path, data_rd_fd, space_rd_fd = SharedMemoryPipeBackend.create(64)
         os.close(data_rd_fd)
         os.close(space_rd_fd)
 
@@ -165,9 +165,9 @@ class TestCrossProcessStream:
 
     def test_cross_process_stream_roundtrip(self):
         """Parent writes, child reads via separate processes."""
-        from nexus_kernel import SharedStreamBufferCore
+        from nexus_kernel import SharedMemoryStreamBackend
 
-        core, shm_path, data_rd_fd = SharedStreamBufferCore.create(4096)
+        core, shm_path, data_rd_fd = SharedMemoryStreamBackend.create(4096)
         os.close(data_rd_fd)
 
         q = multiprocessing.Queue()
@@ -185,9 +185,9 @@ class TestCrossProcessStream:
 
     def test_cross_process_stream_multi_reader(self):
         """Multiple child readers with independent cursors."""
-        from nexus_kernel import SharedStreamBufferCore
+        from nexus_kernel import SharedMemoryStreamBackend
 
-        core, shm_path, data_rd_fd = SharedStreamBufferCore.create(4096)
+        core, shm_path, data_rd_fd = SharedMemoryStreamBackend.create(4096)
         os.close(data_rd_fd)
 
         # Write two messages before spawning readers

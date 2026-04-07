@@ -376,10 +376,10 @@ pub struct Kernel {
     // Keyed by zone-canonical mount point (e.g. "/zone-beta/shared").
     // Syscalls check here first, then fall back to self.metastore (global).
     mount_metastores: DashMap<String, Box<dyn crate::metastore::Metastore>>,
-    // IPC registry — DT_PIPE buffers (lock-free SPSC ring)
-    pipe_buffers: DashMap<String, Arc<crate::pipe::RingBufferCore>>,
-    // IPC registry — DT_STREAM buffers (append-only linear)
-    stream_buffers: DashMap<String, Arc<crate::stream::StreamBufferCore>>,
+    // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
+    pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
+    // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
+    pub(crate) stream_manager: crate::stream_manager::StreamManager,
 }
 
 impl Kernel {
@@ -409,8 +409,8 @@ impl Kernel {
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
             mount_metastores: DashMap::new(),
-            pipe_buffers: DashMap::new(),
-            stream_buffers: DashMap::new(),
+            pipe_manager: crate::pipe_manager::PipeManager::new(),
+            stream_manager: crate::stream_manager::StreamManager::new(),
         }
     }
 
@@ -977,22 +977,18 @@ impl Kernel {
         self.file_watches.match_path(path)
     }
 
-    // ── IPC Registry — Pipe methods ─────────────────────────────────────
+    // ── IPC Registry — Pipe methods (delegates to PipeManager) ──────────
 
     /// Create a pipe buffer in the IPC registry.
     ///
-    /// Persists DT_PIPE inode to metastore + dcache so sys_read/sys_write
-    /// can discover the entry_type and dispatch to the IPC fast-path.
+    /// PipeManager owns the buffer; Kernel persists DT_PIPE inode to
+    /// metastore + dcache so sys_read/sys_write dispatch to IPC fast-path.
     pub fn create_pipe(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
-        if self.pipe_buffers.contains_key(path) {
-            return Err(KernelError::PipeExists(path.to_string()));
-        }
-        let buf = crate::pipe::RingBufferCore::new(capacity);
-        self.pipe_buffers.insert(path.to_string(), Arc::new(buf));
+        self.pipe_manager
+            .create(path, capacity)
+            .map_err(pipe_mgr_err)?;
 
         // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
-        // route_impl returns a canonical mount_point (e.g. "/root/workspace") —
-        // use directly as with_metastore key, do NOT re-canonicalize.
         let mount_point = self
             .router
             .route_impl(path, "root", true, false)
@@ -1013,7 +1009,6 @@ impl Kernel {
             let _ = ms.put(path, meta);
         });
 
-        // Populate dcache so sys_read/sys_write see entry_type=DT_PIPE
         self.dcache.put(
             path,
             CachedEntry {
@@ -1032,107 +1027,72 @@ impl Kernel {
     }
 
     /// Destroy a pipe buffer.
-    ///
-    /// Removes DT_PIPE inode from metastore + dcache.
     pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
-        match self.pipe_buffers.remove(path) {
-            Some((_, buf)) => {
-                buf.close();
+        self.pipe_manager.destroy(path).map_err(pipe_mgr_err)?;
 
-                // Remove DT_PIPE inode (best-effort)
-                let mount_point = self
-                    .router
-                    .route_impl(path, "root", true, false)
-                    .map(|r| r.mount_point)
-                    .unwrap_or_default();
-                self.with_metastore(&mount_point, |ms| {
-                    let _ = ms.delete(path);
-                });
-                self.dcache.evict(path);
+        // Remove DT_PIPE inode (best-effort)
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let _ = ms.delete(path);
+        });
+        self.dcache.evict(path);
 
-                Ok(())
-            }
-            None => Err(KernelError::PipeNotFound(path.to_string())),
-        }
+        Ok(())
     }
 
     /// Close a pipe (signal close, keep in registry for drain).
     pub fn close_pipe(&self, path: &str) -> Result<(), KernelError> {
-        match self.pipe_buffers.get(path) {
-            Some(buf) => {
-                buf.close();
-                Ok(())
-            }
-            None => Err(KernelError::PipeNotFound(path.to_string())),
-        }
+        self.pipe_manager.close(path).map_err(pipe_mgr_err)
     }
 
     /// Check if a pipe exists.
     pub fn has_pipe(&self, path: &str) -> bool {
-        self.pipe_buffers.contains_key(path)
+        self.pipe_manager.has(path)
     }
 
     /// Non-blocking write to a pipe. Returns bytes written.
     pub fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
-        let buf = self
-            .pipe_buffers
-            .get(path)
-            .ok_or_else(|| KernelError::PipeNotFound(path.to_string()))?;
-        buf.push(data).map_err(|e| match e {
-            crate::pipe::RingError::Full(u, c) => {
-                KernelError::PipeFull(format!("{u}/{c} bytes used"))
-            }
-            crate::pipe::RingError::Closed(msg) => KernelError::PipeClosed(msg.to_string()),
-            crate::pipe::RingError::Oversized(s, c) => {
-                KernelError::PipeFull(format!("msg {s} > capacity {c}"))
-            }
-            _ => KernelError::IOError(format!("pipe write: {e:?}")),
-        })
+        self.pipe_manager
+            .write_nowait(path, data)
+            .map_err(pipe_mgr_err)
     }
 
-    /// Non-blocking read from a pipe. Returns data or WouldBlock if empty.
+    /// Non-blocking read from a pipe. Returns data or None if empty.
     pub fn pipe_read_nowait(&self, path: &str) -> Result<Option<Vec<u8>>, KernelError> {
-        let buf = self
-            .pipe_buffers
-            .get(path)
-            .ok_or_else(|| KernelError::PipeNotFound(path.to_string()))?;
-        match buf.pop() {
-            Ok(data) => Ok(Some(data)),
-            Err(crate::pipe::RingError::Empty) => Ok(None),
-            Err(crate::pipe::RingError::ClosedEmpty) => {
-                Err(KernelError::PipeClosed("closed and empty".to_string()))
-            }
-            Err(e) => Err(KernelError::IOError(format!("pipe read: {e:?}"))),
-        }
+        self.pipe_manager.read_nowait(path).map_err(pipe_mgr_err)
     }
 
     /// List all pipes with their paths.
     pub fn list_pipes(&self) -> Vec<String> {
-        self.pipe_buffers.iter().map(|r| r.key().clone()).collect()
+        self.pipe_manager.list()
+    }
+
+    /// Blocking read — Condvar wait (GIL-free via py.allow_threads).
+    /// Called from generated_pyo3.rs PyKernel wrapper.
+    #[allow(dead_code)]
+    pub fn pipe_read_blocking(&self, path: &str, timeout_ms: u64) -> Result<Vec<u8>, KernelError> {
+        self.pipe_manager
+            .read_blocking(path, timeout_ms)
+            .map_err(pipe_mgr_err)
     }
 
     /// Close all pipes (shutdown).
     pub fn close_all_pipes(&self) {
-        for entry in self.pipe_buffers.iter() {
-            entry.value().close();
-        }
+        self.pipe_manager.close_all();
     }
 
-    // ── IPC Registry — Stream methods ─────────────────────────────────
+    // ── IPC Registry — Stream methods (delegates to StreamManager) ────
 
     /// Create a stream buffer in the IPC registry.
-    ///
-    /// Persists DT_STREAM inode to metastore + dcache so sys_read/sys_write
-    /// can discover the entry_type and dispatch to the IPC fast-path.
     pub fn create_stream(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
-        if self.stream_buffers.contains_key(path) {
-            return Err(KernelError::StreamExists(path.to_string()));
-        }
-        let buf = crate::stream::StreamBufferCore::new(capacity);
-        self.stream_buffers.insert(path.to_string(), Arc::new(buf));
+        self.stream_manager
+            .create(path, capacity)
+            .map_err(stream_mgr_err)?;
 
-        // Persist DT_STREAM inode (best-effort — metastore may not be wired in tests).
-        // route_impl returns canonical mount_point — use directly, do NOT re-canonicalize.
         let mount_point = self
             .router
             .route_impl(path, "root", true, false)
@@ -1153,7 +1113,6 @@ impl Kernel {
             let _ = ms.put(path, meta);
         });
 
-        // Populate dcache so sys_read/sys_write see entry_type=DT_STREAM
         self.dcache.put(
             path,
             CachedEntry {
@@ -1172,62 +1131,37 @@ impl Kernel {
     }
 
     /// Destroy a stream buffer.
-    ///
-    /// Removes DT_STREAM inode from metastore + dcache.
     pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
-        match self.stream_buffers.remove(path) {
-            Some((_, buf)) => {
-                buf.close();
+        self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
 
-                // Remove DT_STREAM inode (best-effort)
-                let mount_point = self
-                    .router
-                    .route_impl(path, "root", true, false)
-                    .map(|r| r.mount_point)
-                    .unwrap_or_default();
-                self.with_metastore(&mount_point, |ms| {
-                    let _ = ms.delete(path);
-                });
-                self.dcache.evict(path);
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let _ = ms.delete(path);
+        });
+        self.dcache.evict(path);
 
-                Ok(())
-            }
-            None => Err(KernelError::StreamNotFound(path.to_string())),
-        }
+        Ok(())
     }
 
     /// Close a stream (signal close, keep in registry for drain).
     pub fn close_stream(&self, path: &str) -> Result<(), KernelError> {
-        match self.stream_buffers.get(path) {
-            Some(buf) => {
-                buf.close();
-                Ok(())
-            }
-            None => Err(KernelError::StreamNotFound(path.to_string())),
-        }
+        self.stream_manager.close(path).map_err(stream_mgr_err)
     }
 
     /// Check if a stream exists.
     pub fn has_stream(&self, path: &str) -> bool {
-        self.stream_buffers.contains_key(path)
+        self.stream_manager.has(path)
     }
 
     /// Non-blocking write to a stream. Returns byte offset.
     pub fn stream_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
-        let buf = self
-            .stream_buffers
-            .get(path)
-            .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        buf.push(data).map_err(|e| match e {
-            crate::stream::StreamError::Full(u, c) => {
-                KernelError::StreamFull(format!("{u}/{c} bytes used"))
-            }
-            crate::stream::StreamError::Closed(msg) => KernelError::StreamClosed(msg.to_string()),
-            crate::stream::StreamError::Oversized(s, c) => {
-                KernelError::StreamFull(format!("msg {s} > capacity {c}"))
-            }
-            _ => KernelError::IOError(format!("stream write: {e:?}")),
-        })
+        self.stream_manager
+            .write_nowait(path, data)
+            .map_err(stream_mgr_err)
     }
 
     /// Read one message at byte offset. Returns (data, next_offset) or None if empty.
@@ -1236,18 +1170,9 @@ impl Kernel {
         path: &str,
         offset: usize,
     ) -> Result<Option<(Vec<u8>, usize)>, KernelError> {
-        let buf = self
-            .stream_buffers
-            .get(path)
-            .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        match buf.read_at(offset) {
-            Ok((data, next)) => Ok(Some((data, next))),
-            Err(crate::stream::StreamError::Empty) => Ok(None),
-            Err(crate::stream::StreamError::ClosedEmpty) => {
-                Err(KernelError::StreamClosed("closed and empty".to_string()))
-            }
-            Err(e) => Err(KernelError::IOError(format!("stream read: {e:?}"))),
-        }
+        self.stream_manager
+            .read_at(path, offset)
+            .map_err(stream_mgr_err)
     }
 
     /// Read up to `count` messages starting from byte offset.
@@ -1257,27 +1182,33 @@ impl Kernel {
         offset: usize,
         count: usize,
     ) -> Result<(Vec<Vec<u8>>, usize), KernelError> {
-        let buf = self
-            .stream_buffers
-            .get(path)
-            .ok_or_else(|| KernelError::StreamNotFound(path.to_string()))?;
-        buf.read_batch(offset, count)
-            .map_err(|e| KernelError::IOError(format!("stream batch: {e:?}")))
+        self.stream_manager
+            .read_batch(path, offset, count)
+            .map_err(stream_mgr_err)
     }
 
     /// List all streams with their paths.
     pub fn list_streams(&self) -> Vec<String> {
-        self.stream_buffers
-            .iter()
-            .map(|r| r.key().clone())
-            .collect()
+        self.stream_manager.list()
+    }
+
+    /// Blocking read at offset — Condvar wait (GIL-free via py.allow_threads).
+    /// Called from generated_pyo3.rs PyKernel wrapper.
+    #[allow(dead_code)]
+    pub fn stream_read_at_blocking(
+        &self,
+        path: &str,
+        offset: usize,
+        timeout_ms: u64,
+    ) -> Result<(Vec<u8>, usize), KernelError> {
+        self.stream_manager
+            .read_at_blocking(path, offset, timeout_ms)
+            .map_err(stream_mgr_err)
     }
 
     /// Close all streams (shutdown).
     pub fn close_all_streams(&self) {
-        for entry in self.stream_buffers.iter() {
-            entry.value().close();
-        }
+        self.stream_manager.close_all();
     }
 
     // ── sys_read ───────────────────────────────────────────────────────
@@ -1352,7 +1283,7 @@ impl Kernel {
 
         // DT_PIPE — try Rust IPC registry (nowait pop)
         if entry.entry_type == DT_PIPE {
-            if let Some(buf) = self.pipe_buffers.get(path) {
+            if let Some(buf) = self.pipe_manager.get(path) {
                 match buf.pop() {
                     Ok(data) => {
                         return Ok(SysReadResult {
@@ -1363,7 +1294,7 @@ impl Kernel {
                             entry_type: DT_PIPE,
                         });
                     }
-                    Err(crate::pipe::RingError::Empty) => {
+                    Err(crate::pipe::PipeError::Empty) => {
                         // Empty — return miss with DT_PIPE so Python async shell retries
                         return Ok(SysReadResult {
                             hit: false,
@@ -1373,7 +1304,7 @@ impl Kernel {
                             entry_type: DT_PIPE,
                         });
                     }
-                    Err(crate::pipe::RingError::ClosedEmpty) => {
+                    Err(crate::pipe::PipeError::ClosedEmpty) => {
                         return Err(KernelError::PipeClosed(path.to_string()));
                     }
                     Err(_) => {}
@@ -1494,7 +1425,7 @@ impl Kernel {
         // 3. DCache check — DT_PIPE/DT_STREAM: try Rust IPC registry
         if let Some(entry) = self.dcache.get_entry(path) {
             if entry.entry_type == DT_PIPE {
-                if let Some(buf) = self.pipe_buffers.get(path) {
+                if let Some(buf) = self.pipe_manager.get(path) {
                     match buf.push(content) {
                         Ok(n) => {
                             return Ok(SysWriteResult {
@@ -1505,11 +1436,11 @@ impl Kernel {
                                 size: n as u64,
                             });
                         }
-                        Err(crate::pipe::RingError::Full(_, _)) => {
+                        Err(crate::pipe::PipeError::Full(_, _)) => {
                             // Full — return miss so Python async shell retries
                             return miss();
                         }
-                        Err(crate::pipe::RingError::Closed(msg)) => {
+                        Err(crate::pipe::PipeError::Closed(msg)) => {
                             return Err(KernelError::PipeClosed(msg.to_string()));
                         }
                         Err(_) => {}
@@ -1518,7 +1449,7 @@ impl Kernel {
                 return miss();
             }
             if entry.entry_type == DT_STREAM {
-                if let Some(buf) = self.stream_buffers.get(path) {
+                if let Some(buf) = self.stream_manager.get(path) {
                     match buf.push(content) {
                         Ok(offset) => {
                             return Ok(SysWriteResult {
@@ -2498,6 +2429,50 @@ impl Kernel {
 }
 
 // ── Fast path validation ────────────────────────────────────────────────
+
+// ── Manager error conversions ─────────────────────────────────────────
+
+fn pipe_mgr_err(e: crate::pipe_manager::PipeManagerError) -> KernelError {
+    use crate::pipe_manager::PipeManagerError;
+    match e {
+        PipeManagerError::Exists(p) => KernelError::PipeExists(p),
+        PipeManagerError::NotFound(p) => KernelError::PipeNotFound(p),
+        PipeManagerError::Closed(p) => KernelError::PipeClosed(p),
+        PipeManagerError::WouldBlock(msg) => KernelError::WouldBlock(msg),
+        PipeManagerError::Backend(be) => {
+            use crate::pipe::PipeError;
+            match be {
+                PipeError::Full(u, c) => KernelError::PipeFull(format!("{u}/{c} bytes used")),
+                PipeError::Closed(msg) => KernelError::PipeClosed(msg.to_string()),
+                PipeError::Oversized(s, c) => {
+                    KernelError::PipeFull(format!("msg {s} > capacity {c}"))
+                }
+                other => KernelError::IOError(format!("pipe: {other:?}")),
+            }
+        }
+    }
+}
+
+fn stream_mgr_err(e: crate::stream_manager::StreamManagerError) -> KernelError {
+    use crate::stream_manager::StreamManagerError;
+    match e {
+        StreamManagerError::Exists(p) => KernelError::StreamExists(p),
+        StreamManagerError::NotFound(p) => KernelError::StreamNotFound(p),
+        StreamManagerError::Closed(p) => KernelError::StreamClosed(p),
+        StreamManagerError::WouldBlock(msg) => KernelError::WouldBlock(msg),
+        StreamManagerError::Backend(be) => {
+            use crate::stream::StreamError;
+            match be {
+                StreamError::Full(u, c) => KernelError::StreamFull(format!("{u}/{c} bytes used")),
+                StreamError::Closed(msg) => KernelError::StreamClosed(msg.to_string()),
+                StreamError::Oversized(s, c) => {
+                    KernelError::StreamFull(format!("msg {s} > capacity {c}"))
+                }
+                other => KernelError::IOError(format!("stream: {other:?}")),
+            }
+        }
+    }
+}
 
 pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
     if path.is_empty() {

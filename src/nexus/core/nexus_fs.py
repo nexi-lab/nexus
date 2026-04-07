@@ -1,6 +1,7 @@
 """Unified filesystem implementation for Nexus."""
 # Kernel interface unification — see KERNEL-ARCHITECTURE.md §4.5
 
+import asyncio
 import builtins
 import contextlib
 import logging
@@ -205,8 +206,6 @@ class NexusFS(  # type: ignore[misc]
             transport_pool=self._transport_pool,
         )
 
-        # IPC waiters for blocking path (asyncio.Event pairs per pipe/stream)
-        self._ipc_waiters: dict[str, Any] = {}
         # Custom backends for SHM/remote pipes/streams (non-standard, keep in Python)
         self._custom_pipe_backends: dict[str, Any] = {}
         self._custom_stream_backends: dict[str, Any] = {}
@@ -856,19 +855,11 @@ class NexusFS(  # type: ignore[misc]
                 # Idempotent open: re-create Rust buffer if lost after restart
                 if not self._kernel.has_pipe(path):
                     self._kernel.create_pipe(path, attrs.get("capacity", 65_536))
-                if path not in self._ipc_waiters:
-                    from nexus.core.ipc_waiter import IPCWaiter
-
-                    self._ipc_waiters[path] = IPCWaiter()
                 return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_STREAM:
                 # Idempotent open: re-create Rust buffer if lost after restart
                 if not self._kernel.has_stream(path):
                     self._kernel.create_stream(path, attrs.get("capacity", 65_536))
-                if path not in self._ipc_waiters:
-                    from nexus.core.ipc_waiter import IPCWaiter
-
-                    self._ipc_waiters[path] = IPCWaiter()
                 return {"path": path, "created": False, "entry_type": requested_type}
             if meta.entry_type == requested_type and requested_type == DT_DIR:
                 return {"path": path, "created": False, "entry_type": requested_type}
@@ -945,7 +936,6 @@ class NexusFS(  # type: ignore[misc]
             }
 
         if entry_type == DT_PIPE:
-            from nexus.core.ipc_waiter import IPCWaiter
             from nexus.core.pipe import PipeError
 
             io_profile = attrs.get("io_profile", "memory")
@@ -964,11 +954,9 @@ class NexusFS(  # type: ignore[misc]
                     self._kernel.create_pipe(path, capacity)
             except (PipeError, Exception) as exc:
                 raise BackendError(str(exc)) from exc
-            self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
         if entry_type == DT_STREAM:
-            from nexus.core.ipc_waiter import IPCWaiter
             from nexus.core.stream import StreamError
 
             io_profile = attrs.get("io_profile", "memory")
@@ -996,7 +984,6 @@ class NexusFS(  # type: ignore[misc]
                     self._kernel.create_stream(path, capacity)
             except (StreamError, Exception) as exc:
                 raise BackendError(str(exc)) from exc
-            self._ipc_waiters[path] = IPCWaiter()
             return {"path": path, "created": True, "entry_type": entry_type, "capacity": capacity}
 
         if entry_type == DT_DIR:
@@ -1260,45 +1247,30 @@ class NexusFS(  # type: ignore[misc]
         if result.entry_type == 3:  # DT_PIPE
             if result.hit:
                 data = result.data or b""
-                # Signal waiter: space freed → wake blocked writers
-                _waiter = self._ipc_waiters.get(path)
-                if _waiter is not None:
-                    _waiter.signal_not_full()
                 if offset or count is not None:
                     data = data[offset : offset + count] if count is not None else data[offset:]
                 return data
-            # Empty pipe — blocking retry via IPCWaiter
-            _waiter = self._ipc_waiters.get(path)
-            if _waiter is not None:
-                while True:
-                    await _waiter.wait_readable()
-                    _data = self._kernel.pipe_read_nowait(path)
-                    if _data is not None:
-                        _waiter.signal_not_full()
-                        if offset or count is not None:
-                            _data = (
-                                _data[offset : offset + count]
-                                if count is not None
-                                else _data[offset:]
-                            )
-                        return _data
-            raise NexusFileNotFoundError(path, f"Pipe not found: {path}")
+            # Empty pipe — try nowait (hot path), then block in Rust (GIL-free)
+            _data = self._kernel.pipe_read_nowait(path)
+            if _data is not None:
+                if offset or count is not None:
+                    _data = _data[offset : offset + count] if count is not None else _data[offset:]
+                return bytes(_data)
+            _data = await asyncio.to_thread(self._kernel.pipe_read_blocking, path, 30000)
+            if offset or count is not None:
+                _data = _data[offset : offset + count] if count is not None else _data[offset:]
+            return bytes(_data)
 
         # DT_STREAM: blocking reads with offset tracking
         if result.entry_type == 4:  # DT_STREAM
             _result = self._kernel.stream_read_at(path, offset)
             if _result is not None:
-                data, _next = _result
-                return bytes(data)
-            # Empty — blocking retry
-            _waiter = self._ipc_waiters.get(path)
-            if _waiter is not None:
-                while True:
-                    await _waiter.wait_readable()
-                    _result = self._kernel.stream_read_at(path, offset)
-                    if _result is not None:
-                        return bytes(_result[0])
-            raise NexusFileNotFoundError(path, f"Stream empty at offset {offset}")
+                return bytes(_result[0])
+            # Slow path — block in Rust (GIL-free)
+            _data, _next = await asyncio.to_thread(
+                self._kernel.stream_read_at_blocking, path, offset, 30000
+            )
+            return bytes(_data)
 
         if not result.hit:
             raise NexusFileNotFoundError(path)
@@ -1860,20 +1832,14 @@ class NexusFS(  # type: ignore[misc]
                 base.update(_result)
             return base
 
-        # IPC write: Rust sys_write handles DT_PIPE/DT_STREAM inline.
-        # If Rust returns hit=true for IPC, signal waiter and return.
+        # IPC write: Rust kernel handles DT_PIPE/DT_STREAM inline.
+        # Rust condvar wakes blocked readers automatically after write.
         _meta = self.metadata.get(path)
         if _meta is not None and _meta.is_pipe:
             n = self._kernel.pipe_write_nowait(path, buf)
-            _waiter = self._ipc_waiters.get(path)
-            if _waiter is not None:
-                _waiter.signal_not_empty()
             return {"path": path, "bytes_written": n}
         if _meta is not None and _meta.is_stream:
             _off = self._kernel.stream_write_nowait(path, buf)
-            _waiter = self._ipc_waiters.get(path)
-            if _waiter is not None:
-                _waiter.signal_not_empty()
             return {"path": path, "bytes_written": len(buf), "offset": _off}
         if _meta is None:
             raise NexusFileNotFoundError(
@@ -4653,19 +4619,13 @@ class NexusFS(  # type: ignore[misc]
     # ── IPC primitives (inlined from IPCMixin) ─────────────────────────
 
     async def _pipe_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_PIPE — async blocking via IPCWaiter + Rust nowait retry."""
-        _waiter = self._ipc_waiters.get(path)
-        if _waiter is not None:
-            while True:
-                _data = self._kernel.pipe_read_nowait(path)
-                if _data is not None:
-                    _waiter.signal_not_full()
-                    if offset or count is not None:
-                        _data = (
-                            _data[offset : offset + count] if count is not None else _data[offset:]
-                        )
-                    return bytes(_data)
-                await _waiter.wait_readable()
+        """Read from DT_PIPE — nowait hot path + Rust blocking slow path (GIL-free)."""
+        # Hot path: try nowait first (zero GIL)
+        _data = self._kernel.pipe_read_nowait(path)
+        if _data is not None:
+            if offset or count is not None:
+                _data = _data[offset : offset + count] if count is not None else _data[offset:]
+            return bytes(_data)
 
         # Custom backend fallback (SHM/remote)
         _buf = self._custom_pipe_backends.get(path)
@@ -4682,15 +4642,15 @@ class NexusFS(  # type: ignore[misc]
                 data = data[offset : offset + count] if count is not None else data[offset:]
             return data
 
-        raise NexusFileNotFoundError(path, f"Pipe not found: {path}")
+        # Slow path: block in Rust, release GIL
+        _data = await asyncio.to_thread(self._kernel.pipe_read_blocking, path, 30000)
+        if offset or count is not None:
+            _data = _data[offset : offset + count] if count is not None else _data[offset:]
+        return bytes(_data)
 
     def _pipe_write(self, path: str, data: bytes) -> int:
-        """Write to DT_PIPE — non-blocking via Rust kernel."""
-        n: int = self._kernel.pipe_write_nowait(path, data)
-        _waiter = self._ipc_waiters.get(path)
-        if _waiter is not None:
-            _waiter.signal_not_empty()
-        return n
+        """Write to DT_PIPE — non-blocking via Rust kernel (condvar wakes readers)."""
+        return self._kernel.pipe_write_nowait(path, data)
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
         """Destroy DT_PIPE — close Rust buffer + clean up Python state."""
@@ -4701,18 +4661,14 @@ class NexusFS(  # type: ignore[misc]
         _buf = self._custom_pipe_backends.pop(path, None)
         if _buf is not None:
             _buf.close()
-        self._ipc_waiters.pop(path, None)
         return {}
 
     async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
-        """Read from DT_STREAM — async blocking via IPCWaiter + Rust nowait retry."""
-        _waiter = self._ipc_waiters.get(path)
-        if _waiter is not None:
-            while True:
-                _result = self._kernel.stream_read_at(path, offset)
-                if _result is not None:
-                    return bytes(_result[0])
-                await _waiter.wait_readable()
+        """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
+        # Hot path: try nowait first (zero GIL)
+        _result = self._kernel.stream_read_at(path, offset)
+        if _result is not None:
+            return bytes(_result[0])
 
         # Custom backend fallback
         _buf = self._custom_stream_backends.get(path)
@@ -4731,15 +4687,15 @@ class NexusFS(  # type: ignore[misc]
             except StreamClosedError:
                 raise NexusFileNotFoundError(path, f"Stream closed: {path}") from None
 
-        raise NexusFileNotFoundError(path, f"Stream not found: {path}")
+        # Slow path: block in Rust, release GIL
+        _data, _next = await asyncio.to_thread(
+            self._kernel.stream_read_at_blocking, path, offset, 30000
+        )
+        return bytes(_data)
 
     def _stream_write(self, path: str, data: bytes) -> int:
-        """Write to DT_STREAM — non-blocking via Rust kernel, returns byte offset."""
-        _off: int = self._kernel.stream_write_nowait(path, data)
-        _waiter = self._ipc_waiters.get(path)
-        if _waiter is not None:
-            _waiter.signal_not_empty()
-        return _off
+        """Write to DT_STREAM — non-blocking via Rust kernel (condvar wakes readers), returns byte offset."""
+        return self._kernel.stream_write_nowait(path, data)
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
         """Destroy DT_STREAM — close Rust buffer + clean up Python state."""
@@ -4750,7 +4706,6 @@ class NexusFS(  # type: ignore[misc]
         _buf = self._custom_stream_backends.pop(path, None)
         if _buf is not None:
             _buf.close()
-        self._ipc_waiters.pop(path, None)
         return {}
 
     def close(self) -> None:
@@ -4767,7 +4722,6 @@ class NexusFS(  # type: ignore[misc]
         # Close IPC primitives — Rust kernel (§4.2)
         self._kernel.close_all_pipes()
         self._kernel.close_all_streams()
-        self._ipc_waiters.clear()
         self._custom_pipe_backends.clear()
         self._custom_stream_backends.clear()
         # Close transport pool (persistent gRPC connections)

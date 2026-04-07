@@ -28,8 +28,7 @@ def _make_mock_nx() -> MagicMock:
     # Rust kernel mock — IPC pipe operations
     kernel = MagicMock()
     nx._kernel = kernel
-    # IPCWaiter map
-    nx._ipc_waiters = {}
+    # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
     # sys_setattr is async
     nx.sys_setattr = AsyncMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
     # sys_read is async — returns bytes

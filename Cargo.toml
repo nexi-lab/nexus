@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "rust/nexus_core",
+    "rust/nexus_transport",
     "rust/nexus_kernel",
     "rust/nexus_raft",
     "rust/nexus_tasks",
@@ -23,6 +24,9 @@ string-interner = "0.17"
 regex-syntax = "0.8"
 crc32fast = "1.4"
 mimalloc = { version = "0.1", default-features = false }
+tonic = { version = "0.13", features = ["transport", "tls-ring"] }
+prost = "0.13"
+nexus_transport = { path = "rust/nexus_transport" }
 
 [profile.dev]
 opt-level = 1

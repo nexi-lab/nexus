@@ -578,6 +578,67 @@ pub struct ClusterInfoResult {
     pub leader_address: Option<String>,
 }
 
+// =============================================================================
+// JoinCluster client — shared by fullnodes (via PyO3) and witness binary
+// =============================================================================
+
+/// Result of a successful JoinCluster call.
+pub struct JoinClusterResult {
+    pub ca_pem: Vec<u8>,
+    pub node_cert_pem: Vec<u8>,
+    pub node_key_pem: Vec<u8>,
+}
+
+/// Call JoinCluster on a leader to get a signed node certificate.
+///
+/// K3s-style: authenticates with join token password. The leader signs
+/// the cert server-side — CA key never leaves node-1.
+pub async fn call_join_cluster(
+    leader_addr: &str,
+    node_id: u64,
+    node_address: &str,
+    zone_id: &str,
+    password: &str,
+    timeout_secs: u64,
+) -> Result<JoinClusterResult> {
+    let ep = Endpoint::from_shared(leader_addr.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(timeout_secs));
+
+    let channel = ep
+        .connect()
+        .await
+        .map_err(|e| TransportError::Connection(format!("JoinCluster connect failed: {}", e)))?;
+
+    let mut client = ZoneApiServiceClient::new(channel);
+    let request = JoinClusterRequest {
+        password: password.to_string(),
+        node_id,
+        node_address: node_address.to_string(),
+        zone_id: zone_id.to_string(),
+    };
+
+    let response = client
+        .join_cluster(request)
+        .await
+        .map_err(|e| TransportError::Rpc(format!("JoinCluster RPC failed: {}", e)))?
+        .into_inner();
+
+    if !response.success {
+        return Err(TransportError::Rpc(format!(
+            "JoinCluster rejected: {}",
+            response.error.unwrap_or_default()
+        )));
+    }
+
+    Ok(JoinClusterResult {
+        ca_pem: response.ca_pem,
+        node_cert_pem: response.node_cert_pem,
+        node_key_pem: response.node_key_pem,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,67 +765,4 @@ mod tests {
             inner: ZoneTransportServiceClient::new(channel),
         }
     }
-}
-
-// =============================================================================
-// JoinCluster client — shared by fullnodes (via PyO3) and witness binary
-// =============================================================================
-
-/// Result of a successful JoinCluster call.
-pub struct JoinClusterResult {
-    pub ca_pem: Vec<u8>,
-    pub node_cert_pem: Vec<u8>,
-    pub node_key_pem: Vec<u8>,
-}
-
-/// Call JoinCluster on a leader to get a signed node certificate.
-///
-/// Call JoinCluster on a leader to get a signed node certificate.
-///
-/// K3s-style: authenticates with join token password. The leader signs
-/// the cert server-side — CA key never leaves node-1.
-pub async fn call_join_cluster(
-    leader_addr: &str,
-    node_id: u64,
-    node_address: &str,
-    zone_id: &str,
-    password: &str,
-    timeout_secs: u64,
-) -> Result<JoinClusterResult> {
-    let ep = Endpoint::from_shared(leader_addr.to_string())
-        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
-        .connect_timeout(Duration::from_secs(timeout_secs))
-        .timeout(Duration::from_secs(timeout_secs));
-
-    let channel = ep
-        .connect()
-        .await
-        .map_err(|e| TransportError::Connection(format!("JoinCluster connect failed: {}", e)))?;
-
-    let mut client = ZoneApiServiceClient::new(channel);
-    let request = JoinClusterRequest {
-        password: password.to_string(),
-        node_id,
-        node_address: node_address.to_string(),
-        zone_id: zone_id.to_string(),
-    };
-
-    let response = client
-        .join_cluster(request)
-        .await
-        .map_err(|e| TransportError::Rpc(format!("JoinCluster RPC failed: {}", e)))?
-        .into_inner();
-
-    if !response.success {
-        return Err(TransportError::Rpc(format!(
-            "JoinCluster rejected: {}",
-            response.error.unwrap_or_default()
-        )));
-    }
-
-    Ok(JoinClusterResult {
-        ca_pem: response.ca_pem,
-        node_cert_pem: response.node_cert_pem,
-        node_key_pem: response.node_key_pem,
-    })
 }

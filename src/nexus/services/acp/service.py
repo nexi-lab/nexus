@@ -4,7 +4,7 @@ Calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.) over the
 ACP JSON-RPC 2.0 protocol (stdin/stdout).  Each call is a one-shot
 session: spawn → initialize → session/new → session/prompt → disconnect.
 
-AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipe
+AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipeBackend
 (kernel PipeBackend).  Agent pipes are registered as DT_PIPEs at
 ``/{zone}/proc/{pid}/fd/0`` (stdin) and ``fd/1`` (stdout) when PipeManager
 is available.  AcpConnection is a pure protocol adapter — no subprocess.
@@ -32,7 +32,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import AgentDescriptor, AgentKind
 from nexus.contracts.vfs_paths import agent as agent_paths
 from nexus.contracts.vfs_paths import proc as proc_paths
-from nexus.core.stdio_pipe import StdioPipe
+from nexus.core.stdio_pipe import StdioPipeBackend
 
 from .agents import AgentConfig
 from .connection import AcpConnection, AcpPromptResult, AcpRpcError, FsReadFn, FsWriteFn
@@ -76,7 +76,7 @@ class AcpService:
         2. Inject system prompt (VFS override > config default)
         3. Build ACP command (binary + acp_args, no prompt in argv)
         4. Register process in ``AgentRegistry`` (spawn → REGISTERED)
-        5. Create subprocess, wrap in StdioPipe, register DT_PIPEs
+        5. Create subprocess, wrap in StdioPipeBackend, register DT_PIPEs
         6. ``AcpConnection`` → initialize → session/new → session/prompt
         7. Disconnect, kill subprocess, destroy DT_PIPEs, → TERMINATED
         8. Map ``AcpPromptResult`` → ``AcpResult`` with unified metadata
@@ -241,10 +241,10 @@ class AcpService:
                 env=env,
             )
 
-            # Wrap in StdioPipe (kernel PipeBackend) — all three fds
-            stdin_pipe = StdioPipe(reader=None, writer=proc.stdin)
-            stdout_pipe = StdioPipe(reader=proc.stdout, writer=None)
-            stderr_pipe = StdioPipe(reader=proc.stderr, writer=None)
+            # Wrap in StdioPipeBackend (kernel PipeBackend) — all three fds
+            stdin_pipe = StdioPipeBackend(reader=None, writer=proc.stdin)
+            stdout_pipe = StdioPipeBackend(reader=proc.stdout, writer=None)
+            stderr_pipe = StdioPipeBackend(reader=proc.stderr, writer=None)
 
             # Register DT_PIPEs in VFS (graceful degradation)
             if self._nexus_fs is not None:

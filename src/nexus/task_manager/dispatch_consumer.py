@@ -131,9 +131,6 @@ class TaskDispatchPipeConsumer:
         try:
             data = json.dumps({"type": signal_type, "payload": payload}).encode()
             self._nx._kernel.pipe_write_nowait(_TASK_DISPATCH_PIPE_PATH, data)
-            _waiter = self._nx._ipc_waiters.get(_TASK_DISPATCH_PIPE_PATH)
-            if _waiter is not None:
-                _waiter.signal_not_empty()
         except Exception:
             logger.warning("[TASK-DISPATCH] pipe full/closed, dropping signal: %s", signal_type)
 

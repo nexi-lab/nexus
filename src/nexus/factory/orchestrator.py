@@ -608,7 +608,7 @@ async def _register_vfs_hooks(
     # If EventBus (NATS/Dragonfly) is configured, use EventBusRemoteWatcher instead.
     from nexus.core.remote_watcher import StreamEventObserver, StreamRemoteWatcher
 
-    _stream_watcher = StreamRemoteWatcher(nx._stream_manager)
+    _stream_watcher = StreamRemoteWatcher(nx)
     _stream_observer = StreamEventObserver(_stream_watcher)
     nx._file_watcher.set_remote_watcher(_stream_watcher)
     await _enlist("stream_event_observer", _stream_observer)

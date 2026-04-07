@@ -25,7 +25,7 @@ from nexus.core.file_events import ALL_FILE_EVENTS
 if TYPE_CHECKING:
     from nexus.contracts.protocols.service_hooks import HookSpec
     from nexus.core.file_events import FileEvent
-    from nexus.core.stream_manager import StreamManager
+    from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
@@ -41,31 +41,21 @@ class StreamRemoteWatcher:
     (OBSERVE phase) and read by ``wait_for_event()`` via non-destructive
     offset-based stream reads.
 
-    Single-node: in-memory MemoryStreamBackend (~0.5μs/op).
+    Single-node: in-memory Rust MemoryStreamBackend (~0.5μs/op).
     Multi-node:  WALStreamBackend for Raft-replicated event delivery (future).
     """
 
-    def __init__(self, stream_manager: "StreamManager") -> None:
-        self._sm = stream_manager
+    def __init__(self, nx: "NexusFS") -> None:
+        self._nx = nx
         self._offsets: dict[str, int] = {}  # zone_id → read offset
         self._initialized = False
 
     def _ensure_stream(self) -> None:
-        """Lazily create the event DT_STREAM on first use.
-
-        Registers a MemoryStreamBackend directly in StreamManager._buffers
-        WITHOUT writing a DT_STREAM inode to metastore.  This keeps the
-        kernel-internal event stream invisible to glob/list (no VFS inode)
-        while remaining fully usable for stream_write/stream_read.
-        """
+        """Lazily create the event DT_STREAM via Rust kernel."""
         if self._initialized:
             return
-        if _EVENT_STREAM_PATH not in self._sm._buffers:
-            from nexus.core.stream import MemoryStreamBackend
-
-            self._sm._buffers[_EVENT_STREAM_PATH] = MemoryStreamBackend(
-                capacity=_EVENT_STREAM_CAPACITY,
-            )
+        if not self._nx._kernel.has_stream(_EVENT_STREAM_PATH):
+            self._nx._kernel.create_stream(_EVENT_STREAM_PATH, _EVENT_STREAM_CAPACITY)
         self._initialized = True
 
     def publish(self, event: "FileEvent") -> None:
@@ -73,7 +63,7 @@ class StreamRemoteWatcher:
         self._ensure_stream()
         payload = event.to_json().encode("utf-8")
         with contextlib.suppress(Exception):
-            self._sm.stream_write_nowait(_EVENT_STREAM_PATH, payload)
+            self._nx._kernel.stream_write_nowait(_EVENT_STREAM_PATH, payload)
 
     async def wait_for_event(
         self,
@@ -99,10 +89,21 @@ class StreamRemoteWatcher:
                 return None
 
             try:
-                data, new_offset = await asyncio.wait_for(
-                    self._sm.stream_read(_EVENT_STREAM_PATH, offset, blocking=True),
-                    timeout=remaining,
-                )
+                # Try nowait first; fall back to Rust blocking read
+                result = self._nx._kernel.stream_read_at(_EVENT_STREAM_PATH, offset)
+                if result is None:
+                    data_raw, new_offset = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self._nx._kernel.stream_read_at_blocking,
+                            _EVENT_STREAM_PATH,
+                            offset,
+                            int(remaining * 1000),
+                        ),
+                        timeout=remaining,
+                    )
+                else:
+                    data_raw, new_offset = result
+                data = bytes(data_raw)
                 offset = new_offset
                 self._offsets[zone_id] = offset
 

@@ -424,7 +424,7 @@ Two-layer architecture for both: VFS metadata (inode) in MetastoreABC, data
   ``RemoteStreamBackend`` (federation gRPC proxy),
   ``WALStreamBackend`` (durable, EC WAL-backed for cross-node at-least-once),
   ``SHMStreamBackend`` (mmap shared memory, cross-process, ~1-5μs),
-  ``StdioStream`` (OS subprocess pipe adapter for agent I/O).
+  ``StdioStreamBackend`` (OS subprocess pipe adapter for agent I/O).
 - **Mount-determined backend** — ``_MountEntry.stream_backend_factory`` is baked
   at mount time. ``sys_setattr(entry_type=DT_STREAM)`` checks the enclosing
   mount's factory; if set, creates a custom backend instead of default memory.

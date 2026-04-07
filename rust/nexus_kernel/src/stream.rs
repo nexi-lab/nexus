@@ -1,6 +1,6 @@
 //! Linear append-only buffer for DT_STREAM kernel IPC (Task #1574).
 //!
-//! Unlike `pipe.rs` (circular ring, destructive pop), StreamBufferCore is a
+//! Unlike `pipe.rs` (circular ring, destructive pop), MemoryStreamBackend is a
 //! linear append-only buffer where reads are non-destructive and offset-based.
 //! Multiple readers maintain independent cursors (fan-out).
 //!
@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 const HEADER_SIZE: usize = 4;
 
 // ---------------------------------------------------------------------------
-// StreamBufferCore
+// MemoryStreamBackend
 // ---------------------------------------------------------------------------
 
 /// Linear append-only buffer for DT_STREAM.
@@ -29,7 +29,7 @@ const HEADER_SIZE: usize = 4;
 /// Pre-allocated linear buffer with monotonic tail. Reads are non-destructive
 /// and offset-based — each reader supplies its own byte offset.
 /// Kernel-internal only — no PyO3 export. Python uses kernel.create_stream().
-pub struct StreamBufferCore {
+pub struct MemoryStreamBackend {
     buf: UnsafeCell<Vec<u8>>,
     capacity: usize,
     tail: AtomicUsize,
@@ -41,8 +41,8 @@ pub struct StreamBufferCore {
 // SAFETY: Append-only buffer. Writes extend [tail..new_tail], reads access
 // [offset..offset+len] which is already committed. Python GIL serializes
 // all PyO3 method calls.
-unsafe impl Send for StreamBufferCore {}
-unsafe impl Sync for StreamBufferCore {}
+unsafe impl Send for MemoryStreamBackend {}
+unsafe impl Sync for MemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
 // Internal error type
@@ -60,10 +60,62 @@ pub(crate) enum StreamError {
 }
 
 // ---------------------------------------------------------------------------
+// StreamBackend trait — uniform interface for all stream backends
+// ---------------------------------------------------------------------------
+
+/// Uniform interface for stream backends (memory, shared memory, future gRPC).
+///
+/// Enables `DashMap<String, Arc<dyn StreamBackend>>` in StreamManager for
+/// heterogeneous backend dispatch.
+#[allow(dead_code)] // Used via Arc<dyn StreamBackend> in StreamManager + generated_pyo3.rs
+pub(crate) trait StreamBackend: Send + Sync {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError>;
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError>;
+    fn read_batch(&self, offset: usize, count: usize)
+        -> Result<(Vec<Vec<u8>>, usize), StreamError>;
+    fn close(&self);
+    fn is_closed(&self) -> bool;
+    fn tail_offset(&self) -> usize;
+    fn msg_count(&self) -> usize;
+}
+
+// ---------------------------------------------------------------------------
+// StreamBackend impl for MemoryStreamBackend
+// ---------------------------------------------------------------------------
+
+impl StreamBackend for MemoryStreamBackend {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
+        MemoryStreamBackend::push(self, data)
+    }
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
+        MemoryStreamBackend::read_at(self, offset)
+    }
+    fn read_batch(
+        &self,
+        offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
+        MemoryStreamBackend::read_batch(self, offset, count)
+    }
+    fn close(&self) {
+        MemoryStreamBackend::close(self)
+    }
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+    fn tail_offset(&self) -> usize {
+        self.tail.load(Ordering::Acquire)
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count.load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers — pub(crate) for direct Kernel IPC registry access
 // ---------------------------------------------------------------------------
 
-impl StreamBufferCore {
+impl MemoryStreamBackend {
     /// Push raw bytes into the buffer. Returns byte offset where message starts.
     pub(crate) fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
         if self.closed.load(Ordering::Acquire) {
@@ -176,7 +228,7 @@ impl StreamBufferCore {
         self.closed.load(Ordering::Acquire)
     }
 
-    /// Create a new StreamBufferCore (pub(crate), no PyO3).
+    /// Create a new MemoryStreamBackend (pub(crate), no PyO3).
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
             buf: UnsafeCell::new(vec![0u8; capacity]),
@@ -226,15 +278,15 @@ impl StreamBufferCore {
 mod tests {
     use super::*;
 
-    fn make(cap: usize) -> StreamBufferCore {
-        StreamBufferCore::new(cap)
+    fn make(cap: usize) -> MemoryStreamBackend {
+        MemoryStreamBackend::new(cap)
     }
 
-    fn push(core: &StreamBufferCore, data: &[u8]) -> usize {
+    fn push(core: &MemoryStreamBackend, data: &[u8]) -> usize {
         core.push(data).expect("push failed")
     }
 
-    fn read_at(core: &StreamBufferCore, offset: usize) -> (Vec<u8>, usize) {
+    fn read_at(core: &MemoryStreamBackend, offset: usize) -> (Vec<u8>, usize) {
         let (start, len, next) = core.read_at_position(offset).expect("read_at failed");
         let buf = unsafe { &*core.buf.get() };
         (buf[start..start + len].to_vec(), next)

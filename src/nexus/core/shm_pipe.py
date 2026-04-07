@@ -1,6 +1,6 @@
 """Cross-process DT_PIPE via shared memory (mmap) — SharedMemoryPipeBackend (#1680).
 
-Implements ``PipeBackend`` protocol using ``SharedRingBufferCore`` (Rust, mmap)
+Implements ``PipeBackend`` protocol using ``SharedMemoryPipeBackend`` (Rust, mmap)
 for cross-process SPSC communication.  OS pipes provide async wakeup via
 ``loop.add_reader(fd, callback)``.
 
@@ -29,10 +29,10 @@ from typing import TYPE_CHECKING, Self
 from nexus.core.pipe import PipeClosedError, PipeEmptyError, PipeFullError, _translate_rust_error
 
 if TYPE_CHECKING:
-    from nexus_kernel import SharedRingBufferCore
+    from nexus_kernel import SharedMemoryPipeBackend as _RustSharedMemoryPipeBackend
 
-# RUST_FALLBACK: SharedRingBufferCore
-from nexus._rust_compat import SharedRingBufferCore as _SharedRingBufferCore
+# RUST_FALLBACK: SharedMemoryPipeBackend
+from nexus._rust_compat import SharedMemoryPipeBackend as _SharedMemoryPipeBackend
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class SharedMemoryPipeBackend:
 
     def __init__(
         self,
-        core: SharedRingBufferCore,
+        core: _RustSharedMemoryPipeBackend,
         data_rd_fd: int = -1,
         space_rd_fd: int = -1,
     ) -> None:
@@ -88,9 +88,9 @@ class SharedMemoryPipeBackend:
             - data_rd_fd: pass to child (child listens for data notifications)
             - space_rd_fd: keep in parent (parent listens for space notifications)
         """
-        if _SharedRingBufferCore is None:
+        if _SharedMemoryPipeBackend is None:
             raise RuntimeError("SharedPipe requires the nexus-kernel Rust extension.")
-        core, shm_path, data_rd_fd, space_rd_fd = _SharedRingBufferCore.create(capacity)
+        core, shm_path, data_rd_fd, space_rd_fd = _SharedMemoryPipeBackend.create(capacity)
         # Parent keeps space_rd_fd (wakes when reader frees space)
         buf = cls(core, data_rd_fd=-1, space_rd_fd=space_rd_fd)
         return buf, shm_path, data_rd_fd, space_rd_fd
@@ -107,9 +107,9 @@ class SharedMemoryPipeBackend:
             notify_space_wr: Write-end of space pipe (child writes here after pop — passed to Rust core).
             data_rd_fd: Read-end of data pipe (child listens here for data notifications).
         """
-        if _SharedRingBufferCore is None:
+        if _SharedMemoryPipeBackend is None:
             raise RuntimeError("SharedPipe requires the nexus-kernel Rust extension.")
-        core = _SharedRingBufferCore.attach(shm_path, notify_data_wr, notify_space_wr)
+        core = _SharedMemoryPipeBackend.attach(shm_path, notify_data_wr, notify_space_wr)
         return cls(core, data_rd_fd=data_rd_fd, space_rd_fd=-1)
 
     # -- fd callbacks ---------------------------------------------------------

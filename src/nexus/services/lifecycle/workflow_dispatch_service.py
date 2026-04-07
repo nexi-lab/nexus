@@ -122,10 +122,10 @@ class WorkflowDispatchService:
 
         from nexus.core.pipe import PipeClosedError, PipeFullError
 
-        if self._pipe_manager is not None and self._pipe_ready:
+        if self._nx is not None and self._pipe_ready:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
-                self._pipe_manager.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
+                self._nx._kernel.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
             except (PipeClosedError, PipeFullError):
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:
@@ -166,9 +166,6 @@ class WorkflowDispatchService:
             try:
                 data = json.dumps({"type": trigger_type, "ctx": event_context}).encode()
                 self._nx._kernel.pipe_write_nowait(_WORKFLOW_PIPE_PATH, data)
-                _waiter = self._nx._ipc_waiters.get(_WORKFLOW_PIPE_PATH)
-                if _waiter is not None:
-                    _waiter.signal_not_empty()
             except Exception:
                 logger.warning("Workflow pipe full/closed, dropping event: %s", label)
         else:

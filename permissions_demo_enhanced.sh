@@ -316,7 +316,7 @@ try:
                DEFAULT_MEMORY_NAMESPACE, DEFAULT_PLAYBOOK_NAMESPACE,
                DEFAULT_TRAJECTORY_NAMESPACE, DEFAULT_SKILL_NAMESPACE]:
         try:
-            rebac.register_namespace_sync({"object_type": ns.object_type, "config": ns.config, "namespace_id": ns.namespace_id})
+            rebac.register_namespace_sync(namespace={"object_type": ns.object_type, "config": ns.config, "namespace_id": ns.namespace_id})
             print(f"  ✓ {ns.object_type} namespace initialized")
         except Exception as e:
             if "already exists" in str(e).lower() or "duplicate" in str(e).lower():

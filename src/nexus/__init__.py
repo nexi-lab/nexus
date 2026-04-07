@@ -320,7 +320,6 @@ async def connect(
         from nexus.core.router import PathRouter as _PathRouter
 
         _mount_table = _MountTable(remote_metastore)
-        _mount_table.add("/", remote_backend)
         _router = _PathRouter(_mount_table)
 
         from nexus.contracts.types import OperationContext as _RemoteOC
@@ -331,6 +330,12 @@ async def connect(
             router=_router,
             init_cred=_RemoteOC(user_id="remote", groups=[], is_admin=False),
         )
+
+        # Mount after NexusFS construction so the Kernel is already wired into
+        # _mount_table (_mount_table._kernel is set by NexusFS.__init__).
+        # If add() is called before the kernel is wired, the kernel's route table
+        # stays empty and self._kernel.sys_mkdir() raises PathNotMountedError.
+        _mount_table.add("/", remote_backend)
 
         # Wire service proxies for REMOTE profile (Issue #1171).
         # Fills all 25+ service slots with RemoteServiceProxy — forwards

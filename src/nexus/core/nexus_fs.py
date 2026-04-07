@@ -3048,7 +3048,13 @@ class NexusFS(  # type: ignore[misc]
 
         # Python always does full rmdir (Rust kernel has the capability for FUSE/gRPC bypass)
         dir_path = path if path.endswith("/") else path + "/"
-        files_in_dir = route.metastore.list(dir_path)
+        # Use recursive listing when deleting recursively so all descendants are
+        # cleaned from the metastore in one batch (not just immediate children).
+        files_in_dir = (
+            route.metastore.list(dir_path, recursive=True)
+            if recursive
+            else route.metastore.list(dir_path)
+        )
 
         if files_in_dir:
             if not recursive:
@@ -3057,8 +3063,9 @@ class NexusFS(  # type: ignore[misc]
             file_paths = [file_meta.path for file_meta in files_in_dir]
             route.metastore.delete_batch(file_paths)
 
-        # Remove directory in backend (suppress errors — CAS may not have physical dir)
-        with contextlib.suppress(NexusFileNotFoundError):
+        # Remove directory in backend (suppress errors — CAS may not have physical dir,
+        # or it may already be gone if metastore and backend are out of sync)
+        with contextlib.suppress(NexusFileNotFoundError, BackendError):
             route.backend.rmdir(route.backend_path, recursive=recursive)
 
         # Delete directory's own metadata entry
@@ -3099,7 +3106,12 @@ class NexusFS(  # type: ignore[misc]
 
     @rpc_expose(description="Rename/move file")
     async def sys_rename(
-        self, old_path: str, new_path: str, *, context: OperationContext | None = None
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        force: bool = False,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
@@ -3113,6 +3125,7 @@ class NexusFS(  # type: ignore[misc]
         Args:
             old_path: Current virtual path
             new_path: New virtual path
+            force: If True, delete the destination before renaming (overwrite).
             context: Optional operation context for permission checks (uses default if not provided)
 
         Returns:
@@ -3120,7 +3133,7 @@ class NexusFS(  # type: ignore[misc]
 
         Raises:
             NexusFileNotFoundError: If source file doesn't exist
-            FileExistsError: If destination path already exists
+            FileExistsError: If destination path already exists (and force=False)
             InvalidPathError: If either path is invalid
             PermissionError: If either path is read-only
             AccessDeniedError: If access is denied (zone isolation)
@@ -3192,7 +3205,10 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check destination — use backend.file_exists() for PAS backends
                 if new_route.metastore.exists(new_path):
-                    if hasattr(new_route.backend, "file_exists"):
+                    if force:
+                        # force=True: delete destination so rename can proceed
+                        await self.sys_unlink(new_path, recursive=True, context=context)
+                    elif hasattr(new_route.backend, "file_exists"):
                         if new_route.backend.file_exists(new_route.backend_path):
                             raise FileExistsError(f"Destination path already exists: {new_path}")
                         logger.warning(

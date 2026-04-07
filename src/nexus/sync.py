@@ -324,6 +324,7 @@ async def move_file(
     nx: "NexusFilesystem",
     source: str,
     dest: str,
+    force: bool = False,
 ) -> bool:
     """Move a file or directory.
 
@@ -345,7 +346,7 @@ async def move_file(
             # Falls back to copy+delete if rename fails (e.g. gRPC transport
             # not available on REMOTE profile).  Issue #341.
             try:
-                await nx.sys_rename(source, dest)
+                await nx.sys_rename(source, dest, force=force)
                 return True
             except Exception:
                 # Fallback: copy content then delete source

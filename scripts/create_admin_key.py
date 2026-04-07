@@ -39,7 +39,7 @@ def create_admin_key(
     admin_user: str,
     custom_key: str | None = None,
     skip_permissions: bool = False,
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> tuple[str, bool]:
     """
     Create or register admin API key.
@@ -49,7 +49,7 @@ def create_admin_key(
         admin_user: Admin user ID
         custom_key: Optional custom API key to register (if None, generates new one)
         skip_permissions: If True, skip entity registry registration
-        zone_id: Zone ID (default: "default")
+        zone_id: Zone ID (default: "root")
 
     Returns:
         Tuple of (api_key, success)

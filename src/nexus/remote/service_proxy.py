@@ -96,6 +96,9 @@ class RemoteServiceProxy:
         rpc_forwarder.__qualname__ = f"RemoteServiceProxy.{name}"
         return rpc_forwarder
 
+    def close(self) -> None:
+        """No-op close — REMOTE proxies have no local resources to release."""
+
     def __repr__(self) -> str:
         name = object.__getattribute__(self, "_service_name")
         return f"<RemoteServiceProxy({name or 'universal'})>"

@@ -39,6 +39,7 @@ from nexus.contracts.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    PathNotMountedError,
     ValidationError,
 )
 from nexus.contracts.rpc_types import RPCErrorCode
@@ -263,6 +264,12 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
             logger.warning("Connector error in gRPC method %s: %s", method, e)
             return vfs_pb2.CallResponse(
                 payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}"),
+                is_error=True,
+            )
+        except PathNotMountedError as e:
+            logger.warning("PathNotMountedError in gRPC method %s: %s", method, e)
+            return vfs_pb2.CallResponse(
+                payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, f"Path not mounted: {e}"),
                 is_error=True,
             )
         except NexusError as e:

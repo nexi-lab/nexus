@@ -4442,7 +4442,7 @@ class NexusFS(  # type: ignore[misc]
         # ── Connector mount listing (S3, GCS, local, etc.) ──
         # Only intercept for ExternalRouteResult OR connector-registered backends
         # (not the default Raft backend which also has list_dir).
-        if path and path != "/" and self.router:
+        if path and path != "/" and getattr(self, "router", None):
             try:
                 from nexus.core.router import ExternalRouteResult
 

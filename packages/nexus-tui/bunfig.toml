@@ -1,7 +1,4 @@
 preload = ["@opentui/solid/preload"]
 
 [test]
-# jsx:"preserve" in tsconfig is for babel-preset-solid at runtime.
-# bun test needs react-jsx to compile JSX in .tsx test files.
-jsx = "react-jsx"
-jsxImportSource = "@opentui/solid"
+tsconfig = "tsconfig.test.json"

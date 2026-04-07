@@ -7,7 +7,7 @@
       "ES2022",
       "DOM"
     ],
-    "jsx": "react-jsx",
+    "jsx": "preserve",
     "jsxImportSource": "@opentui/solid",
     "customConditions": [
       "browser"

@@ -4465,7 +4465,7 @@ class NexusFS(  # type: ignore[misc]
                         )
                     )
                     entries = backend.list_dir(backend_path, context=_ctx)
-                    if entries:
+                    if entries is not None:
                         if details:
                             return [
                                 {

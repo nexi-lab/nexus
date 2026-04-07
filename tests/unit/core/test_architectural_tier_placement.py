@@ -9,16 +9,16 @@ import importlib
 
 
 class TestPipeTierPlacement:
-    """pipe.py (MemoryPipeBackend/kfifo) is a kernel VFS primitive — stays in core/.
+    """pipe.py (PipeBackend protocol + exceptions) is a kernel VFS primitive — stays in core/.
     pipe_manager.py (PipeManager/fs/pipe.c) is a kernel primitive — lives in core/.
 
     Issue #2366: PipeManager reverted back to core/ — it is a kernel primitive
-    alongside MemoryPipeBackend per KERNEL-ARCHITECTURE.md.
+    per KERNEL-ARCHITECTURE.md.
     """
 
-    def test_ring_buffer_in_core(self) -> None:
+    def test_pipe_backend_protocol_in_core(self) -> None:
         mod = importlib.import_module("nexus.core.pipe")
-        assert hasattr(mod, "MemoryPipeBackend")
+        assert hasattr(mod, "PipeBackend")
 
     def test_pipe_manager_in_core(self) -> None:
         mod = importlib.import_module("nexus.core.pipe_manager")

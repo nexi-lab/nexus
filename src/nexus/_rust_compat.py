@@ -74,8 +74,6 @@ _CAPABILITY_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "hash": ("hash_content_py", "hash_content_smart_py"),
     "ipc": (
-        "RingBufferCore",
-        "StreamBufferCore",
         "SharedRingBufferCore",
         "SharedStreamBufferCore",
     ),
@@ -172,10 +170,8 @@ PathTrie = _get("PathTrie")
 
 # Classes still exported as standalone
 BloomFilter = _get("BloomFilter")
-RingBufferCore = _get("RingBufferCore")
 SharedRingBufferCore = _get("SharedRingBufferCore")
 SharedStreamBufferCore = _get("SharedStreamBufferCore")
-StreamBufferCore = _get("StreamBufferCore")
 VFSLockManager = _get("VFSLockManager")
 VFSSemaphore = _get("VFSSemaphore")
 VolumeEngine = _get("VolumeEngine")

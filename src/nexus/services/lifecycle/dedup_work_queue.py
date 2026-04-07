@@ -1,4 +1,4 @@
-"""DedupWorkQueue — coalescing work queue backed by DT_PIPE MemoryPipeBackend (#2062).
+"""DedupWorkQueue — coalescing work queue backed by asyncio.Queue (#2062).
 
 Follows the Kubernetes controller-runtime workqueue pattern:
   - 10 rapid writes to the same file → 10 events recorded (audit complete)
@@ -6,13 +6,12 @@ Follows the Kubernetes controller-runtime workqueue pattern:
   - Does NOT replace EventLog — dedup is for *processing*, not *recording*.
 
 Three invariants maintained by add/get/done:
-  1. An item in ``dirty`` but not ``processing`` has exactly one entry in the buffer.
-  2. An item in ``processing`` has zero entries in the buffer.
+  1. An item in ``dirty`` but not ``processing`` has exactly one entry in the queue.
+  2. An item in ``processing`` has zero entries in the queue.
   3. An item can be in both ``dirty`` and ``processing`` (re-added during
      processing → will be re-queued on ``done()``).
 
-Transport: DT_PIPE MemoryPipeBackend (Rust-backed kfifo, ~0.5μs/op) replaces
-asyncio.Queue. The pipe carries 8-byte sequence tokens; actual items stay
+Transport: asyncio.Queue carries sequence tokens; actual items stay
 in a Python dict — no serialization needed. Dedup logic (dirty/processing
 sets) remains in Python.
 
@@ -22,7 +21,6 @@ Consumer-side dedup: each subscriber opts in independently.
 References:
   - https://github.com/kubernetes/client-go/blob/master/util/workqueue/queue.go
   - NEXUS-LEGO-ARCHITECTURE.md §12.5
-  - KERNEL-ARCHITECTURE.md §6 (DT_PIPE kfifo tier)
 """
 
 import asyncio
@@ -30,8 +28,6 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Generic, TypeVar
-
-from nexus.core.pipe import MemoryPipeBackend, PipeClosedError, PipeFullError
 
 logger = logging.getLogger(__name__)
 
@@ -48,10 +44,9 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
-    **Transport:** Uses DT_PIPE MemoryPipeBackend (Rust-backed kfifo) for the
-    internal FIFO, replacing asyncio.Queue. The pipe carries 8-byte
-    sequence tokens; actual items stay in a Python dict (no serialization).
-    Dedup logic (dirty/processing sets) remains in Python.
+    **Transport:** Uses asyncio.Queue for the internal FIFO. The queue
+    carries sequence tokens; actual items stay in a Python dict (no
+    serialization). Dedup logic (dirty/processing sets) remains in Python.
 
     **Threading model:** This queue is designed for single-event-loop asyncio.
     ``add()`` and ``get()`` are async and acquire a lock.  ``done()`` is
@@ -76,9 +71,9 @@ class DedupWorkQueue(Generic[T]):
             q.done(key)
     """
 
-    def __init__(self, *, capacity: int = 65_536) -> None:
-        self._buf = MemoryPipeBackend(capacity)
-        self._seq = 0  # monotonic sequence counter (pipe carries 8-byte tokens)
+    def __init__(self, *, capacity: int = 65_536) -> None:  # noqa: ARG002
+        self._queue: asyncio.Queue[int] = asyncio.Queue()
+        self._seq = 0  # monotonic sequence counter
         self._items: dict[int, T] = {}  # seq → item (actual data stays in Python)
         self._dirty: set[T] = set()
         self._processing: set[T] = set()
@@ -123,11 +118,11 @@ class DedupWorkQueue(Generic[T]):
                 # Currently being processed — will re-queue on done()
                 return
 
-            # New work item — enqueue token via pipe
+            # New work item — enqueue token
             seq = self._seq
             self._seq += 1
             self._items[seq] = key
-            self._buf.write_u64_nowait(seq)
+            self._queue.put_nowait(seq)
 
     async def get(self) -> T:
         """Get the next key to process (blocks until available).
@@ -142,12 +137,12 @@ class DedupWorkQueue(Generic[T]):
             ShutdownError: If the queue is shut down while waiting.
         """
         while True:
-            if self._shutting_down and self._buf._core.is_empty():
+            if self._shutting_down and self._queue.empty():
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                seq = await asyncio.wait_for(self._buf.read_u64(), timeout=0.5)
-            except (TimeoutError, PipeClosedError):
+                seq = await asyncio.wait_for(self._queue.get(), timeout=0.5)
+            except TimeoutError:
                 if self._shutting_down:
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
                 continue
@@ -179,14 +174,14 @@ class DedupWorkQueue(Generic[T]):
         self._processing.discard(key)
 
         if key in self._dirty:
-            # Re-added during processing — re-queue via pipe
+            # Re-added during processing — re-queue
             try:
                 seq = self._seq
                 self._seq += 1
                 self._items[seq] = key
-                self._buf.write_u64_nowait(seq)
-            except (PipeClosedError, PipeFullError):
-                # Shutting down or buffer full — item stays in dirty
+                self._queue.put_nowait(seq)
+            except asyncio.QueueFull:
+                # Buffer full — item stays in dirty
                 # and will be picked up if queue restarts
                 pass
 
@@ -236,7 +231,7 @@ class DedupWorkQueue(Generic[T]):
             "gets": self._gets,
             "pending": len(self._dirty),
             "processing": len(self._processing),
-            "queue_depth": self._buf.stats.get("msg_count", 0),
+            "queue_depth": self._queue.qsize(),
         }
 
 

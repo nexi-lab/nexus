@@ -67,3 +67,7 @@ jobs:
 
       - run: bun install
       - run: bun test
+        env:
+          # @opentui/solid jsx-dev-runtime types lack jsxDEV export;
+          # production mode uses jsx-runtime which has proper exports.
+          NODE_ENV: production

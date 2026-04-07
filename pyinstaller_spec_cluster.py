@@ -1,11 +1,10 @@
-# -*- mode: python ; coding: utf-8 -*-
+# ruff: noqa: F821
 """
 PyInstaller spec for nexus (profile=cluster)
 Minimal deployment: storage + ipc + federation
 """
 
 import os
-import glob
 
 # Rust extension paths
 NEXUS_RAFT_SO = '/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/_nexus_raft/_nexus_raft.cpython-313-darwin.so'

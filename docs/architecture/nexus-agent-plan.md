@@ -32,17 +32,18 @@ Exponential backoff for 429/5xx/network errors, immediate fail on auth errors, t
 
 Incremental accumulation of OpenAI-compatible streaming tool calls: per-index argument concatenation across chunks, emitted as complete tool_calls in the "done" control message.
 
-### 1.5 Tool Registry & Execution — Tier A DONE, Tier B planned
+### 1.5 Tool Registry & Execution — DONE
 
 **Key design decision — two-tier tool model**:
 
 - **Tier A: Built-in kernel tools (eager, function-calling)** — DONE.
-  Small set (~6) of kernel-level tools bound day-1 via function-calling schema: read_file, write_file, edit_file, bash, grep, glob. Few enough (~1.2K tokens) to not dilute context.
+  Small set (~6) bound via function-calling schema: read_file, write_file, edit_file, bash, grep, glob.
 
-- **Tier B: External CLI tools (lazy, filesystem discovery)** — planned.
-  User provides tool paths (`nexus agent --tools /path/to/toolset`). LLM discovers tools on-demand via `ls /tools/` + `--help`. Benefits: unlimited tools without context explosion, no schema translation, self-describing via cli-args-ssot. Implementation: DT_MOUNT to real tool directories, filesystem IS the registry.
+- **Tier B: External CLI tools (lazy, filesystem discovery)** — DONE.
+  `nexus chat --tools /path/to/toolset` → DT_MOUNT to `/root/tools/{name}`.
+  LLM discovers on-demand via `ls /tools/` + `--help`. Filesystem IS the registry.
 
-### 1.6 Dual Persistence Explained — retained (design rationale)
+### 1.6 Dual Persistence — retained (design rationale)
 
 **Not redundant** — different granularity and timing:
 
@@ -50,10 +51,10 @@ Incremental accumulation of OpenAI-compatible streaming tool calls: per-index ar
 |---|---|---|
 | Granularity | Single LLM call (request + response) | Entire conversation (all turns incl. tool results) |
 | Purpose | LLM KV cache optimization, audit trail | Session resume (--continue) |
-| Tool results | Not directly (but included in next turn's request) | Yes |
-| Timing | After LLM response, before tool execution | After tool execution, before next LLM call |
+| Timing | After streaming done (in `_run_stream()`) | After tool execution, before next LLM call |
 
-Both retained. CAS dedup ensures no wasted space.
+Both retained. CAS dedup ensures no wasted space. `persist_session()` now
+lives in `CASOpenAIBackend` directly (LLMStreamingService eliminated in PR #3657).
 
 ### 1.7 Session Resume — DONE
 
@@ -372,7 +373,7 @@ to prompt. Does NOT exit REPL.
 | `src/nexus/cli/main.py` | ADD: register `chat` subcommand |
 | `src/nexus/services/agent_runtime/managed_loop.py` | MINOR: streaming token callback hook |
 
-**Layer: Agent + Framework | P0 | Needs building**
+**Layer: Agent + Framework | P0 | DONE (V1)**
 
 ### 11.3 Keyboard Shortcuts [Production] — Layer: Agent | P2
 ### 11.4 Status Line [Production] — Layer: Agent | P2

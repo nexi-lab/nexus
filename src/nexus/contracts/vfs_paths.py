@@ -82,6 +82,16 @@ class agent:
         return f"/{zone_id}/agents/{agent_id}/sessions"
 
     @staticmethod
+    def prompt_fragment(zone_id: str, agent_id: str, name: str) -> str:
+        """Prompt fragment file: /{zone}/agents/{id}/prompts/{name}.md"""
+        return f"/{zone_id}/agents/{agent_id}/prompts/{name}.md"
+
+    @staticmethod
+    def transcript(zone_id: str, agent_id: str, timestamp: str) -> str:
+        """Compaction transcript: /{zone}/agents/{id}/transcripts/{timestamp}.jsonl"""
+        return f"/{zone_id}/agents/{agent_id}/transcripts/{timestamp}.jsonl"
+
+    @staticmethod
     def session_conversation(zone_id: str, agent_id: str, session_id: str) -> str:
         """Session conversation (CAS-addressed): /{zone}/agents/{id}/sessions/{session}/conversation"""
         return f"/{zone_id}/agents/{agent_id}/sessions/{session_id}/conversation"

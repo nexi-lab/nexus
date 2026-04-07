@@ -24,49 +24,34 @@ import { Tooltip } from "../../shared/components/tooltip.js";
 
 export default function ApiConsolePanel(): JSX.Element {
   const client = useApi();
-  // Reactive subscription to command runner status (Codex finding 2)
-  const commandRunnerStatus = useCommandRunnerStore((s) => s.status);
-  const endpoints = useApiConsoleStore((s) => s.endpoints);
-  const filteredEndpoints = useApiConsoleStore((s) => s.filteredEndpoints);
-  const selectedEndpoint = useApiConsoleStore((s) => s.selectedEndpoint);
+
+  // Reactive state reads (wrapped in () => for SolidJS tracking)
+  const commandRunnerStatus = () => useCommandRunnerStore((s) => s.status);
+  const endpoints = () => useApiConsoleStore((s) => s.endpoints);
+  const filteredEndpoints = () => useApiConsoleStore((s) => s.filteredEndpoints);
+  const selectedEndpoint = () => useApiConsoleStore((s) => s.selectedEndpoint);
+  const commandHistory = () => useApiConsoleStore((s) => s.commandHistory);
+  const commandInputMode = () => useApiConsoleStore((s) => s.commandInputMode);
+  const commandInputBuffer = () => useApiConsoleStore((s) => s.commandInputBuffer);
+  const uiFocusPane = () => useUiStore((s) => s.getFocusPane("console"));
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
+
+  // Stable action references (no () => needed)
   const selectEndpoint = useApiConsoleStore((s) => s.selectEndpoint);
   const executeRequest = useApiConsoleStore((s) => s.executeRequest);
   const executeCommand = useApiConsoleStore((s) => s.executeCommand);
   const fetchOpenApiSpec = useApiConsoleStore((s) => s.fetchOpenApiSpec);
-  const commandHistory = useApiConsoleStore((s) => s.commandHistory);
-  const commandInputMode = useApiConsoleStore((s) => s.commandInputMode);
-  const commandInputBuffer = useApiConsoleStore((s) => s.commandInputBuffer);
   const setCommandInputMode = useApiConsoleStore((s) => s.setCommandInputMode);
   const setCommandInputBuffer = useApiConsoleStore((s) => s.setCommandInputBuffer);
   const navigateHistory = useApiConsoleStore((s) => s.navigateHistory);
-
   const setSearchQuery = useApiConsoleStore((s) => s.setSearchQuery);
-
-  // Focus pane (ui-store)
-  const uiFocusPane = useUiStore((s) => s.getFocusPane("console"));
   const toggleFocus = useUiStore((s) => s.toggleFocusPane);
-  const overlayActive = useUiStore((s) => s.overlayActive);
 
   // Auto-load endpoints from OpenAPI spec on mount
   createEffect(() => {
-    if (client && endpoints.length === 0) {
+    if (client && endpoints().length === 0) {
       fetchOpenApiSpec(client);
     }
-  });
-
-  // Find current selection index
-  const selectedIdx = selectedEndpoint
-    ? filteredEndpoints.findIndex((ep) => ep.path === selectedEndpoint.path && ep.method === selectedEndpoint.method)
-    : -1;
-
-  // Shared list navigation (j/k/up/down/g/G)
-  const listNav = listNavigationBindings({
-    getIndex: () => selectedIdx,
-    setIndex: (i) => {
-      const ep = filteredEndpoints[i];
-      if (ep) selectEndpoint(ep);
-    },
-    getLength: () => filteredEndpoints.length,
   });
 
   // Endpoint filter input (replaces local endpointFilterMode/endpointFilter state)
@@ -75,61 +60,54 @@ export default function ApiConsolePanel(): JSX.Element {
     onCancel: () => { setSearchQuery(""); },
   });
 
-  // Handle printable characters in command input mode
-  const handleUnhandledKey = (keyName: string) => {
-      if (!commandInputMode) return;
-      if (keyName.length === 1) {
-        setCommandInputBuffer(commandInputBuffer + keyName);
-      } else if (keyName === "space") {
-        setCommandInputBuffer(commandInputBuffer + " ");
-      }
-    };
-
   useKeyboard(
-    overlayActive
-      ? {}
-      : endpointFilter.active
-      ? endpointFilter.inputBindings
-      : commandInputMode
-      ? {
+    (): Record<string, () => void> => {
+      if (overlayActive()) return {};
+      if (endpointFilter.active) return endpointFilter.inputBindings;
+
+      const s = useApiConsoleStore.getState();
+      if (s.commandInputMode) {
+        return {
           return: () => {
             setCommandInputMode(false);
-            if (client && commandInputBuffer.trim()) {
-              executeCommand(commandInputBuffer, client);
-            }
+            const buf = useApiConsoleStore.getState().commandInputBuffer;
+            if (client && buf.trim()) executeCommand(buf, client);
           },
-          escape: () => {
-            setCommandInputMode(false);
-          },
+          escape: () => setCommandInputMode(false),
           backspace: () => {
-            setCommandInputBuffer(commandInputBuffer.slice(0, -1));
+            const buf = useApiConsoleStore.getState().commandInputBuffer;
+            setCommandInputBuffer(buf.slice(0, -1));
           },
           up: () => navigateHistory("up"),
           down: () => navigateHistory("down"),
-        }
-      : {
-          ...listNav,
-          return: () => {
-            if (client) executeRequest(client);
-          },
-          "/": () => {
-            endpointFilter.activate(endpointFilter.buffer);
-          },
-          ":": () => {
-            setCommandInputMode(true);
-          },
-          // Issue #3078: Shift+B to run nexus build from Console
-          "shift+b": () => {
-            useCommandRunnerStore.getState().reset();
-            executeLocalCommand("build", []);
-          },
-          tab: () => toggleFocus("console"),
-        },
-    overlayActive
-      ? undefined
-      : endpointFilter.active
-      ? endpointFilter.onUnhandled
-      : handleUnhandledKey,
+        };
+      }
+
+      const fe = useApiConsoleStore.getState().filteredEndpoints;
+      const sel = useApiConsoleStore.getState().selectedEndpoint;
+      const selIdx = sel ? fe.findIndex((ep) => ep.path === sel.path && ep.method === sel.method) : -1;
+      return {
+        ...listNavigationBindings({
+          getIndex: () => selIdx,
+          setIndex: (i) => { const ep = fe[i]; if (ep) selectEndpoint(ep); },
+          getLength: () => fe.length,
+        }),
+        return: () => { if (client) executeRequest(client); },
+        "/": () => endpointFilter.activate(endpointFilter.buffer),
+        ":": () => setCommandInputMode(true),
+        "shift+b": () => { useCommandRunnerStore.getState().reset(); executeLocalCommand("build", []); },
+        tab: () => toggleFocus("console"),
+      };
+    },
+    (keyName: string) => {
+      const s = useApiConsoleStore.getState();
+      if (!s.commandInputMode) return;
+      if (keyName.length === 1) {
+        setCommandInputBuffer(s.commandInputBuffer + keyName);
+      } else if (keyName === "space") {
+        setCommandInputBuffer(s.commandInputBuffer + " ");
+      }
+    },
   );
 
   return (
@@ -137,9 +115,9 @@ export default function ApiConsolePanel(): JSX.Element {
       <Tooltip tooltipKey="api-console-panel" message="Tip: Press ? for keybinding help" />
     <box flexGrow={1} width="100%" flexDirection="row">
       {/* Left: Endpoint list (30%) */}
-      <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
+      <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane() === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
         <box height={1} width="100%">
-          <text>{`─── Endpoints ─── (history: ${commandHistory.length})`}</text>
+          <text>{`─── Endpoints ─── (history: ${commandHistory().length})`}</text>
         </box>
         <box height={1} width="100%">
           <text>
@@ -154,18 +132,18 @@ export default function ApiConsolePanel(): JSX.Element {
       </box>
 
       {/* Right: Request + Response (70%) */}
-      <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
+      <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane() === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
         {/* Command input bar */}
         <box height={1} width="100%">
           <text>
-            {commandInputMode
-              ? `> ${commandInputBuffer}█`
-              : `Press ":" for command input | "!" prefix for local commands | Shift+B:build | history: ${commandHistory.length}`}
+            {commandInputMode()
+              ? `> ${commandInputBuffer()}█`
+              : `Press ":" for command input | "!" prefix for local commands | Shift+B:build | history: ${commandHistory().length}`}
           </text>
         </box>
 
         {/* Local command output (when running via !command or Shift+B) */}
-        {commandRunnerStatus !== "idle" && (
+        {commandRunnerStatus() !== "idle" && (
           <box borderStyle="single" height={8} width="100%">
             <CommandOutput />
           </box>

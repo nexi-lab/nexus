@@ -281,14 +281,9 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       };
       set({ schedulerMetrics: metrics, schedulerLoading: false });
       useUiStore.getState().markDataUpdated("workflows");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch scheduler metrics";
-      set({
-        schedulerMetrics: null,
-        schedulerLoading: false,
-        error: message,
-      });
-      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+    } catch {
+      // Suppress — SchedulerView handles null metrics gracefully
+      set({ schedulerMetrics: null, schedulerLoading: false });
     }
   },
 

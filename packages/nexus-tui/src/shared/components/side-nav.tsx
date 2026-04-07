@@ -142,7 +142,7 @@ const STALE_CHECK_INTERVAL_MS = 10_000;
 
 export function SideNav(props: SideNavProps) {
   const terminalDimensions = useTerminalDimensions();
-  const mode = getSideNavMode(terminalDimensions().width);
+  const mode = () => getSideNavMode(terminalDimensions().width);
 
   // Periodic tick so stale derivation re-evaluates over time
   const [now, setNow] = createSignal(Date.now());
@@ -172,14 +172,13 @@ export function SideNav(props: SideNavProps) {
     if (spinnerTimer) clearInterval(spinnerTimer);
   });
 
-  if (!props.visible || mode === "hidden") return null;
-
+  // No if/return — unconditional rendering. SolidJS evaluates if/return once.
   return (
     <box
       flexDirection="column"
-      width={mode === "full" ? 18 : 6}
-      height="100%"
-      borderStyle="single"
+      width={!props.visible || mode() === "hidden" ? 0 : mode() === "full" ? 18 : 6}
+      height={!props.visible || mode() === "hidden" ? 0 : "100%"}
+      borderStyle={!props.visible || mode() === "hidden" ? undefined : "single"}
       borderColor={palette.faint}
     >
       <For each={visibleItems}>
@@ -192,7 +191,7 @@ export function SideNav(props: SideNavProps) {
             hasError={indicators.error[item.id]}
             isUnseen={indicators.unseen[item.id]}
             isStale={indicators.stale[item.id]}
-            mode={mode}
+            mode={mode()}
             spinnerFrame={SPINNER_FRAMES[spinnerFrame()]!}
           />
         </box>

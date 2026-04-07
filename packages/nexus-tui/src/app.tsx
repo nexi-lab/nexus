@@ -5,7 +5,7 @@
  * Shows PreConnectionScreen when the server is unavailable (Decision 3A).
  */
 
-import { createEffect, createMemo, createSignal, ErrorBoundary, lazy, Match, onCleanup, Show, Suspense, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, Show, Switch } from "solid-js";
 import type { JSX } from "solid-js";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
 import { useUiStore } from "./stores/ui-store.js";
@@ -72,23 +72,24 @@ export const PANEL_ROUTES: Record<PanelId, () => unknown> = {
   stack:          () => <StackPanel />,
 };
 
-// PanelRouter is rendered inside App. The panel signal and polling are
-// created in App (not PanelRouter) so they survive <Switch> branch disposal.
-function PanelRouter(props: { panel: () => PanelId }) {
+// PanelRouter reads activePanel directly from the SolidJS-backed store.
+// Since create-store uses solid-js/store under the hood, props.panel is
+// reactive through babel-preset-solid's compiled getters — no polling needed.
+function PanelRouter(props: { panel: PanelId }) {
   return (
     <Switch fallback={<text>Loading panel...</text>}>
-      <Match when={props.panel() === "files"}><FileExplorerPanel /></Match>
-      <Match when={props.panel() === "versions"}><VersionsPanel /></Match>
-      <Match when={props.panel() === "agents"}><AgentsPanel /></Match>
-      <Match when={props.panel() === "zones"}><ZonesPanel /></Match>
-      <Match when={props.panel() === "access"}><AccessPanel /></Match>
-      <Match when={props.panel() === "payments"}><PaymentsPanel /></Match>
-      <Match when={props.panel() === "search"}><SearchPanel /></Match>
-      <Match when={props.panel() === "workflows"}><WorkflowsPanel /></Match>
-      <Match when={props.panel() === "infrastructure"}><EventsPanel /></Match>
-      <Match when={props.panel() === "console"}><ApiConsolePanel /></Match>
-      <Match when={props.panel() === "connectors"}><ConnectorsPanel /></Match>
-      <Match when={props.panel() === "stack"}><StackPanel /></Match>
+      <Match when={props.panel === "files"}><FileExplorerPanel /></Match>
+      <Match when={props.panel === "versions"}><VersionsPanel /></Match>
+      <Match when={props.panel === "agents"}><AgentsPanel /></Match>
+      <Match when={props.panel === "zones"}><ZonesPanel /></Match>
+      <Match when={props.panel === "access"}><AccessPanel /></Match>
+      <Match when={props.panel === "payments"}><PaymentsPanel /></Match>
+      <Match when={props.panel === "search"}><SearchPanel /></Match>
+      <Match when={props.panel === "workflows"}><WorkflowsPanel /></Match>
+      <Match when={props.panel === "infrastructure"}><EventsPanel /></Match>
+      <Match when={props.panel === "console"}><ApiConsolePanel /></Match>
+      <Match when={props.panel === "connectors"}><ConnectorsPanel /></Match>
+      <Match when={props.panel === "stack"}><StackPanel /></Match>
     </Switch>
   );
 }
@@ -111,13 +112,6 @@ export function App() {
   const activePanel = useGlobalStore((s) => s.activePanel);
   const setActivePanel = useGlobalStore((s) => s.setActivePanel);
 
-  // Panel signal for PanelRouter — created in App scope so it survives
-  // <Switch> branch disposal in PanelRouter.
-  const [panelSignal, setPanelSignal] = createSignal<PanelId>(useGlobalStore.getState().activePanel);
-  setInterval(() => {
-    const ap = useGlobalStore.getState().activePanel as PanelId;
-    if (ap !== panelSignal()) setPanelSignal(ap);
-  }, 50);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
   const connectionError = useGlobalStore((s) => s.connectionError);
   const config = useGlobalStore((s) => s.config);
@@ -344,7 +338,7 @@ export function App() {
         <box flexGrow={1} flexDirection="row">
           <SideNav activePanel={useGlobalStore((s) => s.activePanel)} visible={sideNavVisible() && !useUiStore((s) => s.zoomedPanel)} onSelect={setActivePanel} />
           <box flexGrow={1}>
-            <PanelRouter panel={panelSignal} />
+            <PanelRouter panel={useGlobalStore((s) => s.activePanel) as PanelId} />
           </box>
         </box>
 

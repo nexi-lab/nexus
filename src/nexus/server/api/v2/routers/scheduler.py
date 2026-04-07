@@ -258,8 +258,12 @@ async def get_metrics(
     scheduler: Any = Depends(get_scheduler_service),
 ) -> MetricsResponse:
     """Get scheduler queue metrics and fair-share snapshots."""
-    data = await scheduler.metrics()
-    return MetricsResponse(**data)
+    try:
+        data = await scheduler.metrics()
+        return MetricsResponse(**data)
+    except Exception as e:
+        logger.error("Failed to fetch scheduler metrics: %s", e, exc_info=True)
+        return MetricsResponse(queue_by_class=[], fair_share={}, use_hrrn=False)
 
 
 @router.post("/classify", response_model=ClassifyResponse)

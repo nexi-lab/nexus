@@ -109,8 +109,10 @@ export default function WorkflowsPanel(): JSX.Element {
     }
   };
 
-  // Auto-fetch when tab changes
+  // Auto-fetch when tab changes — read activeTab() reactively so Solid
+  // re-runs this effect on every tab switch.
   createEffect(() => {
+    const _tab = activeTab(); // track reactive dependency
     refreshCurrentView();
   });
 

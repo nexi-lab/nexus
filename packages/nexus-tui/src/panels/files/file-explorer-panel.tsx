@@ -75,7 +75,9 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // =============================================================================
 
 export default function FileExplorerPanel(): JSX.Element {
-  const client = useApi();
+  // Read client fresh each time via getState() — not a stale capture.
+  // useApi() returns a snapshot that can be null if read before connection.
+  const getClient = () => useGlobalStore.getState().client;
   const visibleTabs = useVisibleTabs(ALL_TABS);
 
   // Panel-level active tab
@@ -144,14 +146,25 @@ export default function FileExplorerPanel(): JSX.Element {
     }
   });
 
-  // Flattened visible tree nodes — the source of truth for explorer navigation.
+  // Flattened visible tree nodes — read treeNodes and currentPath from store
+  // proxy inside the memo so changes trigger recomputation.
   const visibleNodes = createMemo(
-    () => flattenVisibleNodes(currentPath, treeNodes),
+    () => flattenVisibleNodes(
+      useFilesStore((s) => s.currentPath),
+      useFilesStore((s) => s.treeNodes),
+    ),
   );
 
-  const selectedNode = visibleNodes()[selectedIndex] ?? null;
-  const isSentinel = selectedNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false;
-  const currentTreeNode = treeNodes.get(currentPath);
+  const selectedNode = createMemo(() => {
+    const idx = useFilesStore((s) => s.selectedIndex);
+    return visibleNodes()[idx] ?? null;
+  });
+  const isSentinel = createMemo(() => selectedNode()?.path.endsWith(LOAD_MORE_SENTINEL) ?? false);
+  const currentTreeNode = createMemo(() => {
+    const cp = useFilesStore((s) => s.currentPath);
+    const tn = useFilesStore((s) => s.treeNodes);
+    return tn.get(cp);
+  });
   let lastDirectoryAnnouncementRef: string | null = null;
   let lastSelectionAnnouncementRef: string | null = null;
   let lastPasteAnnouncementRef: string | null = null;
@@ -161,17 +174,18 @@ export default function FileExplorerPanel(): JSX.Element {
   // The fallback ensures metadata pane works even if the file cache is empty
   // (e.g. requests were aborted during rapid navigation).
   const selectedItem = createMemo(() => {
-    if (!selectedNode || isSentinel) return null;
-    const parentDir = selectedNode.path.split("/").slice(0, -1).join("/") || "/";
+    const node = selectedNode();
+    if (!node || isSentinel()) return null;
+    const parentDir = node.path.split("/").slice(0, -1).join("/") || "/";
     const parentFiles = getCachedFiles(parentDir);
-    const cached = parentFiles?.find((f) => f.path === selectedNode.path);
+    const cached = parentFiles?.find((f) => f.path === node.path);
     if (cached) return cached;
     // Fallback: construct from tree node, using global zoneId from health check
     return {
-      name: selectedNode.name,
-      path: selectedNode.path,
-      isDirectory: selectedNode.isDirectory,
-      size: selectedNode.size ?? 0,
+      name: node.name,
+      path: node.path,
+      isDirectory: node.isDirectory,
+      size: node.size ?? 0,
       modifiedAt: null,
       etag: null,
       mimeType: null,
@@ -197,7 +211,8 @@ export default function FileExplorerPanel(): JSX.Element {
   });
 
   createEffect(() => {
-    if (!currentTreeNode || currentTreeNode.loading) return;
+    const ctn = currentTreeNode();
+    if (!ctn || ctn.loading) return;
     const key = `${currentPath}:${cachedFiles.length}:${fileCacheRevision}`;
     if (lastDirectoryAnnouncementRef === key) return;
     lastDirectoryAnnouncementRef = key;
@@ -205,14 +220,15 @@ export default function FileExplorerPanel(): JSX.Element {
   });
 
   createEffect(() => {
-    if (!selectedNode || isSentinel) return;
+    const node = selectedNode();
+    if (!node || isSentinel()) return;
     if (lastSelectionAnnouncementRef === null) {
-      lastSelectionAnnouncementRef = selectedNode.path;
+      lastSelectionAnnouncementRef = node.path;
       return;
     }
-    if (lastSelectionAnnouncementRef === selectedNode.path) return;
-    lastSelectionAnnouncementRef = selectedNode.path;
-    announce(formatSelectionAnnouncement(selectedNode.name, selectedNode.isDirectory));
+    if (lastSelectionAnnouncementRef === node.path) return;
+    lastSelectionAnnouncementRef = node.path;
+    announce(formatSelectionAnnouncement(node.name, node.isDirectory));
   });
 
   createEffect(() => {
@@ -276,12 +292,14 @@ export default function FileExplorerPanel(): JSX.Element {
 
   // Fetch share links when switching to that tab
   createEffect(() => {
+    const client = getClient();
     if (!client) return;
     if (activeTab() === "shareLinks") fetchLinks(client);
   });
 
   // Search execution
   const executeSearch = async (query: string) => {
+    const client = getClient();
     if (!client) return;
     setSearchResults(null);
 
@@ -348,7 +366,7 @@ export default function FileExplorerPanel(): JSX.Element {
       selectedIndex: state.selectedIndex, selectedItem: selItem,
       selectedNode: selNode, isSentinel: selNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false,
       visibleNodeCount: nodes.length, currentPath: state.currentPath,
-      client, setSelectedIndex, toggleNode, collapseNode,
+      client: getClient(), setSelectedIndex, toggleNode, collapseNode,
       fetchPreview, setMetadataTab, catalogAvailable,
       shareLinks: useShareLinkStore.getState().links,
       selectedLinkIndex: useShareLinkStore.getState().selectedLinkIndex,
@@ -384,6 +402,7 @@ export default function FileExplorerPanel(): JSX.Element {
 
   const handleConfirmDelete = (): void => {
     setConfirmDelete(false);
+    const client = getClient();
     if (!client) return;
     // Bulk delete: delete all selected files, then fall back to single item
     const effective = getEffectiveSelection(

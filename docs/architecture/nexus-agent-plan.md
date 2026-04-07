@@ -283,52 +283,12 @@ class SessionManager:
 
 ## 4. Context Management [P0 — Detailed Design]
 
-### 4.1 Context Compression [Production]
+### 4.1 Context Compression [Production] — DONE
 
-Pluggable ABC with CC-compatible default implementation:
+CompactionStrategy protocol + DefaultCompactionStrategy (3 layers: micro/auto/manual).
+Wired into ManagedAgentLoop.run(). See `services/agent_runtime/compaction.py`.
 
-```python
-class CompactionStrategy(Protocol):
-    async def compact(self, messages: list[dict], ctx: CompactContext) -> list[dict]: ...
-
-class CompactContext:
-    token_estimate: int        # current token count
-    max_tokens: int            # threshold for auto_compact
-    llm_call: Callable         # for strategies that need LLM summarization
-    sys_write: SysWriteFn      # for transcript persistence to VFS
-    agent_path: str            # for transcript VFS path
-```
-
-Default implementation (CC-compatible, 3 layers):
-
-**Layer 1 — micro_compact** (every turn, in ManagedAgentLoop.run() before LLM call):
-- Scan messages for role="tool" entries
-- Keep last 3 tool results at full fidelity
-- Older tool results with content > 100 chars → replace with `[cleared]`
-- In-place mutation, no LLM call needed
-
-**Layer 2 — auto_compact** (token threshold trigger, in ManagedAgentLoop.run()):
-- Trigger when `estimate_tokens(messages) > 100K`
-- Save full transcript to VFS: `/{zone}/agents/{id}/transcripts/{timestamp}.jsonl`
-- Call LLM to generate summary (last 80K chars, max 2000 tokens)
-- Replace all messages with `[Compressed]\n\n{summary}`
-- Insert compact_boundary marker
-
-**Layer 3 — manual compact** (/compact slash command or model calls compact tool):
-- Same logic as auto_compact but user/model triggered
-- Exposed as slash command in REPL and as a tool in ToolRegistry
-
-Integration point: ManagedAgentLoop.run() calls compaction before each LLM call:
-```
-while turns < max_turns:
-    self._compactor.micro_compact(self._messages)
-    if self._compactor.should_auto_compact(self._messages):
-        self._messages = await self._compactor.auto_compact(self._messages)
-    response = await self._call_llm_with_retry()
-    ...
-```
-
-**Layer: Framework | P0 | Needs building**
+**Layer: Framework | P0 | DONE**
 
 ### 4.2 System Prompt Assembly [Production]
 
@@ -593,7 +553,7 @@ Skill-backed commands will use the skill system when implemented (§7.1).
 
 ### To implement next (designed, ready for implementation):
 
-6. **Context Compression** (§4.1) — pluggable CompactionStrategy ABC, CC-compatible default
+6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
 7. **System Prompt Assembly** (§4.2) — 15 sections mapped to VFS files, _assemble_system_prompt()
 8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` via click, slash command registry, StdioPipe agent
 9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs

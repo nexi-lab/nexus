@@ -71,7 +71,7 @@ describe("Connection Lifecycle", () => {
   });
 
   describe("happy path: disconnected → connecting → connected", () => {
-    it("testConnection sets connected + userInfo on success", async () => {
+    it("testConnection sets connected on success (userInfo deferred)", async () => {
       const client = createMockClient();
       useGlobalStore.setState({ client });
 
@@ -80,8 +80,8 @@ describe("Connection Lifecycle", () => {
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("connected");
       expect(state.connectionError).toBeNull();
-      expect(state.userInfo).not.toBeNull();
-      expect(state.userInfo!.email).toBe("test@example.com");
+      // userInfo is null — /auth/me deferred to avoid connection pool blocking
+      expect(state.userInfo).toBeNull();
     });
 
     it("testConnection does not overwrite zoneId (set via setIdentity, not health)", async () => {
@@ -208,7 +208,7 @@ describe("Connection Lifecycle", () => {
       useGlobalStore.setState({ client: okClient });
       await useGlobalStore.getState().testConnection();
       expect(useGlobalStore.getState().connectionStatus).toBe("connected");
-      expect(useGlobalStore.getState().userInfo).not.toBeNull();
+      // userInfo is null — /auth/me deferred
       expect(useGlobalStore.getState().connectionError).toBeNull();
     });
   });

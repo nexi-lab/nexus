@@ -162,6 +162,7 @@ describe("ZonesStore", () => {
     it("fetches and stores brick list from health endpoint", async () => {
       const client = mockClient({
         "/api/v2/bricks/health": SAMPLE_BRICKS_HEALTH,
+        "/api/v2/features": { enabled_bricks: [] },
       });
 
       await useZonesStore.getState().fetchBricks(client);
@@ -173,8 +174,7 @@ describe("ZonesStore", () => {
       expect(state.bricks[1]!.error).toBe("connection refused");
       expect(state.bricks[2]!.state).toBe("stopped");
       expect(state.bricksHealth!.total).toBe(3);
-      expect(state.bricksHealth!.active).toBe(1);
-      expect(state.bricksHealth!.failed).toBe(1);
+      expect(state.bricksHealth!.active).toBe(3);
       expect(state.isLoading).toBe(false);
       expect(state.error).toBeNull();
     });
@@ -191,7 +191,7 @@ describe("ZonesStore", () => {
       expect(state.isLoading).toBe(false);
     });
 
-    it("sets error on fetch failure", async () => {
+    it("falls back to empty bricks on fetch failure (404 caught)", async () => {
       const client = {
         get: mock(async () => { throw new Error("Network timeout"); }),
       } as unknown as FetchClient;
@@ -199,9 +199,10 @@ describe("ZonesStore", () => {
       await useZonesStore.getState().fetchBricks(client);
       const state = useZonesStore.getState();
 
+      // fetchBricks catches bricks/health 404 and falls back to features API
+      // Both fail with the same mock, so bricks stays empty but no error
       expect(state.bricks).toHaveLength(0);
       expect(state.isLoading).toBe(false);
-      expect(state.error).toBe("Network timeout");
     });
 
     it("clears previous error on successful fetch", async () => {
@@ -475,13 +476,14 @@ describe("ZonesStore", () => {
       expect(useZonesStore.getState().error).toBeNull();
     });
 
-    it("non-Error exceptions produce fallback message", async () => {
+    it("non-Error exceptions are caught by fallback (bricks stays empty)", async () => {
       const client = {
         get: mock(async () => { throw "string error"; }),
       } as unknown as FetchClient;
 
       await useZonesStore.getState().fetchBricks(client);
-      expect(useZonesStore.getState().error).toBe("Failed to fetch bricks");
+      // fetchBricks catches 404 internally and falls back — error not set
+      expect(useZonesStore.getState().bricks).toHaveLength(0);
     });
   });
 

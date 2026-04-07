@@ -315,11 +315,11 @@ describe("GlobalStore", () => {
         primary_auth_method: "api_key",
       };
 
-      // testConnection calls client.get 3 times: health, features, auth/me
+      // testConnection calls client.get 2 times: health, features
+      // (auth/me is deferred — see global-store.ts comment)
       const mockGet = mock()
         .mockResolvedValueOnce(mockHealth)     // health (/healthz/ready)
-        .mockResolvedValueOnce(null)           // features
-        .mockResolvedValueOnce(mockUserInfo);  // auth/me
+        .mockResolvedValueOnce(null);          // features
 
       const mockFetchClient = { get: mockGet } as unknown as FetchClient;
       useGlobalStore.setState({ client: mockFetchClient });
@@ -329,10 +329,8 @@ describe("GlobalStore", () => {
 
       expect(state.connectionStatus).toBe("connected");
       expect(state.connectionError).toBeNull();
-      expect(state.userInfo).not.toBeNull();
-      expect(state.userInfo!.user_id).toBe("user-1");
-      expect(state.userInfo!.email).toBe("test@example.com");
-      expect(state.userInfo!.is_global_admin).toBe(false);
+      // userInfo is null — /auth/me is deferred to avoid connection pool blocking
+      expect(state.userInfo).toBeNull();
     });
 
     it("sets connected when health passes but auth/me fails", async () => {

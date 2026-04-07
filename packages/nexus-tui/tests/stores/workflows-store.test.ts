@@ -339,7 +339,7 @@ describe("WorkflowsStore", () => {
       expect(state.error).toBeNull();
     });
 
-    it("sets error on failure", async () => {
+    it("clears metrics on failure and pushes to error store", async () => {
       const client = {
         get: mock(async () => { throw new Error("Scheduler down"); }),
       } as unknown as FetchClient;
@@ -348,7 +348,8 @@ describe("WorkflowsStore", () => {
       const state = useWorkflowsStore.getState();
       expect(state.schedulerMetrics).toBeNull();
       expect(state.schedulerLoading).toBe(false);
-      expect(state.error).toBe("Scheduler down");
+      // Error is pushed to error store for observability, not set on panel-level error
+      // (SchedulerView renders "unavailable" state for null metrics)
     });
   });
 

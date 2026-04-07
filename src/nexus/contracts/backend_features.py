@@ -68,12 +68,6 @@ class BackendFeature(StrEnum):
     PATH_DELETE = "path_delete"
     """Backend supports path-based delete (not just hash-based)."""
 
-    CACHE_BULK_READ = "cache_bulk_read"
-    """Backend supports read_bulk_from_cache() for bulk cache reads."""
-
-    CACHE_SYNC = "cache_sync"
-    """Backend supports sync_to_cache() / sync_from_cache()."""
-
     MULTIPART_UPLOAD = "multipart_upload"
     """Backend supports multipart/chunked uploads."""
 

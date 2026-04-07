@@ -45,8 +45,8 @@ class TestBackendFeatureEnum:
         assert len(values) == len(set(values))
 
     def test_expected_member_count(self) -> None:
-        """18 features after sync/cache cleanup removed SYNC_ELIGIBLE and CHANGE_NOTIFICATIONS."""
-        assert len(BackendFeature) == 18
+        """16 features after removing CACHE_BULK_READ and CACHE_SYNC."""
+        assert len(BackendFeature) == 16
 
     def test_str_enum_identity(self) -> None:
         """StrEnum values can be compared with plain strings."""

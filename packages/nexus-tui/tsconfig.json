@@ -7,8 +7,8 @@
       "ES2022",
       "DOM"
     ],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

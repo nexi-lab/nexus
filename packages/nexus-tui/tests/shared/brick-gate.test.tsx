@@ -25,12 +25,12 @@ let setup: TestSetup;
 
 async function renderGate(
   brick: string | readonly string[],
-  children: JSX.Element,
-  fallback?: JSX.Element,
+  childrenFn: () => JSX.Element,
+  fallbackFn?: () => JSX.Element,
 ): Promise<string> {
   setup = await testRender(
-    () => <BrickGate brick={brick} fallback={fallback}>
-      {children}
+    () => <BrickGate brick={brick} fallback={fallbackFn?.()}>
+      {childrenFn()}
     </BrickGate>,
     { width: 80, height: 10 },
   );
@@ -64,12 +64,12 @@ describe("BrickGate — loading state", () => {
   beforeEach(() => setStoreState({ featuresLoaded: false, enabledBricks: [] }));
 
   it("shows spinner while features are loading", async () => {
-    const frame = await renderGate("storage", <text>Content</text>);
+    const frame = await renderGate("storage", () => <text>Content</text>);
     expect(frame).toContain("Loading features");
   });
 
   it("does not render children while loading", async () => {
-    const frame = await renderGate("storage", <text>SecretContent</text>);
+    const frame = await renderGate("storage", () => <text>SecretContent</text>);
     expect(frame).not.toContain("SecretContent");
   });
 });
@@ -78,12 +78,12 @@ describe("BrickGate — available", () => {
   beforeEach(() => setStoreState({ featuresLoaded: true, enabledBricks: ["storage", "agent_runtime"] }));
 
   it("renders children when brick is enabled", async () => {
-    const frame = await renderGate("storage", <text>StorageContent</text>);
+    const frame = await renderGate("storage", () => <text>StorageContent</text>);
     expect(frame).toContain("StorageContent");
   });
 
   it("does not show unavailable message when brick is enabled", async () => {
-    const frame = await renderGate("storage", <text>StorageContent</text>);
+    const frame = await renderGate("storage", () => <text>StorageContent</text>);
     expect(frame).not.toContain("Feature not available");
   });
 });
@@ -92,22 +92,22 @@ describe("BrickGate — unavailable", () => {
   beforeEach(() => setStoreState({ featuresLoaded: true, enabledBricks: ["storage"] }));
 
   it("shows 'Feature not available' when brick is disabled", async () => {
-    const frame = await renderGate("agent_runtime", <text>AgentContent</text>);
+    const frame = await renderGate("agent_runtime", () => <text>AgentContent</text>);
     expect(frame).toContain("Feature not available");
   });
 
   it("shows the required brick name in the message", async () => {
-    const frame = await renderGate("agent_runtime", <text>AgentContent</text>);
+    const frame = await renderGate("agent_runtime", () => <text>AgentContent</text>);
     expect(frame).toContain("agent_runtime");
   });
 
   it("does not render children when brick is disabled", async () => {
-    const frame = await renderGate("agent_runtime", <text>AgentContent</text>);
+    const frame = await renderGate("agent_runtime", () => <text>AgentContent</text>);
     expect(frame).not.toContain("AgentContent");
   });
 
   it("shows mount guidance text", async () => {
-    const frame = await renderGate("agent_runtime", <text>AgentContent</text>);
+    const frame = await renderGate("agent_runtime", () => <text>AgentContent</text>);
     expect(frame).toContain("Zones");
   });
 });
@@ -118,8 +118,8 @@ describe("BrickGate — custom fallback", () => {
   it("renders custom fallback instead of BrickUnavailableMessage", async () => {
     const frame = await renderGate(
       "storage",
-      <text>Content</text>,
-      <text>CustomFallback</text>,
+      () => <text>Content</text>,
+      () => <text>CustomFallback</text>,
     );
     expect(frame).toContain("CustomFallback");
     expect(frame).not.toContain("Feature not available");
@@ -131,7 +131,7 @@ describe("BrickGate — multi-brick OR semantics", () => {
     setStoreState({ featuresLoaded: true, enabledBricks: ["delegation"] });
     const frame = await renderGate(
       ["agent_runtime", "delegation"] as const,
-      <text>MultiContent</text>,
+      () => <text>MultiContent</text>,
     );
     expect(frame).toContain("MultiContent");
   });
@@ -140,7 +140,7 @@ describe("BrickGate — multi-brick OR semantics", () => {
     setStoreState({ featuresLoaded: true, enabledBricks: ["storage"] });
     const frame = await renderGate(
       ["agent_runtime", "delegation"] as const,
-      <text>MultiContent</text>,
+      () => <text>MultiContent</text>,
     );
     expect(frame).toContain("Feature not available");
     expect(frame).not.toContain("MultiContent");

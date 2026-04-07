@@ -789,6 +789,53 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import secrets audit router: {e}")
 
+    # Secrets store endpoints (general-purpose secret storage with versioning)
+    try:
+        from nexus.server.api.v2.routers.secrets import (
+            get_secrets_service as _secrets_service_dep,
+        )
+        from nexus.server.api.v2.routers.secrets import (
+            router as secrets_router,
+        )
+        from nexus.bricks.secrets.service import SecretsService
+        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        _secrets_service_instance: SecretsService | None = None
+
+        def _get_secrets_service_override() -> SecretsService:
+            nonlocal _secrets_service_instance
+            if _secrets_service_instance is None:
+                _sa_rs = getattr(app.state, "record_store", None)
+                if _sa_rs is None:
+                    raise HTTPException(status_code=500, detail="Secrets service not configured")
+
+                # Build a settings_store from metastore so the encryption key
+                # is persisted across restarts instead of being randomly generated.
+                _settings_store = None
+                try:
+                    from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+                    _nx_fs = getattr(app.state, "nexus_fs", None)
+                    if _nx_fs is not None:
+                        _settings_store = MetastoreSettingsStore(_nx_fs.metadata)
+                except Exception:
+                    logger.warning("MetastoreSettingsStore unavailable; using ephemeral OAuth key", exc_info=True)
+
+                _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
+                _audit_logger = SecretsAuditLogger(record_store=_sa_rs)
+                _secrets_service_instance = SecretsService(
+                    record_store=_sa_rs,
+                    oauth_crypto=_oauth_crypto,
+                    audit_logger=_audit_logger,
+                )
+            return _secrets_service_instance
+
+        app.dependency_overrides[_secrets_service_dep] = _get_secrets_service_override
+        app.include_router(secrets_router)
+        logger.info("Secrets store routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets router: {e}")
+
     # Asyncio debug endpoint (Python 3.14+) — gated behind env flag + admin auth (Issue #1596)
     if os.environ.get("NEXUS_DEBUG_ENABLED", "").lower() in ("1", "true", "yes"):
         from nexus.server.dependencies import require_admin as _require_admin_dep

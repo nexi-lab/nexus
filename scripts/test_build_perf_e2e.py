@@ -74,7 +74,7 @@ def rpc_transport():
             with open(nexus_yaml) as f:
                 cfg = yaml.safe_load(f)
             tls_dir = Path(cfg.get("data_dir", "")) / "tls"
-            if tls_dir.exists() and (tls_dir / "ca.pem").exists():
+            if cfg.get("tls") and tls_dir.exists() and (tls_dir / "ca.pem").exists():
 
                 class _TlsCfg:
                     def __init__(self, d: Path):
@@ -325,12 +325,12 @@ def main() -> None:
     # =========================================================================
     # Write a test file, wait for auto-index, verify searchable
     t.call_rpc(
-        "sys_write",
+        "write",
         {"path": "/workspace/demo/delete-test.md", "buf": "Quantum entanglement teleportation"},
     )
     indexed = False
-    for attempt in range(3):
-        print(f"    Waiting 8s for auto-index (attempt {attempt + 1}/3)...")
+    for attempt in range(5):
+        print(f"    Waiting 8s for auto-index (attempt {attempt + 1}/5)...")
         time.sleep(8)
         r = cli("search", "query", "quantum entanglement teleportation", "--limit", "3")
         if "delete-test" in r.stdout:

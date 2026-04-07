@@ -39,6 +39,7 @@ from nexus.contracts.exceptions import (
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    PathNotMountedError,
     ValidationError,
 )
 from nexus.contracts.rpc_types import RPCErrorCode
@@ -265,6 +266,12 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
                 payload=_error_payload(RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}"),
                 is_error=True,
             )
+        except PathNotMountedError as e:
+            logger.warning("PathNotMountedError in gRPC method %s: %s", method, e)
+            return vfs_pb2.CallResponse(
+                payload=_error_payload(RPCErrorCode.FILE_NOT_FOUND, f"Path not mounted: {e}"),
+                is_error=True,
+            )
         except NexusError as e:
             logger.warning("NexusError in gRPC method %s: %s", method, e)
             return vfs_pb2.CallResponse(
@@ -310,21 +317,19 @@ class VFSServicer(vfs_pb2_grpc.NexusVFSServiceServicer):
     ) -> "vfs_pb2.ReadResponse":
         """Typed read — returns raw bytes, no JSON/base64 overhead.
 
-        Reads content directly from backend by ``content_id`` (opaque identifier:
-        hash for CAS, path for PAS). No metastore lookup — the caller already
-        resolved metadata and knows the content_id.
+        Always routes through sys_read (full VFS path) so that:
+        1. Non-root zone callers route correctly — sys_read uses the kernel's
+           ROOT_ZONE_ID for mount LPM, avoiding PathNotMountedError on paths
+           like /zone/default/... which don't match the root "/" mount when
+           the caller's zone_id is used for canonicalization.
+        2. Path-addressed (PAS / path_local) backends work — they require
+           backend_path in context, not a CAS hash as content_id.
+        3. Permission hooks run — sys_read dispatches PermissionCheckHook
+           so ReBAC enforcement applies to every read.
         """
         try:
             _, op_context = await self._auth_and_context(request.auth_token)
             self._scope_path_for_zone(request, op_context.zone_id)
-            route = self._nexus_fs.router.route(request.path, zone_id=op_context.zone_id)
-            # Backward-compat: when client supplies content_id, read directly
-            # from backend by hash/id.  When empty (older clients, version skew),
-            # fall back to full VFS sys_read which resolves metadata → content.
-            cid = request.content_id
-            if cid:
-                content = route.backend.read_content(cid, context=op_context)
-                return vfs_pb2.ReadResponse(content=content, etag=cid, size=len(content))
             content = await self._nexus_fs.sys_read(request.path, context=op_context)
             return vfs_pb2.ReadResponse(content=content, size=len(content))
         except ZoneScopingError as e:

@@ -17,6 +17,7 @@ from nexus.contracts.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.contracts.rpc_types import RPCErrorCode
 from nexus.grpc.servicer import VFSServicer
 from nexus.lib.rpc_codec import decode_rpc_message, encode_rpc_message
 
@@ -284,10 +285,8 @@ class TestVFSServicerTypedRPCs:
 
     @pytest.mark.anyio
     async def test_read_success(self, servicer, mock_nexus_fs) -> None:
-        """Read returns content via route.backend.read_content(content_id)."""
-        mock_route = MagicMock()
-        mock_route.backend.read_content.return_value = b"hello world"
-        mock_nexus_fs.router.route.return_value = mock_route
+        """Read returns content via sys_read (full VFS path)."""
+        mock_nexus_fs.sys_read = AsyncMock(return_value=b"hello world")
         request = _make_typed_request(
             "ReadRequest", path="/test.txt", auth_token="", content_id="sha256-abc"
         )
@@ -297,15 +296,12 @@ class TestVFSServicerTypedRPCs:
 
         assert response.is_error is False
         assert response.content == b"hello world"
-        assert response.etag == "sha256-abc"
         assert response.size == 11
 
     @pytest.mark.anyio
     async def test_read_not_found(self, servicer, mock_nexus_fs) -> None:
         """Read returns is_error=True with FILE_NOT_FOUND on missing file."""
-        mock_route = MagicMock()
-        mock_route.backend.read_content.side_effect = NexusFileNotFoundError("/missing.txt")
-        mock_nexus_fs.router.route.return_value = mock_route
+        mock_nexus_fs.sys_read = AsyncMock(side_effect=NexusFileNotFoundError("/missing.txt"))
         request = _make_typed_request(
             "ReadRequest", path="/missing.txt", auth_token="", content_id="sha256-xyz"
         )
@@ -315,7 +311,7 @@ class TestVFSServicerTypedRPCs:
 
         assert response.is_error is True
         payload = decode_rpc_message(response.error_payload)
-        assert payload["code"] == -32000
+        assert payload["code"] == RPCErrorCode.FILE_NOT_FOUND.value
 
     @pytest.mark.anyio
     async def test_write_success(self, servicer, mock_nexus_fs) -> None:

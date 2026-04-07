@@ -9,6 +9,7 @@ All commands require:
 3. Server URL set via NEXUS_URL or --remote-url
 """
 
+import contextlib
 import os
 import sys
 from collections.abc import Callable
@@ -73,7 +74,8 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     from nexus.cli.state import load_project_config_optional, load_runtime_state
 
     cfg = load_project_config_optional()
-    data_dir = cfg.get("data_dir", "./nexus-data")
+    # data_dir: nexus.yaml > NEXUS_DATA_DIR env (Docker containers) > default
+    data_dir = cfg.get("data_dir", os.environ.get("NEXUS_DATA_DIR", "./nexus-data"))
     state = load_runtime_state(data_dir)
 
     # gRPC port: env var > state.json > config > default
@@ -95,6 +97,12 @@ def get_admin_rpc(url: str | None, api_key: str | None) -> AdminRPC:
     tls_config = None
     if tls.get("cert") or os.environ.get("NEXUS_TLS_CERT"):
         tls_config = ZoneTlsConfig.from_env()
+    elif data_dir:
+        # Auto-detect TLS from data dir (Docker containers where NEXUS_DATA_DIR
+        # is set but no nexus.yaml/.state.json exists — e.g. inside the server
+        # container itself where TLS certs live in {data_dir}/tls/).
+        with contextlib.suppress(Exception):
+            tls_config = ZoneTlsConfig.from_data_dir(data_dir)
     transport = RPCTransport(server_address=grpc_address, auth_token=api_key, tls_config=tls_config)
     return transport.call_rpc
 

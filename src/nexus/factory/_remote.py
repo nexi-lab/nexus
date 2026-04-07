@@ -45,9 +45,13 @@ def install_remote_kernel_rpc_overrides(nfs: "NexusFS", transport: "RPCTransport
         _self: Any,
         old_path: str,
         new_path: str,
+        *,
+        force: bool = False,
         **_: Any,
     ) -> dict[str, Any]:
-        transport.call_rpc("sys_rename", {"old_path": old_path, "new_path": new_path})
+        transport.call_rpc(
+            "sys_rename", {"old_path": old_path, "new_path": new_path, "force": force}
+        )
         return {}
 
     cast(Any, nfs).sys_rename = types.MethodType(_remote_sys_rename, nfs)

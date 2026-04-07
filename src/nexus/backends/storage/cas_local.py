@@ -364,6 +364,8 @@ class CASLocalBackend(CASAddressingEngine, MultipartUpload):
                 shutil.rmtree(full_path)
             else:
                 full_path.rmdir()
+        except FileNotFoundError:
+            pass  # Already gone — metastore/backend out of sync, that's fine
         except OSError as e:
             raise BackendError(f"Directory not empty: {path}", backend="local", path=path) from e
 

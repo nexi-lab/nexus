@@ -865,7 +865,7 @@ def move_cmd(
             with console.status(
                 f"[nexus.warning]Moving {source} to {dest}...[/nexus.warning]", spinner="dots"
             ):
-                success = await move_file(nx, source, dest)
+                success = await move_file(nx, source, dest, force=force)
 
             nx.close()
 

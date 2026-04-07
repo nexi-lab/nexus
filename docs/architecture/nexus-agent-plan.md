@@ -372,71 +372,146 @@ See `services/agent_runtime/system_prompt.py`.
 ## 11. UI & Interaction [P0/P1 — Detailed Design]
 
 ### 11.1 Terminal UI [Production] — Layer: Agent | P1 (Python: Rich/Textual)
+Existing `packages/nexus-tui` is a management dashboard (TypeScript/SolidJS), not agent chat.
+Agent REPL will be Python-native (see §11.2). TUI polish (colors, progress bars) deferred.
 
-### 11.2 REPL + Slash Commands [Production — Detailed Design]
+### 11.2 REPL + CLI Entry Point [Production — Detailed Design]
 
-**Agent startup**: Uses same pattern as 3rd-party AcpService but with MANAGED kind:
-1. `AgentRegistry.spawn(kind=MANAGED)` → PID
-2. Create StdioPipe for user terminal ↔ agent communication
-3. Register DT_PIPEs at `/{zone}/proc/{pid}/fd/0,1,2`
-4. Start ManagedAgentLoop with session from SessionManager
+#### Design Decisions (aligned 2026-04-07)
 
-**CLI entry point**: `nexus chat` (click subcommand), connects to local nexusd:
+**Two interaction modes (orthogonal to connection method):**
+
+| Mode | Command | Behavior |
+|------|---------|----------|
+| **Interactive** | `nexus chat` | Persistent REPL, multi-turn, user exits with `/quit` or Ctrl+D |
+| **One-shot** | `nexus chat -p "fix the bug"` | Single prompt → agent runs → exits |
+
+**Connection method (transparent to user):**
+
+| Flag | Behavior |
+|------|----------|
+| (default) | In-process auto-start: boot SLIM-profile NexusFS + LLM backend, single process |
+| `--profile X` | Connect to existing nexusd via REMOTE profile (RPCTransport + gRPC) |
+
+Default is auto-start (zero setup, like CC). `--profile` reuses existing CLI profile
+system (`~/.nexus/config.yaml`). Both modes support both connection methods.
+
+**Streaming**: Default is streaming (打字机效果) via `CASOpenAIBackend.start_streaming()`
+→ DT_STREAM → REPL reads tokens in real-time. Matches CC default behavior.
+
+#### CLI Entry Point
+
+`nexus chat` — click subcommand in existing CLI (`src/nexus/cli/`):
+
 ```
-nexus chat [--model MODEL] [--continue] [--resume ID] [--fork-session ID] [--tools PATH...]
+nexus chat [OPTIONS] [-p PROMPT]
+
+Options:
+  -p, --prompt TEXT       One-shot mode: run single prompt and exit
+  --model TEXT            Model name (default from config or env)
+  --continue              Resume most recent session
+  --resume ID             Resume specific session by ID
+  --tools PATH...         Mount external tool directories (Tier B, §1.5)
+  --profile TEXT          Connect to named nexusd profile (default: in-process)
 ```
 
-**REPL loop**:
+Config precedence (matching CC): `CLI args > env vars > config file`
+
+| Setting | CLI Flag | Env Var | Config File |
+|---------|----------|---------|-------------|
+| Model | `--model` | `NEXUS_LLM_MODEL` | `~/.nexus/config.yaml` settings.agent.model |
+| LLM URL | — | `NEXUS_LLM_BASE_URL` | Profile entry `llm-base-url` |
+| API Key | — | `NEXUS_LLM_API_KEY` | Profile entry `llm-api-key` |
+| Tools | `--tools` | — | `{cwd}/.nexus/agent.md` |
+
+#### Bootstrap Sequence
+
+```
+nexus chat [--profile X] [-p "prompt"]
+  │
+  ├─ --profile given?
+  │   YES → nexus.connect(profile="remote", url=..., api_key=...)
+  │         Returns NexusFS with RPCTransport to existing nexusd
+  │   NO  → Boot in-process:
+  │         1. create_nexus_fs(profile=SLIM, backend=CASLocalBackend(~/.nexus/data))
+  │         2. Mount LLM backend: sys_setattr("/llm", DT_MOUNT, CASOpenAIBackend(...))
+  │         3. Inject StreamManager into backend
+  │
+  ├─ Create ManagedAgentLoop(
+  │     sys_read=nx.sys_read, sys_write=nx.sys_write,
+  │     stream_read=nx._stream_manager.stream_read,
+  │     llm_backend=backend, agent_path="/root/agents/default",
+  │     cwd=os.getcwd(), model=model,
+  │     tool_registry=ToolRegistry(default_tools()),
+  │     compactor=DefaultCompactionStrategy(sys_write=nx.sys_write, agent_path=...)
+  │   )
+  │
+  ├─ await loop.initialize()  # Assemble system prompt from VFS (§4.2)
+  │
+  ├─ -p given?
+  │   YES → One-shot: result = await loop.run(prompt); print; exit
+  │   NO  → Interactive REPL: enter repl_loop()
+  │
+  └─ Cleanup: shutdown NexusFS if in-process
+```
+
+#### Interactive REPL
+
 ```python
-while True:
-    query = input("nexus >> ")
-    if query.startswith("/"):
-        handle_slash_command(query)
-    elif query.strip():
+async def repl_loop(loop: ManagedAgentLoop) -> None:
+    """Interactive REPL with slash commands and streaming output."""
+    while True:
+        try:
+            query = await async_input("nexus > ")
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        query = query.strip()
+        if not query:
+            continue
+
+        # Slash commands
+        if query.startswith("/"):
+            handled = handle_slash_command(query, loop)
+            if handled == "quit":
+                break
+            continue
+
+        # Agent turn with streaming token display
         result = await loop.run(query)
-        print(result.text)
+        # Tokens already printed in real-time via stream reader
+        # Final status: cost, model, etc.
+        print_turn_summary(result)
 ```
 
-**Slash command registry** — all CC commands listed, core ones implemented first:
+Streaming display: a background task reads from DT_STREAM and prints tokens
+as they arrive (`sys.stdout.write(token); sys.stdout.flush()`). The REPL
+doesn't block on full response — tokens appear in real-time.
 
-| Command | Status | Description |
-|---------|--------|-------------|
-| `/help` | Implement | Show help |
-| `/compact` | Implement | Manual context compression |
-| `/clear` | Implement | Clear conversation |
-| `/model` | Implement | Switch model |
-| `/quit` | Implement | Exit REPL |
-| `/sessions` | Implement | List sessions |
-| `/cost` | Implement | Show token usage / cost |
-| `/commit` | Placeholder | Skill: git commit |
-| `/review-pr` | Placeholder | Skill: PR review |
-| `/pdf` | Placeholder | Skill: PDF processing |
-| `/simplify` | Placeholder | Skill: code simplification |
-| `/loop` | Placeholder | Skill: recurring task |
-| `/schedule` | Placeholder | Skill: cron scheduling |
-| `/tasks` | Placeholder | Show task board |
-| `/team` | Placeholder | Show team roster |
-| `/inbox` | Placeholder | Check inbox |
-| `/effort` | Placeholder | Set effort level |
-| `/btw` | Placeholder | Side question |
-| `/stickers` | Placeholder | Easter egg |
-| `/thinkback` | Placeholder | Year in review |
-| `/good-claude` | Placeholder | Easter egg |
-| `/bughunter` | Placeholder | Easter egg |
-| `/fast` | Placeholder | Toggle fast mode |
-| `/verbose` | Placeholder | Toggle verbose output |
-| `/config` | Placeholder | Edit settings |
-| `/keybindings` | Placeholder | Keybinding config |
-| `/update-config` | Placeholder | Skill: config update |
-| `/claude-api` | Placeholder | Skill: API help |
-| `/doctor` | Placeholder | Diagnostics |
-| `/init` | Placeholder | Project setup |
-| `/status` | Placeholder | Agent status |
-| `/memory` | Placeholder | Memory system |
-| `/forget` | Placeholder | Remove memory |
+Ctrl+C during LLM call: cancels `CASOpenAIBackend.cancel_stream()`, returns
+to prompt. Does NOT exit REPL.
 
-Placeholder = registered in slash command map but returns "Not implemented yet".
-Skill-backed commands will use the skill system when implemented (§7.1).
+#### Slash Commands (V1)
+
+| Command | V1 | Description |
+|---------|-----|-------------|
+| `/help` | Yes | Show available commands |
+| `/compact` | Yes | Manual context compression (§4.1 Layer 3) |
+| `/clear` | Yes | Clear conversation, start fresh |
+| `/model MODEL` | Yes | Switch model |
+| `/quit` | Yes | Exit REPL |
+| `/cost` | Yes | Show accumulated token usage |
+| `/sessions` | Yes | List available sessions |
+| `/status` | Yes | Show agent status (model, tokens, session) |
+| Others | No | Placeholder "Not implemented yet" |
+
+#### Files to Create/Modify
+
+| File | Action |
+|------|--------|
+| `src/nexus/cli/commands/chat.py` | NEW: click subcommand, bootstrap, REPL loop |
+| `src/nexus/cli/main.py` | ADD: register `chat` subcommand |
+| `src/nexus/services/agent_runtime/managed_loop.py` | MINOR: streaming token callback hook |
 
 **Layer: Agent + Framework | P0 | Needs building**
 
@@ -459,8 +534,22 @@ Skill-backed commands will use the skill system when implemented (§7.1).
 ## 13. Configuration [P0/P1]
 
 ### 13.1 Settings System [Production] — Layer: Framework | P1
+Existing: `~/.nexus/config.yaml` with profile management (`nexus connect`, `nexus config`).
+Agent-specific settings (default model, LLM URL) to be added under `settings.agent.*`.
+
 ### 13.2 CLI Arguments [Production] — Layer: Agent | P0
+See §11.2 CLI entry point for full argument list.
+Precedence: `CLI args > env vars > config file` (matching CC).
+
 ### 13.3 Environment Variables [Production] — Layer: Agent | P0
+| Variable | Purpose |
+|----------|---------|
+| `NEXUS_LLM_BASE_URL` | LLM API base URL |
+| `NEXUS_LLM_API_KEY` | LLM API key |
+| `NEXUS_LLM_MODEL` | Default model name |
+| `NEXUS_PROFILE` | Default connection profile |
+| `NEXUS_URL` | Remote nexusd URL (REMOTE profile) |
+| `NEXUS_API_KEY` | Remote nexusd API key |
 
 ---
 
@@ -508,7 +597,7 @@ Skill-backed commands will use the skill system when implemented (§7.1).
 
 6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
 7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
-8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` via click, slash command registry, StdioPipe agent
+8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` click subcommand, interactive + one-shot, streaming
 9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs
 
 ### Deferred Items (not in current scope):

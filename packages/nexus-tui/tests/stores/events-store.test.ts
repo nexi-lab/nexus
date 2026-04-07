@@ -3,26 +3,20 @@ import { useEventsStore } from "../../src/stores/events-store.js";
 
 describe("EventsStore", () => {
   beforeEach(() => {
-    useEventsStore.getState().disconnect();
     useEventsStore.getState().eventsBuffer.clear();
     useEventsStore.setState({
       events: [],
-      connected: false,
-      reconnectCount: 0,
       filters: { eventType: null, search: null },
       filteredEvents: [],
       eventsOverflowed: false,
       evictedCount: 0,
-      sseClient: null,
     });
   });
 
   describe("initial state", () => {
-    it("starts disconnected with empty events", () => {
+    it("starts with empty events", () => {
       const state = useEventsStore.getState();
-      expect(state.connected).toBe(false);
       expect(state.events).toEqual([]);
-      expect(state.reconnectCount).toBe(0);
     });
   });
 
@@ -76,17 +70,6 @@ describe("EventsStore", () => {
       useEventsStore.getState().clearEvents();
       expect(useEventsStore.getState().events).toEqual([]);
       expect(useEventsStore.getState().filteredEvents).toEqual([]);
-    });
-  });
-
-  describe("disconnect", () => {
-    it("resets connection state", () => {
-      useEventsStore.setState({ connected: true, reconnectCount: 5 });
-      useEventsStore.getState().disconnect();
-      const state = useEventsStore.getState();
-      expect(state.connected).toBe(false);
-      expect(state.reconnectCount).toBe(0);
-      expect(state.sseClient).toBeNull();
     });
   });
 });

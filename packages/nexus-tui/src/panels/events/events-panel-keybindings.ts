@@ -10,7 +10,7 @@
 
 import type { Setter } from "solid-js";
 import type { SseEvent } from "@nexus-ai-fs/api-client";
-import type { FetchClient, NexusClientOptions } from "@nexus-ai-fs/api-client";
+import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { subTabCycleBindings } from "../../shared/components/sub-tab-bar-utils.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
 import type { TabDef } from "../../shared/hooks/use-visible-tabs.js";
@@ -22,7 +22,7 @@ import type {
   OperationItem,
   AuditTransaction,
 } from "../../stores/infra-store.js";
-import type { EventFilters, SseIdentity } from "../../stores/events-store.js";
+import type { EventFilters } from "../../stores/events-store.js";
 
 // =============================================================================
 // Types
@@ -71,10 +71,8 @@ export interface EventsBindingContext {
   readonly clearEvents: () => void;
   readonly copy: (text: string) => void;
 
-  // SSE connection
-  readonly config: NexusClientOptions;
-  readonly connect: (baseUrl: string, apiKey: string, identity?: SseIdentity) => void;
-  readonly disconnect: () => void;
+  // SSE connection (managed by sse-bus at app level)
+  readonly reconnect: () => void;
 
   // MCL
   readonly mclUrnFilter: string;
@@ -228,7 +226,7 @@ function getNormalModeBindings(ctx: EventsBindingContext): Record<string, () => 
     events, selectedEventIndex, setSelectedEventIndex,
     expandedEventIndex, setExpandedEventIndex,
     filters, setFilter, clearEvents, copy,
-    config, connect, disconnect,
+    reconnect,
     mclUrnFilter, mclAspectFilter,
     fetchReplay,
     replayTypeFilter, fetchEventReplay,
@@ -278,14 +276,7 @@ function getNormalModeBindings(ctx: EventsBindingContext): Record<string, () => 
   const refreshCurrentTab = (): void => {
     if (!apiClient) return;
     if (activeTab === "events") {
-      if (config.apiKey && config.baseUrl) {
-        disconnect();
-        connect(config.baseUrl, config.apiKey, {
-          agentId: config.agentId,
-          subject: config.subject,
-          zoneId: config.zoneId,
-        });
-      }
+      reconnect();
     } else if (activeTab === "mcl") {
       void fetchReplay(apiClient, 0, 50);
     } else if (activeTab === "replay") {

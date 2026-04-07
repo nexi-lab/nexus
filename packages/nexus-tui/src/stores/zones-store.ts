@@ -420,3 +420,25 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     set({ activeTab: tab });
   },
 }));
+
+// =============================================================================
+// SSE bus handler — live zone/brick updates (#3632 §3)
+// =============================================================================
+
+import { useSseBus } from "./sse-bus.js";
+import { useGlobalStore } from "./global-store.js";
+
+const ZONE_EVENT_TYPES = new Set(["mount", "unmount"]);
+
+useSseBus.getState().registerHandler("zones", (events) => {
+  const relevant = events.some((ev) => ZONE_EVENT_TYPES.has(ev.type));
+  if (!relevant) return;
+
+  queueMicrotask(() => {
+    const client = useGlobalStore.getState().client;
+    if (client) {
+      void useZonesStore.getState().fetchBricks(client);
+    }
+    useUiStore.getState().markDataUpdated("zones");
+  });
+}, { debounceMs: 1000 });

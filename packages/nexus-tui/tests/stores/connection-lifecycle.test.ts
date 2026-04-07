@@ -10,46 +10,67 @@ import { describe, it, expect, beforeEach, mock } from "bun:test";
 import { useGlobalStore } from "../../src/stores/global-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 
+const DEFAULT_USER_INFO = {
+  user_id: "user-1",
+  email: "test@example.com",
+  username: "testuser",
+  display_name: "Test User",
+  avatar_url: null,
+  is_global_admin: false,
+  primary_auth_method: "api_key",
+};
+
+const DEFAULT_HEALTH = { status: "ready", uptime_seconds: 100 };
+const DEFAULT_FEATURES = {
+  profile: "full",
+  mode: "standalone",
+  enabled_bricks: ["search", "catalog"],
+  disabled_bricks: [],
+  version: "0.9.0",
+  rate_limit_enabled: false,
+};
+
 function createMockClient(overrides: {
   health?: () => Promise<unknown>;
   features?: () => Promise<unknown>;
   authMe?: () => Promise<unknown>;
 } = {}): FetchClient {
-  const defaultUserInfo = {
-    user_id: "user-1",
-    email: "test@example.com",
-    username: "testuser",
-    display_name: "Test User",
-    avatar_url: null,
-    is_global_admin: false,
-    primary_auth_method: "api_key",
-  };
-
-  const defaultHealth = { status: "ready", uptime_seconds: 100 };
-  const defaultFeatures = {
-    profile: "full",
-    mode: "standalone",
-    enabled_bricks: ["search", "catalog"],
-    disabled_bricks: [],
-    version: "0.9.0",
-    rate_limit_enabled: false,
-  };
-
   return {
     get: mock(async (url: string) => {
       if (url === "/auth/me") {
-        return overrides.authMe ? overrides.authMe() : defaultUserInfo;
+        return overrides.authMe ? overrides.authMe() : DEFAULT_USER_INFO;
       }
       if (url === "/healthz/ready") {
-        return overrides.health ? overrides.health() : defaultHealth;
+        return overrides.health ? overrides.health() : DEFAULT_HEALTH;
       }
       if (url === "/api/v2/features") {
-        return overrides.features ? overrides.features() : defaultFeatures;
+        return overrides.features ? overrides.features() : DEFAULT_FEATURES;
       }
       throw new Error(`Unmocked URL: ${url}`);
     }),
     rawRequest: mock(async () => new Response("{}", { status: 200 })),
   } as unknown as FetchClient;
+}
+
+/** Mock fetch for the dedicated auth client created inside testConnection. */
+function createMockFetch(overrides: {
+  authMe?: () => Promise<unknown>;
+} = {}): typeof globalThis.fetch {
+  return (async (input: string | URL | Request) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("/auth/me")) {
+      if (overrides.authMe) {
+        try {
+          const data = await overrides.authMe();
+          return new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } });
+        } catch (e) {
+          return new Response(JSON.stringify({ detail: String(e) }), { status: 401, headers: { "content-type": "application/json" } });
+        }
+      }
+      return new Response(JSON.stringify(DEFAULT_USER_INFO), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify(DEFAULT_HEALTH), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof globalThis.fetch;
 }
 
 describe("Connection Lifecycle", () => {
@@ -71,17 +92,27 @@ describe("Connection Lifecycle", () => {
   });
 
   describe("happy path: disconnected → connecting → connected", () => {
-    it("testConnection sets connected on success (userInfo deferred)", async () => {
+    it("testConnection populates userInfo via deferred /auth/me", async () => {
       const client = createMockClient();
-      useGlobalStore.setState({ client });
+      const config = { ...useGlobalStore.getState().config, fetch: createMockFetch(), transformKeys: false };
+      useGlobalStore.setState({ client, config });
 
       await useGlobalStore.getState().testConnection();
+      // Give deferred /auth/me time to settle
+      await new Promise((r) => setTimeout(r, 10));
 
       const state = useGlobalStore.getState();
       expect(state.connectionStatus).toBe("connected");
       expect(state.connectionError).toBeNull();
-      // userInfo is null — /auth/me deferred to avoid connection pool blocking
-      expect(state.userInfo).toBeNull();
+      expect(state.userInfo).toEqual({
+        user_id: "user-1",
+        email: "test@example.com",
+        username: "testuser",
+        display_name: "Test User",
+        avatar_url: null,
+        is_global_admin: false,
+        primary_auth_method: "api_key",
+      });
     });
 
     it("testConnection does not overwrite zoneId (set via setIdentity, not health)", async () => {
@@ -205,11 +236,23 @@ describe("Connection Lifecycle", () => {
 
       // Second: succeed
       const okClient = createMockClient();
-      useGlobalStore.setState({ client: okClient });
+      const config = { ...useGlobalStore.getState().config, fetch: createMockFetch(), transformKeys: false };
+      useGlobalStore.setState({ client: okClient, config });
       await useGlobalStore.getState().testConnection();
       expect(useGlobalStore.getState().connectionStatus).toBe("connected");
-      // userInfo is null — /auth/me deferred
       expect(useGlobalStore.getState().connectionError).toBeNull();
+
+      // Deferred /auth/me populates userInfo after settling
+      await new Promise((r) => setTimeout(r, 10));
+      expect(useGlobalStore.getState().userInfo).toEqual({
+        user_id: "user-1",
+        email: "test@example.com",
+        username: "testuser",
+        display_name: "Test User",
+        avatar_url: null,
+        is_global_admin: false,
+        primary_auth_method: "api_key",
+      });
     });
   });
 
@@ -259,10 +302,12 @@ describe("Connection Lifecycle", () => {
     });
 
     it("initConfig re-reads config and can create a new client", () => {
-      // Verify that initConfig() with overrides creates a new client
+      // Verify that initConfig() with overrides creates a new client.
+      // Use a non-connectable port so background testConnection fails fast
+      // and doesn't pollute other test files with real server state.
       useGlobalStore.setState({ client: null, connectionStatus: "disconnected" });
 
-      useGlobalStore.getState().initConfig({ apiKey: "sk-new-key", baseUrl: "http://localhost:2026" });
+      useGlobalStore.getState().initConfig({ apiKey: "sk-new-key", baseUrl: "http://localhost:1" });
 
       // Should now have a client and be in connecting state
       const state = useGlobalStore.getState();

@@ -1,10 +1,10 @@
+import type { JSX } from "solid-js";
 /**
  * Zone list view: shows zones from GET /api/zones.
  *
  * Displays: zone_id, name, domain, phase, is_active, created_at.
  */
 
-import React from "react";
 import type { ZoneResponse } from "../../stores/zones-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -27,41 +27,28 @@ function truncate(value: string, maxLen: number): string {
   return `${value.slice(0, maxLen - 2)}..`;
 }
 
-export function ZoneList({
-  zones,
-  selectedIndex,
-  loading,
-}: ZoneListProps): React.ReactNode {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading zones...</text>
-      </box>
-    );
-  }
-
-  if (zones.length === 0) {
-    return <EmptyState message="No zones found." hint="Press n to create a zone." />;
-  }
-
+export function ZoneList(props: ZoneListProps): JSX.Element {
+  // Unconditional rendering — ternary instead of if/return (evaluates once in Match)
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  ZONE ID            NAME             DOMAIN           PHASE     ACTIVE  CREATED"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  -----------------  ---------------  ---------------  --------  ------  -------------------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>{props.loading ? "Loading zones..." : props.zones.length === 0 ? "No zones found. Press n to create a zone." : ""}</text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  ZONE ID            NAME             DOMAIN           PHASE     ACTIVE  CREATED"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  -----------------  ---------------  ---------------  --------  ------  -------------------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {zones.map((zone, i) => {
-        const isSelected = i === selectedIndex;
+        {/* Rows */}
+        {props.zones.map((zone, i) => {
+          const isSelected = i === props.selectedIndex;
         const prefix = isSelected ? "> " : "  ";
         const activeLabel = zone.is_active ? "yes" : "no";
 
         return (
-          <box key={zone.zone_id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`${prefix}${truncate(zone.zone_id, 17).padEnd(17)}  ${truncate(zone.name, 15).padEnd(15)}  ${truncate(zone.domain ?? "-", 15).padEnd(15)}  ${zone.phase.padEnd(8)}  ${activeLabel.padEnd(6)}  ${formatTimestamp(zone.created_at)}`}
             </text>
@@ -69,5 +56,6 @@ export function ZoneList({
         );
       })}
     </scrollbox>
+    </box>
   );
 }

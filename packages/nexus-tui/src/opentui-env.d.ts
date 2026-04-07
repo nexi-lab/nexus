@@ -1,19 +1,24 @@
 /**
- * Type augmentations for OpenTUI v0.1.87.
- *
- * Fixes ElementClass definition (instance vs constructor mismatch).
- * The original declares `ElementClass extends React.ComponentClass<any>`
- * which incorrectly requires the constructor type rather than the
- * instance type, preventing class components from being used as JSX.
+ * Local type augmentations for OpenTUI Solid bindings.
  */
-import type React from "react";
 import type { RGBA } from "@opentui/core";
+import type { TextNodeOptions, TextOptions } from "@opentui/core";
+import type { SpanProps, TextProps } from "@opentui/solid/src/types/elements.js";
 
-declare module "@opentui/react/jsx-runtime" {
+declare module "@opentui/solid/jsx-runtime" {
   namespace JSX {
-    // Fix: ElementClass should describe instances, not constructors.
-    interface ElementClass {
-      render(): React.ReactNode;
+    interface IntrinsicAttributes {
+      key?: string | number;
+    }
+
+    interface IntrinsicElements {
+      span: SpanProps & TextNodeOptions;
+      b: SpanProps & TextNodeOptions;
+      strong: SpanProps & TextNodeOptions;
+      i: SpanProps & TextNodeOptions;
+      em: SpanProps & TextNodeOptions;
+      u: SpanProps & TextNodeOptions;
+      text: TextProps & TextOptions;
     }
   }
 }

@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * CommandOutput — renders streaming output from local nexus CLI commands.
  *
@@ -5,7 +6,6 @@
  * Shows a spinner while running (Decision 15A).
  */
 
-import React from "react";
 import { useCommandRunnerStore } from "../../services/command-runner.js";
 import { StyledText } from "./styled-text.js";
 import { Spinner } from "./spinner.js";
@@ -32,7 +32,7 @@ function findErrorHint(lines: readonly string[]): string | null {
   return null;
 }
 
-export function CommandOutput(): React.ReactNode {
+export function CommandOutput(): JSX.Element {
   const status = useCommandRunnerStore((s) => s.status);
   const outputLines = useCommandRunnerStore((s) => s.outputLines);
   const commandLabel = useCommandRunnerStore((s) => s.commandLabel);

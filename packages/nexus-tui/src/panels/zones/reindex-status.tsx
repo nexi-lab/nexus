@@ -4,7 +4,8 @@
  * Issue #2930.
  */
 
-import React, { useState } from "react";
+import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useApi } from "../../shared/hooks/use-api.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 
@@ -17,11 +18,11 @@ interface ReindexResult {
   readonly dryRun: boolean;
 }
 
-export function ReindexStatus(): React.ReactNode {
+export function ReindexStatus(): JSX.Element {
   const client = useApi();
-  const [result, setResult] = useState<ReindexResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = createSignal<ReindexResult | null>(null);
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
 
   useKeyboard({
     d: () => {
@@ -61,22 +62,22 @@ export function ReindexStatus(): React.ReactNode {
       <text>{"  Press 'd' dry-run search, 's' reindex search, 'v' reindex versions"}</text>
       <text> </text>
 
-      {loading && <text>{"  Reindex in progress..."}</text>}
+      {loading() && <text>{"  Reindex in progress..."}</text>}
 
-      {error && <text>{`  Error: ${error}`}</text>}
+      {error() && <text>{`  Error: ${error()}`}</text>}
 
-      {result && (
+      {result() && (
         <box flexDirection="column">
-          <text>{`  Last Reindex ${result.dryRun ? "(dry run)" : ""}`}</text>
-          <text>{`  Target:     ${result.target}`}</text>
-          <text>{`  Total:      ${result.total} MCL records`}</text>
-          <text>{`  Processed:  ${result.processed}`}</text>
-          <text>{`  Errors:     ${result.errors}`}</text>
-          <text>{`  Last seq:   ${result.lastSequence}`}</text>
+          <text>{`  Last Reindex ${result()!.dryRun ? "(dry run)" : ""}`}</text>
+          <text>{`  Target:     ${result()!.target}`}</text>
+          <text>{`  Total:      ${result()!.total} MCL records`}</text>
+          <text>{`  Processed:  ${result()!.processed}`}</text>
+          <text>{`  Errors:     ${result()!.errors}`}</text>
+          <text>{`  Last seq:   ${result()!.lastSequence}`}</text>
         </box>
       )}
 
-      {!result && !loading && !error && (
+      {!result() && !loading() && !error() && (
         <text>{"  No reindex operations performed in this session."}</text>
       )}
     </box>

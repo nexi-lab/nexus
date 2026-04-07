@@ -7,7 +7,7 @@
  * @see Issue #3066, Phase E7
  */
 
-import React from "react";
+import { Show } from "solid-js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
@@ -29,44 +29,38 @@ interface TextInputProps {
   readonly active?: boolean;
 }
 
-export function TextInput({
-  value,
-  onChange,
-  onSubmit,
-  onCancel,
-  label,
-  placeholder,
-  active = true,
-}: TextInputProps): React.ReactNode {
+export function TextInput(props: TextInputProps) {
   useKeyboard(
-    active
+    (props.active ?? true)
       ? {
-          return: () => onSubmit?.(value),
-          escape: () => onCancel?.(),
-          backspace: () => onChange(value.slice(0, -1)),
+          return: () => props.onSubmit?.(props.value),
+          escape: () => props.onCancel?.(),
+          backspace: () => props.onChange(props.value.slice(0, -1)),
         }
       : {},
-    active
+    (props.active ?? true)
       ? (key) => {
           // Only append printable characters (single char)
           if (key.length === 1) {
-            onChange(value + key);
+            props.onChange(props.value + key);
           }
         }
       : undefined,
   );
 
-  const displayValue = value || (placeholder ? placeholder : "");
-  const isDimmed = !value && placeholder;
+  const displayValue = props.value || (props.placeholder ? props.placeholder : "");
+  const isDimmed = !props.value && props.placeholder;
 
   return (
     <box flexDirection="row" height={1}>
-      {label && (
-        <text style={textStyle({ fg: statusColor.info })}>{`${label}: `}</text>
-      )}
+      <Show when={props.label}>
+        <text style={textStyle({ fg: statusColor.info })}>{`${props.label}: `}</text>
+      </Show>
       <text style={textStyle({ dim: !!isDimmed })}>
         {displayValue}
-        {active && <span style={textStyle({ fg: statusColor.info })}>{"█"}</span>}
+        <Show when={props.active ?? true}>
+          <span style={textStyle({ fg: statusColor.info })}>{"█"}</span>
+        </Show>
       </text>
     </box>
   );

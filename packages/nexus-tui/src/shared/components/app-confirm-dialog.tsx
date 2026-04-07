@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * App-level ConfirmDialog that reads from the imperative useConfirmStore.
  *
@@ -7,11 +8,11 @@
  * @see Issue #3066 Architecture Decision 3A
  */
 
-import React from "react";
+
 import { useConfirmStore } from "../hooks/use-confirm.js";
 import { ConfirmDialog } from "./confirm-dialog.js";
 
-export function AppConfirmDialog(): React.ReactNode {
+export function AppConfirmDialog(): JSX.Element {
   const visible = useConfirmStore((s) => s.visible);
   const title = useConfirmStore((s) => s.title);
   const message = useConfirmStore((s) => s.message);

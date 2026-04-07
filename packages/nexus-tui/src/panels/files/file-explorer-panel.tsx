@@ -17,7 +17,8 @@
  * @see Issue #3102 — TUI rendering & data-fetching performance
  */
 
-import React, { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { createSignal, createEffect, createMemo, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import {
   useFilesStore,
   type FileItem,
@@ -73,14 +74,16 @@ const ALL_TABS: readonly TabDef<FilesTab>[] = [
 // Component
 // =============================================================================
 
-export default function FileExplorerPanel(): React.ReactNode {
-  const client = useApi();
+export default function FileExplorerPanel(): JSX.Element {
+  // Read client fresh each time via getState() — not a stale capture.
+  // useApi() returns a snapshot that can be null if read before connection.
+  const getClient = () => useGlobalStore.getState().client;
   const visibleTabs = useVisibleTabs(ALL_TABS);
 
   // Panel-level active tab
-  const [activeTab, setActiveTab] = useState<FilesTab>("explorer");
+  const [activeTab, setActiveTab] = createSignal<FilesTab>("explorer");
 
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
   // Files store
   const currentPath = useFilesStore((s) => s.currentPath);
@@ -96,9 +99,7 @@ export default function FileExplorerPanel(): React.ReactNode {
   const fetchPreview = useFilesStore((s) => s.fetchPreview);
 
   // Cancel all in-flight file requests when panel unmounts (Issue #3102)
-  useEffect(() => {
-    return () => { abortAll(); };
-  }, [abortAll]);
+  onCleanup(() => { abortAll(); });
 
   // Selection & clipboard store
   const selectedPaths = useFilesStore((s) => s.selectedPaths);
@@ -138,42 +139,53 @@ export default function FileExplorerPanel(): React.ReactNode {
   const { available: catalogAvailable } = useBrickAvailable("catalog");
 
   // Active metadata sub-tab
-  const [metadataTab, setMetadataTab] = React.useState<"metadata" | "aspects" | "schema" | "lineage">("metadata");
-  React.useEffect(() => {
-    if (!catalogAvailable && (metadataTab === "aspects" || metadataTab === "schema")) {
+  const [metadataTab, setMetadataTab] = createSignal<"metadata" | "aspects" | "schema" | "lineage">("metadata");
+  createEffect(() => {
+    if (!catalogAvailable && (metadataTab() === "aspects" || metadataTab() === "schema")) {
       setMetadataTab("metadata");
     }
-  }, [catalogAvailable, metadataTab]);
+  });
 
-  // Flattened visible tree nodes — the source of truth for explorer navigation.
-  const visibleNodes = useMemo(
-    () => flattenVisibleNodes(currentPath, treeNodes),
-    [currentPath, treeNodes],
+  // Flattened visible tree nodes — read treeNodes and currentPath from store
+  // proxy inside the memo so changes trigger recomputation.
+  const visibleNodes = createMemo(
+    () => flattenVisibleNodes(
+      useFilesStore((s) => s.currentPath),
+      useFilesStore((s) => s.treeNodes),
+    ),
   );
 
-  const selectedNode = visibleNodes[selectedIndex] ?? null;
-  const isSentinel = selectedNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false;
-  const currentTreeNode = treeNodes.get(currentPath);
-  const lastDirectoryAnnouncementRef = useRef<string | null>(null);
-  const lastSelectionAnnouncementRef = useRef<string | null>(null);
-  const lastPasteAnnouncementRef = useRef<string | null>(null);
+  const selectedNode = createMemo(() => {
+    const idx = useFilesStore((s) => s.selectedIndex);
+    return visibleNodes()[idx] ?? null;
+  });
+  const isSentinel = createMemo(() => selectedNode()?.path.endsWith(LOAD_MORE_SENTINEL) ?? false);
+  const currentTreeNode = createMemo(() => {
+    const cp = useFilesStore((s) => s.currentPath);
+    const tn = useFilesStore((s) => s.treeNodes);
+    return tn.get(cp);
+  });
+  let lastDirectoryAnnouncementRef: string | null = null;
+  let lastSelectionAnnouncementRef: string | null = null;
+  let lastPasteAnnouncementRef: string | null = null;
 
   // For metadata/actions, look up FileItem from parent's file cache first,
   // then fall back to constructing a minimal FileItem from the tree node.
   // The fallback ensures metadata pane works even if the file cache is empty
   // (e.g. requests were aborted during rapid navigation).
-  const selectedItem: FileItem | null = useMemo(() => {
-    if (!selectedNode || isSentinel) return null;
-    const parentDir = selectedNode.path.split("/").slice(0, -1).join("/") || "/";
+  const selectedItem = createMemo(() => {
+    const node = selectedNode();
+    if (!node || isSentinel()) return null;
+    const parentDir = node.path.split("/").slice(0, -1).join("/") || "/";
     const parentFiles = getCachedFiles(parentDir);
-    const cached = parentFiles?.find((f) => f.path === selectedNode.path);
+    const cached = parentFiles?.find((f) => f.path === node.path);
     if (cached) return cached;
     // Fallback: construct from tree node, using global zoneId from health check
     return {
-      name: selectedNode.name,
-      path: selectedNode.path,
-      isDirectory: selectedNode.isDirectory,
-      size: selectedNode.size ?? 0,
+      name: node.name,
+      path: node.path,
+      isDirectory: node.isDirectory,
+      size: node.size ?? 0,
       modifiedAt: null,
       etag: null,
       mimeType: null,
@@ -182,48 +194,50 @@ export default function FileExplorerPanel(): React.ReactNode {
       permissions: null,
       zoneId: useGlobalStore.getState().zoneId,
     };
-  }, [selectedNode, isSentinel, getCachedFiles, fileCacheRevision]);
+  });
 
   const visibleNodeCount = visibleNodes.length;
   // Keep cachedFiles for backward compat with BindingContext (selection uses it)
   const cachedFiles = fileCacheRevision >= 0 ? (getCachedFiles(currentPath) ?? []) : [];
 
-  useEffect(() => {
-    lastSelectionAnnouncementRef.current = null;
-  }, [currentPath]);
+  createEffect(() => {
+    lastSelectionAnnouncementRef = null;
+  });
 
-  useEffect(() => {
+  createEffect(() => {
     if (pasteProgress === null) {
-      lastPasteAnnouncementRef.current = null;
+      lastPasteAnnouncementRef = null;
     }
-  }, [pasteProgress]);
+  });
 
-  useEffect(() => {
-    if (!currentTreeNode || currentTreeNode.loading) return;
+  createEffect(() => {
+    const ctn = currentTreeNode();
+    if (!ctn || ctn.loading) return;
     const key = `${currentPath}:${cachedFiles.length}:${fileCacheRevision}`;
-    if (lastDirectoryAnnouncementRef.current === key) return;
-    lastDirectoryAnnouncementRef.current = key;
+    if (lastDirectoryAnnouncementRef === key) return;
+    lastDirectoryAnnouncementRef = key;
     announce(formatDirectoryAnnouncement(currentPath, cachedFiles.length));
-  }, [currentTreeNode, currentPath, cachedFiles.length, fileCacheRevision, announce]);
+  });
 
-  useEffect(() => {
-    if (!selectedNode || isSentinel) return;
-    if (lastSelectionAnnouncementRef.current === null) {
-      lastSelectionAnnouncementRef.current = selectedNode.path;
+  createEffect(() => {
+    const node = selectedNode();
+    if (!node || isSentinel()) return;
+    if (lastSelectionAnnouncementRef === null) {
+      lastSelectionAnnouncementRef = node.path;
       return;
     }
-    if (lastSelectionAnnouncementRef.current === selectedNode.path) return;
-    lastSelectionAnnouncementRef.current = selectedNode.path;
-    announce(formatSelectionAnnouncement(selectedNode.name, selectedNode.isDirectory));
-  }, [selectedNode, isSentinel, announce]);
+    if (lastSelectionAnnouncementRef === node.path) return;
+    lastSelectionAnnouncementRef = node.path;
+    announce(formatSelectionAnnouncement(node.name, node.isDirectory));
+  });
 
-  useEffect(() => {
+  createEffect(() => {
     if (!pasteProgress) return;
     const completed = pasteProgress.completed + pasteProgress.failed;
     if (completed < pasteProgress.total) return;
     const key = `${pasteProgress.total}:${pasteProgress.completed}:${pasteProgress.failed}:${clipboard?.operation ?? "none"}`;
-    if (lastPasteAnnouncementRef.current === key) return;
-    lastPasteAnnouncementRef.current = key;
+    if (lastPasteAnnouncementRef === key) return;
+    lastPasteAnnouncementRef = key;
     announce(
       formatSuccessAnnouncement(
         pasteProgress.failed > 0
@@ -232,12 +246,12 @@ export default function FileExplorerPanel(): React.ReactNode {
       ),
       pasteProgress.failed > 0 ? "error" : "success",
     );
-  }, [pasteProgress, clipboard?.operation, announce]);
+  });
 
   // Aspect count badge
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
-  const selectedUrn = selectedItem?.path
-    ? `urn:nexus:file:${selectedItem.zoneId || "default"}:${crypto.createHash("sha256").update(selectedItem.path).digest("hex").slice(0, 32)}`
+  const selectedUrn = selectedItem()?.path
+    ? `urn:nexus:file:${selectedItem()?.zoneId || "default"}:${crypto.createHash("sha256").update(selectedItem()!.path).digest("hex").slice(0, 32)}`
     : null;
   const aspectCount = selectedUrn ? (aspectsCache.get(selectedUrn)?.length ?? 0) : 0;
 
@@ -245,45 +259,47 @@ export default function FileExplorerPanel(): React.ReactNode {
   const { copy, copied } = useCopy();
 
   // Editor overlay state — suppress global panel-switch keys while editor is open
-  const [editorPath, setEditorPath] = useState<string | null>(null);
-  const openEditor = useCallback((path: string) => {
+  const [editorPath, setEditorPath] = createSignal<string | null>(null);
+  const openEditor = (path: string) => {
     useUiStore.getState().setFileEditorOpen(true);
     setEditorPath(path);
-  }, []);
-  const closeEditor = useCallback(() => {
+  };
+  const closeEditor = () => {
     useUiStore.getState().setFileEditorOpen(false);
     setEditorPath(null);
-  }, []);
+  };
 
   // Dialog state
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDelete, setConfirmDelete] = createSignal(false);
 
   // Input mode
-  const [inputMode, setInputMode] = useState<InputMode>("none");
-  const [inputBuffer, setInputBuffer] = useState("");
+  const [inputMode, setInputMode] = createSignal<InputMode>("none");
+  const [inputBuffer, setInputBuffer] = createSignal("");
 
   // Filter & search state
-  const [filterQuery, setFilterQuery] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<readonly { path: string; line?: number; content?: string }[] | null>(null);
+  const [filterQuery, setFilterQuery] = createSignal("");
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchResults, setSearchResults] = createSignal<readonly { path: string; line?: number; content?: string }[] | null>(null);
 
   // Effective selection count for display
-  const effectiveSelection = useMemo(() => {
-    if (activeTab !== "explorer") return new Set<string>();
+  const effectiveSelection = createMemo(() => {
+    if (activeTab() !== "explorer") return new Set<string>();
     return getEffectiveSelection(
       selectedPaths, visualModeAnchor, selectedIndex,
       cachedFiles.map((f) => f.path),
     );
-  }, [activeTab, selectedPaths, visualModeAnchor, selectedIndex, cachedFiles]);
+  });
 
   // Fetch share links when switching to that tab
-  useEffect(() => {
+  createEffect(() => {
+    const client = getClient();
     if (!client) return;
-    if (activeTab === "shareLinks") fetchLinks(client);
-  }, [activeTab, client, fetchLinks]);
+    if (activeTab() === "shareLinks") fetchLinks(client);
+  });
 
   // Search execution
-  const executeSearch = useCallback(async (query: string) => {
+  const executeSearch = async (query: string) => {
+    const client = getClient();
     if (!client) return;
     setSearchResults(null);
 
@@ -314,58 +330,79 @@ export default function FileExplorerPanel(): React.ReactNode {
     } catch {
       setSearchResults([]);
     }
-  }, [client, currentPath]);
+  };
 
   // Build input buffer reference for the binding context
   // The input buffer needs to be passed through the context for mkdir/rename
   // to access the current value in their return handlers
-  const inputBufferRef = inputMode === "filter" ? filterQuery
-    : inputMode === "search" ? searchQuery
-    : inputMode === "paste-dest" ? inputBuffer
+  const inputBufferRef = inputMode() === "filter" ? filterQuery
+    : inputMode() === "search" ? searchQuery
+    : inputMode() === "paste-dest" ? inputBuffer
     : inputBuffer;
 
   // Handle unhandled keys for text input modes
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      if (inputMode === "none") return;
-      const setter = inputMode === "filter" ? setFilterQuery
-        : inputMode === "search" ? setSearchQuery
+  const handleUnhandledKey = (keyName: string) => {
+      if (inputMode() === "none") return;
+      const setter = inputMode() === "filter" ? setFilterQuery
+        : inputMode() === "search" ? setSearchQuery
         : setInputBuffer;
       if (keyName.length === 1) {
         setter((b) => b + keyName);
       } else if (keyName === "space") {
         setter((b) => b + " ");
       }
-    },
-    [inputMode],
-  );
+    };
 
-  // Build binding context
-  const ctx: BindingContext = {
-    activeTab, cachedFiles, selectedIndex, selectedItem, selectedNode, isSentinel,
-    visibleNodeCount, currentPath, client, setSelectedIndex, toggleNode, collapseNode,
-    fetchPreview, setMetadataTab, catalogAvailable,
-    shareLinks, selectedLinkIndex, setSelectedLinkIndex, revokeLink, fetchLinks,
-    uploadSessions, selectedSessionIndex, setSelectedSessionIndex,
-    visibleTabs, setActiveTab, toggleFocus, copy, setConfirmDelete,
-    setInputMode, setInputBuffer,
-    selectedPaths, visualModeAnchor, clipboard,
-    toggleSelect, clearSelection, enterVisualMode, exitVisualMode,
-    yankToClipboard, cutToClipboard, clearClipboard, pasteFiles,
-    filterQuery: inputBufferRef, setFilterQuery, searchQuery, setSearchQuery,
-    executeSearch,
-    searchResults, setSearchResults,
-    setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
-    openEditor,
+  // Build binding context — reads fresh store values on every call.
+  // useKeyboard calls this function on each keypress, so ctx is always current.
+  const buildCtx = (): BindingContext => {
+    const state = useFilesStore.getState();
+    const nodes = flattenVisibleNodes(state.currentPath, state.treeNodes);
+    const selNode = nodes[state.selectedIndex] ?? null;
+    const files = state.getCachedFiles(state.currentPath) ?? [];
+    const selItem = files[state.selectedIndex] ?? null;
+    return {
+      activeTab: activeTab(), cachedFiles: files as readonly FileItem[],
+      selectedIndex: state.selectedIndex, selectedItem: selItem,
+      selectedNode: selNode, isSentinel: selNode?.path.endsWith(LOAD_MORE_SENTINEL) ?? false,
+      visibleNodeCount: nodes.length, currentPath: state.currentPath,
+      client: getClient(), setSelectedIndex, toggleNode, collapseNode,
+      fetchPreview, setMetadataTab, catalogAvailable,
+      shareLinks: useShareLinkStore.getState().links,
+      selectedLinkIndex: useShareLinkStore.getState().selectedLinkIndex,
+      setSelectedLinkIndex, revokeLink, fetchLinks,
+      uploadSessions: useUploadStore.getState().sessions,
+      selectedSessionIndex: useUploadStore.getState().selectedSessionIndex,
+      setSelectedSessionIndex,
+      visibleTabs, setActiveTab, toggleFocus, copy, setConfirmDelete,
+      setInputMode, setInputBuffer,
+      selectedPaths: state.selectedPaths, visualModeAnchor: state.visualModeAnchor,
+      clipboard: state.clipboard,
+      toggleSelect, clearSelection, enterVisualMode, exitVisualMode,
+      yankToClipboard, cutToClipboard, clearClipboard, pasteFiles,
+      filterQuery: filterQuery(), setFilterQuery, searchQuery: searchQuery(), setSearchQuery,
+      executeSearch,
+      searchResults: searchResults(), setSearchResults,
+      setInputModeWithCallback: setInputMode as BindingContext["setInputModeWithCallback"],
+      openEditor,
+    };
   };
 
   useKeyboard(
-    getKeyBindings(inputMode, overlayActive, confirmDelete, editorPath !== null, ctx),
-    !overlayActive && inputMode !== "none" && editorPath === null ? handleUnhandledKey : undefined,
+    () => {
+      const im = inputMode();
+      const ov = useUiStore.getState().overlayActive;
+      const cd = confirmDelete();
+      const eo = editorPath() !== null;
+      const bindings = getKeyBindings(im, ov, cd, eo, buildCtx());
+      return bindings;
+    },
+    !useUiStore.getState().overlayActive && inputMode() !== "none" && editorPath() === null ? handleUnhandledKey : undefined,
   );
 
   const handleConfirmDelete = (): void => {
     setConfirmDelete(false);
+    const client = getClient();
     if (!client) return;
     // Bulk delete: delete all selected files, then fall back to single item
     const effective = getEffectiveSelection(
@@ -377,8 +414,8 @@ export default function FileExplorerPanel(): React.ReactNode {
         useFilesStore.getState().deleteFile(path, client);
       }
       clearSelection();
-    } else if (selectedItem) {
-      useFilesStore.getState().deleteFile(selectedItem.path, client);
+    } else if (selectedItem()) {
+      useFilesStore.getState().deleteFile(selectedItem()!.path, client);
     }
   };
 
@@ -387,24 +424,24 @@ export default function FileExplorerPanel(): React.ReactNode {
   };
 
   // Determine which input buffer to display
-  const displayBuffer = inputMode === "filter" ? filterQuery
-    : inputMode === "search" ? searchQuery
+  const displayBuffer = inputMode() === "filter" ? filterQuery
+    : inputMode() === "search" ? searchQuery
     : inputBuffer;
 
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Full-screen file editor */}
-      {editorPath ? (
-        <FileEditor path={editorPath} onClose={closeEditor} />
+      {editorPath() ? (
+        <FileEditor path={editorPath()!} onClose={closeEditor} />
       ) : <>
 
       {/* Panel-level tab bar */}
-      <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
+      <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
       {/* Input bar for text modes */}
-      {inputMode !== "none" && (
+      {inputMode() !== "none" && (
         <box height={1} width="100%">
-          <text>{getInputLabel(inputMode, displayBuffer)}</text>
+          <text>{getInputLabel(inputMode(), displayBuffer())}</text>
         </box>
       )}
 
@@ -420,7 +457,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       )}
 
       {/* Clipboard indicator (only when not actively pasting) */}
-      {clipboard && !pasteProgress && inputMode === "none" && (
+      {clipboard && !pasteProgress && inputMode() === "none" && (
         <box height={1} width="100%">
           <text foregroundColor={statusColor.warning}>
             {`${clipboard.paths.length} file${clipboard.paths.length > 1 ? "s" : ""} ${clipboard.operation === "cut" ? "cut" : "copied"} — press p to paste`}
@@ -429,18 +466,18 @@ export default function FileExplorerPanel(): React.ReactNode {
       )}
 
       {/* Explorer tab */}
-      {activeTab === "explorer" && (
+      {activeTab() === "explorer" && (
         <box flexGrow={1} flexDirection="column">
           {/* Breadcrumb navigation */}
           <Breadcrumb path={currentPath} onNavigate={setCurrentPath} />
 
           {/* Search results overlay */}
-          {searchResults !== null ? (
+          {searchResults() !== null ? (
             <box flexGrow={1} borderStyle="single">
               <scrollbox height="100%" width="100%">
-                {searchResults.length === 0
+                {(searchResults()?.length ?? 0) === 0
                   ? <text>No results found</text>
-                  : searchResults.map((result, i) => (
+                  : searchResults()!.map((result, i) => (
                     <box key={`${result.path}:${result.line ?? i}`} height={1} width="100%">
                       <text>
                         {result.line !== undefined
@@ -460,8 +497,8 @@ export default function FileExplorerPanel(): React.ReactNode {
               {/* Left pane: file tree (40%) */}
               <box width="40%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder}>
                 <FileTree
-                  filterQuery={filterQuery}
-                  effectiveSelection={effectiveSelection}
+                  filterQuery={filterQuery()}
+                  effectiveSelection={effectiveSelection()}
                 />
               </box>
 
@@ -475,29 +512,29 @@ export default function FileExplorerPanel(): React.ReactNode {
                 {/* Metadata tab bar with aspect count badge */}
                 <box height={1} width="100%" flexDirection="row">
                   <box height={1} onMouseDown={() => setMetadataTab("metadata")}>
-                    <text>{metadataTab === "metadata" ? " [Metadata]" : "  Metadata "}</text>
+                    <text>{metadataTab() === "metadata" ? " [Metadata]" : "  Metadata "}</text>
                   </box>
                   <box height={1} onMouseDown={() => setMetadataTab("lineage")}>
-                    <text>{metadataTab === "lineage" ? " [Lineage]" : "  Lineage "}</text>
+                    <text>{metadataTab() === "lineage" ? " [Lineage]" : "  Lineage "}</text>
                   </box>
                   {catalogAvailable && (
                     <box height={1} onMouseDown={() => setMetadataTab("aspects")}>
-                      <text>{metadataTab === "aspects" ? ` [Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : `  Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}  `}</text>
+                      <text>{metadataTab() === "aspects" ? ` [Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}]` : `  Aspects${aspectCount > 0 ? ` (${aspectCount})` : ""}  `}</text>
                     </box>
                   )}
                   {catalogAvailable && (
                     <box height={1} onMouseDown={() => setMetadataTab("schema")}>
-                      <text>{metadataTab === "schema" ? " [Schema]" : "  Schema "}</text>
+                      <text>{metadataTab() === "schema" ? " [Schema]" : "  Schema "}</text>
                     </box>
                   )}
                 </box>
 
                 {/* Metadata sidebar (bottom 30%) */}
                 <box flexGrow={3} borderStyle="single">
-                  {metadataTab === "metadata" && <FileMetadata item={selectedItem} />}
-                  {metadataTab === "lineage" && <FileLineage item={selectedItem} />}
-                  {metadataTab === "aspects" && catalogAvailable && <FileAspects item={selectedItem} />}
-                  {metadataTab === "schema" && catalogAvailable && <FileSchema item={selectedItem} />}
+                  {metadataTab() === "metadata" && <FileMetadata item={selectedItem()} />}
+                  {metadataTab() === "lineage" && <FileLineage item={selectedItem()} />}
+                  {metadataTab() === "aspects" && catalogAvailable && <FileAspects item={selectedItem()} />}
+                  {metadataTab() === "schema" && catalogAvailable && <FileSchema item={selectedItem()} />}
                 </box>
               </box>
             </box>
@@ -506,7 +543,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       )}
 
       {/* Share Links tab */}
-      {activeTab === "shareLinks" && (
+      {activeTab() === "shareLinks" && (
         <box flexGrow={1} borderStyle="single">
           <ShareLinksTab
             links={shareLinks}
@@ -517,7 +554,7 @@ export default function FileExplorerPanel(): React.ReactNode {
       )}
 
       {/* Uploads tab */}
-      {activeTab === "uploads" && (
+      {activeTab() === "uploads" && (
         <box flexGrow={1} borderStyle="single">
           <UploadsTab
             sessions={uploadSessions}
@@ -533,8 +570,8 @@ export default function FileExplorerPanel(): React.ReactNode {
           ? <text foregroundColor={statusColor.healthy}>Copied!</text>
           : <text>
             {getHelpText(
-              inputMode, activeTab, catalogAvailable,
-              visualModeAnchor !== null, effectiveSelection.size,
+              inputMode(), activeTab(), catalogAvailable,
+              visualModeAnchor !== null, effectiveSelection().size,
               clipboard,
             )}
           </text>}
@@ -542,13 +579,13 @@ export default function FileExplorerPanel(): React.ReactNode {
 
       {/* Delete confirmation dialog */}
       <ConfirmDialog
-        visible={confirmDelete}
-        title={effectiveSelection.size > 0 ? "Delete Selected" : "Delete File"}
-        message={effectiveSelection.size > 1
-          ? `Delete ${effectiveSelection.size} selected files?`
-          : effectiveSelection.size === 1
-            ? `Delete "${[...effectiveSelection][0]!.split("/").pop()}"?`
-            : `Delete "${selectedItem?.name ?? ""}"?`}
+        visible={confirmDelete()}
+        title={effectiveSelection().size > 0 ? "Delete Selected" : "Delete File"}
+        message={effectiveSelection().size > 1
+          ? `Delete ${effectiveSelection().size} selected files?`
+          : effectiveSelection().size === 1
+            ? `Delete "${[...effectiveSelection()][0]!.split("/").pop()}"?`
+            : `Delete "${selectedItem()?.name ?? ""}"?`}
         onConfirm={handleConfirmDelete}
         onCancel={handleCancelDelete}
       />

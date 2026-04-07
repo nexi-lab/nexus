@@ -2,7 +2,7 @@
  * Global application state: connection, navigation, config.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { NexusClientOptions } from "@nexus-ai-fs/api-client";
 import { FetchClient, resolveConfig } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
@@ -23,7 +23,6 @@ export type PanelId =
   | "console"
   | "connectors"
   | "stack";
-
 
 /** Response from GET /api/v2/features */
 export interface FeaturesResponse {
@@ -119,13 +118,18 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
     set({ connectionStatus: "connecting", connectionError: null });
 
     try {
-      // Consolidated connection check (Decision 5A): health + features + auth in one flow
-      let [health, features, userInfo] = await Promise.all([
+      // Consolidated connection check (Decision 5A): health + features + auth in one flow.
+      // Connection check: health + features only. /auth/me is deferred until AFTER
+      // connection succeeds to avoid blocking Bun's per-host connection pool
+      // (some servers hang on /auth/me indefinitely, starving all other requests).
+      const fast = { timeout: 8_000 };
+      let userInfo: UserInfo | null = null;
+
+      let [health, features] = await Promise.all([
         client.get<{ status?: string; uptime_seconds?: number }>(
-          "/healthz/ready",
+          "/healthz/ready", fast,
         ).catch(() => null),
-        client.get<FeaturesResponse>("/api/v2/features").catch(() => null),
-        client.get<UserInfo>("/auth/me").catch(() => null),
+        client.get<FeaturesResponse>("/api/v2/features", fast).catch(() => null),
       ]);
 
       // Auto-discovery: if health check fails, scan common ports to find the server.
@@ -148,10 +152,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
             if (probeHealth) {
               const newConfig = resolveConfig({ transformKeys: false, baseUrl: probeUrl });
               const newClient = new FetchClient(newConfig);
-              [health, features, userInfo] = await Promise.all([
+              [health, features] = await Promise.all([
                 Promise.resolve(probeHealth),
                 newClient.get<FeaturesResponse>("/api/v2/features").catch(() => null),
-                newClient.get<UserInfo>("/auth/me").catch(() => null),
               ]);
               set({ config: newConfig, client: newClient });
               break;
@@ -183,6 +186,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       // fires on reconnects too.  The TTL guard in refreshFeatures() prevents a
       // double-fetch when setFeatures() was already called above.
       get().setConnectionStatus("connected");
+
+      // /auth/me is skipped during testConnection — it hangs on many servers
+      // and blocks Bun's connection pool. userInfo is populated lazily if needed.
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection test failed";
       set({

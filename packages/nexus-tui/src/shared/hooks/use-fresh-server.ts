@@ -2,7 +2,7 @@
  * Detects if the connected server is "fresh" (no user data yet).
  * Used to trigger the welcome screen on first run.
  */
-import { useState, useEffect } from "react";
+import { createEffect, createSignal, onCleanup } from "solid-js";
 import { useGlobalStore } from "../../stores/global-store.js";
 
 interface FreshCheckClient {
@@ -30,10 +30,10 @@ export async function detectFreshServer(client: FreshCheckClient): Promise<boole
 export function useFreshServer(): { isFresh: boolean | null; loading: boolean } {
   const client = useGlobalStore((s) => s.client);
   const connectionStatus = useGlobalStore((s) => s.connectionStatus);
-  const [isFresh, setIsFresh] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [isFresh, setIsFresh] = createSignal<boolean | null>(null);
+  const [loading, setLoading] = createSignal(false);
 
-  useEffect(() => {
+  createEffect(() => {
     if (connectionStatus !== "connected" || !client) {
       setIsFresh(null);
       return;
@@ -55,8 +55,15 @@ export function useFreshServer(): { isFresh: boolean | null; loading: boolean } 
       }
     })();
 
-    return () => { cancelled = true; };
-  }, [client, connectionStatus]);
+    onCleanup(() => { cancelled = true; });
+  });
 
-  return { isFresh, loading };
+  return {
+    get isFresh() {
+      return isFresh();
+    },
+    get loading() {
+      return loading();
+    },
+  };
 }

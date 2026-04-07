@@ -13,7 +13,7 @@
  * @see Issue #3066 Architecture Decision 3A
  */
 
-import { create } from "zustand";
+import { createStore } from "../../stores/create-store.js";
 
 // =============================================================================
 // Types
@@ -38,7 +38,7 @@ export interface ConfirmState {
 // Store
 // =============================================================================
 
-export const useConfirmStore = create<ConfirmState>((set, get) => ({
+export const useConfirmStore = createStore<ConfirmState>((set, get) => ({
   visible: false,
   title: "",
   message: "",

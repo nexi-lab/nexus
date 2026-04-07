@@ -4,7 +4,8 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -16,17 +17,17 @@ interface MclTabProps {
   readonly overlayActive: boolean;
 }
 
-export function MclTab({ tabBindings, overlayActive }: MclTabProps): React.ReactNode {
+export function MclTab(props: MclTabProps): JSX.Element {
   const client = useApi();
-  const [urnFilter, setUrnFilter] = useState("");
-  const [aspectFilter, setAspectFilter] = useState("");
+  const [urnFilter, setUrnFilter] = createSignal("");
+  const [aspectFilter, setAspectFilter] = createSignal("");
 
-  const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
-  const clearReplay = useKnowledgeStore((s) => s.clearReplay);
+  const fetchReplay = useKnowledgeStore.getState().fetchReplay;
+  const clearReplay = useKnowledgeStore.getState().clearReplay;
 
-  useEffect(() => {
+  createEffect(() => {
     if (client) void fetchReplay(client, 0, 50);
-  }, [client, fetchReplay]);
+  });
 
   const urnInput = useTextInput({
     onSubmit: (val) => setUrnFilter(val),
@@ -34,27 +35,33 @@ export function MclTab({ tabBindings, overlayActive }: MclTabProps): React.React
   const aspectInput = useTextInput({
     onSubmit: (val) => setAspectFilter(val),
   });
-  const anyInputActive = urnInput.active || aspectInput.active;
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : anyInputActive
-      ? (urnInput.active ? urnInput.inputBindings : aspectInput.inputBindings)
-      : {
-          ...tabBindings,
-          u: () => urnInput.activate(urnFilter),
-          n: () => aspectInput.activate(aspectFilter),
-          r: () => {
-            if (client) {
-              clearReplay();
-              void fetchReplay(client, 0, 50);
-            }
-          },
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      const anyInputActive = urnInput.active || aspectInput.active;
+      if (anyInputActive) {
+        return urnInput.active ? urnInput.inputBindings : aspectInput.inputBindings;
+      }
+      return {
+        ...props.tabBindings,
+        u: () => urnInput.activate(urnFilter()),
+        n: () => aspectInput.activate(aspectFilter()),
+        r: () => {
+          if (client) {
+            clearReplay();
+            void fetchReplay(client, 0, 50);
+          }
         },
-    overlayActive ? undefined : anyInputActive
-      ? (urnInput.active ? urnInput.onUnhandled : aspectInput.onUnhandled)
-      : undefined,
+      };
+    },
+    () => {
+      if (props.overlayActive) return undefined;
+      const anyInputActive = urnInput.active || aspectInput.active;
+      return anyInputActive
+        ? (urnInput.active ? urnInput.onUnhandled : aspectInput.onUnhandled)
+        : undefined;
+    },
   );
 
   return (
@@ -65,15 +72,15 @@ export function MclTab({ tabBindings, overlayActive }: MclTabProps): React.React
             ? `Filter URN: ${urnInput.buffer}\u2588`
             : aspectInput.active
               ? `Filter aspect: ${aspectInput.buffer}\u2588`
-              : `Filter: URN=${urnFilter || "*"} aspect=${aspectFilter || "*"}`}
+              : `Filter: URN=${urnFilter() || "*"} aspect=${aspectFilter() || "*"}`}
         </text>
       </box>
       <box flexGrow={1} width="100%" borderStyle="single">
-        <MclReplay urnFilter={urnFilter} aspectFilter={aspectFilter} />
+        <MclReplay urnFilter={urnFilter()} aspectFilter={aspectFilter()} />
       </box>
       <box height={1} width="100%">
         <text>
-          {anyInputActive
+          {(urnInput.active || aspectInput.active)
             ? "Type value, Enter:apply, Escape:cancel"
             : "u:filter URN  n:filter aspect  r:refresh  Tab:switch tab"}
         </text>

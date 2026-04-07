@@ -1,9 +1,10 @@
+import type { JSX } from "solid-js";
 /**
  * Constraint list: displays ReBAC governance constraints with
  * from/to agents, type, and creation time.
  */
 
-import React from "react";
+
 import type { GovernanceConstraint } from "../../stores/access-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -31,7 +32,7 @@ export function ConstraintList({
   constraints,
   selectedIndex,
   loading,
-}: ConstraintListProps): React.ReactNode {
+}: ConstraintListProps): JSX.Element {
   if (loading) {
     return <LoadingIndicator message="Loading constraints..." />;
   }
@@ -60,7 +61,7 @@ export function ConstraintList({
         const prefix = isSelected ? "> " : "  ";
 
         return (
-          <box key={c.id} height={1} width="100%">
+          <box height={1} width="100%">
             <text>
               {`${prefix}${shortId(c.from_agent_id).padEnd(13)}  ${shortId(c.to_agent_id).padEnd(13)}  ${c.constraint_type.padEnd(14)}  ${formatTime(c.created_at)}`}
             </text>

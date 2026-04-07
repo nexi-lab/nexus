@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * Searchable, filterable list of all API endpoints.
  */
 
-import React from "react";
 import { useApiConsoleStore, type EndpointInfo } from "../../stores/api-console-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -16,7 +16,7 @@ const METHOD_BADGE: Record<string, string> = {
   OPTIONS: "OPT   ",
 };
 
-export function EndpointList(): React.ReactNode {
+export function EndpointList(): JSX.Element {
   const endpoints = useApiConsoleStore((s) => s.filteredEndpoints);
   const selectedEndpoint = useApiConsoleStore((s) => s.selectedEndpoint);
   const searchQuery = useApiConsoleStore((s) => s.searchQuery);
@@ -45,7 +45,7 @@ function EndpointRow({
 }: {
   endpoint: EndpointInfo;
   selected: boolean;
-}): React.ReactNode {
+}): JSX.Element {
   const prefix = selected ? "▸ " : "  ";
   const badge = METHOD_BADGE[endpoint.method] ?? endpoint.method;
 

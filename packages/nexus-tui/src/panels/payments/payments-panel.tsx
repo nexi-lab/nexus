@@ -3,7 +3,8 @@
  * Policies, and Approvals views.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { usePaymentsStore } from "../../stores/payments-store.js";
 import type { PaymentsTab } from "../../stores/payments-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
@@ -37,39 +38,39 @@ const HELP_TEXT: Readonly<Record<string, string>> = {
   approvals: "j/k:navigate  n:new request  a:approve  x:reject  Tab:switch tab  r:refresh  q:quit",
 };
 
-export default function PaymentsPanel(): React.ReactNode {
+export default function PaymentsPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
-  const overlayActive = useUiStore((s) => s.overlayActive);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
   const { copy, copied } = useCopy();
-  const [showTransfer, setShowTransfer] = useState(false);
-  const [approvalInputMode, setApprovalInputMode] = useState(false);
-  const [approvalAmountBuffer, setApprovalAmountBuffer] = useState("");
-  const [approvalPurposeBuffer, setApprovalPurposeBuffer] = useState("");
-  const [approvalField, setApprovalField] = useState<"amount" | "purpose">("amount");
+  const [showTransfer, setShowTransfer] = createSignal(false);
+  const [approvalInputMode, setApprovalInputMode] = createSignal(false);
+  const [approvalAmountBuffer, setApprovalAmountBuffer] = createSignal("");
+  const [approvalPurposeBuffer, setApprovalPurposeBuffer] = createSignal("");
+  const [approvalField, setApprovalField] = createSignal<"amount" | "purpose">("amount");
 
-  const balance = usePaymentsStore((s) => s.balance);
-  const balanceLoading = usePaymentsStore((s) => s.balanceLoading);
-  const reservations = usePaymentsStore((s) => s.reservations);
-  const selectedReservationIndex = usePaymentsStore((s) => s.selectedReservationIndex);
-  const reservationsLoading = usePaymentsStore((s) => s.reservationsLoading);
-  const transactions = usePaymentsStore((s) => s.transactions);
-  const transactionsLoading = usePaymentsStore((s) => s.transactionsLoading);
-  const selectedTransactionIndex = usePaymentsStore((s) => s.selectedTransactionIndex);
-  const policies = usePaymentsStore((s) => s.policies);
-  const policiesLoading = usePaymentsStore((s) => s.policiesLoading);
-  const budget = usePaymentsStore((s) => s.budget);
-  const budgetLoading = usePaymentsStore((s) => s.budgetLoading);
-  const activeTab = usePaymentsStore((s) => s.activeTab);
-  const error = usePaymentsStore((s) => s.error);
+  const balance = () => usePaymentsStore((s) => s.balance);
+  const balanceLoading = () => usePaymentsStore((s) => s.balanceLoading);
+  const reservations = () => usePaymentsStore((s) => s.reservations);
+  const selectedReservationIndex = () => usePaymentsStore((s) => s.selectedReservationIndex);
+  const reservationsLoading = () => usePaymentsStore((s) => s.reservationsLoading);
+  const transactions = () => usePaymentsStore((s) => s.transactions);
+  const transactionsLoading = () => usePaymentsStore((s) => s.transactionsLoading);
+  const selectedTransactionIndex = () => usePaymentsStore((s) => s.selectedTransactionIndex);
+  const policies = () => usePaymentsStore((s) => s.policies);
+  const policiesLoading = () => usePaymentsStore((s) => s.policiesLoading);
+  const budget = () => usePaymentsStore((s) => s.budget);
+  const budgetLoading = () => usePaymentsStore((s) => s.budgetLoading);
+  const activeTab = () => usePaymentsStore((s) => s.activeTab);
+  const error = () => usePaymentsStore((s) => s.error);
 
   const fetchBalance = usePaymentsStore((s) => s.fetchBalance);
   const transfer = usePaymentsStore((s) => s.transfer);
   const commitReservation = usePaymentsStore((s) => s.commitReservation);
   const releaseReservation = usePaymentsStore((s) => s.releaseReservation);
-  const transactionsHasMore = usePaymentsStore((s) => s.transactionsHasMore);
-  const transactionsCursorStack = usePaymentsStore((s) => s.transactionsCursorStack);
-  const integrityResult = usePaymentsStore((s) => s.integrityResult);
+  const transactionsHasMore = () => usePaymentsStore((s) => s.transactionsHasMore);
+  const transactionsCursorStack = () => usePaymentsStore((s) => s.transactionsCursorStack);
+  const integrityResult = () => usePaymentsStore((s) => s.integrityResult);
   const fetchTransactions = usePaymentsStore((s) => s.fetchTransactions);
   const fetchNextTransactions = usePaymentsStore((s) => s.fetchNextTransactions);
   const fetchPrevTransactions = usePaymentsStore((s) => s.fetchPrevTransactions);
@@ -78,15 +79,16 @@ export default function PaymentsPanel(): React.ReactNode {
   const fetchBudget = usePaymentsStore((s) => s.fetchBudget);
   const deletePolicy = usePaymentsStore((s) => s.deletePolicy);
   const checkAfford = usePaymentsStore((s) => s.checkAfford);
-  const affordResult = usePaymentsStore((s) => s.affordResult);
+  const affordResult = () => usePaymentsStore((s) => s.affordResult);
   const createPolicy = usePaymentsStore((s) => s.createPolicy);
-  const approvals = usePaymentsStore((s) => s.approvals);
-  const approvalsLoading = usePaymentsStore((s) => s.approvalsLoading);
-  const selectedApprovalIndex = usePaymentsStore((s) => s.selectedApprovalIndex);
+  const approvals = () => usePaymentsStore((s) => s.approvals);
+  const approvalsLoading = () => usePaymentsStore((s) => s.approvalsLoading);
+  const selectedApprovalIndex = () => usePaymentsStore((s) => s.selectedApprovalIndex);
   const fetchApprovals = usePaymentsStore((s) => s.fetchApprovals);
   const requestApproval = usePaymentsStore((s) => s.requestApproval);
   const approveRequest = usePaymentsStore((s) => s.approveRequest);
   const rejectRequest = usePaymentsStore((s) => s.rejectRequest);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const setSelectedApprovalIndex = usePaymentsStore((s) => s.setSelectedApprovalIndex);
   const setActiveTab = usePaymentsStore((s) => s.setActiveTab);
   const setSelectedReservationIndex = usePaymentsStore(
@@ -95,53 +97,51 @@ export default function PaymentsPanel(): React.ReactNode {
   const setSelectedTransactionIndex = usePaymentsStore(
     (s) => s.setSelectedTransactionIndex,
   );
-  const [selectedPolicyIndex, setSelectedPolicyIndex] = useState(0);
+  const [selectedPolicyIndex, setSelectedPolicyIndex] = createSignal(0);
 
   const visibleTabs = useVisibleTabs(PAYMENTS_TABS);
-  useTabFallback(visibleTabs, activeTab, setActiveTab);
+  useTabFallback(visibleTabs, activeTab(), setActiveTab);
 
   // Clamp selectedPolicyIndex when policies list shrinks (e.g. after delete)
-  useEffect(() => {
-    if (policies.length > 0 && selectedPolicyIndex >= policies.length) {
-      setSelectedPolicyIndex(Math.max(0, policies.length - 1));
+  createEffect(() => {
+    if (policies().length > 0 && selectedPolicyIndex() >= policies().length) {
+      setSelectedPolicyIndex(Math.max(0, policies().length - 1));
     }
-  }, [policies.length, selectedPolicyIndex]);
+  });
 
-  const handleTransferSubmit = useCallback(
-    async (to: string, amount: string, memo: string) => {
+  const handleTransferSubmit = async (to: string, amount: string, memo: string) => {
       if (!client) return;
       const ok = await confirm("Transfer funds?", `Transfer ${amount} credits to ${to}. This cannot be undone.`);
       if (!ok) return;
       transfer(to, amount, memo, client);
       setShowTransfer(false);
-    },
-    [client, transfer, confirm],
-  );
+    };
 
-  const handleTransferCancel = useCallback(() => {
+  const handleTransferCancel = () => {
     setShowTransfer(false);
-  }, []);
+  };
 
   // Refresh current view based on active tab.
   // Reservations are tracked locally, so no fetch is needed for that tab.
-  const refreshCurrentView = useCallback((): void => {
+  const refreshCurrentView = (): void => {
     if (!client) return;
+    const tab = usePaymentsStore.getState().activeTab;
 
-    if (activeTab === "balance") {
+    if (tab === "balance") {
       fetchBalance(client);
-    } else if (activeTab === "transactions") {
+    } else if (tab === "transactions") {
       fetchTransactions(client);
-    } else if (activeTab === "policies") {
+    } else if (tab === "policies") {
       fetchPolicies(client);
-    } else if (activeTab === "approvals") {
+    } else if (tab === "approvals") {
       fetchApprovals(client);
     }
-  }, [client, activeTab, fetchBalance, fetchTransactions, fetchPolicies, fetchApprovals]);
+  };
 
   // Auto-fetch when tab changes
-  useEffect(() => {
+  createEffect(() => {
     refreshCurrentView();
-  }, [refreshCurrentView]);
+  });
 
   // Text input for afford check (numbers-only)
   const affordInput = useTextInput({
@@ -159,46 +159,44 @@ export default function PaymentsPanel(): React.ReactNode {
   });
 
   // Shared list navigation (j/k/up/down/g/G) — switches per active tab
+  // Callbacks read from getState() for fresh values at action time
   const listNav = listNavigationBindings({
     getIndex: () => {
-      if (activeTab === "reservations") return selectedReservationIndex;
-      if (activeTab === "transactions") return selectedTransactionIndex;
-      if (activeTab === "policies") return selectedPolicyIndex;
-      if (activeTab === "approvals") return selectedApprovalIndex;
+      const s = usePaymentsStore.getState();
+      if (s.activeTab === "reservations") return s.selectedReservationIndex;
+      if (s.activeTab === "transactions") return s.selectedTransactionIndex;
+      if (s.activeTab === "policies") return selectedPolicyIndex();
+      if (s.activeTab === "approvals") return s.selectedApprovalIndex;
       return 0;
     },
     setIndex: (i) => {
-      if (activeTab === "reservations") setSelectedReservationIndex(i);
-      else if (activeTab === "transactions") setSelectedTransactionIndex(i);
-      else if (activeTab === "policies") setSelectedPolicyIndex(i);
-      else if (activeTab === "approvals") setSelectedApprovalIndex(i);
+      const tab = usePaymentsStore.getState().activeTab;
+      if (tab === "reservations") setSelectedReservationIndex(i);
+      else if (tab === "transactions") setSelectedTransactionIndex(i);
+      else if (tab === "policies") setSelectedPolicyIndex(i);
+      else if (tab === "approvals") setSelectedApprovalIndex(i);
     },
     getLength: () => {
-      if (activeTab === "reservations") return reservations.length;
-      if (activeTab === "transactions") return transactions.length;
-      if (activeTab === "policies") return policies.length;
-      if (activeTab === "approvals") return approvals.length;
+      const s = usePaymentsStore.getState();
+      if (s.activeTab === "reservations") return s.reservations.length;
+      if (s.activeTab === "transactions") return s.transactions.length;
+      if (s.activeTab === "policies") return s.policies.length;
+      if (s.activeTab === "approvals") return s.approvals.length;
       return 0;
     },
   });
 
-  // Determine which input mode (if any) is active for useKeyboard routing
-  const anyInputActive = affordInput.active || policyInput.active || approvalInputMode;
-
   useKeyboard(
-    overlayActive
-      ? {}
-      : showTransfer
-      ? {}
-      : affordInput.active
-        ? affordInput.inputBindings
-        : policyInput.active
-          ? policyInput.inputBindings
-          : approvalInputMode
-            ? {
+    (): Record<string, () => void> => {
+      if (useUiStore.getState().overlayActive) return {};
+      if (showTransfer()) return {};
+      if (affordInput.active) return affordInput.inputBindings;
+      if (policyInput.active) return policyInput.inputBindings;
+      if (approvalInputMode()) {
+        return {
                 return: () => {
-                  const amount = parseFloat(approvalAmountBuffer.trim());
-                  const purpose = approvalPurposeBuffer.trim();
+                  const amount = parseFloat(approvalAmountBuffer().trim());
+                  const purpose = approvalPurposeBuffer().trim();
                   if (Number.isFinite(amount) && purpose && client) {
                     requestApproval(amount, purpose, client);
                   }
@@ -214,7 +212,7 @@ export default function PaymentsPanel(): React.ReactNode {
                   setApprovalField("amount");
                 },
                 backspace: () => {
-                  if (approvalField === "amount") {
+                  if (approvalField() === "amount") {
                     setApprovalAmountBuffer((b) => b.slice(0, -1));
                   } else {
                     setApprovalPurposeBuffer((b) => b.slice(0, -1));
@@ -223,31 +221,36 @@ export default function PaymentsPanel(): React.ReactNode {
                 tab: () => {
                   setApprovalField((f) => f === "amount" ? "purpose" : "amount");
                 },
-              }
-            : {
+              };
+      }
+
+      const tab = usePaymentsStore.getState().activeTab;
+      return {
           ...listNav,
-          ...subTabCycleBindings(visibleTabs, activeTab, setActiveTab),
+          ...subTabCycleBindings(visibleTabs, tab, setActiveTab),
           t: () => {
             setShowTransfer(true);
           },
           r: () => refreshCurrentView(),
           c: () => {
-            if (activeTab !== "reservations" || !client) return;
-            const selected = reservations[selectedReservationIndex];
+            const s = usePaymentsStore.getState();
+            if (s.activeTab !== "reservations" || !client) return;
+            const selected = s.reservations[s.selectedReservationIndex];
             if (selected && selected.status === "pending") {
               commitReservation(selected.id, client);
             }
           },
           x: async () => {
-            if (activeTab === "reservations" && client) {
-              const selected = reservations[selectedReservationIndex];
+            const s = usePaymentsStore.getState();
+            if (s.activeTab === "reservations" && client) {
+              const selected = s.reservations[s.selectedReservationIndex];
               if (selected && selected.status === "pending") {
                 const ok = await confirm("Release reservation?", `Release reservation ${selected.id}. Reserved funds will be returned.`);
                 if (!ok) return;
                 releaseReservation(selected.id, client);
               }
-            } else if (activeTab === "approvals" && client) {
-              const selected = approvals[selectedApprovalIndex];
+            } else if (s.activeTab === "approvals" && client) {
+              const selected = s.approvals[s.selectedApprovalIndex];
               if (selected && selected.status === "pending") {
                 const ok = await confirm("Reject approval?", `Reject spending approval request ${selected.id}.`);
                 if (!ok) return;
@@ -256,8 +259,9 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           d: async () => {
-            if (activeTab !== "policies" || !client) return;
-            const selected = policies[selectedPolicyIndex];
+            const s = usePaymentsStore.getState();
+            if (s.activeTab !== "policies" || !client) return;
+            const selected = s.policies[selectedPolicyIndex()];
             if (selected) {
               const ok = await confirm("Delete policy?", "Delete spending policy. This cannot be undone.");
               if (!ok) return;
@@ -265,29 +269,31 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           b: () => {
-            if (activeTab !== "policies" || !client) return;
+            if (usePaymentsStore.getState().activeTab !== "policies" || !client) return;
             fetchBudget(client);
           },
           "]": () => {
-            if (activeTab !== "transactions" || !client) return;
+            if (usePaymentsStore.getState().activeTab !== "transactions" || !client) return;
             fetchNextTransactions(client);
           },
           "[": () => {
-            if (activeTab !== "transactions" || !client) return;
+            if (usePaymentsStore.getState().activeTab !== "transactions" || !client) return;
             fetchPrevTransactions(client);
           },
           i: () => {
-            if (activeTab !== "transactions" || !client) return;
-            const selected = transactions[selectedTransactionIndex];
+            const s = usePaymentsStore.getState();
+            if (s.activeTab !== "transactions" || !client) return;
+            const selected = s.transactions[s.selectedTransactionIndex];
             if (selected) {
               verifyIntegrity(selected.id, client);
             }
           },
           a: async () => {
-            if (activeTab === "balance") {
+            const s = usePaymentsStore.getState();
+            if (s.activeTab === "balance") {
               affordInput.activate();
-            } else if (activeTab === "approvals" && client) {
-              const selected = approvals[selectedApprovalIndex];
+            } else if (s.activeTab === "approvals" && client) {
+              const selected = s.approvals[s.selectedApprovalIndex];
               if (selected && selected.status === "pending") {
                 const ok = await confirm("Approve request?", `Approve spending request ${selected.id} for ${selected.amount}.`);
                 if (!ok) return;
@@ -296,7 +302,7 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           n: () => {
-            if (activeTab === "approvals") {
+            if (usePaymentsStore.getState().activeTab === "approvals") {
               setApprovalInputMode(true);
               setApprovalAmountBuffer("");
               setApprovalPurposeBuffer("");
@@ -304,41 +310,43 @@ export default function PaymentsPanel(): React.ReactNode {
             }
           },
           "shift+n": () => {
-            if (activeTab === "policies") {
+            if (usePaymentsStore.getState().activeTab === "policies") {
               policyInput.activate();
             }
           },
           y: () => {
-            if (activeTab === "transactions") {
-              const selected = transactions[selectedTransactionIndex];
+            const s = usePaymentsStore.getState();
+            if (s.activeTab === "transactions") {
+              const selected = s.transactions[s.selectedTransactionIndex];
               if (selected) copy(selected.id);
             }
           },
-        },
-    !overlayActive && anyInputActive
-      ? affordInput.active
-        ? affordInput.onUnhandled
-        : policyInput.active
-          ? policyInput.onUnhandled
-          : approvalInputMode
-            ? (keyName: string) => {
-                if (approvalField === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
+        };
+    },
+    () => {
+      if (useUiStore.getState().overlayActive) return undefined;
+      if (affordInput.active) return affordInput.onUnhandled;
+      if (policyInput.active) return policyInput.onUnhandled;
+      if (approvalInputMode()) {
+        return (keyName: string) => {
+                if (approvalField() === "amount" && keyName.length === 1 && /[\d.]/.test(keyName)) {
                   setApprovalAmountBuffer((b) => b + keyName);
-                } else if (approvalField === "purpose" && keyName.length === 1) {
+                } else if (approvalField() === "purpose" && keyName.length === 1) {
                   setApprovalPurposeBuffer((b) => b + keyName);
-                } else if (approvalField === "purpose" && keyName === "space") {
+                } else if (approvalField() === "purpose" && keyName === "space") {
                   setApprovalPurposeBuffer((b) => b + " ");
                 }
-              }
-            : undefined
-      : undefined,
+              };
+      }
+      return undefined;
+    },
   );
 
   return (
     <BrickGate brick="pay">
       <box height="100%" width="100%" flexDirection="column">
         {/* Tab bar */}
-        <SubTabBar tabs={visibleTabs} activeTab={activeTab} onSelect={setActiveTab as (id: string) => void} />
+        <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
         {/* Afford check input */}
         {affordInput.active && (
@@ -355,79 +363,79 @@ export default function PaymentsPanel(): React.ReactNode {
         )}
 
         {/* Approval request input (inline bar) */}
-        {approvalInputMode && (
+        {approvalInputMode() && (
           <box height={1} width="100%">
             <text>
-              {approvalField === "amount"
-                ? `Amount: ${approvalAmountBuffer}\u2588 \u2502 Purpose: ${approvalPurposeBuffer}  (Tab:next  Enter:submit  Esc:cancel)`
-                : `Amount: ${approvalAmountBuffer} \u2502 Purpose: ${approvalPurposeBuffer}\u2588  (Tab:next  Enter:submit  Esc:cancel)`}
+              {approvalField() === "amount"
+                ? `Amount: ${approvalAmountBuffer()}\u2588 \u2502 Purpose: ${approvalPurposeBuffer()}  (Tab:next  Enter:submit  Esc:cancel)`
+                : `Amount: ${approvalAmountBuffer()} \u2502 Purpose: ${approvalPurposeBuffer()}\u2588  (Tab:next  Enter:submit  Esc:cancel)`}
             </text>
           </box>
         )}
 
         {/* Error display — 404 means the pay API routes aren't registered */}
-        {error && (
+        {error() && (
           <box height={1} width="100%">
-            <text>{error.includes("Not Found") || error.includes("404")
+            <text>{error()!.includes("Not Found") || error()!.includes("404")
               ? "Payment APIs not available on this server. The pay brick is enabled but REST routes are not registered."
-              : `Error: ${error}`}</text>
+              : `Error: ${error()}`}</text>
           </box>
         )}
 
         {/* Detail content */}
         <box flexGrow={1} borderStyle="single">
-          {showTransfer ? (
+          {showTransfer() ? (
             <TransferForm
               onSubmit={handleTransferSubmit}
               onCancel={handleTransferCancel}
             />
           ) : (
             <>
-              {activeTab === "balance" && (
+              {activeTab() === "balance" && (
                 <>
-                  <BalanceCard balance={balance} loading={balanceLoading} />
-                  {affordResult && (
+                  <BalanceCard balance={balance()} loading={balanceLoading()} />
+                  {affordResult() && (
                     <box height={1} width="100%" marginTop={1}>
                       <text>
-                        {`Afford check: ${affordResult.can_afford ? "YES" : "NO"} (balance=${affordResult.balance} requested=${affordResult.requested})`}
+                        {`Afford check: ${affordResult()!.can_afford ? "YES" : "NO"} (balance=${affordResult()!.balance} requested=${affordResult()!.requested})`}
                       </text>
                     </box>
                   )}
                 </>
               )}
-              {activeTab === "reservations" && (
+              {activeTab() === "reservations" && (
                 <ReservationList
-                  reservations={reservations}
-                  selectedIndex={selectedReservationIndex}
-                  loading={reservationsLoading}
+                  reservations={reservations()}
+                  selectedIndex={selectedReservationIndex()}
+                  loading={reservationsLoading()}
                 />
               )}
-              {activeTab === "transactions" && (
+              {activeTab() === "transactions" && (
                 <TransactionList
-                  transactions={transactions}
-                  selectedIndex={selectedTransactionIndex}
-                  loading={transactionsLoading}
-                  hasMore={transactionsHasMore}
-                  hasPrev={transactionsCursorStack.length > 0}
-                  currentPage={transactionsCursorStack.length + 1}
-                  integrityResult={integrityResult}
+                  transactions={transactions()}
+                  selectedIndex={selectedTransactionIndex()}
+                  loading={transactionsLoading()}
+                  hasMore={transactionsHasMore()}
+                  hasPrev={transactionsCursorStack().length > 0}
+                  currentPage={transactionsCursorStack().length + 1}
+                  integrityResult={integrityResult()}
                 />
               )}
-              {activeTab === "policies" && (
+              {activeTab() === "policies" && (
                 <box flexDirection="column" height="100%" width="100%">
-                  <BudgetCard budget={budget} loading={budgetLoading} />
+                  <BudgetCard budget={budget()} loading={budgetLoading()} />
                   <PolicyList
-                    policies={policies}
-                    selectedIndex={selectedPolicyIndex}
-                    loading={policiesLoading}
+                    policies={policies()}
+                    selectedIndex={selectedPolicyIndex()}
+                    loading={policiesLoading()}
                   />
                 </box>
               )}
-              {activeTab === "approvals" && (
+              {activeTab() === "approvals" && (
                 <ApprovalList
-                  approvals={approvals}
-                  selectedIndex={selectedApprovalIndex}
-                  loading={approvalsLoading}
+                  approvals={approvals()}
+                  selectedIndex={selectedApprovalIndex()}
+                  loading={approvalsLoading()}
                 />
               )}
             </>
@@ -439,9 +447,9 @@ export default function PaymentsPanel(): React.ReactNode {
           {copied
             ? <text style={textStyle({ fg: "green" })}>Copied!</text>
             : <text>
-            {showTransfer
+            {showTransfer()
               ? "Tab:next field  Enter:submit  Escape:cancel"
-              : HELP_TEXT[activeTab] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
+              : HELP_TEXT[activeTab()] ?? "j/k:navigate  Tab:switch tab  r:refresh  q:quit"}
           </text>}
         </box>
       </box>

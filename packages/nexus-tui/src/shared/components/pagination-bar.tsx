@@ -6,7 +6,7 @@
  * @see Issue #3066, Phase E4
  */
 
-import React from "react";
+import { Show } from "solid-js";
 import { statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
 
@@ -34,34 +34,26 @@ export function formatPageDisplay(currentPage: number, hasMore: boolean, totalPa
     : `Page ${currentPage}${hasMore ? "+" : ""}`;
 }
 
-export function PaginationBar({
-  hasMore,
-  hasPrev,
-  currentPage,
-  totalPages,
-  nextKey = "]",
-  prevKey = "[",
-  loading = false,
-}: PaginationBarProps): React.ReactNode {
-  const pageDisplay = formatPageDisplay(currentPage, hasMore, totalPages);
+export function PaginationBar(props: PaginationBarProps) {
+  const pageDisplay = formatPageDisplay(props.currentPage, props.hasMore, props.totalPages);
 
   return (
     <box height={1} width="100%" flexDirection="row">
       <text style={textStyle({ dim: true })}>
-        {hasPrev && (
+        <Show when={props.hasPrev}>
           <span>
-            <span style={textStyle({ fg: statusColor.info })}>{prevKey}</span>
+            <span style={textStyle({ fg: statusColor.info })}>{props.prevKey ?? "["}</span>
             <span>{":prev "}</span>
           </span>
-        )}
-        <span>{loading ? "Loading..." : pageDisplay}</span>
-        {hasMore && (
+        </Show>
+        <span>{props.loading ? "Loading..." : pageDisplay}</span>
+        <Show when={props.hasMore}>
           <span>
             <span>{" "}</span>
-            <span style={textStyle({ fg: statusColor.info })}>{nextKey}</span>
+            <span style={textStyle({ fg: statusColor.info })}>{props.nextKey ?? "]"}</span>
             <span>{":next"}</span>
           </span>
-        )}
+        </Show>
       </text>
     </box>
   );

@@ -1,10 +1,10 @@
+import type { JSX } from "solid-js";
 /**
  * Access manifest list: shows manifests with name, agent, zone, status, entries count, validity.
  * When entries are loaded (via fetchManifestDetail), shows the tuple entries inline
  * for the selected manifest — this serves as the tuple browser.
  */
 
-import React from "react";
 import type { AccessManifest } from "../../stores/access-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 
@@ -27,79 +27,78 @@ function formatTimestamp(ts: string): string {
   }
 }
 
-export function ManifestList({
-  manifests,
-  selectedIndex,
-  loading,
-}: ManifestListProps): React.ReactNode {
-  if (loading) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>Loading manifests...</text>
-      </box>
-    );
-  }
-
-  if (manifests.length === 0) {
-    return <EmptyState message="No manifests found." hint="Press c to create a manifest." />;
-  }
-
-  const selected = manifests[selectedIndex];
-  const entries = selected?.entries;
-
+export function ManifestList(props: ManifestListProps): JSX.Element {
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <scrollbox flexGrow={1} width="100%">
-        {/* Header */}
-        <box height={1} width="100%">
-          <text>{"  NAME             AGENT            ZONE             STATUS     ENTRIES  VALID FROM         VALID UNTIL"}</text>
-        </box>
-        <box height={1} width="100%">
-          <text>{"  ---------------  ---------------  ---------------  ---------  -------  -----------------  -----------------"}</text>
-        </box>
+      <text>
+        {props.loading
+          ? "Loading manifests..."
+          : props.manifests.length === 0
+            ? "No manifests found. Press c to create a manifest."
+            : `${props.manifests.length} manifests`}
+      </text>
 
-        {/* Rows */}
-        {manifests.map((m, i) => {
-          const isSelected = i === selectedIndex;
-          const prefix = isSelected ? "> " : "  ";
-          const entriesCount = String(m.entries?.length ?? "-");
+      {(() => {
+        if (props.loading || props.manifests.length === 0) return null;
+        const selected = props.manifests[props.selectedIndex];
+        const entries = selected?.entries;
 
-          return (
-            <box key={m.manifest_id} height={1} width="100%">
-              <text>
-                {`${prefix}${shortId(m.name).padEnd(15)}  ${shortId(m.agent_id).padEnd(15)}  ${shortId(m.zone_id).padEnd(15)}  ${m.status.padEnd(9)}  ${entriesCount.padEnd(7)}  ${formatTimestamp(m.valid_from).padEnd(17)}  ${formatTimestamp(m.valid_until)}`}
-              </text>
-            </box>
-          );
-        })}
-      </scrollbox>
-
-      {/* Tuple entries for selected manifest (shown when loaded via Enter) */}
-      {entries && entries.length > 0 && (
-        <box height={Math.min(entries.length + 2, 8)} width="100%" flexDirection="column" borderStyle="single">
-          <box height={1} width="100%">
-            <text>{`Entries (tuples) for ${selected.name}:`}</text>
-          </box>
-          {entries.map((e, i) => {
-            const rateStr = e.max_calls_per_minute
-              ? `  rate=${e.max_calls_per_minute}/min`
-              : "";
-            return (
-              <box key={`${e.tool_pattern}-${i}`} height={1} width="100%">
-                <text>
-                  {`  ${e.tool_pattern.padEnd(30)} ${e.permission.padEnd(6)}${rateStr}`}
-                </text>
+        return (
+          <>
+            <scrollbox flexGrow={1} width="100%">
+              {/* Header */}
+              <box height={1} width="100%">
+                <text>{"  NAME             AGENT            ZONE             STATUS     ENTRIES  VALID FROM         VALID UNTIL"}</text>
               </box>
-            );
-          })}
-        </box>
-      )}
+              <box height={1} width="100%">
+                <text>{"  ---------------  ---------------  ---------------  ---------  -------  -----------------  -----------------"}</text>
+              </box>
 
-      {entries !== undefined && entries.length === 0 && (
-        <box height={1} width="100%">
-          <text>{`No entries (tuples) for ${selected?.name ?? "manifest"}`}</text>
-        </box>
-      )}
+              {/* Rows */}
+              {props.manifests.map((m, i) => {
+                const isSelected = i === props.selectedIndex;
+                const prefix = isSelected ? "> " : "  ";
+                const entriesCount = String(m.entries?.length ?? "-");
+
+                return (
+                  <box key={m.manifest_id} height={1} width="100%">
+                    <text>
+                      {`${prefix}${shortId(m.name).padEnd(15)}  ${shortId(m.agent_id).padEnd(15)}  ${shortId(m.zone_id).padEnd(15)}  ${m.status.padEnd(9)}  ${entriesCount.padEnd(7)}  ${formatTimestamp(m.valid_from).padEnd(17)}  ${formatTimestamp(m.valid_until)}`}
+                    </text>
+                  </box>
+                );
+              })}
+            </scrollbox>
+
+            {/* Tuple entries for selected manifest (shown when loaded via Enter) */}
+            {entries && entries.length > 0 && (
+              <box height={Math.min(entries.length + 2, 8)} width="100%" flexDirection="column" borderStyle="single">
+                <box height={1} width="100%">
+                  <text>{`Entries (tuples) for ${selected.name}:`}</text>
+                </box>
+                {entries.map((e, i) => {
+                  const rateStr = e.max_calls_per_minute
+                    ? `  rate=${e.max_calls_per_minute}/min`
+                    : "";
+                  return (
+                    <box key={`${e.tool_pattern}-${i}`} height={1} width="100%">
+                      <text>
+                        {`  ${e.tool_pattern.padEnd(30)} ${e.permission.padEnd(6)}${rateStr}`}
+                      </text>
+                    </box>
+                  );
+                })}
+              </box>
+            )}
+
+            {entries !== undefined && entries.length === 0 && (
+              <box height={1} width="100%">
+                <text>{`No entries (tuples) for ${selected?.name ?? "manifest"}`}</text>
+              </box>
+            )}
+          </>
+        );
+      })()}
     </box>
   );
 }

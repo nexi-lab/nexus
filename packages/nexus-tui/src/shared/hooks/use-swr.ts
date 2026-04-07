@@ -7,7 +7,7 @@
  * - Aborts in-flight requests on key change or unmount (Issue #3102)
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { LruCache } from "../utils/lru-cache.js";
 
 interface SwrOptions {
@@ -25,6 +25,8 @@ interface SwrResult<T> {
   readonly mutate: () => void;
 }
 
+type SwrKey = string | (() => string);
+
 // =============================================================================
 // Module-level cache shared across hook instances (Decision 7A)
 // =============================================================================
@@ -33,85 +35,63 @@ interface SwrResult<T> {
 export const swrCache = new LruCache(200);
 
 export function useSwr<T>(
-  key: string,
+  key: SwrKey,
   fetcher: (signal: AbortSignal) => Promise<T>,
   options?: SwrOptions,
 ): SwrResult<T> {
   const ttlMs = options?.ttlMs ?? 30_000;
   const enabled = options?.enabled ?? true;
 
-  const [data, setData] = useState<T | undefined>(() => {
-    const cached = swrCache.get(key) as { data: T; fetchedAt: number } | undefined;
-    return cached?.data;
-  });
-  const [error, setError] = useState<Error | undefined>();
-  const [isLoading, setIsLoading] = useState(false);
-  const fetcherRef = useRef(fetcher);
-  fetcherRef.current = fetcher;
-
-  // Track the active key so in-flight fetches for stale keys are discarded
-  const activeKeyRef = useRef(key);
-  activeKeyRef.current = key;
-
-  // Track the active AbortController for cancellation (Issue #3102, Decision 3A)
-  const controllerRef = useRef<AbortController | null>(null);
-
-  // Reset data to cached value (or undefined) when key changes
-  useEffect(() => {
-    const cached = swrCache.get(key) as { data: T; fetchedAt: number } | undefined;
-    setData(cached?.data);
-  }, [key]);
-
-  const isStale = (() => {
-    const cached = swrCache.get(key);
+  let controller: AbortController | null = null;
+  const [refreshToken, setRefreshToken] = createSignal(0);
+  const resolvedKey = createMemo(() => typeof key === "function" ? key() : key);
+  const cacheEntry = createMemo(() => swrCache.get(resolvedKey()) as { data: T; fetchedAt: number } | undefined);
+  const isStale = createMemo(() => {
+    const cached = cacheEntry();
     if (!cached) return true;
     return Date.now() - cached.fetchedAt > ttlMs;
-  })();
+  });
 
-  const doFetch = useCallback(async () => {
-    const fetchKey = key; // capture for closure
-
-    // Abort any previous in-flight fetch
-    controllerRef.current?.abort();
-    const controller = new AbortController();
-    controllerRef.current = controller;
-
-    setIsLoading(true);
-    setError(undefined);
-    try {
-      const result = await fetcherRef.current(controller.signal);
-      // Only update if this key is still the active one
-      if (activeKeyRef.current !== fetchKey) return;
-      swrCache.set(key, { data: result, fetchedAt: Date.now() });
-      setData(result);
-    } catch (err) {
-      // Suppress AbortError — it's expected when we cancel
-      if (err instanceof DOMException && err.name === "AbortError") return;
-      if (activeKeyRef.current !== fetchKey) return;
-      setError(err instanceof Error ? err : new Error(String(err)));
-    } finally {
-      if (activeKeyRef.current === fetchKey) {
-        setIsLoading(false);
+  const [resource, { refetch }] = createResource(
+    () => enabled ? { key: resolvedKey(), refreshToken: refreshToken() } : null,
+    async (source) => {
+      if (!source) return cacheEntry()?.data as T | undefined;
+      const currentKey = source.key;
+      const cached = swrCache.get(currentKey) as { data: T; fetchedAt: number } | undefined;
+      if (cached && Date.now() - cached.fetchedAt <= ttlMs) {
+        return cached.data;
       }
-    }
-  }, [key]);
+      controller?.abort();
+      controller = new AbortController();
+      const result = await fetcher(controller.signal);
+      swrCache.set(currentKey, { data: result, fetchedAt: Date.now() });
+      return result;
+    },
+    {
+      initialValue: cacheEntry()?.data as T | undefined,
+    },
+  );
 
-  useEffect(() => {
-    if (!enabled) return;
-    if (isStale) {
-      doFetch();
-    }
+  onCleanup(() => controller?.abort());
 
-    // Abort in-flight request on unmount or key change
-    return () => {
-      controllerRef.current?.abort();
-    };
-  }, [key, enabled, isStale, doFetch]);
-
-  const mutate = useCallback(() => {
-    swrCache.delete(key);
-    doFetch();
-  }, [key, doFetch]);
-
-  return { data, error, isLoading, isStale, mutate };
+  return {
+    get data() {
+      return resource() ?? cacheEntry()?.data;
+    },
+    get error() {
+      const current = resource.error;
+      return current instanceof Error ? current : current ? new Error(String(current)) : undefined;
+    },
+    get isLoading() {
+      return resource.loading;
+    },
+    get isStale() {
+      return isStale();
+    },
+    mutate() {
+      swrCache.delete(resolvedKey());
+      setRefreshToken((value) => value + 1);
+      void refetch();
+    },
+  };
 }

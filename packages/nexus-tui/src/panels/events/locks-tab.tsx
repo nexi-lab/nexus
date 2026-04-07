@@ -4,7 +4,8 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { listNavigationBindings } from "../../shared/hooks/use-list-navigation.js";
@@ -18,22 +19,22 @@ interface LocksTabProps {
   readonly overlayActive: boolean;
 }
 
-export function LocksTab({ tabBindings, overlayActive }: LocksTabProps): React.ReactNode {
+export function LocksTab(props: LocksTabProps): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
 
-  const locks = useInfraStore((s) => s.locks);
-  const locksLoading = useInfraStore((s) => s.locksLoading);
-  const selectedLockIndex = useInfraStore((s) => s.selectedLockIndex);
+  const locks = () => useInfraStore((s) => s.locks);
+  const locksLoading = () => useInfraStore((s) => s.locksLoading);
+  const selectedLockIndex = () => useInfraStore((s) => s.selectedLockIndex);
   const setSelectedLockIndex = useInfraStore((s) => s.setSelectedLockIndex);
   const fetchLocks = useInfraStore((s) => s.fetchLocks);
   const acquireLock = useInfraStore((s) => s.acquireLock);
   const releaseLock = useInfraStore((s) => s.releaseLock);
   const extendLock = useInfraStore((s) => s.extendLock);
 
-  useEffect(() => {
+  createEffect(() => {
     if (client) fetchLocks(client);
-  }, [client, fetchLocks]);
+  });
 
   const acquireInput = useTextInput({
     onSubmit: (val) => {
@@ -41,40 +42,39 @@ export function LocksTab({ tabBindings, overlayActive }: LocksTabProps): React.R
     },
   });
 
-  const listNav = listNavigationBindings({
-    getIndex: () => selectedLockIndex,
-    setIndex: (i) => setSelectedLockIndex(i),
-    getLength: () => locks.length,
-  });
-
   useKeyboard(
-    overlayActive
-      ? {}
-      : acquireInput.active
-      ? acquireInput.inputBindings
-      : {
-          ...listNav,
-          ...tabBindings,
-          n: () => acquireInput.activate(""),
-          d: async () => {
-            if (client) {
-              const lock = locks[selectedLockIndex];
-              if (lock) {
-                const ok = await confirm("Release lock?", "Release this lock. Other waiters may acquire it.");
-                if (!ok) return;
-                releaseLock(lock.resource, lock.lock_id, client);
-              }
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      if (acquireInput.active) return acquireInput.inputBindings;
+      const listNav = listNavigationBindings({
+        getIndex: () => selectedLockIndex(),
+        setIndex: (i) => setSelectedLockIndex(i),
+        getLength: () => locks().length,
+      });
+      return {
+        ...listNav,
+        ...props.tabBindings,
+        n: () => acquireInput.activate(""),
+        d: async () => {
+          if (client) {
+            const lock = locks()[selectedLockIndex()];
+            if (lock) {
+              const ok = await confirm("Release lock?", "Release this lock. Other waiters may acquire it.");
+              if (!ok) return;
+              releaseLock(lock.resource, lock.lock_id, client);
             }
-          },
-          e: () => {
-            if (client) {
-              const lock = locks[selectedLockIndex];
-              if (lock) extendLock(lock.resource, lock.lock_id, 60, client);
-            }
-          },
-          r: () => { if (client) fetchLocks(client); },
+          }
         },
-    overlayActive ? undefined : acquireInput.active ? acquireInput.onUnhandled : undefined,
+        e: () => {
+          if (client) {
+            const lock = locks()[selectedLockIndex()];
+            if (lock) extendLock(lock.resource, lock.lock_id, 60, client);
+          }
+        },
+        r: () => { if (client) fetchLocks(client); },
+      };
+    },
+    () => props.overlayActive ? undefined : acquireInput.active ? acquireInput.onUnhandled : undefined,
   );
 
   return (
@@ -86,9 +86,9 @@ export function LocksTab({ tabBindings, overlayActive }: LocksTabProps): React.R
       )}
       <box flexGrow={1} width="100%" borderStyle="single">
         <LockList
-          locks={locks}
-          selectedIndex={selectedLockIndex}
-          loading={locksLoading}
+          locks={locks()}
+          selectedIndex={selectedLockIndex()}
+          loading={locksLoading()}
         />
       </box>
       <box height={1} width="100%">

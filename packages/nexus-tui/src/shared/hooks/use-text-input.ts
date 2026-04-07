@@ -26,7 +26,7 @@
  * ```
  */
 
-import { useState, useCallback, useRef } from "react";
+import { createSignal } from "solid-js";
 
 export interface UseTextInputOptions {
   /** Called when Enter is pressed. Receives the trimmed buffer value. */
@@ -64,50 +64,56 @@ export interface UseTextInputReturn {
 }
 
 export function useTextInput(options: UseTextInputOptions): UseTextInputReturn {
-  const [active, setActive] = useState(false);
-  const [buffer, setBuffer] = useState("");
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
+  const [active, setActive] = createSignal(false);
+  const [buffer, setBuffer] = createSignal("");
 
-  const activate = useCallback((initialValue?: string) => {
+  const activate = (initialValue?: string) => {
     setBuffer(initialValue ?? "");
     setActive(true);
-  }, []);
+  };
 
-  const deactivate = useCallback(() => {
+  const deactivate = () => {
     setBuffer("");
     setActive(false);
-  }, []);
+  };
 
   const inputBindings: Record<string, () => void> = {
     return: () => {
       setActive(false);
-      optionsRef.current.onSubmit(buffer);
+      options.onSubmit(buffer());
     },
     escape: () => {
       setActive(false);
       setBuffer("");
-      optionsRef.current.onCancel?.();
+      options.onCancel?.();
     },
     backspace: () => {
       setBuffer((b) => b.slice(0, -1));
     },
   };
 
-  const onUnhandled = useCallback(
-    (keyName: string) => {
-      if (!active) return;
-      if (keyName === "space") {
-        setBuffer((b) => b + " ");
-      } else if (keyName.length === 1) {
-        const filter = optionsRef.current.filter;
-        if (!filter || filter(keyName)) {
-          setBuffer((b) => b + keyName);
-        }
+  const onUnhandled = (keyName: string) => {
+    if (!active()) return;
+    if (keyName === "space") {
+      setBuffer((b) => b + " ");
+    } else if (keyName.length === 1) {
+      const filter = options.filter;
+      if (!filter || filter(keyName)) {
+        setBuffer((b) => b + keyName);
       }
-    },
-    [active],
-  );
+    }
+  };
 
-  return { active, buffer, activate, deactivate, inputBindings, onUnhandled };
+  return {
+    get active() {
+      return active();
+    },
+    get buffer() {
+      return buffer();
+    },
+    activate,
+    deactivate,
+    inputBindings,
+    onUnhandled,
+  };
 }

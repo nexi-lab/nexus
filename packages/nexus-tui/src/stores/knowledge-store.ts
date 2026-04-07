@@ -3,7 +3,7 @@
  * Issue #2930.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";

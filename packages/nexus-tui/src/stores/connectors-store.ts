@@ -4,7 +4,7 @@
  * Single store following the one-store-per-panel pattern (Decision 3A).
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import { createApiAction } from "./create-api-action.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useUiStore } from "./ui-store.js";

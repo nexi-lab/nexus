@@ -7,7 +7,7 @@
  * @see Issue #3066 Architecture Decision 8A
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 
 // =============================================================================
 // Types

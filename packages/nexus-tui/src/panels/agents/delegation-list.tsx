@@ -2,7 +2,8 @@
  * Delegation list table with status badges and expandable detail view.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import type { DelegationItem } from "../../stores/agents-store.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -29,17 +30,17 @@ interface PermTuple {
   readonly object_id: string;
 }
 
-function DelegationDetail({ delegation }: { delegation: DelegationItem }): React.ReactNode {
+function DelegationDetail({ delegation }: { delegation: DelegationItem }): JSX.Element {
   const client = useApi();
-  const [perms, setPerms] = useState<readonly PermTuple[]>([]);
+  const [perms, setPerms] = createSignal<readonly PermTuple[]>([]);
 
-  useEffect(() => {
+  createEffect(() => {
     if (!client) return;
     client.get<{ permissions: PermTuple[] }>(
       `/api/v2/agents/${encodeURIComponent(delegation.agent_id)}/permissions`,
     ).then((r) => setPerms(r.permissions))
       .catch(() => setPerms([]));
-  }, [client, delegation.agent_id]);
+  });
 
   return (
     <box height={11 + Math.max(perms.length, 1)} width="100%" borderStyle="single" flexDirection="column">
@@ -56,7 +57,7 @@ function DelegationDetail({ delegation }: { delegation: DelegationItem }): React
       {perms.length === 0 ? (
         <text style={textStyle({ dim: true })}>{"    (none or loading...)"}</text>
       ) : (
-        perms.map((p, i) => {
+        perms().map((p, i) => {
           const tool = p.object_id.replace("/tools/", "");
           const accessLevel = p.relation.replace("direct_", "");
           const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
@@ -88,27 +89,12 @@ function formatExpiry(ts: string | null): string {
   }
 }
 
-export function DelegationList({
-  delegations,
-  selectedIndex,
-  loading,
-  expandedDelegation,
-}: DelegationListProps): React.ReactNode {
-  if (loading) {
-    return <LoadingIndicator message="Loading delegations..." />;
-  }
-
-  if (delegations.length === 0) {
-    return (
-      <box height="100%" width="100%" justifyContent="center" alignItems="center">
-        <text>No delegations found</text>
-      </box>
-    );
-  }
-
+export function DelegationList(props: DelegationListProps): JSX.Element {
+  // Unconditional rendering — avoid if/return which evaluates once in Match branches.
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <scrollbox flexGrow={expandedDelegation ? 0 : 1} width="100%">
+      <text>{props.loading ? "Loading delegations..." : props.delegations.length === 0 ? "No delegations found" : ""}</text>
+      <scrollbox flexGrow={props.expandedDelegation ? 0 : 1} width="100%">
         {/* Header */}
         <box height={1} width="100%">
           <text>{"  ST  ID          MODE    AGENT->PARENT        INTENT               DEPTH  EXPIRES"}</text>
@@ -118,8 +104,8 @@ export function DelegationList({
         </box>
 
         {/* Rows */}
-        {delegations.map((d, i) => {
-          const isSelected = i === selectedIndex;
+        {props.delegations.map((d, i) => {
+          const isSelected = i === props.selectedIndex;
           const badge = STATUS_BADGES[d.status] ?? "?";
           const badgeColor = delegationStatusColor[d.status] ?? statusColor.dim;
           const modeColor = delegationModeColor[d.delegation_mode] ?? statusColor.dim;
@@ -146,8 +132,8 @@ export function DelegationList({
       </scrollbox>
 
       {/* Expanded delegation detail */}
-      {expandedDelegation && (
-        <DelegationDetail delegation={expandedDelegation} />
+      {props.expandedDelegation && (
+        <DelegationDetail delegation={props.expandedDelegation!} />
       )}
     </box>
   );

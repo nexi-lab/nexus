@@ -1,3 +1,5 @@
+import { For } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Audit trail explorer view.
  *
@@ -5,10 +7,8 @@
  * with cursor-based pagination.
  */
 
-import React from "react";
+
 import type { AuditTransaction } from "../../stores/infra-store.js";
-import { Spinner } from "../../shared/components/spinner.js";
-import { EmptyState } from "../../shared/components/empty-state.js";
 import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
 
@@ -19,56 +19,50 @@ export interface AuditTrailProps {
   readonly selectedIndex: number;
 }
 
-export function AuditTrail({
-  transactions,
-  loading,
-  hasMore,
-  selectedIndex,
-}: AuditTrailProps): React.ReactNode {
-  if (loading && transactions.length === 0) {
-    return <Spinner label="Loading audit transactions..." />;
-  }
-
-  if (transactions.length === 0) {
-    return (
-      <EmptyState
-        message="No audit transactions found."
-        hint="Transactions will appear as actions are audited."
-      />
-    );
-  }
-
-  const displayTransactions = transactions.slice(0, 200);
-  const isTruncated = transactions.length > 200;
+export function AuditTrail(props: AuditTrailProps): JSX.Element {
+  const displayTransactions = () => props.transactions.slice(0, 200);
+  const isTruncated = () => props.transactions.length > 200;
 
   return (
     <box flexDirection="column" height="100%" width="100%">
+      <text>
+        {props.loading && props.transactions.length === 0
+          ? "Loading audit transactions..."
+          : props.transactions.length === 0
+            ? "No audit transactions found. Transactions will appear as actions are audited."
+            : `${props.transactions.length} audit transactions`}
+      </text>
+
       {/* Header */}
       <box height={1} width="100%">
         <text>
-          {isTruncated
-            ? `  Showing first 200 of ${transactions.length} — Action           Actor              Resource                       Status    Time`
+          {isTruncated()
+            ? `  Showing first 200 of ${props.transactions.length} — Action           Actor              Resource                       Status    Time`
             : "  Action           Actor              Resource                       Status    Time"}
         </text>
       </box>
 
       {/* Rows */}
       <scrollbox flexGrow={1} width="100%">
-        {displayTransactions.map((tx, i) => {
-          const prefix = i === selectedIndex ? "> " : "  ";
+        <For each={displayTransactions()}>{(tx, i) => {
+          const prefix = () => i() === props.selectedIndex ? "> " : "  ";
           const action = tx.action.padEnd(16).slice(0, 16);
           const actor = tx.actor_id.padEnd(18).slice(0, 18);
           const resource = tx.resource.padEnd(30).slice(0, 30);
           const status = tx.status.padEnd(9).slice(0, 9);
           const time = formatTimestamp(tx.timestamp);
           return (
-            <box key={tx.transaction_id} height={1} width="100%">
-              <text>{`${prefix}${action} ${actor} ${resource} ${status} ${time}`}</text>
+            <box height={1} width="100%">
+              <text>{`${prefix()}${action} ${actor} ${resource} ${status} ${time}`}</text>
             </box>
           );
-        })}
-        {hasMore && <text style={textStyle({ dim: true })}>{"  ... more transactions (press m to load more)"}</text>}
-        {loading && transactions.length > 0 && <text style={textStyle({ dim: true })}>{"  Loading..."}</text>}
+        }}</For>
+        {props.hasMore && (
+          <text style={textStyle({ dim: true })}>{"  ... more transactions (press m to load more)"}</text>
+        )}
+        {props.loading && props.transactions.length > 0 && (
+          <text style={textStyle({ dim: true })}>{"  Loading..."}</text>
+        )}
       </scrollbox>
     </box>
   );

@@ -7,7 +7,6 @@
  * @see Issue #3066 Architecture Decision 8A
  */
 
-import React from "react";
 import { useErrorStore } from "../../stores/error-store.js";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 import { palette } from "../theme.js";
@@ -19,7 +18,7 @@ const CATEGORY_HINTS: Record<string, string> = {
   server: "Server error. r:retry",
 };
 
-export function ErrorBar(): React.ReactNode {
+export function ErrorBar() {
   const errors = useErrorStore((s) => s.errors);
   const dismissError = useErrorStore((s) => s.dismissError);
 

@@ -80,7 +80,7 @@ export function parseSchemaFields(schemaContent: string): readonly SchemaField[]
     // Parse enum values — strip trailing "default: X" from the match
     const enumMatch = comment?.match(/One of:\s*(.+)$/i);
     const enumValues: string[] = enumMatch
-      ? enumMatch[1]
+      ? (enumMatch[1] ?? "")
           .replace(/,?\s*default:\s*\S+/i, "")
           .split(",")
           .map((v) => v.trim())
@@ -89,7 +89,7 @@ export function parseSchemaFields(schemaContent: string): readonly SchemaField[]
 
     // Determine nesting from indent
     const indent = line.search(/\S/);
-    const valueStr = rawValue.trim();
+    const valueStr = (rawValue ?? "").trim();
     const isNested = valueStr === "" && !comment?.includes("type:");
 
     fields.push({
@@ -173,7 +173,7 @@ export function generateTemplate(
  */
 function getPlaceholder(field: SchemaField): string {
   if (field.default_value) return field.default_value;
-  if (field.enum_values.length > 0) return field.enum_values[0];
+  if (field.enum_values.length > 0) return field.enum_values[0] ?? `"<${field.name}>"`;
 
   switch (field.type.toLowerCase()) {
     case "string":

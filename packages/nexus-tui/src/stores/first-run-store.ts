@@ -5,7 +5,7 @@
  * lightweight "Tip: Press ? for help" style tooltips.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 
 export interface FirstRunState {
   /** Set of tooltip keys that have been dismissed. */

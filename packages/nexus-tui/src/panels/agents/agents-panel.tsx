@@ -2,7 +2,8 @@
  * Agents panel: left sidebar with agent list, right pane with tabbed detail views.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal, Match, Switch } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAgentsStore } from "../../stores/agents-store.js";
 import type { AgentTab, DelegationItem } from "../../stores/agents-store.js";
 import { useGlobalStore } from "../../stores/global-store.js";
@@ -19,6 +20,7 @@ import { TrajectoriesTab } from "./trajectories-tab.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { StyledText } from "../../shared/components/styled-text.js";
 import { LoadingIndicator } from "../../shared/components/loading-indicator.js";
+import { SubTabBar } from "../../shared/components/sub-tab-bar.js";
 import { CommandOutput } from "../../shared/components/command-output.js";
 import { useCommandRunnerStore, executeLocalCommand } from "../../services/command-runner.js";
 import { useUiStore } from "../../stores/ui-store.js";
@@ -39,7 +41,7 @@ const TAB_LABELS: Readonly<Record<AgentTab, string>> = {
   trajectories: "Trajectories",
 };
 
-export default function AgentsPanel(): React.ReactNode {
+export default function AgentsPanel(): JSX.Element {
   const client = useApi();
   const confirm = useConfirmStore((s) => s.confirm);
   const visibleTabs = useVisibleTabs(ALL_TABS);
@@ -52,27 +54,31 @@ export default function AgentsPanel(): React.ReactNode {
   const serverZoneId = useGlobalStore((s) => s.zoneId);
   const effectiveZoneId = configZoneId ?? serverZoneId ?? "root";
 
-  const knownAgents = useAgentsStore((s) => s.knownAgents);
-  const agents = useAgentsStore((s) => s.agents);
-  const agentsLoading = useAgentsStore((s) => s.agentsLoading);
-  const selectedAgentId = useAgentsStore((s) => s.selectedAgentId);
-  const selectedAgentIndex = useAgentsStore((s) => s.selectedAgentIndex);
-  const activeTab = useAgentsStore((s) => s.activeTab);
-  const agentStatus = useAgentsStore((s) => s.agentStatus);
-  const agentSpec = useAgentsStore((s) => s.agentSpec);
-  const agentIdentity = useAgentsStore((s) => s.agentIdentity);
-  const statusLoading = useAgentsStore((s) => s.statusLoading);
-  const trustScore = useAgentsStore((s) => s.trustScore);
-  const reputation = useAgentsStore((s) => s.reputation);
-  const delegations = useAgentsStore((s) => s.delegations);
-  const delegationsLoading = useAgentsStore((s) => s.delegationsLoading);
-  const selectedDelegationIndex = useAgentsStore((s) => s.selectedDelegationIndex);
-  const inboxMessages = useAgentsStore((s) => s.inboxMessages);
-  const inboxCount = useAgentsStore((s) => s.inboxCount);
-  const inboxLoading = useAgentsStore((s) => s.inboxLoading);
-  const trajectories = useAgentsStore((s) => s.trajectories);
-  const trajectoriesLoading = useAgentsStore((s) => s.trajectoriesLoading);
-  const error = useAgentsStore((s) => s.error);
+  // Read store state reactively through the Solid proxy (jsx:"preserve" compiles
+  // these into reactive getters when used in JSX expressions).
+  const as = useAgentsStore();  // Solid store proxy — reads are tracked in JSX
+  // Shorthand accessors used in JSX and effects:
+  const agents = () => as.agents;
+  const agentsLoading = () => as.agentsLoading;
+  const selectedAgentId = () => as.selectedAgentId;
+  const selectedAgentIndex = () => as.selectedAgentIndex;
+  const activeTab = () => as.activeTab;
+  const agentStatus = () => as.agentStatus;
+  const agentSpec = () => as.agentSpec;
+  const agentIdentity = () => as.agentIdentity;
+  const statusLoading = () => as.statusLoading;
+  const trustScore = () => as.trustScore;
+  const reputation = () => as.reputation;
+  const delegations = () => as.delegations;
+  const delegationsLoading = () => as.delegationsLoading;
+  const selectedDelegationIndex = () => as.selectedDelegationIndex;
+  const inboxMessages = () => as.inboxMessages;
+  const inboxCount = () => as.inboxCount;
+  const inboxLoading = () => as.inboxLoading;
+  const trajectories = () => as.trajectories;
+  const trajectoriesLoading = () => as.trajectoriesLoading;
+  const error = () => as.error;
+  const knownAgents = () => as.knownAgents;
 
   const setSelectedAgentId = useAgentsStore((s) => s.setSelectedAgentId);
   const setSelectedAgentIndex = useAgentsStore((s) => s.setSelectedAgentIndex);
@@ -102,57 +108,67 @@ export default function AgentsPanel(): React.ReactNode {
   const { copy, copied } = useCopy();
 
   // Local loading state for async warmup/evict/verify operations
-  const [operationLoading, setOperationLoading] = useState<string | null>(null);
+  const [operationLoading, setOperationLoading] = createSignal<string | null>(null);
 
   // Expanded delegation detail
-  const [expandedDelegation, setExpandedDelegation] = useState<DelegationItem | null>(null);
+  const [expandedDelegation, setExpandedDelegation] = createSignal<DelegationItem | null>(null);
 
-  // Merge fetched agents into a display list: fetched agents + any manually added knownAgents not in the fetched list
-  const fetchedAgentIds = agents.map((a) => a.agent_id);
-  const extraKnown = knownAgents.filter((id) => !fetchedAgentIds.includes(id));
-  const displayAgentIds = [...fetchedAgentIds, ...extraKnown];
+  // Merge fetched agents into a display list — call as displayAgentIds() for fresh data
+  const displayAgentIds = () => {
+    const a = agents();
+    const k = knownAgents();
+    const fetchedIds = a.map((ag) => ag.agent_id);
+    const extra = k.filter((id) => !fetchedIds.includes(id));
+    return [...fetchedIds, ...extra];
+  };
 
   // Fetch agents on mount when zone is available
-  useEffect(() => {
+  createEffect(() => {
     if (client && effectiveZoneId) {
       fetchAgents(effectiveZoneId, client);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [client, effectiveZoneId]);
+  });
+
+  // Auto-select first agent when list loads
+  createEffect(() => {
+    const ids = displayAgentIds();
+    if (ids.length > 0 && !selectedAgentId()) {
+      setSelectedAgentId(ids[0]!);
+      setSelectedAgentIndex(0);
+    }
+  });
 
   // Fall back to first visible tab if the active tab becomes hidden
   const visibleIds = visibleTabs.map((t) => t.id);
-  useEffect(() => {
-    if (visibleIds.length > 0 && !visibleIds.includes(activeTab)) {
+  createEffect(() => {
+    if (visibleIds.length > 0 && !visibleIds.includes(activeTab())) {
       setActiveTab(visibleIds[0]!);
     }
-  }, [visibleIds.join(","), activeTab, setActiveTab]);
+  });
 
   // Refresh current view based on active tab
   const refreshCurrentView = (): void => {
     if (!client) return;
+    const tab = activeTab();
+    const aid = selectedAgentId();
 
-    if (activeTab === "status" && selectedAgentId) {
-      // Fetch permissions for all agents (works for registered + running)
+    if (tab === "status" && aid) {
       client.get<{ permissions: readonly { relation: string; object_type: string; object_id: string }[] }>(
-        `/api/v2/agents/${encodeURIComponent(selectedAgentId)}/permissions`,
+        `/api/v2/agents/${encodeURIComponent(aid)}/permissions`,
       ).then((r) => useAgentsStore.setState({ agentPermissions: r.permissions }))
         .catch(() => useAgentsStore.setState({ agentPermissions: [] }));
-      // Only fetch live status for running agents
-      const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
-      if (selectedAgent && selectedAgent.state !== "registered" && selectedAgent.state !== "delegated") {
-        fetchAgentStatus(selectedAgentId, client);
-        fetchAgentSpec(selectedAgentId, client);
-        fetchAgentIdentity(selectedAgentId, client);
-        fetchTrustScore(selectedAgentId, client);
-        fetchAgentReputation(selectedAgentId, client);
-      }
-    } else if (activeTab === "delegations" && selectedAgentId) {
-      fetchDelegations(selectedAgentId, client);
-    } else if (activeTab === "inbox" && selectedAgentId) {
-      fetchInbox(selectedAgentId, client);
-    } else if (activeTab === "trajectories" && selectedAgentId) {
-      fetchTrajectories(selectedAgentId, client);
+      fetchAgentStatus(aid, client);
+      fetchAgentSpec(aid, client);
+      fetchAgentIdentity(aid, client);
+      fetchTrustScore(aid, client);
+      fetchAgentReputation(aid, client);
+    } else if (tab === "delegations" && aid) {
+      fetchDelegations(aid, client);
+    } else if (tab === "inbox" && aid) {
+      fetchInbox(aid, client);
+    } else if (tab === "trajectories" && aid) {
+      fetchTrajectories(aid, client);
     }
 
     // Also refresh agent list
@@ -162,166 +178,98 @@ export default function AgentsPanel(): React.ReactNode {
   };
 
   // Auto-fetch when agent or tab changes
-  useEffect(() => {
+  createEffect(() => {
+    // Track reactive deps so this re-runs when tab or agent changes
+    void activeTab();
+    void selectedAgentId();
     refreshCurrentView();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgentId, activeTab, client]);
+  });
 
-  useKeyboard(overlayActive ? {} : {
-    j: () => {
-      if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(
-          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
-        );
+  useKeyboard((): Record<string, () => void> => {
+    if (useUiStore.getState().overlayActive) return {};
+    const s = useAgentsStore.getState();
+    const move = (delta: number) => () => {
+      if (s.activeTab === "delegations") {
+        const next = Math.max(0, Math.min(s.selectedDelegationIndex + delta, s.delegations.length - 1));
+        setSelectedDelegationIndex(next);
       } else {
-        if (displayAgentIds.length === 0) return;
-        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
+        const ids = displayAgentIds();
+        if (ids.length === 0) return;
+        const next = Math.max(0, Math.min(s.selectedAgentIndex + delta, ids.length - 1));
+        setSelectedAgentIndex(next);
+        const agentId = ids[next];
         if (agentId) setSelectedAgentId(agentId);
       }
-    },
-    down: () => {
-      if (activeTab === "delegations") {
-        if (delegations.length === 0) return;
-        setSelectedDelegationIndex(
-          Math.max(0, Math.min(selectedDelegationIndex + 1, delegations.length - 1)),
-        );
-      } else {
-        if (displayAgentIds.length === 0) return;
-        const newIdx = Math.max(0, Math.min(selectedAgentIndex + 1, displayAgentIds.length - 1));
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    k: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      } else {
-        const newIdx = Math.max(0, selectedAgentIndex - 1);
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    up: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(Math.max(selectedDelegationIndex - 1, 0));
-      } else {
-        const newIdx = Math.max(0, selectedAgentIndex - 1);
-        setSelectedAgentIndex(newIdx);
-        const agentId = displayAgentIds[newIdx];
-        if (agentId) setSelectedAgentId(agentId);
-      }
-    },
-    tab: () => {
-      const ids = visibleTabs.map((t) => t.id);
-      const currentIdx = ids.indexOf(activeTab);
-      const nextIdx = (currentIdx + 1) % ids.length;
-      const nextTab = ids[nextIdx];
-      if (nextTab) {
-        setActiveTab(nextTab);
-      }
-    },
-    "shift+tab": () => toggleFocus("agents"),
-    r: () => refreshCurrentView(),
-    d: async () => {
-      if (activeTab !== "delegations" || !client) return;
-      const selected = delegations[selectedDelegationIndex];
-      if (selected && selected.status === "active") {
-        const ok = await confirm("Revoke delegation?", `Revoke delegation ${selected.delegation_id}. The agent will lose delegated access.`);
-        if (!ok) return;
-        revokeDelegation(selected.delegation_id, client);
-      }
-    },
-    return: () => {
-      if (activeTab === "delegations") {
-        // Toggle delegation detail drill-down
-        const selected = delegations[selectedDelegationIndex];
-        if (selected) {
-          setExpandedDelegation(
-            expandedDelegation?.delegation_id === selected.delegation_id ? null : selected,
-          );
+    };
+    return {
+      j: move(1), down: move(1), k: move(-1), up: move(-1),
+      tab: () => {
+        const ids = visibleTabs.map((t) => t.id);
+        const currentIdx = ids.indexOf(s.activeTab);
+        const nextIdx = (currentIdx + 1) % ids.length;
+        const nextTab = ids[nextIdx];
+        if (nextTab) setActiveTab(nextTab);
+      },
+      "shift+tab": () => toggleFocus("agents"),
+      r: () => refreshCurrentView(),
+      d: async () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab !== "delegations" || !client) return;
+        const selected = st.delegations[st.selectedDelegationIndex];
+        if (selected && selected.status === "active") {
+          const ok = await confirm("Revoke delegation?", `Revoke delegation ${selected.delegation_id}. The agent will lose delegated access.`);
+          if (!ok) return;
+          revokeDelegation(selected.delegation_id, client);
         }
-        return;
-      }
-      // If an agent is highlighted in the agents list, select it
-      const agent = displayAgentIds[selectedAgentIndex];
-      if (agent) {
-        setSelectedAgentId(agent);
-        addKnownAgent(agent);
-      }
-    },
-    escape: () => {
-      if (expandedDelegation) {
-        setExpandedDelegation(null);
-      }
-    },
-    "shift+w": async () => {
-      if (!client || !selectedAgentId) return;
-      setOperationLoading("Warming up agent...");
-      try {
-        await warmupAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    "shift+e": async () => {
-      if (!client || !selectedAgentId) return;
-      // Only evict if agent is not already evicted
-      const agentEntry = agents.find((a) => a.agent_id === selectedAgentId);
-      if (agentEntry && agentEntry.state === "evicted") return;
-      setOperationLoading("Evicting agent...");
-      try {
-        await evictAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    "shift+v": async () => {
-      if (!client || !selectedAgentId) return;
-      setOperationLoading("Verifying agent...");
-      try {
-        await verifyAgent(selectedAgentId, client);
-      } finally {
-        setOperationLoading(null);
-      }
-    },
-    g: () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(jumpToStart());
-      } else {
-        setSelectedAgentIndex(jumpToStart());
-        const firstAgent = displayAgentIds[0];
-        if (firstAgent) {
-          setSelectedAgentId(firstAgent);
+      },
+      return: () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") {
+          const selected = st.delegations[st.selectedDelegationIndex];
+          if (selected) {
+            setExpandedDelegation(
+              expandedDelegation()?.delegation_id === selected.delegation_id ? null : selected,
+            );
+          }
+          return;
         }
-      }
-    },
-    "shift+g": () => {
-      if (activeTab === "delegations") {
-        setSelectedDelegationIndex(jumpToEnd(delegations.length));
-      } else {
-        const lastIdx = jumpToEnd(displayAgentIds.length);
-        setSelectedAgentIndex(lastIdx);
-        const lastAgent = displayAgentIds[lastIdx];
-        if (lastAgent) {
-          setSelectedAgentId(lastAgent);
-        }
-      }
-    },
-    y: () => {
-      if (selectedAgentId) {
-        copy(selectedAgentId);
-      }
-    },
-    // Issue #3078: spawn new agent via local CLI command
-    n: () => {
-      useCommandRunnerStore.getState().reset();
-      executeLocalCommand("agent", ["spawn"]);
-    },
+        const agent = displayAgentIds()[st.selectedAgentIndex];
+        if (agent) { setSelectedAgentId(agent); addKnownAgent(agent); }
+      },
+      escape: () => { if (expandedDelegation()) setExpandedDelegation(null); },
+      "shift+w": async () => {
+        const aid = useAgentsStore.getState().selectedAgentId;
+        if (!client || !aid) return;
+        setOperationLoading("Warming up agent...");
+        try { await warmupAgent(aid, client); } finally { setOperationLoading(null); }
+      },
+      "shift+e": async () => {
+        const st = useAgentsStore.getState();
+        if (!client || !st.selectedAgentId) return;
+        const entry = st.agents.find((a) => a.agent_id === st.selectedAgentId);
+        if (entry && entry.state === "evicted") return;
+        setOperationLoading("Evicting agent...");
+        try { await evictAgent(st.selectedAgentId, client); } finally { setOperationLoading(null); }
+      },
+      "shift+v": async () => {
+        const aid = useAgentsStore.getState().selectedAgentId;
+        if (!client || !aid) return;
+        setOperationLoading("Verifying agent...");
+        try { await verifyAgent(aid, client); } finally { setOperationLoading(null); }
+      },
+      g: () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") { setSelectedDelegationIndex(jumpToStart()); }
+        else { setSelectedAgentIndex(jumpToStart()); const a = displayAgentIds()[0]; if (a) setSelectedAgentId(a); }
+      },
+      "shift+g": () => {
+        const st = useAgentsStore.getState();
+        if (st.activeTab === "delegations") { setSelectedDelegationIndex(jumpToEnd(st.delegations.length)); }
+        else { const idx = jumpToEnd(displayAgentIds().length); setSelectedAgentIndex(idx); const a = displayAgentIds()[idx]; if (a) setSelectedAgentId(a); }
+      },
+      y: () => { const aid = useAgentsStore.getState().selectedAgentId; if (aid) copy(aid); },
+      n: () => { useCommandRunnerStore.getState().reset(); executeLocalCommand("agent", ["spawn"]); },
+    };
   });
 
   return (
@@ -331,26 +279,26 @@ export default function AgentsPanel(): React.ReactNode {
         {/* Left sidebar: agent list (30%) */}
         <box width="30%" height="100%" borderStyle="single" borderColor={uiFocusPane === "left" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           <box height={1} width="100%">
-            {agentsLoading
+            {agentsLoading()
               ? <LoadingIndicator message="Agents" centered={false} />
               : <text>{"--- Agents ---"}</text>}
           </box>
 
           {/* Agents list */}
-          {displayAgentIds.length === 0 ? (
+          {displayAgentIds().length === 0 ? (
             <EmptyState
               message="No agents registered."
               hint="Start an agent with 'nexus agent spawn' or add one with the API."
             />
           ) : (
-            <ScrollIndicator selectedIndex={selectedAgentIndex} totalItems={displayAgentIds.length} visibleItems={20}>
+            <ScrollIndicator selectedIndex={selectedAgentIndex()} totalItems={displayAgentIds().length} visibleItems={20}>
               <scrollbox flexGrow={1} width="100%">
-                {displayAgentIds.map((agentId, i) => {
-                  const isSelected = i === selectedAgentIndex;
-                  const isActive = agentId === selectedAgentId;
+                {displayAgentIds().map((agentId, i) => {
+                  const isSelected = i === selectedAgentIndex();
+                  const isActive = agentId === selectedAgentId();
                   const prefix = isSelected ? "> " : "  ";
                   const suffix = isActive ? " *" : "";
-                  const agentEntry = agents.find((a) => a.agent_id === agentId);
+                  const agentEntry = agents().find((a) => a.agent_id === agentId);
                   const state = agentEntry?.state ?? "";
                   const stateColor = agentStateColor[state] ?? statusColor.dim;
                   return (
@@ -372,109 +320,65 @@ export default function AgentsPanel(): React.ReactNode {
         {/* Right pane: detail views (70%) */}
         <box width="70%" height="100%" borderStyle="single" borderColor={uiFocusPane === "right" ? focusColor.activeBorder : focusColor.inactiveBorder} flexDirection="column">
           {/* Tab bar */}
-          <box height={1} width="100%">
-            <text>
-              {visibleTabs.map((tab) => {
-                return tab.id === activeTab ? `[${tab.label}]` : ` ${tab.label} `;
-              }).join(" ")}
-            </text>
-          </box>
+          <SubTabBar tabs={visibleTabs} activeTab={activeTab()} onSelect={setActiveTab as (id: string) => void} />
 
           {/* Operation in-progress feedback */}
-          {operationLoading && (
+          {operationLoading() && (
             <box height={1} width="100%">
-              <LoadingIndicator message={operationLoading} centered={false} />
+              <LoadingIndicator message={operationLoading() ?? undefined} centered={false} />
             </box>
           )}
 
           {/* Error display */}
-          {error && (
+          {error() && (
             <box height={1} width="100%">
-              <StyledText>{`Error: ${error}`}</StyledText>
+              <StyledText>{`Error: ${error()}`}</StyledText>
             </box>
           )}
 
-          {/* Detail content */}
+          {/* Detail content — use Switch/Match for reactive tab switching */}
           <box flexGrow={1} borderStyle="single">
-            {activeTab === "status" && (() => {
-              const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
-              if (selectedAgent?.state === "registered" || selectedAgent?.state === "delegated") {
-                const perms = useAgentsStore.getState().agentPermissions;
-                return (
-                  <box height="100%" width="100%" flexDirection="column" padding={1}>
-                    <text style={textStyle({ bold: true })}>{`Agent: ${selectedAgent.agent_id}`}</text>
-                    <text>{""}</text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"State:  "}</span><span>{"registered"}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Name:   "}</span><span>{selectedAgent.name ?? selectedAgent.agent_id}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Owner:  "}</span><span>{selectedAgent.owner_id}</span></text>
-                    <text><span style={textStyle({ fg: "cyan" })}>{"Zone:   "}</span><span>{selectedAgent.zone_id ?? "root"}</span></text>
-                    <text>{""}</text>
-                    <text style={textStyle({ fg: "cyan", bold: true })}>{"Effective Permissions:"}</text>
-                    {perms.length === 0 ? (
-                      <text style={textStyle({ dim: true })}>{"  No permissions assigned"}</text>
-                    ) : (
-                      perms.map((p, i) => {
-                        // Translate ReBAC tuples into human-readable capabilities
-                        const tool = p.object_id.replace("/tools/", "");
-                        const accessLevel = p.relation.replace("direct_", "");
-                        const icon = accessLevel === "viewer" || accessLevel === "reader" ? "R" : accessLevel === "editor" || accessLevel === "writer" ? "W" : "?";
-                        const color = icon === "R" ? "cyan" : icon === "W" ? "yellow" : "gray";
-                        return (
-                          <text key={`perm-${i}`}>
-                            <span style={textStyle({ fg: color })}>{`  [${icon}] `}</span>
-                            <span>{tool}</span>
-                            <span style={textStyle({ dim: true })}>{` (${accessLevel})`}</span>
-                          </text>
-                        );
-                      })
-                    )}
-                    <text>{""}</text>
-                    <text style={textStyle({ dim: true })}>{"  View Access panel (5) for manifests & delegations"}</text>
-                    <text>{""}</text>
-                    <text style={textStyle({ dim: true })}>{"Agent is registered but not running."}</text>
-                  </box>
-                );
-              }
-              return (
+            <Switch>
+              <Match when={activeTab() === "status"}>
                 <AgentStatusView
-                  status={agentStatus}
-                  spec={agentSpec}
-                  identity={agentIdentity}
-                  loading={statusLoading}
-                  trustScore={trustScore}
-                  reputation={reputation}
+                  status={agentStatus()}
+                  spec={agentSpec()}
+                  identity={agentIdentity()}
+                  loading={statusLoading()}
+                  trustScore={trustScore()}
+                  reputation={reputation()}
                 />
-              );
-            })()}
-            {activeTab === "delegations" && (
-              <DelegationList
-                delegations={delegations}
-                selectedIndex={selectedDelegationIndex}
-                loading={delegationsLoading}
-                expandedDelegation={expandedDelegation}
-              />
-            )}
-            {activeTab === "inbox" && (
-              <InboxView
-                messages={inboxMessages}
-                count={inboxCount}
-                processedMessages={useAgentsStore.getState().processedMessages}
-                deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
-                loading={inboxLoading}
-              />
-            )}
-            {activeTab === "trajectories" && (
-              <TrajectoriesTab
-                trajectories={trajectories}
-                loading={trajectoriesLoading}
-              />
-            )}
+              </Match>
+              <Match when={activeTab() === "delegations"}>
+                <DelegationList
+                  delegations={delegations()}
+                  selectedIndex={selectedDelegationIndex()}
+                  loading={delegationsLoading()}
+                  expandedDelegation={expandedDelegation()}
+                />
+              </Match>
+              <Match when={activeTab() === "inbox"}>
+                <InboxView
+                  messages={inboxMessages()}
+                  count={inboxCount()}
+                  processedMessages={useAgentsStore.getState().processedMessages}
+                  deadLetterMessages={useAgentsStore.getState().deadLetterMessages}
+                  loading={inboxLoading()}
+                />
+              </Match>
+              <Match when={activeTab() === "trajectories"}>
+                <TrajectoriesTab
+                  trajectories={trajectories()}
+                  loading={trajectoriesLoading()}
+                />
+              </Match>
+            </Switch>
           </box>
         </box>
       </box>
 
       {/* Command runner output (when agent spawn is running) */}
-      {commandRunnerStatus !== "idle" && (
+      {useCommandRunnerStore((s) => s.status) !== "idle" && (
         <box borderStyle="single" height={6} width="100%">
           <CommandOutput />
         </box>

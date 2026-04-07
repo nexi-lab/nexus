@@ -5,7 +5,6 @@
  * with profile info and mount guidance (Decision 7A).
  */
 
-import React from "react";
 import { useBricksAvailable } from "../hooks/use-brick-available.js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { Spinner } from "./spinner.js";
@@ -15,20 +14,20 @@ interface BrickGateProps {
   /** Brick name or array of brick names (any-of semantics). */
   readonly brick: string | readonly string[];
   /** Content to render when the brick is available. */
-  readonly children: React.ReactNode;
+  readonly children: unknown;
   /** Custom fallback. Defaults to BrickUnavailable message. */
-  readonly fallback?: React.ReactNode;
+  readonly fallback?: unknown;
 }
 
-function BrickUnavailableMessage({ names }: { names: readonly string[] }): React.ReactNode {
+function BrickUnavailableMessage(props: { names: readonly string[] }) {
   const profile = useGlobalStore((s) => s.profile);
-  const brickList = names.join(", ");
+  const brickList = props.names.join(", ");
 
   return (
     <box height="100%" width="100%" justifyContent="center" alignItems="center" flexDirection="column">
       <text>{`Feature not available`}</text>
       <text> </text>
-      <text style={textStyle({ dim: true })}>{`Required brick${names.length > 1 ? "s" : ""}: ${brickList}`}</text>
+      <text style={textStyle({ dim: true })}>{`Required brick${props.names.length > 1 ? "s" : ""}: ${brickList}`}</text>
       {profile && <text style={textStyle({ dim: true })}>{`Current profile: ${profile}`}</text>}
       <text> </text>
       <text style={textStyle({ dim: true })}>{`To enable: mount the brick via Zones > Bricks`}</text>
@@ -36,8 +35,8 @@ function BrickUnavailableMessage({ names }: { names: readonly string[] }): React
   );
 }
 
-export function BrickGate({ brick, children, fallback }: BrickGateProps): React.ReactNode {
-  const bricks = Array.isArray(brick) ? brick : [brick];
+export function BrickGate(props: BrickGateProps) {
+  const bricks = Array.isArray(props.brick) ? props.brick : [props.brick];
 
   const { available, loading } = useBricksAvailable(bricks);
 
@@ -50,8 +49,8 @@ export function BrickGate({ brick, children, fallback }: BrickGateProps): React.
   }
 
   if (!available) {
-    return fallback ?? <BrickUnavailableMessage names={bricks} />;
+    return props.fallback ?? <BrickUnavailableMessage names={bricks} />;
   }
 
-  return <>{children}</>;
+  return <>{props.children}</>;
 }

@@ -5,7 +5,7 @@
  * across a tabbed interface.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
@@ -282,12 +282,10 @@ export const useWorkflowsStore = create<WorkflowsState>((set, get) => ({
       set({ schedulerMetrics: metrics, schedulerLoading: false });
       useUiStore.getState().markDataUpdated("workflows");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to fetch scheduler metrics";
-      set({
-        schedulerMetrics: null,
-        schedulerLoading: false,
-        error: message,
-      });
+      const message = err instanceof Error ? err.message : "Scheduler metrics unavailable";
+      set({ schedulerMetrics: null, schedulerLoading: false });
+      // Push to error store for observability but don't set panel-level error
+      // (SchedulerView renders a distinct "unavailable" state for null metrics)
       useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
     }
   },

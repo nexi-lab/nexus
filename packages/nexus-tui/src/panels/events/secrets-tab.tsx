@@ -4,7 +4,8 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useInfraStore } from "../../stores/infra-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useTextInput } from "../../shared/hooks/use-text-input.js";
@@ -16,33 +17,33 @@ interface SecretsTabProps {
   readonly overlayActive: boolean;
 }
 
-export function SecretsTab({ tabBindings, overlayActive }: SecretsTabProps): React.ReactNode {
+export function SecretsTab(props: SecretsTabProps): JSX.Element {
   const client = useApi();
-  const [secretsFilter, setSecretsFilter] = useState("");
+  const [secretsFilter, setSecretsFilter] = createSignal("");
 
-  const secretAuditEntries = useInfraStore((s) => s.secretAuditEntries);
-  const secretsLoading = useInfraStore((s) => s.secretsLoading);
+  const secretAuditEntries = () => useInfraStore((s) => s.secretAuditEntries);
+  const secretsLoading = () => useInfraStore((s) => s.secretsLoading);
   const fetchSecretAudit = useInfraStore((s) => s.fetchSecretAudit);
 
-  useEffect(() => {
+  createEffect(() => {
     if (client) fetchSecretAudit(client);
-  }, [client, fetchSecretAudit]);
+  });
 
   const filterInput = useTextInput({
     onSubmit: (val) => setSecretsFilter(val),
   });
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : filterInput.active
-      ? filterInput.inputBindings
-      : {
-          ...tabBindings,
-          "/": () => filterInput.activate(secretsFilter),
-          r: () => { if (client) fetchSecretAudit(client); },
-        },
-    overlayActive ? undefined : filterInput.active ? filterInput.onUnhandled : undefined,
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      if (filterInput.active) return filterInput.inputBindings;
+      return {
+        ...props.tabBindings,
+        "/": () => filterInput.activate(secretsFilter()),
+        r: () => { if (client) fetchSecretAudit(client); },
+      };
+    },
+    () => props.overlayActive ? undefined : filterInput.active ? filterInput.onUnhandled : undefined,
   );
 
   return (
@@ -51,16 +52,16 @@ export function SecretsTab({ tabBindings, overlayActive }: SecretsTabProps): Rea
         <text>
           {filterInput.active
             ? `Filter: ${filterInput.buffer}\u2588`
-            : secretsFilter
-              ? `Filter: ${secretsFilter}`
+            : secretsFilter()
+              ? `Filter: ${secretsFilter()}`
               : ""}
         </text>
       </box>
       <box flexGrow={1} width="100%" borderStyle="single">
         <SecretsAudit
-          entries={secretAuditEntries}
-          loading={secretsLoading}
-          filter={secretsFilter}
+          entries={secretAuditEntries()}
+          loading={secretsLoading()}
+          filter={secretsFilter()}
         />
       </box>
       <box height={1} width="100%">

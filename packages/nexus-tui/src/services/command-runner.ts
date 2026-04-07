@@ -10,7 +10,7 @@
  *   15A: Show spinner immediately (handled by consumer component)
  */
 
-import { create } from "zustand";
+import { createStore } from "../stores/create-store.js";
 
 // =============================================================================
 // Constants
@@ -63,7 +63,7 @@ const INITIAL_STATE: CommandRunnerState = {
   spawnError: null,
 };
 
-export const useCommandRunnerStore = create<CommandRunnerStore>((set) => ({
+export const useCommandRunnerStore = createStore<CommandRunnerStore>((set) => ({
   ...INITIAL_STATE,
 
   appendOutput: (chunk) => {

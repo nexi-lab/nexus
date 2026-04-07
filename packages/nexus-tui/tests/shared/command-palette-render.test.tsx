@@ -19,8 +19,7 @@
  */
 
 import { describe, it, expect, mock, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import { testRender } from "../helpers/render.js";
 import { CommandPalette } from "../../src/shared/components/command-palette.js";
 import type { CommandPaletteItem } from "../../src/shared/command-palette.js";
 
@@ -65,7 +64,7 @@ async function renderPalette(
   onClose: () => void,
 ): Promise<TestSetup> {
   setup = await testRender(
-    <CommandPalette visible={visible} commands={commands} onClose={onClose} />,
+    () => <CommandPalette visible={visible} commands={commands} onClose={onClose} />,
     { width: 80, height: 30 },
   );
   await setup.renderOnce();

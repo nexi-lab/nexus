@@ -11,8 +11,8 @@
  * @see Issue #3497, #3503
  */
 
-import React, { useState, useEffect } from "react";
-import { useTerminalDimensions } from "@opentui/react";
+import { createSignal, For, onCleanup } from "solid-js";
+import { useTerminalDimensions } from "@opentui/solid";
 import { palette } from "../theme.js";
 import { NAV_ITEMS, type NavItem } from "../nav-items.js";
 import { getSideNavMode, STALE_THRESHOLD_MS, type SideNavMode } from "./side-nav-utils.js";
@@ -140,59 +140,63 @@ interface SideNavProps {
 /** Interval (ms) for re-evaluating stale state. */
 const STALE_CHECK_INTERVAL_MS = 10_000;
 
-export function SideNav({ activePanel, visible, onSelect }: SideNavProps): React.ReactNode {
-  const { width: columns } = useTerminalDimensions();
-  const mode = getSideNavMode(columns);
+export function SideNav(props: SideNavProps) {
+  const terminalDimensions = useTerminalDimensions();
+  const mode = () => getSideNavMode(terminalDimensions().width);
 
   // Periodic tick so stale derivation re-evaluates over time
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), STALE_CHECK_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, []);
+  const [now, setNow] = createSignal(Date.now());
+  const staleTimer = setInterval(() => setNow(Date.now()), STALE_CHECK_INTERVAL_MS);
+  onCleanup(() => clearInterval(staleTimer));
 
-  const indicators = usePanelIndicators(now);
+  const indicators = usePanelIndicators(now());
 
   // Apply same brick filtering as the command palette so disabled panels
   // are not advertised in the primary navigation.
   const visibleItems = useVisibleTabs(NAV_ITEMS);
 
   // Spinner animation for loading indicators
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  const [spinnerFrame, setSpinnerFrame] = createSignal(0);
   const hasAnyLoading = Object.values(indicators.loading).some(Boolean);
-
-  useEffect(() => {
-    if (!hasAnyLoading) return;
-    const timer = setInterval(() => {
+  let spinnerTimer: ReturnType<typeof setInterval> | null = null;
+  if (hasAnyLoading && !spinnerTimer) {
+    spinnerTimer = setInterval(() => {
       setSpinnerFrame((prev) => (prev + 1) % SPINNER_FRAMES.length);
     }, SPINNER_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [hasAnyLoading]);
+  }
+  if (!hasAnyLoading && spinnerTimer) {
+    clearInterval(spinnerTimer);
+    spinnerTimer = null;
+  }
+  onCleanup(() => {
+    if (spinnerTimer) clearInterval(spinnerTimer);
+  });
 
-  if (!visible || mode === "hidden") return null;
-
+  // No if/return — unconditional rendering. SolidJS evaluates if/return once.
   return (
     <box
       flexDirection="column"
-      width={mode === "full" ? 18 : 6}
-      height="100%"
-      borderRight
+      width={!props.visible || mode() === "hidden" ? 0 : mode() === "full" ? 18 : 6}
+      height={!props.visible || mode() === "hidden" ? 0 : "100%"}
+      borderStyle={!props.visible || mode() === "hidden" ? undefined : "single"}
       borderColor={palette.faint}
     >
-      {visibleItems.map((item) => (
-        <box key={item.id} height={1} onMouseDown={() => onSelect?.(item.id as PanelId)}>
+      <For each={visibleItems}>
+        {(item) => (
+        <box height={1} onMouseDown={() => props.onSelect?.(item.id as PanelId)}>
           <SideNavItem
             item={item as NavItem}
-            isActive={item.id === activePanel}
+            isActive={item.id === props.activePanel}
             isLoading={indicators.loading[item.id]}
             hasError={indicators.error[item.id]}
             isUnseen={indicators.unseen[item.id]}
             isStale={indicators.stale[item.id]}
-            mode={mode}
-            spinnerFrame={SPINNER_FRAMES[spinnerFrame]!}
+            mode={mode()}
+            spinnerFrame={SPINNER_FRAMES[spinnerFrame()]!}
           />
         </box>
-      ))}
+      )}
+      </For>
     </box>
   );
 }
@@ -215,79 +219,65 @@ interface SideNavItemProps {
   readonly spinnerFrame: string;
 }
 
-function SideNavItem({
-  item,
-  isActive,
-  isLoading,
-  hasError,
-  isUnseen,
-  isStale,
-  mode,
-  spinnerFrame,
-}: SideNavItemProps): React.ReactNode {
-  // Determine the status indicator character
-  // Priority: loading > error > unseen (when not active) > active > healthy
-  const indicator = isLoading
-    ? spinnerFrame
-    : hasError
+function SideNavItem(props: SideNavItemProps) {
+  // SolidJS: do NOT destructure props — use props.x for reactive access.
+  // Derived values as accessors so they re-evaluate reactively.
+  const indicator = () => props.isLoading
+    ? props.spinnerFrame
+    : props.hasError
       ? "●"
-      : isUnseen && !isActive
+      : props.isUnseen && !props.isActive
         ? "●"
-        : isActive
+        : props.isActive
           ? "◂"
           : " ";
 
-  const indicatorColor = isLoading
+  const indicatorColor = () => props.isLoading
     ? palette.accent
-    : hasError
+    : props.hasError
       ? palette.error
-      : isUnseen && !isActive
+      : props.isUnseen && !props.isActive
         ? UNSEEN_COLOR
-        : isActive
+        : props.isActive
           ? palette.accent
           : undefined;
 
-  // Text color: active > stale (dimmed) > normal muted
-  const textColor = isActive
+  const textColor = () => props.isActive
     ? palette.accent
-    : isStale && !isUnseen
+    : props.isStale && !props.isUnseen
       ? palette.faint
       : palette.muted;
 
-  if (mode === "collapsed") {
-    // Collapsed: " ◎2◂" — icon + shortcut + indicator
+  const paddedLabel = props.item.fullLabel.padEnd(12);
+
+  if (props.mode === "collapsed") {
     return (
       <box height={1}>
         <text>
-          <span foregroundColor={isActive ? palette.accent : textColor}>
-            {` ${item.icon}${item.shortcut}`}
+          <span foregroundColor={props.isActive ? palette.accent : textColor()}>
+            {` ${props.item.icon}${props.item.shortcut}`}
           </span>
-          <span foregroundColor={indicatorColor}>{indicator}</span>
+          <span foregroundColor={indicatorColor()}>{indicator()}</span>
         </text>
       </box>
     );
   }
 
-  // Full: " 2:Versions  ◂" — shortcut:label + indicator
-  const label = item.fullLabel;
-  // Pad label to fill the available width: 18 total - 2 (left " ") - 2 (shortcut + ":") - 1 (indicator) - 1 (right pad) = 12 chars for label
-  const paddedLabel = label.padEnd(12);
-
   return (
     <box height={1}>
       <text>
-        {isActive ? (
+        {props.isActive ? (
           <>
-            <span foregroundColor={palette.accent} bold>{` ${item.shortcut}:`}</span>
+            <span foregroundColor={palette.accent} bold>{` ${props.item.shortcut}:`}</span>
             <span foregroundColor={palette.accent} bold>{paddedLabel}</span>
           </>
         ) : (
           <>
-            <span foregroundColor={textColor}>{` ${item.shortcut}:`}</span>
-            <span foregroundColor={textColor}>{paddedLabel}</span>
+            <span foregroundColor={textColor()}>{` ${props.item.shortcut}:`}</span>
+            <span foregroundColor={textColor()}>{paddedLabel}</span>
           </>
         )}
-        <span foregroundColor={indicatorColor}>{indicator}</span>
+        <span foregroundColor={indicatorColor()}>{indicator()}</span>
       </text>
     </box>
   );

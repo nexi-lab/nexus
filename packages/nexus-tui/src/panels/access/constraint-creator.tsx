@@ -6,7 +6,8 @@
  * Escape cancels and returns to normal mode.
  */
 
-import React, { useState, useCallback } from "react";
+import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useAccessStore } from "../../stores/access-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -24,16 +25,16 @@ interface ConstraintCreatorProps {
   readonly onClose: () => void;
 }
 
-export function ConstraintCreator({ zoneId, onClose }: ConstraintCreatorProps): React.ReactNode {
+export function ConstraintCreator({ zoneId, onClose }: ConstraintCreatorProps): JSX.Element {
   const client = useApi();
   const createConstraint = useAccessStore((s) => s.createConstraint);
   const constraintsLoading = useAccessStore((s) => s.constraintsLoading);
   const error = useAccessStore((s) => s.error);
 
-  const [fromAgentId, setFromAgentId] = useState("");
-  const [toAgentId, setToAgentId] = useState("");
-  const [constraintType, setConstraintType] = useState("");
-  const [activeField, setActiveField] = useState<ActiveField>("fromAgentId");
+  const [fromAgentId, setFromAgentId] = createSignal("");
+  const [toAgentId, setToAgentId] = createSignal("");
+  const [constraintType, setConstraintType] = createSignal("");
+  const [activeField, setActiveField] = createSignal<ActiveField>("fromAgentId");
 
   const setters: Readonly<Record<ActiveField, (fn: (b: string) => string) => void>> = {
     fromAgentId: (fn) => setFromAgentId((b) => fn(b)),
@@ -41,40 +42,37 @@ export function ConstraintCreator({ zoneId, onClose }: ConstraintCreatorProps): 
     constraintType: (fn) => setConstraintType((b) => fn(b)),
   };
 
-  const handleSubmit = useCallback(() => {
-    if (!client || !fromAgentId.trim() || !toAgentId.trim() || !constraintType.trim()) return;
+  const handleSubmit = () => {
+    if (!client || !fromAgentId().trim() || !toAgentId().trim() || !constraintType().trim()) return;
     createConstraint(
       {
-        from_agent_id: fromAgentId.trim(),
-        to_agent_id: toAgentId.trim(),
-        constraint_type: constraintType.trim(),
+        from_agent_id: fromAgentId().trim(),
+        to_agent_id: toAgentId().trim(),
+        constraint_type: constraintType().trim(),
         zone_id: zoneId,
       },
       client,
     );
-  }, [client, fromAgentId, toAgentId, constraintType, zoneId, createConstraint]);
+  };
 
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
-      const setter = setters[activeField];
+  const handleUnhandledKey = (keyName: string) => {
+      const setter = setters[activeField()];
       if (keyName.length === 1) {
         setter((b) => b + keyName);
       } else if (keyName === "space") {
         setter((b) => b + " ");
       }
-    },
-    [activeField],
-  );
+    };
 
   useKeyboard(
     {
       return: handleSubmit,
       escape: onClose,
       backspace: () => {
-        setters[activeField]((b) => b.slice(0, -1));
+        setters[activeField()]((b) => b.slice(0, -1));
       },
       tab: () => {
-        const currentIdx = FIELD_ORDER.indexOf(activeField);
+        const currentIdx = FIELD_ORDER.indexOf(activeField());
         const nextIdx = (currentIdx + 1) % FIELD_ORDER.length;
         const next = FIELD_ORDER[nextIdx];
         if (next) {
@@ -88,18 +86,18 @@ export function ConstraintCreator({ zoneId, onClose }: ConstraintCreatorProps): 
   const cursor = "\u2588";
 
   const fields: readonly { readonly key: ActiveField; readonly label: string; readonly value: string; readonly hint?: string }[] = [
-    { key: "fromAgentId", label: "From Agent ID   ", value: fromAgentId },
-    { key: "toAgentId", label: "To Agent ID     ", value: toAgentId },
-    { key: "constraintType", label: "Constraint Type ", value: constraintType, hint: "e.g. deny, rate_limit" },
+    { key: "fromAgentId", label: "From Agent ID   ", value: fromAgentId() },
+    { key: "toAgentId", label: "To Agent ID     ", value: toAgentId() },
+    { key: "constraintType", label: "Constraint Type ", value: constraintType(), hint: "e.g. deny, rate_limit" },
   ];
 
   return (
     <box height="100%" width="100%" flexDirection="column">
       {/* Form fields */}
       {fields.map((f) => (
-        <box key={f.key} height={1} width="100%">
+        <box height={1} width="100%">
           <text>
-            {activeField === f.key
+            {activeField() === f.key
               ? `> ${f.label}: ${f.value}${cursor}${f.hint ? `  (${f.hint})` : ""}`
               : `  ${f.label}: ${f.value}${f.hint && !f.value ? `  (${f.hint})` : ""}`}
           </text>

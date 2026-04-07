@@ -112,7 +112,6 @@ function getTabNavBindings(ctx: BindingContext): Record<string, () => void> {
           setIndex: ctx.setSelectedIndex,
           getLength: () => ctx.visibleNodeCount,
           onSelect: (index) => {
-            // Sentinel nodes are handled by FileTree's auto-load effect
             if (ctx.isSentinel) return;
             if (ctx.selectedNode && ctx.client) {
               if (ctx.selectedNode.isDirectory) {

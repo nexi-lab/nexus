@@ -1,3 +1,5 @@
+import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Reusable confirmation dialog for destructive actions.
  *
@@ -5,7 +7,6 @@
  * Follows the same overlay pattern as IdentitySwitcher.
  */
 
-import React from "react";
 import { useKeyboard } from "../hooks/use-keyboard.js";
 
 interface ConfirmDialogProps {
@@ -16,46 +17,40 @@ interface ConfirmDialogProps {
   readonly onCancel: () => void;
 }
 
-export function ConfirmDialog({
-  visible,
-  title,
-  message,
-  onConfirm,
-  onCancel,
-}: ConfirmDialogProps): React.ReactNode {
+export function ConfirmDialog(props: ConfirmDialogProps): JSX.Element {
   useKeyboard(
-    visible
+    (): Record<string, () => void> => props.visible
       ? {
-          y: onConfirm,
-          return: onConfirm,
-          n: onCancel,
-          escape: onCancel,
+          y: () => props.onConfirm(),
+          return: () => props.onConfirm(),
+          n: () => props.onCancel(),
+          escape: () => props.onCancel(),
         }
       : {},
   );
 
-  if (!visible) return null;
-
   return (
-    <box
-      height="100%"
-      width="100%"
-      justifyContent="center"
-      alignItems="center"
-    >
+    <Show when={props.visible}>
       <box
-        flexDirection="column"
-        borderStyle="double"
-        width={50}
-        height={7}
-        padding={1}
+        height="100%"
+        width="100%"
+        justifyContent="center"
+        alignItems="center"
       >
-        <text>{title}</text>
-        <text>{""}</text>
-        <text>{message}</text>
-        <text>{""}</text>
-        <text>{"Y:confirm  N/Esc:cancel"}</text>
+        <box
+          flexDirection="column"
+          borderStyle="double"
+          width={50}
+          height={7}
+          padding={1}
+        >
+          <text>{props.title}</text>
+          <text>{""}</text>
+          <text>{props.message}</text>
+          <text>{""}</text>
+          <text>{"Y:confirm  N/Esc:cancel"}</text>
+        </box>
       </box>
-    </box>
+    </Show>
   );
 }

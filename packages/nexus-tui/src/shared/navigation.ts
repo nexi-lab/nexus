@@ -43,7 +43,6 @@ export const PANEL_TABS: readonly TopLevelTab[] = NAV_ITEMS.map(({ id, label, sh
   shortcut,
 }));
 
-
 export const ACCESS_TABS: readonly TabDef<AccessTab>[] = [
   { id: "manifests", label: "Manifests", brick: "access_manifest" },
   { id: "alerts", label: "Alerts", brick: "governance" },

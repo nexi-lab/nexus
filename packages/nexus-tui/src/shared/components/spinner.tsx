@@ -2,7 +2,7 @@
  * Animated loading spinner using braille characters.
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, onCleanup } from "solid-js";
 
 const FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const INTERVAL_MS = 80;
@@ -11,16 +11,14 @@ interface SpinnerProps {
   readonly label?: string;
 }
 
-export function Spinner({ label }: SpinnerProps): React.ReactNode {
-  const [frame, setFrame] = useState(0);
+export function Spinner(props: SpinnerProps) {
+  const [frame, setFrame] = createSignal(0);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setFrame((prev) => (prev + 1) % FRAMES.length);
-    }, INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, []);
+  const timer = setInterval(() => {
+    setFrame((prev) => (prev + 1) % FRAMES.length);
+  }, INTERVAL_MS);
+  onCleanup(() => clearInterval(timer));
 
-  const text = label ? `${FRAMES[frame]} ${label}` : FRAMES[frame]!;
+  const text = () => props.label ? `${FRAMES[frame()]} ${props.label}` : FRAMES[frame()]!;
   return <text>{text}</text>;
 }

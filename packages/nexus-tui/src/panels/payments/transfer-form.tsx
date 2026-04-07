@@ -5,7 +5,8 @@
  * Uses the same input-mode pattern as search-panel.tsx.
  */
 
-import React, { useState, useCallback } from "react";
+import { createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 
 type TransferField = "to" | "amount" | "memo";
@@ -25,29 +26,26 @@ interface TransferFormProps {
 export function TransferForm({
   onSubmit,
   onCancel,
-}: TransferFormProps): React.ReactNode {
-  const [activeField, setActiveField] = useState<TransferField>("to");
-  const [fields, setFields] = useState<Readonly<Record<TransferField, string>>>({
+}: TransferFormProps): JSX.Element {
+  const [activeField, setActiveField] = createSignal<TransferField>("to");
+  const [fields, setFields] = createSignal<Readonly<Record<TransferField, string>>>({
     to: "",
     amount: "",
     memo: "",
   });
 
-  const handleUnhandledKey = useCallback(
-    (keyName: string) => {
+  const handleUnhandledKey = (keyName: string) => {
       if (keyName.length === 1) {
-        setFields((prev) => ({ ...prev, [activeField]: prev[activeField] + keyName }));
+        setFields((prev) => ({ ...prev, [activeField()]: prev[activeField()] + keyName }));
       } else if (keyName === "space") {
-        setFields((prev) => ({ ...prev, [activeField]: prev[activeField] + " " }));
+        setFields((prev) => ({ ...prev, [activeField()]: prev[activeField()] + " " }));
       }
-    },
-    [activeField],
-  );
+    };
 
   useKeyboard(
     {
       tab: () => {
-        const currentIdx = FIELD_ORDER.indexOf(activeField);
+        const currentIdx = FIELD_ORDER.indexOf(activeField());
         const nextIdx = (currentIdx + 1) % FIELD_ORDER.length;
         const nextField = FIELD_ORDER[nextIdx];
         if (nextField) {
@@ -57,13 +55,13 @@ export function TransferForm({
       backspace: () => {
         setFields((prev) => ({
           ...prev,
-          [activeField]: prev[activeField].slice(0, -1),
+          [activeField()]: prev[activeField()].slice(0, -1),
         }));
       },
       return: () => {
-        const to = fields.to.trim();
-        const amount = fields.amount.trim();
-        const memo = fields.memo.trim();
+        const to = fields().to.trim();
+        const amount = fields().amount.trim();
+        const memo = fields().memo.trim();
         if (to && amount) {
           onSubmit(to, amount, memo);
         }
@@ -87,13 +85,13 @@ export function TransferForm({
       </box>
 
       {FIELD_ORDER.map((field) => {
-        const isActive = field === activeField;
+        const isActive = field === activeField();
         const label = FIELD_LABELS[field];
-        const value = fields[field];
+        const value = fields()[field];
         const cursor = isActive ? "\u2588" : "";
         const prefix = isActive ? "> " : "  ";
         return (
-          <box key={field} height={1} width="100%">
+          <box height={1} width="100%">
             <text>{`${prefix}${label}: ${value}${cursor}`}</text>
           </box>
         );

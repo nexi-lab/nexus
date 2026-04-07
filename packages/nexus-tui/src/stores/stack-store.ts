@@ -6,7 +6,7 @@
  * Server health is fetched via the FetchClient from the global store.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useErrorStore } from "./error-store.js";
 import { categorizeError } from "./create-api-action.js";

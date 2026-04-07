@@ -11,8 +11,7 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
-import React from "react";
-import { testRender } from "@opentui/react/test-utils";
+import { testRender } from "../helpers/render.js";
 import { RlmAnswerView } from "../../src/panels/search/rlm-answer-view.js";
 import type { RlmAnswer } from "../../src/stores/search-store-types.js";
 
@@ -30,7 +29,7 @@ async function renderView(
   contextPaths: readonly string[] = [],
 ): Promise<string> {
   setup = await testRender(
-    <RlmAnswerView answer={answer} loading={loading} contextPaths={contextPaths} />,
+    () => <RlmAnswerView answer={answer} loading={loading} contextPaths={contextPaths} />,
     { width: 80, height: 20 },
   );
   await setup.renderOnce();

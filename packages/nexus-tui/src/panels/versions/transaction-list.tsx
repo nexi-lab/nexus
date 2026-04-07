@@ -2,7 +2,7 @@
  * Scrollable transaction list with status badges and selection highlight.
  */
 
-import React from "react";
+import { For, Show } from "solid-js";
 import type { Transaction } from "../../stores/versions-store.js";
 import { EmptyState } from "../../shared/components/empty-state.js";
 import { textStyle } from "../../shared/text-style.js";
@@ -49,42 +49,39 @@ interface TransactionListProps {
   readonly selectedIndex: number;
 }
 
-export function TransactionList({
-  transactions,
-  selectedIndex,
-}: TransactionListProps): React.ReactNode {
-  if (transactions.length === 0) {
-    return (
-      <EmptyState
-        message="No transactions yet."
-        hint="Press n to begin one, or write a file to create an auto-transaction."
-      />
-    );
-  }
-
+export function TransactionList(props: TransactionListProps) {
   return (
-    <ScrollIndicator selectedIndex={selectedIndex} totalItems={transactions.length} visibleItems={20}>
-      <scrollbox flexGrow={1} width="100%">
-        {transactions.map((txn, index) => {
-          const selected = index === selectedIndex;
-          const prefix = selected ? "\u25B8 " : "  ";
-          const badge = statusBadge(txn.status);
-          const desc = txn.description ?? "";
-          const id = truncateId(txn.transaction_id);
-          const time = formatTime(txn.created_at);
-          const entries = `${txn.entry_count} entries`;
+    <Show
+      when={props.transactions.length > 0}
+      fallback={
+        <EmptyState
+          message="No transactions yet."
+          hint="Press n to begin one, or write a file to create an auto-transaction."
+        />
+      }
+    >
+      <ScrollIndicator selectedIndex={props.selectedIndex} totalItems={props.transactions.length} visibleItems={20}>
+        <scrollbox flexGrow={1} width="100%">
+          <For each={props.transactions}>{(txn, index) => {
+            const selected = () => index() === props.selectedIndex;
+            const badge = statusBadge(txn.status);
+            const desc = txn.description ?? "";
+            const id = truncateId(txn.transaction_id);
+            const time = formatTime(txn.created_at);
+            const entries = `${txn.entry_count} entries`;
 
-          return (
-            <box key={txn.transaction_id} height={1} width="100%">
-              <text>{prefix}</text>
-              <text style={textStyle({ fg: transactionStatusColor[txn.status] })}>{badge}</text>
-              <text>
-                {` ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
-              </text>
-            </box>
-          );
-        })}
-      </scrollbox>
-    </ScrollIndicator>
+            return (
+              <box height={1} width="100%">
+                <text>{selected() ? "\u25B8 " : "  "}</text>
+                <text style={textStyle({ fg: transactionStatusColor[txn.status] })}>{badge}</text>
+                <text>
+                  {` ${id}  ${desc ? desc + "  " : ""}${entries}  ${time}`}
+                </text>
+              </box>
+            );
+          }}</For>
+        </scrollbox>
+      </ScrollIndicator>
+    </Show>
   );
 }

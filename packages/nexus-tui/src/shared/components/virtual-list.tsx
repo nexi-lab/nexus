@@ -8,13 +8,14 @@
  * @see Issue #3102, Decision 1A
  */
 
-import React, { useMemo } from "react";
+import { createMemo, Show } from "solid-js";
+import type { JSX } from "solid-js";
 
 export interface VirtualListProps<T> {
   /** Full (flat) list of items. */
   readonly items: readonly T[];
   /** Render callback for a single item row. */
-  readonly renderItem: (item: T, index: number) => React.ReactNode;
+  readonly renderItem: (item: T, index: number) => JSX.Element;
   /** Height of each item in terminal rows. Default: 1 */
   readonly itemHeight?: number;
   /** Maximum number of visible rows in the viewport. */
@@ -64,40 +65,34 @@ export function calculateWindow(
   return { startIndex, endIndex, scrollOffset };
 }
 
-export function VirtualList<T>({
-  items,
-  renderItem,
-  itemHeight = 1,
-  viewportHeight,
-  selectedIndex,
-  overscan = 5,
-  onSelect,
-}: VirtualListProps<T>): React.ReactNode {
-  const { startIndex, endIndex } = useMemo(
-    () => calculateWindow(items.length, viewportHeight, selectedIndex, overscan),
-    [items.length, viewportHeight, selectedIndex, overscan],
+export function VirtualList<T>(props: VirtualListProps<T>): JSX.Element {
+  // SolidJS: do NOT destructure props — use props.x for reactive access.
+  const itemHeight = props.itemHeight ?? 1;
+  const overscan = props.overscan ?? 5;
+
+  const windowMemo = createMemo(
+    () => calculateWindow(props.items.length, props.viewportHeight, props.selectedIndex, overscan),
   );
+  const startIndex = () => windowMemo().startIndex;
+  const endIndex = () => windowMemo().endIndex;
 
   // Slice the items to only the visible window
-  const visibleItems = useMemo(
-    () => items.slice(startIndex, endIndex),
-    [items, startIndex, endIndex],
+  const visibleItems = createMemo(
+    () => props.items.slice(startIndex(), endIndex()),
   );
 
-  if (items.length === 0) {
-    return null;
-  }
-
   return (
-    <box flexDirection="column" height={viewportHeight * itemHeight} width="100%">
-      {visibleItems.map((item, i) => {
-        const absoluteIndex = startIndex + i;
-        return onSelect ? (
-          <box key={absoluteIndex} height={itemHeight} width="100%" onMouseDown={() => onSelect(absoluteIndex)}>
-            {renderItem(item, absoluteIndex)}
-          </box>
-        ) : renderItem(item, absoluteIndex);
-      })}
-    </box>
+    <Show when={props.items.length > 0}>
+      <box flexDirection="column" height={props.viewportHeight * itemHeight} width="100%">
+        {visibleItems().map((item, i) => {
+          const absoluteIndex = startIndex() + i;
+          return props.onSelect ? (
+            <box height={itemHeight} width="100%" onMouseDown={() => props.onSelect!(absoluteIndex)}>
+              {props.renderItem(item, absoluteIndex)}
+            </box>
+          ) : props.renderItem(item, absoluteIndex);
+        })}
+      </box>
+    </Show>
   );
 }

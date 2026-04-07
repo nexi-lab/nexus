@@ -5,7 +5,7 @@
  * drift reconciliation reports, and brick lifecycle operations.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { createApiAction, categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
@@ -194,11 +194,37 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     source: SOURCE,
     errorMessage: "Failed to fetch bricks",
     action: async (client) => {
-      const response = await client.get<BricksHealthResponse>(
-        "/api/v2/bricks/health",
-      );
-      const bricks = response.bricks ?? [];
-      return { bricksHealth: response, bricks };
+      let response: BricksHealthResponse;
+      try {
+        response = await client.get<BricksHealthResponse>("/api/v2/bricks/health");
+      } catch {
+        // Health endpoint may 404 — use empty response as fallback
+        response = { bricks: [], total: 0, active: 0, failed: 0 };
+      }
+      let bricks = response.bricks ?? [];
+      // Fallback: if health endpoint returns no/empty bricks, synthesize from features
+      if (bricks.length === 0) {
+        try {
+          const features = await client.get<{ enabled_bricks?: readonly string[] }>(
+            "/api/v2/features",
+          );
+          if (features.enabled_bricks && features.enabled_bricks.length > 0) {
+            bricks = features.enabled_bricks.map((name) => ({
+              name,
+              state: "active",
+              protocol_name: "brick",
+              error: null,
+              started_at: null,
+              stopped_at: null,
+              unmounted_at: null,
+            }));
+          }
+        } catch { /* features endpoint unavailable */ }
+      }
+      return {
+        bricksHealth: { ...response, bricks, total: bricks.length, active: bricks.length },
+        bricks,
+      };
     },
   }),
 
@@ -207,7 +233,21 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
     source: SOURCE,
     errorMessage: "Failed to fetch cache stats",
     action: async (client) => {
-      const stats = await client.get<unknown>("/api/v2/cache/stats");
+      const raw = await client.get<{
+        file_access_tracker?: { tracked_paths?: number; total_accesses?: number; window_seconds?: number; hot_threshold?: number };
+        total_entries?: number; total_size_bytes?: number; hit_rate?: number;
+      }>("/api/v2/cache/stats");
+      // Normalize: server may return file_access_tracker wrapper or flat fields
+      const fat = raw.file_access_tracker;
+      const stats = {
+        total_entries: raw.total_entries ?? fat?.tracked_paths ?? 0,
+        total_size_bytes: raw.total_size_bytes ?? 0,
+        hit_rate: raw.hit_rate ?? 0,
+        tracked_paths: fat?.tracked_paths ?? 0,
+        total_accesses: fat?.total_accesses ?? 0,
+        window_seconds: fat?.window_seconds ?? 300,
+        hot_threshold: fat?.hot_threshold ?? 10,
+      };
       return { cacheStats: stats };
     },
   }),
@@ -257,12 +297,16 @@ export const useZonesStore = create<ZonesState>((set, get) => ({
       useUiStore.getState().markDataUpdated("zones");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to fetch drift report";
+      // Suppress 404 — drift endpoint is optional
+      const is404 = message.includes("Not Found") || message.includes("404");
       set({
         driftReport: null,
         driftLoading: false,
-        error: message,
+        error: is404 ? null : message,
       });
-      useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+      if (!is404) {
+        useErrorStore.getState().pushError({ message, category: categorizeError(message), source: SOURCE });
+      }
     }
   },
 

@@ -4,7 +4,8 @@
  * Extracted from events-panel.tsx (Issue 2A).
  */
 
-import React, { useState, useEffect } from "react";
+import { createSignal, createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useTextInput } from "../../shared/hooks/use-text-input.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -16,16 +17,16 @@ interface ReplayTabProps {
   readonly overlayActive: boolean;
 }
 
-export function ReplayTab({ tabBindings, overlayActive }: ReplayTabProps): React.ReactNode {
+export function ReplayTab(props: ReplayTabProps): JSX.Element {
   const client = useApi();
-  const [typeFilter, setTypeFilter] = useState("");
+  const [typeFilter, setTypeFilter] = createSignal("");
 
-  const fetchEventReplay = useKnowledgeStore((s) => s.fetchEventReplay);
-  const clearEventReplay = useKnowledgeStore((s) => s.clearEventReplay);
+  const fetchEventReplay = useKnowledgeStore.getState().fetchEventReplay;
+  const clearEventReplay = useKnowledgeStore.getState().clearEventReplay;
 
-  useEffect(() => {
+  createEffect(() => {
     if (client) void fetchEventReplay({}, client);
-  }, [client, fetchEventReplay]);
+  });
 
   const filterInput = useTextInput({
     onSubmit: (val) => {
@@ -35,21 +36,21 @@ export function ReplayTab({ tabBindings, overlayActive }: ReplayTabProps): React
   });
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : filterInput.active
-      ? filterInput.inputBindings
-      : {
-          ...tabBindings,
-          f: () => filterInput.activate(typeFilter),
-          r: () => {
-            if (client) {
-              clearEventReplay();
-              void fetchEventReplay({ event_types: typeFilter || undefined }, client);
-            }
-          },
+    (): Record<string, () => void> => {
+      if (props.overlayActive) return {};
+      if (filterInput.active) return filterInput.inputBindings;
+      return {
+        ...props.tabBindings,
+        f: () => filterInput.activate(typeFilter()),
+        r: () => {
+          if (client) {
+            clearEventReplay();
+            void fetchEventReplay({ event_types: typeFilter() || undefined }, client);
+          }
         },
-    overlayActive ? undefined : filterInput.active ? filterInput.onUnhandled : undefined,
+      };
+    },
+    () => props.overlayActive ? undefined : filterInput.active ? filterInput.onUnhandled : undefined,
   );
 
   return (
@@ -58,11 +59,11 @@ export function ReplayTab({ tabBindings, overlayActive }: ReplayTabProps): React
         <text>
           {filterInput.active
             ? `Filter event type: ${filterInput.buffer}\u2588`
-            : `Filter: event_type=${typeFilter || "*"}`}
+            : `Filter: event_type=${typeFilter() || "*"}`}
         </text>
       </box>
       <box flexGrow={1} width="100%" borderStyle="single">
-        <EventReplay typeFilter={typeFilter} />
+        <EventReplay typeFilter={typeFilter()} />
       </box>
       <box height={1} width="100%">
         <text>

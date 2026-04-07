@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Single tree node row: indent + expand/collapse icon + file/folder icon + name + size.
  *
@@ -6,7 +7,6 @@
  * @see Issue #3102, Decisions 4A + 5A
  */
 
-import React from "react";
 import type { TreeNode } from "../../stores/files-store.js";
 import { formatSize } from "../../shared/utils/format-size.js";
 
@@ -17,28 +17,24 @@ interface FileTreeNodeProps {
   readonly marked: boolean;
 }
 
-export const FileTreeNode = React.memo(function FileTreeNode({ node, selected, marked }: FileTreeNodeProps): React.ReactNode {
-  const indent = "  ".repeat(node.depth);
-  const cursor = selected ? "▸ " : "  ";
-  const check = marked ? "✓ " : "  ";
+export function FileTreeNode(props: FileTreeNodeProps): JSX.Element {
+  const indent = () => "  ".repeat(props.node.depth);
+  const cursor = () => props.selected ? "▸ " : "  ";
+  const check = () => props.marked ? "✓ " : "  ";
 
-  let expandIcon = "  ";
-  if (node.isDirectory) {
-    if (node.loading) {
-      expandIcon = "⟳ ";
-    } else if (node.expanded) {
-      expandIcon = "▾ ";
-    } else {
-      expandIcon = "▸ ";
-    }
-  }
+  const expandIcon = () => {
+    if (!props.node.isDirectory) return "  ";
+    if (props.node.loading) return "⟳ ";
+    if (props.node.expanded) return "▾ ";
+    return "▸ ";
+  };
 
-  const fileIcon = node.isDirectory ? "📁" : "📄";
-  const sizeSuffix = !node.isDirectory && node.size > 0 ? ` (${formatSize(node.size)})` : "";
+  const fileIcon = () => props.node.isDirectory ? "📁" : "📄";
+  const sizeSuffix = () => !props.node.isDirectory && props.node.size > 0 ? ` (${formatSize(props.node.size)})` : "";
 
   return (
     <box height={1} width="100%">
-      <text>{`${cursor}${check}${indent}${expandIcon}${fileIcon} ${node.name}${sizeSuffix}`}</text>
+      <text>{`${cursor()}${check()}${indent()}${expandIcon()}${fileIcon()} ${props.node.name}${sizeSuffix()}`}</text>
     </box>
   );
-});
+}

@@ -8,7 +8,7 @@
  * @see Issue #3066 Architecture Decision 1C
  */
 
-import React from "react";
+import { For } from "solid-js";
 import Anser from "anser";
 import { textStyle } from "../text-style.js";
 
@@ -24,10 +24,10 @@ interface StyledTextProps {
   readonly children: string;
 }
 
-export function StyledText({ children }: StyledTextProps): React.ReactNode {
-  if (!children) return null;
+export function StyledText(props: StyledTextProps) {
+  if (!props.children) return null;
 
-  const spans = Anser.ansiToJson(children, {
+  const spans = Anser.ansiToJson(props.children, {
     json: true,
     remove_empty: true,
   });
@@ -41,11 +41,10 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
 
   return (
     <text>
-      {spans.map((span, i) => {
+      <For each={spans}>{(span, i) => {
         const decoration = span.decoration ?? "";
         return (
           <span
-            key={i}
             style={textStyle({
               bold: decoration.includes("bold") || undefined,
               dim: decoration.includes("dim") || undefined,
@@ -58,7 +57,7 @@ export function StyledText({ children }: StyledTextProps): React.ReactNode {
             {span.content}
           </span>
         );
-      })}
+      }}</For>
     </text>
   );
 }

@@ -3,9 +3,12 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "DOM"],
-    "jsx": "react-jsx",
-    "jsxImportSource": "@opentui/react",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "jsx": "preserve",
+    "jsxImportSource": "@opentui/solid",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -15,8 +18,25 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "types": ["bun-types"]
+    "types": [
+      "bun-types"
+    ],
+    "customConditions": [
+      "browser"
+    ],
+    "paths": {
+      "@nexus-ai-fs/api-client": [
+        "../nexus-api-client/src/index.ts"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "tests"
+  ]
 }

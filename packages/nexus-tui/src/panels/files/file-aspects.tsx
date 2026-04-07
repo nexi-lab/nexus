@@ -4,7 +4,8 @@
  * Issue #2930.
  */
 
-import React, { useEffect } from "react";
+import { createEffect } from "solid-js";
+import type { JSX } from "solid-js";
 import crypto from "node:crypto";
 import type { FileItem } from "../../stores/files-store.js";
 import { useKnowledgeStore } from "../../stores/knowledge-store.js";
@@ -26,7 +27,7 @@ function computeUrn(item: FileItem): string | null {
   return `urn:nexus:file:${zone}:${pathHash}`;
 }
 
-export function FileAspects({ item }: FileAspectsProps): React.ReactNode {
+export function FileAspects({ item }: FileAspectsProps): JSX.Element {
   const client = useApi();
   const aspectsCache = useKnowledgeStore((s) => s.aspectsCache);
   const aspectDetailCache = useKnowledgeStore((s) => s.aspectDetailCache);
@@ -36,21 +37,21 @@ export function FileAspects({ item }: FileAspectsProps): React.ReactNode {
 
   const urn = item ? computeUrn(item) : null;
 
-  useEffect(() => {
+  createEffect(() => {
     if (client && urn) {
       fetchAspects(urn, client);
     }
-  }, [client, urn, fetchAspects]);
+  });
 
   // Fetch detail for each aspect once names are loaded
   const aspectNames = urn ? (aspectsCache.get(urn) ?? []) : [];
-  useEffect(() => {
+  createEffect(() => {
     if (client && urn && aspectNames.length > 0) {
       for (const name of aspectNames) {
         fetchAspectDetail(urn, name, client);
       }
     }
-  }, [client, urn, aspectNames.length, fetchAspectDetail]);
+  });
 
   if (!item) {
     return <text>No file selected</text>;
@@ -80,7 +81,7 @@ export function FileAspects({ item }: FileAspectsProps): React.ReactNode {
         const key = `${urn}::${name}`;
         const detail = aspectDetailCache.get(key);
         return (
-          <box key={name} flexDirection="column">
+          <box flexDirection="column">
             <text>{`  * ${name}`}</text>
             {detail ? (
               <text>{`    v${detail.version} by ${detail.createdBy}`}</text>

@@ -1207,7 +1207,7 @@ class NexusFS(  # type: ignore[misc]
                 )
             return content
 
-        # DT_EXTERNAL_STORAGE pre-check — backend manages own namespace, skip kernel
+        # External connector mount read — only for ExternalRouteResult.
         _is_admin = (
             getattr(context, "is_admin", False)
             if context is not None and not isinstance(context, dict)
@@ -1218,21 +1218,28 @@ class NexusFS(  # type: ignore[misc]
         _route = self.router.route(
             path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
         )
-        if isinstance(_route, ExternalRouteResult):
+        _route_backend = getattr(_route, "backend", None)
+        _route_backend_path = getattr(_route, "backend_path", "") or ""
+        if isinstance(_route, ExternalRouteResult) and _route_backend is not None:
             _ctx = (
-                _dc_replace(context, backend_path=_route.backend_path, virtual_path=path)
+                _dc_replace(context, backend_path=_route_backend_path, virtual_path=path)
                 if context
                 else OperationContext(
                     user_id="anonymous",
                     groups=[],
-                    backend_path=_route.backend_path,
+                    backend_path=_route_backend_path,
                     virtual_path=path,
                 )
             )
-            data = _route.backend.read_content("", context=_ctx)
-            if offset or count is not None:
-                data = data[offset : offset + count] if count is not None else data[offset:]
-            return data
+            try:
+                data = _route_backend.read_content(_route_backend_path, context=_ctx)
+                if offset or count is not None:
+                    data = data[offset : offset + count] if count is not None else data[offset:]
+                return data
+            except Exception:
+                # If connector read fails, fall through to kernel
+                if isinstance(_route, ExternalRouteResult):
+                    raise  # External mounts should not fall through
 
         # PRE-INTERCEPT hooks dispatched by Rust sys_read (dispatch_pre_hooks)
 
@@ -4425,6 +4432,56 @@ class NexusFS(  # type: ignore[misc]
             if details:
                 return [self._format_lock_info(lk) for lk in locks]
             return [lk.path for lk in locks]
+
+        # ── External connector mount listing (S3, GCS, etc.) ──
+        # Only intercept ExternalRouteResult — these are mounts with
+        # is_external_storage metadata set. Plain RouteResult backends
+        # (LocalBackend, CASLocalBackend, etc.) use the normal metastore path.
+        if path and path != "/" and getattr(self, "router", None):
+            try:
+                from nexus.core.router import ExternalRouteResult
+
+                _is_admin = (
+                    context.is_admin
+                    if context is not None and not isinstance(context, dict)
+                    else (context.get("is_admin", False) if isinstance(context, dict) else False)
+                )
+                _route = self.router.route(
+                    path, is_admin=_is_admin, check_write=False, zone_id=self._zone_id
+                )
+                backend = getattr(_route, "backend", None)
+                if isinstance(_route, ExternalRouteResult) and backend is not None:
+                    backend_path = getattr(_route, "backend_path", "") or ""
+                    _ctx = (
+                        _dc_replace(context, backend_path=backend_path, virtual_path=path)
+                        if context
+                        else OperationContext(
+                            user_id="anonymous",
+                            groups=[],
+                            backend_path=backend_path,
+                            virtual_path=path,
+                        )
+                    )
+                    entries = backend.list_dir(backend_path, context=_ctx)
+                    if entries is not None:
+                        if details:
+                            return [
+                                {
+                                    "path": f"{path.rstrip('/')}/{e}"
+                                    if not e.startswith("/")
+                                    else e,
+                                    "name": e.rstrip("/").rsplit("/", 1)[-1],
+                                    "is_directory": e.endswith("/"),
+                                    "size": 0,
+                                }
+                                for e in entries
+                            ]
+                        return [
+                            f"{path.rstrip('/')}/{e}" if not e.startswith("/") else e
+                            for e in entries
+                        ]
+            except Exception as exc:
+                logger.debug("sys_readdir connector route failed for %s: %s", path, exc)
 
         prefix = path if path != "/" else ""
         if prefix and not prefix.endswith("/"):

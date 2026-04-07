@@ -1,8 +1,8 @@
+import type { JSX } from "solid-js";
 /**
  * File metadata sidebar displaying path, size, etag, version, owner, permissions, etc.
  */
 
-import React from "react";
 import type { FileItem } from "../../stores/files-store.js";
 import { textStyle } from "../../shared/text-style.js";
 import { formatTimestamp } from "../../shared/utils/format-time.js";
@@ -24,39 +24,32 @@ function truncate(value: string | null | undefined, max: number = 30): string {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-function MetaRow({ label, value, color }: { label: string; value: string; color?: string }): React.ReactNode {
+function MetaRow(props: { label: string; value: string; color?: string }): JSX.Element {
   return (
     <box height={1} width="100%">
       <text>
-        <span style={textStyle({ fg: statusColor.dim })}>{`${label.padEnd(8)} `}</span>
-        <span style={color ? textStyle({ fg: color }) : undefined}>{value}</span>
+        <span style={textStyle({ fg: statusColor.dim })}>{`${props.label.padEnd(8)} `}</span>
+        <span style={props.color ? textStyle({ fg: props.color }) : undefined}>{props.value}</span>
       </text>
     </box>
   );
 }
 
-export function FileMetadata({ item }: FileMetadataProps): React.ReactNode {
-  if (!item) {
-    return (
-      <box height="100%" width="100%">
-        <text>No file selected</text>
-      </box>
-    );
-  }
-
+export function FileMetadata(props: FileMetadataProps): JSX.Element {
+  // No if/return — unconditional rendering with ternary.
+  // props.item is reactive via babel-preset-solid compiled getters.
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <MetaRow label="Name" value={item.name} color={statusColor.info} />
-      <MetaRow label="Path" value={truncate(item.path, 40)} color={statusColor.reference} />
-      <MetaRow label="Type" value={item.isDirectory ? "Directory" : "File"} />
-      {!item.isDirectory && <MetaRow label="Size" value={formatBytes(item.size)} />}
-      <MetaRow label="ETag" value={truncate(item.etag, 20)} />
-      <MetaRow label="Version" value={truncate(item.version != null ? String(item.version) : null)} />
-      <MetaRow label="MIME" value={truncate(item.mimeType)} />
-      <MetaRow label="Owner" value={truncate(item.owner)} />
-      <MetaRow label="Perms" value={truncate(item.permissions)} />
-      <MetaRow label="Zone" value={item.zoneId ?? "n/a"} color={item.zoneId ? statusColor.reference : undefined} />
-      <MetaRow label="Modified" value={item.modifiedAt ? formatTimestamp(item.modifiedAt) : "n/a"} />
+      <text>{props.item ? `${props.item.name} — ${props.item.isDirectory ? "Directory" : "File"}` : "No file selected"}</text>
+      <text>{props.item ? `Path: ${truncate(props.item.path, 50)}` : ""}</text>
+      <text>{props.item ? `Size: ${formatBytes(props.item.size)}` : ""}</text>
+      <text>{props.item ? `ETag: ${truncate(props.item.etag, 20)}` : ""}</text>
+      <text>{props.item ? `Version: ${props.item.version ?? "n/a"}` : ""}</text>
+      <text>{props.item ? `MIME: ${truncate(props.item.mimeType)}` : ""}</text>
+      <text>{props.item ? `Owner: ${truncate(props.item.owner)}` : ""}</text>
+      <text>{props.item ? `Perms: ${truncate(props.item.permissions)}` : ""}</text>
+      <text>{props.item ? `Zone: ${props.item.zoneId ?? "n/a"}` : ""}</text>
+      <text>{props.item ? `Modified: ${props.item.modifiedAt ? formatTimestamp(props.item.modifiedAt) : "n/a"}` : ""}</text>
     </box>
   );
 }

@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * Shared connector row component used by Available and Mounted tabs.
  *
@@ -5,14 +6,13 @@
  * mount path, and sync status. Props control column visibility per tab.
  */
 
-import React from "react";
 import { statusColor } from "../../shared/theme.js";
 
 // =============================================================================
 // Auth status indicator
 // =============================================================================
 
-const AUTH_INDICATORS: Record<string, { icon: string; color: string }> = {
+const AUTH_INDICATORS: Readonly<Record<string, { icon: string; color: string }>> = {
   authed: { icon: "●", color: statusColor.healthy },
   expired: { icon: "●", color: statusColor.warning },
   no_auth: { icon: "○", color: statusColor.dim },
@@ -24,7 +24,7 @@ const AUTH_INDICATORS: Record<string, { icon: string; color: string }> = {
 // Sync status indicator
 // =============================================================================
 
-const SYNC_INDICATORS: Record<string, { label: string; color: string }> = {
+const SYNC_INDICATORS: Readonly<Record<string, { label: string; color: string }>> = {
   synced: { label: "synced", color: statusColor.healthy },
   syncing: { label: "syncing", color: statusColor.warning },
   error: { label: "error", color: statusColor.error },
@@ -59,42 +59,36 @@ export interface ConnectorRowProps {
 // Component
 // =============================================================================
 
-export function ConnectorRow({
-  name,
-  category,
-  authStatus,
-  mountPath,
-  syncStatus,
-  selected,
-  showAuth = true,
-  showSync = true,
-  isSyncing = false,
-}: ConnectorRowProps): React.ReactNode {
-  const prefix = selected ? "▶ " : "  ";
-  const auth = AUTH_INDICATORS[authStatus] ?? AUTH_INDICATORS.unknown;
-  const displayName = name.replace(/_connector$/, "");
-  const categoryLabel = category ? ` (${category})` : "";
-  const mountLabel = mountPath ?? "—";
+export function ConnectorRow(props: ConnectorRowProps): JSX.Element {
+  const showAuth = props.showAuth ?? true;
+  const showSync = props.showSync ?? true;
+  const isSyncing = props.isSyncing ?? false;
+
+  const prefix = props.selected ? "▶ " : "  ";
+  const auth = AUTH_INDICATORS[props.authStatus] ?? AUTH_INDICATORS.unknown!;
+  const displayName = props.name.replace(/_connector$/, "");
+  const categoryLabel = props.category ? ` (${props.category})` : "";
+  const mountLabel = props.mountPath ?? "—";
 
   // Build sync label
   let syncLabel = "";
-  let syncColor = statusColor.dim;
+  let syncColor: string = statusColor.dim;
   if (isSyncing) {
     syncLabel = "syncing…";
     syncColor = statusColor.warning;
-  } else if (syncStatus) {
-    const indicator = SYNC_INDICATORS[syncStatus];
-    syncLabel = indicator?.label ?? syncStatus;
+  } else if (props.syncStatus) {
+    const indicator = SYNC_INDICATORS[props.syncStatus];
+    syncLabel = indicator?.label ?? props.syncStatus;
     syncColor = indicator?.color ?? statusColor.dim;
   }
 
   return (
     <box height={1} width="100%">
       <text>
-        <span foregroundColor={selected ? statusColor.info : undefined}>
+        <span foregroundColor={props.selected ? statusColor.info : undefined}>
           {prefix}
         </span>
-        <span bold={selected}>
+        <span bold={props.selected}>
           {displayName}
         </span>
         <span foregroundColor={statusColor.dim}>
@@ -104,7 +98,7 @@ export function ConnectorRow({
           <>
             <span>{"  "}</span>
             <span foregroundColor={auth.color}>{auth.icon}</span>
-            <span foregroundColor={statusColor.dim}>{` ${authStatus}`}</span>
+            <span foregroundColor={statusColor.dim}>{` ${props.authStatus}`}</span>
           </>
         )}
         <span>{"  "}</span>

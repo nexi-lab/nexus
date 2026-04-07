@@ -3,7 +3,7 @@
  * Issue #3417.
  */
 
-import { create } from "zustand";
+import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { useErrorStore } from "./error-store.js";
 
@@ -110,9 +110,9 @@ export const useLineageStore = create<LineageState>((set, get) => ({
       const msg = err instanceof Error ? err.message : String(err);
       set({ loading: false, error: msg });
       useErrorStore.getState().pushError({
-        title: "Lineage fetch failed",
-        detail: msg,
-        category: "api",
+        message: `Lineage fetch failed: ${msg}`,
+        category: "server",
+        source: "lineage",
       });
     }
   },

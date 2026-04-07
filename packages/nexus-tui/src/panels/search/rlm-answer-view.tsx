@@ -1,3 +1,4 @@
+import type { JSX } from "solid-js";
 /**
  * RLM document Q&A answer view: progressive streaming display.
  *
@@ -5,7 +6,6 @@
  * then the final answer. Status bar shows model, tokens, duration, iteration count.
  */
 
-import React from "react";
 import type { RlmAnswer, RlmStep } from "../../stores/search-store.js";
 
 interface RlmAnswerViewProps {
@@ -24,7 +24,7 @@ function formatStep(step: RlmStep): string {
   return `[${step.step}] ${code}\n    → ${output}  (${step.tokens_used} tok, ${step.duration_seconds.toFixed(1)}s)`;
 }
 
-export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewProps): React.ReactNode {
+export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewProps): JSX.Element {
   if (!answer && !loading) {
     return (
       <box height="100%" width="100%" flexDirection="column" justifyContent="center" alignItems="center">
@@ -86,7 +86,7 @@ export function RlmAnswerView({ answer, loading, contextPaths }: RlmAnswerViewPr
         ) : answer.steps.length > 0 ? (
           <box flexDirection="column">
             {answer.steps.map((step) => (
-              <box key={step.step} height={2} width="100%">
+              <box height={2} width="100%">
                 <text>{formatStep(step)}</text>
               </box>
             ))}

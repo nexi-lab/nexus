@@ -6,7 +6,8 @@
  * Keybindings: Tab to switch, r to refresh, j/k to scroll.
  */
 
-import React, { useEffect, useState } from "react";
+import { createEffect, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import { useStackStore, type StackTab, type ContainerInfo, type StackPaths } from "../../stores/stack-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useApi } from "../../shared/hooks/use-api.js";
@@ -51,166 +52,169 @@ const HEALTH_COLOR: Record<string, string> = {
 // Sub-components
 // =============================================================================
 
-function ContainerList({
-  containers,
-  loading,
-  selectedIndex,
-}: {
+function ContainerList(props: {
   containers: readonly ContainerInfo[];
   loading: boolean;
   selectedIndex: number;
-}): React.ReactNode {
-  if (loading) {
-    return <LoadingIndicator message="Querying Docker..." />;
-  }
-
-  if (containers.length === 0) {
-    return <EmptyState message="No containers found." hint="Start the stack with: nexus up" />;
-  }
-
+}): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      {/* Header */}
-      <box height={1} width="100%">
-        <text>{"  CONTAINER NAME                      SERVICE       STATE       HEALTH      PORTS                    IMAGE"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text>{"  ------------------------------------  -----------  ----------  ----------  -----------------------  -------------------------"}</text>
-      </box>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Querying Docker..."
+          : props.containers.length === 0
+            ? "No containers found. Start the stack with: nexus up"
+            : `${props.containers.length} containers`}
+      </text>
+      <scrollbox flexGrow={1} width="100%">
+        {/* Header */}
+        <box height={1} width="100%">
+          <text>{"  CONTAINER NAME                      SERVICE       STATE       HEALTH      PORTS                    IMAGE"}</text>
+        </box>
+        <box height={1} width="100%">
+          <text>{"  ------------------------------------  -----------  ----------  ----------  -----------------------  -------------------------"}</text>
+        </box>
 
-      {/* Rows */}
-      {containers.map((c, i) => {
-        const isSelected = i === selectedIndex;
-        const prefix = isSelected ? "> " : "  ";
-        const stateColor = CONTAINER_STATE_COLOR[c.state] ?? statusColor.dim;
-        const hColor = HEALTH_COLOR[c.health] ?? statusColor.dim;
-        const name = c.name.length > 36 ? c.name.slice(0, 33) + "..." : c.name;
-        const image = c.image.length > 25 ? c.image.slice(0, 22) + "..." : c.image;
-        const ports = c.ports.length > 23 ? c.ports.slice(0, 20) + "..." : c.ports;
+        {/* Rows */}
+        {props.containers.map((c, i) => {
+          const isSelected = i === props.selectedIndex;
+          const prefix = isSelected ? "> " : "  ";
+          const stateColor = CONTAINER_STATE_COLOR[c.state] ?? statusColor.dim;
+          const hColor = HEALTH_COLOR[c.health] ?? statusColor.dim;
+          const name = c.name.length > 36 ? c.name.slice(0, 33) + "..." : c.name;
+          const image = c.image.length > 25 ? c.image.slice(0, 22) + "..." : c.image;
+          const ports = c.ports.length > 23 ? c.ports.slice(0, 20) + "..." : c.ports;
 
-        return (
-          <box key={c.name} height={1} width="100%">
-            <text>
-              {`${prefix}${name.padEnd(36)}  ${c.service.padEnd(11)}  `}
-              <span foregroundColor={stateColor}>{c.state.padEnd(10)}</span>
-              {"  "}
-              <span foregroundColor={hColor}>{(c.health || "-").padEnd(10)}</span>
-              {`  ${ports.padEnd(23)}  ${image}`}
-            </text>
-          </box>
-        );
-      })}
-    </scrollbox>
+          return (
+            <box height={1} width="100%">
+              <text>
+                {`${prefix}${name.padEnd(36)}  ${c.service.padEnd(11)}  `}
+                <span foregroundColor={stateColor}>{c.state.padEnd(10)}</span>
+                {"  "}
+                <span foregroundColor={hColor}>{(c.health || "-").padEnd(10)}</span>
+                {`  ${ports.padEnd(23)}  ${image}`}
+              </text>
+            </box>
+          );
+        })}
+      </scrollbox>
+    </box>
   );
 }
 
-function ConfigView({
-  yaml,
-  loading,
-  scrollOffset,
-}: {
+function ConfigView(props: {
   yaml: string;
   loading: boolean;
   scrollOffset: number;
-}): React.ReactNode {
-  if (loading) {
-    return <LoadingIndicator message="Reading nexus.yaml..." />;
-  }
-
-  if (!yaml) {
-    return <EmptyState message="No nexus.yaml found." hint="Run: nexus init --preset shared" />;
-  }
-
-  const lines = yaml.split("\n");
-
+}): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      <box height={1} width="100%">
-        <text foregroundColor={statusColor.info}>{"  nexus.yaml"}</text>
-      </box>
-      <box height={1} width="100%">
-        <text dimColor>{"  " + "─".repeat(60)}</text>
-      </box>
-      {lines.slice(scrollOffset).map((line, i) => (
-        <box key={i} height={1} width="100%">
-          <text>
-            <span dimColor>{`  ${String(scrollOffset + i + 1).padStart(3)}  `}</span>
-            {line}
-          </text>
-        </box>
-      ))}
-    </scrollbox>
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Reading nexus.yaml..."
+          : !props.yaml
+            ? "No nexus.yaml found. Run: nexus init --preset shared"
+            : "nexus.yaml"}
+      </text>
+
+      {(() => {
+        if (props.loading || !props.yaml) return null;
+        const lines = props.yaml.split("\n");
+
+        return (
+          <scrollbox flexGrow={1} width="100%">
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.info}>{"  nexus.yaml"}</text>
+            </box>
+            <box height={1} width="100%">
+              <text dimColor>{"  " + "─".repeat(60)}</text>
+            </box>
+            {lines.slice(props.scrollOffset).map((line, i) => (
+              <box height={1} width="100%">
+                <text>
+                  <span dimColor>{`  ${String(props.scrollOffset + i + 1).padStart(3)}  `}</span>
+                  {line}
+                </text>
+              </box>
+            ))}
+          </scrollbox>
+        );
+      })()}
+    </box>
   );
 }
 
-function StateView({
-  stateJson,
-  loading,
-  projectName,
-  scrollOffset,
-}: {
+function StateView(props: {
   stateJson: Record<string, unknown> | null;
   loading: boolean;
   projectName: string | null;
   scrollOffset: number;
-}): React.ReactNode {
-  if (loading) {
-    return <LoadingIndicator message="Reading .state.json..." />;
-  }
-
-  if (!stateJson) {
-    return <EmptyState message="No .state.json found." hint="Start the stack first." />;
-  }
-
-  // Render key-value pairs with nested object support
-  const lines: { key: string; value: string; indent: number }[] = [];
-
-  function flatten(obj: Record<string, unknown>, indent: number): void {
-    for (const [key, val] of Object.entries(obj)) {
-      if (val && typeof val === "object" && !Array.isArray(val)) {
-        lines.push({ key, value: "", indent });
-        flatten(val as Record<string, unknown>, indent + 1);
-      } else {
-        lines.push({ key, value: String(val), indent });
-      }
-    }
-  }
-  flatten(stateJson, 0);
-
+}): JSX.Element {
   return (
-    <scrollbox height="100%" width="100%">
-      <box height={1} width="100%">
-        <text foregroundColor={statusColor.info}>{"  .state.json (runtime)"}</text>
-      </box>
-      {projectName && (
-        <box height={1} width="100%">
-          <text>
-            {"  project_name: "}
-            <span foregroundColor={statusColor.identity}>{projectName}</span>
-          </text>
-        </box>
-      )}
-      <box height={1} width="100%">
-        <text dimColor>{"  " + "─".repeat(60)}</text>
-      </box>
-      {lines.slice(scrollOffset).map((line, i) => {
-        const pad = "  ".repeat(line.indent);
+    <box height="100%" width="100%" flexDirection="column">
+      <text>
+        {props.loading
+          ? "Reading .state.json..."
+          : !props.stateJson
+            ? "No .state.json found. Start the stack first."
+            : ".state.json (runtime)"}
+      </text>
+
+      {(() => {
+        if (props.loading || !props.stateJson) return null;
+
+        // Render key-value pairs with nested object support
+        const lines: { key: string; value: string; indent: number }[] = [];
+
+        function flatten(obj: Record<string, unknown>, indent: number): void {
+          for (const [key, val] of Object.entries(obj)) {
+            if (val && typeof val === "object" && !Array.isArray(val)) {
+              lines.push({ key, value: "", indent });
+              flatten(val as Record<string, unknown>, indent + 1);
+            } else {
+              lines.push({ key, value: String(val), indent });
+            }
+          }
+        }
+        flatten(props.stateJson, 0);
+
         return (
-          <box key={i} height={1} width="100%">
-            <text>
-              {"  "}{pad}
-              <span foregroundColor={statusColor.info}>{line.key}</span>
-              {line.value ? ": " : ""}
-              {line.value}
-            </text>
-          </box>
+          <scrollbox flexGrow={1} width="100%">
+            <box height={1} width="100%">
+              <text foregroundColor={statusColor.info}>{"  .state.json (runtime)"}</text>
+            </box>
+            {props.projectName && (
+              <box height={1} width="100%">
+                <text>
+                  {"  project_name: "}
+                  <span foregroundColor={statusColor.identity}>{props.projectName}</span>
+                </text>
+              </box>
+            )}
+            <box height={1} width="100%">
+              <text dimColor>{"  " + "─".repeat(60)}</text>
+            </box>
+            {lines.slice(props.scrollOffset).map((line, i) => {
+              const pad = "  ".repeat(line.indent);
+              return (
+                <box height={1} width="100%">
+                  <text>
+                    {"  "}{pad}
+                    <span foregroundColor={statusColor.info}>{line.key}</span>
+                    {line.value ? ": " : ""}
+                    {line.value}
+                  </text>
+                </box>
+              );
+            })}
+          </scrollbox>
         );
-      })}
-    </scrollbox>
+      })()}
+    </box>
   );
 }
 
-function PathsBar({ paths }: { paths: StackPaths | null }): React.ReactNode {
+function PathsBar({ paths }: { paths: StackPaths | null }): JSX.Element {
   if (!paths) return null;
 
   return (
@@ -250,7 +254,7 @@ function HealthSummary({
   healthDetails: { status: string; components: Record<string, { status: string; detail?: string }> } | null;
   uptime: number | null;
   serverVersion: string | null;
-}): React.ReactNode {
+}): JSX.Element {
   if (!healthDetails) return null;
 
   const color = healthDetails.status === "healthy"
@@ -287,7 +291,7 @@ function HealthSummary({
               ? statusColor.warning
               : statusColor.error;
             return (
-              <box key={name} height={1} width="100%">
+              <box height={1} width="100%">
                 <text>
                   {"    "}
                   <span foregroundColor={cColor}>{"●"}</span>
@@ -308,99 +312,103 @@ function HealthSummary({
 // Main panel
 // =============================================================================
 
-export default function StackPanel(): React.ReactNode {
+export default function StackPanel(): JSX.Element {
   const client = useApi();
-  const overlayActive = useUiStore((s) => s.overlayActive);
-  const serverVersion = useGlobalStore((s) => s.serverVersion);
-  const uptime = useGlobalStore((s) => s.uptime);
+  const overlayActive = () => useUiStore((s) => s.overlayActive);
+  const serverVersion = () => useGlobalStore((s) => s.serverVersion);
+  const uptime = () => useGlobalStore((s) => s.uptime);
 
-  const activeTab = useStackStore((s) => s.activeTab);
+  const activeTab = () => useStackStore((s) => s.activeTab);
   const setActiveTab = useStackStore((s) => s.setActiveTab);
-  const containers = useStackStore((s) => s.containers);
-  const containersLoading = useStackStore((s) => s.containersLoading);
-  const configYaml = useStackStore((s) => s.configYaml);
-  const configLoading = useStackStore((s) => s.configLoading);
-  const stateJson = useStackStore((s) => s.stateJson);
-  const stateLoading = useStackStore((s) => s.stateLoading);
-  const healthDetails = useStackStore((s) => s.healthDetails);
-  const paths = useStackStore((s) => s.paths);
-  const error = useStackStore((s) => s.error);
+  const containers = () => useStackStore((s) => s.containers);
+  const containersLoading = () => useStackStore((s) => s.containersLoading);
+  const configYaml = () => useStackStore((s) => s.configYaml);
+  const configLoading = () => useStackStore((s) => s.configLoading);
+  const stateJson = () => useStackStore((s) => s.stateJson);
+  const stateLoading = () => useStackStore((s) => s.stateLoading);
+  const healthDetails = () => useStackStore((s) => s.healthDetails);
+  const paths = () => useStackStore((s) => s.paths);
+  const error = () => useStackStore((s) => s.error);
   const refreshAll = useStackStore((s) => s.refreshAll);
 
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [scrollOffset, setScrollOffset] = useState(0);
+  const [selectedIndex, setSelectedIndex] = createSignal(0);
+  const [scrollOffset, setScrollOffset] = createSignal(0);
 
   // Tracks whether any fetch has ever started on this mount.
   // Set reactively when loading flags first go true — NOT at the call site —
   // so there is no render cycle where hasLoaded=true but loading=false and
   // data is still empty (which would flash misleading "no containers" state).
-  const [hasLoaded, setHasLoaded] = useState(false);
-  const anyLoading = containersLoading || configLoading || stateLoading;
-  useEffect(() => {
-    if (!hasLoaded && anyLoading) {
+  const [hasLoaded, setHasLoaded] = createSignal(false);
+  const anyLoading = () => containersLoading() || configLoading() || stateLoading();
+  createEffect(() => {
+    if (!hasLoaded() && anyLoading()) {
       setHasLoaded(true);
     }
-  }, [anyLoading, hasLoaded]);
+  });
 
   // Derive project name from state.json
-  const projectName = stateJson?.project_name as string | null ?? null;
+  const projectName = () => (stateJson()?.project_name as string | null) ?? null;
 
   // Auto-fetch on client connect so the panel surfaces real state on entry.
   // hasLoaded is set by the anyLoading effect above once refreshAll raises
   // loading flags — do NOT set it here to avoid the pre-load empty-state flash.
-  useEffect(() => {
+  createEffect(() => {
     if (client) {
       refreshAll(client);
     }
-  }, [client, refreshAll]);
+  });
 
   // Reset selection/scroll on tab change
-  useEffect(() => {
+  createEffect(() => {
     setSelectedIndex(0);
     setScrollOffset(0);
-  }, [activeTab]);
+  });
 
-  // List length for current tab
-  const listLength = activeTab === "containers"
-    ? containers.length
-    : activeTab === "config"
-    ? configYaml.split("\n").length
-    : stateJson
-    ? Object.keys(stateJson).length * 3 // approximate
-    : 0;
+  // List length for current tab (read fresh from store for keyboard handler)
+  const listLength = (): number => {
+    const s = useStackStore.getState();
+    if (s.activeTab === "containers") return s.containers.length;
+    if (s.activeTab === "config") return s.configYaml.split("\n").length;
+    return s.stateJson ? Object.keys(s.stateJson).length * 3 : 0;
+  };
 
   useKeyboard(
-    overlayActive
-      ? {}
-      : {
+    (): Record<string, () => void> => {
+      if (useUiStore.getState().overlayActive) return {};
+      return {
           tab: () => {
-            const idx = TAB_ORDER.indexOf(activeTab);
+            const tab = useStackStore.getState().activeTab;
+            const idx = TAB_ORDER.indexOf(tab);
             const next = TAB_ORDER[(idx + 1) % TAB_ORDER.length]!;
             setActiveTab(next);
           },
           j: () => {
-            if (activeTab === "containers") {
-              setSelectedIndex((i) => Math.min(i + 1, containers.length - 1));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex((i) => Math.min(i + 1, useStackStore.getState().containers.length - 1));
             } else {
-              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength - 5, 0)));
+              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength() - 5, 0)));
             }
           },
           down: () => {
-            if (activeTab === "containers") {
-              setSelectedIndex((i) => Math.min(i + 1, containers.length - 1));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex((i) => Math.min(i + 1, useStackStore.getState().containers.length - 1));
             } else {
-              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength - 5, 0)));
+              setScrollOffset((o) => Math.min(o + 1, Math.max(listLength() - 5, 0)));
             }
           },
           k: () => {
-            if (activeTab === "containers") {
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
               setSelectedIndex((i) => Math.max(i - 1, 0));
             } else {
               setScrollOffset((o) => Math.max(o - 1, 0));
             }
           },
           up: () => {
-            if (activeTab === "containers") {
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
               setSelectedIndex((i) => Math.max(i - 1, 0));
             } else {
               setScrollOffset((o) => Math.max(o - 1, 0));
@@ -414,13 +422,15 @@ export default function StackPanel(): React.ReactNode {
             setScrollOffset(0);
           },
           "shift+g": () => {
-            if (activeTab === "containers") {
-              setSelectedIndex(Math.max(containers.length - 1, 0));
+            const tab = useStackStore.getState().activeTab;
+            if (tab === "containers") {
+              setSelectedIndex(Math.max(useStackStore.getState().containers.length - 1, 0));
             } else {
-              setScrollOffset(Math.max(listLength - 5, 0));
+              setScrollOffset(Math.max(listLength() - 5, 0));
             }
           },
-        },
+        };
+    },
   );
 
   return (
@@ -430,55 +440,55 @@ export default function StackPanel(): React.ReactNode {
         <text>
           {TAB_ORDER.map((tab) => {
             const label = TAB_LABELS[tab];
-            return tab === activeTab ? `[${label}]` : ` ${label} `;
+            return tab === activeTab() ? `[${label}]` : ` ${label} `;
           }).join(" ")}
         </text>
       </box>
 
       {/* Error display */}
-      {error && (
+      {error() && (
         <box height={1} width="100%">
-          <text foregroundColor={statusColor.error}>{`  Error: ${error}`}</text>
+          <text foregroundColor={statusColor.error}>{`  Error: ${error()}`}</text>
         </box>
       )}
 
       {/* Health summary (always visible) */}
       <HealthSummary
-        healthDetails={healthDetails}
-        uptime={uptime}
-        serverVersion={serverVersion}
+        healthDetails={healthDetails()}
+        uptime={uptime()}
+        serverVersion={serverVersion()}
       />
 
       {/* File paths */}
-      <PathsBar paths={paths} />
+      <PathsBar paths={paths()} />
 
       {/* Main content */}
       <box flexGrow={1} borderStyle="single">
-        {!hasLoaded && !containersLoading && !configLoading && !stateLoading && (
+        {!hasLoaded() && !containersLoading() && !configLoading() && !stateLoading() && (
           <box height="100%" width="100%" justifyContent="center" alignItems="center">
             <text dimColor>{"  Press r to load stack info"}</text>
           </box>
         )}
-        {(hasLoaded || containersLoading || configLoading || stateLoading) && activeTab === "containers" && (
+        {(hasLoaded() || containersLoading() || configLoading() || stateLoading()) && activeTab() === "containers" && (
           <ContainerList
-            containers={containers}
-            loading={containersLoading}
-            selectedIndex={selectedIndex}
+            containers={containers()}
+            loading={containersLoading()}
+            selectedIndex={selectedIndex()}
           />
         )}
-        {(hasLoaded || configLoading) && activeTab === "config" && (
+        {(hasLoaded() || configLoading()) && activeTab() === "config" && (
           <ConfigView
-            yaml={configYaml}
-            loading={configLoading}
-            scrollOffset={scrollOffset}
+            yaml={configYaml()}
+            loading={configLoading()}
+            scrollOffset={scrollOffset()}
           />
         )}
-        {(hasLoaded || stateLoading) && activeTab === "state" && (
+        {(hasLoaded() || stateLoading()) && activeTab() === "state" && (
           <StateView
-            stateJson={stateJson}
-            loading={stateLoading}
-            projectName={projectName}
-            scrollOffset={scrollOffset}
+            stateJson={stateJson()}
+            loading={stateLoading()}
+            projectName={projectName()}
+            scrollOffset={scrollOffset()}
           />
         )}
       </box>

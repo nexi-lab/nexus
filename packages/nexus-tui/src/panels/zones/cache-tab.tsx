@@ -1,118 +1,31 @@
-import React from "react";
-import { textStyle } from "../../shared/text-style.js";
-import { formatSize } from "../../shared/utils/format-size.js";
-import { statusColor } from "../../shared/theme.js";
+import type { JSX } from "solid-js";
 
-interface CacheStats {
-  readonly total_entries?: number;
-  readonly total_size_bytes?: number;
-  readonly hit_rate?: number;
-  readonly miss_rate?: number;
-  readonly eviction_count?: number;
-  readonly layers?: ReadonlyArray<{
-    readonly name: string;
-    readonly entries: number;
-    readonly size_bytes: number;
-    readonly hit_rate: number;
-  }>;
-}
+import { useZonesStore } from "../../stores/zones-store.js";
 
-interface HotFile {
-  readonly path?: string;
-  readonly access_count?: number;
-}
-
-interface CacheTabProps {
-  readonly stats: unknown | null;
-  readonly hotFiles: readonly unknown[];
-  readonly loading: boolean;
-}
-
-function hitRateColor(rate: number): string | undefined {
-  if (rate > 0.8) return statusColor.healthy;
-  if (rate > 0.5) return statusColor.warning;
-  return statusColor.error;
-}
-
-export function CacheTab({ stats, hotFiles, loading }: CacheTabProps): React.ReactNode {
-  if (loading) return <text>Loading cache stats...</text>;
-  if (!stats) return <text>No cache data available.</text>;
-
-  const s = stats as CacheStats;
-  const files = hotFiles as readonly HotFile[];
+/**
+ * Cache statistics tab — reads directly from store for reactive updates.
+ */
+export function CacheTab(): JSX.Element {
+  const stats = () => useZonesStore((s) => s.cacheStats) as Record<string, unknown> | null;
+  const loading = () => useZonesStore((s) => s.cacheStatsLoading);
+  const hotFiles = () => useZonesStore((s) => s.hotFiles) as readonly { path?: string; access_count?: number }[];
 
   return (
     <box height="100%" width="100%" flexDirection="column">
-      <box height={1} width="100%"><text>--- Cache Statistics ---</text></box>
-
-      {/* Summary stats */}
-      {s.total_entries != null && (
-        <box height={1} width="100%">
-          <text>{`  Total entries:   ${s.total_entries.toLocaleString()}`}</text>
-        </box>
-      )}
-      {s.total_size_bytes != null && (
-        <box height={1} width="100%">
-          <text>{`  Total size:      ${formatSize(s.total_size_bytes)}`}</text>
-        </box>
-      )}
-      {s.hit_rate != null && (
-        <box height={1} width="100%">
-          <text>
-            {"  Hit rate:        "}
-            <span style={textStyle({ fg: hitRateColor(s.hit_rate) })}>{`${(s.hit_rate * 100).toFixed(1)}%`}</span>
-          </text>
-        </box>
-      )}
-      {s.miss_rate != null && (
-        <box height={1} width="100%">
-          <text>{`  Miss rate:       ${(s.miss_rate * 100).toFixed(1)}%`}</text>
-        </box>
-      )}
-      {s.eviction_count != null && (
-        <box height={1} width="100%">
-          <text>{`  Evictions:       ${s.eviction_count.toLocaleString()}`}</text>
-        </box>
-      )}
-
-      {/* Layer table */}
-      {s.layers && s.layers.length > 0 && (
-        <>
-          <box height={1} width="100%"><text>{""}</text></box>
-          <box height={1} width="100%"><text>--- Cache Layers ---</text></box>
-          <box height={1} width="100%">
-            <text>{"  NAME                 ENTRIES     SIZE         HIT RATE"}</text>
-          </box>
-          <box height={1} width="100%">
-            <text>{"  -------------------  ----------  -----------  --------"}</text>
-          </box>
-          {s.layers.map((layer) => (
-            <box key={layer.name} height={1} width="100%">
-              <text>
-                {`  ${layer.name.padEnd(19)}  ${String(layer.entries).padEnd(10)}  ${formatSize(layer.size_bytes).padEnd(11)}  `}
-                <span style={textStyle({ fg: hitRateColor(layer.hit_rate) })}>{`${(layer.hit_rate * 100).toFixed(1)}%`}</span>
-              </text>
-            </box>
-          ))}
-        </>
-      )}
-
-      {/* Hot files */}
-      {files.length > 0 && (
-        <>
-          <box height={1} width="100%"><text>{""}</text></box>
-          <box height={1} width="100%"><text>--- Hot Files ---</text></box>
-          {files.slice(0, 10).map((file, i) => {
-            const path = file.path ?? "unknown";
-            const count = file.access_count ?? 0;
-            return (
-              <box key={`hf-${i}`} height={1} width="100%">
-                <text>{`  ${path} (${count} hits)`}</text>
-              </box>
-            );
-          })}
-        </>
-      )}
+      <text>{loading() ? "Loading cache stats..." : !stats() ? "No cache data available." : "--- File Access Tracker ---"}</text>
+      <text>{stats() ? `  Tracked hot paths:  ${stats()!.tracked_paths ?? stats()!.total_entries ?? 0}` : ""}</text>
+      <text>{stats() ? `  Total accesses:     ${stats()!.total_accesses ?? 0}` : ""}</text>
+      <text>{stats() ? `  Window:             ${stats()!.window_seconds ?? 300}s` : ""}</text>
+      <text>{stats() ? `  Hot threshold:      ${stats()!.hot_threshold ?? 10} accesses` : ""}</text>
+      <text>{""}</text>
+      <text>{"--- Dragonfly Cache (backend) ---"}</text>
+      <text>{"  Use 'docker exec <dragonfly> redis-cli INFO' for full stats."}</text>
+      <text>{"  Cache is active — stats not exposed via HTTP API yet."}</text>
+      <text>{""}</text>
+      <text>{hotFiles().length > 0 ? "--- Hot Files ---" : "No hot files tracked yet."}</text>
+      {hotFiles().slice(0, 10).map((f, i) => (
+        <text key={`hf-${i}`}>{`  ${f.path ?? "?"} (${f.access_count ?? 0} hits)`}</text>
+      ))}
     </box>
   );
 }

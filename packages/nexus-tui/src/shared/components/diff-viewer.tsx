@@ -1,3 +1,5 @@
+import { Show } from "solid-js";
+import type { JSX } from "solid-js";
 /**
  * Reusable diff viewer component.
  *
@@ -5,8 +7,6 @@
  * using OpenTUI's built-in <diff> component for syntax-highlighted,
  * scrollable diff display.
  */
-
-import React from "react";
 
 // =============================================================================
 // Types
@@ -197,36 +197,38 @@ function generateUnifiedDiff(
 // Guard: skip quadratic LCS for files exceeding this line count per side
 const MAX_DIFF_LINES = 500;
 
-export function DiffViewer({
-  oldText,
-  newText,
-  oldLabel = "a",
-  newLabel = "b",
-  view = "unified",
-}: DiffViewerProps): React.ReactNode {
-  const oldLineCount = oldText ? oldText.split("\n").length : 0;
-  const newLineCount = newText ? newText.split("\n").length : 0;
-  if (oldLineCount > MAX_DIFF_LINES || newLineCount > MAX_DIFF_LINES) {
-    return (
-      <box height="100%" width="100%">
-        <text>{`Diff skipped: files too large (${oldLineCount} + ${newLineCount} lines). Open in editor to compare.`}</text>
-      </box>
-    );
-  }
+export function DiffViewer(props: DiffViewerProps): JSX.Element {
+  const oldLabel = () => props.oldLabel ?? "a";
+  const newLabel = () => props.newLabel ?? "b";
+  const view = () => props.view ?? "unified";
 
-  const diffString = generateUnifiedDiff(oldText, newText, oldLabel, newLabel);
+  const oldLineCount = () => props.oldText ? props.oldText.split("\n").length : 0;
+  const newLineCount = () => props.newText ? props.newText.split("\n").length : 0;
+  const tooLarge = () => oldLineCount() > MAX_DIFF_LINES || newLineCount() > MAX_DIFF_LINES;
 
-  if (diffString === "") {
-    return (
-      <box height="100%" width="100%">
-        <text>No differences found.</text>
-      </box>
-    );
-  }
+  const diffString = () => tooLarge() ? "" : generateUnifiedDiff(props.oldText, props.newText, oldLabel(), newLabel());
 
   return (
-    <scrollbox height="100%" width="100%">
-      <diff diff={diffString} view={view} showLineNumbers />
-    </scrollbox>
+    <Show
+      when={!tooLarge()}
+      fallback={
+        <box height="100%" width="100%">
+          <text>{`Diff skipped: files too large (${oldLineCount()} + ${newLineCount()} lines). Open in editor to compare.`}</text>
+        </box>
+      }
+    >
+      <Show
+        when={diffString() !== ""}
+        fallback={
+          <box height="100%" width="100%">
+            <text>No differences found.</text>
+          </box>
+        }
+      >
+        <scrollbox height="100%" width="100%">
+          <diff diff={diffString()} view={view()} showLineNumbers />
+        </scrollbox>
+      </Show>
+    </Show>
   );
 }

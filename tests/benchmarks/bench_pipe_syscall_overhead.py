@@ -3,10 +3,10 @@
 
 Measures the cost of routing DT_PIPE read/write through the kernel syscall path
 (metastore lookup, path validation, dispatch resolution) vs calling
-PipeManager.pipe_write_nowait() directly.
+kernel.pipe_write_nowait() directly.
 
 Benchmarks:
-  [1]  pm.pipe_write_nowait()       — direct (current production path)
+  [1]  kernel.pipe_write_nowait()   — direct (current production path)
   [2a] nx.sys_write(pipe_path, ..)  — full syscall write path
   [2b] nx.sys_read(pipe_path)       — full syscall read path
   [3]  Component breakdown          — isolate each overhead source
@@ -71,10 +71,9 @@ def _print_stats(label: str, idx: int, st: dict) -> None:
 
 
 async def _setup(tmp_dir: Path):
-    """Create NexusFS + PipeManager with a single pipe for benchmarking."""
+    """Create NexusFS + Rust kernel pipe for benchmarking."""
     from nexus.backends.storage.path_local import PathLocalBackend
     from nexus.core.config import ParseConfig
-    from nexus.core.pipe_manager import PipeManager
     from nexus.factory import create_nexus_fs
     from nexus.storage.raft_metadata_store import RaftMetadataStore
     from tests.helpers.test_context import TEST_ADMIN_CONTEXT
@@ -84,7 +83,6 @@ async def _setup(tmp_dir: Path):
     data_dir.mkdir(exist_ok=True)
 
     metastore = RaftMetadataStore.embedded(str(raft_path))
-    pipe_manager = PipeManager(metastore)
 
     nx = await create_nexus_fs(
         backend=PathLocalBackend(root_path=str(data_dir)),
@@ -93,44 +91,34 @@ async def _setup(tmp_dir: Path):
         init_cred=TEST_ADMIN_CONTEXT,
     )
 
-    # Create the benchmark pipe
-    pipe_manager.create(_BENCH_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")
+    # Create the benchmark pipe via sys_setattr (standard path)
+    from nexus.contracts.metadata import DT_PIPE
 
-    # Register pipe inode in metastore so sys_write's metadata.get() finds it
-    from nexus.contracts.metadata import DT_PIPE, FileMetadata
-
-    metastore.put(
-        FileMetadata(
-            path=_BENCH_PIPE_PATH,
-            backend_name="pipe",
-            physical_path="",
-            size=0,
-            etag="",
-            mime_type="application/octet-stream",
-            entry_type=DT_PIPE,
-            zone_id="bench",
-        )
+    await nx.sys_setattr(
+        _BENCH_PIPE_PATH,
+        entry_type=DT_PIPE,
+        capacity=_BENCH_PIPE_CAPACITY,
+        owner_id="bench",
     )
 
-    # Inject pipe_manager into NexusFS (it needs this for _pipe_write)
-    nx._pipe_manager = pipe_manager
+    kernel = nx._kernel
 
-    return nx, pipe_manager, metastore
+    return nx, kernel, metastore
 
 
 # ── Benchmark functions ────────────────────────────────────────────────
 
 
-def _bench_direct(pm, data: bytes) -> list[float]:
-    """[1] Direct pipe_write_nowait — current production path."""
+def _bench_direct(kernel, data: bytes) -> list[float]:
+    """[1] Direct kernel.pipe_write_nowait — current production path."""
     # warmup
     for _ in range(WARMUP):
-        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)  # us
     return times
@@ -193,31 +181,30 @@ def _bench_resolve_write(nx, path: str, data: bytes) -> list[float]:
     return times
 
 
-def _bench_dict_in(pm, path: str) -> list[float]:
-    """[3e] `path in pm._buffers` — proposed fast-path check."""
-    buffers = pm._buffers
+def _bench_dict_in(kernel, path: str) -> list[float]:
+    """[3e] `path in kernel.list_pipes()` — proposed fast-path check."""
     for _ in range(WARMUP):
-        _ = path in buffers
+        _ = path in kernel.list_pipes()
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        _ = path in buffers
+        _ = path in kernel.list_pipes()
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times
 
 
-async def _bench_sys_read(nx, pm, data: bytes) -> list[float]:
+async def _bench_sys_read(nx, kernel, data: bytes) -> list[float]:
     """[2b] nx.sys_read(pipe_path) — full syscall path (pre-fill + read)."""
     # warmup
     for _ in range(WARMUP):
-        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
         await nx.sys_read(_BENCH_PIPE_PATH)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
-        pm.pipe_write_nowait(_BENCH_PIPE_PATH, data)
+        kernel.pipe_write_nowait(_BENCH_PIPE_PATH, data)
         t0 = time.perf_counter()
         await nx.sys_read(_BENCH_PIPE_PATH)
         t1 = time.perf_counter()
@@ -225,18 +212,15 @@ async def _bench_sys_read(nx, pm, data: bytes) -> list[float]:
     return times
 
 
-def _bench_ideal_fast_path(pm, path: str, data: bytes) -> list[float]:
-    """[4] Ideal fast-path: dict check + pipe_write_nowait (no validation/metastore)."""
-    buffers = pm._buffers
+def _bench_ideal_fast_path(kernel, path: str, data: bytes) -> list[float]:
+    """[4] Ideal fast-path: pipe_write_nowait (no validation/metastore)."""
     for _ in range(WARMUP):
-        if path in buffers:
-            pm.pipe_write_nowait(path, data)
+        kernel.pipe_write_nowait(path, data)
 
     times: list[float] = []
     for _ in range(ITERATIONS):
         t0 = time.perf_counter()
-        if path in buffers:
-            pm.pipe_write_nowait(path, data)
+        kernel.pipe_write_nowait(path, data)
         t1 = time.perf_counter()
         times.append((t1 - t0) * 1_000_000)
     return times
@@ -248,7 +232,7 @@ def _bench_ideal_fast_path(pm, path: str, data: bytes) -> list[float]:
 async def _run() -> dict:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_dir = Path(tmp)
-        nx, pm, metastore = await _setup(tmp_dir)
+        nx, kernel, metastore = await _setup(tmp_dir)
 
         payload = json.dumps(
             {
@@ -260,18 +244,18 @@ async def _run() -> dict:
         ).encode()  # ~80 bytes, typical audit event
 
         # Run benchmarks
-        direct = _bench_direct(pm, payload)
+        direct = _bench_direct(kernel, payload)
         sys_write = await _bench_sys_write(nx, payload)
-        sys_read = await _bench_sys_read(nx, pm, payload)
+        sys_read = await _bench_sys_read(nx, kernel, payload)
         meta_get = _bench_metastore_get(metastore, _BENCH_PIPE_PATH)
         validate = _bench_validate_path(nx, _BENCH_PIPE_PATH)
         resolve = _bench_resolve_write(nx, _BENCH_PIPE_PATH, payload)
-        dict_in = _bench_dict_in(pm, _BENCH_PIPE_PATH)
-        fast_path = _bench_ideal_fast_path(pm, _BENCH_PIPE_PATH, payload)
+        dict_in = _bench_dict_in(kernel, _BENCH_PIPE_PATH)
+        fast_path = _bench_ideal_fast_path(kernel, _BENCH_PIPE_PATH, payload)
         sys_write_opt = await _bench_sys_write(nx, payload)
-        sys_read_opt = await _bench_sys_read(nx, pm, payload)
+        sys_read_opt = await _bench_sys_read(nx, kernel, payload)
 
-        pm.close_all()
+        kernel.close_all_pipes()
 
     return {
         "direct_pipe_write": _stats(direct),
@@ -299,7 +283,7 @@ def main() -> None:
     print(f"PIPE SYSCALL OVERHEAD BENCHMARK ({ITERATIONS} iterations, {WARMUP} warmup)")
     print("=" * 70)
 
-    _print_stats("pm.pipe_write_nowait() — direct", 1, results["direct_pipe_write"])
+    _print_stats("kernel.pipe_write_nowait() — direct", 1, results["direct_pipe_write"])
     _print_stats("nx.sys_write(pipe_path) — full syscall", "2a", results["sys_write"])
     _print_stats("nx.sys_read(pipe_path) — full syscall", "2b", results["sys_read"])
 
@@ -319,8 +303,8 @@ def main() -> None:
     print(f"\n  >>> Component sum: {_fmt(component_sum)}")
 
     print("\n--- Proposed optimization ---")
-    _print_stats("dict `in` check (pipe registry)", "3e", results["dict_in"])
-    _print_stats("dict check + pipe_write_nowait (ideal)", 4, results["fast_path"])
+    _print_stats("list_pipes() `in` check (pipe registry)", "3e", results["dict_in"])
+    _print_stats("pipe_write_nowait (ideal)", 4, results["fast_path"])
 
     delta = results["fast_path"]["mean_us"] - results["direct_pipe_write"]["mean_us"]
     print(f"\n  >>> Ideal fast-path overhead vs direct: {_fmt(delta)}")

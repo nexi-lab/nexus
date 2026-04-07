@@ -974,7 +974,7 @@ class NexusFS(  # type: ignore[misc]
             io_profile = attrs.get("io_profile", "memory")
 
             # Check if mount provides a custom stream backend factory
-            # (e.g. CAS-backed or WAL-backed streams). Default: in-memory MemoryStreamBackend.
+            # (e.g. CAS-backed or WAL-backed streams). Default: Rust kernel IPC stream.
             _mount_entry = self.router.get_mount_entry_for_path(path)
             _factory = _mount_entry.stream_backend_factory if _mount_entry else None
 

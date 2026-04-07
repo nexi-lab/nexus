@@ -1,4 +1,4 @@
-"""DedupWorkQueue — coalescing work queue backed by asyncio.Queue (#2062).
+"""DedupWorkQueue — coalescing work queue backed by kernel IPC pipes (#2062).
 
 Follows the Kubernetes controller-runtime workqueue pattern:
   - 10 rapid writes to the same file → 10 events recorded (audit complete)
@@ -6,14 +6,14 @@ Follows the Kubernetes controller-runtime workqueue pattern:
   - Does NOT replace EventLog — dedup is for *processing*, not *recording*.
 
 Three invariants maintained by add/get/done:
-  1. An item in ``dirty`` but not ``processing`` has exactly one entry in the queue.
-  2. An item in ``processing`` has zero entries in the queue.
+  1. An item in ``dirty`` but not ``processing`` has exactly one entry in the pipe.
+  2. An item in ``processing`` has zero entries in the pipe.
   3. An item can be in both ``dirty`` and ``processing`` (re-added during
      processing → will be re-queued on ``done()``).
 
-Transport: asyncio.Queue carries sequence tokens; actual items stay
-in a Python dict — no serialization needed. Dedup logic (dirty/processing
-sets) remains in Python.
+Transport: Rust kernel IPC pipe (``kernel.create_pipe``) carries u64 LE
+sequence tokens (8 bytes each); actual items stay in a Python dict — no
+serialization needed. Dedup logic (dirty/processing sets) remains in Python.
 
 Architecture: NEXUS-LEGO-ARCHITECTURE.md §12.5.
 Consumer-side dedup: each subscriber opts in independently.
@@ -23,11 +23,17 @@ References:
   - NEXUS-LEGO-ARCHITECTURE.md §12.5
 """
 
+from __future__ import annotations
+
 import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from typing import Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, TypeVar
+
+if TYPE_CHECKING:
+    from nexus_kernel import PyKernel as Kernel
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +50,10 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
-    **Transport:** Uses asyncio.Queue for the internal FIFO. The queue
-    carries sequence tokens; actual items stay in a Python dict (no
-    serialization). Dedup logic (dirty/processing sets) remains in Python.
+    **Transport:** Uses a Rust kernel IPC pipe for the internal FIFO.
+    The pipe carries u64 LE sequence tokens (8 bytes each); actual items
+    stay in a Python dict (no serialization). Dedup logic (dirty/processing
+    sets) remains in Python.
 
     **Threading model:** This queue is designed for single-event-loop asyncio.
     ``add()`` and ``get()`` are async and acquire a lock.  ``done()`` is
@@ -57,7 +64,9 @@ class DedupWorkQueue(Generic[T]):
 
     Usage::
 
-        q: DedupWorkQueue[str] = DedupWorkQueue()
+        from nexus_kernel import Kernel
+        kernel = Kernel(...)
+        q: DedupWorkQueue[str] = DedupWorkQueue(kernel=kernel)
 
         # Producer side — events coalesce by key
         await q.add("/data/file.txt")
@@ -71,14 +80,26 @@ class DedupWorkQueue(Generic[T]):
             q.done(key)
     """
 
-    def __init__(self, *, capacity: int = 65_536) -> None:  # noqa: ARG002
-        self._queue: asyncio.Queue[int] = asyncio.Queue()
+    _TOKEN_SIZE = 8  # u64 little-endian
+
+    def __init__(
+        self,
+        *,
+        kernel: Kernel,
+        pipe_path: str | None = None,
+        capacity: int = 65_536,
+    ) -> None:
+        self._kernel = kernel
+        self._pipe_path = pipe_path or f"/__sys__/dedup/{id(self)}"
+        self._kernel.create_pipe(self._pipe_path, capacity * self._TOKEN_SIZE)
+
         self._seq = 0  # monotonic sequence counter
         self._items: dict[int, T] = {}  # seq → item (actual data stays in Python)
         self._dirty: set[T] = set()
         self._processing: set[T] = set()
         self._lock = asyncio.Lock()
         self._shutting_down = False
+        self._closed = False
 
         # Metrics (monotonic counters)
         self._adds = 0
@@ -118,17 +139,22 @@ class DedupWorkQueue(Generic[T]):
                 # Currently being processed — will re-queue on done()
                 return
 
-            # New work item — enqueue token
+            # New work item — enqueue token via kernel pipe
             seq = self._seq
             self._seq += 1
             self._items[seq] = key
-            self._queue.put_nowait(seq)
+            self._kernel.pipe_write_nowait(
+                self._pipe_path, seq.to_bytes(self._TOKEN_SIZE, "little")
+            )
 
     async def get(self) -> T:
         """Get the next key to process (blocks until available).
 
         The caller MUST call ``done(key)`` when processing is complete,
         even if processing fails.  Use a try/finally block.
+
+        Polls the kernel pipe with ``pipe_read_nowait``.  If the pipe is
+        empty, yields to the event loop briefly (10 ms) and retries.
 
         Returns:
             The next key to process.
@@ -137,15 +163,24 @@ class DedupWorkQueue(Generic[T]):
             ShutdownError: If the queue is shut down while waiting.
         """
         while True:
-            if self._shutting_down and self._queue.empty():
+            if self._shutting_down and not self._items:
                 raise ShutdownError("DedupWorkQueue has been shut down")
 
             try:
-                seq = await asyncio.wait_for(self._queue.get(), timeout=0.5)
-            except TimeoutError:
+                data = self._kernel.pipe_read_nowait(self._pipe_path)
+            except RuntimeError as exc:
+                if "PipeClosed" in str(exc):
+                    raise ShutdownError("DedupWorkQueue has been shut down") from None
+                raise
+
+            if data is None:
+                # Pipe empty — yield and retry
                 if self._shutting_down:
                     raise ShutdownError("DedupWorkQueue has been shut down") from None
+                await asyncio.sleep(0.01)
                 continue
+
+            seq = int.from_bytes(data, "little")
             key = self._items.pop(seq)
 
             async with self._lock:
@@ -174,14 +209,16 @@ class DedupWorkQueue(Generic[T]):
         self._processing.discard(key)
 
         if key in self._dirty:
-            # Re-added during processing — re-queue
+            # Re-added during processing — re-queue via kernel pipe
             try:
                 seq = self._seq
                 self._seq += 1
                 self._items[seq] = key
-                self._queue.put_nowait(seq)
-            except asyncio.QueueFull:
-                # Buffer full — item stays in dirty
+                self._kernel.pipe_write_nowait(
+                    self._pipe_path, seq.to_bytes(self._TOKEN_SIZE, "little")
+                )
+            except RuntimeError:
+                # PipeFull or PipeClosed — item stays in dirty
                 # and will be picked up if queue restarts
                 pass
 
@@ -190,9 +227,13 @@ class DedupWorkQueue(Generic[T]):
 
         After shutdown, ``add()`` raises ``ShutdownError`` and ``get()``
         drains remaining items then raises ``ShutdownError``.
+        Signals the kernel pipe as closed so blocked readers wake up.
         """
         async with self._lock:
             self._shutting_down = True
+
+        with contextlib.suppress(RuntimeError):
+            self._kernel.close_pipe(self._pipe_path)
 
         logger.info(
             "DedupWorkQueue shutdown (adds=%d, coalesced=%d, gets=%d)",
@@ -231,8 +272,22 @@ class DedupWorkQueue(Generic[T]):
             "gets": self._gets,
             "pending": len(self._dirty),
             "processing": len(self._processing),
-            "queue_depth": self._queue.qsize(),
+            "queue_depth": len(self._items),
         }
+
+    def close(self) -> None:
+        """Destroy the kernel pipe, releasing resources.
+
+        Safe to call multiple times.  Called automatically by ``__del__``.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        with contextlib.suppress(RuntimeError):
+            self._kernel.destroy_pipe(self._pipe_path)
+
+    def __del__(self) -> None:
+        self.close()
 
 
 async def run_worker(

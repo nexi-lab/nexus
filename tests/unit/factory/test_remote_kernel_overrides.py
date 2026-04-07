@@ -28,5 +28,8 @@ async def test_install_remote_kernel_rpc_overrides_routes_sys_rename_to_server_r
 
     assert result == {}
     assert transport.calls == [
-        ("sys_rename", {"old_path": "/workspace/old.txt", "new_path": "/workspace/new.txt"})
+        (
+            "sys_rename",
+            {"old_path": "/workspace/old.txt", "new_path": "/workspace/new.txt", "force": False},
+        )
     ]

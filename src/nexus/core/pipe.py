@@ -351,6 +351,11 @@ class MemoryPipeBackend:
         while self._core.is_empty() and not self._core.closed:
             self._readers_waiting = True
             self._not_empty.clear()
+            # Re-check after clear to close TOCTOU race with write_nowait:
+            # if a writer pushed data between is_empty() and the flag/clear,
+            # the writer didn't see _readers_waiting and skipped the wake.
+            if not self._core.is_empty() or self._core.closed:
+                break
             await self._not_empty.wait()
         self._readers_waiting = False
 

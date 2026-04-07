@@ -311,8 +311,8 @@ jobs:
           with open(entrypoint_path, "w") as ep:
               ep.write("from nexus.daemon import main\nmain()\n")
           spec = re.sub(
-              r"Analysis\(\s*\['[^']*'\]",
-              f"Analysis(\n    ['{entrypoint_path}']",
+              r'Analysis\(\s*\[(["\']).*?\1\]',
+              f'Analysis(\n    ["{entrypoint_path}"]',
               spec,
           )
 
@@ -332,7 +332,7 @@ jobs:
           print(f"Patched NEXUS_RAFT_SO   -> {nexus_raft_so}")
           print(f"Patched NEXUS_KERNEL_SO -> {nexus_kernel_so}")
           print(f"Patched pathex          -> {src_path}")
-          print(f"Patched entry point     -> {src_path}/nexus/daemon/main.py")
+          print(f"Patched entry point     -> {entrypoint_path}")
           print(f"Injected runtime_hook   -> {hook_path} (NEXUS_PROFILE=cluster)")
           EOF
 

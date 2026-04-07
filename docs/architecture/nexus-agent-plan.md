@@ -290,59 +290,12 @@ Wired into ManagedAgentLoop.run(). See `services/agent_runtime/compaction.py`.
 
 **Layer: Framework | P0 | DONE**
 
-### 4.2 System Prompt Assembly [Production]
+### 4.2 System Prompt Assembly [Production] — DONE
 
-CC has 19 sections in its system prompt. Nexus matches with VFS files:
+Multi-section assembly from VFS via `vfs_paths.agent` path helpers.
+See `services/agent_runtime/system_prompt.py`.
 
-| # | CC Section | Nexus VFS File | Dynamic? |
-|---|-----------|----------------|----------|
-| 1 | Identity & Role | `{agent_path}/SYSTEM.md` | No |
-| 2 | Strengths | `{agent_path}/SYSTEM.md` | No |
-| 3 | Guidelines | `{agent_path}/SYSTEM.md` | No |
-| 4 | Notes | `{agent_path}/SYSTEM.md` | No |
-| 5 | Environment info | Generated at runtime | Yes |
-| 6 | Model identity | Generated at runtime | Yes |
-| 7 | Knowledge cutoff | Generated at runtime | Yes |
-| 8 | Git status | Generated at runtime | Yes |
-| 9 | Tool descriptions | `ToolRegistry.schemas()` → API tools param | Yes |
-| 10 | Output efficiency | `{agent_path}/prompts/output_efficiency.md` | No |
-| 11 | Model patches | `{agent_path}/prompts/model_patches.md` | Conditional |
-| 12 | Project context | `{cwd}/.nexus/agent.md` (equiv to CLAUDE.md) | Yes |
-| 13 | Conditional | Feature flags | Conditional |
-| 14 | JSON formatting | `{agent_path}/prompts/json_formatting.md` | No |
-| 15 | Tool batching | `{agent_path}/prompts/tool_batching.md` | No |
-
-system-reminder injections (runtime, as user messages in conversation):
-- Current date
-- Skill availability list
-- Deferred tool availability
-- Task-tool nudges
-
-Assembly in `initialize()`:
-```python
-async def _assemble_system_prompt(self) -> str:
-    parts = []
-    # Static sections from SYSTEM.md (1-4)
-    parts.append(await self._sys_read(f"{self._agent_path}/SYSTEM.md"))
-    # Dynamic environment block (5-8)
-    parts.append(self._generate_env_block())
-    # Static prompt fragments (10, 14, 15)
-    for name in ("output_efficiency", "json_formatting", "tool_batching"):
-        try:
-            parts.append(await self._sys_read(f"{self._agent_path}/prompts/{name}.md"))
-        except Exception:
-            pass
-    # Project context (12) — read from cwd
-    try:
-        parts.append(await self._sys_read(f"{self._cwd}/.nexus/agent.md"))
-    except Exception:
-        pass
-    return "\n\n".join(p.decode("utf-8").strip() for p in parts if p)
-```
-
-Tool descriptions (9) go in the API `tools` parameter, not in system prompt text.
-
-**Layer: Framework | P0 | Needs building**
+**Layer: Framework | P0 | DONE**
 
 ### 4.3 Session Persistence [Production]
 - SessionManager (§1.7) — DONE in PR #3660.
@@ -554,7 +507,7 @@ Skill-backed commands will use the skill system when implemented (§7.1).
 ### To implement next (designed, ready for implementation):
 
 6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
-7. **System Prompt Assembly** (§4.2) — 15 sections mapped to VFS files, _assemble_system_prompt()
+7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
 8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` via click, slash command registry, StdioPipe agent
 9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs
 

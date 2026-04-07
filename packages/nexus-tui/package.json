@@ -1,7 +1,7 @@
 {
   "name": "@nexus-ai-fs/tui",
   "version": "0.9.26",
-  "description": "Terminal UI for Nexus — file explorer, API inspector, and monitoring dashboard",
+  "description": "Terminal UI for Nexus \u2014 file explorer, API inspector, and monitoring dashboard",
   "type": "module",
   "bin": {
     "nexus-tui": "./src/index.tsx"
@@ -15,7 +15,8 @@
     "start": "bun run --conditions=browser src/index.tsx",
     "test": "bun test",
     "lint": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "postinstall": "node scripts/patch-jsx-types.cjs"
   },
   "dependencies": {
     "@nexus-ai-fs/api-client": "file:../nexus-api-client",

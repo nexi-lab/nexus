@@ -1,6 +1,1 @@
 preload = ["@opentui/solid/preload"]
-
-[test]
-# @opentui/solid's jsx-dev-runtime types don't export jsxDEV,
-# so force production JSX transform for tests.
-env = { NODE_ENV = "production" }

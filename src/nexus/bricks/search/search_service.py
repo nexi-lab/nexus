@@ -763,11 +763,7 @@ class SearchService:
         list_context: Any,
         recursive: bool,
     ) -> builtins.list[str]:
-        """List directory entries via live API.
-
-        The old SYNC_ELIGIBLE / metastore-first path was removed — the sync
-        infrastructure that populated the metastore no longer exists.
-        """
+        """List directory entries via live API."""
         return self._list_dir_parallel(
             backend=route.backend,
             root_path=path,

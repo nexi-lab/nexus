@@ -250,16 +250,6 @@ class PathAddressingEngine(Backend):
                 backend=self.name,
             )
 
-        # Cache optimization: check cache first if available
-        if (
-            hasattr(self, "_get_size_from_cache")
-            and hasattr(context, "virtual_path")
-            and context.virtual_path
-        ):
-            cached_size = self._get_size_from_cache(context.virtual_path)
-            if cached_size is not None:
-                return int(cached_size)
-
         blob_path = self._get_key_path(context.backend_path)
         return self._transport.get_size(blob_path)
 

@@ -319,7 +319,7 @@ class PathSlackBackend(
             if not backend_path.endswith(".yaml"):
                 return None
 
-            # Return timestamp-based version so sync_pipeline can detect staleness
+            # Return timestamp-based version for staleness detection
             return str(int(datetime.now(UTC).timestamp()))
         except Exception as e:
             logger.debug("Slack version check failed: %s", e)

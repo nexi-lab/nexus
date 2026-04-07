@@ -617,7 +617,7 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 
 6. ~~**Context Compression** (§4.1)~~ — DONE (CompactionStrategy + DefaultCompactionStrategy, 15 tests)
 7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
-8. **REPL + CLI** (§11.2 + §13.2) — `nexus chat` click subcommand, interactive + one-shot, streaming
+8. ~~**REPL + CLI** (§11.2 + §13.2)~~ — DONE (`nexus chat`, interactive REPL + one-shot, embedded/remote modes, V1 slash commands)
 9. **External tool discovery (Tier B)** (§1.5) — DT_MOUNT toolset dirs
 
 ### Deferred Items (not in current scope):

@@ -8,7 +8,7 @@
 import { createSignal, createEffect, Show, For } from "solid-js";
 import type { JSX } from "solid-js";
 import { useEventsStore } from "../../stores/events-store.js";
-import { useGlobalStore } from "../../stores/global-store.js";
+import { useSseBus } from "../../stores/sse-bus.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useTextInput } from "../../shared/hooks/use-text-input.js";
@@ -37,18 +37,15 @@ interface EventsTabProps {
 
 export function EventsTab(props: EventsTabProps): JSX.Element {
   // Reactive store accessors (direct reads via jsx:preserve)
-  const config = () => useGlobalStore((s) => s.config);
-
-  const connected = () => useEventsStore((s) => s.connected);
+  const connected = () => useSseBus((s) => s.connected);
   const events = () => useEventsStore((s) => s.filteredEvents);
-  const reconnectCount = () => useEventsStore((s) => s.reconnectCount);
-  const reconnectExhausted = () => useEventsStore((s) => s.reconnectExhausted);
+  const reconnectCount = () => useSseBus((s) => s.reconnectCount);
+  const reconnectExhausted = () => useSseBus((s) => s.reconnectExhausted);
   const filters = () => useEventsStore((s) => s.filters);
   const eventsOverflowed = () => useEventsStore((s) => s.eventsOverflowed);
   const evictedCount = () => useEventsStore((s) => s.evictedCount);
   const eventsBuffer = () => useEventsStore((s) => s.eventsBuffer);
-  const connect = useEventsStore((s) => s.connect);
-  const disconnect = useEventsStore((s) => s.disconnect);
+  const reconnect = useSseBus((s) => s.reconnect);
   const clearEvents = useEventsStore((s) => s.clearEvents);
   const setFilter = useEventsStore((s) => s.setFilter);
 
@@ -90,7 +87,6 @@ export function EventsTab(props: EventsTabProps): JSX.Element {
       }
       const evts = events();
       const f = filters();
-      const cfg = config();
       return {
         ...listNav,
         ...props.tabBindings,
@@ -103,16 +99,7 @@ export function EventsTab(props: EventsTabProps): JSX.Element {
           if (expandedEventIndex() !== null) setExpandedEventIndex(null);
         },
         c: () => clearEvents(),
-        r: () => {
-          if (cfg.apiKey && cfg.baseUrl) {
-            disconnect();
-            connect(cfg.baseUrl, cfg.apiKey, {
-              agentId: cfg.agentId,
-              subject: cfg.subject,
-              zoneId: cfg.zoneId,
-            });
-          }
-        },
+        r: () => reconnect(),
         f: () => typeFilter.activate(f.eventType ?? ""),
         s: () => searchFilter.activate(f.search ?? ""),
         y: () => {

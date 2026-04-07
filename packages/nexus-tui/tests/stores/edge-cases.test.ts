@@ -69,17 +69,13 @@ describe("Edge cases: Workflows panel", () => {
 
 describe("Edge cases: Events buffer eviction", () => {
   beforeEach(() => {
-    useEventsStore.getState().disconnect();
+    useEventsStore.getState().eventsBuffer.clear();
     useEventsStore.setState({
       events: [],
-      connected: false,
-      reconnectCount: 0,
-      reconnectExhausted: false,
       filters: { eventType: null, search: null },
       filteredEvents: [],
       eventsOverflowed: false,
       evictedCount: 0,
-      sseClient: null,
     });
   });
 

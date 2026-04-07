@@ -7,11 +7,11 @@
  * In filter mode, type the filter value, Enter to apply, Escape to cancel.
  */
 
-import { createSignal, createEffect, onCleanup, Show } from "solid-js";
+import { createSignal, createEffect, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { useEventsStore } from "../../stores/events-store.js";
+import { useSseBus } from "../../stores/sse-bus.js";
 import { useInfraStore } from "../../stores/infra-store.js";
-import { useGlobalStore } from "../../stores/global-store.js";
 import { useKeyboard } from "../../shared/hooks/use-keyboard.js";
 import { useCopy } from "../../shared/hooks/use-copy.js";
 import { useConfirmStore } from "../../shared/hooks/use-confirm.js";
@@ -51,8 +51,6 @@ export default function EventsPanel(): JSX.Element {
   const confirm = useConfirmStore((s) => s.confirm);
   const overlayActive = () => useUiStore((s) => s.overlayActive);
   const visibleTabs = useVisibleTabs(EVENTS_TABS);
-  const config = () => useGlobalStore((s) => s.config);
-
   // Clipboard copy
   const { copy, copied } = useCopy();
 
@@ -81,18 +79,17 @@ export default function EventsPanel(): JSX.Element {
   const [selectedAuditIndex, setSelectedAuditIndex] = createSignal(0);
 
   // ---- Reactive store values (direct reads via jsx:preserve) ----
-  const connected = () => useEventsStore((s) => s.connected);
+  const connected = () => useSseBus((s) => s.connected);
   const events = () => useEventsStore((s) => s.filteredEvents);
-  const reconnectCount = () => useEventsStore((s) => s.reconnectCount);
-  const reconnectExhausted = () => useEventsStore((s) => s.reconnectExhausted);
+  const reconnectCount = () => useSseBus((s) => s.reconnectCount);
+  const reconnectExhausted = () => useSseBus((s) => s.reconnectExhausted);
   const filters = () => useEventsStore((s) => s.filters);
   const eventsOverflowed = () => useEventsStore((s) => s.eventsOverflowed);
   const evictedCount = () => useEventsStore((s) => s.evictedCount);
   const eventsBuffer = () => useEventsStore((s) => s.eventsBuffer);
 
   // Actions (stable function references)
-  const connect = useEventsStore((s) => s.connect);
-  const disconnect = useEventsStore((s) => s.disconnect);
+  const reconnect = useSseBus((s) => s.reconnect);
   const clearEvents = useEventsStore((s) => s.clearEvents);
   const setFilter = useEventsStore((s) => s.setFilter);
 
@@ -145,18 +142,8 @@ export default function EventsPanel(): JSX.Element {
     setExpandedEventIndex(null);
   });
 
-  // Auto-connect SSE on mount, reconnect when identity changes.
-  // Defer connect() to avoid setting store state inside a reactive computation
-  // (causes SolidJS runUpdates recursion).
-  createEffect(() => {
-    const { apiKey, baseUrl, agentId, subject, zoneId } = config();
-    if (apiKey && baseUrl) {
-      queueMicrotask(() => {
-        connect(baseUrl, apiKey, { agentId, subject, zoneId });
-      });
-    }
-    onCleanup(() => disconnect());
-  });
+  // SSE connection is managed at the app level by the SSE bus (sse-bus.ts).
+  // No per-panel connect/disconnect needed.
 
   // Knowledge store (MCL replay + event replay)
   const fetchReplay = useKnowledgeStore((s) => s.fetchReplay);
@@ -191,7 +178,7 @@ export default function EventsPanel(): JSX.Element {
         events: events(), selectedEventIndex: selectedEventIndex(), setSelectedEventIndex,
         expandedEventIndex: expandedEventIndex(), setExpandedEventIndex,
         filters: filters(), setFilter, clearEvents, copy,
-        config: config(), disconnect, connect,
+        reconnect,
         mclUrnFilter: mclUrnFilter(), setMclUrnFilter, mclAspectFilter: mclAspectFilter(), setMclAspectFilter,
         clearReplay, fetchReplay,
         replayTypeFilter: replayTypeFilter(), setReplayTypeFilter, clearEventReplay, fetchEventReplay,

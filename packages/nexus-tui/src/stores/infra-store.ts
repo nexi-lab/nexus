@@ -459,3 +459,25 @@ export const useInfraStore = create<InfraState>((set, get) => ({
     set({ selectedLockIndex: index });
   },
 }));
+
+// =============================================================================
+// SSE bus handler — live infra updates (#3632 §3)
+// =============================================================================
+
+import { useSseBus } from "./sse-bus.js";
+import { useGlobalStore } from "./global-store.js";
+
+const INFRA_EVENT_TYPES = new Set(["mount", "unmount"]);
+
+useSseBus.getState().registerHandler("infra", (events) => {
+  const relevant = events.some((ev) => INFRA_EVENT_TYPES.has(ev.type));
+  if (!relevant) return;
+
+  queueMicrotask(() => {
+    const client = useGlobalStore.getState().client;
+    if (client) {
+      void useInfraStore.getState().fetchConnectors(client);
+    }
+    useUiStore.getState().markDataUpdated("infrastructure");
+  });
+}, { debounceMs: 1000 });

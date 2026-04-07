@@ -9,6 +9,7 @@ import { createStore as create } from "./create-store.js";
 import type { FetchClient } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
+import { useGlobalStore } from "./global-store.js";
 import { useUiStore } from "./ui-store.js";
 import { LruCache } from "../shared/utils/lru-cache.js";
 
@@ -628,3 +629,98 @@ export const useFilesStore = create<FilesState>((set, get) => ({
     }
   },
 }));
+
+// =============================================================================
+// SSE bus handler — live file system updates (#3632 §3)
+// =============================================================================
+
+const FILE_EVENT_TYPES = new Set([
+  "write", "delete", "rename", "copy", "mkdir", "rmdir", "metadata_change",
+]);
+
+/** Extract parent directory from a file path. */
+function parentDir(path: string): string {
+  return path.split("/").slice(0, -1).join("/") || "/";
+}
+
+/** Debounced refetch for the current path after SSE invalidation. */
+let _pendingRefetch: ReturnType<typeof setTimeout> | null = null;
+
+function cancelPendingRefetch(): void {
+  if (_pendingRefetch !== null) {
+    clearTimeout(_pendingRefetch);
+    _pendingRefetch = null;
+  }
+}
+
+function scheduleRefetchCurrentPath(): void {
+  if (_pendingRefetch !== null) return; // already scheduled
+  _pendingRefetch = setTimeout(() => {
+    _pendingRefetch = null;
+    const client = useGlobalStore.getState().client;
+    if (!client) return; // disconnected — skip
+    const { currentPath } = useFilesStore.getState();
+    void useFilesStore.getState().fetchFiles(currentPath, client);
+  }, 100); // short delay — the bus handler already debounces at 500ms
+}
+
+// Register once at module load. The bus store is initialized before domain
+// stores import it, so registerHandler is always available.
+import { useSseBus } from "./sse-bus.js";
+
+// Cancel pending refetch when SSE bus disconnects
+useSseBus.subscribe((state, prev) => {
+  if (prev.connected && !state.connected) {
+    cancelPendingRefetch();
+  }
+});
+
+useSseBus.getState().registerHandler("files", (events) => {
+  const affectedDirs = new Set<string>();
+  const affectedPaths = new Set<string>();
+
+  for (const ev of events) {
+    if (!FILE_EVENT_TYPES.has(ev.type)) continue;
+    if (ev.path) {
+      affectedPaths.add(ev.path);
+      affectedDirs.add(parentDir(ev.path));
+      // rename/copy may also affect a new_path
+      const newPath = ev.payload.new_path;
+      if (typeof newPath === "string") {
+        affectedPaths.add(newPath);
+        affectedDirs.add(parentDir(newPath));
+      }
+    }
+  }
+
+  if (affectedDirs.size === 0 && affectedPaths.size === 0) return;
+
+  queueMicrotask(() => {
+    const store = useFilesStore.getState();
+    // Invalidate cache for all affected directories
+    for (const dir of affectedDirs) {
+      fileCache.delete(dir);
+    }
+    // Also invalidate cache for directly affected paths (e.g. renamed/deleted dirs)
+    for (const p of affectedPaths) {
+      fileCache.delete(p);
+    }
+    // Bump revision so reactive selectors re-evaluate
+    useFilesStore.setState({
+      fileCacheRevision: store.fileCacheRevision + 1,
+    });
+    useUiStore.getState().markDataUpdated("files");
+
+    // Auto-refetch if the current path or any of its parents were affected
+    const needsRefetch =
+      affectedDirs.has(store.currentPath) ||
+      affectedPaths.has(store.currentPath) ||
+      // If the current directory itself was renamed/deleted, refetch to show the change
+      [...affectedPaths].some((p) =>
+        store.currentPath.startsWith(p + "/") || store.currentPath === p,
+      );
+    if (needsRefetch) {
+      scheduleRefetchCurrentPath();
+    }
+  });
+}, { debounceMs: 500 });

@@ -176,20 +176,23 @@ class TestManagedAgentLoop:
 
     @pytest.mark.asyncio()
     async def test_initialize_reads_system_prompt_from_vfs(self) -> None:
-        """System prompt loaded via sys_read from VFS."""
+        """System prompt loaded via sys_read from VFS (includes env block)."""
         loop, mocks = _make_vfs_loop(system_prompt="You are helpful.")
         await loop.initialize()
 
         assert len(loop.messages) == 1
         assert loop.messages[0]["role"] == "system"
-        assert loop.messages[0]["content"] == "You are helpful."
+        assert "You are helpful." in loop.messages[0]["content"]
+        assert "# Environment" in loop.messages[0]["content"]
 
     @pytest.mark.asyncio()
     async def test_initialize_no_system_prompt(self) -> None:
-        """No system prompt → empty messages."""
+        """No SYSTEM.md → system message still has env block."""
         loop, _ = _make_vfs_loop(system_prompt="")
         await loop.initialize()
-        assert len(loop.messages) == 0
+        # assemble_system_prompt always includes env block
+        assert len(loop.messages) == 1
+        assert "# Environment" in loop.messages[0]["content"]
 
     @pytest.mark.asyncio()
     async def test_run_calls_llm_via_streaming_service(self) -> None:

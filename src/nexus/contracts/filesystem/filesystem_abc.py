@@ -88,7 +88,12 @@ class NexusFilesystem(Protocol):
     ) -> dict[str, Any]: ...
 
     async def sys_rename(
-        self, old_path: str, new_path: str, *, context: OperationContext | None = None
+        self,
+        old_path: str,
+        new_path: str,
+        *,
+        force: bool = False,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]: ...
 
     async def sys_copy(

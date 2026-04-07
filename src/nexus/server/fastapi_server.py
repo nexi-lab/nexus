@@ -812,12 +812,17 @@ def _register_routes(app: FastAPI) -> None:
 
                 # Build a settings_store from metastore so the encryption key
                 # is persisted across restarts instead of being randomly generated.
+                # Use Python RaftMetadataStore directly (not RustMetastoreProxy) to
+                # avoid Rust/Python redb coherency issues with cfg: entries.
                 _settings_store = None
                 try:
+                    from pathlib import Path
                     from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
-                    _nx_fs = getattr(app.state, "nexus_fs", None)
-                    if _nx_fs is not None:
-                        _settings_store = MetastoreSettingsStore(_nx_fs.metadata)
+                    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+                    _metadata_path = str(Path.home() / ".nexus" / "metastore")
+                    _py_metastore = RaftMetadataStore.embedded(_metadata_path)
+                    _settings_store = MetastoreSettingsStore(_py_metastore)
                 except Exception:
                     logger.warning("MetastoreSettingsStore unavailable; using ephemeral OAuth key", exc_info=True)
 

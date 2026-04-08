@@ -5,6 +5,7 @@ Minimal deployment: storage + ipc + federation
 """
 
 import os
+from PyInstaller.utils.hooks import collect_submodules
 
 # Rust extension paths
 NEXUS_RAFT_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/_nexus_raft/_nexus_raft.cpython-313-darwin.so"
@@ -28,6 +29,9 @@ hiddenimports = [
     "nexus.storage",
     "nexus.storage.raft_metadata_store",
     "nexus.storage.dict_metastore",
+    "nexus.bricks.search",
+    "nexus.bricks.search.search_service",
+    "nexus.bricks.search.primitives",
     "nexus.bricks.ipc",
     "nexus.bricks.federation",
     "nexus.contracts.deployment_profile",
@@ -43,13 +47,15 @@ hiddenimports = [
     "fastapi",
     "starlette",
     "sqlalchemy",
+    "sqlalchemy.dialects.sqlite.aiosqlite",
+    "aiosqlite",
     "alembic",
     "grpc",
     "grpc_google_apis",
     "google.protobuf",
     "google.api",
     "google.api_core",
-]
+] + collect_submodules("nexus.bricks.search")
 
 # Exclude heavy modules not needed for cluster profile
 excludes = [
@@ -57,7 +63,6 @@ excludes = [
     "nexus.bricks.pay",
     "nexus.bricks.sandbox",
     "nexus.bricks.workflows",
-    "nexus.bricks.search",
     "nexus.bricks.memory",
     "nexus.bricks.mcp",
     "nexus.bricks.agent_runtime",

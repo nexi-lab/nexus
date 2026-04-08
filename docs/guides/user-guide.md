@@ -1136,7 +1136,8 @@ useful map.
 
 | Package group | What it gives you as a user |
 | --- | --- |
-| `nexus.core` | the kernel, VFS, syscalls, routing, locks |
+| `nexus.core` | the kernel facade, VFS, syscalls, routing, locks |
+| `nexus_kernel` (Rust) | Rust kernel binary — DT_PIPE / DT_STREAM registries, mount router, blocking IPC waits, and the syscall fast paths used by background consumers |
 | `nexus.contracts` | stable protocol and type boundaries |
 | `nexus.storage` | metadata, record store, history, audit, snapshots |
 | `nexus.backends` | local/cloud/object backends and connector adapters |
@@ -1160,7 +1161,6 @@ useful map.
 | `nexus.system_services.event_subsystem` | replay, subscriptions, exporters |
 | `nexus.system_services.sync` | sync and write-back plumbing |
 | `nexus.system_services.agent_runtime` | embedded agent process runtime |
-| `nexus.system_services.pipe_manager` | kernel pipe plumbing used by background consumers |
 
 ### Bricks for user features
 

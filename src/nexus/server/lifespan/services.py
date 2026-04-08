@@ -584,13 +584,15 @@ async def _startup_workflow_engine(app: "FastAPI", svc: "LifespanServices") -> N
 
 
 async def _startup_pipe_consumers(app: "FastAPI", svc: "LifespanServices") -> None:
-    """Inject PipeManager and start DT_PIPE consumers (Issue #809, #810).
+    """Start DT_PIPE consumers (Issue #809, #810).
 
     Two consumers are started here:
     1. PipedRecordStoreWriteObserver — async RecordStore sync via kernel IPC
     2. ZoektPipeConsumer — async Zoekt index notifications via kernel IPC
 
     All consumers use NexusFS sys_read/sys_write for pipe I/O (Rust kernel).
+    PipeManager itself was deleted in PR #3671 — the kernel pipe registry
+    is now managed entirely inside the Rust binary.
     """
     nx = svc.nexus_fs
 

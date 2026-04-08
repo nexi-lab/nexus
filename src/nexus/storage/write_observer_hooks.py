@@ -1,13 +1,14 @@
-"""Audit interceptor: serialize VFS mutations → DT_PIPE via sys_write.
+"""Audit interceptor: serialize VFS mutations → DT_PIPE via NexusFS Tier 2 API.
 
-Async VFS interceptor hook that serializes each mutation event to JSON
-and writes it into a DT_PIPE via ``nx.sys_write(pipe_path, data)``.
+Sync VFS interceptor hook that serializes each mutation event to JSON
+and writes it into the audit DT_PIPE via ``nx.pipe_write_nowait()``
+(Tier 2 sync passthrough to the Rust kernel ring buffer, ~0.5μs).
 The pipe is consumed by ``PipedRecordStoreWriteObserver`` which flushes
 events to RecordStore in batches.
 
-By using ``sys_write`` instead of ``PipeManager`` directly, the
-interceptor is decoupled from kernel internals and benefits from the
-IPC fast-path (~1μs).
+The interceptor uses the public NexusFS pipe API rather than reaching
+into kernel internals, decoupling it from the underlying transport
+while still benefiting from the IPC fast-path.
 
 Issue #900, #1772.
 """
@@ -155,7 +156,7 @@ class AuditWriteInterceptor:
 
     name = "audit_write_observer"
 
-    __slots__ = ("_nx", "_pipe_path", "_strict_mode", "_pipe_buffer")
+    __slots__ = ("_nx", "_pipe_path", "_strict_mode")
 
     # ── Hook spec (duck-typed) (Issue #1613) ──────────────────────────
 
@@ -175,11 +176,6 @@ class AuditWriteInterceptor:
         self._nx = nx
         self._pipe_path = pipe_path
         self._strict_mode = strict_mode
-        # Cache the pipe buffer reference for direct writes.
-        # Avoids going through the full VFS sys_write pipeline which would
-        # re-trigger post-write hooks (including this one), causing a 5s
-        # timeout per write via _post_dispatch's asyncio.wait_for.
-        self._pipe_buffer: Any = None
 
     # ── VFSWriteHook ──────────────────────────────────────────────────
 
@@ -278,32 +274,27 @@ class AuditWriteInterceptor:
     # ── Internal ──────────────────────────────────────────────────────
 
     def _emit(self, event: dict[str, Any], operation: str, op_path: str) -> None:
-        """Serialize event to JSON and write directly to the pipe buffer (~0.5μs).
+        """Serialize event to JSON and write directly to the Rust pipe buffer (~0.5μs).
 
-        Writes directly to PipeManager's in-memory ring buffer via
-        ``write_nowait()`` — synchronous, non-blocking Rust call.
+        Writes via ``NexusFS.pipe_write_nowait()`` — Tier 2 sync passthrough
+        to the Rust kernel ring buffer. Synchronous and non-blocking, so
+        this hook does not re-trigger post-write hooks (which would cause
+        a recursive sys_write loop and 5s timeout per write).
 
-        If the pipe buffer isn't ready (startup race), the event is dropped
-        with a warning. This eliminates the recursive sys_write fallback
-        that caused 5s timeouts in the previous async implementation.
+        If the pipe buffer is closed/missing (startup race or kernel
+        teardown), the event is dropped with a warning.
         """
         try:
             data = json.dumps(event).encode()
 
-            # Fast path: write directly to cached pipe buffer (~0.5μs)
-            buf = self._pipe_buffer
-            if buf is None:
-                pm = getattr(self._nx, "_pipe_manager", None)
-                if pm is not None:
-                    buf = pm._buffers.get(self._pipe_path)
-                    if buf is not None:
-                        self._pipe_buffer = buf
-
-            if buf is not None:
-                buf.write_nowait(data)
+            # Fast path: kernel ring buffer write (~0.5μs, no GIL re-entry).
+            try:
+                self._nx.pipe_write_nowait(self._pipe_path, data)
                 return
+            except Exception:
+                # Pipe not ready (startup race) or closed — fall through to drop.
+                pass
 
-            # Pipe not ready (startup race) — drop event with warning.
             logger.warning(
                 "Audit pipe not ready, dropping %s event for '%s'",
                 operation,

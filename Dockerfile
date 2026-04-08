@@ -187,11 +187,12 @@ RUN set -eux; \
     curl -fsSL "https://github.com/googleworkspace/cli/releases/latest/download/google-workspace-cli-${ARCH}-unknown-linux-gnu.tar.gz" \
         | tar -xz -C "$tmpdir"; \
     install -m 0755 "$tmpdir/gws" /usr/local/bin/gws; \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list && \
-    apt-get update && apt-get install -y --no-install-recommends gh && \
+    apt-get update && apt-get install -y --no-install-recommends git gh && \
     rm -rf /var/lib/apt/lists/* && \
     gws --version && gh --version
 

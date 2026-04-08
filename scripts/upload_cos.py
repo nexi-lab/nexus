@@ -7,7 +7,6 @@ import argparse
 import mimetypes
 import os
 from pathlib import Path
-from typing import Optional
 
 from qcloud_cos import CosConfig, CosS3Client
 
@@ -30,7 +29,7 @@ class COSClient:
         secret_key: str,
         bucket: str,
         region: str,
-        base_url: Optional[str] = None,
+        base_url: str | None = None,
     ) -> None:
         config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
         self.client = CosS3Client(config)
@@ -42,7 +41,7 @@ class COSClient:
         self,
         local_path: Path,
         remote_path: str,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> str:
         if content_type is None:
             content_type, _ = mimetypes.guess_type(str(local_path))

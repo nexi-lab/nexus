@@ -5,6 +5,7 @@ Minimal deployment: storage + ipc + federation
 """
 
 import os
+
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # CI rewrites these placeholders to the actual site-packages paths resolved

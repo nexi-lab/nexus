@@ -1963,13 +1963,12 @@ impl PyKernel {
         let rust_ctx = ctx.to_rust();
         let result = py.detach(|| self.inner._read_batch(&paths, &rust_ctx));
         let results = result.map_err(|e| -> PyErr { e.into() })?;
+        // GIL is held here (after py.detach returns) — use outer `py` for PyBytes
         Ok(results
             .into_iter()
             .map(|r| PySysReadResult {
                 hit: r.hit,
-                data: r
-                    .data
-                    .map(|d| Python::attach(|py| PyBytes::new(py, &d).into())),
+                data: r.data.map(|d| PyBytes::new(py, &d).into()),
                 post_hook_needed: r.post_hook_needed,
                 content_hash: r.content_hash,
                 entry_type: r.entry_type,

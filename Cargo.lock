@@ -1481,7 +1481,7 @@ dependencies = [
 
 [[package]]
 name = "nexus_kernel"
-version = "0.9.27"
+version = "0.9.28"
 dependencies = [
  "ahash",
  "blake3",

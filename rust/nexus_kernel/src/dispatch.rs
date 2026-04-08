@@ -6,6 +6,7 @@
 //! Contains:
 //!   - PathResolver: virtual path short-circuit (PRE-DISPATCH phase, procfs-style)
 //!   - MutationObserver: fire-and-forget event notification (OBSERVE phase, fsnotify-style)
+//!   - FileEvent / FileEventType: kernel I/O event mirror of Python `FileEvent`
 //!   - PathTrie: O(path_depth) lookup (~50ns) for virtual path resolvers
 //!
 //! Issue #1868: PR 22 — dispatch.rs fully pure Rust.
@@ -13,6 +14,177 @@
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+// ── FileEvent / FileEventType ────────────────────────────────────────
+//
+// Rust mirror of `nexus.core.file_events.FileEvent` (Python frozen
+// dataclass). The struct is constructed by Rust kernel sys_* methods and
+// passed to `MutationObserver::on_mutation`. Fields and bitmask positions
+// MUST match the Python definitions exactly — see file_events.py and the
+// `FILE_EVENT_BIT` table in the same module.
+//
+// `FileEventType` is `repr(u32)` and the discriminants are exactly the
+// bit positions used by `ObserverRegistry::event_mask`. This lets the
+// dispatch loop do `(event_type as u32) & mask != 0` directly without a
+// lookup table.
+//
+// Linux analogue: `fsnotify_event` carries a single event-type tag plus
+// path metadata; consumers extract what they need.
+
+/// Kernel file-system event type.
+///
+/// Bit positions are the source of truth — Python's `FILE_EVENT_BIT` table
+/// is generated from the same positions. Adding a new variant requires
+/// updating both this enum and `nexus.core.file_events.FILE_EVENT_BIT`.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u32)]
+pub(crate) enum FileEventType {
+    FileWrite = 1 << 0,
+    FileDelete = 1 << 1,
+    FileRename = 1 << 2,
+    MetadataChange = 1 << 3,
+    DirCreate = 1 << 4,
+    DirDelete = 1 << 5,
+    SyncToBackendRequested = 1 << 6,
+    SyncToBackendCompleted = 1 << 7,
+    SyncToBackendFailed = 1 << 8,
+    ConflictDetected = 1 << 9,
+    FileCopy = 1 << 10,
+    Mount = 1 << 11,
+    Unmount = 1 << 12,
+}
+
+#[allow(dead_code)]
+impl FileEventType {
+    /// Event-type bitmask matching `ObserverRegistry::event_mask` filters.
+    #[inline]
+    pub(crate) fn bit(self) -> u32 {
+        self as u32
+    }
+
+    /// Stable string identifier matching the Python `FileEventType` StrEnum
+    /// (`FileEventType.FILE_WRITE.value == "file_write"`). The boundary
+    /// adapter passes this to Python so reconstructed `FileEvent` objects
+    /// have the right `type` field.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            FileEventType::FileWrite => "file_write",
+            FileEventType::FileDelete => "file_delete",
+            FileEventType::FileRename => "file_rename",
+            FileEventType::MetadataChange => "metadata_change",
+            FileEventType::DirCreate => "dir_create",
+            FileEventType::DirDelete => "dir_delete",
+            FileEventType::SyncToBackendRequested => "sync_to_backend_requested",
+            FileEventType::SyncToBackendCompleted => "sync_to_backend_completed",
+            FileEventType::SyncToBackendFailed => "sync_to_backend_failed",
+            FileEventType::ConflictDetected => "conflict_detected",
+            FileEventType::FileCopy => "file_copy",
+            FileEventType::Mount => "mount",
+            FileEventType::Unmount => "unmount",
+        }
+    }
+}
+
+/// Bitmask matching `nexus.core.file_events.ALL_FILE_EVENTS`.
+///
+/// Computed as `(1 << N) - 1` where N is the number of variants. Adding
+/// a new variant requires bumping the shift here and in Python.
+#[allow(dead_code)]
+pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 13) - 1;
+
+/// Kernel file-system event — Rust mirror of `nexus.core.file_events.FileEvent`.
+///
+/// Constructed by sys_* methods after a successful mutation, then passed
+/// to `MutationObserver::on_mutation`. The struct is `Clone` so the
+/// deferred ThreadPool dispatch can hand each observer its own owned copy
+/// without sharing references across threads.
+///
+/// Fields mirror the Python frozen dataclass field-by-field; see
+/// `file_events.py`. Optional Python fields map to `Option<T>`. Strings
+/// (`event_id`, `timestamp` ISO 8601) are stored as owned `String` so the
+/// boundary adapter can clone cheaply.
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub(crate) struct FileEvent {
+    /// Event type — strongly typed; the boundary adapter converts to the
+    /// Python `FileEventType` StrEnum.
+    pub(crate) event_type: FileEventType,
+    /// Primary path (for `file_rename`, this is the *old* path; the new
+    /// path lives in `new_path`, mirroring the Python field naming).
+    pub(crate) path: String,
+    /// Kernel namespace partition; `None` for Layer 1 local events.
+    pub(crate) zone_id: Option<String>,
+    /// ISO 8601 timestamp (kept as string to match Python serialization).
+    /// Generated at construction site if not provided.
+    pub(crate) timestamp: String,
+    /// UUID v4 string — generated at construction site.
+    pub(crate) event_id: String,
+    /// For renames: the source path is in `path`, destination in `new_path`.
+    /// Some test/event consumers also stash a previous path here.
+    pub(crate) old_path: Option<String>,
+    pub(crate) size: Option<u64>,
+    pub(crate) etag: Option<String>,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) vector_clock: Option<String>,
+    /// Monotonic ordering within a zone (#2755).
+    pub(crate) sequence_number: Option<u64>,
+    pub(crate) user_id: Option<String>,
+    /// Write-specific: file version counter.
+    pub(crate) version: Option<u32>,
+    /// Write-specific: True if file was newly created (not overwritten).
+    pub(crate) is_new: bool,
+    /// Rename-specific: destination path.
+    pub(crate) new_path: Option<String>,
+    /// Write-specific: previous content hash (for overwrite detection).
+    pub(crate) old_etag: Option<String>,
+}
+
+#[allow(dead_code)]
+impl FileEvent {
+    /// Minimal-constructor convenience for sys_* call sites that only
+    /// know `(type, path, zone_id)`. Auto-generates `event_id` and
+    /// `timestamp`. Other fields default to None / false.
+    pub(crate) fn new(event_type: FileEventType, path: impl Into<String>) -> Self {
+        Self {
+            event_type,
+            path: path.into(),
+            zone_id: None,
+            timestamp: now_iso8601(),
+            event_id: new_event_id(),
+            old_path: None,
+            size: None,
+            etag: None,
+            agent_id: None,
+            vector_clock: None,
+            sequence_number: None,
+            user_id: None,
+            version: None,
+            is_new: false,
+            new_path: None,
+            old_etag: None,
+        }
+    }
+}
+
+/// Generate a UUID v4 string matching Python `str(uuid.uuid4())`.
+///
+/// Uses `uuid` crate (already a transitive dep via redb). Kept private to
+/// the dispatch module so callers always go through `FileEvent::new`.
+fn new_event_id() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
+/// ISO 8601 timestamp with `+00:00` UTC suffix matching Python
+/// `datetime.now(UTC).isoformat()` exactly.
+///
+/// Note: we pass `use_z=false` to chrono so the suffix is `+00:00`, not
+/// `Z`. Python's `datetime.isoformat()` always uses the `+HH:MM` form;
+/// the boundary adapter passes this string directly to Python where it
+/// must round-trip through `datetime.fromisoformat()`.
+fn now_iso8601() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
+}
 
 /// PRE-DISPATCH resolver — virtual path short-circuit.
 ///
@@ -369,5 +541,104 @@ mod tests {
         let trie = Trie::new();
         trie.register("/a", 0).unwrap();
         assert!(trie.register("/b", 0).is_err());
+    }
+
+    // ── FileEvent / FileEventType bit-position mirror tests ───────────
+    //
+    // These assertions are the load-bearing contract that Rust observers
+    // see exactly the same event bits as the Python `FILE_EVENT_BIT`
+    // table. If a new event type is added on either side, both tables
+    // must be updated together — a mismatch will silently mis-route
+    // events, so we pin the values explicitly here.
+
+    #[test]
+    fn test_file_event_type_bit_positions_match_python() {
+        assert_eq!(FileEventType::FileWrite.bit(), 1 << 0);
+        assert_eq!(FileEventType::FileDelete.bit(), 1 << 1);
+        assert_eq!(FileEventType::FileRename.bit(), 1 << 2);
+        assert_eq!(FileEventType::MetadataChange.bit(), 1 << 3);
+        assert_eq!(FileEventType::DirCreate.bit(), 1 << 4);
+        assert_eq!(FileEventType::DirDelete.bit(), 1 << 5);
+        assert_eq!(FileEventType::SyncToBackendRequested.bit(), 1 << 6);
+        assert_eq!(FileEventType::SyncToBackendCompleted.bit(), 1 << 7);
+        assert_eq!(FileEventType::SyncToBackendFailed.bit(), 1 << 8);
+        assert_eq!(FileEventType::ConflictDetected.bit(), 1 << 9);
+        assert_eq!(FileEventType::FileCopy.bit(), 1 << 10);
+        assert_eq!(FileEventType::Mount.bit(), 1 << 11);
+        assert_eq!(FileEventType::Unmount.bit(), 1 << 12);
+    }
+
+    #[test]
+    fn test_all_file_events_mask() {
+        // Must equal `nexus.core.file_events.ALL_FILE_EVENTS == (1 << 13) - 1`.
+        assert_eq!(ALL_FILE_EVENTS, 0x1FFF);
+        // Every variant bit must be present in the all-mask.
+        let bits = [
+            FileEventType::FileWrite.bit(),
+            FileEventType::FileDelete.bit(),
+            FileEventType::FileRename.bit(),
+            FileEventType::MetadataChange.bit(),
+            FileEventType::DirCreate.bit(),
+            FileEventType::DirDelete.bit(),
+            FileEventType::SyncToBackendRequested.bit(),
+            FileEventType::SyncToBackendCompleted.bit(),
+            FileEventType::SyncToBackendFailed.bit(),
+            FileEventType::ConflictDetected.bit(),
+            FileEventType::FileCopy.bit(),
+            FileEventType::Mount.bit(),
+            FileEventType::Unmount.bit(),
+        ];
+        let or_all: u32 = bits.iter().fold(0, |acc, b| acc | b);
+        assert_eq!(or_all, ALL_FILE_EVENTS);
+    }
+
+    #[test]
+    fn test_file_event_type_str_matches_python_strenum() {
+        // String values must match Python `FileEventType(StrEnum)` `.value`
+        // — these strings cross the PyO3 boundary verbatim and feed into
+        // the reconstructed Python `FileEvent`.
+        assert_eq!(FileEventType::FileWrite.as_str(), "file_write");
+        assert_eq!(FileEventType::FileDelete.as_str(), "file_delete");
+        assert_eq!(FileEventType::FileRename.as_str(), "file_rename");
+        assert_eq!(FileEventType::MetadataChange.as_str(), "metadata_change");
+        assert_eq!(FileEventType::DirCreate.as_str(), "dir_create");
+        assert_eq!(FileEventType::DirDelete.as_str(), "dir_delete");
+        assert_eq!(
+            FileEventType::SyncToBackendRequested.as_str(),
+            "sync_to_backend_requested"
+        );
+        assert_eq!(
+            FileEventType::SyncToBackendCompleted.as_str(),
+            "sync_to_backend_completed"
+        );
+        assert_eq!(
+            FileEventType::SyncToBackendFailed.as_str(),
+            "sync_to_backend_failed"
+        );
+        assert_eq!(
+            FileEventType::ConflictDetected.as_str(),
+            "conflict_detected"
+        );
+        assert_eq!(FileEventType::FileCopy.as_str(), "file_copy");
+        assert_eq!(FileEventType::Mount.as_str(), "mount");
+        assert_eq!(FileEventType::Unmount.as_str(), "unmount");
+    }
+
+    #[test]
+    fn test_file_event_new_minimal_constructor() {
+        let ev = FileEvent::new(FileEventType::FileWrite, "/foo/bar.txt");
+        assert_eq!(ev.event_type, FileEventType::FileWrite);
+        assert_eq!(ev.path, "/foo/bar.txt");
+        // event_id is a UUIDv4 (36 chars including dashes).
+        assert_eq!(ev.event_id.len(), 36);
+        // Timestamp must mirror Python `datetime.now(UTC).isoformat()` —
+        // ends with `+00:00`, not `Z`.
+        assert!(ev.timestamp.ends_with("+00:00"));
+        assert!(ev.timestamp.contains('T'));
+        // All optional fields default to None / false.
+        assert!(ev.zone_id.is_none());
+        assert!(ev.size.is_none());
+        assert!(ev.etag.is_none());
+        assert!(!ev.is_new);
     }
 }

@@ -22,12 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from nexus.contracts.metadata import FileMetadata
-from nexus.core.pipe_manager import PipeManager
 from nexus.storage.piped_record_store_write_observer import (
     _AUDIT_PIPE_PATH,
     PipedRecordStoreWriteObserver,
 )
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_write_observer import RecordStoreWriteObserver
 
@@ -100,50 +98,65 @@ _BENCH_PIPE_CAPACITY = 4 * 1024 * 1024  # 4MB — holds ~8k serialized events
 
 async def _bench_piped_async(tmp_dir: Path) -> list[float]:
     db_path = tmp_dir / "piped.db"
-    raft_path = tmp_dir / "piped-raft"
 
     record_store = SQLAlchemyRecordStore(db_path=str(db_path))
-    metastore = RaftMetadataStore.embedded(str(raft_path))
-    pipe_manager = PipeManager(metastore)
 
-    # Pre-create the pipe with benchmark-sized capacity so that
-    # observer.start() finds an existing pipe (open path) and reuses it.
-    pipe_manager.create(_AUDIT_PIPE_PATH, capacity=_BENCH_PIPE_CAPACITY, owner_id="bench")
+    # Create Rust kernel for IPC pipe operations
+    from nexus_kernel import Kernel
+
+    kernel = Kernel()
+
+    # Pre-create the pipe with benchmark-sized capacity
+    kernel.create_pipe(_AUDIT_PIPE_PATH, _BENCH_PIPE_CAPACITY)
 
     observer = PipedRecordStoreWriteObserver(record_store, strict_mode=False)
 
     # Bind a minimal NexusFS-like object that satisfies the observer's
-    # runtime contract: _pipe_manager for start(), sys_read() for the
+    # runtime contract: _kernel for pipe operations, sys_read() for the
     # background consumer, and sys_unlink() for stop().
     class _BenchNx:
         """Minimal NexusFS fake matching the observer's runtime contract.
 
-        Translates PipeClosedError → NexusFileNotFoundError so the
-        consumer's shutdown path works (it only catches the latter).
+        Uses Rust kernel IPC directly. Translates pipe errors to
+        NexusFileNotFoundError so the consumer's shutdown path works.
         """
 
-        def __init__(self, pm: PipeManager) -> None:
-            self._pipe_manager = pm
+        def __init__(self, k: Any) -> None:
+            self._kernel = k
+            # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
+
+        async def sys_setattr(self, path: str, **kwargs: Any) -> dict:
+            """No-op — pipe already created via kernel.create_pipe."""
+            return {"path": path, "created": False}
+
+        def pipe_read_nowait(self, path: str) -> bytes | None:
+            """Tier 2 NexusFS public sync API — sync passthrough to kernel."""
+            return self._kernel.pipe_read_nowait(path)
 
         async def sys_read(self, path: str, **kwargs: Any) -> bytes:
             from nexus.contracts.exceptions import NexusFileNotFoundError
-            from nexus.core.pipe import PipeClosedError, PipeNotFoundError
 
-            try:
-                return await self._pipe_manager.pipe_read(path)
-            except (PipeClosedError, PipeNotFoundError):
-                raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+            # Blocking read: poll pipe_read_nowait with asyncio.sleep
+            while True:
+                try:
+                    data = self.pipe_read_nowait(path)
+                    if data is not None:
+                        return bytes(data)
+                    # No data available — yield and retry
+                    await asyncio.sleep(0.001)
+                except RuntimeError as exc:
+                    if "PipeClosed" in str(exc) or "not found" in str(exc):
+                        raise NexusFileNotFoundError(path, f"Pipe closed: {path}") from None
+                    raise
 
         async def sys_unlink(self, path: str, **kwargs: Any) -> dict:
-            from nexus.core.pipe import PipeNotFoundError
-
             try:
-                self._pipe_manager.destroy(path)
-            except PipeNotFoundError:
+                self._kernel.close_pipe(path)
+            except (RuntimeError, Exception):
                 pass  # Already cleaned up
             return {"path": path}
 
-    fake_nx: Any = _BenchNx(pipe_manager)
+    fake_nx: Any = _BenchNx(kernel)
     observer.bind_fs(fake_nx)
 
     # Suppress observer warnings during benchmark
@@ -169,7 +182,7 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
             times.append((t1 - t0) * 1000)  # ms
     finally:
         await observer.stop()
-        pipe_manager.close_all()
+        kernel.close_all_pipes()
         obs_logger.setLevel(prev_level)
 
     return times

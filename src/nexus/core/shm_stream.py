@@ -1,6 +1,6 @@
 """Cross-process DT_STREAM via shared memory (mmap) — SharedMemoryStreamBackend (#1680).
 
-Implements ``StreamBackend`` protocol using ``SharedStreamBufferCore`` (Rust, mmap)
+Implements ``StreamBackend`` protocol using ``SharedMemoryStreamBackend`` (Rust, mmap)
 for cross-process append-only log with independent reader cursors.
 
 For in-process use, prefer ``MemoryStreamBackend`` from ``core/stream.py`` (zero syscall).
@@ -22,10 +22,10 @@ from nexus.core.stream import (
 )
 
 if TYPE_CHECKING:
-    from nexus_kernel import SharedStreamBufferCore
+    from nexus_kernel import SharedMemoryStreamBackend as _RustSharedMemoryStreamBackend
 
-# RUST_FALLBACK: SharedStreamBufferCore
-from nexus._rust_compat import SharedStreamBufferCore as _SharedStreamBufferCore
+# RUST_FALLBACK: SharedMemoryStreamBackend
+from nexus._rust_compat import SharedMemoryStreamBackend as _SharedMemoryStreamBackend
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class SharedMemoryStreamBackend:
 
     def __init__(
         self,
-        core: SharedStreamBufferCore,
+        core: _RustSharedMemoryStreamBackend,
         data_rd_fd: int = -1,
     ) -> None:
         self._core = core
@@ -71,9 +71,9 @@ class SharedMemoryStreamBackend:
             - shm_path: pass to reader for attach()
             - data_rd_fd: pass to reader (reader listens for data notifications)
         """
-        if _SharedStreamBufferCore is None:
+        if _SharedMemoryStreamBackend is None:
             raise RuntimeError("SharedStream requires the nexus-kernel Rust extension.")
-        core, shm_path, data_rd_fd = _SharedStreamBufferCore.create(capacity)
+        core, shm_path, data_rd_fd = _SharedMemoryStreamBackend.create(capacity)
         buf = cls(core, data_rd_fd=-1)
         return buf, shm_path, data_rd_fd
 
@@ -86,9 +86,9 @@ class SharedMemoryStreamBackend:
             notify_data_wr: Write-end of data pipe (passed to Rust core for notification).
             data_rd_fd: Read-end of data pipe (reader listens here).
         """
-        if _SharedStreamBufferCore is None:
+        if _SharedMemoryStreamBackend is None:
             raise RuntimeError("SharedStream requires the nexus-kernel Rust extension.")
-        core = _SharedStreamBufferCore.attach(shm_path, notify_data_wr)
+        core = _SharedMemoryStreamBackend.attach(shm_path, notify_data_wr)
         return cls(core, data_rd_fd=data_rd_fd)
 
     # -- fd callback ----------------------------------------------------------

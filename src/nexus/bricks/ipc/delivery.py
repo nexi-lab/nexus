@@ -38,8 +38,6 @@ from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.protocols import (
     EventPublisher,
     EventSubscriber,
-    WakeupListener,
-    WakeupNotifier,
 )
 from nexus.storage.zone_settings import SigningMode
 
@@ -77,9 +75,8 @@ class MessageSender:
 
     Writes messages to the recipient's inbox directory, copies to the
     sender's outbox, and fires notifications (best-effort):
-      1. DT_PIPE wakeup signal (~0.5us, same-node only)
-      2. EventBus notification (ms, cross-node capable)
-      3. TTL schedule event via CacheStore pub/sub (for event-driven sweeping)
+      1. EventBus notification (ms, cross-node capable)
+      2. TTL schedule event via CacheStore pub/sub (for event-driven sweeping)
 
     Args:
         vfs: NexusFS instance for IPC read/write operations.
@@ -88,7 +85,6 @@ class MessageSender:
         max_inbox_size: Maximum messages per inbox before backpressure.
         max_payload_bytes: Maximum serialized message size.
         signer: MessageSigner for envelope signing. Optional.
-        wakeup_notifiers: DT_PIPE notifiers for same-node wakeup. Optional.
         cache_store: CacheStore for TTL schedule pub/sub. Optional.
     """
 
@@ -101,7 +97,6 @@ class MessageSender:
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
         max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
         signer: "MessageSigner | None" = None,
-        wakeup_notifiers: list[WakeupNotifier] | None = None,
         cache_store: "CacheStoreABC | None" = None,
     ) -> None:
         self._vfs = vfs
@@ -110,7 +105,6 @@ class MessageSender:
         self._max_inbox_size = max_inbox_size
         self._max_payload_bytes = max_payload_bytes
         self._signer = signer
-        self._wakeup_notifiers = wakeup_notifiers or []
         self._cache_store = cache_store
 
     def _ctx(self) -> Any:
@@ -193,17 +187,6 @@ class MessageSender:
                 },
                 exc_info=True,
             )
-
-        # DT_PIPE wakeup (best-effort, ~0.5us same-node)
-        for notifier in self._wakeup_notifiers:
-            try:
-                await notifier.notify(envelope.recipient)
-            except Exception:
-                logger.debug(
-                    "Wakeup notifier %s failed for agent %s (best-effort)",
-                    type(notifier).__name__,
-                    envelope.recipient,
-                )
 
         # EventBus notification (best-effort, cross-node capable)
         if self._publisher is not None:
@@ -311,12 +294,10 @@ class MessageProcessor:
     (CacheStore pillar: ephemeral KV with TTL).  When no cache_store is provided,
     a NullCacheStore is used and dedup is effectively disabled.
 
-    Supports two notification channels (both optional, poll fallback always works):
-      1. DT_PIPE wakeup via WakeupListener (~0.5us, same-node)
-      2. EventBus push via EventSubscriber (ms, cross-node)
-
-    Both listeners auto-reconnect with exponential backoff (up to
-    _MAX_LISTENER_RETRIES consecutive failures before stopping).
+    Supports EventBus push notifications via EventSubscriber for ms-latency
+    cross-node delivery (poll fallback always works).  The listener
+    auto-reconnects with exponential backoff (up to ``_MAX_LISTENER_RETRIES``
+    consecutive failures before stopping).
 
     Args:
         vfs: NexusFS instance for IPC read/write/rename.
@@ -330,7 +311,6 @@ class MessageProcessor:
         max_retries: Maximum handler retry attempts.
         retry_delays: Backoff delays between retries.
         event_subscriber: EventBus subscriber for push notifications. Optional.
-        wakeup_listener: DT_PIPE wakeup listener for same-node push. Optional.
     """
 
     def __init__(
@@ -347,7 +327,6 @@ class MessageProcessor:
         max_retries: int = 3,
         retry_delays: tuple[float, ...] = (1.0, 2.0, 4.0),
         event_subscriber: EventSubscriber | None = None,
-        wakeup_listener: WakeupListener | None = None,
     ) -> None:
         self._vfs = vfs
         self._agent_id = agent_id
@@ -357,8 +336,6 @@ class MessageProcessor:
         self._dedup_ttl = dedup_ttl_seconds
         self._event_subscriber = event_subscriber
         self._event_task: asyncio.Task[None] | None = None
-        self._wakeup_listener = wakeup_listener
-        self._wakeup_task: asyncio.Task[None] | None = None
         self._verifier = verifier
         self._signing_mode = signing_mode
         self._max_retries = max_retries
@@ -385,26 +362,13 @@ class MessageProcessor:
             await self._cache_store.set(self._dedup_key(message_id), b"1", ttl=self._dedup_ttl)
 
     async def start(self) -> None:
-        """Start notification listeners (DT_PIPE and/or EventBus)."""
-        if self._wakeup_listener is not None and self._wakeup_task is None:
-            self._wakeup_task = asyncio.create_task(self._wakeup_listen_loop())
-            logger.info("DT_PIPE wakeup listener started for agent %s", self._agent_id)
-
+        """Start notification listeners (EventBus push notifications)."""
         if self._event_subscriber is not None and self._event_task is None:
             self._event_task = asyncio.create_task(self._event_listen_loop())
             logger.info("EventBus listener started for agent %s", self._agent_id)
 
     async def stop(self) -> None:
         """Stop all notification listeners."""
-        if self._wakeup_task is not None:
-            self._wakeup_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._wakeup_task
-            self._wakeup_task = None
-
-        if self._wakeup_listener is not None:
-            self._wakeup_listener.close()
-
         if self._event_task is not None:
             self._event_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -412,52 +376,6 @@ class MessageProcessor:
             self._event_task = None
 
         logger.info("Listeners stopped for agent %s", self._agent_id)
-
-    async def _wakeup_listen_loop(self) -> None:
-        """Listen for DT_PIPE wakeup signals and process inbox.
-
-        Uses drain-and-process pattern: wait_for_wakeup() blocks until
-        at least one signal arrives, drains all pending signals, then
-        we process the inbox once. This coalesces burst signals.
-
-        Auto-reconnects with exponential backoff on failure.
-        """
-        if self._wakeup_listener is None:
-            return
-        consecutive_failures = 0
-        while True:
-            try:
-                await self._wakeup_listener.wait_for_wakeup()
-                consecutive_failures = 0
-                try:
-                    await self.process_inbox()
-                except Exception:
-                    logger.warning(
-                        "Wakeup-triggered inbox processing failed for agent %s",
-                        self._agent_id,
-                        exc_info=True,
-                    )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                consecutive_failures += 1
-                if consecutive_failures >= _MAX_LISTENER_RETRIES:
-                    logger.error(
-                        "DT_PIPE listener failed %d times for agent %s, stopping",
-                        _MAX_LISTENER_RETRIES,
-                        self._agent_id,
-                    )
-                    break
-                delay = min(2**consecutive_failures, 30)
-                logger.warning(
-                    "DT_PIPE listener error for agent %s (attempt %d/%d), retrying in %ds",
-                    self._agent_id,
-                    consecutive_failures,
-                    _MAX_LISTENER_RETRIES,
-                    delay,
-                    exc_info=True,
-                )
-                await asyncio.sleep(delay)
 
     async def _event_listen_loop(self) -> None:
         """Subscribe to EventBus for push notifications.

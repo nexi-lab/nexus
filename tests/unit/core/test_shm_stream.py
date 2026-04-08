@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("nexus_kernel")
 
-from nexus_kernel import SharedStreamBufferCore
+from nexus_kernel import SharedMemoryStreamBackend as RustStreamBackend
 
 from nexus.core.shm_stream import SharedMemoryStreamBackend
 from nexus.core.stream import StreamBackend, StreamEmptyError
@@ -19,11 +19,11 @@ from nexus.core.stream import StreamBackend, StreamEmptyError
 # ---------------------------------------------------------------------------
 
 
-class TestSharedStreamBufferCore:
-    """Tests for the Rust SharedStreamBufferCore directly."""
+class TestRustStreamBackend:
+    """Tests for the Rust SharedMemoryStreamBackend directly."""
 
     def test_create_returns_handles(self):
-        core, shm_path, data_rd_fd = SharedStreamBufferCore.create(1024)
+        core, shm_path, data_rd_fd = RustStreamBackend.create(1024)
         assert shm_path
         assert data_rd_fd >= 0
         import os
@@ -32,8 +32,8 @@ class TestSharedStreamBufferCore:
         core.cleanup()
 
     def test_write_read_at_roundtrip(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
-        reader = SharedStreamBufferCore.attach(shm_path, -1)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
+        reader = RustStreamBackend.attach(shm_path, -1)
         import os
 
         os.close(dfd)
@@ -46,8 +46,8 @@ class TestSharedStreamBufferCore:
         core.cleanup()
 
     def test_multi_reader_independent_cursors(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
-        reader = SharedStreamBufferCore.attach(shm_path, -1)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
+        reader = RustStreamBackend.attach(shm_path, -1)
         import os
 
         os.close(dfd)
@@ -68,7 +68,7 @@ class TestSharedStreamBufferCore:
         core.cleanup()
 
     def test_tail_monotonic(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
         import os
 
         os.close(dfd)
@@ -82,8 +82,8 @@ class TestSharedStreamBufferCore:
         core.cleanup()
 
     def test_close_propagates(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
-        reader = SharedStreamBufferCore.attach(shm_path, -1)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
+        reader = RustStreamBackend.attach(shm_path, -1)
         import os
 
         os.close(dfd)
@@ -96,15 +96,15 @@ class TestSharedStreamBufferCore:
     def test_cleanup_removes_file(self):
         import os
 
-        core, shm_path, dfd = SharedStreamBufferCore.create(64)
+        core, shm_path, dfd = RustStreamBackend.create(64)
         os.close(dfd)
         assert os.path.exists(shm_path)
         core.cleanup()
         assert not os.path.exists(shm_path)
 
     def test_read_batch(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
-        reader = SharedStreamBufferCore.attach(shm_path, -1)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
+        reader = RustStreamBackend.attach(shm_path, -1)
         import os
 
         os.close(dfd)
@@ -121,7 +121,7 @@ class TestSharedStreamBufferCore:
         core.cleanup()
 
     def test_stats(self):
-        core, shm_path, dfd = SharedStreamBufferCore.create(1024)
+        core, shm_path, dfd = RustStreamBackend.create(1024)
         import os
 
         os.close(dfd)
@@ -144,8 +144,8 @@ class TestSharedMemoryStreamBackend:
     """Tests for the Python SharedMemoryStreamBackend wrapper."""
 
     def _create_pair(self, capacity=1024):
-        core_w, shm_path, dfd = SharedStreamBufferCore.create(capacity)
-        core_r = SharedStreamBufferCore.attach(shm_path, -1)
+        core_w, shm_path, dfd = RustStreamBackend.create(capacity)
+        core_r = RustStreamBackend.attach(shm_path, -1)
         import os
 
         os.close(dfd)

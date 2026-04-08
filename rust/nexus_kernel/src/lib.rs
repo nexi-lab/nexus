@@ -34,6 +34,7 @@ mod openai_backend;
 mod openai_inference;
 mod path_utils;
 mod pipe;
+mod pipe_manager;
 mod prefix;
 mod rebac;
 mod replication;
@@ -50,6 +51,7 @@ mod simd;
 #[cfg(feature = "connectors")]
 mod slack_backend;
 mod stream;
+mod stream_manager;
 mod trigram;
 mod volume_engine;
 mod volume_index;
@@ -133,12 +135,12 @@ fn nexus_kernel(m: &Bound<PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
     m.add_class::<lock::VFSLockManager>()?;
-    m.add_class::<pipe::RingBufferCore>()?;
-    m.add_class::<stream::StreamBufferCore>()?;
+    // MemoryPipeBackend/MemoryStreamBackend are kernel-internal only (no #[pyclass]).
+    // Python accesses IPC buffers through kernel.create_pipe/create_stream.
     #[cfg(unix)]
-    m.add_class::<shm_pipe::SharedRingBufferCore>()?;
+    m.add_class::<shm_pipe::SharedMemoryPipeBackend>()?;
     #[cfg(unix)]
-    m.add_class::<shm_stream::SharedStreamBufferCore>()?;
+    m.add_class::<shm_stream::SharedMemoryStreamBackend>()?;
     m.add_class::<semaphore::VFSSemaphore>()?;
     // CAS Volume Engine (Issue #3403)
     m.add_class::<volume_engine::VolumeEngine>()?;

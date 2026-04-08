@@ -14,8 +14,6 @@
 //! Error encoding: Rust raises `RuntimeError("PipeFull:…")` etc. Python translates
 //! to the matching exception class.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
@@ -27,15 +25,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 const HEADER_SIZE: usize = 4;
 
 // ---------------------------------------------------------------------------
-// RingBufferCore
+// MemoryPipeBackend
 // ---------------------------------------------------------------------------
 
 /// Lock-free SPSC ring buffer core for DT_PIPE.
 ///
 /// Contiguous byte ring with atomic monotonic head/tail counters.
-/// Python wrapper adds asyncio.Event coordination for blocking read/write.
-#[pyclass]
-pub struct RingBufferCore {
+/// Kernel-internal only — no PyO3 export. Python uses kernel.create_pipe().
+pub struct MemoryPipeBackend {
     ring: UnsafeCell<Vec<u8>>,
     ring_cap: usize,
     user_capacity: usize,
@@ -50,15 +47,15 @@ pub struct RingBufferCore {
 
 // SAFETY: SPSC — producer and consumer operate on non-overlapping ring regions.
 // Python GIL serializes all PyO3 method calls.
-unsafe impl Send for RingBufferCore {}
-unsafe impl Sync for RingBufferCore {}
+unsafe impl Send for MemoryPipeBackend {}
+unsafe impl Sync for MemoryPipeBackend {}
 
 // ---------------------------------------------------------------------------
 // Internal error type
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-enum RingError {
+pub(crate) enum PipeError {
     Closed(&'static str),
     Full(usize, usize),
     Empty,
@@ -67,26 +64,69 @@ enum RingError {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers (not exposed to Python)
+// PipeBackend trait — uniform interface for all pipe backends
 // ---------------------------------------------------------------------------
 
-impl RingBufferCore {
+/// Uniform interface for pipe backends (memory, shared memory, future gRPC).
+///
+/// Enables `DashMap<String, Arc<dyn PipeBackend>>` in PipeManager for
+/// heterogeneous backend dispatch.
+#[allow(dead_code)] // Used via Arc<dyn PipeBackend> in PipeManager + generated_pyo3.rs
+pub(crate) trait PipeBackend: Send + Sync {
+    fn push(&self, data: &[u8]) -> Result<usize, PipeError>;
+    fn pop(&self) -> Result<Vec<u8>, PipeError>;
+    fn close(&self);
+    fn is_closed(&self) -> bool;
+    fn is_empty(&self) -> bool;
+    fn size(&self) -> usize;
+    fn msg_count(&self) -> usize;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers — pub(crate) for direct Kernel IPC registry access
+// ---------------------------------------------------------------------------
+
+impl PipeBackend for MemoryPipeBackend {
+    fn push(&self, data: &[u8]) -> Result<usize, PipeError> {
+        MemoryPipeBackend::push(self, data)
+    }
+    fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        MemoryPipeBackend::pop(self)
+    }
+    fn close(&self) {
+        MemoryPipeBackend::close(self)
+    }
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+    fn is_empty(&self) -> bool {
+        MemoryPipeBackend::is_empty(self)
+    }
+    fn size(&self) -> usize {
+        MemoryPipeBackend::size(self)
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count.load(Ordering::Relaxed)
+    }
+}
+
+impl MemoryPipeBackend {
     /// Push raw bytes into the ring. Returns payload length on success.
-    fn push_inner(&self, data: &[u8]) -> Result<usize, RingError> {
+    pub(crate) fn push(&self, data: &[u8]) -> Result<usize, PipeError> {
         if self.closed.load(Ordering::Acquire) {
-            return Err(RingError::Closed("write to closed pipe"));
+            return Err(PipeError::Closed("write to closed pipe"));
         }
         let payload_len = data.len();
         if payload_len == 0 {
             return Ok(0);
         }
         if payload_len > self.user_capacity {
-            return Err(RingError::Oversized(payload_len, self.user_capacity));
+            return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
 
         let used = self.used_bytes.load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
-            return Err(RingError::Full(used, self.user_capacity));
+            return Err(PipeError::Full(used, self.user_capacity));
         }
 
         let frame_len = HEADER_SIZE + payload_len;
@@ -128,16 +168,16 @@ impl RingBufferCore {
 
     /// Find the next message position without advancing head.
     /// Returns (payload_start_ring_idx, payload_len, total_bytes_to_advance_head).
-    fn pop_position(&self) -> Result<(usize, usize, usize), RingError> {
+    pub(crate) fn pop_position(&self) -> Result<(usize, usize, usize), PipeError> {
         let mut head = self.head.load(Ordering::Acquire);
         let tail = self.tail.load(Ordering::Acquire);
 
         loop {
             if head == tail {
                 return if self.closed.load(Ordering::Acquire) {
-                    Err(RingError::ClosedEmpty)
+                    Err(PipeError::ClosedEmpty)
                 } else {
-                    Err(RingError::Empty)
+                    Err(PipeError::Empty)
                 };
             }
 
@@ -165,31 +205,34 @@ impl RingBufferCore {
     }
 
     /// Advance head after data has been copied out.
-    fn commit_pop(&self, total_advance: usize, payload_len: usize) {
+    pub(crate) fn commit_pop(&self, total_advance: usize, payload_len: usize) {
         let head = self.head.load(Ordering::Relaxed);
         self.head.store(head + total_advance, Ordering::Release);
         self.msg_count.fetch_sub(1, Ordering::Relaxed);
         self.used_bytes.fetch_sub(payload_len, Ordering::Relaxed);
         self.pop_count.fetch_add(1, Ordering::Relaxed);
     }
-}
 
-// ---------------------------------------------------------------------------
-// PyO3 methods
-// ---------------------------------------------------------------------------
+    /// Pop one message from the ring, returning owned bytes (no PyBytes dependency).
+    /// Combines pop_position + ring copy + commit_pop.
+    pub(crate) fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        let (payload_start, payload_len, total_advance) = self.pop_position()?;
+        let ring = unsafe { &*self.ring.get() };
+        let data = ring[payload_start..payload_start + payload_len].to_vec();
+        self.commit_pop(total_advance, payload_len);
+        Ok(data)
+    }
 
-#[pymethods]
-impl RingBufferCore {
-    #[new]
-    fn new(capacity: usize) -> PyResult<Self> {
-        if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be > 0, got 0",
-            ));
-        }
-        // Allocate ring: capacity * 2 gives headroom for framing + sentinel waste
+    /// Check if the pipe is closed.
+    #[allow(dead_code)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Create a new MemoryPipeBackend (pub(crate), no PyO3).
+    pub(crate) fn new(capacity: usize) -> Self {
         let ring_cap = capacity * 2;
-        Ok(Self {
+        Self {
             ring: UnsafeCell::new(vec![0u8; ring_cap]),
             ring_cap,
             user_capacity: capacity,
@@ -200,178 +243,41 @@ impl RingBufferCore {
             pop_count: AtomicU64::new(0),
             msg_count: AtomicUsize::new(0),
             used_bytes: AtomicUsize::new(0),
-        })
-    }
-
-    /// Push a message into the buffer. Returns bytes written.
-    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
-        match self.push_inner(data) {
-            Ok(n) => Ok(n),
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PipeClosed:{msg}"
-            ))),
-            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(RingError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
         }
     }
 
-    /// Pop the next message. Returns PyBytes (L3 — direct ring→PyBytes copy).
-    fn pop<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
-        match self.pop_position() {
-            Ok((start, len, advance)) => {
-                let ring = unsafe { &*self.ring.get() };
-                let result = PyBytes::new(py, &ring[start..start + len]);
-                self.commit_pop(advance, len);
-                Ok(result)
-            }
-            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeClosed:read from closed empty pipe",
-            )),
-            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeEmpty:buffer empty",
-            )),
-            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Push a u64 value (L2 — 12-byte frame, zero PyBytes allocation).
-    fn push_u64(&self, _py: Python<'_>, val: u64) -> PyResult<()> {
-        match self.push_inner(&val.to_le_bytes()) {
-            Ok(_) => Ok(()),
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "PipeClosed:{msg}"
-            ))),
-            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("PipeFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(RingError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
-        }
-    }
-
-    /// Pop a u64 value (L2 — returns Python int directly, zero PyBytes).
-    fn pop_u64(&self, _py: Python<'_>) -> PyResult<u64> {
-        match self.pop_position() {
-            Ok((start, len, advance)) => {
-                if len != 8 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                        "pop_u64 expects 8-byte payload, got {len}"
-                    )));
-                }
-                let ring = unsafe { &*self.ring.get() };
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(&ring[start..start + 8]);
-                let val = u64::from_le_bytes(buf);
-                self.commit_pop(advance, len);
-                Ok(val)
-            }
-            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeClosed:read from closed empty pipe",
-            )),
-            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "PipeEmpty:buffer empty",
-            )),
-            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Non-consuming peek at the next message. Returns None if empty.
-    fn peek<'py>(&self, py: Python<'py>) -> Option<Bound<'py, PyBytes>> {
-        match self.pop_position() {
-            Ok((start, len, _advance)) => {
-                let ring = unsafe { &*self.ring.get() };
-                Some(PyBytes::new(py, &ring[start..start + len]))
-                // NOTE: no commit_pop — peek is non-consuming
-            }
-            Err(_) => None,
-        }
-    }
-
-    /// Non-consuming view of all buffered messages.
-    fn peek_all<'py>(&self, py: Python<'py>) -> Bound<'py, PyList> {
-        let list = PyList::empty(py);
-        let ring = unsafe { &*self.ring.get() };
-        let tail = self.tail.load(Ordering::Acquire);
-        let mut pos = self.head.load(Ordering::Acquire);
-
-        while pos < tail {
-            let idx = pos % self.ring_cap;
-            let mut hdr = [0u8; HEADER_SIZE];
-            hdr.copy_from_slice(&ring[idx..idx + HEADER_SIZE]);
-            let payload_len = u32::from_le_bytes(hdr) as usize;
-
-            if payload_len == 0 {
-                // Sentinel — skip to ring start
-                pos += self.ring_cap - idx;
-                continue;
-            }
-
-            let payload_start = idx + HEADER_SIZE;
-            let item = PyBytes::new(py, &ring[payload_start..payload_start + payload_len]);
-            list.append(item).expect("append to list");
-            pos += HEADER_SIZE + payload_len;
-        }
-
-        list
-    }
-
-    /// Close the buffer. Idempotent.
-    fn close(&self) {
+    /// Signal close.
+    pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
 
-    /// Buffer statistics as a dict.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = PyDict::new(py);
-        dict.set_item("size", self.used_bytes.load(Ordering::Relaxed))?;
-        dict.set_item("capacity", self.user_capacity)?;
-        dict.set_item("msg_count", self.msg_count.load(Ordering::Relaxed))?;
-        dict.set_item("closed", self.closed.load(Ordering::Acquire))?;
-        dict.set_item("push_count", self.push_count.load(Ordering::Relaxed))?;
-        dict.set_item("pop_count", self.pop_count.load(Ordering::Relaxed))?;
-        Ok(dict.into())
-    }
-
-    fn is_empty(&self) -> bool {
+    /// Check if buffer is empty (no messages).
+    #[allow(dead_code)]
+    pub(crate) fn is_empty(&self) -> bool {
         self.msg_count.load(Ordering::Relaxed) == 0
     }
 
-    fn is_full(&self) -> bool {
+    /// Check if buffer is full (used bytes >= capacity).
+    #[allow(dead_code)]
+    pub(crate) fn is_full(&self) -> bool {
         self.used_bytes.load(Ordering::Relaxed) >= self.user_capacity
     }
 
-    #[getter]
-    fn closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
-    }
-
-    #[getter]
-    fn size(&self) -> usize {
+    /// Current used bytes.
+    #[allow(dead_code)]
+    pub(crate) fn size(&self) -> usize {
         self.used_bytes.load(Ordering::Relaxed)
     }
 
-    #[getter]
-    fn capacity(&self) -> usize {
-        self.user_capacity
+    /// Is the buffer closed?
+    #[allow(dead_code)]
+    pub(crate) fn closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 
-    #[getter]
-    fn msg_count(&self) -> usize {
+    /// Number of messages in the buffer.
+    #[allow(dead_code)]
+    pub(crate) fn msg_count(&self) -> usize {
         self.msg_count.load(Ordering::Relaxed)
     }
 }
@@ -384,17 +290,17 @@ impl RingBufferCore {
 mod tests {
     use super::*;
 
-    fn make(cap: usize) -> RingBufferCore {
-        RingBufferCore::new(cap).unwrap()
+    fn make(cap: usize) -> MemoryPipeBackend {
+        MemoryPipeBackend::new(cap)
     }
 
     /// Test-only push helper (bypasses PyO3 Python parameter).
-    fn push(core: &RingBufferCore, data: &[u8]) -> usize {
-        core.push_inner(data).expect("push failed in test helper")
+    fn push(core: &MemoryPipeBackend, data: &[u8]) -> usize {
+        core.push(data).expect("push failed in test helper")
     }
 
     /// Test-only pop helper (bypasses PyO3, returns raw bytes).
-    fn pop(core: &RingBufferCore) -> Vec<u8> {
+    fn pop(core: &MemoryPipeBackend) -> Vec<u8> {
         let (start, len, advance) = core.pop_position().expect("pop failed in test helper");
         let ring = unsafe { &*core.ring.get() };
         let data = ring[start..start + len].to_vec();
@@ -403,13 +309,13 @@ mod tests {
     }
 
     /// Test-only push_u64 helper.
-    fn push_u64(core: &RingBufferCore, val: u64) {
-        core.push_inner(&val.to_le_bytes())
+    fn push_u64(core: &MemoryPipeBackend, val: u64) {
+        core.push(&val.to_le_bytes())
             .expect("push_u64 failed in test helper");
     }
 
     /// Test-only pop_u64 helper.
-    fn pop_u64(core: &RingBufferCore) -> u64 {
+    fn pop_u64(core: &MemoryPipeBackend) -> u64 {
         let (start, len, advance) = core.pop_position().expect("pop_u64 failed in test helper");
         assert_eq!(len, 8, "pop_u64 expects 8-byte payload");
         let ring = unsafe { &*core.ring.get() };
@@ -418,11 +324,6 @@ mod tests {
         let val = u64::from_le_bytes(buf);
         core.commit_pop(advance, len);
         val
-    }
-
-    #[test]
-    fn test_zero_capacity_rejected() {
-        assert!(RingBufferCore::new(0).is_err());
     }
 
     #[test]
@@ -484,14 +385,14 @@ mod tests {
     fn test_push_closed_rejected() {
         let core = make(1024);
         core.close();
-        assert!(core.push_inner(b"data").is_err());
+        assert!(core.push(b"data").is_err());
     }
 
     #[test]
     fn test_oversized_rejected() {
         let core = make(10);
-        match core.push_inner(&[0u8; 11]) {
-            Err(RingError::Oversized(11, 10)) => {}
+        match core.push(&[0u8; 11]) {
+            Err(PipeError::Oversized(11, 10)) => {}
             other => panic!("expected Oversized, got {:?}", other.is_ok()),
         }
     }
@@ -500,8 +401,8 @@ mod tests {
     fn test_full_rejected() {
         let core = make(10);
         push(&core, &[0u8; 10]);
-        match core.push_inner(b"x") {
-            Err(RingError::Full(10, 10)) => {}
+        match core.push(b"x") {
+            Err(PipeError::Full(10, 10)) => {}
             other => panic!("expected Full, got {:?}", other.is_ok()),
         }
     }
@@ -524,7 +425,7 @@ mod tests {
         let core = make(1024);
         core.close();
         match core.pop_position() {
-            Err(RingError::ClosedEmpty) => {}
+            Err(PipeError::ClosedEmpty) => {}
             _ => panic!("expected ClosedEmpty"),
         }
     }
@@ -536,7 +437,7 @@ mod tests {
         core.close();
         assert_eq!(pop(&core), b"last");
         match core.pop_position() {
-            Err(RingError::ClosedEmpty) => {}
+            Err(PipeError::ClosedEmpty) => {}
             _ => panic!("expected ClosedEmpty"),
         }
     }
@@ -699,9 +600,9 @@ mod tests {
             thread::spawn(move || {
                 for i in 0..n {
                     loop {
-                        match core.push_inner(&(i as u64).to_le_bytes()) {
+                        match core.push(&(i as u64).to_le_bytes()) {
                             Ok(_) => break,
-                            Err(RingError::Full(_, _)) => {
+                            Err(PipeError::Full(_, _)) => {
                                 thread::yield_now();
                                 continue;
                             }
@@ -728,7 +629,7 @@ mod tests {
                                 assert_eq!(val, i as u64);
                                 break;
                             }
-                            Err(RingError::Empty) => {
+                            Err(PipeError::Empty) => {
                                 thread::yield_now();
                                 continue;
                             }

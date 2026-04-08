@@ -1,19 +1,17 @@
 """Integration tests: PathRouter DT_PIPE native dispatch (#1201, #1496).
 
 Verifies that PathRouter.route() detects DT_PIPE inodes and returns
-PipeRouteResult, and that NexusFS sys_read/sys_write/sys_unlink
-dispatch to PipeManager for pipe paths.
+PipeRouteResult, and that Rust kernel IPC pipe operations (create_pipe,
+pipe_write_nowait, pipe_read_nowait, close_pipe) work correctly.
 
-See: core/router.py, core/pipe_manager.py
+See: core/router.py, Rust kernel IPC registry
 """
 
 from __future__ import annotations
 
 import pytest
 
-from nexus.contracts.metadata import FileMetadata
-from nexus.core.pipe import PipeFullError
-from nexus.core.pipe_manager import PipeManager
+from nexus.contracts.metadata import DT_PIPE, FileMetadata
 from nexus.core.router import PathRouter, PipeRouteResult, RouteResult
 
 # ======================================================================
@@ -47,6 +45,22 @@ class MockMetastore:
         pass
 
 
+def _create_pipe_inode(ms: MockMetastore, path: str) -> None:
+    """Register a DT_PIPE inode in the metastore (replaces PipeManager.create)."""
+    ms.put(
+        FileMetadata(
+            path=path,
+            backend_name="pipe",
+            physical_path="",
+            size=0,
+            etag="",
+            mime_type="application/octet-stream",
+            entry_type=DT_PIPE,
+            zone_id="test",
+        )
+    )
+
+
 # ======================================================================
 # PathRouter DT_PIPE detection
 # ======================================================================
@@ -59,8 +73,7 @@ class TestPathRouterPipeRoute:
 
         mount_table = MountTable(ms)
         router = PathRouter(mount_table)
-        mgr = PipeManager(ms)
-        mgr.create("/pipes/inbox", capacity=1024)
+        _create_pipe_inode(ms, "/pipes/inbox")
 
         result = router.route("/pipes/inbox")
         assert isinstance(result, PipeRouteResult)
@@ -104,8 +117,7 @@ class TestPathRouterPipeRoute:
 
         mount_table = MountTable(ms)
         router = PathRouter(mount_table)
-        mgr = PipeManager(ms)
-        mgr.create("/pipes/inbox", capacity=1024)
+        _create_pipe_inode(ms, "/pipes/inbox")
 
         # /pipes/inbox is a pipe
         result = router.route("/pipes/inbox")
@@ -119,34 +131,50 @@ class TestPathRouterPipeRoute:
 
 
 # ======================================================================
-# PipeManager read/write via pipe dispatch
+# Kernel IPC pipe read/write (replaces PipeManager tests)
 # ======================================================================
 
 
-class TestPipeReadWrite:
-    def test_pipe_write_then_read(self) -> None:
-        ms = MockMetastore()
-        mgr = PipeManager(ms)
-        buf = mgr.create("/pipes/roundtrip", capacity=1024)
+class TestKernelPipeReadWrite:
+    def _make_kernel(self):
+        """Create a Rust Kernel instance for IPC testing."""
+        from nexus_kernel import Kernel
 
-        mgr.pipe_write_nowait("/pipes/roundtrip", b"hello")
-        data = buf.read_nowait()
-        assert data == b"hello"
+        return Kernel()
+
+    def test_pipe_write_then_read(self) -> None:
+        kernel = self._make_kernel()
+        kernel.create_pipe("/pipes/roundtrip", 1024)
+
+        kernel.pipe_write_nowait("/pipes/roundtrip", b"hello")
+        data = kernel.pipe_read_nowait("/pipes/roundtrip")
+        assert bytes(data) == b"hello"
+
+        kernel.close_all_pipes()
 
     def test_pipe_write_full_raises(self) -> None:
-        ms = MockMetastore()
-        mgr = PipeManager(ms)
-        mgr.create("/pipes/tiny", capacity=10)
-        mgr.pipe_write_nowait("/pipes/tiny", b"x" * 10)
+        kernel = self._make_kernel()
+        kernel.create_pipe("/pipes/tiny", 10)
+        kernel.pipe_write_nowait("/pipes/tiny", b"x" * 10)
 
-        with pytest.raises(PipeFullError):
-            mgr.pipe_write_nowait("/pipes/tiny", b"overflow")
+        with pytest.raises(RuntimeError, match="PipeFull"):
+            kernel.pipe_write_nowait("/pipes/tiny", b"overflow")
 
-    def test_pipe_destroy(self) -> None:
-        ms = MockMetastore()
-        mgr = PipeManager(ms)
-        buf = mgr.create("/pipes/delme", capacity=1024)
+        kernel.close_all_pipes()
 
-        mgr.destroy("/pipes/delme")
-        assert buf.closed is True
-        assert ms.get("/pipes/delme") is None
+    def test_pipe_close(self) -> None:
+        """close_pipe() signals the closed flag (pipe still registered);
+        destroy_pipe() removes it from the registry.
+        """
+        kernel = self._make_kernel()
+        kernel.create_pipe("/pipes/delme", 1024)
+
+        # close_pipe: sets closed flag but does NOT remove from registry
+        kernel.close_pipe("/pipes/delme")
+        assert "/pipes/delme" in kernel.list_pipes()
+
+        # destroy_pipe: removes from registry
+        kernel.destroy_pipe("/pipes/delme")
+        assert "/pipes/delme" not in kernel.list_pipes()
+
+        kernel.close_all_pipes()

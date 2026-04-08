@@ -351,9 +351,7 @@ async def _boot_post_kernel_services(
         # Late-bind NexusFS for VFS-routed file I/O (``everything is a file``).
         if hasattr(_acp_service, "bind_fs"):
             _acp_service.bind_fs(nx)
-        # Late-bind PipeManager for DT_PIPE registration of agent stdio.
-        if hasattr(_acp_service, "bind_pipe_manager"):
-            _acp_service.bind_pipe_manager(getattr(nx, "_pipe_manager", None))
+        # PipeManager deleted — agent stdio pipes registered via NexusFS._kernel directly.
         # Wire agent termination → permission lease revocation (Issue #3398 decision 2A)
         _perm_lease_table = getattr(nx, "_permission_lease_table", None)
         if _perm_lease_table is not None and hasattr(_acp_service, "register_on_terminate"):
@@ -482,8 +480,8 @@ async def _boot_post_kernel_services(
             with contextlib.suppress(Exception):
                 _candidate = nx.router.route(_llm_prefix).backend
                 if isinstance(_candidate, CASOpenAIBackend):
-                    _candidate.set_stream_manager(nx._stream_manager)
-                    logger.debug("Injected StreamManager into CASOpenAIBackend at %s", _llm_prefix)
+                    _candidate.set_stream_manager(nx)
+                    logger.debug("Injected NexusFS into CASOpenAIBackend at %s", _llm_prefix)
     except Exception:
         pass
     try:

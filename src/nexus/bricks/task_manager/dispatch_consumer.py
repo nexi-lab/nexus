@@ -64,7 +64,7 @@ class TaskDispatchPipeConsumer:
 
         consumer = TaskDispatchPipeConsumer()
         task_write_hook.register_handler(consumer)
-        consumer.set_pipe_manager(pipe_manager)
+        consumer.bind_fs(nx)
         consumer.set_task_service(task_manager_service)
         await consumer.start()
         ...
@@ -116,12 +116,11 @@ class TaskDispatchPipeConsumer:
         if self._nx is None:
             return
 
-        pipe_manager = getattr(self._nx, "_pipe_manager", None)
-        if pipe_manager is None:
-            raise RuntimeError("PipeManager not available for task dispatch startup")
+        from nexus.contracts.metadata import DT_PIPE
 
-        pipe_manager.ensure(
+        await self._nx.sys_setattr(
             _TASK_DISPATCH_PIPE_PATH,
+            entry_type=DT_PIPE,
             capacity=_TASK_DISPATCH_PIPE_CAPACITY,
             owner_id="kernel",
         )

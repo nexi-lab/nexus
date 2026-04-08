@@ -43,12 +43,7 @@ from nexus.bricks.ipc.lifecycle import dead_letter_message
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 from nexus.bricks.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
 from nexus.bricks.ipc.sweep import TTLSweeper
-from nexus.bricks.ipc.wakeup import (
-    CacheStoreEventPublisher,
-    PipeNotifyFactory,
-    PipeWakeupListener,
-    PipeWakeupNotifier,
-)
+from nexus.bricks.ipc.wakeup import CacheStoreEventPublisher
 
 __all__ = [
     # Envelope
@@ -79,10 +74,8 @@ __all__ = [
     "TTLSweeper",
     # Lifecycle
     "dead_letter_message",
-    # Wakeup (#3197)
-    "PipeWakeupNotifier",
-    "PipeWakeupListener",
-    "PipeNotifyFactory",
+    # Event publishing (#3197)
+    "CacheStoreEventPublisher",
     # Exceptions
     "IPCError",
     "EnvelopeValidationError",

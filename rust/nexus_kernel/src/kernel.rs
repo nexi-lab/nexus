@@ -18,7 +18,7 @@ use crate::dispatch::{MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
-use crate::router::{PathRouter, RouteError, RustRouteResult};
+use crate::router::{canonicalize, PathRouter, RouteError, RustRouteResult};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +36,18 @@ pub enum KernelError {
     Route(RouteError),
     IOError(String),
     TrieError(String),
+    // IPC error variants
+    PipeFull(String),
+    PipeEmpty(String),
+    PipeClosed(String),
+    PipeExists(String),
+    PipeNotFound(String),
+    StreamFull(String),
+    StreamEmpty(String),
+    StreamClosed(String),
+    StreamExists(String),
+    StreamNotFound(String),
+    WouldBlock(String),
 }
 
 impl From<RouteError> for KernelError {
@@ -360,6 +372,14 @@ pub struct Kernel {
     file_watches: FileWatchRegistry,
     // Agent registry — DashMap backing store (§10 B1)
     pub(crate) agent_registry: crate::agent_registry::AgentRegistry,
+    // Per-mount metastores — federation zones have independent redb instances.
+    // Keyed by zone-canonical mount point (e.g. "/zone-beta/shared").
+    // Syscalls check here first, then fall back to self.metastore (global).
+    mount_metastores: DashMap<String, Box<dyn crate::metastore::Metastore>>,
+    // IPC registry — PipeManager owns DashMap<String, Arc<dyn PipeBackend>>
+    pub(crate) pipe_manager: crate::pipe_manager::PipeManager,
+    // IPC registry — StreamManager owns DashMap<String, Arc<dyn StreamBackend>>
+    pub(crate) stream_manager: crate::stream_manager::StreamManager,
 }
 
 impl Kernel {
@@ -388,6 +408,9 @@ impl Kernel {
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
+            mount_metastores: DashMap::new(),
+            pipe_manager: crate::pipe_manager::PipeManager::new(),
+            stream_manager: crate::stream_manager::StreamManager::new(),
         }
     }
 
@@ -412,6 +435,21 @@ impl Kernel {
             .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
         self.metastore = Some(Box::new(ms));
         Ok(())
+    }
+
+    /// Resolve metastore for a syscall: per-mount first, then global fallback.
+    ///
+    /// In federation mode each mount has its own redb instance (Raft-backed zone store).
+    /// Standalone mode uses a single global metastore.
+    /// `mount_point` must be the zone-canonical key from route_impl().
+    fn with_metastore<F, R>(&self, mount_point: &str, f: F) -> Option<R>
+    where
+        F: FnOnce(&dyn crate::metastore::Metastore) -> R,
+    {
+        if let Some(ms) = self.mount_metastores.get(mount_point) {
+            return Some(f(ms.as_ref()));
+        }
+        self.metastore.as_ref().map(|ms| f(ms.as_ref()))
     }
 
     // ── Metastore proxy methods (for Python RustMetastoreProxy) ────────
@@ -596,6 +634,10 @@ impl Kernel {
     /// Backend resolution:
     ///   - `backend` provided → uses it directly.
     ///   - `backend` is None → no backend (sys_read returns miss).
+    ///
+    /// When `metastore_path` is provided, opens a Rust-native RedbMetastore
+    /// for this mount point (federation: each zone has its own redb instance).
+    /// Syscalls will use this per-mount metastore instead of the global one.
     #[allow(clippy::too_many_arguments)]
     pub fn add_mount(
         &self,
@@ -606,7 +648,15 @@ impl Kernel {
         io_profile: &str,
         backend_name: &str,
         backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        metastore_path: Option<&str>,
     ) -> Result<(), KernelError> {
+        // Open per-mount metastore if path provided (federation mode)
+        if let Some(ms_path) = metastore_path {
+            let ms = RedbMetastore::open(std::path::Path::new(ms_path))
+                .map_err(|e| KernelError::IOError(format!("RedbMetastore: {e:?}")))?;
+            let canonical = canonicalize(mount_point, zone_id);
+            self.mount_metastores.insert(canonical, Box::new(ms));
+        }
         self.router
             .add_mount(
                 mount_point,
@@ -620,8 +670,10 @@ impl Kernel {
             .map_err(KernelError::from)
     }
 
-    /// Remove a mount point.
+    /// Remove a mount point (and its per-mount metastore if any).
     pub fn remove_mount(&self, mount_point: &str, zone_id: &str) -> bool {
+        let canonical = canonicalize(mount_point, zone_id);
+        self.mount_metastores.remove(&canonical);
         self.router.remove_mount(mount_point, zone_id)
     }
 
@@ -646,6 +698,84 @@ impl Kernel {
     /// List all mount points.
     pub fn get_mount_points(&self) -> Vec<String> {
         self.router.get_mount_points()
+    }
+
+    /// High-level mount: add_mount + create DT_MOUNT metastore entry.
+    ///
+    /// Encapsulates routing table update + metadata persistence in one call.
+    /// DLC calls this, then does Python-side hook registration.
+    #[allow(clippy::too_many_arguments, dead_code)]
+    pub fn kernel_mount(
+        &self,
+        mount_point: &str,
+        zone_id: &str,
+        readonly: bool,
+        admin_only: bool,
+        io_profile: &str,
+        backend_name: &str,
+        backend: Option<Box<dyn crate::backend::ObjectStore>>,
+        metastore_path: Option<&str>,
+    ) -> Result<(), KernelError> {
+        // 1. Router + per-mount metastore
+        self.add_mount(
+            mount_point,
+            zone_id,
+            readonly,
+            admin_only,
+            io_profile,
+            backend_name,
+            backend,
+            metastore_path,
+        )?;
+
+        // 2. Create DT_MOUNT metadata entry (best-effort)
+        let canonical = canonicalize(mount_point, zone_id);
+        self.with_metastore(&canonical, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: mount_point.to_string(),
+                backend_name: backend_name.to_string(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(mount_point, meta);
+        });
+
+        // 3. DCache entry for mount point
+        self.dcache.put(
+            mount_point,
+            CachedEntry {
+                backend_name: backend_name.to_string(),
+                physical_path: String::new(),
+                size: 0,
+                etag: None,
+                version: 1,
+                entry_type: 2, // DT_MOUNT
+                zone_id: Some(zone_id.to_string()),
+                mime_type: None,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// High-level unmount: remove_mount + cleanup metastore entry.
+    pub fn kernel_unmount(&self, mount_point: &str, zone_id: &str) -> Result<bool, KernelError> {
+        // 1. Cleanup metastore entry (best-effort)
+        let canonical = canonicalize(mount_point, zone_id);
+        self.with_metastore(&canonical, |ms| {
+            let _ = ms.delete(mount_point);
+        });
+
+        // 2. DCache evict
+        self.dcache.evict(mount_point);
+
+        // 3. Remove from router + per-mount metastore
+        Ok(self.remove_mount(mount_point, zone_id))
     }
 
     // ── Trie proxy methods ─────────────────────────────────────────────
@@ -847,6 +977,240 @@ impl Kernel {
         self.file_watches.match_path(path)
     }
 
+    // ── IPC Registry — Pipe methods (delegates to PipeManager) ──────────
+
+    /// Create a pipe buffer in the IPC registry.
+    ///
+    /// PipeManager owns the buffer; Kernel persists DT_PIPE inode to
+    /// metastore + dcache so sys_read/sys_write dispatch to IPC fast-path.
+    pub fn create_pipe(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
+        self.pipe_manager
+            .create(path, capacity)
+            .map_err(pipe_mgr_err)?;
+
+        // Persist DT_PIPE inode (best-effort — metastore may not be wired in tests).
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: "pipe".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_PIPE,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(path, meta);
+        });
+
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: "pipe".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_PIPE,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Destroy a pipe buffer.
+    pub fn destroy_pipe(&self, path: &str) -> Result<(), KernelError> {
+        self.pipe_manager.destroy(path).map_err(pipe_mgr_err)?;
+
+        // Remove DT_PIPE inode (best-effort)
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let _ = ms.delete(path);
+        });
+        self.dcache.evict(path);
+
+        Ok(())
+    }
+
+    /// Close a pipe (signal close, keep in registry for drain).
+    pub fn close_pipe(&self, path: &str) -> Result<(), KernelError> {
+        self.pipe_manager.close(path).map_err(pipe_mgr_err)
+    }
+
+    /// Check if a pipe exists.
+    pub fn has_pipe(&self, path: &str) -> bool {
+        self.pipe_manager.has(path)
+    }
+
+    /// Non-blocking write to a pipe. Returns bytes written.
+    pub fn pipe_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
+        self.pipe_manager
+            .write_nowait(path, data)
+            .map_err(pipe_mgr_err)
+    }
+
+    /// Non-blocking read from a pipe. Returns data or None if empty.
+    pub fn pipe_read_nowait(&self, path: &str) -> Result<Option<Vec<u8>>, KernelError> {
+        self.pipe_manager.read_nowait(path).map_err(pipe_mgr_err)
+    }
+
+    /// List all pipes with their paths.
+    pub fn list_pipes(&self) -> Vec<String> {
+        self.pipe_manager.list()
+    }
+
+    /// Blocking read — Condvar wait (GIL-free via py.allow_threads).
+    /// Called from generated_pyo3.rs PyKernel wrapper.
+    #[allow(dead_code)]
+    pub fn pipe_read_blocking(&self, path: &str, timeout_ms: u64) -> Result<Vec<u8>, KernelError> {
+        self.pipe_manager
+            .read_blocking(path, timeout_ms)
+            .map_err(pipe_mgr_err)
+    }
+
+    /// Close all pipes (shutdown).
+    pub fn close_all_pipes(&self) {
+        self.pipe_manager.close_all();
+    }
+
+    // ── IPC Registry — Stream methods (delegates to StreamManager) ────
+
+    /// Create a stream buffer in the IPC registry.
+    pub fn create_stream(&self, path: &str, capacity: usize) -> Result<(), KernelError> {
+        self.stream_manager
+            .create(path, capacity)
+            .map_err(stream_mgr_err)?;
+
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let meta = crate::metastore::FileMetadata {
+                path: path.to_string(),
+                backend_name: "stream".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            };
+            let _ = ms.put(path, meta);
+        });
+
+        self.dcache.put(
+            path,
+            CachedEntry {
+                backend_name: "stream".to_string(),
+                physical_path: "mem://".to_string(),
+                size: capacity as u64,
+                etag: None,
+                version: 1,
+                entry_type: DT_STREAM,
+                zone_id: Some("root".to_string()),
+                mime_type: None,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Destroy a stream buffer.
+    pub fn destroy_stream(&self, path: &str) -> Result<(), KernelError> {
+        self.stream_manager.destroy(path).map_err(stream_mgr_err)?;
+
+        let mount_point = self
+            .router
+            .route_impl(path, "root", true, false)
+            .map(|r| r.mount_point)
+            .unwrap_or_default();
+        self.with_metastore(&mount_point, |ms| {
+            let _ = ms.delete(path);
+        });
+        self.dcache.evict(path);
+
+        Ok(())
+    }
+
+    /// Close a stream (signal close, keep in registry for drain).
+    pub fn close_stream(&self, path: &str) -> Result<(), KernelError> {
+        self.stream_manager.close(path).map_err(stream_mgr_err)
+    }
+
+    /// Check if a stream exists.
+    pub fn has_stream(&self, path: &str) -> bool {
+        self.stream_manager.has(path)
+    }
+
+    /// Non-blocking write to a stream. Returns byte offset.
+    pub fn stream_write_nowait(&self, path: &str, data: &[u8]) -> Result<usize, KernelError> {
+        self.stream_manager
+            .write_nowait(path, data)
+            .map_err(stream_mgr_err)
+    }
+
+    /// Read one message at byte offset. Returns (data, next_offset) or None if empty.
+    pub fn stream_read_at(
+        &self,
+        path: &str,
+        offset: usize,
+    ) -> Result<Option<(Vec<u8>, usize)>, KernelError> {
+        self.stream_manager
+            .read_at(path, offset)
+            .map_err(stream_mgr_err)
+    }
+
+    /// Read up to `count` messages starting from byte offset.
+    pub fn stream_read_batch(
+        &self,
+        path: &str,
+        offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), KernelError> {
+        self.stream_manager
+            .read_batch(path, offset, count)
+            .map_err(stream_mgr_err)
+    }
+
+    /// List all streams with their paths.
+    pub fn list_streams(&self) -> Vec<String> {
+        self.stream_manager.list()
+    }
+
+    /// Blocking read at offset — Condvar wait (GIL-free via py.allow_threads).
+    /// Called from generated_pyo3.rs PyKernel wrapper.
+    #[allow(dead_code)]
+    pub fn stream_read_at_blocking(
+        &self,
+        path: &str,
+        offset: usize,
+        timeout_ms: u64,
+    ) -> Result<(Vec<u8>, usize), KernelError> {
+        self.stream_manager
+            .read_at_blocking(path, offset, timeout_ms)
+            .map_err(stream_mgr_err)
+    }
+
+    /// Close all streams (shutdown).
+    pub fn close_all_streams(&self) {
+        self.stream_manager.close_all();
+    }
+
     // ── sys_read ───────────────────────────────────────────────────────
 
     /// Rust syscall: read file content (pure Rust, no GIL).
@@ -891,42 +1255,81 @@ impl Kernel {
         let entry = match self.dcache.get_entry(path) {
             Some(e) => e,
             None => {
-                // Metastore fallback
-                match &self.metastore {
-                    Some(ms) => match ms.get(path) {
-                        Ok(Some(meta)) => {
-                            // Populate dcache from metastore result
-                            let cached = CachedEntry {
-                                backend_name: meta.backend_name.clone(),
-                                physical_path: meta.physical_path.clone(),
-                                size: meta.size,
-                                etag: meta.etag.clone(),
-                                version: meta.version,
-                                entry_type: meta.entry_type,
-                                zone_id: meta.zone_id.clone(),
-                                mime_type: meta.mime_type.clone(),
-                            };
-                            self.dcache.put(path, cached);
-                            // Re-fetch from dcache (now populated)
-                            self.dcache.get_entry(path).unwrap()
-                        }
-                        // Metastore miss — may be overlay base layer; let wrapper handle
-                        Ok(None) => return miss(),
-                        Err(_) => return miss(),
-                    },
+                // Metastore fallback (per-mount first, then global)
+                match self.with_metastore(&route.mount_point, |ms| ms.get(path)) {
+                    Some(Ok(Some(meta))) => {
+                        // Populate dcache from metastore result
+                        let cached = CachedEntry {
+                            backend_name: meta.backend_name.clone(),
+                            physical_path: meta.physical_path.clone(),
+                            size: meta.size,
+                            etag: meta.etag.clone(),
+                            version: meta.version,
+                            entry_type: meta.entry_type,
+                            zone_id: meta.zone_id.clone(),
+                            mime_type: meta.mime_type.clone(),
+                        };
+                        self.dcache.put(path, cached);
+                        // Re-fetch from dcache (now populated)
+                        self.dcache.get_entry(path).unwrap()
+                    }
+                    // Metastore miss — may be overlay base layer; let wrapper handle
+                    Some(Ok(None)) => return miss(),
+                    Some(Err(_)) => return miss(),
                     None => return Err(KernelError::FileNotFound(path.to_string())),
                 }
             }
         };
 
-        // DT_PIPE/DT_STREAM -> return entry_type so wrapper dispatches IPC
-        if let dt @ (DT_PIPE | DT_STREAM) = entry.entry_type {
+        // DT_PIPE — try Rust IPC registry (nowait pop)
+        if entry.entry_type == DT_PIPE {
+            if let Some(buf) = self.pipe_manager.get(path) {
+                match buf.pop() {
+                    Ok(data) => {
+                        return Ok(SysReadResult {
+                            hit: true,
+                            data: Some(data),
+                            post_hook_needed: false,
+                            content_hash: None,
+                            entry_type: DT_PIPE,
+                        });
+                    }
+                    Err(crate::pipe::PipeError::Empty) => {
+                        // Empty — return miss with DT_PIPE so Python async shell retries
+                        return Ok(SysReadResult {
+                            hit: false,
+                            data: None,
+                            post_hook_needed: false,
+                            content_hash: None,
+                            entry_type: DT_PIPE,
+                        });
+                    }
+                    Err(crate::pipe::PipeError::ClosedEmpty) => {
+                        return Err(KernelError::PipeClosed(path.to_string()));
+                    }
+                    Err(_) => {}
+                }
+            }
+            // Not in Rust registry — fall through to Python fallback
             return Ok(SysReadResult {
                 hit: false,
                 data: None,
                 post_hook_needed: false,
                 content_hash: None,
-                entry_type: dt,
+                entry_type: DT_PIPE,
+            });
+        }
+
+        // DT_STREAM — try Rust IPC registry (nowait read_at)
+        // Note: stream reads need byte offset, which comes from OperationContext or
+        // the wrapper. For now, return miss so Python handles offset tracking.
+        if entry.entry_type == DT_STREAM {
+            return Ok(SysReadResult {
+                hit: false,
+                data: None,
+                post_hook_needed: false,
+                content_hash: None,
+                entry_type: DT_STREAM,
             });
         }
 
@@ -1019,11 +1422,52 @@ impl Kernel {
             Err(_) => return miss(),
         };
 
-        // 3. DCache check — DT_PIPE/DT_STREAM -> wrapper handles
+        // 3. DCache check — DT_PIPE/DT_STREAM: try Rust IPC registry
         if let Some(entry) = self.dcache.get_entry(path) {
-            match entry.entry_type {
-                DT_PIPE | DT_STREAM => return miss(),
-                _ => {}
+            if entry.entry_type == DT_PIPE {
+                if let Some(buf) = self.pipe_manager.get(path) {
+                    match buf.push(content) {
+                        Ok(n) => {
+                            return Ok(SysWriteResult {
+                                hit: true,
+                                content_id: None,
+                                post_hook_needed: false,
+                                version: 0,
+                                size: n as u64,
+                            });
+                        }
+                        Err(crate::pipe::PipeError::Full(_, _)) => {
+                            // Full — return miss so Python async shell retries
+                            return miss();
+                        }
+                        Err(crate::pipe::PipeError::Closed(msg)) => {
+                            return Err(KernelError::PipeClosed(msg.to_string()));
+                        }
+                        Err(_) => {}
+                    }
+                }
+                return miss();
+            }
+            if entry.entry_type == DT_STREAM {
+                if let Some(buf) = self.stream_manager.get(path) {
+                    match buf.push(content) {
+                        Ok(offset) => {
+                            return Ok(SysWriteResult {
+                                hit: true,
+                                content_id: None,
+                                post_hook_needed: false,
+                                version: 0,
+                                size: offset as u64,
+                            });
+                        }
+                        Err(crate::stream::StreamError::Full(_, _)) => return miss(),
+                        Err(crate::stream::StreamError::Closed(msg)) => {
+                            return Err(KernelError::StreamClosed(msg.to_string()));
+                        }
+                        Err(_) => {}
+                    }
+                }
+                return miss();
             }
         }
 
@@ -1053,8 +1497,8 @@ impl Kernel {
                 let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
                 let new_version = old_version + 1;
 
-                // Build FileMetadata and persist via metastore
-                if let Some(ref ms) = self.metastore {
+                // Build FileMetadata and persist via metastore (per-mount or global)
+                self.with_metastore(&route.mount_point, |ms| {
                     let meta = crate::metastore::FileMetadata {
                         path: path.to_string(),
                         backend_name: route.io_profile.clone(),
@@ -1068,7 +1512,7 @@ impl Kernel {
                     };
                     // Best-effort metastore.put -- error logged but doesn't fail write
                     let _ = ms.put(path, meta);
-                }
+                });
 
                 // Update dcache with new metadata
                 self.dcache.put(
@@ -1200,12 +1644,11 @@ impl Kernel {
             Err(_) => return miss(0),
         };
 
-        // 3. Get metadata (dcache or metastore)
+        // 3. Get metadata (dcache or metastore — per-mount first, then global)
         let meta = match self.dcache.get_entry(path) {
             Some(e) => Some(e),
-            None => {
-                // Metastore fallback
-                if let Some(ref ms) = self.metastore {
+            None => self
+                .with_metastore(&route.mount_point, |ms| {
                     ms.get(path).ok().flatten().map(|m| CachedEntry {
                         backend_name: m.backend_name,
                         physical_path: m.physical_path,
@@ -1216,10 +1659,8 @@ impl Kernel {
                         zone_id: m.zone_id,
                         mime_type: m.mime_type,
                     })
-                } else {
-                    None
-                }
-            }
+                })
+                .flatten(),
         };
 
         let entry = match meta {
@@ -1245,10 +1686,10 @@ impl Kernel {
             return miss(entry.entry_type);
         }
 
-        // 6. Metastore delete
-        if let Some(ref ms) = self.metastore {
+        // 6. Metastore delete (per-mount or global)
+        self.with_metastore(&route.mount_point, |ms| {
             let _ = ms.delete(path);
-        }
+        });
 
         // 7. Backend delete (best-effort, PAS only)
         let _ = self
@@ -1356,12 +1797,10 @@ impl Kernel {
             return miss();
         }
 
-        // 4. Existence check: get old metadata
-        let old_meta = if let Some(ref ms) = self.metastore {
-            ms.get(old_path).ok().flatten()
-        } else {
-            None
-        };
+        // 4. Existence check: get old metadata (per-mount or global)
+        let old_meta = self
+            .with_metastore(&old_route.mount_point, |ms| ms.get(old_path).ok().flatten())
+            .flatten();
 
         // Also check dcache
         let old_entry = self.dcache.get_entry(old_path);
@@ -1392,33 +1831,38 @@ impl Kernel {
 
         // 5. Destination conflict check — let Python handle under VFS lock
         //    (Python has richer stale-metadata cleanup logic with backend.file_exists)
-        if let Some(ref ms) = self.metastore {
-            if ms.exists(new_path).unwrap_or(false) {
-                release_locks(&self.vfs_lock, lock1, lock2);
-                return miss();
-            }
+        let new_exists = self
+            .with_metastore(&old_route.mount_point, |ms| {
+                ms.exists(new_path).unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if new_exists {
+            release_locks(&self.vfs_lock, lock1, lock2);
+            return miss();
         }
 
         // 6. Put-then-delete (crash-safe): metastore.put(new) → metastore.delete(old)
-        if let Some(ref ms) = self.metastore {
-            if let Some(ref meta) = old_meta {
-                let new_meta = crate::metastore::FileMetadata {
-                    path: new_path.to_string(),
-                    backend_name: meta.backend_name.clone(),
-                    physical_path: meta.physical_path.clone(),
-                    size: meta.size,
-                    etag: meta.etag.clone(),
-                    version: meta.version,
-                    entry_type: meta.entry_type,
-                    zone_id: meta.zone_id.clone(),
-                    mime_type: meta.mime_type.clone(),
-                };
+        if let Some(ref meta) = old_meta {
+            let new_meta = crate::metastore::FileMetadata {
+                path: new_path.to_string(),
+                backend_name: meta.backend_name.clone(),
+                physical_path: meta.physical_path.clone(),
+                size: meta.size,
+                etag: meta.etag.clone(),
+                version: meta.version,
+                entry_type: meta.entry_type,
+                zone_id: meta.zone_id.clone(),
+                mime_type: meta.mime_type.clone(),
+            };
+            self.with_metastore(&old_route.mount_point, |ms| {
                 let _ = ms.put(new_path, new_meta);
                 let _ = ms.delete(old_path);
-            }
+            });
+        }
 
-            // 7. Recursive child rename (directories)
-            if is_directory {
+        // 7. Recursive child rename (directories)
+        if is_directory {
+            self.with_metastore(&old_route.mount_point, |ms| {
                 let prefix = format!("{}/", old_path.trim_end_matches('/'));
                 if let Ok(children) = ms.list(&prefix) {
                     for child in &children {
@@ -1439,7 +1883,7 @@ impl Kernel {
                         let _ = ms.delete(&child.path);
                     }
                 }
-            }
+            });
         }
 
         // 8. Backend rename (best-effort, PAS only)
@@ -1492,23 +1936,24 @@ impl Kernel {
             .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
 
-        // 3. Existence check via metastore
-        if let Some(ref ms) = self.metastore {
-            if ms.exists(path).unwrap_or(false) {
-                if !exist_ok && !parents {
-                    return Err(KernelError::IOError(format!(
-                        "Directory already exists: {path}"
-                    )));
-                }
-                // Already exists — ensure parents and return
-                if parents {
-                    self.ensure_parent_directories(path, ctx, &route.mount_point)?;
-                }
-                return Ok(SysMkdirResult {
-                    hit: true,
-                    post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
-                });
+        // 3. Existence check via metastore (per-mount or global)
+        let exists = self
+            .with_metastore(&route.mount_point, |ms| ms.exists(path).unwrap_or(false))
+            .unwrap_or(false);
+        if exists {
+            if !exist_ok && !parents {
+                return Err(KernelError::IOError(format!(
+                    "Directory already exists: {path}"
+                )));
             }
+            // Already exists — ensure parents and return
+            if parents {
+                self.ensure_parent_directories(path, ctx, &route.mount_point)?;
+            }
+            return Ok(SysMkdirResult {
+                hit: true,
+                post_hook_needed: self.mkdir_hook_count.load(Ordering::Relaxed) > 0,
+            });
         }
 
         // 4. Backend mkdir (best-effort, PAS backends create physical dirs)
@@ -1521,8 +1966,8 @@ impl Kernel {
             self.ensure_parent_directories(path, ctx, &route.mount_point)?;
         }
 
-        // 6. Create directory metadata in metastore
-        if let Some(ref ms) = self.metastore {
+        // 6. Create directory metadata in metastore (per-mount or global)
+        self.with_metastore(&route.mount_point, |ms| {
             let meta = crate::metastore::FileMetadata {
                 path: path.to_string(),
                 backend_name: route.io_profile.clone(),
@@ -1535,7 +1980,7 @@ impl Kernel {
                 mime_type: Some("inode/directory".to_string()),
             };
             let _ = ms.put(path, meta);
-        }
+        });
 
         // 7. DCache put
         self.dcache.put(
@@ -1565,11 +2010,6 @@ impl Kernel {
         ctx: &OperationContext,
         mount_point: &str,
     ) -> Result<(), KernelError> {
-        let ms = match &self.metastore {
-            Some(ms) => ms,
-            None => return Ok(()),
-        };
-
         // Walk up from parent to root, collecting missing dirs
         let mut current = path;
         let mut to_create = Vec::new();
@@ -1581,7 +2021,10 @@ impl Kernel {
                     if current.is_empty() || current == "/" {
                         break;
                     }
-                    if !ms.exists(current).unwrap_or(true) {
+                    let exists = self
+                        .with_metastore(mount_point, |ms| ms.exists(current).unwrap_or(true))
+                        .unwrap_or(true);
+                    if !exists {
                         to_create.push(current.to_string());
                     } else {
                         break; // Existing parent found, stop
@@ -1592,18 +2035,20 @@ impl Kernel {
 
         // Create from shallowest to deepest
         for dir_path in to_create.into_iter().rev() {
-            let meta = crate::metastore::FileMetadata {
-                path: dir_path.clone(),
-                backend_name: String::new(),
-                physical_path: String::new(),
-                size: 0,
-                etag: None,
-                version: 1,
-                entry_type: DT_DIR,
-                zone_id: Some(ctx.zone_id.clone()),
-                mime_type: Some("inode/directory".to_string()),
-            };
-            let _ = ms.put(&dir_path, meta);
+            self.with_metastore(mount_point, |ms| {
+                let meta = crate::metastore::FileMetadata {
+                    path: dir_path.clone(),
+                    backend_name: String::new(),
+                    physical_path: String::new(),
+                    size: 0,
+                    etag: None,
+                    version: 1,
+                    entry_type: DT_DIR,
+                    zone_id: Some(ctx.zone_id.clone()),
+                    mime_type: Some("inode/directory".to_string()),
+                };
+                let _ = ms.put(&dir_path, meta);
+            });
             self.dcache.put(
                 &dir_path,
                 CachedEntry {
@@ -1618,7 +2063,6 @@ impl Kernel {
                 },
             );
         }
-        let _ = mount_point; // used for routing context
         Ok(())
     }
 
@@ -1650,25 +2094,25 @@ impl Kernel {
             .router
             .route_impl(path, &ctx.zone_id, ctx.is_admin, true)?;
 
-        // 3. Get metadata
-        let entry_type = if let Some(ref ms) = self.metastore {
-            ms.get(path)
-                .ok()
-                .flatten()
-                .map(|m| m.entry_type)
-                .unwrap_or(DT_DIR)
-        } else {
-            DT_DIR
-        };
+        // 3. Get metadata (per-mount or global)
+        let entry_type = self
+            .with_metastore(&route.mount_point, |ms| {
+                ms.get(path)
+                    .ok()
+                    .flatten()
+                    .map(|m| m.entry_type)
+                    .unwrap_or(DT_DIR)
+            })
+            .unwrap_or(DT_DIR);
 
         // DT_MOUNT(2) / DT_EXTERNAL_STORAGE(5) → Python handles unmount
         if entry_type == 2 || entry_type == 5 {
             return miss();
         }
 
-        // 4. Check children
+        // 4. Check children (per-mount or global)
         let mut children_deleted = 0;
-        if let Some(ref ms) = self.metastore {
+        if let Some(result) = self.with_metastore(&route.mount_point, |ms| {
             let prefix = format!("{}/", path.trim_end_matches('/'));
             let children = ms.list(&prefix).unwrap_or_default();
 
@@ -1679,8 +2123,12 @@ impl Kernel {
 
                 // 5. Recursive: batch delete all children
                 let child_paths: Vec<String> = children.iter().map(|c| c.path.clone()).collect();
-                children_deleted = ms.delete_batch(&child_paths).unwrap_or(0);
+                Ok(ms.delete_batch(&child_paths).unwrap_or(0))
+            } else {
+                Ok(0)
             }
+        }) {
+            children_deleted = result?;
         }
 
         // 6. Backend rmdir (best-effort)
@@ -1688,10 +2136,10 @@ impl Kernel {
             .router
             .rmdir(&route.mount_point, &route.backend_path, recursive);
 
-        // 7. Delete directory metadata
-        if let Some(ref ms) = self.metastore {
+        // 7. Delete directory metadata (per-mount or global)
+        self.with_metastore(&route.mount_point, |ms| {
             let _ = ms.delete(path);
-        }
+        });
 
         // 8. DCache evict + prefix evict
         self.dcache.evict(path);
@@ -1776,7 +2224,8 @@ impl Kernel {
         }
 
         // 4. Write each item — collect metadata for batch put
-        let mut batch_meta: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
+        // Tuple: (mount_point, path, FileMetadata) for per-mount metastore support
+        let mut batch_meta: Vec<(String, String, crate::metastore::FileMetadata)> = Vec::new();
 
         for (i, ((path, content), route_opt)) in items.iter().zip(routes.iter()).enumerate() {
             let route = match route_opt {
@@ -1827,7 +2276,7 @@ impl Kernel {
                         zone_id: Some(ctx.zone_id.clone()),
                         mime_type: None,
                     };
-                    batch_meta.push((path.clone(), meta));
+                    batch_meta.push((route.mount_point.clone(), path.clone(), meta));
 
                     // DCache update
                     self.dcache.put(
@@ -1865,10 +2314,23 @@ impl Kernel {
             }
         }
 
-        // 4b. Single metastore.put_batch for all successful writes
+        // 4b. Metastore put_batch — per-mount metastore aware.
+        // Global items (no per-mount metastore) use batch put for efficiency.
         if !batch_meta.is_empty() {
-            if let Some(ref ms) = self.metastore {
-                let _ = ms.put_batch(&batch_meta);
+            let mut global_items: Vec<(String, crate::metastore::FileMetadata)> = Vec::new();
+            for (mp, path, meta) in batch_meta {
+                if self.mount_metastores.get(&mp).is_some() {
+                    self.with_metastore(&mp, |ms| {
+                        let _ = ms.put(&path, meta);
+                    });
+                } else {
+                    global_items.push((path, meta));
+                }
+            }
+            if !global_items.is_empty() {
+                if let Some(ref ms) = self.metastore {
+                    let _ = ms.put_batch(&global_items);
+                }
             }
         }
 
@@ -1967,6 +2429,50 @@ impl Kernel {
 }
 
 // ── Fast path validation ────────────────────────────────────────────────
+
+// ── Manager error conversions ─────────────────────────────────────────
+
+fn pipe_mgr_err(e: crate::pipe_manager::PipeManagerError) -> KernelError {
+    use crate::pipe_manager::PipeManagerError;
+    match e {
+        PipeManagerError::Exists(p) => KernelError::PipeExists(p),
+        PipeManagerError::NotFound(p) => KernelError::PipeNotFound(p),
+        PipeManagerError::Closed(p) => KernelError::PipeClosed(p),
+        PipeManagerError::WouldBlock(msg) => KernelError::WouldBlock(msg),
+        PipeManagerError::Backend(be) => {
+            use crate::pipe::PipeError;
+            match be {
+                PipeError::Full(u, c) => KernelError::PipeFull(format!("{u}/{c} bytes used")),
+                PipeError::Closed(msg) => KernelError::PipeClosed(msg.to_string()),
+                PipeError::Oversized(s, c) => {
+                    KernelError::PipeFull(format!("msg {s} > capacity {c}"))
+                }
+                other => KernelError::IOError(format!("pipe: {other:?}")),
+            }
+        }
+    }
+}
+
+fn stream_mgr_err(e: crate::stream_manager::StreamManagerError) -> KernelError {
+    use crate::stream_manager::StreamManagerError;
+    match e {
+        StreamManagerError::Exists(p) => KernelError::StreamExists(p),
+        StreamManagerError::NotFound(p) => KernelError::StreamNotFound(p),
+        StreamManagerError::Closed(p) => KernelError::StreamClosed(p),
+        StreamManagerError::WouldBlock(msg) => KernelError::WouldBlock(msg),
+        StreamManagerError::Backend(be) => {
+            use crate::stream::StreamError;
+            match be {
+                StreamError::Full(u, c) => KernelError::StreamFull(format!("{u}/{c} bytes used")),
+                StreamError::Closed(msg) => KernelError::StreamClosed(msg.to_string()),
+                StreamError::Oversized(s, c) => {
+                    KernelError::StreamFull(format!("msg {s} > capacity {c}"))
+                }
+                other => KernelError::IOError(format!("stream: {other:?}")),
+            }
+        }
+    }
+}
 
 pub(crate) fn validate_path_fast(path: &str) -> Result<(), KernelError> {
     if path.is_empty() {

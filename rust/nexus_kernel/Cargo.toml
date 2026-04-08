@@ -33,8 +33,9 @@ lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
 crc32fast = { workspace = true }
-tonic = { version = "0.13", features = ["transport"] }
-prost = "0.13"
+nexus_transport = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
 tokio = { version = "1", features = ["rt", "net", "sync"] }
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
 hmac = { version = "0.12", optional = true }

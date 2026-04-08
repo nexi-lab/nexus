@@ -1,516 +1,346 @@
-"""Tests for DT_STREAM — append-only log with offset-based non-destructive reads.
+"""Tests for DT_STREAM — kernel IPC stream operations.
 
-Tests MemoryStreamBackend (kstream) and StreamManager (mkstream).
+All stream operations go through the Rust Kernel class.
+Covers: write/read roundtrip, replay, multi-reader, batch reads,
+capacity limits, close semantics, and stream lifecycle management.
 """
 
 import pytest
 
-from nexus.core.stream import (
-    MemoryStreamBackend,
-    StreamClosedError,
-    StreamEmptyError,
-    StreamFullError,
-)
-
 try:
-    from nexus_kernel import StreamBufferCore  # noqa: F401
+    from nexus_kernel import Kernel
 
-    _HAS_STREAM_CORE = True
+    RUST_AVAILABLE = True
 except ImportError:
-    _HAS_STREAM_CORE = False
+    RUST_AVAILABLE = False
 
 pytestmark = pytest.mark.skipif(
-    not _HAS_STREAM_CORE,
-    reason="nexus_kernel.StreamBufferCore not built — rebuild Rust extension",
+    not RUST_AVAILABLE,
+    reason="nexus_kernel not built — rebuild Rust extension",
 )
 
+
+def _make_kernel() -> "Kernel":
+    return Kernel()
+
+
 # ---------------------------------------------------------------------------
-# MemoryStreamBackend (kstream) — basic operations
+# Kernel IPC Stream — basic write / read_at
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryStreamBackendBasic:
-    """Write / read_at roundtrip, ordering, stats."""
+class TestKernelStreamBasic:
+    """Write / read_at roundtrip, ordering."""
+
+    def test_create_and_has(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        assert k.has_stream("/streams/test")
+
+    def test_has_stream_nonexistent(self):
+        k = _make_kernel()
+        assert not k.has_stream("/streams/nope")
 
     def test_write_read_roundtrip(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        offset = buf.write_nowait(b"hello")
-        data, next_offset = buf.read_at(offset)
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        offset = k.stream_write_nowait("/streams/test", b"hello")
+        result = k.stream_read_at("/streams/test", offset)
+        assert result is not None
+        data, next_offset = result
         assert data == b"hello"
         assert next_offset > offset
 
     def test_write_multiple_read_in_order(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        o1 = buf.write_nowait(b"aaa")
-        o2 = buf.write_nowait(b"bbb")
-        o3 = buf.write_nowait(b"ccc")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        o1 = k.stream_write_nowait("/streams/test", b"aaa")
+        o2 = k.stream_write_nowait("/streams/test", b"bbb")
+        o3 = k.stream_write_nowait("/streams/test", b"ccc")
 
-        d1, n1 = buf.read_at(o1)
-        d2, n2 = buf.read_at(n1)
-        d3, _ = buf.read_at(n2)
+        r1 = k.stream_read_at("/streams/test", o1)
+        assert r1 is not None
+        d1, n1 = r1
+
+        r2 = k.stream_read_at("/streams/test", n1)
+        assert r2 is not None
+        d2, n2 = r2
+
+        r3 = k.stream_read_at("/streams/test", n2)
+        assert r3 is not None
+        d3, _ = r3
 
         assert d1 == b"aaa"
         assert d2 == b"bbb"
         assert d3 == b"ccc"
         assert o1 < o2 < o3
 
-    def test_stats(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"x")
-        buf.write_nowait(b"y")
-        s = buf.stats
-        assert s["msg_count"] == 2
-        assert s["push_count"] == 2
+    def test_read_at_end_returns_none(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        offset = k.stream_write_nowait("/streams/test", b"only")
+        result = k.stream_read_at("/streams/test", offset)
+        assert result is not None
+        _, next_offset = result
+        # Reading past the last message returns None
+        assert k.stream_read_at("/streams/test", next_offset) is None
 
-    def test_tail_monotonic(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        assert buf.tail == 0
-        buf.write_nowait(b"data")
-        t1 = buf.tail
-        buf.write_nowait(b"more")
-        t2 = buf.tail
-        assert t2 > t1 > 0
+    def test_read_empty_stream_returns_none(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        assert k.stream_read_at("/streams/test", 0) is None
 
 
 # ---------------------------------------------------------------------------
-# MemoryStreamBackend — replay / multi-reader
+# Kernel IPC Stream — replay / multi-reader
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryStreamBackendReplay:
-    """read_at(0) replays from start, same offset re-readable."""
+class TestKernelStreamReplay:
+    """read_at(0) replays from start, same offset re-readable (non-destructive)."""
 
     def test_replay_from_start(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"first")
-        buf.write_nowait(b"second")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"first")
+        k.stream_write_nowait("/streams/test", b"second")
 
         # Read from 0 twice — same result (non-destructive)
-        d1, n1 = buf.read_at(0)
-        d2, n2 = buf.read_at(0)
+        r1 = k.stream_read_at("/streams/test", 0)
+        r2 = k.stream_read_at("/streams/test", 0)
+        assert r1 is not None and r2 is not None
+        d1, n1 = r1
+        d2, n2 = r2
         assert d1 == d2 == b"first"
         assert n1 == n2
 
     def test_same_offset_re_readable(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        offset = buf.write_nowait(b"hello")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        offset = k.stream_write_nowait("/streams/test", b"hello")
         for _ in range(5):
-            data, _ = buf.read_at(offset)
+            result = k.stream_read_at("/streams/test", offset)
+            assert result is not None
+            data, _ = result
             assert data == b"hello"
 
 
-class TestMemoryStreamBackendMultiReader:
-    """Two readers at different offsets."""
+class TestKernelStreamMultiReader:
+    """Two readers at different offsets — independent cursors."""
 
     def test_independent_cursors(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"msg1")
-        buf.write_nowait(b"msg2")
-        buf.write_nowait(b"msg3")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"msg1")
+        k.stream_write_nowait("/streams/test", b"msg2")
+        k.stream_write_nowait("/streams/test", b"msg3")
 
         # Reader A reads from start
-        da, na = buf.read_at(0)
+        ra = k.stream_read_at("/streams/test", 0)
+        assert ra is not None
+        da, na = ra
         assert da == b"msg1"
 
         # Reader B reads further ahead
-        _, nb = buf.read_at(na)
-        db, _ = buf.read_at(nb)
+        rb = k.stream_read_at("/streams/test", na)
+        assert rb is not None
+        _, nb = rb
+        rc = k.stream_read_at("/streams/test", nb)
+        assert rc is not None
+        db, _ = rc
         assert db == b"msg3"
 
         # Reader A still at msg1 offset — can re-read
-        da2, _ = buf.read_at(0)
+        ra2 = k.stream_read_at("/streams/test", 0)
+        assert ra2 is not None
+        da2, _ = ra2
         assert da2 == b"msg1"
 
 
 # ---------------------------------------------------------------------------
-# MemoryStreamBackend — batch reads
+# Kernel IPC Stream — batch reads
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryStreamBackendBatch:
-    """read_batch with various counts."""
+class TestKernelStreamBatch:
+    """stream_read_batch with various counts."""
 
     def test_batch_all(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"a")
-        buf.write_nowait(b"b")
-        buf.write_nowait(b"c")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"a")
+        k.stream_write_nowait("/streams/test", b"b")
+        k.stream_write_nowait("/streams/test", b"c")
 
-        items, next_off = buf.read_batch(0, count=10)
+        items, _next_off = k.stream_read_batch("/streams/test", 0, 10)
         assert len(items) == 3
         assert items == [b"a", b"b", b"c"]
 
     def test_batch_partial(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"a")
-        buf.write_nowait(b"b")
-        buf.write_nowait(b"c")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"a")
+        k.stream_write_nowait("/streams/test", b"b")
+        k.stream_write_nowait("/streams/test", b"c")
 
-        items, next_off = buf.read_batch(0, count=2)
+        items, next_off = k.stream_read_batch("/streams/test", 0, 2)
         assert len(items) == 2
         assert items == [b"a", b"b"]
 
         # Continue from next_off
-        items2, _ = buf.read_batch(next_off, count=10)
+        items2, _ = k.stream_read_batch("/streams/test", next_off, 10)
         assert items2 == [b"c"]
 
     def test_batch_count_one(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"only")
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"only")
 
-        items, _ = buf.read_batch(0, count=1)
+        items, _ = k.stream_read_batch("/streams/test", 0, 1)
         assert items == [b"only"]
 
+    def test_batch_empty_stream(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+
+        items, next_off = k.stream_read_batch("/streams/test", 0, 10)
+        assert items == []
+        assert next_off == 0
+
 
 # ---------------------------------------------------------------------------
-# MemoryStreamBackend — capacity and errors
+# Kernel IPC Stream — capacity and errors
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryStreamBackendCapacity:
-    """Oversized, exact capacity, full error."""
+class TestKernelStreamCapacity:
+    """Oversized message, full buffer."""
 
     def test_oversized_message(self):
-        buf = MemoryStreamBackend(capacity=64)
-        with pytest.raises(ValueError):
-            buf.write_nowait(b"x" * 1000)
+        k = _make_kernel()
+        k.create_stream("/streams/test", 64)
+        with pytest.raises((RuntimeError, ValueError)):
+            k.stream_write_nowait("/streams/test", b"x" * 1000)
 
     def test_full_error(self):
-        buf = MemoryStreamBackend(capacity=64)
-        # Fill the buffer
-        while True:
-            try:
-                buf.write_nowait(b"xxxx")
-            except (StreamFullError, ValueError):
-                break
+        k = _make_kernel()
+        k.create_stream("/streams/test", 64)
+        # Fill the buffer until it raises
+        with pytest.raises((RuntimeError, ValueError)):
+            for _ in range(1000):
+                k.stream_write_nowait("/streams/test", b"xxxx")
 
-    def test_capacity_must_be_positive(self):
-        with pytest.raises(ValueError):
-            MemoryStreamBackend(capacity=0)
-        with pytest.raises(ValueError):
-            MemoryStreamBackend(capacity=-1)
-
-    def test_empty_read(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        with pytest.raises(StreamEmptyError):
-            buf.read_at(0)
+    def test_zero_capacity_full_immediately(self):
+        """Zero capacity buffer rejects all writes immediately."""
+        k = _make_kernel()
+        k.create_stream("/streams/zero", 0)
+        with pytest.raises(RuntimeError):
+            k.stream_write_nowait("/streams/zero", b"x")
 
 
 # ---------------------------------------------------------------------------
-# MemoryStreamBackend — close semantics
+# Kernel IPC Stream — close semantics
 # ---------------------------------------------------------------------------
 
 
-class TestMemoryStreamBackendClose:
-    """Write after close, close semantics."""
+class TestKernelStreamClose:
+    """Write after close, read existing data after close."""
 
-    def test_write_after_close(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"before")
-        buf.close()
-        with pytest.raises(StreamClosedError):
-            buf.write_nowait(b"after")
+    def test_write_after_close_raises(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.stream_write_nowait("/streams/test", b"before")
+        k.close_stream("/streams/test")
+        with pytest.raises(RuntimeError, match="StreamClosed"):
+            k.stream_write_nowait("/streams/test", b"after")
 
     def test_read_existing_after_close(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        offset = buf.write_nowait(b"data")
-        buf.close()
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        offset = k.stream_write_nowait("/streams/test", b"data")
+        k.close_stream("/streams/test")
         # Existing data still readable after close
-        data, _ = buf.read_at(offset)
+        result = k.stream_read_at("/streams/test", offset)
+        assert result is not None
+        data, _ = result
         assert data == b"data"
 
-    def test_closed_property(self):
-        buf = MemoryStreamBackend(capacity=1024)
-        assert not buf.closed
-        buf.close()
-        assert buf.closed
-
 
 # ---------------------------------------------------------------------------
-# StreamManager (mkstream) — lifecycle
+# Kernel IPC Stream — lifecycle management
 # ---------------------------------------------------------------------------
 
 
-class TestStreamManager:
-    """create, open, destroy, list, close_all."""
+class TestKernelStreamLifecycle:
+    """create, destroy, list, close_all."""
 
-    @pytest.fixture()
-    def manager(self, tmp_path):
-        from unittest.mock import MagicMock
+    def test_create_duplicate_raises(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        with pytest.raises(RuntimeError, match="StreamExists"):
+            k.create_stream("/streams/test", 1024)
 
-        from nexus.contracts.metadata import FileMetadata
+    def test_destroy_stream(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.destroy_stream("/streams/test")
+        assert not k.has_stream("/streams/test")
 
-        # Simple in-memory metastore mock
-        store: dict[str, FileMetadata] = {}
+    def test_destroy_nonexistent_raises(self):
+        k = _make_kernel()
+        with pytest.raises(FileNotFoundError):
+            k.destroy_stream("/streams/nonexistent")
 
-        mock = MagicMock()
-        mock.get = lambda p: store.get(p)
-        mock.put = lambda m: store.__setitem__(m.path, m)
-        mock.delete = lambda p: store.pop(p, None)
+    def test_list_streams(self):
+        k = _make_kernel()
+        k.create_stream("/streams/a", 1024)
+        k.create_stream("/streams/b", 1024)
 
-        from nexus.core.stream_manager import StreamManager
-
-        return StreamManager(mock, self_address=None)
-
-    def test_create_and_read(self, manager):
-        buf = manager.create("/streams/test", capacity=1024)
-        offset = buf.write_nowait(b"hello")
-
-        data, _ = manager.stream_read_at("/streams/test", offset)
-        assert data == b"hello"
-
-    def test_create_duplicate_raises(self, manager):
-        manager.create("/streams/test")
-        from nexus.core.stream import StreamError
-
-        with pytest.raises(StreamError, match="already exists"):
-            manager.create("/streams/test")
-
-    def test_open_existing(self, manager):
-        manager.create("/streams/test")
-        buf = manager.open("/streams/test")
-        assert not buf.closed
-
-    def test_open_not_found(self, manager):
-        from nexus.core.stream import StreamNotFoundError
-
-        with pytest.raises(StreamNotFoundError):
-            manager.open("/streams/nonexistent")
-
-    def test_destroy(self, manager):
-        manager.create("/streams/test")
-        manager.destroy("/streams/test")
-
-        from nexus.core.stream import StreamNotFoundError
-
-        with pytest.raises(StreamNotFoundError):
-            manager.stream_read_at("/streams/test", 0)
-
-    def test_list_streams(self, manager):
-        manager.create("/streams/a")
-        manager.create("/streams/b")
-
-        streams = manager.list_streams()
+        streams = k.list_streams()
         assert "/streams/a" in streams
         assert "/streams/b" in streams
 
-    def test_close_all(self, manager):
-        buf_a = manager.create("/streams/a")
-        buf_b = manager.create("/streams/b")
+    def test_list_streams_empty(self):
+        k = _make_kernel()
+        assert k.list_streams() == []
 
-        manager.close_all()
-        assert buf_a.closed
-        assert buf_b.closed
+    def test_close_all_streams(self):
+        k = _make_kernel()
+        k.create_stream("/streams/a", 1024)
+        k.create_stream("/streams/b", 1024)
+        k.stream_write_nowait("/streams/a", b"data_a")
+        k.stream_write_nowait("/streams/b", b"data_b")
 
-    def test_signal_close(self, manager):
-        buf = manager.create("/streams/test")
-        manager.signal_close("/streams/test")
-        assert buf.closed
-        # Buffer still in registry — can still read existing data
+        k.close_all_streams()
 
-    def test_write_nowait(self, manager):
-        manager.create("/streams/test")
-        offset = manager.stream_write_nowait("/streams/test", b"sync_data")
-        data, _ = manager.stream_read_at("/streams/test", offset)
-        assert data == b"sync_data"
+        # Writes should fail after close_all
+        with pytest.raises(RuntimeError, match="StreamClosed"):
+            k.stream_write_nowait("/streams/a", b"nope")
+        with pytest.raises(RuntimeError, match="StreamClosed"):
+            k.stream_write_nowait("/streams/b", b"nope")
 
+    def test_close_stream_then_read_remaining(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        offset = k.stream_write_nowait("/streams/test", b"msg1")
+        k.stream_write_nowait("/streams/test", b"msg2")
+        k.close_stream("/streams/test")
 
-class TestStreamManagerFederation:
-    """self_address and backend_name encoding."""
+        # Can still read all existing data after close
+        items, _ = k.stream_read_batch("/streams/test", offset, 10)
+        assert items == [b"msg1", b"msg2"]
 
-    def test_no_self_address(self, tmp_path):
-        from unittest.mock import MagicMock
+    def test_destroy_after_close(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.close_stream("/streams/test")
+        k.destroy_stream("/streams/test")
+        assert not k.has_stream("/streams/test")
 
-        store: dict = {}
-        mock = MagicMock()
-        mock.get = lambda p: store.get(p)
-        mock.put = lambda m: store.__setitem__(m.path, m)
-
-        from nexus.core.stream_manager import StreamManager
-
-        mgr = StreamManager(mock, self_address=None)
-        mgr.create("/s/test")
-
-        meta = store["/s/test"]
-        assert meta.backend_name == "stream"
-
-    def test_with_self_address(self, tmp_path):
-        from unittest.mock import MagicMock
-
-        store: dict = {}
-        mock = MagicMock()
-        mock.get = lambda p: store.get(p)
-        mock.put = lambda m: store.__setitem__(m.path, m)
-
-        from nexus.core.stream_manager import StreamManager
-
-        mgr = StreamManager(mock, self_address="node1:5050")
-        mgr.create("/s/test")
-
-        meta = store["/s/test"]
-        assert meta.backend_name == "stream@node1:5050"
-
-
-# ---------------------------------------------------------------------------
-# MemoryStreamBackend — async blocking reads
-# ---------------------------------------------------------------------------
-
-
-class TestMemoryStreamBackendBlockingRead:
-    """Async blocking read waits for data, unblocks on push or close."""
-
-    async def test_blocking_read_with_existing_data(self):
-        """Blocking read returns immediately when data exists."""
-        buf = MemoryStreamBackend(capacity=1024)
-        buf.write_nowait(b"hello")
-        data, next_off = await buf.read(0, blocking=True)
-        assert data == b"hello"
-        assert next_off > 0
-
-    async def test_blocking_read_waits_for_push(self):
-        """Blocking read blocks until producer pushes data."""
-        import asyncio
-
-        buf = MemoryStreamBackend(capacity=1024)
-        results = []
-
-        async def consumer():
-            data, _ = await buf.read(0, blocking=True)
-            results.append(data)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            buf.write_nowait(b"delayed")
-
-        await asyncio.gather(consumer(), producer())
-        assert results == [b"delayed"]
-
-    async def test_blocking_read_unblocks_on_close(self):
-        """Blocking read raises StreamClosedError when buffer is closed."""
-        import asyncio
-
-        buf = MemoryStreamBackend(capacity=1024)
-
-        async def consumer():
-            with pytest.raises(StreamClosedError):
-                await buf.read(0, blocking=True)
-
-        async def closer():
-            await asyncio.sleep(0.01)
-            buf.close()
-
-        await asyncio.gather(consumer(), closer())
-
-    async def test_non_blocking_read_raises_empty(self):
-        """Non-blocking read raises StreamEmptyError immediately."""
-        buf = MemoryStreamBackend(capacity=1024)
-        with pytest.raises(StreamEmptyError):
-            await buf.read(0, blocking=False)
-
-    async def test_blocking_batch_waits_for_push(self):
-        """Blocking batch read waits until data is available."""
-        import asyncio
-
-        buf = MemoryStreamBackend(capacity=1024)
-        results = []
-
-        async def consumer():
-            items, _ = await buf.read_batch_blocking(0, count=5, blocking=True)
-            results.extend(items)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            buf.write_nowait(b"a")
-            buf.write_nowait(b"b")
-
-        await asyncio.gather(consumer(), producer())
-        assert len(results) >= 1  # at least one message
-
-    async def test_multi_reader_blocking(self):
-        """Multiple async readers unblock independently."""
-        import asyncio
-
-        buf = MemoryStreamBackend(capacity=1024)
-        r1_result = []
-        r2_result = []
-
-        async def reader1():
-            data, _ = await buf.read(0, blocking=True)
-            r1_result.append(data)
-
-        async def reader2():
-            data, _ = await buf.read(0, blocking=True)
-            r2_result.append(data)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            buf.write_nowait(b"shared")
-
-        await asyncio.gather(reader1(), reader2(), producer())
-        # Both readers see same data (non-destructive)
-        assert r1_result == [b"shared"]
-        assert r2_result == [b"shared"]
-
-
-# ---------------------------------------------------------------------------
-# StreamManager — async blocking reads
-# ---------------------------------------------------------------------------
-
-
-class TestStreamManagerBlockingRead:
-    """StreamManager async blocking read API."""
-
-    @pytest.fixture()
-    def manager(self):
-        from unittest.mock import MagicMock
-
-        from nexus.contracts.metadata import FileMetadata
-
-        store: dict[str, FileMetadata] = {}
-        mock = MagicMock()
-        mock.get = lambda p: store.get(p)
-        mock.put = lambda m: store.__setitem__(m.path, m)
-        mock.delete = lambda p: store.pop(p, None)
-
-        from nexus.core.stream_manager import StreamManager
-
-        return StreamManager(mock)
-
-    async def test_stream_read_blocking(self, manager):
-        """stream_read() blocks until data arrives."""
-        import asyncio
-
-        manager.create("/s/test", capacity=1024)
-        results = []
-
-        async def consumer():
-            data, _ = await manager.stream_read("/s/test", 0, blocking=True)
-            results.append(data)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            manager.stream_write_nowait("/s/test", b"token1")
-
-        await asyncio.gather(consumer(), producer())
-        assert results == [b"token1"]
-
-    async def test_stream_read_batch_blocking(self, manager):
-        """stream_read_batch_blocking() blocks until data arrives."""
-        import asyncio
-
-        manager.create("/s/test", capacity=1024)
-        results = []
-
-        async def consumer():
-            items, _ = await manager.stream_read_batch_blocking(
-                "/s/test", 0, count=10, blocking=True
-            )
-            results.extend(items)
-
-        async def producer():
-            await asyncio.sleep(0.01)
-            manager.stream_write_nowait("/s/test", b"a")
-            manager.stream_write_nowait("/s/test", b"b")
-
-        await asyncio.gather(consumer(), producer())
-        assert len(results) >= 1
+    def test_create_after_destroy_reuses_path(self):
+        k = _make_kernel()
+        k.create_stream("/streams/test", 1024)
+        k.destroy_stream("/streams/test")
+        # Should succeed — path is free again
+        k.create_stream("/streams/test", 2048)
+        assert k.has_stream("/streams/test")

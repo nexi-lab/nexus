@@ -1,4 +1,4 @@
-"""Unit tests for StdioStream — StreamBackend over OS subprocess pipes.
+"""Unit tests for StdioStreamBackend — StreamBackend over OS subprocess pipes.
 
 Tests StreamBackend protocol conformance, pump task, offset-based
 multi-reader access, and batch reads.
@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from nexus.core.stdio_stream import StdioStream
+from nexus.core.stdio_stream import StdioStreamBackend
 from nexus.core.stream import StreamBackend, StreamClosedError, StreamEmptyError
 
 # ---------------------------------------------------------------------------
@@ -21,19 +21,19 @@ class TestProtocolConformance:
     @pytest.mark.asyncio
     async def test_isinstance_stream_backend(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         assert isinstance(stream, StreamBackend)
 
     @pytest.mark.asyncio
     async def test_closed_initially_false(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         assert stream.closed is False
 
     @pytest.mark.asyncio
     async def test_stats_property(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         stats = stream.stats
         assert stats["backend"] == "stdio_stream"
         assert stats["msg_count"] == 0
@@ -43,7 +43,7 @@ class TestProtocolConformance:
     @pytest.mark.asyncio
     async def test_tail_initially_zero(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         assert stream.tail == 0
 
 
@@ -56,7 +56,7 @@ class TestPumpAndRead:
     @pytest.mark.asyncio
     async def test_pump_accumulates_lines(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"line1\nline2\nline3\n")
         reader.feed_eof()
@@ -71,7 +71,7 @@ class TestPumpAndRead:
     @pytest.mark.asyncio
     async def test_read_at_first_message(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"hello\nworld\n")
         reader.feed_eof()
@@ -86,7 +86,7 @@ class TestPumpAndRead:
     @pytest.mark.asyncio
     async def test_read_at_second_message(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"hello\nworld\n")
         reader.feed_eof()
@@ -102,14 +102,14 @@ class TestPumpAndRead:
     @pytest.mark.asyncio
     async def test_read_at_empty_raises(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         with pytest.raises(StreamEmptyError):
             stream.read_at(0)
 
     @pytest.mark.asyncio
     async def test_read_at_past_end_raises(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"only\n")
         reader.feed_eof()
@@ -130,7 +130,7 @@ class TestMultiReader:
     @pytest.mark.asyncio
     async def test_independent_cursors(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"a\nb\nc\n")
         reader.feed_eof()
@@ -153,7 +153,7 @@ class TestMultiReader:
     @pytest.mark.asyncio
     async def test_tail_monotonic(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"msg1\n")
         reader.feed_eof()
@@ -176,7 +176,7 @@ class TestAsyncRead:
     @pytest.mark.asyncio
     async def test_async_read_blocks_until_data(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         await stream.start_pump()
 
         async def _feed_later() -> None:
@@ -192,7 +192,7 @@ class TestAsyncRead:
     @pytest.mark.asyncio
     async def test_async_read_non_blocking(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         with pytest.raises(StreamEmptyError):
             await stream.read(0, blocking=False)
 
@@ -206,7 +206,7 @@ class TestBatchRead:
     @pytest.mark.asyncio
     async def test_read_batch_all(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"a\nb\nc\nd\ne\n")
         reader.feed_eof()
@@ -222,7 +222,7 @@ class TestBatchRead:
     @pytest.mark.asyncio
     async def test_read_batch_partial(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
 
         reader.feed_data(b"a\nb\nc\nd\ne\n")
         reader.feed_eof()
@@ -250,14 +250,14 @@ class TestWrite:
     @pytest.mark.asyncio
     async def test_write_no_writer_raises(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader, writer=None)
+        stream = StdioStreamBackend(reader, writer=None)
         with pytest.raises(StreamClosedError):
             await stream.write(b"data")
 
     @pytest.mark.asyncio
     async def test_write_closed_raises(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         stream.close()
         with pytest.raises(StreamClosedError):
             await stream.write(b"data")
@@ -272,14 +272,14 @@ class TestClose:
     @pytest.mark.asyncio
     async def test_close_sets_flag(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         stream.close()
         assert stream.closed is True
 
     @pytest.mark.asyncio
     async def test_close_wakes_blocked_readers(self) -> None:
         reader = asyncio.StreamReader()
-        stream = StdioStream(reader)
+        stream = StdioStreamBackend(reader)
         await stream.start_pump()
 
         async def _reader() -> None:

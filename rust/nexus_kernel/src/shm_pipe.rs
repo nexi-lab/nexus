@@ -62,18 +62,8 @@ const OFF_POP_COUNT: usize = SLOT_SIZE * 2 + 8;
 // Slot 3: flags
 const OFF_CLOSED: usize = SLOT_SIZE * 3;
 
-// ---------------------------------------------------------------------------
-// Internal error type
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-enum RingError {
-    Closed(&'static str),
-    Full(usize, usize),
-    Empty,
-    ClosedEmpty,
-    Oversized(usize, usize),
-}
+// Use shared PipeError from pipe.rs
+use crate::pipe::PipeError;
 
 // ---------------------------------------------------------------------------
 // Shared-memory header accessors (safe wrappers over raw mmap)
@@ -119,7 +109,7 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 }
 
 // ---------------------------------------------------------------------------
-// SharedRingBufferCore
+// SharedMemoryPipeBackend
 // ---------------------------------------------------------------------------
 
 /// Cross-process SPSC ring buffer backed by mmap + OS pipe notification.
@@ -130,7 +120,7 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 /// Python side uses `loop.add_reader(fd, callback)` on the notification
 /// pipe fds for zero-cost asyncio integration.
 #[pyclass]
-pub struct SharedRingBufferCore {
+pub struct SharedMemoryPipeBackend {
     mmap: memmap2::MmapMut,
     ring_cap: usize,
     user_capacity: usize,
@@ -143,14 +133,14 @@ pub struct SharedRingBufferCore {
 }
 
 // SAFETY: SPSC by design — single producer + single consumer across processes.
-unsafe impl Send for SharedRingBufferCore {}
-unsafe impl Sync for SharedRingBufferCore {}
+unsafe impl Send for SharedMemoryPipeBackend {}
+unsafe impl Sync for SharedMemoryPipeBackend {}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-impl SharedRingBufferCore {
+impl SharedMemoryPipeBackend {
     /// Pointer to the start of the mmap region.
     #[inline]
     fn base(&self) -> *const u8 {
@@ -233,22 +223,22 @@ impl SharedRingBufferCore {
         }
     }
 
-    /// Push raw bytes — same algorithm as RingBufferCore::push_inner.
-    fn push_inner(&self, data: &[u8]) -> Result<usize, RingError> {
+    /// Push raw bytes — same algorithm as MemoryPipeBackend::push.
+    fn push_inner(&self, data: &[u8]) -> Result<usize, PipeError> {
         if self.closed_flag().load(Ordering::Acquire) {
-            return Err(RingError::Closed("write to closed pipe"));
+            return Err(PipeError::Closed("write to closed pipe"));
         }
         let payload_len = data.len();
         if payload_len == 0 {
             return Ok(0);
         }
         if payload_len > self.user_capacity {
-            return Err(RingError::Oversized(payload_len, self.user_capacity));
+            return Err(PipeError::Oversized(payload_len, self.user_capacity));
         }
 
         let used = self.used_bytes().load(Ordering::Relaxed);
         if used + payload_len > self.user_capacity {
-            return Err(RingError::Full(used, self.user_capacity));
+            return Err(PipeError::Full(used, self.user_capacity));
         }
 
         let frame_len = HEADER_SIZE + payload_len;
@@ -287,17 +277,17 @@ impl SharedRingBufferCore {
         Ok(payload_len)
     }
 
-    /// Find the next message position — same algorithm as RingBufferCore::pop_position.
-    fn pop_position(&self) -> Result<(usize, usize, usize), RingError> {
+    /// Find the next message position — same algorithm as MemoryPipeBackend::pop_position.
+    fn pop_position(&self) -> Result<(usize, usize, usize), PipeError> {
         let mut head_val = self.head().load(Ordering::Acquire);
         let tail_val = self.tail().load(Ordering::Acquire);
 
         loop {
             if head_val == tail_val {
                 return if self.closed_flag().load(Ordering::Acquire) {
-                    Err(RingError::ClosedEmpty)
+                    Err(PipeError::ClosedEmpty)
                 } else {
-                    Err(RingError::Empty)
+                    Err(PipeError::Empty)
                 };
             }
 
@@ -334,11 +324,48 @@ impl SharedRingBufferCore {
 }
 
 // ---------------------------------------------------------------------------
+// PipeBackend trait impl
+// ---------------------------------------------------------------------------
+
+impl crate::pipe::PipeBackend for SharedMemoryPipeBackend {
+    fn push(&self, data: &[u8]) -> Result<usize, PipeError> {
+        let n = self.push_inner(data)?;
+        self.notify_data();
+        Ok(n)
+    }
+    fn pop(&self) -> Result<Vec<u8>, PipeError> {
+        let (start, len, advance) = self.pop_position()?;
+        let ring = self.ring_slice();
+        let data = ring[start..start + len].to_vec();
+        self.commit_pop(advance, len);
+        self.notify_space();
+        Ok(data)
+    }
+    fn close(&self) {
+        self.closed_flag().store(true, Ordering::Release);
+        self.notify_data();
+        self.notify_space();
+    }
+    fn is_closed(&self) -> bool {
+        self.closed_flag().load(Ordering::Acquire)
+    }
+    fn is_empty(&self) -> bool {
+        self.msg_count().load(Ordering::Relaxed) == 0
+    }
+    fn size(&self) -> usize {
+        self.used_bytes().load(Ordering::Relaxed)
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count().load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyO3 methods
 // ---------------------------------------------------------------------------
 
 #[pymethods]
-impl SharedRingBufferCore {
+impl SharedMemoryPipeBackend {
     /// Create a new shared ring buffer.
     ///
     /// Returns `(self, shm_path, data_rd_fd, space_rd_fd)`.
@@ -409,7 +436,7 @@ impl SharedRingBufferCore {
             libc::fcntl(space_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
         }
 
-        let core = SharedRingBufferCore {
+        let core = SharedMemoryPipeBackend {
             mmap,
             ring_cap,
             user_capacity: capacity,
@@ -460,7 +487,7 @@ impl SharedRingBufferCore {
         let ring_cap = read_u32(base, OFF_RING_CAP) as usize;
         let user_capacity = read_u32(base, OFF_USER_CAP) as usize;
 
-        Ok(SharedRingBufferCore {
+        Ok(SharedMemoryPipeBackend {
             mmap,
             ring_cap,
             user_capacity,
@@ -479,18 +506,18 @@ impl SharedRingBufferCore {
                 self.notify_data();
                 Ok(n)
             }
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            Err(PipeError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "PipeClosed:{msg}"
             ))),
-            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 format!("PipeFull:buffer full ({used}/{cap} bytes)"),
             )),
-            Err(RingError::Oversized(msg_len, cap)) => {
+            Err(PipeError::Oversized(msg_len, cap)) => {
                 Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "message size {msg_len} exceeds buffer capacity {cap}"
                 )))
             }
-            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
+            Err(PipeError::Empty | PipeError::ClosedEmpty) => unreachable!(),
         }
     }
 
@@ -505,13 +532,13 @@ impl SharedRingBufferCore {
                 self.notify_space();
                 Ok(result)
             }
-            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "PipeClosed:read from closed empty pipe",
             )),
-            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "PipeEmpty:buffer empty",
             )),
-            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
+            Err(PipeError::Closed(_) | PipeError::Full(_, _) | PipeError::Oversized(_, _)) => {
                 unreachable!()
             }
         }
@@ -524,18 +551,18 @@ impl SharedRingBufferCore {
                 self.notify_data();
                 Ok(())
             }
-            Err(RingError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+            Err(PipeError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "PipeClosed:{msg}"
             ))),
-            Err(RingError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 format!("PipeFull:buffer full ({used}/{cap} bytes)"),
             )),
-            Err(RingError::Oversized(msg_len, cap)) => {
+            Err(PipeError::Oversized(msg_len, cap)) => {
                 Err(pyo3::exceptions::PyValueError::new_err(format!(
                     "message size {msg_len} exceeds buffer capacity {cap}"
                 )))
             }
-            Err(RingError::Empty | RingError::ClosedEmpty) => unreachable!(),
+            Err(PipeError::Empty | PipeError::ClosedEmpty) => unreachable!(),
         }
     }
 
@@ -556,13 +583,13 @@ impl SharedRingBufferCore {
                 self.notify_space();
                 Ok(val)
             }
-            Err(RingError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "PipeClosed:read from closed empty pipe",
             )),
-            Err(RingError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
+            Err(PipeError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "PipeEmpty:buffer empty",
             )),
-            Err(RingError::Closed(_) | RingError::Full(_, _) | RingError::Oversized(_, _)) => {
+            Err(PipeError::Closed(_) | PipeError::Full(_, _) | PipeError::Oversized(_, _)) => {
                 unreachable!()
             }
         }
@@ -631,7 +658,7 @@ impl SharedRingBufferCore {
     }
 }
 
-impl Drop for SharedRingBufferCore {
+impl Drop for SharedMemoryPipeBackend {
     fn drop(&mut self) {
         // Close notification pipe write-ends
         if self.notify_data_wr >= 0 {
@@ -656,14 +683,14 @@ mod tests {
     use super::*;
 
     /// Same-process create + attach test (valid because MAP_SHARED).
-    fn create_pair(cap: usize) -> (SharedRingBufferCore, SharedRingBufferCore) {
+    fn create_pair(cap: usize) -> (SharedMemoryPipeBackend, SharedMemoryPipeBackend) {
         let (creator, shm_path, data_rd_fd, space_rd_fd) =
-            SharedRingBufferCore::create(cap).unwrap();
+            SharedMemoryPipeBackend::create(cap).unwrap();
         // For same-process testing: attacher gets the write-ends for notifications
         // In real cross-process: fds would be inherited via subprocess
         // Here we pass notify_data_wr=-1, notify_space_wr=-1 since we don't need
         // cross-process notification in same-process tests.
-        let attacher = SharedRingBufferCore::attach(
+        let attacher = SharedMemoryPipeBackend::attach(
             &shm_path, -1, // attacher doesn't need to notify data (it's the reader)
             -1, // attacher doesn't need to notify space in these tests
         )
@@ -677,12 +704,12 @@ mod tests {
     }
 
     /// Helper: push raw bytes via push_inner (bypass PyO3).
-    fn push(core: &SharedRingBufferCore, data: &[u8]) -> usize {
+    fn push(core: &SharedMemoryPipeBackend, data: &[u8]) -> usize {
         core.push_inner(data).expect("push failed")
     }
 
     /// Helper: pop raw bytes via pop_position + commit_pop (bypass PyO3).
-    fn pop(core: &SharedRingBufferCore) -> Vec<u8> {
+    fn pop(core: &SharedMemoryPipeBackend) -> Vec<u8> {
         let (start, len, advance) = core.pop_position().expect("pop failed");
         let ring = core.ring_slice();
         let data = ring[start..start + len].to_vec();
@@ -693,7 +720,7 @@ mod tests {
     #[test]
     fn test_create_returns_valid_handles() {
         let (creator, shm_path, data_rd_fd, space_rd_fd) =
-            SharedRingBufferCore::create(1024).unwrap();
+            SharedMemoryPipeBackend::create(1024).unwrap();
         assert!(!shm_path.is_empty());
         assert!(data_rd_fd >= 0);
         assert!(space_rd_fd >= 0);
@@ -707,8 +734,8 @@ mod tests {
 
     #[test]
     fn test_magic_version_validated() {
-        let (creator, shm_path, dfd, sfd) = SharedRingBufferCore::create(64).unwrap();
-        let attacher = SharedRingBufferCore::attach(&shm_path, -1, -1);
+        let (creator, shm_path, dfd, sfd) = SharedMemoryPipeBackend::create(64).unwrap();
+        let attacher = SharedMemoryPipeBackend::attach(&shm_path, -1, -1);
         assert!(attacher.is_ok());
         unsafe {
             libc::close(dfd);

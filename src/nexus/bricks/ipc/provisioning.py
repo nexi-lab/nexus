@@ -4,9 +4,6 @@ When an agent is registered, the provisioner creates the standard
 directory layout (inbox/, outbox/, processed/, dead_letter/) and
 writes an initial AGENT.json card.
 
-Issue #3197: Optionally creates a DT_PIPE notification pipe via
-``NotifyPipeFactory`` for same-node wakeup signaling.
-
 Triggered by AGENT_REGISTERED events from the EventBus.
 """
 
@@ -21,7 +18,6 @@ from nexus.bricks.ipc.conventions import (
     agent_dir,
     inbox_path,
 )
-from nexus.bricks.ipc.protocols import NotifyPipeFactory
 from nexus.contracts.constants import ROOT_ZONE_ID
 
 logger = logging.getLogger(__name__)
@@ -33,18 +29,15 @@ class AgentProvisioner:
     Args:
         vfs: NexusFS instance for IPC directory and file creation.
         zone_id: Zone ID for multi-zone isolation.
-        notify_pipe_factory: Factory for creating DT_PIPE notification pipes. Optional.
     """
 
     def __init__(
         self,
         vfs: Any,
         zone_id: str = ROOT_ZONE_ID,
-        notify_pipe_factory: NotifyPipeFactory | None = None,
     ) -> None:
         self._vfs = vfs
         self._zone_id = zone_id
-        self._notify_pipe_factory = notify_pipe_factory
 
     def _ctx(self) -> Any:
         from nexus.contracts.types import OperationContext
@@ -58,7 +51,7 @@ class AgentProvisioner:
         skills: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
-        """Provision IPC directories, agent card, and notify pipe for a new agent.
+        """Provision IPC directories and agent card for a new agent.
 
         Creates:
         - ``/agents/{agent_id}/`` (root)
@@ -67,7 +60,6 @@ class AgentProvisioner:
         - ``/agents/{agent_id}/processed/``
         - ``/agents/{agent_id}/dead_letter/``
         - ``/agents/{agent_id}/AGENT.json``
-        - ``/agents/{agent_id}/notify`` (DT_PIPE, if factory provided)
 
         Idempotent — safe to call multiple times for the same agent.
 
@@ -99,17 +91,6 @@ class AgentProvisioner:
         card_data = json.dumps(card, indent=2).encode("utf-8")
         card_file = agent_card_path(agent_id)
         await self._vfs.write(card_file, card_data, context=self._ctx())
-
-        # Create DT_PIPE notification pipe (if factory provided)
-        if self._notify_pipe_factory is not None:
-            try:
-                self._notify_pipe_factory.create_notify_pipe(agent_id)
-            except Exception:
-                logger.warning(
-                    "Failed to create notify pipe for agent %s (non-fatal)",
-                    agent_id,
-                    exc_info=True,
-                )
 
         logger.info(
             "Provisioned IPC directories for agent %s (%d subdirs + AGENT.json)",

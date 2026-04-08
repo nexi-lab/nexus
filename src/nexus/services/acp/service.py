@@ -4,7 +4,7 @@ Calls coding agent CLIs (Claude Code, Gemini CLI, Codex, etc.) over the
 ACP JSON-RPC 2.0 protocol (stdin/stdout).  Each call is a one-shot
 session: spawn → initialize → session/new → session/prompt → disconnect.
 
-AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipe
+AcpService **owns the subprocess** and wraps stdin/stdout in StdioPipeBackend
 (kernel PipeBackend).  Agent pipes are registered as DT_PIPEs at
 ``/{zone}/proc/{pid}/fd/0`` (stdin) and ``fd/1`` (stdout) when PipeManager
 is available.  AcpConnection is a pure protocol adapter — no subprocess.
@@ -32,7 +32,7 @@ from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.contracts.process_types import AgentDescriptor, AgentKind
 from nexus.contracts.vfs_paths import agent as agent_paths
 from nexus.contracts.vfs_paths import proc as proc_paths
-from nexus.core.stdio_pipe import StdioPipe
+from nexus.core.stdio_pipe import StdioPipeBackend
 
 from .agents import AgentConfig
 from .connection import AcpConnection, AcpPromptResult, AcpRpcError, FsReadFn, FsWriteFn
@@ -76,7 +76,7 @@ class AcpService:
         2. Inject system prompt (VFS override > config default)
         3. Build ACP command (binary + acp_args, no prompt in argv)
         4. Register process in ``AgentRegistry`` (spawn → REGISTERED)
-        5. Create subprocess, wrap in StdioPipe, register DT_PIPEs
+        5. Create subprocess, wrap in StdioPipeBackend, register DT_PIPEs
         6. ``AcpConnection`` → initialize → session/new → session/prompt
         7. Disconnect, kill subprocess, destroy DT_PIPEs, → TERMINATED
         8. Map ``AcpPromptResult`` → ``AcpResult`` with unified metadata
@@ -91,7 +91,6 @@ class AcpService:
         self._agent_registry = agent_registry
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
-        self._pipe_manager: Any | None = None
         self._connections: dict[str, _ActiveAgent] = {}
         # Agent termination callbacks — invoked with agent_id on kill/disconnect
         # (Issue #3398 decision 2A: permission lease revocation on agent death)
@@ -132,15 +131,6 @@ class AcpService:
             if cid == callback_id:
                 return
         self._on_terminate_callbacks.append((callback_id, callback))
-
-    def bind_pipe_manager(self, pipe_manager: Any) -> None:
-        """Bind PipeManager for DT_PIPE registration of agent stdio.
-
-        Called after NexusFS construction (factory ``_wired.py`` phase).
-        When not bound, agent pipes are not visible in the VFS (degraded).
-        """
-        self._pipe_manager = pipe_manager
-        logger.debug("AcpService: PipeManager bound for DT_PIPE registration")
 
     # ------------------------------------------------------------------
     # Public API
@@ -245,17 +235,22 @@ class AcpService:
                 env=env,
             )
 
-            # Wrap in StdioPipe (kernel PipeBackend) — all three fds
-            stdin_pipe = StdioPipe(reader=None, writer=proc.stdin)
-            stdout_pipe = StdioPipe(reader=proc.stdout, writer=None)
-            stderr_pipe = StdioPipe(reader=proc.stderr, writer=None)
+            # Wrap in StdioPipeBackend (kernel PipeBackend) — all three fds
+            stdin_pipe = StdioPipeBackend(reader=None, writer=proc.stdin)
+            stdout_pipe = StdioPipeBackend(reader=proc.stdout, writer=None)
+            stderr_pipe = StdioPipeBackend(reader=proc.stderr, writer=None)
 
             # Register DT_PIPEs in VFS (graceful degradation)
-            if self._pipe_manager is not None:
+            if self._nexus_fs is not None:
                 try:
-                    self._pipe_manager.create_from_backend(fd0_path, stdin_pipe, owner_id=owner_id)
-                    self._pipe_manager.create_from_backend(fd1_path, stdout_pipe, owner_id=owner_id)
-                    self._pipe_manager.create_from_backend(fd2_path, stderr_pipe, owner_id=owner_id)
+                    _nx: Any = self._nexus_fs
+                    for fd_path, pipe_backend in (
+                        (fd0_path, stdin_pipe),
+                        (fd1_path, stdout_pipe),
+                        (fd2_path, stderr_pipe),
+                    ):
+                        _nx._custom_pipe_backends[fd_path] = pipe_backend
+                        _nx.pipe_create(fd_path, 65_536)
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 
@@ -365,10 +360,10 @@ class AcpService:
         if active.proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 active.proc.kill()
-        if self._pipe_manager is not None:
+        if self._nexus_fs is not None:
             for fd_path in (active.fd0_path, active.fd1_path, active.fd2_path):
                 with contextlib.suppress(Exception):
-                    self._pipe_manager.destroy(fd_path)
+                    self._nexus_fs.pipe_destroy(fd_path)
 
     def kill_agent(self, pid: str) -> AgentDescriptor:
         """Kill a running agent connection and mark TERMINATED in AgentRegistry."""

@@ -1,6 +1,6 @@
 //! Linear append-only buffer for DT_STREAM kernel IPC (Task #1574).
 //!
-//! Unlike `pipe.rs` (circular ring, destructive pop), StreamBufferCore is a
+//! Unlike `pipe.rs` (circular ring, destructive pop), MemoryStreamBackend is a
 //! linear append-only buffer where reads are non-destructive and offset-based.
 //! Multiple readers maintain independent cursors (fan-out).
 //!
@@ -10,8 +10,6 @@
 //! Error encoding: Rust raises `RuntimeError("StreamFull:…")` etc. Python
 //! translates to the matching exception class.
 
-use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList};
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
@@ -23,16 +21,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 const HEADER_SIZE: usize = 4;
 
 // ---------------------------------------------------------------------------
-// StreamBufferCore
+// MemoryStreamBackend
 // ---------------------------------------------------------------------------
 
 /// Linear append-only buffer for DT_STREAM.
 ///
 /// Pre-allocated linear buffer with monotonic tail. Reads are non-destructive
 /// and offset-based — each reader supplies its own byte offset.
-/// Python wrapper provides asyncio.Event coordination for blocked writers.
-#[pyclass]
-pub struct StreamBufferCore {
+/// Kernel-internal only — no PyO3 export. Python uses kernel.create_stream().
+pub struct MemoryStreamBackend {
     buf: UnsafeCell<Vec<u8>>,
     capacity: usize,
     tail: AtomicUsize,
@@ -44,15 +41,16 @@ pub struct StreamBufferCore {
 // SAFETY: Append-only buffer. Writes extend [tail..new_tail], reads access
 // [offset..offset+len] which is already committed. Python GIL serializes
 // all PyO3 method calls.
-unsafe impl Send for StreamBufferCore {}
-unsafe impl Sync for StreamBufferCore {}
+unsafe impl Send for MemoryStreamBackend {}
+unsafe impl Sync for MemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
 // Internal error type
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
-enum StreamError {
+#[allow(dead_code)]
+pub(crate) enum StreamError {
     Closed(&'static str),
     Full(usize, usize),
     Empty,
@@ -62,12 +60,64 @@ enum StreamError {
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// StreamBackend trait — uniform interface for all stream backends
 // ---------------------------------------------------------------------------
 
-impl StreamBufferCore {
+/// Uniform interface for stream backends (memory, shared memory, future gRPC).
+///
+/// Enables `DashMap<String, Arc<dyn StreamBackend>>` in StreamManager for
+/// heterogeneous backend dispatch.
+#[allow(dead_code)] // Used via Arc<dyn StreamBackend> in StreamManager + generated_pyo3.rs
+pub(crate) trait StreamBackend: Send + Sync {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError>;
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError>;
+    fn read_batch(&self, offset: usize, count: usize)
+        -> Result<(Vec<Vec<u8>>, usize), StreamError>;
+    fn close(&self);
+    fn is_closed(&self) -> bool;
+    fn tail_offset(&self) -> usize;
+    fn msg_count(&self) -> usize;
+}
+
+// ---------------------------------------------------------------------------
+// StreamBackend impl for MemoryStreamBackend
+// ---------------------------------------------------------------------------
+
+impl StreamBackend for MemoryStreamBackend {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
+        MemoryStreamBackend::push(self, data)
+    }
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
+        MemoryStreamBackend::read_at(self, offset)
+    }
+    fn read_batch(
+        &self,
+        offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
+        MemoryStreamBackend::read_batch(self, offset, count)
+    }
+    fn close(&self) {
+        MemoryStreamBackend::close(self)
+    }
+    fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+    fn tail_offset(&self) -> usize {
+        self.tail.load(Ordering::Acquire)
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count.load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers — pub(crate) for direct Kernel IPC registry access
+// ---------------------------------------------------------------------------
+
+impl MemoryStreamBackend {
     /// Push raw bytes into the buffer. Returns byte offset where message starts.
-    fn push_inner(&self, data: &[u8]) -> Result<usize, StreamError> {
+    pub(crate) fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(StreamError::Closed("write to closed stream"));
         }
@@ -106,8 +156,11 @@ impl StreamBufferCore {
         Ok(msg_offset)
     }
 
-    /// Read one message at the given byte offset. Returns (payload, next_offset).
-    fn read_at_inner(&self, byte_offset: usize) -> Result<(usize, usize, usize), StreamError> {
+    /// Read one message at the given byte offset. Returns (payload_start, payload_len, next_offset).
+    pub(crate) fn read_at_position(
+        &self,
+        byte_offset: usize,
+    ) -> Result<(usize, usize, usize), StreamError> {
         let tail = self.tail.load(Ordering::Acquire);
 
         if byte_offset >= tail {
@@ -138,192 +191,81 @@ impl StreamBufferCore {
 
         Ok((payload_start, payload_len, next_offset))
     }
-}
 
-// ---------------------------------------------------------------------------
-// PyO3 methods
-// ---------------------------------------------------------------------------
+    /// Read one message at byte offset, returning owned bytes and next offset.
+    pub(crate) fn read_at(&self, byte_offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
+        let (payload_start, payload_len, next_offset) = self.read_at_position(byte_offset)?;
+        let buf = unsafe { &*self.buf.get() };
+        let data = buf[payload_start..payload_start + payload_len].to_vec();
+        Ok((data, next_offset))
+    }
 
-#[pymethods]
-impl StreamBufferCore {
-    #[new]
-    fn new(capacity: usize) -> PyResult<Self> {
-        if capacity == 0 {
-            return Err(pyo3::exceptions::PyValueError::new_err(
-                "capacity must be > 0, got 0",
-            ));
+    /// Read up to `count` messages starting from byte offset.
+    /// Returns (messages, next_offset after last message).
+    pub(crate) fn read_batch(
+        &self,
+        byte_offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
+        let mut results = Vec::with_capacity(count);
+        let mut offset = byte_offset;
+        for _ in 0..count {
+            match self.read_at(offset) {
+                Ok((data, next)) => {
+                    results.push(data);
+                    offset = next;
+                }
+                Err(StreamError::Empty) | Err(StreamError::ClosedEmpty) => break,
+                Err(e) => return Err(e),
+            }
         }
-        Ok(Self {
+        Ok((results, offset))
+    }
+
+    /// Check if the stream is closed.
+    #[allow(dead_code)]
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    /// Create a new MemoryStreamBackend (pub(crate), no PyO3).
+    pub(crate) fn new(capacity: usize) -> Self {
+        Self {
             buf: UnsafeCell::new(vec![0u8; capacity]),
             capacity,
             tail: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
             push_count: AtomicU64::new(0),
             msg_count: AtomicUsize::new(0),
-        })
-    }
-
-    /// Push a message. Returns byte offset where the message starts.
-    fn push(&self, _py: Python<'_>, data: &[u8]) -> PyResult<usize> {
-        match self.push_inner(data) {
-            Ok(offset) => Ok(offset),
-            Err(StreamError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamClosed:{msg}"),
-            )),
-            Err(StreamError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(StreamError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(
-                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
-            ) => {
-                unreachable!()
-            }
         }
     }
 
-    /// Read one message at the given byte offset. Returns (data, next_offset).
-    fn read_at<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: usize,
-    ) -> PyResult<(Bound<'py, PyBytes>, usize)> {
-        match self.read_at_inner(byte_offset) {
-            Ok((start, len, next)) => {
-                let buf = unsafe { &*self.buf.get() };
-                let data = PyBytes::new(py, &buf[start..start + len]);
-                Ok((data, next))
-            }
-            Err(StreamError::ClosedEmpty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamClosed:read from closed empty stream",
-            )),
-            Err(StreamError::Empty) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamEmpty:no data at offset",
-            )),
-            Err(StreamError::InvalidOffset(off, tail)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "invalid offset {off} (tail={tail})"
-                )))
-            }
-            Err(
-                StreamError::Closed(_) | StreamError::Full(_, _) | StreamError::Oversized(_, _),
-            ) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Read up to `count` messages starting at byte_offset.
-    /// Returns (list_of_bytes, next_offset).
-    fn read_batch<'py>(
-        &self,
-        py: Python<'py>,
-        byte_offset: usize,
-        count: usize,
-    ) -> PyResult<(Bound<'py, PyList>, usize)> {
-        let list = PyList::empty(py);
-        let buf = unsafe { &*self.buf.get() };
-        let tail = self.tail.load(Ordering::Acquire);
-        let mut pos = byte_offset;
-        let mut read = 0;
-
-        while read < count && pos < tail {
-            if pos + HEADER_SIZE > tail {
-                break;
-            }
-            let mut hdr = [0u8; HEADER_SIZE];
-            hdr.copy_from_slice(&buf[pos..pos + HEADER_SIZE]);
-            let payload_len = u32::from_le_bytes(hdr) as usize;
-            let payload_start = pos + HEADER_SIZE;
-            let next = payload_start + payload_len;
-            if next > tail {
-                break;
-            }
-            let item = PyBytes::new(py, &buf[payload_start..payload_start + payload_len]);
-            list.append(item).expect("append to list");
-            pos = next;
-            read += 1;
-        }
-
-        if read == 0 && byte_offset >= tail {
-            if self.closed.load(Ordering::Acquire) {
-                return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                    "StreamClosed:read from closed empty stream",
-                ));
-            }
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                "StreamEmpty:no data at offset",
-            ));
-        }
-
-        Ok((list, pos))
-    }
-
-    /// Push a u64 value. Returns byte offset where the message starts.
-    fn push_u64(&self, _py: Python<'_>, val: u64) -> PyResult<usize> {
-        match self.push_inner(&val.to_le_bytes()) {
-            Ok(offset) => Ok(offset),
-            Err(StreamError::Closed(msg)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamClosed:{msg}"),
-            )),
-            Err(StreamError::Full(used, cap)) => Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("StreamFull:buffer full ({used}/{cap} bytes)"),
-            )),
-            Err(StreamError::Oversized(msg_len, cap)) => {
-                Err(pyo3::exceptions::PyValueError::new_err(format!(
-                    "message size {msg_len} exceeds buffer capacity {cap}"
-                )))
-            }
-            Err(
-                StreamError::Empty | StreamError::ClosedEmpty | StreamError::InvalidOffset(_, _),
-            ) => {
-                unreachable!()
-            }
-        }
-    }
-
-    /// Close the buffer. Idempotent.
-    fn close(&self) {
+    /// Signal close.
+    pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
     }
 
-    /// Buffer statistics as a dict.
-    fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        let dict = PyDict::new(py);
-        dict.set_item("tail", self.tail.load(Ordering::Relaxed))?;
-        dict.set_item("capacity", self.capacity)?;
-        dict.set_item("msg_count", self.msg_count.load(Ordering::Relaxed))?;
-        dict.set_item("closed", self.closed.load(Ordering::Acquire))?;
-        dict.set_item("push_count", self.push_count.load(Ordering::Relaxed))?;
-        Ok(dict.into())
+    /// Current write position (monotonic tail offset).
+    #[allow(dead_code)]
+    pub(crate) fn tail_offset(&self) -> usize {
+        self.tail.load(Ordering::Acquire)
     }
 
-    #[getter]
-    fn closed(&self) -> bool {
+    /// Is the buffer closed?
+    #[allow(dead_code)]
+    pub(crate) fn closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
 
-    #[getter]
-    fn size(&self) -> usize {
-        self.tail.load(Ordering::Relaxed)
-    }
-
-    #[getter]
-    fn capacity(&self) -> usize {
-        self.capacity
-    }
-
-    #[getter]
-    fn msg_count(&self) -> usize {
+    /// Number of messages in the buffer.
+    #[allow(dead_code)]
+    pub(crate) fn msg_count(&self) -> usize {
         self.msg_count.load(Ordering::Relaxed)
     }
 
-    #[getter]
-    fn tail(&self) -> usize {
+    /// Current tail position.
+    #[allow(dead_code)]
+    pub(crate) fn tail(&self) -> usize {
         self.tail.load(Ordering::Relaxed)
     }
 }
@@ -336,23 +278,18 @@ impl StreamBufferCore {
 mod tests {
     use super::*;
 
-    fn make(cap: usize) -> StreamBufferCore {
-        StreamBufferCore::new(cap).unwrap()
+    fn make(cap: usize) -> MemoryStreamBackend {
+        MemoryStreamBackend::new(cap)
     }
 
-    fn push(core: &StreamBufferCore, data: &[u8]) -> usize {
-        core.push_inner(data).expect("push failed")
+    fn push(core: &MemoryStreamBackend, data: &[u8]) -> usize {
+        core.push(data).expect("push failed")
     }
 
-    fn read_at(core: &StreamBufferCore, offset: usize) -> (Vec<u8>, usize) {
-        let (start, len, next) = core.read_at_inner(offset).expect("read_at failed");
+    fn read_at(core: &MemoryStreamBackend, offset: usize) -> (Vec<u8>, usize) {
+        let (start, len, next) = core.read_at_position(offset).expect("read_at failed");
         let buf = unsafe { &*core.buf.get() };
         (buf[start..start + len].to_vec(), next)
-    }
-
-    #[test]
-    fn test_zero_capacity_rejected() {
-        assert!(StreamBufferCore::new(0).is_err());
     }
 
     #[test]
@@ -429,13 +366,13 @@ mod tests {
     fn test_push_closed_rejected() {
         let core = make(1024);
         core.close();
-        assert!(core.push_inner(b"data").is_err());
+        assert!(core.push(b"data").is_err());
     }
 
     #[test]
     fn test_oversized_rejected() {
         let core = make(10);
-        match core.push_inner(&[0u8; 11]) {
+        match core.push(&[0u8; 11]) {
             Err(StreamError::Oversized(11, 10)) => {}
             other => panic!("expected Oversized, got {:?}", other.is_ok()),
         }
@@ -447,7 +384,7 @@ mod tests {
         // Push 12 bytes payload = 16 bytes frame. Remaining: 4 bytes.
         push(&core, &[0u8; 12]);
         // Next push of 1 byte needs 5 bytes frame, only 4 available.
-        match core.push_inner(b"x") {
+        match core.push(b"x") {
             Err(StreamError::Full(_, _)) => {}
             other => panic!("expected Full, got {:?}", other.is_ok()),
         }
@@ -464,14 +401,14 @@ mod tests {
     #[test]
     fn test_read_empty_error() {
         let core = make(1024);
-        assert!(core.read_at_inner(0).is_err());
+        assert!(core.read_at_position(0).is_err());
     }
 
     #[test]
     fn test_read_closed_empty_error() {
         let core = make(1024);
         core.close();
-        match core.read_at_inner(0) {
+        match core.read_at_position(0) {
             Err(StreamError::ClosedEmpty) => {}
             _ => panic!("expected ClosedEmpty"),
         }
@@ -484,7 +421,7 @@ mod tests {
         core.close();
         let (data, next) = read_at(&core, offset);
         assert_eq!(data, b"last");
-        match core.read_at_inner(next) {
+        match core.read_at_position(next) {
             Err(StreamError::ClosedEmpty) => {}
             _ => panic!("expected ClosedEmpty"),
         }
@@ -499,7 +436,7 @@ mod tests {
         let (data, _) = read_at(&core, 0);
         assert_eq!(data, vec![0xAA; 8]);
         // Buffer is now full
-        match core.push_inner(b"x") {
+        match core.push(b"x") {
             Err(StreamError::Full(_, _)) => {}
             other => panic!("expected Full, got {:?}", other.is_ok()),
         }
@@ -508,8 +445,8 @@ mod tests {
     #[test]
     fn test_u64_push_read() {
         let core = make(1024);
-        let o1 = core.push_inner(&42u64.to_le_bytes()).unwrap();
-        let o2 = core.push_inner(&u64::MAX.to_le_bytes()).unwrap();
+        let o1 = core.push(&42u64.to_le_bytes()).unwrap();
+        let o2 = core.push(&u64::MAX.to_le_bytes()).unwrap();
         let (d1, _) = read_at(&core, o1);
         let (d2, _) = read_at(&core, o2);
         assert_eq!(u64::from_le_bytes(d1.try_into().unwrap()), 42);

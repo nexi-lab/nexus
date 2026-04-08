@@ -23,6 +23,7 @@ Issue #1811, #1320.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +51,6 @@ class DriverLifecycleCoordinator:
         "_mount_table",
         "_dispatch",
         "_mount_specs",
-        "_backend_pool",
         "_self_address",
         "_transport_pool",
     )
@@ -66,76 +66,51 @@ class DriverLifecycleCoordinator:
         self._mount_table = mount_table
         self._dispatch = dispatch
         self._mount_specs: dict[str, HookSpec] = {}
-        self._backend_pool: dict[str, ObjectStoreABC] = {}
         self._self_address: str | None = self_address
         self._transport_pool: RPCTransportPool | None = transport_pool
 
     def backend_key(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
-        """Canonical pool key for a backend.
+        """Canonical key for a backend.
 
         Format: ``name`` for single-mount, ``name:mount_point`` when a
-        mount_point is given and differs from ``/`` (avoids collision when
-        multiple backends share the same name).  Federated nodes append
+        mount_point is given and differs from ``/``.  Federated nodes append
         ``@self_address``.
-
-        The root mount (``/``) uses plain ``name`` for backward
-        compatibility — existing metadata stores ``backend_name="local"``
-        and ``resolve_backend("local")`` must still work.
         """
         base = backend.name
         if mount_point and mount_point != "/":
             base = f"{backend.name}:{mount_point}"
         return f"{base}@{self._self_address}" if self._self_address else base
 
-    def register_backend(self, backend: "ObjectStoreABC", mount_point: str = "") -> str:
-        """Register a backend in the driver pool. Returns the pool key.
-
-        Key = backend_key(backend, mount_point). Called automatically on mount().
-        """
-        key = self.backend_key(backend, mount_point)
-        self._backend_pool[key] = backend
-        return key
-
     def resolve_backend(self, backend_name: str) -> "ObjectStoreABC":
-        """Resolve backend from pool by backend_name.
+        """Resolve backend by scanning mount_table entries.
 
-        Pool hit → cached backend (local or RemoteBackend).
-        Pool miss + local name → scan mount table for matching backend.name.
-        Pool miss + remote origin → lazy-create RemoteBackend, register, return.
+        Local name → scan mount table for matching backend.name.
+        Remote origin → lazy-create RemoteBackend via transport pool.
 
         Raises:
-            KeyError: backend_name not in pool and cannot create remote.
+            KeyError: backend_name not found and cannot create remote.
         """
-        cached = self._backend_pool.get(backend_name)
-        if cached is not None:
-            return cached
-        # Pool miss — check if it's a remote backend address.
         from nexus.contracts.backend_address import BackendAddress
 
-        addr = BackendAddress.parse(backend_name)
-        if not addr.has_origin:
-            # No remote origin — try to find a mounted backend whose .name
-            # matches.  This covers the case where a backend was added to the
-            # mount table directly (e.g. in tests) without going through
-            # coordinator.mount(), so it was never registered in the pool.
-            #
-            # Handle both plain names ("local") and qualified names
-            # ("local:/mount_point") from backend_key().
-            bare_name = backend_name.split(":")[0] if ":" in backend_name else backend_name
-            for entry in self._mount_table._entries.values():
-                if entry.backend.name == bare_name:
-                    self._backend_pool[backend_name] = entry.backend
-                    return entry.backend
-            raise KeyError(f"Backend '{backend_name}' not in pool and has no origin address")
-        origin = addr.origins[0]
-        if self._transport_pool is None:
-            raise KeyError(f"Cannot create RemoteBackend for '{origin}': no transport pool")
-        from nexus.backends.storage.remote import RemoteBackend
+        # Scan mount table for matching backend
+        bare_name = backend_name.split(":")[0] if ":" in backend_name else backend_name
+        bare_name = bare_name.split("@")[0] if "@" in bare_name else bare_name
+        for entry in self._mount_table._entries.values():
+            if entry.backend.name == bare_name:
+                return entry.backend
 
-        transport = self._transport_pool.get(origin)
-        remote = RemoteBackend(transport)
-        self._backend_pool[backend_name] = remote
-        return remote
+        # Check for remote origin
+        addr = BackendAddress.parse(backend_name)
+        if addr.has_origin:
+            origin = addr.origins[0]
+            if self._transport_pool is None:
+                raise KeyError(f"Cannot create RemoteBackend for '{origin}': no transport pool")
+            from nexus.backends.storage.remote import RemoteBackend
+
+            transport = self._transport_pool.get(origin)
+            return RemoteBackend(transport)
+
+        raise KeyError(f"Backend '{backend_name}' not found in mount table")
 
     def mount(
         self,
@@ -147,10 +122,7 @@ class DriverLifecycleCoordinator:
         admin_only: bool = False,
         io_profile: str = "balanced",
     ) -> None:
-        """Mount a backend with full lifecycle: routing + pool + hooks + notification."""
-        # 1. Add to mount table (kernel mount_hashtable)
-        #    Phase E.1: MountTable.add() now passes backend_name + local_root
-        #    to Rust add_mount(), which auto-creates CASEngine for local backends.
+        """Mount a backend with full lifecycle: routing + hooks + notification."""
         self._mount_table.add(
             mount_point,
             backend,
@@ -159,17 +131,10 @@ class DriverLifecycleCoordinator:
             admin_only=admin_only,
             io_profile=io_profile,
         )
-
-        # 2. Register in backend pool (keyed by name:mount_point to avoid collision)
-        self.register_backend(backend, mount_point)
-
-        # 3. Register hook_spec
         self._register_backend_hooks(mount_point, backend)
-
-        # 4. Broadcast mount event
         self._dispatch.notify_mount(mount_point, backend)
 
-    def unmount(self, mount_point: str) -> bool:
+    def unmount(self, mount_point: str, zone_id: str = "root") -> bool:
         """Unmount with full lifecycle: unhook + notify + remove.
 
         Returns True if mount was removed, False if not found.
@@ -180,44 +145,37 @@ class DriverLifecycleCoordinator:
 
         backend = entry.backend
 
-        # 1. Unregister VFS hooks
         spec = self._mount_specs.pop(mount_point, None)
         if spec is not None:
             self._unregister_hooks_for_spec(spec)
 
-        # 2. Broadcast unmount event (best-effort)
         try:
             self._dispatch.notify_unmount(mount_point, backend)
         except Exception as exc:
             logger.warning("[DRIVER] on_unmount notification failed for %s: %s", mount_point, exc)
 
-        # 3. Remove from mount table
-        self._mount_table.remove(mount_point)
+        _kernel = getattr(self._mount_table, "_kernel", None)
+        if _kernel is not None:
+            with contextlib.suppress(Exception):
+                _kernel.kernel_unmount(mount_point, zone_id)
+        self._mount_table.remove(mount_point, zone_id)
         return True
 
     # ------------------------------------------------------------------
-    # Internal hook registration (mirrors ServiceRegistry lifecycle)
+    # Internal hook registration
     # ------------------------------------------------------------------
 
     def _register_backend_hooks(self, mount_point: str, backend: "ObjectStoreABC") -> None:
-        """Extract and register hook_spec from backend."""
         if not hasattr(backend, "hook_spec"):
             return
-
         spec: HookSpec = backend.hook_spec()
         if spec is None or spec.is_empty:
             return
-
         self._mount_specs[mount_point] = spec
         self._register_hooks_for_spec(spec)
-        logger.debug(
-            "[DRIVER] registered %d hooks for mount %s",
-            spec.total_hooks,
-            mount_point,
-        )
+        logger.debug("[DRIVER] registered %d hooks for mount %s", spec.total_hooks, mount_point)
 
     def _register_hooks_for_spec(self, spec: HookSpec) -> None:
-        """Register all hooks from a HookSpec into KernelDispatch."""
         d = self._dispatch
         for h in spec.resolvers:
             d.register_resolver(h)
@@ -245,7 +203,6 @@ class DriverLifecycleCoordinator:
             d.register_unmount_hook(h)
 
     def _unregister_hooks_for_spec(self, spec: HookSpec) -> None:
-        """Unregister all hooks from a HookSpec from KernelDispatch."""
         d = self._dispatch
         for h in spec.resolvers:
             d.unregister_resolver(h)

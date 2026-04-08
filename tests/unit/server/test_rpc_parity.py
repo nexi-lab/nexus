@@ -252,6 +252,24 @@ def test_all_public_methods_are_exposed_or_excluded():
         # Tier 2 convenience wrappers — delegate to Tier 1 sys_* which are already @rpc_expose
         "mkdir",  # Tier 2 → mkdir(parents=True, exist_ok=True)
         "rmdir",  # Tier 2 → sys_unlink(recursive=True)
+        # Tier 2 IPC pipe/stream sync passthroughs (PR #3671) — local-only kernel
+        # convenience methods. Remote callers go through sys_setattr / sys_read /
+        # sys_write / sys_unlink which are already @rpc_expose. Sync wrappers
+        # exist for tight in-process polling loops (audit drain, dedup queue,
+        # LLM token pump) where async wrapping adds event-loop ping-pong.
+        "pipe_create",  # Tier 2 → kernel.create_pipe (local-only)
+        "pipe_close",  # Tier 2 → kernel.close_pipe (local-only)
+        "pipe_destroy",  # Tier 2 → kernel.destroy_pipe (local-only)
+        "pipe_read_nowait",  # Tier 2 → kernel.pipe_read_nowait (local-only)
+        "pipe_write_nowait",  # Tier 2 → kernel.pipe_write_nowait (local-only)
+        "has_pipe",  # Tier 2 → kernel.has_pipe (local-only)
+        "stream_create",  # Tier 2 → kernel.create_stream (local-only)
+        "stream_close",  # Tier 2 → kernel.close_stream (local-only)
+        "stream_destroy",  # Tier 2 → kernel.destroy_stream (local-only)
+        "stream_read_at",  # Tier 2 → kernel.stream_read_at (local-only)
+        "stream_read_at_blocking",  # Tier 2 → kernel.stream_read_at_blocking (local-only)
+        "stream_write_nowait",  # Tier 2 → kernel.stream_write_nowait (local-only)
+        "has_stream",  # Tier 2 → kernel.has_stream (local-only)
         # Search/list — delegates to search_service
         "list",  # ABC stub → overrides NexusFS.list()
         "glob",  # ABC stub → search_service.glob()

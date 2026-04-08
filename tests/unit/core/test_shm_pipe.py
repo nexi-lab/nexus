@@ -11,7 +11,7 @@ import pytest
 
 pytest.importorskip("nexus_kernel")
 
-from nexus_kernel import SharedRingBufferCore
+from nexus_kernel import SharedMemoryPipeBackend as RustPipeBackend
 
 from nexus.core.pipe import PipeBackend, PipeEmptyError, PipeFullError
 from nexus.core.shm_pipe import SharedMemoryPipeBackend
@@ -21,11 +21,11 @@ from nexus.core.shm_pipe import SharedMemoryPipeBackend
 # ---------------------------------------------------------------------------
 
 
-class TestSharedRingBufferCore:
-    """Tests for the Rust SharedRingBufferCore directly."""
+class TestRustPipeBackend:
+    """Tests for the Rust SharedMemoryPipeBackend directly."""
 
     def test_create_returns_handles(self):
-        core, shm_path, data_rd_fd, space_rd_fd = SharedRingBufferCore.create(1024)
+        core, shm_path, data_rd_fd, space_rd_fd = RustPipeBackend.create(1024)
         assert shm_path
         assert data_rd_fd >= 0
         assert space_rd_fd >= 0
@@ -36,8 +36,8 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_write_read_roundtrip(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(1024)
-        reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(1024)
+        reader = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)
@@ -49,8 +49,8 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_fifo_ordering(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(1024)
-        reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(1024)
+        reader = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)
@@ -63,8 +63,8 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_close_propagates(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(1024)
-        reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(1024)
+        reader = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)
@@ -78,7 +78,7 @@ class TestSharedRingBufferCore:
     def test_cleanup_removes_file(self):
         import os
 
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(64)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(64)
         os.close(dfd)
         os.close(sfd)
         assert os.path.exists(shm_path)
@@ -86,8 +86,8 @@ class TestSharedRingBufferCore:
         assert not os.path.exists(shm_path)
 
     def test_wrap_around(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(64)
-        reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(64)
+        reader = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)
@@ -102,8 +102,8 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_u64_roundtrip(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(1024)
-        reader = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(1024)
+        reader = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)
@@ -116,7 +116,7 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_stats(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(1024)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(1024)
         import os
 
         os.close(dfd)
@@ -132,7 +132,7 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_empty_error(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(64)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(64)
         import os
 
         os.close(dfd)
@@ -143,7 +143,7 @@ class TestSharedRingBufferCore:
         core.cleanup()
 
     def test_full_error(self):
-        core, shm_path, dfd, sfd = SharedRingBufferCore.create(10)
+        core, shm_path, dfd, sfd = RustPipeBackend.create(10)
         import os
 
         os.close(dfd)
@@ -165,8 +165,8 @@ class TestSharedMemoryPipeBackend:
 
     def _create_pair(self, capacity=1024):
         """Create a writer + reader pair in the same process."""
-        core_w, shm_path, dfd, sfd = SharedRingBufferCore.create(capacity)
-        core_r = SharedRingBufferCore.attach(shm_path, -1, -1)
+        core_w, shm_path, dfd, sfd = RustPipeBackend.create(capacity)
+        core_r = RustPipeBackend.attach(shm_path, -1, -1)
         import os
 
         os.close(dfd)

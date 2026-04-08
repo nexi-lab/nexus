@@ -5,7 +5,7 @@ and flushes them to RecordStore in batches.  The producer side is
 ``AuditWriteInterceptor`` which writes events via ``nx.sys_write()``.
 
 Issue #809: Decouple write_observer.on_write() sync DB write from hot path.
-Issue #1772: Migrate from PipeManager to sys_write/sys_read.
+Issue #1772: Migrated from PipeManager to sys_write/sys_read + Rust kernel pipe_read_nowait.
 
 Architecture:
     AuditWriteInterceptor (async POST hook)
@@ -129,17 +129,15 @@ class PipedRecordStoreWriteObserver:
         if self._nx is None:
             return  # CLI mode — no NexusFS
 
-        pipe_manager = getattr(self._nx, "_pipe_manager", None)
-        if pipe_manager is not None:
-            pipe_manager.ensure(
-                _AUDIT_PIPE_PATH,
-                capacity=_AUDIT_PIPE_CAPACITY,
-                owner_id="kernel",
-            )
-        else:
-            # Test/degraded path: fall back to direct syscall-based pipe creation
-            # when NexusFS exposes DT_PIPE syscalls but no PipeManager object.
-            await self._nx.sys_setattr(_AUDIT_PIPE_PATH)
+        # Create audit pipe via sys_setattr (idempotent — reuses existing buffer)
+        from nexus.contracts.metadata import DT_PIPE
+
+        await self._nx.sys_setattr(
+            _AUDIT_PIPE_PATH,
+            entry_type=DT_PIPE,
+            capacity=_AUDIT_PIPE_CAPACITY,
+            owner_id="kernel",
+        )
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())
@@ -217,23 +215,20 @@ class PipedRecordStoreWriteObserver:
 
         Used by CLI shutdown path (NexusFS.close) where no asyncio loop
         is running. Also called by close callbacks (Issue #3399) to drain
-        remaining pipe events before PipeManager.close_all() clears buffers.
+        remaining pipe events before kernel close_all_pipes() clears buffers.
         Returns count of flushed events.
         """
-        # Issue #3399: drain any remaining events from the pipe buffer
+        # Issue #3399: drain any remaining events from the Rust pipe buffer
         # directly (bypassing sys_read) before it gets cleared on close.
         if self._nx is not None:
-            pm = getattr(self._nx, "_pipe_manager", None)
-            if pm is not None:
-                buf = pm._buffers.get(_AUDIT_PIPE_PATH)
-                if buf is not None:
-                    from nexus.core.pipe import PipeClosedError, PipeEmptyError
-
-                    while True:
-                        try:
-                            self._pre_buffer.append(buf.read_nowait())
-                        except (PipeEmptyError, PipeClosedError, Exception):
-                            break
+            while True:
+                try:
+                    _data = self._nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                    if _data is None:
+                        break
+                    self._pre_buffer.append(bytes(_data))
+                except Exception:
+                    break
 
         if not self._pre_buffer:
             return 0
@@ -261,12 +256,10 @@ class PipedRecordStoreWriteObserver:
     async def _consume(self) -> None:
         """Background consumer: read from pipe via sys_read, batch, flush."""
         from nexus.contracts.exceptions import NexusFileNotFoundError
-        from nexus.core.pipe import PipeClosedError, PipeEmptyError
 
         assert self._nx is not None
 
         nx = self._nx
-        pm = nx._pipe_manager
         while True:
             # Block until first event arrives
             try:
@@ -275,21 +268,21 @@ class PipedRecordStoreWriteObserver:
                 logger.debug("Audit pipe closed, consumer exiting")
                 break
 
-            # Drain available events for batching (non-blocking read_nowait)
+            # Drain available events for batching (non-blocking Rust pipe_read_nowait)
             batch: list[dict[str, Any]] = [json.loads(first)]
-            buf = pm._buffers.get(_AUDIT_PIPE_PATH) if pm is not None else None
-            if buf is not None:
-                for _ in range(_MAX_BATCH_DRAIN - 1):
-                    try:
-                        data = buf.read_nowait()
-                        batch.append(json.loads(data))
-                    except (PipeEmptyError, PipeClosedError, Exception):
+            for _ in range(_MAX_BATCH_DRAIN - 1):
+                try:
+                    _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                    if _data is None:
                         break
+                    batch.append(json.loads(bytes(_data)))
+                except Exception:
+                    break
 
             # Issue #3399: linger window — if batch isn't full, wait briefly
             # for more events to coalesce into a single DB transaction.
             # OTel uses 200ms, Kafka uses 5ms; 200ms is a good default.
-            if buf is not None and len(batch) < _MAX_BATCH_DRAIN and self._linger_s > 0:
+            if len(batch) < _MAX_BATCH_DRAIN and self._linger_s > 0:
                 try:
                     more = await asyncio.wait_for(
                         nx.sys_read(_AUDIT_PIPE_PATH), timeout=self._linger_s
@@ -298,9 +291,11 @@ class PipedRecordStoreWriteObserver:
                     # Drain any additional events that arrived during linger
                     for _ in range(_MAX_BATCH_DRAIN - len(batch)):
                         try:
-                            data = buf.read_nowait()
-                            batch.append(json.loads(data))
-                        except (PipeEmptyError, PipeClosedError, Exception):
+                            _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                            if _data is None:
+                                break
+                            batch.append(json.loads(bytes(_data)))
+                        except Exception:
                             break
                 except TimeoutError:
                     pass  # Linger expired, flush what we have

@@ -51,19 +51,8 @@ const OFF_MSG_COUNT: usize = SLOT_SIZE + 16;
 // Slot 2: flags
 const OFF_CLOSED: usize = SLOT_SIZE * 2;
 
-// ---------------------------------------------------------------------------
-// Internal error type
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-enum StreamError {
-    Closed(&'static str),
-    Full(usize, usize),
-    Empty,
-    ClosedEmpty,
-    Oversized(usize, usize),
-    InvalidOffset(usize, usize),
-}
+// Use shared StreamError from stream.rs
+use crate::stream::StreamError;
 
 // ---------------------------------------------------------------------------
 // Header accessors (same pattern as shm_pipe.rs)
@@ -95,12 +84,12 @@ unsafe fn atomic_bool(base: *const u8, off: usize) -> &'static AtomicBool {
 }
 
 // ---------------------------------------------------------------------------
-// SharedStreamBufferCore
+// SharedMemoryStreamBackend
 // ---------------------------------------------------------------------------
 
 /// Cross-process append-only buffer backed by mmap + OS pipe notification.
 #[pyclass]
-pub struct SharedStreamBufferCore {
+pub struct SharedMemoryStreamBackend {
     mmap: memmap2::MmapMut,
     capacity: usize,
     notify_data_wr: i32, // writer writes here after push
@@ -108,14 +97,14 @@ pub struct SharedStreamBufferCore {
     shm_path: String,
 }
 
-unsafe impl Send for SharedStreamBufferCore {}
-unsafe impl Sync for SharedStreamBufferCore {}
+unsafe impl Send for SharedMemoryStreamBackend {}
+unsafe impl Sync for SharedMemoryStreamBackend {}
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-impl SharedStreamBufferCore {
+impl SharedMemoryStreamBackend {
     #[inline]
     fn base(&self) -> *const u8 {
         self.mmap.as_ptr()
@@ -241,11 +230,62 @@ impl SharedStreamBufferCore {
 }
 
 // ---------------------------------------------------------------------------
+// StreamBackend trait impl
+// ---------------------------------------------------------------------------
+
+impl crate::stream::StreamBackend for SharedMemoryStreamBackend {
+    fn push(&self, data: &[u8]) -> Result<usize, StreamError> {
+        let offset = self.push_inner(data)?;
+        self.notify_data();
+        Ok(offset)
+    }
+    fn read_at(&self, offset: usize) -> Result<(Vec<u8>, usize), StreamError> {
+        let (start, len, next) = self.read_at_inner(offset)?;
+        let buf = self.data_slice();
+        let data = buf[start..start + len].to_vec();
+        Ok((data, next))
+    }
+    fn read_batch(
+        &self,
+        offset: usize,
+        count: usize,
+    ) -> Result<(Vec<Vec<u8>>, usize), StreamError> {
+        let mut results = Vec::with_capacity(count);
+        let mut pos = offset;
+        for _ in 0..count {
+            match self.read_at_inner(pos) {
+                Ok((start, len, next)) => {
+                    let buf = self.data_slice();
+                    results.push(buf[start..start + len].to_vec());
+                    pos = next;
+                }
+                Err(StreamError::Empty) | Err(StreamError::ClosedEmpty) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok((results, pos))
+    }
+    fn close(&self) {
+        self.closed_flag().store(true, Ordering::Release);
+        self.notify_data();
+    }
+    fn is_closed(&self) -> bool {
+        self.closed_flag().load(Ordering::Acquire)
+    }
+    fn tail_offset(&self) -> usize {
+        self.tail_atomic().load(Ordering::Acquire)
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count().load(Ordering::Relaxed)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // PyO3 methods
 // ---------------------------------------------------------------------------
 
 #[pymethods]
-impl SharedStreamBufferCore {
+impl SharedMemoryStreamBackend {
     /// Create a new shared stream buffer.
     ///
     /// Returns `(self, shm_path, data_rd_fd)`.
@@ -295,7 +335,7 @@ impl SharedStreamBufferCore {
             libc::fcntl(data_fds[1], libc::F_SETFL, libc::O_NONBLOCK);
         }
 
-        let core = SharedStreamBufferCore {
+        let core = SharedMemoryStreamBackend {
             mmap,
             capacity,
             notify_data_wr: data_fds[1],
@@ -334,7 +374,7 @@ impl SharedStreamBufferCore {
 
         let capacity = read_u32(base, OFF_CAPACITY) as usize;
 
-        Ok(SharedStreamBufferCore {
+        Ok(SharedMemoryStreamBackend {
             mmap,
             capacity,
             notify_data_wr,
@@ -500,7 +540,7 @@ impl SharedStreamBufferCore {
     }
 }
 
-impl Drop for SharedStreamBufferCore {
+impl Drop for SharedMemoryStreamBackend {
     fn drop(&mut self) {
         if self.notify_data_wr >= 0 {
             unsafe {
@@ -518,20 +558,20 @@ impl Drop for SharedStreamBufferCore {
 mod tests {
     use super::*;
 
-    fn create_pair(cap: usize) -> (SharedStreamBufferCore, SharedStreamBufferCore) {
-        let (creator, shm_path, data_rd_fd) = SharedStreamBufferCore::create(cap).unwrap();
-        let attacher = SharedStreamBufferCore::attach(&shm_path, -1).unwrap();
+    fn create_pair(cap: usize) -> (SharedMemoryStreamBackend, SharedMemoryStreamBackend) {
+        let (creator, shm_path, data_rd_fd) = SharedMemoryStreamBackend::create(cap).unwrap();
+        let attacher = SharedMemoryStreamBackend::attach(&shm_path, -1).unwrap();
         unsafe {
             libc::close(data_rd_fd);
         }
         (creator, attacher)
     }
 
-    fn push(core: &SharedStreamBufferCore, data: &[u8]) -> usize {
+    fn push(core: &SharedMemoryStreamBackend, data: &[u8]) -> usize {
         core.push_inner(data).expect("push failed")
     }
 
-    fn read_at(core: &SharedStreamBufferCore, offset: usize) -> (Vec<u8>, usize) {
+    fn read_at(core: &SharedMemoryStreamBackend, offset: usize) -> (Vec<u8>, usize) {
         let (start, len, next) = core.read_at_inner(offset).expect("read_at failed");
         let buf = core.data_slice();
         (buf[start..start + len].to_vec(), next)
@@ -539,7 +579,7 @@ mod tests {
 
     #[test]
     fn test_create_returns_handles() {
-        let (creator, shm_path, data_rd_fd) = SharedStreamBufferCore::create(1024).unwrap();
+        let (creator, shm_path, data_rd_fd) = SharedMemoryStreamBackend::create(1024).unwrap();
         assert!(!shm_path.is_empty());
         assert!(data_rd_fd >= 0);
         unsafe {

@@ -188,7 +188,7 @@ mod grpc_cluster {
 
         tracing::info!("Leader elected: node {} at {}", leader_id, leader_endpoint);
 
-        assert!(leader_id >= 1 && leader_id <= 3, "Leader ID should be 1-3");
+        assert!((1..=3).contains(&leader_id), "Leader ID should be 1-3");
 
         // Verify exactly 1 leader
         let config = ClientConfig {
@@ -446,7 +446,7 @@ mod grpc_cluster {
             leader_id,
             leader_endpoint
         );
-        assert!(leader_id >= 1 && leader_id <= 3);
+        assert!((1..=3).contains(&leader_id));
 
         // Verify exactly 1 leader across all nodes (including witness)
         let mut leader_count = 0;

@@ -12,7 +12,10 @@ Tests cover:
 - Benchmark: throughput under coalescing workload
 """
 
+from __future__ import annotations
+
 import asyncio
+import collections
 import time
 
 import pytest
@@ -22,6 +25,57 @@ from nexus.services.lifecycle.dedup_work_queue import (
     ShutdownError,
     run_worker,
 )
+
+# ---------------------------------------------------------------------------
+# Fake kernel — in-process pipe backed by collections.deque
+# ---------------------------------------------------------------------------
+
+
+class _FakeKernel:
+    """Minimal kernel mock implementing the pipe IPC API used by DedupWorkQueue."""
+
+    def __init__(self) -> None:
+        self._pipes: dict[str, tuple[collections.deque[bytes], int, bool]] = {}
+        # path → (deque, capacity_bytes, closed)
+
+    def create_pipe(self, path: str, capacity: int) -> None:
+        self._pipes[path] = (collections.deque(), capacity, False)
+
+    def pipe_write_nowait(self, path: str, data: bytes) -> int:
+        buf, cap, closed = self._pipes[path]
+        if closed:
+            raise RuntimeError(f"PipeClosed: {path}")
+        current = sum(len(d) for d in buf)
+        if current + len(data) > cap:
+            raise RuntimeError(f"PipeFull: {path}")
+        buf.append(data)
+        return len(data)
+
+    def pipe_read_nowait(self, path: str) -> bytes | None:
+        buf, _cap, closed = self._pipes[path]
+        if buf:
+            return buf.popleft()
+        if closed:
+            raise RuntimeError(f"PipeClosed: {path}")
+        return None
+
+    def close_pipe(self, path: str) -> None:
+        if path not in self._pipes:
+            return
+        buf, cap, _closed = self._pipes[path]
+        self._pipes[path] = (buf, cap, True)
+
+    def destroy_pipe(self, path: str) -> None:
+        self._pipes.pop(path, None)
+
+    def has_pipe(self, path: str) -> bool:
+        return path in self._pipes
+
+
+@pytest.fixture()
+def fake_kernel() -> _FakeKernel:
+    return _FakeKernel()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,9 +98,9 @@ async def _drain(q: DedupWorkQueue[str], count: int) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_basic_lifecycle() -> None:
+async def test_basic_lifecycle(fake_kernel: _FakeKernel) -> None:
     """Single key: add → get → done works correctly."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     await q.add("a")
     assert len(q) == 1
@@ -66,9 +120,9 @@ async def test_basic_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
-async def test_coalescing_same_key() -> None:
+async def test_coalescing_same_key(fake_kernel: _FakeKernel) -> None:
     """Adding the same key 10 times yields only 1 item from get()."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     for _ in range(10):
         await q.add("file.txt")
@@ -82,7 +136,7 @@ async def test_coalescing_same_key() -> None:
 
     # Queue should now be empty — no more items
     assert len(q) == 0
-    assert q._buf._core.is_empty()
+    assert q.metrics["queue_depth"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -91,9 +145,9 @@ async def test_coalescing_same_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_requeue_on_done() -> None:
+async def test_requeue_on_done(fake_kernel: _FakeKernel) -> None:
     """Key re-added while processing gets re-queued after done()."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     # Add and start processing
     await q.add("key1")
@@ -116,7 +170,7 @@ async def test_requeue_on_done() -> None:
 
     # Now truly empty
     assert len(q) == 0
-    assert q._buf._core.is_empty()
+    assert q.metrics["queue_depth"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +179,9 @@ async def test_requeue_on_done() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_producers() -> None:
+async def test_concurrent_producers(fake_kernel: _FakeKernel) -> None:
     """Many producers adding overlapping keys concurrently."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     keys = [f"key-{i % 5}" for i in range(50)]  # 50 adds, only 5 unique
 
@@ -146,9 +200,9 @@ async def test_concurrent_producers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_consumers() -> None:
+async def test_concurrent_consumers(fake_kernel: _FakeKernel) -> None:
     """Multiple consumers each get a distinct key."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     for i in range(3):
         await q.add(f"item-{i}")
@@ -170,9 +224,9 @@ async def test_concurrent_consumers() -> None:
 
 
 @pytest.mark.asyncio
-async def test_shutdown_unblocks_get() -> None:
+async def test_shutdown_unblocks_get(fake_kernel: _FakeKernel) -> None:
     """Shutdown causes pending get() to raise ShutdownError."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     async def delayed_shutdown() -> None:
         await asyncio.sleep(0.05)
@@ -187,9 +241,9 @@ async def test_shutdown_unblocks_get() -> None:
 
 
 @pytest.mark.asyncio
-async def test_add_after_shutdown_raises() -> None:
+async def test_add_after_shutdown_raises(fake_kernel: _FakeKernel) -> None:
     """add() after shutdown raises ShutdownError."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
     await q.shutdown()
 
     with pytest.raises(ShutdownError):
@@ -202,17 +256,17 @@ async def test_add_after_shutdown_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_done_without_get_is_safe() -> None:
+async def test_done_without_get_is_safe(fake_kernel: _FakeKernel) -> None:
     """Calling done() for a key not in processing is a no-op."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
     q.done("nonexistent")  # Should not raise
     assert q.processing_count == 0
 
 
 @pytest.mark.asyncio
-async def test_len_empty_queue() -> None:
+async def test_len_empty_queue(fake_kernel: _FakeKernel) -> None:
     """Empty queue has len 0 and correct metrics."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
     assert len(q) == 0
     assert q.processing_count == 0
     assert q.metrics == {
@@ -226,9 +280,9 @@ async def test_len_empty_queue() -> None:
 
 
 @pytest.mark.asyncio
-async def test_multiple_different_keys() -> None:
+async def test_multiple_different_keys(fake_kernel: _FakeKernel) -> None:
     """Different keys are all enqueued independently."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     await q.add("a")
     await q.add("b")
@@ -245,9 +299,9 @@ async def test_multiple_different_keys() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fifo_ordering() -> None:
+async def test_fifo_ordering(fake_kernel: _FakeKernel) -> None:
     """Keys are returned in FIFO (first-added) order."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     for i in range(10):
         await q.add(f"item-{i}")
@@ -267,9 +321,9 @@ async def test_fifo_ordering() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_worker() -> None:
+async def test_run_worker(fake_kernel: _FakeKernel) -> None:
     """run_worker processes items and stops on shutdown."""
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
     processed: list[str] = []
 
     async def handler(key: str) -> None:
@@ -297,9 +351,9 @@ async def test_run_worker() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tuple_keys() -> None:
+async def test_tuple_keys(fake_kernel: _FakeKernel) -> None:
     """DedupWorkQueue works with tuple keys (zone_id, path)."""
-    q: DedupWorkQueue[tuple[str, str]] = DedupWorkQueue()
+    q: DedupWorkQueue[tuple[str, str]] = DedupWorkQueue(kernel=fake_kernel)
 
     await q.add(("zone1", "/file.txt"))
     await q.add(("zone1", "/file.txt"))  # Coalesced
@@ -322,13 +376,13 @@ async def test_tuple_keys() -> None:
 
 
 @pytest.mark.asyncio
-async def test_benchmark_coalescing_throughput() -> None:
+async def test_benchmark_coalescing_throughput(fake_kernel: _FakeKernel) -> None:
     """Benchmark: 100K adds with high duplication + drain.
 
     Validates that coalescing overhead is negligible.
     Target: > 50K ops/sec (conservative for asyncio).
     """
-    q: DedupWorkQueue[str] = DedupWorkQueue()
+    q: DedupWorkQueue[str] = DedupWorkQueue(kernel=fake_kernel)
 
     num_adds = 100_000
     num_unique_keys = 100  # High duplication ratio

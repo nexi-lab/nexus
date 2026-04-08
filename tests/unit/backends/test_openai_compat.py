@@ -458,25 +458,42 @@ class TestCASOpenAIBackendStreaming:
 
     @pytest.fixture()
     def mock_stream_manager(self) -> MagicMock:
-        """Create a mock StreamManager that stores writes in a list."""
+        """Mock NexusFS exposing the Tier 2 public stream methods.
+
+        Post IPC Rust-ification + cleanup (2026-04-08): CASOpenAIBackend
+        calls the public sync stream API on NexusFS — ``stream_create``,
+        ``stream_write_nowait``, ``stream_read_at``, ``stream_close`` —
+        no longer reaching into ``_kernel``. This fixture wires those
+        methods directly on the MagicMock with a shared write list so
+        tests can assert delivery + close.
+        """
         sm = MagicMock()
-        # Track writes for verification
         sm._written: list[bytes] = []
         sm._closed = False
 
-        def _write_nowait(path: str, data: bytes) -> int:
-            sm._written.append(data)
+        def _stream_create(path: str, capacity: int = 65_536) -> None:
+            return None
+
+        def _stream_write_nowait(path: str, data: bytes) -> int:
+            sm._written.append(bytes(data))
             return len(data)
 
-        def _collect_all(path: str) -> bytes:
-            return b"".join(sm._written)
+        def _stream_read_at(path: str, offset: int):
+            # Non-destructive read: return (chunk, next_offset) or None at EOF
+            if offset >= len(sm._written):
+                return None
+            return (sm._written[offset], offset + 1)
 
-        def _signal_close(path: str) -> None:
+        def _stream_close(path: str) -> None:
             sm._closed = True
 
-        sm.stream_write_nowait.side_effect = _write_nowait
-        sm.collect_all.side_effect = _collect_all
-        sm.signal_close.side_effect = _signal_close
+        sm.stream_create.side_effect = _stream_create
+        sm.stream_write_nowait.side_effect = _stream_write_nowait
+        sm.stream_read_at.side_effect = _stream_read_at
+        sm.stream_close.side_effect = _stream_close
+        # Back-compat convenience: expose .create alias used by an
+        # assertion below.
+        sm.create = sm.stream_create
         return sm
 
     @pytest.fixture()

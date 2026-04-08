@@ -62,8 +62,7 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
 
     zone_id = svc.zone_id or ROOT_ZONE_ID
 
-    # --- Issue #3197: DT_PIPE wakeup + EventPublisher + CacheStore ---
-    wakeup_notifiers = []
+    # --- Issue #3197: EventPublisher via CacheStore pub/sub ---
     cache_store = _resolve_ipc_cache_store(app, svc)
     event_publisher = None
 
@@ -78,42 +77,11 @@ async def startup_ipc(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.T
         except Exception as exc:
             logger.warning("[IPC] EventPublisher unavailable: %s", exc)
 
-    if svc.pipe_manager is not None:
-        try:
-            from nexus.bricks.ipc.wakeup import PipeNotifyFactory, PipeWakeupNotifier
-
-            notifier = PipeWakeupNotifier(svc.pipe_manager)
-            wakeup_notifiers.append(notifier)
-
-            # Inject notify pipe factory into provisioner (late-binding)
-            notify_factory = PipeNotifyFactory(svc.pipe_manager)
-            if ipc_provisioner is not None:
-                ipc_provisioner._notify_pipe_factory = notify_factory
-
-            logger.info("[IPC] DT_PIPE wakeup notifier + notify factory wired")
-        except Exception as exc:
-            logger.warning("[IPC] DT_PIPE wakeup unavailable: %s", exc)
-
     # Expose IPC services on app.state for REST router access
     app.state.ipc_nexus_fs = svc.nexus_fs
     app.state.ipc_provisioner = ipc_provisioner
-    app.state.ipc_wakeup_notifiers = wakeup_notifiers
     app.state.ipc_cache_store = cache_store
     app.state.ipc_event_publisher = event_publisher
-    # Create MessageProcessorRegistry with pipe_manager for receiver-side
-    # DT_PIPE wakeup (Issue #3197). Agent runtimes use
-    # registry.create_processor() to get a MessageProcessor with
-    # PipeWakeupListener auto-wired.
-    try:
-        from nexus.bricks.ipc.registry import MessageProcessorRegistry
-
-        processor_registry = MessageProcessorRegistry(pipe_manager=svc.pipe_manager)
-        app.state.ipc_processor_registry = processor_registry
-        if svc.pipe_manager is not None:
-            logger.info("[IPC] MessageProcessorRegistry wired with DT_PIPE wakeup")
-    except Exception as exc:
-        logger.warning("[IPC] MessageProcessorRegistry unavailable: %s", exc)
-    app.state.ipc_pipe_manager = svc.pipe_manager
 
     # Start TTLSweeper background task (with event-driven pub/sub if cache_store available)
     try:

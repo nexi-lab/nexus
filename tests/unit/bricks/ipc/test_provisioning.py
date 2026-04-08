@@ -12,7 +12,7 @@ from nexus.bricks.ipc.conventions import (
 )
 from nexus.bricks.ipc.provisioning import AgentProvisioner
 
-from .fakes import InMemoryNotifyPipeFactory, InMemoryVFS
+from .fakes import InMemoryVFS
 
 ZONE = "test-zone"
 
@@ -92,28 +92,9 @@ class TestAgentProvisioner:
         assert card["version"] == "4.5"
 
     @pytest.mark.asyncio
-    async def test_provision_creates_notify_pipe(self, vfs: InMemoryVFS) -> None:
-        """Issue #3197: Provisioner should create DT_PIPE notify pipe when factory is provided."""
-        factory = InMemoryNotifyPipeFactory()
-        provisioner = AgentProvisioner(vfs, zone_id=ZONE, notify_pipe_factory=factory)
-        await provisioner.provision("agent:bob")
-
-        assert "agent:bob" in factory.created
-
-    @pytest.mark.asyncio
-    async def test_provision_without_pipe_factory_still_works(self, vfs: InMemoryVFS) -> None:
-        """Provisioning without a pipe factory should work (backward compatible)."""
+    async def test_provision_creates_inbox(self, vfs: InMemoryVFS) -> None:
+        """Provisioning should create the inbox directory."""
         provisioner = AgentProvisioner(vfs, zone_id=ZONE)
         await provisioner.provision("agent:bob")
 
-        assert await vfs.access(inbox_path("agent:bob"), ZONE)
-
-    @pytest.mark.asyncio
-    async def test_provision_pipe_factory_failure_non_fatal(self, vfs: InMemoryVFS) -> None:
-        """Pipe factory failure should not prevent provisioning."""
-        factory = InMemoryNotifyPipeFactory(should_fail=True)
-        provisioner = AgentProvisioner(vfs, zone_id=ZONE, notify_pipe_factory=factory)
-        await provisioner.provision("agent:bob")
-
-        # Provisioning should still succeed even though pipe creation failed
         assert await vfs.access(inbox_path("agent:bob"), ZONE)

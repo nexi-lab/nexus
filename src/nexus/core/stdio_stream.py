@@ -1,4 +1,4 @@
-"""StdioStream — StreamBackend over OS subprocess pipes.
+"""StdioStreamBackend — StreamBackend over OS subprocess pipes.
 
 Wraps ``asyncio.StreamReader`` as a ``StreamBackend`` with internal
 accumulation buffer.  Since OS pipes are consumed-on-read, a pump task
@@ -24,7 +24,7 @@ from nexus.core.stream import StreamClosedError, StreamEmptyError
 logger = logging.getLogger(__name__)
 
 
-class StdioStream:
+class StdioStreamBackend:
     """StreamBackend wrapping subprocess stdout with internal accumulation.
 
     A pump task reads lines from the OS pipe and appends to an internal
@@ -76,7 +76,7 @@ class StdioStream:
         except asyncio.CancelledError:
             pass
         except Exception as exc:
-            logger.debug("StdioStream pump error: %s", exc)
+            logger.debug("StdioStreamBackend pump error: %s", exc)
         finally:
             self._closed = True
             self._data_available.set()  # wake blocked readers

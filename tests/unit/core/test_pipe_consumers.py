@@ -32,12 +32,35 @@ class MockNexusFS:
 
     Provides sys_setattr, sys_write, sys_read, sys_unlink — the only
     methods ZoektPipeConsumer and PipedRecordStoreWriteObserver call.
+    Also exposes the public sync ``pipe_read_nowait`` / ``pipe_write_nowait``
+    convenience methods (Tier 2 NexusFS API) so coalescing consumers
+    that drain via non-blocking reads keep working.
     """
 
     def __init__(self) -> None:
         self._pipes: dict[str, asyncio.Queue[bytes]] = {}
         self._closed: set[str] = set()
         self._pipe_manager = None  # No real PipeManager in tests
+        self.write_count = 0
+
+    def pipe_read_nowait(self, path: str) -> bytes | None:
+        """Non-blocking drain — returns None when empty (matches Rust semantics)."""
+        queue = self._pipes.get(path)
+        if queue is None or queue.empty():
+            return None
+        try:
+            return queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    def pipe_write_nowait(self, path: str, data: bytes) -> None:
+        """Non-blocking write — raises if pipe is closed/missing, else enqueues."""
+        if path in self._closed or path not in self._pipes:
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+
+            raise NexusFileNotFoundError(path=path)
+        self._pipes[path].put_nowait(data)
+        self.write_count += 1
 
     async def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Create a pipe (asyncio.Queue)."""

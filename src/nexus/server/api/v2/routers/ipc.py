@@ -98,10 +98,6 @@ def _get_ipc_event_publisher(request: Request) -> Any:
     return getattr(request.app.state, "ipc_event_publisher", None)
 
 
-def _get_ipc_wakeup_notifiers(request: Request) -> list[Any]:
-    return getattr(request.app.state, "ipc_wakeup_notifiers", [])
-
-
 def _get_auth_zone_id(auth_result: dict[str, Any]) -> str:
     return auth_result.get("zone_id") or ROOT_ZONE_ID
 
@@ -118,7 +114,6 @@ async def send_message(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     vfs: Any = Depends(_get_ipc_nexus_fs),
     event_publisher: Any = Depends(_get_ipc_event_publisher),
-    wakeup_notifiers: list[Any] = Depends(_get_ipc_wakeup_notifiers),
     cache_store: Any = Depends(_get_ipc_cache_store),
 ) -> dict[str, Any]:
     """Compatibility REST endpoint for enqueueing IPC inbox messages."""
@@ -146,7 +141,6 @@ async def send_message(
             vfs=vfs,
             event_publisher=event_publisher,
             zone_id=zone_id,
-            wakeup_notifiers=wakeup_notifiers,
             cache_store=cache_store,
         )
         message_path = await sender.send(envelope)

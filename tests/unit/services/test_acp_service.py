@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -46,25 +45,6 @@ class MockAgentRegistry:
 
 
 # ---------------------------------------------------------------------------
-# Mock PipeManager
-# ---------------------------------------------------------------------------
-
-
-class MockPipeManager:
-    def __init__(self) -> None:
-        self.created: dict[str, Any] = {}
-        self.destroyed: list[str] = []
-
-    def create_from_backend(self, path: str, backend: Any, *, owner_id: str | None = None) -> Any:
-        self.created[path] = backend
-        return backend
-
-    def destroy(self, path: str) -> None:
-        self.destroyed.append(path)
-        self.created.pop(path, None)
-
-
-# ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
@@ -75,16 +55,7 @@ class TestAcpServiceConstruction:
     def test_init(self):
         pt = MockAgentRegistry()
         svc = AcpService(agent_registry=pt)
-        assert svc._pipe_manager is None
         assert svc._nexus_fs is None
-
-    def test_bind_pipe_manager(self):
-        pt = MockAgentRegistry()
-        svc = AcpService(agent_registry=pt)
-
-        pm = MockPipeManager()
-        svc.bind_pipe_manager(pm)
-        assert svc._pipe_manager is pm
 
     def test_bind_fs(self):
         pt = MockAgentRegistry()
@@ -142,10 +113,16 @@ class TestAcpServiceKillAgent:
     """Test kill_agent teardown."""
 
     def test_kill_agent_destroys_pipes(self):
+        """kill_agent should destroy all 3 fd pipes via NexusFS.pipe_destroy()."""
         pt = MockAgentRegistry()
-        pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
+
+        # NexusFS is the primary owner of the pipe destroy path post IPC
+        # Rust-ification — teardown calls nx.pipe_destroy(path).
+        destroyed: list[str] = []
+        mock_nx = MagicMock()
+        mock_nx.pipe_destroy = MagicMock(side_effect=lambda path: destroyed.append(path))
+        svc.bind_fs(mock_nx)
 
         # Set up an active agent
         mock_conn = MagicMock()
@@ -171,34 +148,10 @@ class TestAcpServiceKillAgent:
         # Verify subprocess killed
         mock_proc.kill.assert_called_once()
 
-        # Verify DT_PIPEs destroyed (all 3 fds)
-        assert "/root/proc/pid-1/fd/0" in pm.destroyed
-        assert "/root/proc/pid-1/fd/1" in pm.destroyed
-        assert "/root/proc/pid-1/fd/2" in pm.destroyed
-
-    def test_kill_agent_without_pipe_manager(self):
-        """Graceful degradation — no PipeManager bound."""
-        pt = MockAgentRegistry()
-        svc = AcpService(agent_registry=pt)
-
-        mock_conn = MagicMock()
-        mock_conn.disconnect = AsyncMock()
-        mock_proc = MagicMock()
-        mock_proc.returncode = None
-
-        active = _ActiveAgent(
-            conn=mock_conn,
-            proc=mock_proc,
-            fd0_path="/root/proc/pid-1/fd/0",
-            fd1_path="/root/proc/pid-1/fd/1",
-            fd2_path="/root/proc/pid-1/fd/2",
-        )
-        svc._connections["pid-1"] = active
-        pt._procs["pid-1"] = MockProcessDescriptor(pid="pid-1")
-
-        # Should not raise even without pipe_manager
-        svc.kill_agent("pid-1")
-        mock_proc.kill.assert_called_once()
+        # Verify DT_PIPEs destroyed via nx.pipe_destroy (all 3 fds)
+        assert "/root/proc/pid-1/fd/0" in destroyed
+        assert "/root/proc/pid-1/fd/1" in destroyed
+        assert "/root/proc/pid-1/fd/2" in destroyed
 
 
 class TestAcpServiceCloseAll:
@@ -206,9 +159,13 @@ class TestAcpServiceCloseAll:
 
     def test_close_all_cleans_up(self):
         pt = MockAgentRegistry()
-        pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
+
+        # Teardown goes through nx.pipe_destroy post IPC Rust-ification.
+        destroyed: list[str] = []
+        mock_nx = MagicMock()
+        mock_nx.pipe_destroy = MagicMock(side_effect=lambda path: destroyed.append(path))
+        svc.bind_fs(mock_nx)
 
         for i in range(3):
             mock_conn = MagicMock()
@@ -226,7 +183,7 @@ class TestAcpServiceCloseAll:
         svc.close_all()
 
         assert len(svc._connections) == 0
-        assert len(pm.destroyed) == 9  # 3 pipes per agent × 3 agents
+        assert len(destroyed) == 9  # 3 pipes per agent × 3 agents
 
 
 class TestAcpServiceCallAgent:
@@ -238,9 +195,7 @@ class TestAcpServiceCallAgent:
         import json
 
         pt = MockAgentRegistry()
-        pm = MockPipeManager()
         svc = AcpService(agent_registry=pt)
-        svc.bind_pipe_manager(pm)
 
         # Mock NexusFS with agent config file
         agent_config = {

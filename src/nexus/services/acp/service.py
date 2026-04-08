@@ -91,7 +91,6 @@ class AcpService:
         self._agent_registry = agent_registry
         self._zone_id = zone_id
         self._nexus_fs: VFSOperations | None = None
-        self._pipe_manager: Any | None = None
         self._connections: dict[str, _ActiveAgent] = {}
         # Agent termination callbacks — invoked with agent_id on kill/disconnect
         # (Issue #3398 decision 2A: permission lease revocation on agent death)
@@ -132,11 +131,6 @@ class AcpService:
             if cid == callback_id:
                 return
         self._on_terminate_callbacks.append((callback_id, callback))
-
-    def bind_pipe_manager(self, pipe_manager: Any) -> None:
-        """Legacy shim — no longer needed. Pipe registration uses NexusFS._kernel directly."""
-        # No-op: PipeManager deleted. Agent stdio pipes registered via NexusFS.
-        pass
 
     # ------------------------------------------------------------------
     # Public API

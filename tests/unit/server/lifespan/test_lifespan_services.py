@@ -37,7 +37,6 @@ def _make_nexus_fs(**attrs) -> SimpleNamespace:
         "config": None,
         "service_coordinator": None,
         "_agent_registry": None,
-        "_pipe_manager": None,
     }
     defaults.update(attrs)
     ns = SimpleNamespace(**defaults)
@@ -134,7 +133,6 @@ class TestFromAppSystemServices:
     def test_extracts_system_services(self) -> None:
         """System services (eviction_manager, etc.) are extracted via nx.service()."""
         nx = _make_nexus_fs(
-            _pipe_manager="pipe_mgr",
             _service_map={
                 "eviction_manager": "em",
                 "write_observer": "write_obs",
@@ -147,7 +145,6 @@ class TestFromAppSystemServices:
         assert svc.eviction_manager == "em"
         assert svc.write_observer == "write_obs"
         assert svc.zone_lifecycle == "zl"
-        assert svc.pipe_manager == "pipe_mgr"
 
     def test_empty_service_registry_yields_none(self) -> None:
         """When no services registered, all system service fields are None."""

@@ -29,6 +29,7 @@ import { useConnectorsStore } from "../../src/stores/connectors-store.js";
 import { useStackStore } from "../../src/stores/stack-store.js";
 import { useUiStore } from "../../src/stores/ui-store.js";
 import { useGlobalStore } from "../../src/stores/global-store.js";
+import { _setDimensionsForTesting, terminalDimensions } from "../../src/shared/terminal-dimensions.js";
 
 // =============================================================================
 // Helpers
@@ -37,17 +38,23 @@ import { useGlobalStore } from "../../src/stores/global-store.js";
 type TestSetup = Awaited<ReturnType<typeof testRender>>;
 
 let setup: TestSetup;
+let savedDimensions: { width: number; height: number };
 
 async function renderSideNav(
   props: { activePanel?: string; visible?: boolean },
   options?: { width?: number; height?: number },
 ) {
+  const w = options?.width ?? 140;
+  const h = options?.height ?? 20;
+  // Sync the centralized terminal dimensions signal with the renderer viewport
+  // so SideNav's responsive breakpoints match the test's intended size (#3501).
+  _setDimensionsForTesting({ width: w, height: h });
   setup = await testRender(
     () => <SideNav
       activePanel={(props.activePanel ?? "files") as any}
       visible={props.visible ?? true}
     />,
-    { width: options?.width ?? 140, height: options?.height ?? 20 },
+    { width: w, height: h },
   );
   await setup.renderOnce();
   return setup.captureCharFrame();
@@ -81,10 +88,12 @@ function resetStores(): void {
 
 describe("SideNav render", () => {
   beforeEach(() => {
+    savedDimensions = { ...terminalDimensions() };
     resetStores();
   });
 
   afterEach(() => {
+    _setDimensionsForTesting(savedDimensions);
     if (setup) {
       setup.renderer.destroy();
     }

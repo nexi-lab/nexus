@@ -28,6 +28,21 @@ export const FULL_THRESHOLD = 120;
 export const COLLAPSED_THRESHOLD = 80;
 
 /**
+ * Minimum terminal width for the app to be usable.
+ *
+ * Below this threshold the TerminalGuard fires and shows a "please resize"
+ * message instead of the application. Must be less than COLLAPSED_THRESHOLD
+ * so the hidden-sidebar layout mode (60–79 cols) is reachable.
+ */
+export const TERMINAL_GUARD_MIN_COLS = 60;
+
+/** Minimum terminal rows for the app to be usable (TerminalGuard threshold). */
+export const TERMINAL_GUARD_MIN_ROWS = 24;
+
+/** Debounce duration (ms) applied to terminal resize events. */
+export const RESIZE_DEBOUNCE_MS = 150;
+
+/**
  * Character width of the sidebar in full mode.
  *
  * Layout: " S:Label____◂ " — 2 (left pad) + 1 (shortcut) + 1 (:) + label + 2 (indicator + right pad)

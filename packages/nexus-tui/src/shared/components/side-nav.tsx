@@ -12,10 +12,10 @@
  */
 
 import { createSignal, For, onCleanup } from "solid-js";
-import { useTerminalDimensions } from "@opentui/solid";
 import { palette } from "../theme.js";
 import { NAV_ITEMS, type NavItem } from "../nav-items.js";
 import { getSideNavMode, STALE_THRESHOLD_MS, type SideNavMode } from "./side-nav-utils.js";
+import { terminalDimensions } from "../terminal-dimensions.js";
 import type { PanelId } from "../../stores/global-store.js";
 import { useUiStore } from "../../stores/ui-store.js";
 import { useVisibleTabs } from "../hooks/use-visible-tabs.js";
@@ -141,7 +141,6 @@ interface SideNavProps {
 const STALE_CHECK_INTERVAL_MS = 10_000;
 
 export function SideNav(props: SideNavProps) {
-  const terminalDimensions = useTerminalDimensions();
   const mode = () => getSideNavMode(terminalDimensions().width);
 
   // Periodic tick so stale derivation re-evaluates over time

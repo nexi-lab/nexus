@@ -1,36 +1,40 @@
 /**
  * SSE lifecycle integration test.
  *
- * Tests connection state transitions:
+ * Tests connection state transitions via the SSE bus:
  *   connected → disconnect → reconnecting (attempt 1-10) → exhausted → manual retry
  *
  * Verifies correct status strings at each state for wireframe Screen 11.
  *
  * @see Issue #3250 Screen 11 wireframe, Issue 11A
+ * @see Issue #3632 §3 — SSE bus migration
  */
 
 import { describe, it, expect, beforeEach } from "bun:test";
+import { useSseBus } from "../../src/stores/sse-bus.js";
 import { useEventsStore } from "../../src/stores/events-store.js";
 
 describe("SSE lifecycle states", () => {
   beforeEach(() => {
-    useEventsStore.getState().disconnect();
-    useEventsStore.setState({
-      events: [],
+    useSseBus.getState().disconnect();
+    useSseBus.setState({
       connected: false,
       reconnectCount: 0,
       reconnectExhausted: false,
+    });
+    useEventsStore.getState().eventsBuffer.clear();
+    useEventsStore.setState({
+      events: [],
       filters: { eventType: null, search: null },
       filteredEvents: [],
       eventsOverflowed: false,
       evictedCount: 0,
-      sseClient: null,
     });
   });
 
   describe("connection state indicators", () => {
     it("shows disconnected state initially", () => {
-      const state = useEventsStore.getState();
+      const state = useSseBus.getState();
       expect(state.connected).toBe(false);
       expect(state.reconnectCount).toBe(0);
       expect(state.reconnectExhausted).toBe(false);
@@ -38,19 +42,19 @@ describe("SSE lifecycle states", () => {
     });
 
     it("shows connected state when connected", () => {
-      useEventsStore.setState({ connected: true });
-      const state = useEventsStore.getState();
+      useSseBus.setState({ connected: true });
+      const state = useSseBus.getState();
       expect(state.connected).toBe(true);
       // Wireframe: "● Connected — N events"
     });
 
     it("shows reconnecting state with attempt count", () => {
-      useEventsStore.setState({
+      useSseBus.setState({
         connected: false,
         reconnectCount: 3,
         reconnectExhausted: false,
       });
-      const state = useEventsStore.getState();
+      const state = useSseBus.getState();
       expect(state.connected).toBe(false);
       expect(state.reconnectCount).toBe(3);
       expect(state.reconnectExhausted).toBe(false);
@@ -58,12 +62,12 @@ describe("SSE lifecycle states", () => {
     });
 
     it("shows exhausted state after max retries", () => {
-      useEventsStore.setState({
+      useSseBus.setState({
         connected: false,
         reconnectCount: 10,
         reconnectExhausted: true,
       });
-      const state = useEventsStore.getState();
+      const state = useSseBus.getState();
       expect(state.reconnectExhausted).toBe(true);
       // Wireframe: "✕ Reconnect failed after 10 attempts — press r to retry"
     });
@@ -86,28 +90,27 @@ describe("SSE lifecycle states", () => {
 
   describe("disconnect resets state", () => {
     it("resets reconnection tracking on disconnect", () => {
-      useEventsStore.setState({
+      useSseBus.setState({
         connected: true,
         reconnectCount: 5,
         reconnectExhausted: false,
       });
 
-      useEventsStore.getState().disconnect();
-      const state = useEventsStore.getState();
+      useSseBus.getState().disconnect();
+      const state = useSseBus.getState();
       expect(state.connected).toBe(false);
       expect(state.reconnectCount).toBe(0);
-      expect(state.sseClient).toBeNull();
     });
   });
 
   describe("filter persistence across reconnection", () => {
     it("preserves filters when connection drops", () => {
       // Set up filters while connected
-      useEventsStore.setState({ connected: true });
+      useSseBus.setState({ connected: true });
       useEventsStore.getState().setFilter({ eventType: "file.write", search: "important" });
 
       // Simulate disconnect
-      useEventsStore.setState({ connected: false, reconnectCount: 1 });
+      useSseBus.setState({ connected: false, reconnectCount: 1 });
 
       // Filters should still be set
       const state = useEventsStore.getState();

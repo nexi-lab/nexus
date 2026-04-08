@@ -101,7 +101,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
   initConfig: (overrides) => {
     const config = resolveConfig({ transformKeys: false, ...overrides });
     const client = new FetchClient(config);
-    set({ config, client, connectionStatus: client ? "connecting" : "disconnected" });
+    set({ config, client, userInfo: null, connectionStatus: client ? "connecting" : "disconnected" });
 
     if (client) {
       get().testConnection();
@@ -118,12 +118,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
     set({ connectionStatus: "connecting", connectionError: null });
 
     try {
-      // Consolidated connection check (Decision 5A): health + features + auth in one flow.
-      // Connection check: health + features only. /auth/me is deferred until AFTER
-      // connection succeeds to avoid blocking Bun's per-host connection pool
-      // (some servers hang on /auth/me indefinitely, starving all other requests).
+      // Connection check (Decision 5A): health + features only. /auth/me is deferred
+      // until AFTER connection succeeds to avoid blocking Bun's per-host connection
+      // pool (some servers hang on /auth/me indefinitely, starving all other requests).
       const fast = { timeout: 8_000 };
-      let userInfo: UserInfo | null = null;
 
       let [health, features] = await Promise.all([
         client.get<{ status?: string; uptime_seconds?: number }>(
@@ -176,7 +174,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       set({
         serverVersion: features?.version ?? get().serverVersion,
         uptime: health.uptime_seconds ?? get().uptime,
-        userInfo,
+        userInfo: null,
       });
       if (features) {
         get().setFeatures(features);
@@ -187,8 +185,24 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       // double-fetch when setFeatures() was already called above.
       get().setConnectionStatus("connected");
 
-      // /auth/me is skipped during testConnection — it hangs on many servers
-      // and blocks Bun's connection pool. userInfo is populated lazily if needed.
+      // Deferred /auth/me: populate identity in status bar without blocking connection.
+      // Use a dedicated no-retry client so a hung auth endpoint cannot contend
+      // with normal traffic on the shared connection pool.
+      const cfg = get().config;
+      const activeClient = get().client;
+      if (activeClient) {
+        void (async () => {
+          try {
+            const authClient = new FetchClient({ ...cfg, maxRetries: 0, timeout: 4_000 });
+            const info = await authClient.get<UserInfo>("/auth/me");
+            // Only apply if this client is still the active one (guards against
+            // stale writes after reconnect / identity switch).
+            if (info && get().client === activeClient && get().connectionStatus === "connected") {
+              set({ userInfo: info });
+            }
+          } catch { /* non-critical: status bar falls back to agentId */ }
+        })();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Connection test failed";
       set({
@@ -211,7 +225,10 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
 
   setConnectionStatus: (status, error) => {
     const previous = get().connectionStatus;
-    set({ connectionStatus: status, connectionError: error ?? null });
+    // Clear stale identity when leaving connected state so the status bar
+    // never shows a previous principal during reconnect/disconnect flows.
+    const clearIdentity = previous === "connected" && status !== "connected" ? { userInfo: null } : {};
+    set({ connectionStatus: status, connectionError: error ?? null, ...clearIdentity });
     // Refresh features whenever a connection is (re-)established.
     // The TTL guard in refreshFeatures() prevents a double-fetch when
     // testConnection() already called setFeatures() moments ago.
@@ -238,7 +255,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       zoneId: "zoneId" in identity ? identity.zoneId : currentConfig.zoneId,
     };
     const client = new FetchClient(config);
-    set({ config, client });
+    set({ config, client, userInfo: null });
   },
 
   setFeatures: (features) => {

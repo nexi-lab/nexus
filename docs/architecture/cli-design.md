@@ -4,34 +4,45 @@
 
 Nexus has two fundamentally different runtime modes:
 
-1. **In-process (invocation-style)**: Agent imports `nexus` as a library,
-   calls syscalls directly. No daemon, no RPC. This is the local-first default.
-2. **Daemon (persistent)**: A long-running `nexusd` process on a node, exposing
-   gRPC/HTTP. Other processes (CLI, agents, peers) connect via RPC.
-
-Previously, both client CLI commands and server startup lived in a single
-`nexus` binary, making it unclear whether a command was remote (RPC) or local
-(in-process). After PR #2842 deleted the `serve`/`start` commands, there is
-no way to start the daemon at all.
+1. **In-process (invocation-style)** — `nexus`: A NexusFS instance embedded
+   in the invoker's process. Lifecycle tied to the invoker — exits when the
+   invoker exits. Can operate as a REMOTE-profile RPC client (proxying
+   to a nexusd) OR as a full embedded instance (e.g. CLUSTER profile
+   with local storage). The invoker decides.
+2. **Daemon (persistent)** — `nexusd`: A long-running daemon process on a
+   node, exposing gRPC/HTTP. Manages local storage, serves RPC, participates
+   in federation. Self-managed lifecycle (SIGTERM to stop).
 
 This design introduces a clean two-binary split inspired by Unix conventions
 (`docker`/`dockerd`, `consul`/`consul agent`) and the Nexus OS metaphor.
 
 ## The Two Binaries
 
-### `nexus` — Client CLI (remote, via RPC)
+### `nexus` — In-process, Invocation-style
 
-Pure client. Every command connects to a running `nexusd` via gRPC/HTTP.
-Never starts a server, never touches local storage directly.
+Starts a NexusFS instance **in the invoker's process**. The instance's
+lifecycle is tied to the invoker — when the invoker exits, NexusFS exits.
+
+Two modes of operation depending on the command:
+
+**RPC client commands** (`ls`, `cat`, `write`, `grep`, ...):
+Start a REMOTE-profile NexusFS that proxies all syscalls to a running
+`nexusd` via gRPC. Functionally a thin client — no local storage, no
+bricks. Requires a `nexusd` to be running.
+
+**Embedded commands** (`chat`):
+Start a full NexusFS instance (e.g. CLUSTER profile) in-process, with
+local storage (`~/.nexus/data`), bricks, and kernel. No `nexusd` required.
+The NexusFS is exclusive to this process and exits when the process exits.
 
 ```
 nexus <command> [args] [flags]
 ```
 
-Connection target resolved by (highest priority first):
+Connection target for RPC commands (highest priority first):
 1. `--remote-url` / `--remote-api-key` flags
 2. `NEXUS_URL` / `NEXUS_API_KEY` environment variables
-3. Active profile in `~/.nexus/config.yaml`
+3. Active connection in `~/.nexus/config.yaml`
 
 Examples:
 ```bash
@@ -98,6 +109,7 @@ a long-running background process without implying centralized architecture.
 | `glob`, `grep` | `nexus` | Search via RPC |
 | `admin`, `rebac`, `versions` | `nexus` | Management via RPC |
 | `status`, `doctor` | `nexus` | Health checks via RPC |
+| `chat` | `nexus` | Agent REPL (embedded NexusFS or --with nexusd) |
 | `profile`, `connect`, `config` | `nexus` | Local CLI config (no RPC) |
 | Start daemon | `nexusd` | Starts the node process |
 | `join` (federation) | `nexusd` | Node-local operation |

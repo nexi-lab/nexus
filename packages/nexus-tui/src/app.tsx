@@ -5,9 +5,10 @@
  * Shows PreConnectionScreen when the server is unavailable (Decision 3A).
  */
 
-import { createEffect, createMemo, createSignal, Match, Show, Switch } from "solid-js";
+import { createEffect, createMemo, createSignal, Match, onCleanup, Show, Switch } from "solid-js";
 import type { JSX } from "solid-js";
 import { useGlobalStore, type PanelId } from "./stores/global-store.js";
+import { useSseBus } from "./stores/sse-bus.js";
 import { useUiStore } from "./stores/ui-store.js";
 import { useErrorStore } from "./stores/error-store.js";
 import { useAnnouncementStore } from "./stores/announcement-store.js";
@@ -172,6 +173,24 @@ export function App() {
       );
     }
     previousConnection = cs;
+  });
+
+  // SSE bus: connect when the server is reachable, reconnect on identity change.
+  createEffect(() => {
+    const cs = useGlobalStore((s) => s.connectionStatus);
+    const cfg = useGlobalStore((s) => s.config);
+    if (cs === "connected" && cfg.apiKey && cfg.baseUrl) {
+      queueMicrotask(() => {
+        useSseBus.getState().connect(cfg.baseUrl!, cfg.apiKey, {
+          agentId: cfg.agentId,
+          subject: cfg.subject,
+          zoneId: cfg.zoneId,
+        });
+      });
+    } else if (cs !== "connected") {
+      queueMicrotask(() => useSseBus.getState().disconnect());
+    }
+    onCleanup(() => useSseBus.getState().disconnect());
   });
 
   createEffect(() => {

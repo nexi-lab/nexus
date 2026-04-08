@@ -119,6 +119,54 @@ class MountTable:
         self._rust: Any = RustPathRouter() if RustPathRouter is not None else None
         self._kernel: Any = None  # late-bound; set by NexusFS after Kernel is created
 
+    def bind_kernel(self, kernel: Any) -> None:
+        """Late-bind the Rust kernel and backfill any pre-existing mounts.
+
+        Tests (and any caller that adds mounts before NexusFS construction)
+        can register entries on a bare MountTable. NexusFS calls this method
+        after the kernel exists so the kernel router sees the same mounts as
+        Python.  Without backfill, sys_mkdir/sys_write fail with
+        ``No mount found for path: <...>`` even though the mount exists in
+        ``self._entries``.
+        """
+        self._kernel = kernel
+        if not self._entries:
+            return
+        for canonical, entry in self._entries.items():
+            # canonical key is "/{zone_id}{mount_point}"; recover them.
+            if canonical.startswith("/"):
+                first_slash = canonical.find("/", 1)
+                if first_slash > 0:
+                    zone_id = canonical[1:first_slash]
+                    mount_point = canonical[first_slash:] or "/"
+                else:
+                    zone_id = canonical[1:] or ROOT_ZONE_ID
+                    mount_point = "/"
+            else:
+                zone_id = ROOT_ZONE_ID
+                mount_point = canonical
+            backend = entry.backend
+            _backend_name = str(getattr(backend, "name", "unknown"))
+            _is_cas_local = getattr(backend, "has_root_path", False) and type(
+                backend
+            ).__name__.startswith("CAS")
+            _local_root = str(getattr(backend, "root_path", None)) if _is_cas_local else None
+            _ms = entry.metastore
+            _ms_path = getattr(_ms, "_redb_path", None) if _ms else None
+            with contextlib.suppress(Exception):
+                kernel.add_mount(
+                    mount_point,
+                    zone_id,
+                    entry.readonly,
+                    entry.admin_only,
+                    entry.io_profile,
+                    _backend_name,
+                    _local_root,
+                    True,
+                    py_backend=backend,
+                    metastore_path=str(_ms_path) if _ms_path else None,
+                )
+
     # -- Write operations (called by coordinator) ---------------------------
 
     def add(

@@ -14,7 +14,7 @@
 //! Issue #1868: Phase H — kernel boundary collapse.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
-use crate::dispatch::{MutationObserver, Trie};
+use crate::dispatch::{FileEvent, MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
@@ -231,24 +231,30 @@ pub struct StatResult {
 
 /// Observer entry — pure Rust, no PyO3 dependency.
 ///
-/// Stores `Box<dyn MutationObserver>` (either Rust-native or PyMutationObserverAdapter).
-/// The event_mask bitmask matching happens without GIL.
+/// Stores `Arc<dyn MutationObserver>` so the deferred ThreadPool worker
+/// (added in §11 Phase 3) can clone the trait object across threads.
+/// `event_mask` bitmask matching happens without holding the GIL.
 struct KernelObserverEntry {
-    observer: Box<dyn MutationObserver>,
+    observer: Arc<dyn MutationObserver>,
     name: String,
     event_mask: u32,
-    is_inline: bool,
 }
 
 /// Pure Rust observer registry — event-type bitmask filtering without GIL.
 ///
-/// Moved from PyKernel (Phase 10). PyMutationObserverAdapter implements
-/// MutationObserver, so Python observers work transparently.
-/// Future: Rust-native observers (audit logger, search indexer) get zero-crossing dispatch.
+/// Single dispatch path for all OBSERVE-phase observers. The trait
+/// `MutationObserver` takes `&FileEvent` (post §11 Phase 2); the
+/// `PyMutationObserverAdapter` is the boundary that converts `&FileEvent`
+/// to a Python `FileEvent` once per call.
+///
+/// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was
+/// deleted in §11 Phase 2: it overlapped with INTERCEPT POST hooks and
+/// violated dispatch-contract orthogonality. All observers are deferred.
 struct KernelObserverRegistry {
     observers: Vec<KernelObserverEntry>,
 }
 
+#[allow(dead_code)]
 impl KernelObserverRegistry {
     fn new() -> Self {
         Self {
@@ -256,23 +262,17 @@ impl KernelObserverRegistry {
         }
     }
 
-    /// Register observer with event_mask + is_inline flag.
-    fn register(
-        &mut self,
-        observer: Box<dyn MutationObserver>,
-        name: String,
-        event_mask: u32,
-        is_inline: bool,
-    ) {
+    /// Register an observer with its event-type bitmask.
+    fn register(&mut self, observer: Arc<dyn MutationObserver>, name: String, event_mask: u32) {
         self.observers.push(KernelObserverEntry {
             observer,
             name,
             event_mask,
-            is_inline,
         });
     }
 
-    /// Unregister by name (identity not available for trait objects).
+    /// Unregister by name (identity is not available for trait objects).
+    /// Returns true if a registration with that name was removed.
     fn unregister(&mut self, name: &str) -> bool {
         if let Some(pos) = self.observers.iter().position(|e| e.name == name) {
             self.observers.remove(pos);
@@ -281,25 +281,17 @@ impl KernelObserverRegistry {
         false
     }
 
-    /// Dispatch matching observers inline (bitmask filter + on_mutation call).
-    /// No GIL needed for the filter loop. PyMutationObserverAdapter acquires GIL
-    /// only inside on_mutation().
-    fn dispatch_inline(&self, event_type: u32, path: &str) {
-        for entry in &self.observers {
-            if entry.is_inline && entry.event_mask & event_type != 0 {
-                entry.observer.on_mutation(event_type, path);
-            }
-        }
-    }
-
-    /// Return indices of deferred (non-inline) observers matching event_type.
-    /// Caller (PyKernel) uses indices to get Py<PyAny> refs for asyncio.create_task().
-    fn get_deferred_indices(&self, event_type: u32) -> Vec<usize> {
+    /// Return clones of all observers whose event_mask matches `event.event_type`.
+    ///
+    /// The dispatch loop (`Kernel::dispatch_observers`, §11 Phase 3) submits
+    /// each clone to the deferred ThreadPool. Returning Arc clones lets the
+    /// pool borrow the registry lock for the minimum possible time — the
+    /// caller releases the lock before doing any per-observer work.
+    fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
         self.observers
             .iter()
-            .enumerate()
-            .filter(|(_, e)| !e.is_inline && e.event_mask & event_type != 0)
-            .map(|(i, _)| i)
+            .filter(|e| e.event_mask & event_type_bit != 0)
+            .map(|e| Arc::clone(&e.observer))
             .collect()
     }
 
@@ -364,7 +356,13 @@ pub struct Kernel {
     copy_hook_count: AtomicU64,
     access_hook_count: AtomicU64,
     write_batch_hook_count: AtomicU64,
-    // Observer registry (owned by kernel — bitmask matching without GIL)
+    // Observer registry (owned by kernel — bitmask matching without GIL).
+    //
+    // Field is accessed only via the `register_observer` / `dispatch_observers`
+    // methods, which currently have no callers — Phase 5 wires them into the
+    // sys_* methods, Phase 6 wires PyKernel.register_observer to delegate
+    // here. Until then this is intentional pre-built infrastructure.
+    #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
@@ -838,37 +836,59 @@ impl Kernel {
         }
     }
 
-    // ── Observer registry (Phase 10) ────────────────────────────────────
+    // ── Observer registry (§10 Phase 10 / §11 Phase 2) ────────────────
+    //
+    // These methods are pre-built infrastructure for §11 Phases 3/5/6:
+    //   - Phase 3: replaces the inline loop with a `ThreadPool::execute()`
+    //     submission so observers run off the syscall hot path.
+    //   - Phase 5: kernel sys_* methods call `dispatch_observers` after
+    //     each successful mutation.
+    //   - Phase 6: PyKernel.register_observer rewires from the legacy
+    //     `Py<PyAny>`-based ObserverRegistry to this Rust-typed registry,
+    //     and the legacy registry is deleted.
+    //
+    // No production caller exists yet, hence #[allow(dead_code)] — the
+    // attribute is removed when Phase 5 wires the first call site.
 
     /// Register a mutation observer (pure Rust or PyMutationObserverAdapter).
+    ///
+    /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all observers run on
+    /// the deferred ThreadPool (added in Phase 3). Observers needing
+    /// synchronous-blocking semantics must be moved to INTERCEPT POST.
+    #[allow(dead_code)]
     pub fn register_observer(
         &self,
-        observer: Box<dyn MutationObserver>,
+        observer: Arc<dyn MutationObserver>,
         name: String,
         event_mask: u32,
-        is_inline: bool,
     ) {
-        self.observers
-            .lock()
-            .register(observer, name, event_mask, is_inline);
+        self.observers.lock().register(observer, name, event_mask);
     }
 
-    /// Unregister observer by name.
+    /// Unregister observer by name. Returns true if removed.
+    #[allow(dead_code)]
     pub fn unregister_observer(&self, name: &str) -> bool {
         self.observers.lock().unregister(name)
     }
 
-    /// Dispatch inline observers matching event_type (no GIL for filter loop).
-    pub fn dispatch_observers_inline(&self, event_type: u32, path: &str) {
-        self.observers.lock().dispatch_inline(event_type, path);
-    }
-
-    /// Get indices of deferred observers matching event_type.
-    pub fn get_deferred_observer_indices(&self, event_type: u32) -> Vec<usize> {
-        self.observers.lock().get_deferred_indices(event_type)
+    /// OBSERVE-phase dispatch — fire all observers whose event_mask
+    /// matches `event.event_type`.
+    ///
+    /// Currently runs synchronously on the caller's thread. §11 Phase 3
+    /// swaps the per-observer call out to a deferred ThreadPool so it
+    /// runs off the syscall hot path.
+    #[allow(dead_code)]
+    pub fn dispatch_observers(&self, event: &FileEvent) {
+        // Snapshot matching observers, then drop the lock so observer
+        // callbacks can re-enter the kernel without deadlocking.
+        let observers = self.observers.lock().matching(event.event_type as u32);
+        for obs in observers {
+            obs.on_mutation(event);
+        }
     }
 
     /// Number of registered observers.
+    #[allow(dead_code)]
     pub fn observer_count(&self) -> usize {
         self.observers.lock().count()
     }

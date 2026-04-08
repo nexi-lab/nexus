@@ -1321,6 +1321,34 @@ def _gen_dispatch_method(trait_name: str, method: FuncDef) -> list[str]:
         sig_params.append(f"{p.name}: {p.rust_type}")
     sig = ", ".join(sig_params)
 
+    # ── Special case: &FileEvent parameter (MutationObserver::on_mutation)
+    #
+    # The trait passes a `&FileEvent` (Rust struct from dispatch.rs). PyO3
+    # cannot auto-convert it, so we route through the `file_event_to_py`
+    # helper emitted at the top of `_dispatch_adapter_bodies`. This is the
+    # only place a Rust struct crosses into Python in the dispatch direction;
+    # if we add more such structs we should generalize this.
+    file_event_param = next(
+        (p for p in params if p.rust_type == "&FileEvent"),
+        None,
+    )
+    if file_event_param is not None:
+        lines.append(f"    fn {name}({sig}) {{")
+        lines.append("        Python::attach(|py| {")
+        lines.append(
+            f"            let py_event = match file_event_to_py(py, {file_event_param.name}) {{"
+        )
+        lines.append("                Ok(ev) => ev,")
+        lines.append("                Err(_) => return,")
+        lines.append("            };")
+        lines.append("            let hook = self.inner.bind(py);")
+        lines.append(f'            if let Ok(method) = hook.getattr("{name}") {{')
+        lines.append("                let _ = method.call1((py_event,));")
+        lines.append("            }")
+        lines.append("        });")
+        lines.append("    }")
+        return lines
+
     # Determine the method body pattern from return type
     if "Result<(), PyErr>" in ret:
         # Pre-hook: call method, propagate error. Graceful if method missing.
@@ -1541,6 +1569,83 @@ def _dispatch_adapter_bodies(traits: list[TraitDef]) -> list[str]:
     trait_map = {t.name: t for t in traits}
     lines: list[str] = []
 
+    # ── Boundary helper: Rust FileEvent → Python FileEvent ────────────
+    #
+    # MutationObserver::on_mutation takes `&FileEvent` (Rust struct in
+    # dispatch.rs). The PyMutationObserverAdapter must convert it to a
+    # Python `nexus.core.file_events.FileEvent` (frozen dataclass) so the
+    # observer's `on_mutation(event)` Python method receives the right
+    # type. We import the class once via OnceLock — subsequent calls hit
+    # an unbind()/bind() pair (~ns) and skip the import lookup.
+    #
+    # Lives here (and not in dispatch.rs) because dispatch.rs is pure
+    # Rust with zero PyO3 dependency.
+    needs_file_event_helper = any(
+        any(p.rust_type == "&FileEvent" for p in m.params)
+        for trait_name in DISPATCH_ADAPTERS
+        for t in [trait_map.get(trait_name)]
+        if t is not None
+        for m in t.methods
+    )
+    if needs_file_event_helper:
+        lines.extend(
+            [
+                "",
+                "// ── file_event_to_py — Rust FileEvent → Python FileEvent ──────────",
+                "//",
+                "// Converts a Rust `crate::dispatch::FileEvent` to a Python",
+                "// `nexus.core.file_events.FileEvent` (frozen dataclass). The class",
+                "// is cached once via OnceLock — subsequent calls skip the import.",
+                "// Used by `PyMutationObserverAdapter::on_mutation` to bridge the",
+                "// kernel-internal struct to user observer code.",
+                "",
+                "static FILE_EVENT_CLASS: std::sync::OnceLock<Option<Py<PyAny>>> =",
+                "    std::sync::OnceLock::new();",
+                "",
+                "fn file_event_class(py: Python<'_>) -> Option<&'static Py<PyAny>> {",
+                "    FILE_EVENT_CLASS",
+                "        .get_or_init(|| {",
+                '            let m = py.import("nexus.core.file_events").ok()?;',
+                '            let cls = m.getattr("FileEvent").ok()?.unbind();',
+                "            Some(cls)",
+                "        })",
+                "        .as_ref()",
+                "}",
+                "",
+                "fn file_event_to_py(",
+                "    py: Python<'_>,",
+                "    event: &crate::dispatch::FileEvent,",
+                ") -> PyResult<Py<PyAny>> {",
+                "    let cls = file_event_class(py).ok_or_else(|| {",
+                "        pyo3::exceptions::PyRuntimeError::new_err(",
+                '            "FileEvent class not importable from nexus.core.file_events",',
+                "        )",
+                "    })?;",
+                "    let kwargs = PyDict::new(py);",
+                "    // type is the StrEnum string value — Python's __init__ accepts",
+                "    // either FileEventType enum or its string value.",
+                '    kwargs.set_item("type", event.event_type.as_str())?;',
+                '    kwargs.set_item("path", &event.path)?;',
+                '    kwargs.set_item("zone_id", event.zone_id.as_deref())?;',
+                '    kwargs.set_item("timestamp", &event.timestamp)?;',
+                '    kwargs.set_item("event_id", &event.event_id)?;',
+                '    kwargs.set_item("old_path", event.old_path.as_deref())?;',
+                '    kwargs.set_item("size", event.size)?;',
+                '    kwargs.set_item("etag", event.etag.as_deref())?;',
+                '    kwargs.set_item("agent_id", event.agent_id.as_deref())?;',
+                '    kwargs.set_item("vector_clock", event.vector_clock.as_deref())?;',
+                '    kwargs.set_item("sequence_number", event.sequence_number)?;',
+                '    kwargs.set_item("user_id", event.user_id.as_deref())?;',
+                '    kwargs.set_item("version", event.version)?;',
+                '    kwargs.set_item("is_new", event.is_new)?;',
+                '    kwargs.set_item("new_path", event.new_path.as_deref())?;',
+                '    kwargs.set_item("old_etag", event.old_etag.as_deref())?;',
+                "    let obj = cls.bind(py).call((), Some(&kwargs))?;",
+                "    Ok(obj.unbind())",
+                "}",
+            ]
+        )
+
     for trait_name, config in DISPATCH_ADAPTERS.items():
         trait = trait_map.get(trait_name)
         if trait is None:
@@ -1636,7 +1741,7 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "    CasLocalBackend, LocalConnectorBackend, ObjectStore, PathLocalBackend, StorageError,",
             "    WriteResult,",
             "};",
-            "use crate::dispatch::{MutationObserver, PathResolver};",
+            "use crate::dispatch::{FileEvent, MutationObserver, PathResolver};",
             "use crate::hook_registry::{HookRegistry, InterceptHook, ObserverPair, ObserverRegistry};",
             "use crate::kernel::{Kernel, KernelError, OperationContext};",
             "use crate::lock::VFSLockManager;",
@@ -2721,50 +2826,6 @@ def generate_pyo3_rs(traits: list[TraitDef]) -> str:
             "",
             "    fn observer_count(&self) -> usize {",
             "        self.observers.lock().count()",
-            "    }",
-            "",
-            "    // ── Kernel-owned observer dispatch (Phase 10) ────────────────────",
-            "",
-            "    /// Register observer in pure Rust kernel registry (no GIL for filter loop).",
-            "    /// The PyMutationObserverAdapter wraps Python observers as Rust trait objects.",
-            "    #[pyo3(signature = (obs, name, event_mask, is_inline=true))]",
-            "    fn register_kernel_observer(",
-            "        &self,",
-            "        py: Python<'_>,",
-            "        obs: Py<PyAny>,",
-            "        name: &str,",
-            "        event_mask: u32,",
-            "        is_inline: bool,",
-            "    ) -> PyResult<()> {",
-            "        let adapter = PyMutationObserverAdapter { inner: obs };",
-            "        self.inner.register_observer(",
-            "            Box::new(adapter),",
-            "            name.to_string(),",
-            "            event_mask,",
-            "            is_inline,",
-            "        );",
-            "        let _ = py;",
-            "        Ok(())",
-            "    }",
-            "",
-            "    /// Unregister observer from kernel registry by name.",
-            "    fn unregister_kernel_observer(&self, name: &str) -> bool {",
-            "        self.inner.unregister_observer(name)",
-            "    }",
-            "",
-            "    /// Dispatch inline observers in Rust (bitmask filter without GIL).",
-            "    fn dispatch_kernel_observers_inline(&self, event_type: u32, path: &str) {",
-            "        self.inner.dispatch_observers_inline(event_type, path);",
-            "    }",
-            "",
-            "    /// Get count of deferred observers matching event_type.",
-            "    fn get_deferred_observer_count(&self, event_type: u32) -> usize {",
-            "        self.inner.get_deferred_observer_indices(event_type).len()",
-            "    }",
-            "",
-            "    /// Total observers in kernel registry.",
-            "    fn kernel_observer_count(&self) -> usize {",
-            "        self.inner.observer_count()",
             "    }",
             "",
             "    // ── Hook counts ────────────────────────────────────────────────────",

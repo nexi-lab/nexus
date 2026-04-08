@@ -23,7 +23,7 @@ class PathResolver(Protocol):
 
 @runtime_checkable
 class MutationObserver(Protocol):
-    def on_mutation(self, event_type: int, path: str) -> None: ...
+    def on_mutation(self, event: Any) -> None: ...
 
 
 @runtime_checkable

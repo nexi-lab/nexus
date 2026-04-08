@@ -199,11 +199,21 @@ pub(crate) trait PathResolver: Send + Sync {
 
 /// OBSERVE mutation observer — fire-and-forget event notification.
 ///
-/// Rust equivalent of Python `VFSObserver`.
-/// Receives event type + path after each mutation. Never aborts.
+/// Rust equivalent of Python `VFSObserver`. Receives a frozen
+/// `FileEvent` after every successful mutation. Never aborts: the
+/// dispatcher catches and logs any panic.
+///
+/// Contract: the dispatch loop submits this call to a background
+/// `ThreadPool` (`Kernel::deferred_observer_pool`) — `on_mutation`
+/// runs **off** the syscall hot path. `OBSERVE_INLINE` (the legacy
+/// "run on caller's thread" mode) was deleted in §11 Phase 2: it
+/// overlapped with INTERCEPT POST hooks and violated the orthogonality
+/// of the four dispatch contracts. Linux's analogous primitive
+/// (fsnotify) is purely fire-and-forget — observers needing causal
+/// ordering belong in INTERCEPT POST, not OBSERVE.
 #[allow(dead_code)]
 pub(crate) trait MutationObserver: Send + Sync {
-    fn on_mutation(&self, event_type: u32, path: &str);
+    fn on_mutation(&self, event: &FileEvent);
 }
 
 // ── TrieNode ──────────────────────────────────────────────────────────

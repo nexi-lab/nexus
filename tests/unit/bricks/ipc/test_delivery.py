@@ -26,8 +26,6 @@ from .fakes import (
     FlakyEventSubscriber,
     InMemoryEventPublisher,
     InMemoryVFS,
-    InMemoryWakeupListener,
-    InMemoryWakeupNotifier,
 )
 
 ZONE = "test-zone"
@@ -200,48 +198,11 @@ class TestMessageSender:
 
 
 class TestMessageSenderWakeup:
-    """Tests for DT_PIPE wakeup integration in MessageSender (#3197)."""
+    """Tests for ancillary MessageSender behaviour (TTL pub/sub)."""
 
     @pytest.fixture
     def vfs(self) -> InMemoryVFS:
         return InMemoryVFS()
-
-    @pytest.mark.asyncio
-    async def test_send_fires_wakeup_notifier(self, vfs: InMemoryVFS) -> None:
-        """MessageSender should fire wakeup notifiers after writing to inbox."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        notifier = InMemoryWakeupNotifier()
-        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[notifier])
-
-        await sender.send(_make_envelope())
-
-        assert notifier.notifications == ["agent:bob"]
-
-    @pytest.mark.asyncio
-    async def test_send_fires_multiple_notifiers(self, vfs: InMemoryVFS) -> None:
-        """All configured wakeup notifiers should be called."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        n1 = InMemoryWakeupNotifier()
-        n2 = InMemoryWakeupNotifier()
-        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[n1, n2])
-
-        await sender.send(_make_envelope())
-
-        assert n1.notifications == ["agent:bob"]
-        assert n2.notifications == ["agent:bob"]
-
-    @pytest.mark.asyncio
-    async def test_send_wakeup_failure_still_succeeds(self, vfs: InMemoryVFS) -> None:
-        """Wakeup notifier failure should not prevent message delivery."""
-        await _provision_agent(vfs, "agent:bob")
-        await _provision_agent(vfs, "agent:alice")
-        failing_notifier = InMemoryWakeupNotifier(should_fail=True)
-        sender = MessageSender(vfs, zone_id=ZONE, wakeup_notifiers=[failing_notifier])
-
-        path = await sender.send(_make_envelope())
-        assert path.startswith("/agents/agent:bob/inbox/")
 
     @pytest.mark.asyncio
     async def test_send_publishes_ttl_schedule_event(self, vfs: InMemoryVFS) -> None:
@@ -626,54 +587,6 @@ class TestListenerResilience:
 
         # Should have been called _MAX_LISTENER_RETRIES times
         assert subscriber._call_count == _MAX_LISTENER_RETRIES
-
-    @pytest.mark.asyncio
-    async def test_wakeup_listener_start_and_stop(self, vfs: InMemoryVFS) -> None:
-        """DT_PIPE wakeup listener should start and stop cleanly."""
-        await _provision_agent(vfs, "agent:bob")
-
-        async def handler(msg: MessageEnvelope) -> None:
-            pass
-
-        listener = InMemoryWakeupListener()
-        processor = MessageProcessor(
-            vfs, "agent:bob", handler, zone_id=ZONE, wakeup_listener=listener
-        )
-
-        await processor.start()
-        assert processor._wakeup_task is not None
-
-        await processor.stop()
-        assert processor._wakeup_task is None
-
-    @pytest.mark.asyncio
-    async def test_wakeup_listener_triggers_process_inbox(self, vfs: InMemoryVFS) -> None:
-        """DT_PIPE wakeup should trigger process_inbox when signal arrives."""
-        await _provision_agent(vfs, "agent:bob")
-        env = _make_envelope()
-        msg_path = message_path_in_inbox("agent:bob", env.id, env.timestamp)
-        await vfs.sys_write(msg_path, env.to_bytes(), ZONE)
-
-        received: list[MessageEnvelope] = []
-
-        async def handler(msg: MessageEnvelope) -> None:
-            received.append(msg)
-
-        listener = InMemoryWakeupListener()
-        processor = MessageProcessor(
-            vfs, "agent:bob", handler, zone_id=ZONE, wakeup_listener=listener
-        )
-        await processor.start()
-
-        # Wait for listener to be in wait state, then trigger
-        await asyncio.wait_for(listener._waiting.wait(), timeout=1.0)
-        listener.trigger()
-        await asyncio.sleep(0.05)
-
-        await processor.stop()
-
-        assert len(received) == 1
-        assert received[0].id == env.id
 
 
 # ===========================================================================

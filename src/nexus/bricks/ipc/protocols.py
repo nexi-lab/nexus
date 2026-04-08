@@ -17,48 +17,6 @@ from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
-class WakeupNotifier(Protocol):
-    """Sends lightweight wakeup signals to agents via DT_PIPE.
-
-    Implementations MUST be best-effort: ``notify()`` must not raise.
-    If the signal fails, the poll fallback will catch up.
-    """
-
-    async def notify(self, agent_id: str) -> None:
-        """Send a wakeup signal to the given agent. Must not raise."""
-        ...
-
-
-@runtime_checkable
-class WakeupListener(Protocol):
-    """Listens for wakeup signals for a specific agent.
-
-    Used by MessageProcessor to wake on DT_PIPE notifications
-    instead of (or alongside) EventBus subscriptions.
-    """
-
-    async def wait_for_wakeup(self) -> None:
-        """Block until at least one wakeup signal arrives.
-
-        Should drain all pending signals before returning (coalescing).
-        """
-        ...
-
-    def close(self) -> None:
-        """Signal the listener to stop waiting."""
-        ...
-
-
-@runtime_checkable
-class NotifyPipeFactory(Protocol):
-    """Creates notification pipes during agent provisioning."""
-
-    def create_notify_pipe(self, agent_id: str) -> None:
-        """Create a wakeup notification pipe for the agent. Idempotent."""
-        ...
-
-
-@runtime_checkable
 class EventPublisher(Protocol):
     """Minimal event publishing interface required by the IPC brick.
 

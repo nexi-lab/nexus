@@ -55,7 +55,6 @@ def test_post_send_enqueues_message() -> None:
     app = FastAPI()
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
-    app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
     app.state.zone_id = "root"
     app.include_router(router)
@@ -101,7 +100,6 @@ def test_post_send_generates_message_id_when_omitted() -> None:
     app = FastAPI()
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
-    app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
     app.state.zone_id = "wrong-zone"
     app.include_router(router)
@@ -136,7 +134,6 @@ def test_inbox_and_count_return_compatibility_shapes() -> None:
     app = FastAPI()
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
-    app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
     app.state.zone_id = "root"
     app.include_router(router)
@@ -178,7 +175,6 @@ def test_rest_endpoints_use_authenticated_zone_instead_of_app_state() -> None:
     app = FastAPI()
     app.state.ipc_nexus_fs = storage
     app.state.ipc_event_publisher = None
-    app.state.ipc_wakeup_notifiers = []
     app.state.ipc_cache_store = None
     app.state.zone_id = "root"
     app.include_router(router)
@@ -257,7 +253,6 @@ def test_sse_stream_emits_connected_and_delivery_event() -> None:
                 auth,
                 storage,
                 event_publisher,
-                [],
                 cache_store,
             )
         )

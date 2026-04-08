@@ -65,7 +65,7 @@ class SecretsService:
 
     def _base_query(
         self, namespace: str, key: str, subject_id: str | None, subject_type: str | None = None
-    ):
+    ) -> Any:
         """Build a base query filtered by namespace, key, and optionally subject_id + subject_type."""
         stmt = select(SecretStoreModel).where(
             SecretStoreModel.namespace == namespace,

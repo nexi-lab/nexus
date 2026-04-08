@@ -1,7 +1,7 @@
 """feat: Add subject isolation to secret_store unique constraint
 
-Revision ID: add_secret_store_subject_isolation
-Revises: add_secret_store_tables
+Revision ID: a7ss_subj_iso
+Revises: a7ss_create
 Create Date: 2026-04-07
 
 Changes:
@@ -19,8 +19,8 @@ from typing import Union
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "add_secret_store_subject_isolation"
-down_revision: Union[str, Sequence[str], None] = "add_secret_store_tables"
+revision: str = "a7ss_subj_iso"
+down_revision: Union[str, Sequence[str], None] = "a7ss_create"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

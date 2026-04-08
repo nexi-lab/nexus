@@ -18,7 +18,7 @@ the asyncio event loop during synchronous SQLAlchemy I/O.
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -74,15 +74,18 @@ def put_secret(
         raise HTTPException(status_code=400, detail="value is required")
 
     try:
-        return service.put_secret(
-            namespace=namespace,
-            key=key,
-            value=value,
-            description=description,
-            actor_id=actor_id,
-            zone_id=zone_id,
-            subject_id=subject_id,
-            subject_type=subject_type,
+        return cast(
+            "dict[str, Any]",
+            service.put_secret(
+                namespace=namespace,
+                key=key,
+                value=value,
+                description=description,
+                actor_id=actor_id,
+                zone_id=zone_id,
+                subject_id=subject_id,
+                subject_type=subject_type,
+            ),
         )
     except Exception as e:
         logger.error("Failed to put secret: %s", e)

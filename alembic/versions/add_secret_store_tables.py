@@ -1,6 +1,6 @@
 """feat: Add secret_store and secret_store_versions tables
 
-Revision ID: add_secret_store_tables
+Revision ID: a7ss_create
 Revises: 2674e0e3f70d
 Create Date: 2026-04-07
 
@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "add_secret_store_tables"
+revision: str = "a7ss_create"
 down_revision: Union[str, Sequence[str], None] = "2674e0e3f70d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

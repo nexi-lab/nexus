@@ -436,14 +436,14 @@ jobs:
       - name: Upload binary to COS
         shell: bash
         env:
-          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
-          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
-          COS_BUCKET: ${{ vars.COS_BUCKET }}
-          COS_REGION: ${{ vars.COS_REGION }}
-          COS_BASE_URL: ${{ vars.COS_BASE_URL }}
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID || vars.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY || vars.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET || vars.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION || vars.COS_REGION }}
+          COS_BASE_URL: ${{ secrets.COS_BASE_URL || vars.COS_BASE_URL }}
         run: |
           if [ -z "${COS_SECRET_ID}" ] || [ -z "${COS_SECRET_KEY}" ] || [ -z "${COS_BUCKET}" ] || [ -z "${COS_REGION}" ]; then
-            echo "Missing COS configuration. Required: secrets.COS_SECRET_ID, secrets.COS_SECRET_KEY, vars.COS_BUCKET, vars.COS_REGION"
+            echo "Missing COS configuration. Required: COS_SECRET_ID, COS_SECRET_KEY, COS_BUCKET, COS_REGION in secrets or vars"
             exit 1
           fi
 

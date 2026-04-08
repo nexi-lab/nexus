@@ -827,7 +827,10 @@ def _register_routes(app: FastAPI) -> None:
                     _py_metastore = RaftMetadataStore.embedded(_metadata_path)
                     _settings_store = MetastoreSettingsStore(_py_metastore)
                 except Exception:
-                    logger.warning("MetastoreSettingsStore unavailable; using ephemeral OAuth key", exc_info=True)
+                    logger.warning(
+                        "MetastoreSettingsStore unavailable; using ephemeral OAuth key",
+                        exc_info=True,
+                    )
 
                 _oauth_crypto = OAuthCrypto(settings_store=_settings_store)
                 _audit_logger = SecretsAuditLogger(record_store=_sa_rs)

@@ -335,7 +335,9 @@ def delete_version(
             subject_type=subject_type,
         )
         if not success:
-            raise HTTPException(status_code=400, detail="Cannot delete version (not found or last version)")
+            raise HTTPException(
+                status_code=400, detail="Cannot delete version (not found or last version)"
+            )
         return {"namespace": namespace, "key": key, "version": version, "deleted": True}
     except HTTPException:
         raise

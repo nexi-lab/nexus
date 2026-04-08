@@ -63,7 +63,9 @@ class SecretsService:
     # Write Operations
     # -------------------------------------------------------------------------
 
-    def _base_query(self, namespace: str, key: str, subject_id: str | None, subject_type: str | None = None):
+    def _base_query(
+        self, namespace: str, key: str, subject_id: str | None, subject_type: str | None = None
+    ):
         """Build a base query filtered by namespace, key, and optionally subject_id + subject_type."""
         stmt = select(SecretStoreModel).where(
             SecretStoreModel.namespace == namespace,
@@ -171,7 +173,9 @@ class SecretsService:
                     "namespace": secret_model.namespace,
                     "key": secret_model.key,
                     "version": new_version,
-                    "created_at": secret_model.created_at.isoformat() if secret_model.created_at else None,
+                    "created_at": secret_model.created_at.isoformat()
+                    if secret_model.created_at
+                    else None,
                 }
 
         # Audit log (outside session)

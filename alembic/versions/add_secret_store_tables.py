@@ -46,7 +46,12 @@ def upgrade() -> None:
     op.create_table(
         "secret_store_versions",
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("secret_id", sa.String(36), sa.ForeignKey("secret_store.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "secret_id",
+            sa.String(36),
+            sa.ForeignKey("secret_store.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("encrypted_value", sa.Text(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),

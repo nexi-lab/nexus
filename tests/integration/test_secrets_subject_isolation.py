@@ -59,6 +59,7 @@ AUTH_ANONYMOUS = {
 # Test app factory (mock service, override auth)
 # ---------------------------------------------------------------------------
 
+
 def _create_test_app(auth_result):
     from nexus.server.api.v2.routers.secrets import get_secrets_service, router
     from nexus.server.dependencies import require_auth
@@ -68,7 +69,12 @@ def _create_test_app(auth_result):
 
     mock_service = MagicMock()
     mock_service.put_secret.return_value = {"namespace": "ns", "key": "k", "version": 1}
-    mock_service.get_secret.return_value = {"namespace": "ns", "key": "k", "value": "v", "version": 1}
+    mock_service.get_secret.return_value = {
+        "namespace": "ns",
+        "key": "k",
+        "value": "v",
+        "version": 1,
+    }
     mock_service.list_secrets.return_value = []
     mock_service.list_versions.return_value = []
     mock_service.delete_secret.return_value = True
@@ -85,8 +91,10 @@ def _create_test_app(auth_result):
     if auth_result is not None:
         app.dependency_overrides[require_auth] = lambda: auth_result
     else:
+
         async def _no_auth():
             raise HTTPException(status_code=401, detail="Unauthorized")
+
         app.dependency_overrides[require_auth] = _no_auth
 
     return app, mock_service
@@ -297,7 +305,9 @@ class TestServiceSubjectIsolation:
 
     def test_cross_user_update_description_isolation(self, service):
         service.put_secret("ns", "k", "val", subject_id="alice", subject_type="user")
-        result = service.update_description("ns", "k", "new desc", subject_id="bob", subject_type="user")
+        result = service.update_description(
+            "ns", "k", "new desc", subject_id="bob", subject_type="user"
+        )
         assert result is False
 
     # -- S6: Cross-user enable/disable isolation --

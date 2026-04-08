@@ -24,6 +24,7 @@ def setup_server():
 
         # 同步创建 nexus_fs（因为 TestClient 不支持异步）
         import asyncio
+
         loop = asyncio.new_event_loop()
         nexus_fs = loop.run_until_complete(make_test_nexus(tmp_path, record_store=in_memory_rs))
         loop.close()
@@ -58,6 +59,7 @@ def reset_db(client):
     yield
     # 可以在这里添加清理逻辑
 
+
 @pytest.mark.asyncio
 async def test_api_list_secrets_without_auth(client):
     """API-01: Access list secrets endpoint without authentication should be rejected."""
@@ -65,12 +67,14 @@ async def test_api_list_secrets_without_auth(client):
     # This test verifies the endpoint correctly rejects unauthenticated requests.
     app = client.app
     from fastapi.testclient import TestClient
+
     bad_client = TestClient(app)
     response = bad_client.get("/api/v2/secrets")
     # Returns 401 Unauthorized when auth is not provided
     assert response.status_code == 401
     data = response.json()
     assert data["detail"] == "Invalid or missing API key"
+
 
 @pytest.mark.asyncio
 async def test_api_lifecycle_crud(client):
@@ -79,10 +83,10 @@ async def test_api_lifecycle_crud(client):
     key = "my_key"
 
     # 1. PUT v1
-    response = client.put(f"/api/v2/secrets/{namespace}/{key}", json={
-        "value": "secret_v1",
-        "description": "First version"
-    })
+    response = client.put(
+        f"/api/v2/secrets/{namespace}/{key}",
+        json={"value": "secret_v1", "description": "First version"},
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["version"] == 1
@@ -93,10 +97,10 @@ async def test_api_lifecycle_crud(client):
     assert response.json()["value"] == "secret_v1"
 
     # 3. PUT v2 (Update)
-    response = client.put(f"/api/v2/secrets/{namespace}/{key}", json={
-        "value": "secret_v2",
-        "description": "Second version"
-    })
+    response = client.put(
+        f"/api/v2/secrets/{namespace}/{key}",
+        json={"value": "secret_v2", "description": "Second version"},
+    )
     assert response.status_code == 200
     assert response.json()["version"] == 2
 
@@ -108,6 +112,7 @@ async def test_api_lifecycle_crud(client):
     response = client.get(f"/api/v2/secrets/{namespace}/{key}?version=1")
     assert response.status_code == 200
     assert response.json()["value"] == "secret_v1"
+
 
 @pytest.mark.asyncio
 async def test_api_status_management(client):
@@ -134,6 +139,7 @@ async def test_api_status_management(client):
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
 
+
 @pytest.mark.asyncio
 async def test_api_soft_delete_restore(client):
     """API-11, 12: Soft delete and restore."""
@@ -157,6 +163,7 @@ async def test_api_soft_delete_restore(client):
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
     assert response.json()["value"] == "alive"
+
 
 @pytest.mark.asyncio
 async def test_api_list_metadata(client):
@@ -203,15 +210,16 @@ async def test_api_update_description(client):
     key = "desc_key"
 
     # Create secret with initial description
-    client.put(f"/api/v2/secrets/{namespace}/{key}", json={
-        "value": "secret_value",
-        "description": "Initial description"
-    })
+    client.put(
+        f"/api/v2/secrets/{namespace}/{key}",
+        json={"value": "secret_value", "description": "Initial description"},
+    )
 
     # Update description
-    response = client.put(f"/api/v2/secrets/{namespace}/{key}/description", json={
-        "description": "Updated description"
-    })
+    response = client.put(
+        f"/api/v2/secrets/{namespace}/{key}/description",
+        json={"description": "Updated description"},
+    )
     assert response.status_code == 200
     assert response.json()["description"] == "Updated description"
 
@@ -380,11 +388,14 @@ async def test_api_list_exclude_deleted_by_default(client):
     assert response.status_code == 200
     secrets = response.json()["secrets"]
     for s in secrets:
-        assert not (s["namespace"] == namespace and s["key"] == key), \
+        assert not (s["namespace"] == namespace and s["key"] == key), (
             "Deleted secret should not appear in default list"
+        )
 
     # With include_deleted=True
-    response = client.get("/api/v2/secrets", params={"namespace": namespace, "include_deleted": True})
+    response = client.get(
+        "/api/v2/secrets", params={"namespace": namespace, "include_deleted": True}
+    )
     assert response.status_code == 200
     secrets = response.json()["secrets"]
     for s in secrets:

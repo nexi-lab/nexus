@@ -26,7 +26,9 @@ class SecretStoreModel(Base):
 
     __tablename__ = "secret_store"
     __table_args__ = (
-        UniqueConstraint("namespace", "key", "subject_id", "subject_type", name="uq_secret_store_ns_key_subject"),
+        UniqueConstraint(
+            "namespace", "key", "subject_id", "subject_type", name="uq_secret_store_ns_key_subject"
+        ),
         Index("idx_secret_store_namespace", "namespace"),
         Index("idx_secret_store_deleted_at", "deleted_at"),
         Index("idx_secret_store_subject", "subject_id"),
@@ -42,7 +44,9 @@ class SecretStoreModel(Base):
     namespace: Mapped[str] = mapped_column(String(255), nullable=False, default=ROOT_ZONE_ID)
     key: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    enabled: Mapped[bool] = mapped_column(Integer, nullable=False, default=1)  # SQLite doesn't have bool
+    enabled: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=1
+    )  # SQLite doesn't have bool
     deleted_at: Mapped[int | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(

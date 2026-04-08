@@ -278,3 +278,110 @@ pub(crate) enum StreamManagerError {
     WouldBlock(String),
     Backend(StreamError),
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Regression test for the lost-wakeup race fixed alongside the
+    /// `pipe_manager` equivalent. See `pipe_manager::tests` and the
+    /// commit message for the full race description.
+    ///
+    /// Stream is append-only with a single reader cursor advancing
+    /// through `read_at_blocking`. Each iteration writes one message
+    /// then expects the reader to receive it within a short timeout.
+    /// Pre-fix: the writer's `notify_all` arrives between the reader's
+    /// `read_at` returning Empty and the reader parking, the wakeup is
+    /// dropped, and the reader times out. Post-fix: the writer holds
+    /// `notify.mutex` around `notify_all`, so the reader either sees
+    /// the new data on its next predicate check or is woken from its
+    /// parked state.
+    #[test]
+    fn read_at_blocking_no_lost_wakeup_under_concurrent_writes() {
+        const ITERATIONS: usize = 1000;
+        const READ_TIMEOUT_MS: u64 = 250;
+
+        let mgr = Arc::new(StreamManager::new());
+        // Larger capacity than pipe equivalent — stream stores all
+        // messages until close, so the buffer must hold all 1000.
+        mgr.create("/stream", 64 * 1024).expect("create stream");
+
+        let writer_done = Arc::new(AtomicUsize::new(0));
+        let reader_received = Arc::new(AtomicUsize::new(0));
+
+        let writer_mgr = Arc::clone(&mgr);
+        let writer_done_w = Arc::clone(&writer_done);
+        let writer = thread::spawn(move || {
+            for i in 0..ITERATIONS {
+                if i % 4 == 0 {
+                    thread::sleep(Duration::from_micros(10));
+                }
+                let payload = format!("msg-{i:04}").into_bytes();
+                writer_mgr
+                    .write_nowait("/stream", &payload)
+                    .expect("write_nowait");
+                writer_done_w.fetch_add(1, Ordering::Relaxed);
+            }
+        });
+
+        let reader_mgr = Arc::clone(&mgr);
+        let reader_received_r = Arc::clone(&reader_received);
+        let reader = thread::spawn(move || {
+            let mut offset = 0usize;
+            let mut got = 0usize;
+            while got < ITERATIONS {
+                match reader_mgr.read_at_blocking("/stream", offset, READ_TIMEOUT_MS) {
+                    Ok((_data, next)) => {
+                        offset = next;
+                        got += 1;
+                        reader_received_r.store(got, Ordering::Relaxed);
+                    }
+                    Err(StreamManagerError::WouldBlock(_)) => {
+                        panic!("reader timed out after {got} reads; lost-wakeup race regression?");
+                    }
+                    Err(e) => panic!("reader failed: {e:?}"),
+                }
+            }
+        });
+
+        writer.join().expect("writer thread");
+        reader.join().expect("reader thread");
+
+        assert_eq!(writer_done.load(Ordering::Relaxed), ITERATIONS);
+        assert_eq!(reader_received.load(Ordering::Relaxed), ITERATIONS);
+
+        mgr.destroy("/stream").expect("destroy");
+    }
+
+    /// Sanity check that destroy() wakes a parked blocking reader
+    /// instead of leaving it stuck until timeout.
+    #[test]
+    fn read_at_blocking_wakes_on_destroy() {
+        let mgr = Arc::new(StreamManager::new());
+        mgr.create("/closeme", 1024).expect("create");
+
+        let reader_mgr = Arc::clone(&mgr);
+        let reader = thread::spawn(move || {
+            // Long timeout — must return early on destroy notification.
+            reader_mgr.read_at_blocking("/closeme", 0, 30_000)
+        });
+
+        thread::sleep(Duration::from_millis(50));
+
+        mgr.destroy("/closeme").expect("destroy");
+
+        let result = reader.join().expect("reader thread");
+        match result {
+            Err(StreamManagerError::Closed(_)) => {}
+            other => panic!("expected Closed, got {other:?}"),
+        }
+    }
+}

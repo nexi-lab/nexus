@@ -96,9 +96,9 @@ pub(crate) const ALL_FILE_EVENTS: u32 = (1 << 13) - 1;
 /// Kernel file-system event — Rust mirror of `nexus.core.file_events.FileEvent`.
 ///
 /// Constructed by sys_* methods after a successful mutation, then passed
-/// to `MutationObserver::on_mutation`. The struct is `Clone` so the
-/// deferred ThreadPool dispatch can hand each observer its own owned copy
-/// without sharing references across threads.
+/// to `MutationObserver::on_mutation`. The struct is `Clone` so the OBSERVE
+/// ThreadPool dispatch can hand each observer its own owned copy without
+/// sharing references across threads.
 ///
 /// Fields mirror the Python frozen dataclass field-by-field; see
 /// `file_events.py`. Optional Python fields map to `Option<T>`. Strings
@@ -203,14 +203,16 @@ pub(crate) trait PathResolver: Send + Sync {
 /// `FileEvent` after every successful mutation. Never aborts: the
 /// dispatcher catches and logs any panic.
 ///
-/// Contract: the dispatch loop submits this call to a background
-/// `ThreadPool` (`Kernel::deferred_observer_pool`) — `on_mutation`
-/// runs **off** the syscall hot path. `OBSERVE_INLINE` (the legacy
-/// "run on caller's thread" mode) was deleted in §11 Phase 2: it
-/// overlapped with INTERCEPT POST hooks and violated the orthogonality
-/// of the four dispatch contracts. Linux's analogous primitive
-/// (fsnotify) is purely fire-and-forget — observers needing causal
-/// ordering belong in INTERCEPT POST, not OBSERVE.
+/// Contract: OBSERVE is fire-and-forget by definition. The dispatch
+/// loop submits each call to the kernel's background `ThreadPool`
+/// (`Kernel::observer_pool`) so `on_mutation` runs **off** the syscall
+/// hot path. There is no other mode — `OBSERVE_INLINE` (the legacy
+/// "run on caller's thread" flag) was deleted in §11 Phase 2 because
+/// inline observers were functionally identical to INTERCEPT POST hooks
+/// and violated dispatch-contract orthogonality. Linux's analogous
+/// primitive (fsnotify) makes the same choice: fire-and-forget only.
+/// Observers needing causal ordering or sync blocking on the syscall
+/// return path belong in INTERCEPT POST, not OBSERVE.
 #[allow(dead_code)]
 pub(crate) trait MutationObserver: Send + Sync {
     fn on_mutation(&self, event: &FileEvent);

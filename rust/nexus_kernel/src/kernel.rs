@@ -232,9 +232,9 @@ pub struct StatResult {
 
 /// Observer entry — pure Rust, no PyO3 dependency.
 ///
-/// Stores `Arc<dyn MutationObserver>` so the deferred ThreadPool worker
-/// (added in §11 Phase 3) can clone the trait object across threads.
-/// `event_mask` bitmask matching happens without holding the GIL.
+/// Stores `Arc<dyn MutationObserver>` so the OBSERVE ThreadPool worker
+/// (§11 Phase 3) can clone the trait object across threads. `event_mask`
+/// bitmask matching happens without holding the GIL.
 struct KernelObserverEntry {
     observer: Arc<dyn MutationObserver>,
     name: String,
@@ -248,9 +248,11 @@ struct KernelObserverEntry {
 /// `PyMutationObserverAdapter` is the boundary that converts `&FileEvent`
 /// to a Python `FileEvent` once per call.
 ///
-/// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was
-/// deleted in §11 Phase 2: it overlapped with INTERCEPT POST hooks and
-/// violated dispatch-contract orthogonality. All observers are deferred.
+/// `OBSERVE_INLINE` (the legacy inline-on-caller-thread mode) was deleted
+/// in §11 Phase 2: it overlapped with INTERCEPT POST hooks and violated
+/// dispatch-contract orthogonality. OBSERVE is fire-and-forget by
+/// definition — there is no other mode. Observers needing causal
+/// ordering or sync blocking belong in INTERCEPT POST, not OBSERVE.
 struct KernelObserverRegistry {
     observers: Vec<KernelObserverEntry>,
 }
@@ -285,7 +287,7 @@ impl KernelObserverRegistry {
     /// Return clones of all observers whose event_mask matches `event.event_type`.
     ///
     /// The dispatch loop (`Kernel::dispatch_observers`, §11 Phase 3) submits
-    /// each clone to the deferred ThreadPool. Returning Arc clones lets the
+    /// each clone to the OBSERVE ThreadPool. Returning Arc clones lets the
     /// pool borrow the registry lock for the minimum possible time — the
     /// caller releases the lock before doing any per-observer work.
     fn matching(&self, event_type_bit: u32) -> Vec<Arc<dyn MutationObserver>> {
@@ -365,22 +367,28 @@ pub struct Kernel {
     // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
-    // Background ThreadPool for deferred OBSERVE-phase dispatch (§11 Phase 3).
+    // Background ThreadPool for OBSERVE-phase dispatch (§11 Phase 3).
     //
     // OBSERVE is fire-and-forget by contract: the syscall returns as soon
-    // as the event is queued; observer callbacks run on this pool, off the
-    // hot path. 4 worker threads is enough for the typical workload (a
-    // handful of long-lived observers: FileWatcher, EventBus, etc.). Each
-    // worker acquires the GIL inside `PyMutationObserverAdapter::on_mutation`
-    // when calling Python observers — many parallel Python observers will
-    // serialize on the GIL, but Rust-native observers run truly parallel.
+    // as the event is queued; observer callbacks run on this pool, off
+    // the hot path. There is no other mode — the legacy `OBSERVE_INLINE`
+    // flag was deleted in §11 Phase 2 because inline-on-caller-thread
+    // observers were functionally identical to INTERCEPT POST hooks and
+    // violated dispatch-contract orthogonality.
+    //
+    // 4 worker threads is enough for the typical workload (a handful of
+    // long-lived observers: FileWatcher, EventBus, etc.). Each worker
+    // acquires the GIL inside `PyMutationObserverAdapter::on_mutation`
+    // when calling Python observers — many parallel Python observers
+    // will serialize on the GIL, but Rust-native observers run truly
+    // parallel.
     //
     // No production caller yet — `dispatch_observers` becomes the sole
     // submitter once Phase 5 wires sys_* call sites. The pool is created
     // up-front so the cost (4 OS threads, ~8MB stack each) is paid once
     // at kernel construction.
     #[allow(dead_code)]
-    deferred_observer_pool: ThreadPool,
+    observer_pool: ThreadPool,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // File watch registry — Rust-native pattern matching (§10 A3)
@@ -420,7 +428,7 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
-            deferred_observer_pool: ThreadPool::with_name("nexus-observer".to_string(), 4),
+            observer_pool: ThreadPool::with_name("nexus-observer".to_string(), 4),
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -870,9 +878,10 @@ impl Kernel {
 
     /// Register a mutation observer (pure Rust or PyMutationObserverAdapter).
     ///
-    /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all observers run on
-    /// the deferred ThreadPool (added in Phase 3). Observers needing
-    /// synchronous-blocking semantics must be moved to INTERCEPT POST.
+    /// `OBSERVE_INLINE` was deleted in §11 Phase 2 — all OBSERVE callbacks
+    /// run on `observer_pool` (the kernel's background ThreadPool). There
+    /// is no other mode. Observers needing synchronous-blocking semantics
+    /// must be moved to INTERCEPT POST.
     #[allow(dead_code)]
     pub fn register_observer(
         &self,
@@ -890,19 +899,18 @@ impl Kernel {
     }
 
     /// OBSERVE-phase dispatch — submit all observers whose event_mask
-    /// matches `event.event_type` to the deferred ThreadPool.
+    /// matches `event.event_type` to the kernel observer ThreadPool.
     ///
     /// Fire-and-forget by contract: this returns immediately once the
-    /// jobs are queued. Observer callbacks run on `deferred_observer_pool`
-    /// workers, off the syscall hot path. Each callback is handed an
-    /// owned clone of the event so the worker doesn't borrow caller
-    /// state.
+    /// jobs are queued. Observer callbacks run on `observer_pool` workers,
+    /// off the syscall hot path. Each callback is handed an owned clone
+    /// of the event so the worker doesn't borrow caller state.
     ///
     /// Snapshot-then-drop-lock pattern: we collect Arc clones of the
-    /// matching observers under the registry lock, then release the
-    /// lock before submitting to the pool. This prevents deadlocks if
-    /// an observer's callback re-enters the kernel (e.g. an audit
-    /// logger that itself does sys_write).
+    /// matching observers under the registry lock, then release the lock
+    /// before submitting to the pool. This prevents deadlocks if an
+    /// observer's callback re-enters the kernel (e.g. an audit logger
+    /// that itself does sys_write).
     #[allow(dead_code)]
     pub fn dispatch_observers(&self, event: &FileEvent) {
         let observers = self.observers.lock().matching(event.event_type as u32);
@@ -911,7 +919,7 @@ impl Kernel {
         }
         for obs in observers {
             let event_owned = event.clone();
-            self.deferred_observer_pool.execute(move || {
+            self.observer_pool.execute(move || {
                 obs.on_mutation(&event_owned);
             });
         }
@@ -919,17 +927,17 @@ impl Kernel {
 
     /// Block until all queued observer jobs have completed.
     ///
-    /// Test-only helper for deterministic assertions:
-    /// `dispatch_observers` returns as soon as work is queued, but tests
-    /// often need to assert observer side-effects before the test
-    /// teardown. This is the OBSERVE analogue of fsync.
+    /// Test-only helper for deterministic assertions: `dispatch_observers`
+    /// returns as soon as work is queued, but tests often need to assert
+    /// observer side-effects before teardown. This is the OBSERVE analogue
+    /// of fsync.
     ///
     /// Not for production: it blocks the calling thread until the entire
     /// ThreadPool drains, which would defeat the fire-and-forget contract
     /// if called on the syscall hot path.
     #[allow(dead_code)]
     pub fn flush_observers(&self) {
-        self.deferred_observer_pool.join();
+        self.observer_pool.join();
     }
 
     /// Number of registered observers.
@@ -2582,7 +2590,7 @@ mod tests {
         assert!(validate_path_fast("/..").is_err());
     }
 
-    // ── §11 Phase 3 deferred observer ThreadPool tests ─────────────
+    // ── §11 Phase 3 OBSERVE ThreadPool tests ───────────────────────
 
     use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
     use std::sync::atomic::AtomicUsize;

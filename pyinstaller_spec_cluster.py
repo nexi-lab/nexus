@@ -7,9 +7,11 @@ Minimal deployment: storage + ipc + federation
 import os
 from PyInstaller.utils.hooks import collect_submodules
 
+# CI rewrites these placeholders to the actual site-packages paths resolved
+# from the runner's Python environment before invoking PyInstaller.
 # Rust extension paths
-NEXUS_RAFT_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/_nexus_raft/_nexus_raft.cpython-313-darwin.so"
-NEXUS_KERNEL_SO = "/Users/bgd/anaconda3/envs/nexus/lib/python3.13/site-packages/nexus_kernel/nexus_kernel.cpython-313-darwin.so"
+NEXUS_RAFT_SO = "__CI_PATCH_REQUIRED__"
+NEXUS_KERNEL_SO = "__CI_PATCH_REQUIRED__"
 
 # Hidden imports for Rust extensions and nexus modules
 hiddenimports = [
@@ -84,8 +86,8 @@ if os.path.exists(NEXUS_KERNEL_SO):
     binaries.append((NEXUS_KERNEL_SO, "nexus_kernel"))
 
 a = Analysis(
-    ["src/nexus/cli/main.py"],
-    pathex=["/Users/bgd/repo/nexus/src"],
+    ["__CI_ENTRYPOINT_PATCH_REQUIRED__"],
+    pathex=["__CI_PATHEX_PATCH_REQUIRED__"],
     binaries=binaries,
     datas=[],
     hiddenimports=hiddenimports,

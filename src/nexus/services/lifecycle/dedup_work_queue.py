@@ -50,6 +50,15 @@ class DedupWorkQueue(Generic[T]):
     Coalesces duplicate keys so that rapid additions of the same key
     result in at most one processing run.
 
+    **Architectural layer (kernel-level primitive):** ``DedupWorkQueue``
+    holds a ``PyKernel`` handle directly rather than going through the
+    ``NexusFS`` facade. It is a kernel-level primitive (a tight polling
+    loop over a sequence-token pipe with no business logic), conceptually
+    the same tier as ``Kernel.create_pipe`` itself, so the
+    ``self._kernel.pipe_*`` calls in this file are NOT abstraction
+    violations — ``_kernel`` is the construction-time injected dependency,
+    not a reach-in through a service abstraction.
+
     **Transport:** Uses a Rust kernel IPC pipe for the internal FIFO.
     The pipe carries u64 LE sequence tokens (8 bytes each); actual items
     stay in a Python dict (no serialization). Dedup logic (dirty/processing

@@ -54,8 +54,8 @@ class StreamRemoteWatcher:
         """Lazily create the event DT_STREAM via Rust kernel."""
         if self._initialized:
             return
-        if not self._nx._kernel.has_stream(_EVENT_STREAM_PATH):
-            self._nx._kernel.create_stream(_EVENT_STREAM_PATH, _EVENT_STREAM_CAPACITY)
+        if not self._nx.has_stream(_EVENT_STREAM_PATH):
+            self._nx.stream_create(_EVENT_STREAM_PATH, _EVENT_STREAM_CAPACITY)
         self._initialized = True
 
     def publish(self, event: "FileEvent") -> None:
@@ -63,7 +63,7 @@ class StreamRemoteWatcher:
         self._ensure_stream()
         payload = event.to_json().encode("utf-8")
         with contextlib.suppress(Exception):
-            self._nx._kernel.stream_write_nowait(_EVENT_STREAM_PATH, payload)
+            self._nx.stream_write_nowait(_EVENT_STREAM_PATH, payload)
 
     async def wait_for_event(
         self,
@@ -90,11 +90,11 @@ class StreamRemoteWatcher:
 
             try:
                 # Try nowait first; fall back to Rust blocking read
-                result = self._nx._kernel.stream_read_at(_EVENT_STREAM_PATH, offset)
+                result = self._nx.stream_read_at(_EVENT_STREAM_PATH, offset)
                 if result is None:
-                    data_raw, new_offset = await asyncio.wait_for(
+                    data, new_offset = await asyncio.wait_for(
                         asyncio.to_thread(
-                            self._nx._kernel.stream_read_at_blocking,
+                            self._nx.stream_read_at_blocking,
                             _EVENT_STREAM_PATH,
                             offset,
                             int(remaining * 1000),
@@ -102,8 +102,7 @@ class StreamRemoteWatcher:
                         timeout=remaining,
                     )
                 else:
-                    data_raw, new_offset = result
-                data = bytes(data_raw)
+                    data, new_offset = result
                 offset = new_offset
                 self._offsets[zone_id] = offset
 

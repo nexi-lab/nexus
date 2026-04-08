@@ -129,13 +129,17 @@ async def _bench_piped_async(tmp_dir: Path) -> list[float]:
             """No-op — pipe already created via kernel.create_pipe."""
             return {"path": path, "created": False}
 
+        def pipe_read_nowait(self, path: str) -> bytes | None:
+            """Tier 2 NexusFS public sync API — sync passthrough to kernel."""
+            return self._kernel.pipe_read_nowait(path)
+
         async def sys_read(self, path: str, **kwargs: Any) -> bytes:
             from nexus.contracts.exceptions import NexusFileNotFoundError
 
             # Blocking read: poll pipe_read_nowait with asyncio.sleep
             while True:
                 try:
-                    data = self._kernel.pipe_read_nowait(path)
+                    data = self.pipe_read_nowait(path)
                     if data is not None:
                         return bytes(data)
                     # No data available — yield and retry

@@ -4663,6 +4663,101 @@ class NexusFS(  # type: ignore[misc]
             _buf.close()
         return {}
 
+    # ------------------------------------------------------------------
+    # Tier 2 public sync pipe methods (kernel passthroughs)
+    # ------------------------------------------------------------------
+    # These are sync because the underlying Rust kernel calls are sync.
+    # They exist so callers don't need to reach into ``self._kernel`` —
+    # convenience wrappers, not first-class syscalls (no Tier 1 ``sys_*``
+    # name). Used by coalescing consumers (audit drain, dedup work queue)
+    # and sync teardown contexts (AcpService) where async wrapping would
+    # add event-loop ping-pong without buying anything.
+
+    def pipe_read_nowait(self, path: str) -> bytes | None:
+        """Non-blocking pipe read. Returns ``None`` if pipe is empty.
+
+        Sync passthrough to ``Kernel.pipe_read_nowait``.
+        """
+        return self._kernel.pipe_read_nowait(path)
+
+    def pipe_write_nowait(self, path: str, data: bytes) -> int:
+        """Non-blocking pipe write. Returns bytes written.
+
+        Sync passthrough to ``Kernel.pipe_write_nowait``.
+        """
+        return self._kernel.pipe_write_nowait(path, data)
+
+    def pipe_create(self, path: str, capacity: int = 65_536) -> None:
+        """Create a DT_PIPE in the kernel registry.
+
+        Sync passthrough to ``Kernel.create_pipe``.
+        """
+        self._kernel.create_pipe(path, capacity)
+
+    def pipe_close(self, path: str) -> None:
+        """Mark a DT_PIPE as closed (signals EOF to readers, keeps registry entry)."""
+        self._kernel.close_pipe(path)
+
+    def has_pipe(self, path: str) -> bool:
+        """Check if a DT_PIPE exists in the kernel registry."""
+        return self._kernel.has_pipe(path)
+
+    def pipe_destroy(self, path: str) -> None:
+        """Destroy a DT_PIPE — close Rust kernel buffer + custom backend cleanup.
+
+        Sync alternative to ``await sys_unlink(path)`` for sync teardown
+        contexts that don't need full metastore/dcache cleanup. Internally
+        delegates to the existing ``_pipe_destroy()`` helper.
+        """
+        self._pipe_destroy(path)
+
+    # ------------------------------------------------------------------
+    # Tier 2 public sync stream methods (kernel passthroughs)
+    # ------------------------------------------------------------------
+    # Stream counterparts to the pipe convenience methods above. Used by
+    # LLM streaming backends (CASOpenAIBackend) where a tight token-pump
+    # loop calls ``stream_write_nowait`` per token and ``stream_read_at``
+    # for offset-based replay — async wrapping would just add ping-pong.
+
+    def stream_create(self, path: str, capacity: int = 65_536) -> None:
+        """Create a DT_STREAM in the kernel registry."""
+        self._kernel.create_stream(path, capacity)
+
+    def has_stream(self, path: str) -> bool:
+        """Check if a DT_STREAM exists in the kernel registry."""
+        return self._kernel.has_stream(path)
+
+    def stream_read_at_blocking(self, path: str, offset: int, timeout_ms: int) -> tuple[bytes, int]:
+        """Blocking offset-based stream read. Returns (chunk, next_offset).
+
+        Releases the GIL inside Rust during the wait. Callers that need
+        async semantics should wrap in ``asyncio.to_thread``.
+        """
+        _data, _next = self._kernel.stream_read_at_blocking(path, offset, timeout_ms)
+        return (bytes(_data), _next)
+
+    def stream_write_nowait(self, path: str, data: bytes) -> int:
+        """Non-blocking stream append. Returns byte offset."""
+        return self._kernel.stream_write_nowait(path, data)
+
+    def stream_read_at(self, path: str, offset: int) -> tuple[bytes, int] | None:
+        """Non-blocking offset-based stream read. Returns (chunk, next_offset) or None."""
+        _result = self._kernel.stream_read_at(path, offset)
+        if _result is None:
+            return None
+        return (bytes(_result[0]), _result[1])
+
+    def stream_close(self, path: str) -> None:
+        """Mark a DT_STREAM as closed (signals EOF to readers)."""
+        self._kernel.close_stream(path)
+
+    def stream_destroy(self, path: str) -> None:
+        """Destroy a DT_STREAM — close kernel buffer + custom backend cleanup.
+
+        Sync alternative to ``await sys_unlink(path)``.
+        """
+        self._stream_destroy(path)
+
     async def _stream_read(self, path: str, *, count: int | None = None, offset: int = 0) -> bytes:
         """Read from DT_STREAM — nowait hot path + Rust blocking slow path (GIL-free)."""
         # Hot path: try nowait first (zero GIL)

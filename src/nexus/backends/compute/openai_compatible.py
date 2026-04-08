@@ -211,7 +211,7 @@ class CASOpenAIBackend(CASAddressingEngine):
             )
 
         try:
-            self._nx._kernel.create_stream(stream_path, capacity)
+            self._nx.stream_create(stream_path, capacity)
         except Exception as exc:
             raise BackendError(f"LLM streaming unavailable: {exc}") from exc
 
@@ -235,7 +235,7 @@ class CASOpenAIBackend(CASAddressingEngine):
 
         if self._nx is not None:
             with contextlib.suppress(Exception):
-                self._nx._stream_destroy(stream_path)
+                self._nx.stream_destroy(stream_path)
 
         logger.info("LLM stream cancelled: %s", stream_path)
         return True
@@ -243,7 +243,7 @@ class CASOpenAIBackend(CASAddressingEngine):
     async def _run_stream(self, request_bytes: bytes, stream_path: str) -> None:
         """Background task: pump tokens from LLM to DT_STREAM, then CAS persist."""
         assert self._nx is not None  # guaranteed by start_streaming() guard
-        _kernel = self._nx._kernel
+        nx = self._nx
 
         _SENTINEL: object = object()
         token_q: queue.Queue[tuple[str, dict[str, Any] | None] | object | Exception] = queue.Queue(
@@ -275,7 +275,7 @@ class CASOpenAIBackend(CASAddressingEngine):
                 token: str = token_item[0]
                 token_meta: dict[str, Any] | None = token_item[1]
                 if token:
-                    _kernel.stream_write_nowait(stream_path, token.encode("utf-8"))
+                    nx.stream_write_nowait(stream_path, token.encode("utf-8"))
                 if token_meta is not None:
                     meta = token_meta
 
@@ -283,10 +283,10 @@ class CASOpenAIBackend(CASAddressingEngine):
             full_chunks: list[bytes] = []
             _offset = 0
             while True:
-                _result = _kernel.stream_read_at(stream_path, _offset)
+                _result = nx.stream_read_at(stream_path, _offset)
                 if _result is None:
                     break
-                full_chunks.append(bytes(_result[0]))
+                full_chunks.append(_result[0])
                 _offset = _result[1]
             full_response = b"".join(full_chunks)
             result = self.persist_session(
@@ -312,8 +312,8 @@ class CASOpenAIBackend(CASAddressingEngine):
                 done_payload["tool_calls"] = tool_calls
 
             done_msg = json.dumps(done_payload, separators=(",", ":"))
-            _kernel.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
-            _kernel.close_stream(stream_path)
+            nx.stream_write_nowait(stream_path, done_msg.encode("utf-8"))
+            nx.stream_close(stream_path)
 
             logger.info(
                 "LLM stream completed: %s model=%s session=%s",
@@ -325,7 +325,7 @@ class CASOpenAIBackend(CASAddressingEngine):
         except asyncio.CancelledError:
             logger.info("LLM stream cancelled: %s", stream_path)
             with contextlib.suppress(Exception):
-                _kernel.close_stream(stream_path)
+                nx.stream_close(stream_path)
             raise
 
         except Exception as exc:
@@ -335,8 +335,8 @@ class CASOpenAIBackend(CASAddressingEngine):
                 separators=(",", ":"),
             )
             with contextlib.suppress(Exception):
-                _kernel.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
-                _kernel.close_stream(stream_path)
+                nx.stream_write_nowait(stream_path, error_msg.encode("utf-8"))
+                nx.stream_close(stream_path)
 
         finally:
             with contextlib.suppress(Exception):

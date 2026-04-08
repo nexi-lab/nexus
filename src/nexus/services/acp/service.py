@@ -256,7 +256,7 @@ class AcpService:
                         (fd2_path, stderr_pipe),
                     ):
                         _nx._custom_pipe_backends[fd_path] = pipe_backend
-                        _nx._kernel.create_pipe(fd_path, 65_536)
+                        _nx.pipe_create(fd_path, 65_536)
                 except Exception as exc:
                     logger.debug("DT_PIPE registration failed (degraded): %s", exc)
 
@@ -367,10 +367,9 @@ class AcpService:
             with contextlib.suppress(ProcessLookupError):
                 active.proc.kill()
         if self._nexus_fs is not None:
-            _nx_any: Any = self._nexus_fs
             for fd_path in (active.fd0_path, active.fd1_path, active.fd2_path):
                 with contextlib.suppress(Exception):
-                    _nx_any._pipe_destroy(fd_path)
+                    self._nexus_fs.pipe_destroy(fd_path)
 
     def kill_agent(self, pid: str) -> AgentDescriptor:
         """Kill a running agent connection and mark TERMINATED in AgentRegistry."""

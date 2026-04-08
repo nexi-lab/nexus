@@ -24,13 +24,17 @@ _WORKFLOW_PIPE_PATH = "/nexus/pipes/workflow-events"
 
 
 def _make_mock_nx() -> MagicMock:
-    """Create a mock NexusFS with Rust kernel IPC methods."""
+    """Create a mock NexusFS exposing the public Tier 2 pipe API.
+
+    Production code calls ``self._nx.pipe_write_nowait`` /
+    ``self._nx.pipe_close`` (sync passthroughs to the Rust kernel) and
+    ``await self._nx.sys_setattr`` / ``await self._nx.sys_read`` (async).
+    """
     nx = AsyncMock()
-    # Rust kernel mock — IPC pipe operations
-    kernel = MagicMock()
-    nx._kernel = kernel
-    # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
-    # sys_setattr is async
+    # Sync passthrough methods — must be MagicMock so calls are not awaited
+    nx.pipe_write_nowait = MagicMock()
+    nx.pipe_close = MagicMock()
+    # Async syscalls
     nx.sys_setattr = AsyncMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
     # sys_read is async — returns bytes. Raising NexusFileNotFoundError signals
     # "pipe closed" to the consumer loop (which catches it gracefully).
@@ -66,8 +70,8 @@ class TestFire:
         await svc.fire("file_write", {"path": "/foo.txt"}, "file_write:/foo.txt")
 
         # Verify kernel.pipe_write_nowait was called with serialized data
-        nx._kernel.pipe_write_nowait.assert_called_once()
-        call_args = nx._kernel.pipe_write_nowait.call_args
+        nx.pipe_write_nowait.assert_called_once()
+        call_args = nx.pipe_write_nowait.call_args
         assert call_args[0][0] == _WORKFLOW_PIPE_PATH
         msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_write"
@@ -82,7 +86,7 @@ class TestFire:
         await svc.start()
 
         # Make pipe_write_nowait raise to simulate full pipe
-        nx._kernel.pipe_write_nowait.side_effect = RuntimeError("PipeFull: buffer full")
+        nx.pipe_write_nowait.side_effect = RuntimeError("PipeFull: buffer full")
 
         # Should not raise
         await svc.fire("file_write", {"path": "/big.txt"}, "file_write:/big.txt")
@@ -116,7 +120,7 @@ class TestFire:
 
         await svc.fire("file_write", {"path": "/z"}, "file_write:/z")
         # Kernel pipe_write_nowait should NOT be called
-        nx._kernel.pipe_write_nowait.assert_not_called()
+        nx.pipe_write_nowait.assert_not_called()
 
         await svc.stop()
 
@@ -147,7 +151,7 @@ class TestOnMutation:
         )
         svc.on_mutation(event)
 
-        call_args = nx._kernel.pipe_write_nowait.call_args
+        call_args = nx.pipe_write_nowait.call_args
         msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_write"
         assert msg["ctx"]["file_path"] == "/test/file.txt"
@@ -169,7 +173,7 @@ class TestOnMutation:
         )
         svc.on_mutation(event)
 
-        call_args = nx._kernel.pipe_write_nowait.call_args
+        call_args = nx.pipe_write_nowait.call_args
         msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_delete"
         assert msg["ctx"]["file_path"] == "/test/gone.txt"
@@ -191,7 +195,7 @@ class TestOnMutation:
         )
         svc.on_mutation(event)
 
-        call_args = nx._kernel.pipe_write_nowait.call_args
+        call_args = nx.pipe_write_nowait.call_args
         msg = json.loads(call_args[0][1])
         assert msg["type"] == "file_rename"
         assert msg["ctx"]["old_path"] == "/old/path.txt"

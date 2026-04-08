@@ -458,25 +458,23 @@ class TestCASOpenAIBackendStreaming:
 
     @pytest.fixture()
     def mock_stream_manager(self) -> MagicMock:
-        """Mock NexusFS-like object exposing a ``_kernel`` with Rust stream ops.
+        """Mock NexusFS exposing the Tier 2 public stream methods.
 
-        Post IPC Rust-ification (2026-04-07) the OpenAI-compatible backend
-        talks to the Rust kernel directly via ``self._nx._kernel``. The
-        backend calls ``create_stream``, ``stream_write_nowait``,
-        ``stream_read_at``, and ``close_stream`` on the kernel. This
-        fixture wires a minimal kernel stub on a MagicMock so existing
-        tests can track writes + closes.
+        Post IPC Rust-ification + cleanup (2026-04-08): CASOpenAIBackend
+        calls the public sync stream API on NexusFS — ``stream_create``,
+        ``stream_write_nowait``, ``stream_read_at``, ``stream_close`` —
+        no longer reaching into ``_kernel``. This fixture wires those
+        methods directly on the MagicMock with a shared write list so
+        tests can assert delivery + close.
         """
         sm = MagicMock()
         sm._written: list[bytes] = []
         sm._closed = False
 
-        kernel = MagicMock()
-
-        def _create_stream(path: str, capacity: int) -> None:
+        def _stream_create(path: str, capacity: int = 65_536) -> None:
             return None
 
-        def _write_nowait(path: str, data: bytes) -> int:
+        def _stream_write_nowait(path: str, data: bytes) -> int:
             sm._written.append(bytes(data))
             return len(data)
 
@@ -486,19 +484,16 @@ class TestCASOpenAIBackendStreaming:
                 return None
             return (sm._written[offset], offset + 1)
 
-        def _close_stream(path: str) -> None:
+        def _stream_close(path: str) -> None:
             sm._closed = True
 
-        kernel.create_stream.side_effect = _create_stream
-        kernel.stream_write_nowait.side_effect = _write_nowait
-        kernel.stream_read_at.side_effect = _stream_read_at
-        kernel.close_stream.side_effect = _close_stream
-
-        sm._kernel = kernel
-        # Back-compat convenience: expose .create on the top-level mock so
-        # existing assertions like `mock_stream_manager.create.assert_called_once()`
-        # still work. It proxies to the kernel's create_stream.
-        sm.create = kernel.create_stream
+        sm.stream_create.side_effect = _stream_create
+        sm.stream_write_nowait.side_effect = _stream_write_nowait
+        sm.stream_read_at.side_effect = _stream_read_at
+        sm.stream_close.side_effect = _stream_close
+        # Back-compat convenience: expose .create alias used by an
+        # assertion below.
+        sm.create = sm.stream_create
         return sm
 
     @pytest.fixture()

@@ -221,16 +221,14 @@ class PipedRecordStoreWriteObserver:
         # Issue #3399: drain any remaining events from the Rust pipe buffer
         # directly (bypassing sys_read) before it gets cleared on close.
         if self._nx is not None:
-            _kernel = getattr(self._nx, "_kernel", None)
-            if _kernel is not None:
-                while True:
-                    try:
-                        _data = _kernel.pipe_read_nowait(_AUDIT_PIPE_PATH)
-                        if _data is None:
-                            break
-                        self._pre_buffer.append(bytes(_data))
-                    except Exception:
+            while True:
+                try:
+                    _data = self._nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                    if _data is None:
                         break
+                    self._pre_buffer.append(bytes(_data))
+                except Exception:
+                    break
 
         if not self._pre_buffer:
             return 0
@@ -262,7 +260,6 @@ class PipedRecordStoreWriteObserver:
         assert self._nx is not None
 
         nx = self._nx
-        _kernel = nx._kernel
         while True:
             # Block until first event arrives
             try:
@@ -275,7 +272,7 @@ class PipedRecordStoreWriteObserver:
             batch: list[dict[str, Any]] = [json.loads(first)]
             for _ in range(_MAX_BATCH_DRAIN - 1):
                 try:
-                    _data = _kernel.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                    _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
                     if _data is None:
                         break
                     batch.append(json.loads(bytes(_data)))
@@ -294,7 +291,7 @@ class PipedRecordStoreWriteObserver:
                     # Drain any additional events that arrived during linger
                     for _ in range(_MAX_BATCH_DRAIN - len(batch)):
                         try:
-                            _data = _kernel.pipe_read_nowait(_AUDIT_PIPE_PATH)
+                            _data = nx.pipe_read_nowait(_AUDIT_PIPE_PATH)
                             if _data is None:
                                 break
                             batch.append(json.loads(bytes(_data)))

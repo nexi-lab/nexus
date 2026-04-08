@@ -130,7 +130,7 @@ class TaskDispatchPipeConsumer:
 
         try:
             data = json.dumps({"type": signal_type, "payload": payload}).encode()
-            self._nx._kernel.pipe_write_nowait(_TASK_DISPATCH_PIPE_PATH, data)
+            self._nx.pipe_write_nowait(_TASK_DISPATCH_PIPE_PATH, data)
         except Exception:
             logger.warning("[TASK-DISPATCH] pipe full/closed, dropping signal: %s", signal_type)
 
@@ -168,7 +168,7 @@ class TaskDispatchPipeConsumer:
         if self._consumer_task is not None and not self._consumer_task.done():
             if self._nx is not None and self._pipe_ready:
                 with contextlib.suppress(Exception):
-                    self._nx._kernel.close_pipe(_TASK_DISPATCH_PIPE_PATH)
+                    self._nx.pipe_close(_TASK_DISPATCH_PIPE_PATH)
 
             self._consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -4653,9 +4653,10 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.pipe_write_nowait(path, data)
 
     def _pipe_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_PIPE — close Rust buffer + clean up Python state."""
+        """Destroy DT_PIPE — cancel blocked readers + close Rust buffer."""
         import contextlib
 
+        self._kernel.pipe_cancel_read(path)
         with contextlib.suppress(Exception):
             self._kernel.destroy_pipe(path)
         _buf = self._custom_pipe_backends.pop(path, None)
@@ -4698,9 +4699,10 @@ class NexusFS(  # type: ignore[misc]
         return self._kernel.stream_write_nowait(path, data)
 
     def _stream_destroy(self, path: str) -> dict[str, Any]:
-        """Destroy DT_STREAM — close Rust buffer + clean up Python state."""
+        """Destroy DT_STREAM — cancel blocked readers + close Rust buffer."""
         import contextlib
 
+        self._kernel.stream_cancel_read(path)
         with contextlib.suppress(Exception):
             self._kernel.destroy_stream(path)
         _buf = self._custom_stream_backends.pop(path, None)

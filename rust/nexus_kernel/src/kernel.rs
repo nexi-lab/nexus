@@ -1080,6 +1080,12 @@ impl Kernel {
             .map_err(pipe_mgr_err)
     }
 
+    /// Cancel a blocking pipe read. The blocked thread returns WouldBlock within 100ms.
+    #[allow(dead_code)]
+    pub fn pipe_cancel_read(&self, path: &str) {
+        self.pipe_manager.cancel_read(path);
+    }
+
     /// Close all pipes (shutdown).
     pub fn close_all_pipes(&self) {
         self.pipe_manager.close_all();
@@ -1204,6 +1210,12 @@ impl Kernel {
         self.stream_manager
             .read_at_blocking(path, offset, timeout_ms)
             .map_err(stream_mgr_err)
+    }
+
+    /// Cancel a blocking stream read. The blocked thread returns WouldBlock within 100ms.
+    #[allow(dead_code)]
+    pub fn stream_cancel_read(&self, path: &str) {
+        self.stream_manager.cancel_read(path);
     }
 
     /// Close all streams (shutdown).

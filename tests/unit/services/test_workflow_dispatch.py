@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from nexus.contracts.exceptions import NexusFileNotFoundError
 from nexus.core.file_events import FileEvent, FileEventType
 from nexus.services.lifecycle.workflow_dispatch_service import WorkflowDispatchService
 
@@ -31,8 +32,9 @@ def _make_mock_nx() -> MagicMock:
     # Rust kernel handles IPC blocking internally (no Python IPCWaiter needed)
     # sys_setattr is async
     nx.sys_setattr = AsyncMock(return_value={"path": _WORKFLOW_PIPE_PATH, "created": True})
-    # sys_read is async — returns bytes
-    nx.sys_read = AsyncMock(side_effect=Exception("pipe closed"))
+    # sys_read is async — returns bytes. Raising NexusFileNotFoundError signals
+    # "pipe closed" to the consumer loop (which catches it gracefully).
+    nx.sys_read = AsyncMock(side_effect=NexusFileNotFoundError(_WORKFLOW_PIPE_PATH))
     return nx
 
 

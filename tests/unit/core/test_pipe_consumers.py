@@ -27,17 +27,50 @@ import pytest
 # ======================================================================
 
 
+class _MockRustKernel:
+    """Minimal stand-in for nexus_kernel.Kernel — only the pipe methods the
+    consumers touch. Shares pipe state with the owning MockNexusFS.
+    """
+
+    def __init__(self, owner: "MockNexusFS") -> None:
+        self._owner = owner
+
+    def pipe_read_nowait(self, path: str) -> bytes | None:
+        """Non-blocking drain — returns None when empty (matches Rust semantics)."""
+        queue = self._owner._pipes.get(path)
+        if queue is None or queue.empty():
+            return None
+        try:
+            return queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
+    def pipe_write_nowait(self, path: str, data: bytes) -> None:
+        """Non-blocking write — raises if pipe is closed/missing, else enqueues."""
+        if path in self._owner._closed or path not in self._owner._pipes:
+            from nexus.contracts.exceptions import NexusFileNotFoundError
+
+            raise NexusFileNotFoundError(path=path)
+        self._owner._pipes[path].put_nowait(data)
+        self._owner.write_count += 1
+
+
 class MockNexusFS:
     """Minimal NexusFS mock that simulates DT_PIPE via asyncio.Queue.
 
     Provides sys_setattr, sys_write, sys_read, sys_unlink — the only
     methods ZoektPipeConsumer and PipedRecordStoreWriteObserver call.
+    Also exposes a ``_kernel`` stub so consumers that reach into the Rust
+    kernel for non-blocking drain (PipedRecordStoreWriteObserver._consume)
+    keep working.
     """
 
     def __init__(self) -> None:
         self._pipes: dict[str, asyncio.Queue[bytes]] = {}
         self._closed: set[str] = set()
         self._pipe_manager = None  # No real PipeManager in tests
+        self.write_count = 0
+        self._kernel = _MockRustKernel(self)
 
     async def sys_setattr(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Create a pipe (asyncio.Queue)."""

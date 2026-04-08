@@ -163,10 +163,18 @@ class TestKernelPipeReadWrite:
         kernel.close_all_pipes()
 
     def test_pipe_close(self) -> None:
+        """close_pipe() signals the closed flag (pipe still registered);
+        destroy_pipe() removes it from the registry.
+        """
         kernel = self._make_kernel()
         kernel.create_pipe("/pipes/delme", 1024)
 
+        # close_pipe: sets closed flag but does NOT remove from registry
         kernel.close_pipe("/pipes/delme")
+        assert "/pipes/delme" in kernel.list_pipes()
+
+        # destroy_pipe: removes from registry
+        kernel.destroy_pipe("/pipes/delme")
         assert "/pipes/delme" not in kernel.list_pipes()
 
         kernel.close_all_pipes()

@@ -207,9 +207,6 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Install COS upload dependency
-        run: pip install cos-python-sdk-v5
-
       - name: Build nexus_kernel wheel  (rust/nexus_kernel)
         shell: bash
         run: |
@@ -447,6 +444,12 @@ jobs:
             exit 1
           fi
 
+          echo "Installing coscmd..."
+          pip install coscmd
+
+          echo "Configuring coscmd..."
+          coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -r "${COS_REGION}"
+
           UPLOAD_PATH="${ARTIFACT_PATH}"
           if [ -d "${UPLOAD_PATH}" ]; then
             if [ "${RUNNER_OS}" = "Windows" ]; then
@@ -460,9 +463,14 @@ jobs:
 
           REMOTE_PATH="${ARTIFACT_VERSION}/$(basename "${UPLOAD_PATH}")"
           echo "Uploading ${UPLOAD_PATH} -> ${REMOTE_PATH}"
-          python scripts/upload_cos.py \
-            --local-path "${UPLOAD_PATH}" \
-            --remote-path "${REMOTE_PATH}"
+          ls -lh "${UPLOAD_PATH}"
+          coscmd upload "${UPLOAD_PATH}" "${REMOTE_PATH}"
+
+          if [ -n "${COS_BASE_URL}" ]; then
+            echo "URL: ${COS_BASE_URL%/}/${REMOTE_PATH}"
+          else
+            echo "URL: https://${COS_BUCKET}.cos.${COS_REGION}.myqcloud.com/${REMOTE_PATH}"
+          fi
 
   # ── Attach to GitHub Release ──────────────────────────────────────────────
   # Runs after all matrix jobs succeed. The release itself is created by

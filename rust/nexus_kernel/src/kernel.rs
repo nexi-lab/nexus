@@ -23,6 +23,7 @@ use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use threadpool::ThreadPool;
 
 // ── KernelError ────────────────────────────────────────────────────────────
 
@@ -359,11 +360,27 @@ pub struct Kernel {
     // Observer registry (owned by kernel — bitmask matching without GIL).
     //
     // Field is accessed only via the `register_observer` / `dispatch_observers`
-    // methods, which currently have no callers — Phase 5 wires them into the
-    // sys_* methods, Phase 6 wires PyKernel.register_observer to delegate
-    // here. Until then this is intentional pre-built infrastructure.
+    // methods, which have no production caller yet — Phase 5 wires them
+    // into the sys_* methods, Phase 6 wires PyKernel.register_observer to
+    // delegate here. Until then this is intentional pre-built infrastructure.
     #[allow(dead_code)]
     observers: Mutex<KernelObserverRegistry>,
+    // Background ThreadPool for deferred OBSERVE-phase dispatch (§11 Phase 3).
+    //
+    // OBSERVE is fire-and-forget by contract: the syscall returns as soon
+    // as the event is queued; observer callbacks run on this pool, off the
+    // hot path. 4 worker threads is enough for the typical workload (a
+    // handful of long-lived observers: FileWatcher, EventBus, etc.). Each
+    // worker acquires the GIL inside `PyMutationObserverAdapter::on_mutation`
+    // when calling Python observers — many parallel Python observers will
+    // serialize on the GIL, but Rust-native observers run truly parallel.
+    //
+    // No production caller yet — `dispatch_observers` becomes the sole
+    // submitter once Phase 5 wires sys_* call sites. The pool is created
+    // up-front so the cost (4 OS threads, ~8MB stack each) is paid once
+    // at kernel construction.
+    #[allow(dead_code)]
+    deferred_observer_pool: ThreadPool,
     // Zone revision counter — AtomicU64 per zone + Condvar for waiters (§10 A2)
     zone_revisions: DashMap<String, Arc<ZoneRevisionEntry>>,
     // File watch registry — Rust-native pattern matching (§10 A3)
@@ -403,6 +420,7 @@ impl Kernel {
             access_hook_count: AtomicU64::new(0),
             write_batch_hook_count: AtomicU64::new(0),
             observers: Mutex::new(KernelObserverRegistry::new()),
+            deferred_observer_pool: ThreadPool::with_name("nexus-observer".to_string(), 4),
             zone_revisions: DashMap::new(),
             file_watches: FileWatchRegistry::new(),
             agent_registry: crate::agent_registry::AgentRegistry::new(),
@@ -871,20 +889,47 @@ impl Kernel {
         self.observers.lock().unregister(name)
     }
 
-    /// OBSERVE-phase dispatch — fire all observers whose event_mask
-    /// matches `event.event_type`.
+    /// OBSERVE-phase dispatch — submit all observers whose event_mask
+    /// matches `event.event_type` to the deferred ThreadPool.
     ///
-    /// Currently runs synchronously on the caller's thread. §11 Phase 3
-    /// swaps the per-observer call out to a deferred ThreadPool so it
-    /// runs off the syscall hot path.
+    /// Fire-and-forget by contract: this returns immediately once the
+    /// jobs are queued. Observer callbacks run on `deferred_observer_pool`
+    /// workers, off the syscall hot path. Each callback is handed an
+    /// owned clone of the event so the worker doesn't borrow caller
+    /// state.
+    ///
+    /// Snapshot-then-drop-lock pattern: we collect Arc clones of the
+    /// matching observers under the registry lock, then release the
+    /// lock before submitting to the pool. This prevents deadlocks if
+    /// an observer's callback re-enters the kernel (e.g. an audit
+    /// logger that itself does sys_write).
     #[allow(dead_code)]
     pub fn dispatch_observers(&self, event: &FileEvent) {
-        // Snapshot matching observers, then drop the lock so observer
-        // callbacks can re-enter the kernel without deadlocking.
         let observers = self.observers.lock().matching(event.event_type as u32);
-        for obs in observers {
-            obs.on_mutation(event);
+        if observers.is_empty() {
+            return;
         }
+        for obs in observers {
+            let event_owned = event.clone();
+            self.deferred_observer_pool.execute(move || {
+                obs.on_mutation(&event_owned);
+            });
+        }
+    }
+
+    /// Block until all queued observer jobs have completed.
+    ///
+    /// Test-only helper for deterministic assertions:
+    /// `dispatch_observers` returns as soon as work is queued, but tests
+    /// often need to assert observer side-effects before the test
+    /// teardown. This is the OBSERVE analogue of fsync.
+    ///
+    /// Not for production: it blocks the calling thread until the entire
+    /// ThreadPool drains, which would defeat the fire-and-forget contract
+    /// if called on the syscall hot path.
+    #[allow(dead_code)]
+    pub fn flush_observers(&self) {
+        self.deferred_observer_pool.join();
     }
 
     /// Number of registered observers.
@@ -2535,5 +2580,137 @@ mod tests {
         assert!(validate_path_fast("/has\0null").is_err());
         assert!(validate_path_fast("/has/../traversal").is_err());
         assert!(validate_path_fast("/..").is_err());
+    }
+
+    // ── §11 Phase 3 deferred observer ThreadPool tests ─────────────
+
+    use crate::dispatch::{FileEvent, FileEventType, MutationObserver};
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
+
+    /// Counts every observed event and stashes the path so the test
+    /// can assert delivery in arbitrary order. Pure-Rust observer —
+    /// no GIL involved, so works fine in `cargo test --lib`.
+    struct CountingObserver {
+        seen: Arc<AtomicUsize>,
+        last_path: Arc<parking_lot::Mutex<Option<String>>>,
+    }
+
+    impl MutationObserver for CountingObserver {
+        fn on_mutation(&self, event: &FileEvent) {
+            *self.last_path.lock() = Some(event.path.clone());
+            self.seen.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    #[test]
+    fn dispatch_observers_runs_on_threadpool_off_caller_thread() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let last_path = Arc::new(parking_lot::Mutex::new(None));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::clone(&last_path),
+        });
+
+        kernel.register_observer(obs, "counting".to_string(), FileEventType::FileWrite.bit());
+
+        let event = FileEvent::new(FileEventType::FileWrite, "/test/file.txt");
+        kernel.dispatch_observers(&event);
+
+        // dispatch_observers is fire-and-forget; the worker may not
+        // have run yet. flush_observers blocks until the queue drains.
+        kernel.flush_observers();
+
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+        assert_eq!(last_path.lock().as_deref(), Some("/test/file.txt"));
+    }
+
+    #[test]
+    fn dispatch_observers_skips_non_matching_event_mask() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::new(parking_lot::Mutex::new(None)),
+        });
+
+        // Register for FileDelete only.
+        kernel.register_observer(obs, "del-only".to_string(), FileEventType::FileDelete.bit());
+
+        // Fire FileWrite — must NOT trigger the observer.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/x"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 0);
+
+        // Fire FileDelete — must trigger.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileDelete, "/y"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn dispatch_observers_fans_out_to_multiple_observers() {
+        let kernel = Kernel::new();
+        let count_a = Arc::new(AtomicUsize::new(0));
+        let count_b = Arc::new(AtomicUsize::new(0));
+
+        kernel.register_observer(
+            Arc::new(CountingObserver {
+                seen: Arc::clone(&count_a),
+                last_path: Arc::new(parking_lot::Mutex::new(None)),
+            }),
+            "a".to_string(),
+            FileEventType::FileWrite.bit(),
+        );
+        kernel.register_observer(
+            Arc::new(CountingObserver {
+                seen: Arc::clone(&count_b),
+                last_path: Arc::new(parking_lot::Mutex::new(None)),
+            }),
+            "b".to_string(),
+            FileEventType::FileWrite.bit(),
+        );
+
+        for i in 0..10 {
+            kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, format!("/p/{i}")));
+        }
+        kernel.flush_observers();
+
+        assert_eq!(count_a.load(Ordering::Relaxed), 10);
+        assert_eq!(count_b.load(Ordering::Relaxed), 10);
+    }
+
+    #[test]
+    fn dispatch_observers_no_observers_is_zero_cost_no_op() {
+        let kernel = Kernel::new();
+        // No observers registered; dispatch must not panic and must
+        // not even submit to the pool. flush_observers is a sanity
+        // check that returns immediately.
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/empty"));
+        kernel.flush_observers();
+        assert_eq!(kernel.observer_count(), 0);
+    }
+
+    #[test]
+    fn unregister_observer_stops_dispatch() {
+        let kernel = Kernel::new();
+        let seen = Arc::new(AtomicUsize::new(0));
+        let obs = Arc::new(CountingObserver {
+            seen: Arc::clone(&seen),
+            last_path: Arc::new(parking_lot::Mutex::new(None)),
+        });
+        kernel.register_observer(obs, "to-remove".to_string(), FileEventType::FileWrite.bit());
+
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/before"));
+        kernel.flush_observers();
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+
+        assert!(kernel.unregister_observer("to-remove"));
+        kernel.dispatch_observers(&FileEvent::new(FileEventType::FileWrite, "/after"));
+        kernel.flush_observers();
+        // Count is unchanged — observer is gone.
+        assert_eq!(seen.load(Ordering::Relaxed), 1);
+        assert_eq!(kernel.observer_count(), 0);
     }
 }

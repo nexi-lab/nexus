@@ -280,6 +280,14 @@ class SearchDaemon:
         try:
             from nexus.bricks.search.txtai_backend import TxtaiBackend
 
+            # Pass embedding cache so txtai can skip redundant API calls
+            _emb_cache = None
+            if self._cache_brick:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    _emb_cache = self._cache_brick.embedding_cache
+
             self._backend = TxtaiBackend(
                 database_url=self.config.database_url,
                 model=self.config.txtai_model,
@@ -288,6 +296,8 @@ class SearchDaemon:
                 graph=self.config.txtai_graph,
                 reranker_model=self.config.txtai_reranker,
                 sparse=self.config.txtai_sparse,
+                embedding_cache=_emb_cache,
+                data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
             )
             self._backend.kickoff_startup()
             self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())

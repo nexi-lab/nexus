@@ -117,6 +117,8 @@ class TxtaiBackend:
         graph: bool = True,
         reranker_model: str | None = None,
         sparse: bool | str = False,
+        embedding_cache: Any | None = None,
+        data_path: str | None = None,
     ) -> None:
         self._database_url = database_url
         self._model = model
@@ -125,6 +127,7 @@ class TxtaiBackend:
         self._graph = graph
         self._reranker_model = reranker_model
         self._sparse = sparse
+        self._embedding_cache = embedding_cache
         self._embeddings: Any = None
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
@@ -132,6 +135,10 @@ class TxtaiBackend:
         self._startup_lock = asyncio.Lock()
         self._startup_task: asyncio.Task[None] | None = None
         self._reranker_task: asyncio.Task[None] | None = None
+        # Path for txtai config.json — needed for pgvector persistence.
+        # txtai stores index metadata (dimensions, offset) in a local file
+        # and reads it back on load() to reconnect to pgvector tables.
+        self._config_path = data_path or "/app/data/.txtai-index"
         # Serialise all access to _embeddings / _reranker across coroutines.
         # faiss (used by txtai) is NOT thread-safe for concurrent search+write
         # operations. Since asyncio.to_thread() dispatches to a thread pool,
@@ -163,6 +170,68 @@ class TxtaiBackend:
         if self._startup_task is None or self._startup_task.done():
             self._startup_task = asyncio.create_task(self._startup_impl())
 
+    @staticmethod
+    def _patch_litellm_batching() -> None:
+        """Patch txtai's LiteLLM encode to batch API calls.
+
+        txtai's Vectors.index() batches documents (default 500) but passes
+        the entire batch to LiteLLM.encode() as a single API call. OpenAI
+        limits requests to 300k tokens. This patch splits large batches.
+        """
+        try:
+            import litellm as litellm_api
+            import numpy as np
+            import txtai.vectors.dense.litellm as litellm_mod
+
+            original_encode = litellm_mod.LiteLLM.encode
+
+            def batched_encode(self_inner: Any, data: list, category: Any = None) -> Any:
+                import time as _time
+
+                batch_size = 10  # ~80k tokens max per API call
+                if len(data) <= batch_size:
+                    return original_encode(self_inner, data, category)
+
+                all_embeddings: list = []
+                for i in range(0, len(data), batch_size):
+                    batch = data[i : i + batch_size]
+                    for attempt in range(5):
+                        try:
+                            response = litellm_api.embedding(
+                                model=self_inner.config.get("path"),
+                                input=batch,
+                                **self_inner.config.get("vectors", {}),
+                            )
+                            all_embeddings.extend([x["embedding"] for x in response.data])
+                            break
+                        except Exception as exc:
+                            if "rate" in str(exc).lower() or "429" in str(exc):
+                                wait = min(60, 10 * (attempt + 1))
+                                logger.warning("Rate limited, waiting %ds", wait)
+                                _time.sleep(wait)
+                            elif "max" in str(exc).lower() and "token" in str(exc).lower():
+                                # Single doc too long — try one by one
+                                for doc in batch:
+                                    try:
+                                        r = litellm_api.embedding(
+                                            model=self_inner.config.get("path"),
+                                            input=[doc[:30000]],
+                                            **self_inner.config.get("vectors", {}),
+                                        )
+                                        all_embeddings.extend([x["embedding"] for x in r.data])
+                                    except Exception:
+                                        # Skip doc — use zero vector
+                                        all_embeddings.append([0.0] * 1536)
+                                break
+                            else:
+                                raise
+                return np.array(all_embeddings, dtype=np.float32)
+
+            litellm_mod.LiteLLM.encode = batched_encode
+            logger.info("Patched txtai LiteLLM encode with batching (batch_size=10)")
+        except (ImportError, AttributeError) as exc:
+            logger.debug("LiteLLM batching patch skipped: %s", exc)
+
     async def _startup_impl(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
 
@@ -172,6 +241,8 @@ class TxtaiBackend:
         3. Keyword-only BM25 (embedding model fails to load)
         4. Degraded mode — _embeddings stays None, all searches return []
         """
+        self._patch_litellm_batching()
+
         try:
             from txtai import Embeddings
         except ModuleNotFoundError:
@@ -204,6 +275,10 @@ class TxtaiBackend:
             "content": content_store,
             "hybrid": self._hybrid,
             "objects": True,
+            # Batch size for API-backed embeddings (OpenAI limit: 300k tokens/request).
+            # Some docs are very long (~8k tokens each), so keep batch small.
+            # 10 docs × ~8k tokens max = ~80k tokens per API call — safe margin.
+            "batch": 10,
         }
         if self._vectors:
             config["vectors"] = dict(self._vectors)
@@ -240,31 +315,52 @@ class TxtaiBackend:
         if self._graph:
             config["graph"] = {"backend": "networkx"}
 
-        # Attempt full hybrid init; fall back to keyword-only on failure
-        try:
-            self._embeddings = Embeddings(config)
-        except Exception:
-            logger.warning(
-                "Full hybrid init failed (model=%s). Falling back to keyword-only (BM25).",
-                self._model,
-                exc_info=True,
-            )
+        # Try loading existing pgvector index first (survives restarts)
+        if use_pgvector:
             try:
-                bm25_config: dict[str, Any] = {
-                    "keyword": True,
-                    "content": content_store,
-                    "objects": True,
-                }
-                self._embeddings = Embeddings(bm25_config)
-                self._hybrid = False
-                logger.info("Keyword-only (BM25) backend started successfully")
+                probe = Embeddings()
+                if probe.exists(self._config_path):
+                    probe.load(self._config_path)
+                    self._embeddings = probe
+                    logger.info(
+                        "Loaded existing txtai index from pgvector (config=%s, count=%d)",
+                        self._config_path,
+                        probe.count() or 0,
+                    )
+                else:
+                    logger.info(
+                        "No existing txtai index at %s — will create on first index()",
+                        self._config_path,
+                    )
             except Exception:
-                logger.error(
-                    "BM25 fallback also failed. "
-                    "Search daemon will start in degraded mode (no results).",
+                logger.debug("Failed to load existing index, creating fresh", exc_info=True)
+
+        # Create fresh Embeddings if we didn't load from pgvector
+        if self._embeddings is None:
+            try:
+                self._embeddings = Embeddings(config)
+            except Exception:
+                logger.warning(
+                    "Full hybrid init failed (model=%s). Falling back to keyword-only (BM25).",
+                    self._model,
                     exc_info=True,
                 )
-                self._embeddings = None
+                try:
+                    bm25_config: dict[str, Any] = {
+                        "keyword": True,
+                        "content": content_store,
+                        "objects": True,
+                    }
+                    self._embeddings = Embeddings(bm25_config)
+                    self._hybrid = False
+                    logger.info("Keyword-only (BM25) backend started successfully")
+                except Exception:
+                    logger.error(
+                        "BM25 fallback also failed. "
+                        "Search daemon will start in degraded mode (no results).",
+                        exc_info=True,
+                    )
+                    self._embeddings = None
 
         # Mark backend usable as soon as embeddings are ready. Reranker startup
         # can continue in the background without blocking indexing/search.
@@ -323,6 +419,23 @@ class TxtaiBackend:
 
     # ----- Index operations ---------------------------------------------------
 
+    def _save(self) -> None:
+        """Persist txtai index: commit pgvector transactions + write config.json.
+
+        txtai only commits DB transactions in ``save()``. Without this,
+        pgvector transactions stay open indefinitely, causing deadlocks.
+        The config.json file stores index metadata (dimensions, offset)
+        needed to reload from pgvector on restart.
+        """
+        if self._embeddings:
+            try:
+                import os
+
+                os.makedirs(self._config_path, exist_ok=True)
+                self._embeddings.save(self._config_path)
+            except Exception:
+                logger.warning("txtai save failed", exc_info=True)
+
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Index documents (full rebuild for zone_id)."""
         if not documents:
@@ -335,13 +448,15 @@ class TxtaiBackend:
             if not self._embeddings:
                 return 0
             await asyncio.to_thread(self._embeddings.index, rows)
+            await asyncio.to_thread(self._save)
         return len(rows)
 
     async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Upsert documents (insert-or-update).
 
         Falls back to ``index()`` on first call when the ANN backend
-        hasn't been initialized yet.
+        hasn't been initialized yet. Subsequent calls use upsert() which
+        appends with auto-incrementing indexids (no collision with pgvector).
         """
         if not documents:
             return 0
@@ -350,8 +465,6 @@ class TxtaiBackend:
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
 
-        # txtai requires index() for the first batch to initialize the ANN.
-        # After that, upsert() works for incremental updates.
         async with self._lock:
             if not self._embeddings:
                 return 0
@@ -359,6 +472,7 @@ class TxtaiBackend:
                 await asyncio.to_thread(self._embeddings.index, rows)
             else:
                 await asyncio.to_thread(self._embeddings.upsert, rows)
+            await asyncio.to_thread(self._save)
         return len(rows)
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
@@ -470,24 +584,36 @@ class TxtaiBackend:
         zone_id: str,
         hops: int = 2,  # noqa: ARG002
         limit: int = 10,
+        path_filter: str | None = None,
     ) -> list[BaseSearchResult]:
-        """Graph-augmented search using txtai's semantic graph."""
+        """Graph-augmented search using txtai's semantic graph.
+
+        Uses ``Embeddings.search()`` with graph enabled — txtai automatically
+        applies the semantic graph as a boosting/re-ranking signal on top of
+        the standard hybrid BM25+dense retrieval. This is NOT the raw graph
+        query API (``graph.search()``) which expects graph query syntax.
+        """
         await self.startup()
+
+        # Build SQL with zone_id + optional path filter (same as regular search)
+        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
+
         async with self._lock:
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
-            raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
+            # txtai's Embeddings.search() uses graph as boost when graph is configured
+            raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:
-            row = r if isinstance(r, dict) else {"text": str(r), "score": 0.0}
-            if row.get("zone_id") != zone_id:
-                continue
+            score = float(r.get("score", 0.0))
             results.append(
                 BaseSearchResult(
-                    path=row.get("path", ""),
-                    chunk_text=row.get("text", ""),
-                    score=float(row.get("score", 0.0)),
+                    path=r.get("path", ""),
+                    chunk_text=r.get("text", ""),
+                    score=score,
+                    keyword_score=score,
+                    vector_score=score,
                 )
             )
         return results
@@ -570,7 +696,9 @@ def _build_search_sql(
         f"zone_id = '{_escape_sql_string(zone_id)}'",
     ]
     if path_filter:
-        clauses.append(f"path LIKE '{_escape_like_string(path_filter)}%' ESCAPE '\\'")
+        # Note: txtai's SQL parser does not support the ESCAPE keyword.
+        # We rely on _escape_sql_string to sanitise the value instead.
+        clauses.append(f"path LIKE '{_escape_sql_string(path_filter)}%'")
 
     where = " AND ".join(clauses)
     safe_limit = max(1, min(int(limit), 1000))

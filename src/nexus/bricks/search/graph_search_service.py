@@ -103,6 +103,6 @@ async def graph_enhanced_search(
         return []
 
     results: list[BaseSearchResult] = await graph_search_fn(
-        query, zone_id=effective_zone_id, limit=limit
+        query, zone_id=effective_zone_id, limit=limit, path_filter=path_filter
     )
     return results

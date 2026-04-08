@@ -5,7 +5,7 @@ chain with DT_PIPE kernel IPC via sys_write/sys_read, decoupling the
 ObjectStore write hot path from Zoekt's threading.Lock + timer debounce.
 
 Issue #810: Decouple Zoekt on_write_callback sync from ObjectStore write path.
-Issue #1772: Migrate from PipeManager to sys_write/sys_read.
+Issue #1772: Migrated to sys_write/sys_read backed by the Rust kernel pipe registry.
 
 Architecture:
     CASLocalBackend.write_content() (sync)
@@ -115,16 +115,9 @@ class ZoektPipeConsumer:
         if self._nx is None:
             return  # CLI mode
 
-        pipe_manager = getattr(self._nx, "_pipe_manager", None)
-        if pipe_manager is not None:
-            pipe_manager.ensure(
-                _ZOEKT_PIPE_PATH,
-                owner_id="kernel",
-            )
-        else:
-            # Test/degraded path: fall back to direct syscall-based pipe creation
-            # when NexusFS exposes DT_PIPE syscalls but no PipeManager object.
-            await self._nx.sys_setattr(_ZOEKT_PIPE_PATH)
+        # Create the pipe via the public syscall — the Rust kernel router
+        # picks up DT_PIPE entry_type from the metastore.
+        await self._nx.sys_setattr(_ZOEKT_PIPE_PATH)
 
         self._pipe_ready = True
         self._consumer_task = asyncio.create_task(self._consume())

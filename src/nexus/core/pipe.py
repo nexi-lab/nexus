@@ -7,11 +7,13 @@ Implements the Kernel messaging tier from KERNEL-ARCHITECTURE.md §6:
     | **Kernel** | kfifo ring buffer| Nexus Native Pipe (DT_PIPE)        | ~0.5μs  |
 
 This file defines the PipeBackend protocol and exception classes for DT_PIPE.
-The actual data plane lives in the Rust kernel IPC registry (DashMap<String, RingBufferCore>).
-For VFS-visible named pipes (mkfifo/fs/pipe.c equivalent), see core/pipe_manager.py.
+The actual data plane lives in the Rust kernel IPC registry
+(DashMap<String, RingBufferCore>) inside ``nexus_kernel``. The mkfifo /
+``fs/pipe.c`` equivalent (named-pipe creation, lookup, destroy) is also
+owned by the Rust kernel — there is no Python ``PipeManager`` anymore.
 
-    pipe.py         = protocol + exceptions
-    core/pipe_manager.py = fs/pipe.c (VFS named pipe, kernel tier)
+    pipe.py = Python-side protocol + exceptions
+    rust/nexus_kernel/src/ipc/pipe.rs = Rust kernel pipe registry (data plane)
 
 Storage model (KERNEL-ARCHITECTURE.md line 228):
     - Pipe **inode** (FileMetadata, entry_type=DT_PIPE) → MetastoreABC

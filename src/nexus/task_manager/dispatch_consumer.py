@@ -94,12 +94,6 @@ class TaskDispatchPipeConsumer:
     # Deferred injection
     # ------------------------------------------------------------------
 
-    def set_pipe_manager(self, pipe_manager: Any) -> None:
-        """Legacy shim — accepts PipeManager or NexusFS. Use set_nx() instead."""
-        # Callers passing NexusFS directly
-        if hasattr(pipe_manager, "_kernel"):
-            self._nx = pipe_manager
-
     def set_nx(self, nx: "NexusFS") -> None:
         """Inject NexusFS for Rust-kernel pipe I/O."""
         self._nx = nx

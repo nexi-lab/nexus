@@ -5,42 +5,21 @@
 //!
 //! Blocking read/write use `parking_lot::Condvar` + `py.allow_threads()` to
 //! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
-//!
-//! ## Cancellation
-//!
-//! `read_blocking()` uses cooperative cancellation via `AtomicBool` flag +
-//! 100ms Condvar poll intervals. Python calls `cancel_read(path)` to set the
-//! flag; the blocking thread wakes within 100ms and returns `WouldBlock`.
-//!
-//! PERF NOTE (for future AI): The 100ms poll is a workaround for Python asyncio's
-//! inability to interrupt OS threads. When all callers of `read_blocking` are
-//! migrated to pure Rust (no Python asyncio involvement), replace the 100ms poll
-//! with a single `Condvar::wait_for(full_timeout)` — the Rust caller can simply
-//! `notify_all()` on the condvar to cancel, no polling needed. The `cancelled`
-//! AtomicBool and `CANCEL_POLL_INTERVAL` can be removed at that point.
 
 use crate::pipe::{MemoryPipeBackend, PipeBackend, PipeError};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Poll interval for checking cancellation flag during blocking read.
-/// See module-level PERF NOTE for removal criteria.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
 // ---------------------------------------------------------------------------
-// Per-pipe notification (Condvar pair + cancellation flag)
+// Per-pipe notification (Condvar pair)
 // ---------------------------------------------------------------------------
 
 struct PipeNotify {
     mutex: Mutex<()>,
     not_empty: Condvar,
     not_full: Condvar,
-    /// Cooperative cancellation flag. Set by `cancel_read()`, checked by
-    /// `read_blocking()` every `CANCEL_POLL_INTERVAL`. Reset on next `create()`.
-    cancelled: AtomicBool,
 }
 
 impl PipeNotify {
@@ -49,7 +28,6 @@ impl PipeNotify {
             mutex: Mutex::new(()),
             not_empty: Condvar::new(),
             not_full: Condvar::new(),
-            cancelled: AtomicBool::new(false),
         }
     }
 }
@@ -100,13 +78,13 @@ impl PipeManager {
         Ok(())
     }
 
-    /// Destroy a pipe — close, cancel waiters, and remove from registry.
+    /// Destroy a pipe — close, notify waiters, and remove from registry.
     pub(crate) fn destroy(&self, path: &str) -> Result<(), PipeManagerError> {
         match self.buffers.remove(path) {
             Some((_, buf)) => {
                 buf.close();
+                // Wake all waiters before removing notify
                 if let Some((_, n)) = self.notify.remove(path) {
-                    n.cancelled.store(true, Ordering::Release);
                     let _guard = n.mutex.lock();
                     n.not_empty.notify_all();
                     n.not_full.notify_all();
@@ -122,6 +100,7 @@ impl PipeManager {
         match self.buffers.get(path) {
             Some(buf) => {
                 buf.close();
+                // Wake all waiters so they see the closed state
                 if let Some(n) = self.notify.get(path) {
                     let _guard = n.mutex.lock();
                     n.not_empty.notify_all();
@@ -130,18 +109,6 @@ impl PipeManager {
                 Ok(())
             }
             None => Err(PipeManagerError::NotFound(path.to_string())),
-        }
-    }
-
-    /// Cancel any blocking read on this pipe. The blocked thread will
-    /// return `WouldBlock` within `CANCEL_POLL_INTERVAL` (100ms).
-    ///
-    /// Called by Python when asyncio task is cancelled or during shutdown.
-    pub(crate) fn cancel_read(&self, path: &str) {
-        if let Some(n) = self.notify.get(path) {
-            n.cancelled.store(true, Ordering::Release);
-            let _guard = n.mutex.lock();
-            n.not_empty.notify_all();
         }
     }
 
@@ -187,12 +154,7 @@ impl PipeManager {
     /// Blocking read — waits for data with Condvar (GIL-free).
     ///
     /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
-    /// Returns data bytes, `Closed` if pipe closed, or `WouldBlock` on
-    /// timeout/cancellation.
-    ///
-    /// Uses 100ms poll intervals to check the `cancelled` AtomicBool flag,
-    /// enabling Python asyncio task cancellation to propagate within 100ms.
-    /// See module-level PERF NOTE for future optimization path.
+    /// Returns data bytes, or WouldBlock on timeout.
     #[allow(dead_code)]
     pub(crate) fn read_blocking(
         &self,
@@ -208,9 +170,6 @@ impl PipeManager {
             .get(path)
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
 
-        // Reset cancellation flag (may have been set by a previous cancel)
-        notify.cancelled.store(false, Ordering::Release);
-
         // Fast path: try nowait first
         match buf.pop() {
             Ok(data) => {
@@ -222,19 +181,13 @@ impl PipeManager {
             Err(e) => return Err(PipeManagerError::Backend(e)),
         }
 
-        // Slow path: poll with short Condvar waits for cancellation support
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+        // Slow path: wait on condvar
+        let timeout = Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + timeout;
         let mut guard = notify.mutex.lock();
 
         loop {
-            // Check cancellation
-            if notify.cancelled.load(Ordering::Acquire) {
-                return Err(PipeManagerError::WouldBlock(
-                    "pipe read cancelled".to_string(),
-                ));
-            }
-
-            // Try read
+            // Double-check after lock
             match buf.pop() {
                 Ok(data) => {
                     notify.not_full.notify_one();
@@ -247,17 +200,29 @@ impl PipeManager {
                 Err(e) => return Err(PipeManagerError::Backend(e)),
             }
 
-            // Check deadline
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
                 return Err(PipeManagerError::WouldBlock(
                     "pipe read timeout".to_string(),
                 ));
             }
-
-            // Wait for data or cancellation, capped at CANCEL_POLL_INTERVAL
-            let wait_dur = remaining.min(CANCEL_POLL_INTERVAL);
-            notify.not_empty.wait_for(&mut guard, wait_dur);
+            if notify.not_empty.wait_for(&mut guard, remaining).timed_out() {
+                // One more try after timeout
+                match buf.pop() {
+                    Ok(data) => {
+                        notify.not_full.notify_one();
+                        return Ok(data);
+                    }
+                    Err(PipeError::ClosedEmpty) => {
+                        return Err(PipeManagerError::Closed(path.to_string()));
+                    }
+                    _ => {
+                        return Err(PipeManagerError::WouldBlock(
+                            "pipe read timeout".to_string(),
+                        ))
+                    }
+                }
+            }
         }
     }
 
@@ -276,8 +241,8 @@ impl PipeManager {
         for entry in self.buffers.iter() {
             entry.value().close();
         }
+        // Wake all waiters
         for entry in self.notify.iter() {
-            entry.cancelled.store(true, Ordering::Release);
             let _guard = entry.mutex.lock();
             entry.not_empty.notify_all();
             entry.not_full.notify_all();

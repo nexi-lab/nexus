@@ -5,31 +5,20 @@
 //!
 //! Blocking read uses `parking_lot::Condvar` + `py.allow_threads()` to
 //! release the GIL while waiting. This replaces Python's `ipc_waiter.py`.
-//!
-//! ## Cancellation
-//!
-//! Same cooperative cancellation as PipeManager — see `pipe_manager.rs`
-//! module doc for full rationale and PERF NOTE about future Rust-only callers.
 
 use crate::stream::{MemoryStreamBackend, StreamBackend, StreamError};
 use dashmap::DashMap;
 use parking_lot::{Condvar, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Poll interval for checking cancellation flag during blocking read.
-/// See `pipe_manager.rs` module-level PERF NOTE for removal criteria.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
 // ---------------------------------------------------------------------------
-// Per-stream notification + cancellation flag
+// Per-stream notification
 // ---------------------------------------------------------------------------
 
 struct StreamNotify {
     mutex: Mutex<()>,
     not_empty: Condvar,
-    cancelled: AtomicBool,
 }
 
 impl StreamNotify {
@@ -37,7 +26,6 @@ impl StreamNotify {
         Self {
             mutex: Mutex::new(()),
             not_empty: Condvar::new(),
-            cancelled: AtomicBool::new(false),
         }
     }
 }
@@ -88,13 +76,12 @@ impl StreamManager {
         Ok(())
     }
 
-    /// Destroy a stream — close, cancel waiters, and remove from registry.
+    /// Destroy a stream — close, notify waiters, and remove from registry.
     pub(crate) fn destroy(&self, path: &str) -> Result<(), StreamManagerError> {
         match self.buffers.remove(path) {
             Some((_, buf)) => {
                 buf.close();
                 if let Some((_, n)) = self.notify.remove(path) {
-                    n.cancelled.store(true, Ordering::Release);
                     let _guard = n.mutex.lock();
                     n.not_empty.notify_all();
                 }
@@ -119,16 +106,6 @@ impl StreamManager {
         }
     }
 
-    /// Cancel any blocking read on this stream. The blocked thread will
-    /// return `WouldBlock` within `CANCEL_POLL_INTERVAL` (100ms).
-    pub(crate) fn cancel_read(&self, path: &str) {
-        if let Some(n) = self.notify.get(path) {
-            n.cancelled.store(true, Ordering::Release);
-            let _guard = n.mutex.lock();
-            n.not_empty.notify_all();
-        }
-    }
-
     /// Check if a stream exists.
     pub(crate) fn has(&self, path: &str) -> bool {
         self.buffers.contains_key(path)
@@ -145,6 +122,7 @@ impl StreamManager {
             .get(path)
             .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
         let offset = buf.push(data).map_err(StreamManagerError::Backend)?;
+        // Wake blocked readers
         if let Some(notify) = self.notify.get(path) {
             notify.not_empty.notify_all();
         }
@@ -171,9 +149,7 @@ impl StreamManager {
 
     /// Blocking read at offset — waits for data with Condvar (GIL-free).
     ///
-    /// Uses 100ms poll intervals to check the `cancelled` AtomicBool flag,
-    /// enabling Python asyncio task cancellation to propagate within 100ms.
-    /// See `pipe_manager.rs` module-level PERF NOTE for future optimization.
+    /// Called via `py.allow_threads()` from PyO3 wrapper (generated_pyo3.rs).
     #[allow(dead_code)]
     pub(crate) fn read_at_blocking(
         &self,
@@ -190,9 +166,6 @@ impl StreamManager {
             .get(path)
             .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
 
-        // Reset cancellation flag
-        notify.cancelled.store(false, Ordering::Release);
-
         // Fast path
         match buf.read_at(offset) {
             Ok((data, next)) => return Ok((data, next)),
@@ -203,19 +176,12 @@ impl StreamManager {
             Err(e) => return Err(StreamManagerError::Backend(e)),
         }
 
-        // Slow path: poll with short Condvar waits for cancellation support
-        let deadline = std::time::Instant::now() + Duration::from_millis(timeout_ms);
+        // Slow path: wait on condvar
+        let timeout = Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + timeout;
         let mut guard = notify.mutex.lock();
 
         loop {
-            // Check cancellation
-            if notify.cancelled.load(Ordering::Acquire) {
-                return Err(StreamManagerError::WouldBlock(
-                    "stream read cancelled".to_string(),
-                ));
-            }
-
-            // Try read
             match buf.read_at(offset) {
                 Ok((data, next)) => return Ok((data, next)),
                 Err(StreamError::ClosedEmpty) => {
@@ -225,17 +191,25 @@ impl StreamManager {
                 Err(e) => return Err(StreamManagerError::Backend(e)),
             }
 
-            // Check deadline
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
                 return Err(StreamManagerError::WouldBlock(
                     "stream read timeout".to_string(),
                 ));
             }
-
-            // Wait for data or cancellation, capped at CANCEL_POLL_INTERVAL
-            let wait_dur = remaining.min(CANCEL_POLL_INTERVAL);
-            notify.not_empty.wait_for(&mut guard, wait_dur);
+            if notify.not_empty.wait_for(&mut guard, remaining).timed_out() {
+                match buf.read_at(offset) {
+                    Ok((data, next)) => return Ok((data, next)),
+                    Err(StreamError::ClosedEmpty) => {
+                        return Err(StreamManagerError::Closed(path.to_string()));
+                    }
+                    _ => {
+                        return Err(StreamManagerError::WouldBlock(
+                            "stream read timeout".to_string(),
+                        ));
+                    }
+                }
+            }
         }
     }
 
@@ -270,7 +244,6 @@ impl StreamManager {
             entry.value().close();
         }
         for entry in self.notify.iter() {
-            entry.cancelled.store(true, Ordering::Release);
             let _guard = entry.mutex.lock();
             entry.not_empty.notify_all();
         }

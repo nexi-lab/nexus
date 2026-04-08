@@ -7,14 +7,12 @@
  * inline styled segments inside a <text>.
  */
 
-import { createSignal, onCleanup } from "solid-js";
 import { useGlobalStore } from "../../stores/global-store.js";
 import { useEventsStore } from "../../stores/events-store.js";
 import { connectionColor, palette, statusColor } from "../theme.js";
 import { textStyle } from "../text-style.js";
-
-const MIN_COLS = 80;
-const MIN_ROWS = 24;
+import { terminalDimensions } from "../terminal-dimensions.js";
+import { COLLAPSED_THRESHOLD } from "./side-nav-utils.js";
 
 const STATUS_ICONS: Record<string, string> = {
   connected: "●",
@@ -41,16 +39,10 @@ export function StatusBar() {
     return f.eventType !== null || f.search !== null;
   };
 
-  // Terminal size guard (#3245)
-  const [terminalTooSmall, setTerminalTooSmall] = createSignal(false);
-  const check = () => {
-    const cols = process.stdout.columns ?? 80;
-    const rows = process.stdout.rows ?? 24;
-    setTerminalTooSmall(cols < MIN_COLS || rows < MIN_ROWS);
-  };
-  check();
-  process.stdout.on("resize", check);
-  onCleanup(() => { process.stdout.off("resize", check); });
+  // Sidebar hidden when below COLLAPSED_THRESHOLD (60–79 cols). Derived from
+  // the centralized signal — no local resize listener needed (#3501).
+  // Gated on isTTY: in non-TTY the fallback width (60) would false-positive.
+  const sidebarHidden = () => process.stdout.isTTY === true && terminalDimensions().width < COLLAPSED_THRESHOLD;
 
   const icon = () => STATUS_ICONS[status()] ?? "?";
   const baseUrl = () => config().baseUrl ?? "localhost:2026";
@@ -79,8 +71,8 @@ export function StatusBar() {
       flexDirection="row"
     >
       <text>
-        {terminalTooSmall() ? (
-          <span style={textStyle({ fg: statusColor.warning })}>{`⚠ Terminal too small (need ${MIN_COLS}×${MIN_ROWS}) `}</span>
+        {sidebarHidden() ? (
+          <span style={textStyle({ fg: statusColor.warning })}>{"⚠ sidebar hidden  "}</span>
         ) : ""}
         <span style={textStyle({ fg: connectionColor[status()] })}>{icon()}</span>
         <span style={textStyle({ dim: true })}>{` ${status()} │ `}</span>

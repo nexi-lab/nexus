@@ -38,6 +38,9 @@ import {
   formatErrorAnnouncement,
   formatPanelAnnouncement,
 } from "./shared/accessibility-announcements.js";
+import { TerminalGuard } from "./shared/components/terminal-guard.js";
+import { isTooSmall } from "./shared/terminal-dimensions.js";
+import { selectBranch } from "./shared/app-keybindings.js";
 
 // Lazy-loaded panels
 // Direct imports — lazy() + Suspense prevents <Show keyed> from re-mounting panels.
@@ -128,6 +131,10 @@ export function App() {
   const { isFresh } = useFreshServer();
   const [welcomeDismissed, setWelcomeDismissed] = createSignal(false);
   const showWelcome = () => isFresh === true && !welcomeDismissed();
+
+  // Terminal size guard — drives both TerminalGuard display and keyBindings branch.
+  // Uses the shared isTooSmall accessor (single source of truth in terminal-dimensions.ts).
+  const tooSmall = createMemo(() => isTooSmall());
 
   // Determine if we should show the pre-connection screen (Decision 3A).
   // Must be a createMemo so the Show in JSX re-evaluates when connectionStatus changes.
@@ -292,14 +299,25 @@ export function App() {
   });
 
   const keyBindings = createMemo((): KeyBindings => {
-    if (showPreConnection()) {
+    const branch = selectBranch({
+      terminalTooSmall: tooSmall(),
+      showPreConnection: showPreConnection(),
+      overlayOpen: identitySwitcherOpen() || helpOpen() || commandPaletteOpen() || showWelcome(),
+    });
+
+    if (branch === "resize") {
+      // Terminal too small — only quit is available.
+      return { "q": shutdown };
+    }
+
+    if (branch === "pre-connection") {
       return {
           // Pre-connection screen handles its own keybindings
           "q": shutdown,
         };
     }
 
-    if (identitySwitcherOpen() || helpOpen() || commandPaletteOpen() || showWelcome()) {
+    if (branch === "overlay") {
       return {
           // When an overlay is open, only dismiss keys work from app level.
           "ctrl+i": toggleIdentitySwitcher,
@@ -344,35 +362,37 @@ export function App() {
   // visibility, NOT to conditionally mount/unmount. This ensures the main
   // UI's reactive scope (signals, effects, intervals) is never disposed.
   return (
-    <box height="100%" width="100%" flexDirection="column">
-      {/* Pre-connection overlay — shown on top when not connected */}
-      <Show when={showPreConnection()}>
-        <PreConnectionScreen />
-        <StatusBar />
-      </Show>
+    <TerminalGuard>
+      <box height="100%" width="100%" flexDirection="column">
+        {/* Pre-connection overlay — shown on top when not connected */}
+        <Show when={showPreConnection()}>
+          <PreConnectionScreen />
+          <StatusBar />
+        </Show>
 
-      {/* Main UI — always rendered, hidden when pre-connection is shown */}
-      <Show when={!showPreConnection()}>
-        {/* Main row: sidebar + panel content */}
-        <box flexGrow={1} flexDirection="row">
-          <SideNav activePanel={useGlobalStore((s) => s.activePanel)} visible={sideNavVisible() && !useUiStore((s) => s.zoomedPanel)} onSelect={setActivePanel} />
-          <box flexGrow={1}>
-            <PanelRouter panel={useGlobalStore((s) => s.activePanel) as PanelId} />
+        {/* Main UI — always rendered, hidden when pre-connection is shown */}
+        <Show when={!showPreConnection()}>
+          {/* Main row: sidebar + panel content */}
+          <box flexGrow={1} flexDirection="row">
+            <SideNav activePanel={useGlobalStore((s) => s.activePanel)} visible={sideNavVisible() && !useUiStore((s) => s.zoomedPanel)} onSelect={setActivePanel} />
+            <box flexGrow={1}>
+              <PanelRouter panel={useGlobalStore((s) => s.activePanel) as PanelId} />
+            </box>
           </box>
-        </box>
 
-        {/* Overlays */}
-        {showWelcome() && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
-        <IdentitySwitcher visible={identitySwitcherOpen()} onClose={closeIdentitySwitcher} />
-        <CommandPalette visible={commandPaletteOpen()} commands={commandPaletteItems()} onClose={closeCommandPalette} />
-        <AppConfirmDialog />
-        <HelpOverlay visible={helpOpen()} panel={useGlobalStore((s) => s.activePanel)} onDismiss={() => setHelpOpen(false)} />
+          {/* Overlays */}
+          {showWelcome() && <WelcomeScreen onDismiss={() => setWelcomeDismissed(true)} />}
+          <IdentitySwitcher visible={identitySwitcherOpen()} onClose={closeIdentitySwitcher} />
+          <CommandPalette visible={commandPaletteOpen()} commands={commandPaletteItems()} onClose={closeCommandPalette} />
+          <AppConfirmDialog />
+          <HelpOverlay visible={helpOpen()} panel={useGlobalStore((s) => s.activePanel)} onDismiss={() => setHelpOpen(false)} />
 
-        {/* Error bar + Status bar */}
-        <AnnouncementBar />
-        <ErrorBar />
-        <StatusBar />
-      </Show>
-    </box>
+          {/* Error bar + Status bar */}
+          <AnnouncementBar />
+          <ErrorBar />
+          <StatusBar />
+        </Show>
+      </box>
+    </TerminalGuard>
   );
 }

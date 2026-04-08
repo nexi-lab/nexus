@@ -14,6 +14,9 @@ import {
   getSideNavWidth,
   FULL_THRESHOLD,
   COLLAPSED_THRESHOLD,
+  TERMINAL_GUARD_MIN_COLS,
+  TERMINAL_GUARD_MIN_ROWS,
+  RESIZE_DEBOUNCE_MS,
   SIDE_NAV_FULL_WIDTH,
   SIDE_NAV_COLLAPSED_WIDTH,
 } from "../../src/shared/components/side-nav-utils.js";
@@ -89,8 +92,23 @@ describe("thresholds", () => {
     expect(COLLAPSED_THRESHOLD).toBe(80);
   });
 
-  it("full threshold is greater than collapsed threshold", () => {
-    expect(FULL_THRESHOLD).toBeGreaterThan(COLLAPSED_THRESHOLD);
+  it("terminal guard min cols is 60", () => {
+    expect(TERMINAL_GUARD_MIN_COLS).toBe(60);
+  });
+
+  it("terminal guard min rows is 24", () => {
+    expect(TERMINAL_GUARD_MIN_ROWS).toBe(24);
+  });
+
+  it("resize debounce is 150 ms", () => {
+    expect(RESIZE_DEBOUNCE_MS).toBe(150);
+  });
+
+  // 3-way ordering invariant: guard < collapsed < full.
+  // If any constant is changed incorrectly, these catch it.
+  it("guard min cols < collapsed threshold < full threshold", () => {
+    expect(TERMINAL_GUARD_MIN_COLS).toBeLessThan(COLLAPSED_THRESHOLD);
+    expect(COLLAPSED_THRESHOLD).toBeLessThan(FULL_THRESHOLD);
   });
 });
 

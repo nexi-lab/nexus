@@ -7,7 +7,7 @@ Provides encrypted storage for credentials with:
 - Audit logging
 
 Reuses:
-- OAuthCrypto for Fernet encryption
+- TokenEncryptor for Fernet encryption
 - SecretsAuditLogger for audit trail
 """
 
@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
-from nexus.bricks.auth.oauth.crypto import OAuthCrypto
 from nexus.contracts.constants import ROOT_ZONE_ID
+from nexus.contracts.protocols.token_encryptor import TokenEncryptor
 from nexus.storage.models.secret_store import SecretStoreModel, SecretStoreVersionModel
 from nexus.storage.secrets_audit_logger import SecretsAuditLogger
 
@@ -45,14 +45,14 @@ class SecretsService:
 
     Args:
         record_store: RecordStoreABC providing session factory
-        oauth_crypto: OAuthCrypto instance for encryption/decryption
+        oauth_crypto: TokenEncryptor instance for encryption/decryption
         audit_logger: SecretsAuditLogger instance for audit trail
     """
 
     def __init__(
         self,
         record_store: Any,  # RecordStoreABC
-        oauth_crypto: OAuthCrypto,
+        oauth_crypto: TokenEncryptor,
         audit_logger: SecretsAuditLogger,
     ) -> None:
         self._session_factory = record_store.session_factory

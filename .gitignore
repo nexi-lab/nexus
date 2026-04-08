@@ -151,6 +151,7 @@ config.yml
 *.local.yaml
 *.local.yml
 secrets/
+!src/nexus/bricks/secrets/
 *.encrypted
 
 # Data directories

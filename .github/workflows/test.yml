@@ -161,10 +161,10 @@ jobs:
         shell: bash
 
       - name: Run unit tests
-        timeout-minutes: 20
+        timeout-minutes: 60
         run: |
           start=$(date +%s)
-          uv run pytest tests/unit -v --durations=10 -n auto --dist loadgroup \
+          uv run pytest tests/unit -v --durations=50 --timeout=30 -o "addopts=" \
             --cov=nexus --cov-report=term-missing --cov-report=xml
           status=$?
           echo $(( $(date +%s) - start )) > unit_test_duration_sec.txt

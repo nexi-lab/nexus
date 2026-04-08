@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upload a build artifact to Tencent COS using environment-provided credentials."""
+"""Upload a build artifact to Tencent COS using the official Python SDK."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ import argparse
 import mimetypes
 import os
 from pathlib import Path
+from typing import Optional
 
 from qcloud_cos import CosConfig, CosS3Client
 
-SINGLE_PUT_OBJECT_LIMIT = 5 * 1024 * 1024 * 1024
+LARGE_FILE_THRESHOLD = 128 * 1024 * 1024
 
 
 def _required_env(name: str) -> str:
@@ -20,47 +21,58 @@ def _required_env(name: str) -> str:
     return value
 
 
+class COSClient:
+    """Tencent COS client wrapper matching the local helper style."""
+
+    def __init__(
+        self,
+        secret_id: str,
+        secret_key: str,
+        bucket: str,
+        region: str,
+        base_url: Optional[str] = None,
+    ) -> None:
+        config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
+        self.client = CosS3Client(config)
+        self.bucket = bucket
+        self.region = region
+        self.base_url = base_url or f"https://{bucket}.cos.{region}.myqcloud.com"
+
+    def upload_file(
+        self,
+        local_path: Path,
+        remote_path: str,
+        content_type: Optional[str] = None,
+    ) -> str:
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(str(local_path))
+
+        with local_path.open("rb") as fh:
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=remote_path,
+                Body=fh,
+                ContentType=content_type,
+            )
+
+        return f"{self.base_url.rstrip('/')}/{remote_path}"
+
+    def upload_large_file(self, local_path: Path, remote_path: str) -> str:
+        self.client.upload_file(
+            Bucket=self.bucket,
+            Key=remote_path,
+            LocalFilePath=str(local_path),
+            PartSize=10,
+            MAXThread=5,
+        )
+        return f"{self.base_url.rstrip('/')}/{remote_path}"
+
+
 def _normalize_remote_path(remote_path: str) -> str:
     cleaned = remote_path.strip().lstrip("/")
     if not cleaned:
         raise SystemExit("Remote path must not be empty")
     return cleaned
-
-
-def upload_file(local_path: Path, remote_path: str) -> str:
-    secret_id = _required_env("COS_SECRET_ID")
-    secret_key = _required_env("COS_SECRET_KEY")
-    bucket = _required_env("COS_BUCKET")
-    region = _required_env("COS_REGION")
-    base_url = os.getenv("COS_BASE_URL") or f"https://{bucket}.cos.{region}.myqcloud.com"
-
-    if not local_path.is_file():
-        raise SystemExit(f"Local path is not a file: {local_path}")
-
-    remote_key = _normalize_remote_path(remote_path)
-    content_type, _ = mimetypes.guess_type(str(local_path))
-
-    config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
-    client = CosS3Client(config)
-
-    if local_path.stat().st_size > SINGLE_PUT_OBJECT_LIMIT:
-        client.upload_file(
-            Bucket=bucket,
-            Key=remote_key,
-            LocalFilePath=str(local_path),
-            PartSize=10,
-            MAXThread=5,
-        )
-    else:
-        with local_path.open("rb") as fh:
-            client.put_object(
-                Bucket=bucket,
-                Key=remote_key,
-                Body=fh,
-                ContentType=content_type,
-            )
-
-    return f"{base_url.rstrip('/')}/{remote_key}"
 
 
 def main() -> int:
@@ -70,8 +82,24 @@ def main() -> int:
     args = parser.parse_args()
 
     local_path = Path(args.local_path).expanduser().resolve()
-    url = upload_file(local_path, args.remote_path)
-    print(f"Uploaded {local_path} -> {args.remote_path}")
+    if not local_path.is_file():
+        raise SystemExit(f"Local path is not a file: {local_path}")
+
+    client = COSClient(
+        secret_id=_required_env("COS_SECRET_ID"),
+        secret_key=_required_env("COS_SECRET_KEY"),
+        bucket=_required_env("COS_BUCKET"),
+        region=_required_env("COS_REGION"),
+        base_url=os.getenv("COS_BASE_URL"),
+    )
+
+    remote_path = _normalize_remote_path(args.remote_path)
+    if local_path.stat().st_size >= LARGE_FILE_THRESHOLD:
+        url = client.upload_large_file(local_path, remote_path)
+    else:
+        url = client.upload_file(local_path, remote_path)
+
+    print(f"Uploaded {local_path} -> {remote_path}")
     print(f"URL: {url}")
     return 0
 

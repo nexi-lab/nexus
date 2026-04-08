@@ -5,7 +5,7 @@ Minimal deployment: storage + ipc + federation
 """
 
 import os
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 # CI rewrites these placeholders to the actual site-packages paths resolved
 # from the runner's Python environment before invoking PyInstaller.
@@ -13,8 +13,19 @@ from PyInstaller.utils.hooks import collect_submodules
 NEXUS_RAFT_SO = "__CI_PATCH_REQUIRED__"
 NEXUS_KERNEL_SO = "__CI_PATCH_REQUIRED__"
 
+# Force-collect packages that are imported dynamically or through SQLAlchemy
+# dialect lookup so they survive PyInstaller analysis.
+search_datas, search_pkg_binaries, search_hiddenimports = collect_all("nexus.bricks.search")
+aiosqlite_datas, aiosqlite_binaries, aiosqlite_hiddenimports = collect_all("aiosqlite")
+sqlite_datas, sqlite_binaries, sqlite_hiddenimports = collect_all("sqlalchemy.dialects.sqlite")
+
+
+def _dedupe(items):
+    return list(dict.fromkeys(items))
+
+
 # Hidden imports for Rust extensions and nexus modules
-hiddenimports = [
+hiddenimports = _dedupe([
     # Rust extensions
     "_nexus_raft",
     "_nexus_raft._nexus_raft",
@@ -57,7 +68,7 @@ hiddenimports = [
     "google.protobuf",
     "google.api",
     "google.api_core",
-] + collect_submodules("nexus.bricks.search")
+] + collect_submodules("nexus.bricks.search") + search_hiddenimports + aiosqlite_hiddenimports + sqlite_hiddenimports)
 
 # Exclude heavy modules not needed for cluster profile
 excludes = [
@@ -79,17 +90,19 @@ excludes = [
     "nexus.bricks.eventlog",
 ]
 
-binaries = []
+binaries = _dedupe(search_pkg_binaries + aiosqlite_binaries + sqlite_binaries)
 if os.path.exists(NEXUS_RAFT_SO):
     binaries.append((NEXUS_RAFT_SO, "_nexus_raft"))
 if os.path.exists(NEXUS_KERNEL_SO):
     binaries.append((NEXUS_KERNEL_SO, "nexus_kernel"))
 
+datas = _dedupe(search_datas + aiosqlite_datas + sqlite_datas)
+
 a = Analysis(
     ["__CI_ENTRYPOINT_PATCH_REQUIRED__"],
     pathex=["__CI_PATHEX_PATCH_REQUIRED__"],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

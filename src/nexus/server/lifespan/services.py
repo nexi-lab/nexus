@@ -182,9 +182,17 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
-            _identity_record_store = svc.record_store
+            _identity_settings_store = None
+            try:
+                from nexus.storage.auth_stores.metastore_settings_store import (
+                    MetastoreSettingsStore,
+                )
+
+                _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
+            except Exception:
+                pass
             _identity_oauth_crypto = OAuthCrypto(
-                encryption_key=_enc_key, settings_store=_identity_record_store
+                encryption_key=_enc_key, settings_store=_identity_settings_store
             )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 

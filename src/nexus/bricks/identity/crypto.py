@@ -26,7 +26,6 @@ from cryptography.hazmat.primitives.serialization import (
 
 from nexus.contracts.protocols.token_encryptor import TokenEncryptor
 
-
 logger = logging.getLogger(__name__)
 
 

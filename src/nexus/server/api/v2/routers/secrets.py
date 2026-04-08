@@ -23,8 +23,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 
 from nexus.contracts.constants import ROOT_ZONE_ID
-from nexus.server.dependencies import require_auth
 from nexus.contracts.protocols.secrets_audit_log import SecretsAuditLogProtocol
+from nexus.server.dependencies import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,7 @@ def put_secret(
         )
     except Exception as e:
         logger.error("Failed to put secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to put secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to put secret: {e}") from e
 
 
 @router.put("/{namespace}/{key}/description")
@@ -124,7 +124,7 @@ def update_description(
         raise
     except Exception as e:
         logger.error("Failed to update description: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to update description: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update description: {e}") from e
 
 
 # --------------------------------------------------------------------------
@@ -172,10 +172,10 @@ def get_secret(
     except HTTPException:
         raise
     except SecretDisabledError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to get secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to get secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get secret: {e}") from e
 
 
 @router.get("")
@@ -202,7 +202,7 @@ def list_secrets(
         return {"secrets": secrets, "count": len(secrets)}
     except Exception as e:
         logger.error("Failed to list secrets: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to list secrets: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list secrets: {e}") from e
 
 
 @router.get("/{namespace}/{key}/versions")
@@ -229,7 +229,7 @@ def list_versions(
         return {"namespace": namespace, "key": key, "versions": versions, "count": len(versions)}
     except Exception as e:
         logger.error("Failed to list versions: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to list versions: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to list versions: {e}") from e
 
 
 # --------------------------------------------------------------------------
@@ -269,7 +269,7 @@ def delete_secret(
         raise
     except Exception as e:
         logger.error("Failed to delete secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to delete secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete secret: {e}") from e
 
 
 @router.post("/{namespace}/{key}/restore")
@@ -304,7 +304,7 @@ def restore_secret(
         raise
     except Exception as e:
         logger.error("Failed to restore secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to restore secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to restore secret: {e}") from e
 
 
 @router.delete("/{namespace}/{key}/versions/{version}")
@@ -341,7 +341,7 @@ def delete_version(
         raise
     except Exception as e:
         logger.error("Failed to delete version: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to delete version: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete version: {e}") from e
 
 
 # --------------------------------------------------------------------------
@@ -381,7 +381,7 @@ def enable_secret(
         raise
     except Exception as e:
         logger.error("Failed to enable secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to enable secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to enable secret: {e}") from e
 
 
 @router.put("/{namespace}/{key}/disable")
@@ -416,7 +416,7 @@ def disable_secret(
         raise
     except Exception as e:
         logger.error("Failed to disable secret: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to disable secret: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to disable secret: {e}") from e
 
 
 # --------------------------------------------------------------------------
@@ -451,7 +451,7 @@ def batch_put(
         return {"secrets": results, "count": len(results)}
     except Exception as e:
         logger.error("Failed to batch put secrets: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to batch put secrets: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to batch put secrets: {e}") from e
 
 
 @router.post("/batch/get")
@@ -480,4 +480,4 @@ def batch_get(
         return {"secrets": results, "count": len(results)}
     except Exception as e:
         logger.error("Failed to batch get secrets: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to batch get secrets: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to batch get secrets: {e}") from e

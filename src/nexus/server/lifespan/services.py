@@ -184,7 +184,9 @@ def _startup_key_service(app: "FastAPI", svc: "LifespanServices") -> None:
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
             _identity_settings_store = None
             try:
-                from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+                from nexus.storage.auth_stores.metastore_settings_store import (
+                    MetastoreSettingsStore,
+                )
 
                 _identity_settings_store = MetastoreSettingsStore(svc.nexus_fs.metadata)
             except Exception:

@@ -97,6 +97,9 @@ EXPECTED_MODELS = [
     "MetadataChangeLogModel",
     # Lineage Tracking (Issue #3417)
     "LineageReverseIndexModel",
+    # Secrets Store
+    "SecretStoreModel",
+    "SecretStoreVersionModel",
 ]
 
 

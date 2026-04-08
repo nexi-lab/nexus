@@ -120,13 +120,13 @@ from nexus.storage.models.refresh_token_history import (
 # Domain: Scheduler (Task Queue, Issue #1212)
 from nexus.storage.models.scheduler import ScheduledTaskModel as ScheduledTaskModel
 
-# Domain: Secrets Audit (Issue #997)
-from nexus.storage.models.secrets_audit_log import SecretsAuditEventType as SecretsAuditEventType
-from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel as SecretsAuditLogModel
-
 # Domain: Secrets Store
 from nexus.storage.models.secret_store import SecretStoreModel as SecretStoreModel
 from nexus.storage.models.secret_store import SecretStoreVersionModel as SecretStoreVersionModel
+
+# Domain: Secrets Audit (Issue #997)
+from nexus.storage.models.secrets_audit_log import SecretsAuditEventType as SecretsAuditEventType
+from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel as SecretsAuditLogModel
 
 # Domain: Sharing
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel

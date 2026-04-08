@@ -791,14 +791,14 @@ def _register_routes(app: FastAPI) -> None:
 
     # Secrets store endpoints (general-purpose secret storage with versioning)
     try:
+        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
+        from nexus.bricks.secrets.service import SecretsService
         from nexus.server.api.v2.routers.secrets import (
             get_secrets_service as _secrets_service_dep,
         )
         from nexus.server.api.v2.routers.secrets import (
             router as secrets_router,
         )
-        from nexus.bricks.secrets.service import SecretsService
-        from nexus.bricks.auth.oauth.crypto import OAuthCrypto
         from nexus.storage.secrets_audit_logger import SecretsAuditLogger
 
         _secrets_service_instance: SecretsService | None = None
@@ -817,7 +817,10 @@ def _register_routes(app: FastAPI) -> None:
                 _settings_store = None
                 try:
                     from pathlib import Path
-                    from nexus.storage.auth_stores.metastore_settings_store import MetastoreSettingsStore
+
+                    from nexus.storage.auth_stores.metastore_settings_store import (
+                        MetastoreSettingsStore,
+                    )
                     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
                     _metadata_path = str(Path.home() / ".nexus" / "metastore")

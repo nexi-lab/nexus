@@ -124,8 +124,23 @@ impl PipeManager {
             .get(path)
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
         let n = buf.push(data).map_err(PipeManagerError::Backend)?;
-        // Wake blocked readers
+        // Wake blocked readers. We MUST acquire `notify.mutex` before
+        // calling `notify_one` to avoid a lost-wakeup race against
+        // `read_blocking`'s slow path:
+        //
+        //   T1 reader  T2 writer
+        //   lock(mu)
+        //   pop -> Empty
+        //              push(data)
+        //              notify_one()    ← no waiter parked → LOST
+        //   wait_for() ← parks; misses notification → blocks until timeout
+        //
+        // parking_lot::Condvar::notify_one is unbuffered (see rustdoc).
+        // Acquiring `mu` here serializes with the reader's atomic
+        // `wait_for(mu, …)` release/park, so the notification can never
+        // arrive between the reader's predicate check and parking.
         if let Some(notify) = self.notify.get(path) {
+            let _guard = notify.mutex.lock();
             notify.not_empty.notify_one();
         }
         Ok(n)
@@ -139,8 +154,10 @@ impl PipeManager {
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
         match buf.pop() {
             Ok(data) => {
-                // Wake blocked writers
+                // Wake blocked writers. Same lost-wakeup race as in
+                // `write_nowait` — see the comment there.
                 if let Some(notify) = self.notify.get(path) {
+                    let _guard = notify.mutex.lock();
                     notify.not_full.notify_one();
                 }
                 Ok(Some(data))
@@ -170,9 +187,15 @@ impl PipeManager {
             .get(path)
             .ok_or_else(|| PipeManagerError::NotFound(path.to_string()))?;
 
-        // Fast path: try nowait first
+        // Fast path: try nowait first. Same lost-wakeup discipline as
+        // `write_nowait` — take notify.mutex before notify_one. (Today
+        // there are no `not_full` waiters because write_blocking doesn't
+        // exist yet, but keeping this consistent makes the invariant
+        // "Manager only ever notifies under notify.mutex" hold uniformly,
+        // so adding write_blocking later is a one-line change.)
         match buf.pop() {
             Ok(data) => {
+                let _guard = notify.mutex.lock();
                 notify.not_full.notify_one();
                 return Ok(data);
             }

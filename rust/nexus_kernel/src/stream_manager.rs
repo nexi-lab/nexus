@@ -122,8 +122,23 @@ impl StreamManager {
             .get(path)
             .ok_or_else(|| StreamManagerError::NotFound(path.to_string()))?;
         let offset = buf.push(data).map_err(StreamManagerError::Backend)?;
-        // Wake blocked readers
+        // Wake blocked readers. We MUST acquire `notify.mutex` before
+        // calling `notify_all` to avoid a lost-wakeup race against
+        // `read_at_blocking`'s slow path:
+        //
+        //   T1 reader     T2 writer
+        //   lock(mu)
+        //   read_at -> Empty
+        //                 push(data)
+        //                 notify_all()    ← no waiter parked → LOST
+        //   wait_for() ← parks; misses notification → blocks until timeout
+        //
+        // parking_lot::Condvar notifications are unbuffered. Acquiring
+        // `mu` here serializes with the reader's atomic
+        // `wait_for(mu, …)` release/park, so the notification can never
+        // arrive between the reader's predicate check and parking.
         if let Some(notify) = self.notify.get(path) {
+            let _guard = notify.mutex.lock();
             notify.not_empty.notify_all();
         }
         Ok(offset)

@@ -1,10 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
+
+from nexus.contracts.constants import ROOT_ZONE_ID
 from nexus.server.fastapi_server import create_app
 from tests.conftest import make_test_nexus
 from tests.helpers.in_memory_record_store import InMemoryRecordStore
-from nexus.contracts.constants import ROOT_ZONE_ID
-
 
 # Session 级别的变量，用于在所有测试中共享同一个服务器
 _server_app = None
@@ -17,7 +17,6 @@ def setup_server():
 
     if _server_app is None:
         import tempfile
-        import os
 
         tmp_path = tempfile.mkdtemp(prefix="nexus_test_")
         in_memory_rs = InMemoryRecordStore()
@@ -78,7 +77,7 @@ async def test_api_lifecycle_crud(client):
     """API-04, 06, 07, 08: Full CRUD lifecycle and versioning."""
     namespace = "test_ns"
     key = "my_key"
-    
+
     # 1. PUT v1
     response = client.put(f"/api/v2/secrets/{namespace}/{key}", json={
         "value": "secret_v1",
@@ -87,12 +86,12 @@ async def test_api_lifecycle_crud(client):
     assert response.status_code == 200
     data = response.json()
     assert data["version"] == 1
-    
+
     # 2. GET v1
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
     assert response.json()["value"] == "secret_v1"
-    
+
     # 3. PUT v2 (Update)
     response = client.put(f"/api/v2/secrets/{namespace}/{key}", json={
         "value": "secret_v2",
@@ -100,11 +99,11 @@ async def test_api_lifecycle_crud(client):
     })
     assert response.status_code == 200
     assert response.json()["version"] == 2
-    
+
     # 4. GET latest (v2)
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.json()["value"] == "secret_v2"
-    
+
     # 5. GET specific version (v1)
     response = client.get(f"/api/v2/secrets/{namespace}/{key}?version=1")
     assert response.status_code == 200
@@ -116,21 +115,21 @@ async def test_api_status_management(client):
     namespace = "status_ns"
     key = "toggle_key"
     client.put(f"/api/v2/secrets/{namespace}/{key}", json={"value": "some_val"})
-    
+
     # Disable
     response = client.put(f"/api/v2/secrets/{namespace}/{key}/disable")
     assert response.status_code == 200
     assert response.json()["enabled"] is False
-    
+
     # GET should fail
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 403
-    
+
     # Enable
     response = client.put(f"/api/v2/secrets/{namespace}/{key}/enable")
     assert response.status_code == 200
     assert response.json()["enabled"] is True
-    
+
     # GET should succeed
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
@@ -141,19 +140,19 @@ async def test_api_soft_delete_restore(client):
     namespace = "delete_ns"
     key = "kill_me"
     client.put(f"/api/v2/secrets/{namespace}/{key}", json={"value": "alive"})
-    
+
     # Delete
     response = client.delete(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
-    
+
     # GET latest should fail (404)
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 404
-    
+
     # Restore
     response = client.post(f"/api/v2/secrets/{namespace}/{key}/restore")
     assert response.status_code == 200
-    
+
     # GET should succeed
     response = client.get(f"/api/v2/secrets/{namespace}/{key}")
     assert response.status_code == 200
@@ -164,7 +163,7 @@ async def test_api_list_metadata(client):
     """API-05: Metadata check (list shouldn't return values)."""
     client.put("/api/v2/secrets/list_ns/k1", json={"value": "v1"})
     client.put("/api/v2/secrets/list_ns/k2", json={"value": "v2"})
-    
+
     response = client.get("/api/v2/secrets?namespace=list_ns")
     assert response.status_code == 200
     secrets = response.json()["secrets"]
@@ -388,10 +387,8 @@ async def test_api_list_exclude_deleted_by_default(client):
     response = client.get("/api/v2/secrets", params={"namespace": namespace, "include_deleted": True})
     assert response.status_code == 200
     secrets = response.json()["secrets"]
-    deleted_found = False
     for s in secrets:
         if s["namespace"] == namespace and s["key"] == key:
-            deleted_found = True
             assert s.get("deleted_at") is not None
     # Note: Depending on implementation, deleted secrets may or may not appear
     # This test at least verifies the include_deleted parameter works

@@ -7,7 +7,7 @@ enforces subject-based filtering so users can only access their own secrets.
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -15,8 +15,8 @@ src_path = Path(__file__).parent.parent.parent.parent / "src"
 if str(src_path) not in sys.path:
     sys.path.insert(0, str(src_path))
 
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
+from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Auth result fixtures
@@ -60,7 +60,7 @@ AUTH_ANONYMOUS = {
 # ---------------------------------------------------------------------------
 
 def _create_test_app(auth_result):
-    from nexus.server.api.v2.routers.secrets import router, get_secrets_service
+    from nexus.server.api.v2.routers.secrets import get_secrets_service, router
     from nexus.server.dependencies import require_auth
 
     app = FastAPI()
@@ -224,10 +224,10 @@ class TestServiceSubjectIsolation:
     def service(self):
         from sqlalchemy import create_engine, text
         from sqlalchemy.orm import sessionmaker
-        from nexus.storage.models._base import Base
 
         # Import models so they register with Base.metadata
         import nexus.storage.models.secret_store  # noqa: F401
+        from nexus.storage.models._base import Base
 
         engine = create_engine("sqlite:///:memory:")
         Base.metadata.create_all(engine)
@@ -244,8 +244,6 @@ class TestServiceSubjectIsolation:
         mock_crypto = MagicMock()
         mock_crypto.encrypt_token.side_effect = lambda v: f"enc({v})"
         mock_crypto.decrypt_token.side_effect = lambda v: v.replace("enc(", "").replace(")", "")
-
-        mock_audit = MagicMock()
 
         from nexus.bricks.secrets.service import SecretsService
         from nexus.storage.secrets_audit_logger import SecretsAuditLogger

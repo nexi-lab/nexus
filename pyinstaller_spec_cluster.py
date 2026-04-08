@@ -26,50 +26,56 @@ def _dedupe(items):
 
 
 # Hidden imports for Rust extensions and nexus modules
-hiddenimports = _dedupe([
-    # Rust extensions
-    "_nexus_raft",
-    "_nexus_raft._nexus_raft",
-    "nexus_kernel",
-    # Cluster profile core modules
-    "nexus",
-    "nexus.cli",
-    "nexus.cli.main",
-    "nexus.daemon",
-    "nexus.daemon.main",
-    "nexus.raft",
-    "nexus.raft.federation",
-    "nexus.raft.zone_manager",
-    "nexus.storage",
-    "nexus.storage.raft_metadata_store",
-    "nexus.storage.dict_metastore",
-    "nexus.bricks.search",
-    "nexus.bricks.search.search_service",
-    "nexus.bricks.search.primitives",
-    "nexus.bricks.ipc",
-    "nexus.bricks.federation",
-    "nexus.contracts.deployment_profile",
-    # Required dependencies
-    "click",
-    "rich",
-    "tqdm",
-    "pydantic",
-    "pyyaml",
-    "httpx",
-    "requests",
-    "uvicorn",
-    "fastapi",
-    "starlette",
-    "sqlalchemy",
-    "sqlalchemy.dialects.sqlite.aiosqlite",
-    "aiosqlite",
-    "alembic",
-    "grpc",
-    "grpc_google_apis",
-    "google.protobuf",
-    "google.api",
-    "google.api_core",
-] + collect_submodules("nexus.bricks.search") + search_hiddenimports + aiosqlite_hiddenimports + sqlite_hiddenimports)
+hiddenimports = _dedupe(
+    [
+        # Rust extensions
+        "_nexus_raft",
+        "_nexus_raft._nexus_raft",
+        "nexus_kernel",
+        # Cluster profile core modules
+        "nexus",
+        "nexus.cli",
+        "nexus.cli.main",
+        "nexus.daemon",
+        "nexus.daemon.main",
+        "nexus.raft",
+        "nexus.raft.federation",
+        "nexus.raft.zone_manager",
+        "nexus.storage",
+        "nexus.storage.raft_metadata_store",
+        "nexus.storage.dict_metastore",
+        "nexus.bricks.search",
+        "nexus.bricks.search.search_service",
+        "nexus.bricks.search.primitives",
+        "nexus.bricks.ipc",
+        "nexus.bricks.federation",
+        "nexus.contracts.deployment_profile",
+        # Required dependencies
+        "click",
+        "rich",
+        "tqdm",
+        "pydantic",
+        "pyyaml",
+        "httpx",
+        "requests",
+        "uvicorn",
+        "fastapi",
+        "starlette",
+        "sqlalchemy",
+        "sqlalchemy.dialects.sqlite.aiosqlite",
+        "aiosqlite",
+        "alembic",
+        "grpc",
+        "grpc_google_apis",
+        "google.protobuf",
+        "google.api",
+        "google.api_core",
+    ]
+    + collect_submodules("nexus.bricks.search")
+    + search_hiddenimports
+    + aiosqlite_hiddenimports
+    + sqlite_hiddenimports
+)
 
 # Exclude heavy modules not needed for cluster profile
 excludes = [

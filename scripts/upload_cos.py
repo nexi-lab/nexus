@@ -10,6 +10,8 @@ from pathlib import Path
 
 from qcloud_cos import CosConfig, CosS3Client
 
+SINGLE_PUT_OBJECT_LIMIT = 5 * 1024 * 1024 * 1024
+
 
 def _required_env(name: str) -> str:
     value = os.getenv(name)
@@ -41,7 +43,7 @@ def upload_file(local_path: Path, remote_path: str) -> str:
     config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
     client = CosS3Client(config)
 
-    if local_path.stat().st_size >= 10 * 1024 * 1024:
+    if local_path.stat().st_size > SINGLE_PUT_OBJECT_LIMIT:
         client.upload_file(
             Bucket=bucket,
             Key=remote_key,

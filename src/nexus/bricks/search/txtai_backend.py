@@ -440,6 +440,14 @@ class TxtaiBackend:
         save() just commits DB transactions. No SQLite or large file writes.
         The only local file is config.json (~1KB) for txtai's load() to
         reconnect on restart.
+
+        **Fail-closed contract:** if ``Embeddings.save()`` raises, this method
+        rolls back both ANN and content DB sessions and re-raises. Callers
+        (``index()``/``upsert()``) MUST propagate the failure so clients can
+        retry — silently swallowing here would create durability gaps when
+        the config path is unwritable, the disk is full, or a PostgreSQL
+        commit fails, because the caller would see a success count even
+        though nothing was persisted.
         """
         if not self._embeddings:
             return
@@ -449,16 +457,22 @@ class TxtaiBackend:
             os.makedirs(self._config_path, exist_ok=True)
             self._embeddings.save(self._config_path)
         except Exception:
-            import contextlib
-
-            logger.warning("txtai save failed", exc_info=True)
-            ann = getattr(self._embeddings, "ann", None)
-            if ann and hasattr(ann, "database"):
-                with contextlib.suppress(Exception):
-                    ann.database.rollback()
+            logger.error(
+                "txtai save failed — rolling back sessions and re-raising",
+                exc_info=True,
+            )
+            # Roll back BOTH ANN and content DB sessions so subsequent calls
+            # can recover (otherwise PendingRollbackError cascades).
+            self._rollback_db_sessions()
+            raise
 
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
-        """Index documents (full rebuild for zone_id)."""
+        """Index documents (full rebuild for zone_id).
+
+        Fails closed: if the underlying ``Embeddings.index`` or ``_save``
+        raises, rolls back and re-raises so callers know the batch did not
+        persist.
+        """
         if not documents:
             return 0
         await self.startup()
@@ -468,8 +482,13 @@ class TxtaiBackend:
         async with self._lock:
             if not self._embeddings:
                 return 0
-            await asyncio.to_thread(self._embeddings.index, rows)
-            await asyncio.to_thread(self._save)
+            try:
+                await asyncio.to_thread(self._embeddings.index, rows)
+                await asyncio.to_thread(self._save)
+            except Exception:
+                logger.error("index failed, rolling back sessions", exc_info=True)
+                await asyncio.to_thread(self._rollback_db_sessions)
+                raise
         return len(rows)
 
     def _rollback_ann_session(self) -> None:

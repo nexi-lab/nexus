@@ -456,6 +456,11 @@ async def search_query_batch(
 
     Returns: {"queries": [{"query": str, "results": [...], "total": int}, ...]}
 
+    Applies the same ReBAC file-level permission filter as the single-query
+    ``/query`` endpoint (Decision #17). Each query is over-fetched 3x when
+    the permission enforcer is active and trimmed to its configured ``limit``
+    after filtering so authorized results are not starved by denied paths.
+
     Optimized for benchmarks and bulk evaluations. txtai's batchsearch()
     embeds all query texts in ONE OpenAI API call, then runs each through
     the full hybrid pipeline (BM25 + vector + fusion). For 470 queries:
@@ -465,19 +470,40 @@ async def search_query_batch(
 
     zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
     body = await request.json()
-    queries: list[dict[str, Any]] = body.get("queries", [])
-    if not queries:
+    raw_queries: list[dict[str, Any]] = body.get("queries", [])
+    if not raw_queries:
         raise HTTPException(status_code=400, detail="No queries provided")
 
     if not search_daemon.is_initialized:
         raise HTTPException(status_code=503, detail="Search daemon is still initializing")
 
+    # Same ReBAC hook the single-query endpoint uses.
+    permission_enforcer = getattr(request.app.state, "permission_enforcer", None)
+    overfetch_multiplier = 3 if permission_enforcer is not None else 1
+
+    # Over-fetch per-query so ReBAC filtering does not strip us below the
+    # caller's requested limit. Keep caller's original limit for trimming.
+    requested_limits: list[int] = []
+    fetch_queries: list[dict[str, Any]] = []
+    for q_spec in raw_queries:
+        orig_limit = max(1, int(q_spec.get("limit", 10)))
+        requested_limits.append(orig_limit)
+        fetch_queries.append({**q_spec, "limit": orig_limit * overfetch_multiplier})
+
     t0 = time.perf_counter()
-    raw_results = await search_daemon.batch_search(queries, zone_id=zone_id)
+    raw_results = await search_daemon.batch_search(fetch_queries, zone_id=zone_id)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
+    filter_ms_total = 0.0
     response_queries: list[dict[str, Any]] = []
-    for q_spec, results in zip(queries, raw_results, strict=True):
+    for q_spec, results, orig_limit in zip(raw_queries, raw_results, requested_limits, strict=True):
+        # File-level ReBAC filtering (Decision #17) — same enforcement as /query.
+        filtered, filter_ms = _apply_rebac_filter(
+            results, permission_enforcer, auth_result, zone_id
+        )
+        filter_ms_total += filter_ms
+        trimmed = filtered[:orig_limit]
+
         formatted = [
             {
                 "path": r.path,
@@ -486,7 +512,7 @@ async def search_query_batch(
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
                 "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
             }
-            for r in results
+            for r in trimmed
         ]
         response_queries.append(
             {
@@ -498,9 +524,10 @@ async def search_query_batch(
 
     return {
         "queries": response_queries,
-        "total_queries": len(queries),
+        "total_queries": len(raw_queries),
         "latency_ms": round(elapsed_ms, 2),
-        "avg_per_query_ms": round(elapsed_ms / max(len(queries), 1), 2),
+        "avg_per_query_ms": round(elapsed_ms / max(len(raw_queries), 1), 2),
+        "permission_filter_ms": round(filter_ms_total, 2),
     }
 
 
@@ -513,6 +540,10 @@ async def search_index_documents(
     """Explicitly index documents (Decision #18: call-by-call indexing).
 
     Request body: ``{"documents": [{"id": str, "text": str, "path": str, ...}]}``
+
+    Fails closed with HTTP 500 if the underlying backend cannot persist
+    (e.g., config path unwritable, PostgreSQL commit failed), so clients
+    can retry instead of silently losing data.
     """
     from nexus.contracts.constants import ROOT_ZONE_ID
 
@@ -522,7 +553,14 @@ async def search_index_documents(
     if not documents:
         raise HTTPException(status_code=400, detail="No documents provided")
 
-    count = await search_daemon.index_documents(documents, zone_id=zone_id)
+    try:
+        count = await search_daemon.index_documents(documents, zone_id=zone_id)
+    except Exception as exc:
+        logger.error("index_documents failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Index persistence failed: {type(exc).__name__}: {exc}",
+        ) from exc
     return {"status": "indexed", "count": count, "zone_id": zone_id}
 
 

@@ -729,7 +729,8 @@ class SearchDaemon:
         if backend_batch is None:
             return [[] for _ in queries]
 
-        return await backend_batch(queries, zone_id=effective_zone_id)
+        results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
+        return results
 
     async def index_documents(
         self,

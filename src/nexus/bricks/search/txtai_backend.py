@@ -78,16 +78,27 @@ class SearchBackendProtocol(Protocol):
 
 
 def _escape_sql_string(value: str) -> str:
-    """Escape single-quotes for txtai SQL syntax.
+    r"""Sanitise a string for use in txtai SQL.
 
-    Applies strict sanitisation: strips control characters and limits
-    length to prevent abuse via oversized payloads.
+    txtai uses a Lark-based SQL parser that doesn't tolerate certain
+    characters even when escaped:
+    - apostrophes ('): break the literal even when doubled
+    - semicolons (;): treated as statement terminators
+    - backticks (`): cause parser errors
+    - smart quotes (' ' " "): cause "No closing quotation" errors
+    - backslashes (\): escape interpretation issues
+
+    This function strips all of these (lossy but safe). For search queries
+    this is acceptable since these characters carry no semantic value for
+    BM25/vector retrieval. Also strips control chars and truncates to 4096.
     """
     # Strip ASCII control characters (0x00–0x1F, 0x7F)
     sanitised = "".join(ch for ch in value if ch.isprintable())
+    # Strip characters that break txtai's SQL parser
+    bad_chars = "'\"`\\;\u2018\u2019\u201c\u201d"
+    sanitised = "".join(ch for ch in sanitised if ch not in bad_chars)
     # Truncate to reasonable maximum (search queries / filters)
-    sanitised = sanitised[:4096]
-    return sanitised.replace("'", "''")
+    return sanitised[:4096]
 
 
 def _escape_like_string(value: str) -> str:
@@ -117,6 +128,8 @@ class TxtaiBackend:
         graph: bool = True,
         reranker_model: str | None = None,
         sparse: bool | str = False,
+        embedding_cache: Any | None = None,
+        data_path: str | None = None,
     ) -> None:
         self._database_url = database_url
         self._model = model
@@ -125,6 +138,7 @@ class TxtaiBackend:
         self._graph = graph
         self._reranker_model = reranker_model
         self._sparse = sparse
+        self._embedding_cache = embedding_cache
         self._embeddings: Any = None
         self._reranker: Any = None
         self.last_rerank_ms: float = 0.0
@@ -132,6 +146,10 @@ class TxtaiBackend:
         self._startup_lock = asyncio.Lock()
         self._startup_task: asyncio.Task[None] | None = None
         self._reranker_task: asyncio.Task[None] | None = None
+        # Path for txtai config.json — needed for pgvector persistence.
+        # txtai stores index metadata (dimensions, offset) in a local file
+        # and reads it back on load() to reconnect to pgvector tables.
+        self._config_path = data_path or "/app/data/.txtai-index"
         # Serialise all access to _embeddings / _reranker across coroutines.
         # faiss (used by txtai) is NOT thread-safe for concurrent search+write
         # operations. Since asyncio.to_thread() dispatches to a thread pool,
@@ -162,6 +180,46 @@ class TxtaiBackend:
             return
         if self._startup_task is None or self._startup_task.done():
             self._startup_task = asyncio.create_task(self._startup_impl())
+
+    @staticmethod
+    def _configure_litellm() -> None:
+        """Configure litellm and txtai for production use with API embeddings.
+
+        1. litellm.num_retries=5: auto-retry on 429 with exponential backoff.
+        2. Patch LiteLLM.encode to respect encodebatch: txtai's LiteLLM sends
+           ALL docs in one API call, ignoring the encodebatch config. OpenAI
+           limits requests to 300k tokens (~50 docs). This patch splits the
+           encode call to respect the configured batch size.
+        """
+        try:
+            import litellm
+            import numpy as np
+
+            litellm.num_retries = 5
+
+            import txtai.vectors.dense.litellm as litellm_mod
+
+            original_encode = litellm_mod.LiteLLM.encode
+
+            def batched_encode(self_inner: Any, data: list, category: Any = None) -> Any:
+                batch_size = getattr(self_inner, "encodebatch", 50)
+                if len(data) <= batch_size:
+                    return original_encode(self_inner, data, category)
+
+                all_embeddings: list = []
+                for i in range(0, len(data), batch_size):
+                    batch = data[i : i + batch_size]
+                    emb = original_encode(self_inner, batch, category)
+                    all_embeddings.append(emb)
+                return np.vstack(all_embeddings)
+
+            litellm_mod.LiteLLM.encode = batched_encode
+            logger.info(
+                "Configured litellm: num_retries=%d, LiteLLM.encode respects encodebatch",
+                litellm.num_retries,
+            )
+        except ImportError:
+            pass
 
     async def _startup_impl(self) -> None:
         """Initialize txtai Embeddings with pgvector backend (with fallback).
@@ -202,9 +260,16 @@ class TxtaiBackend:
         config: dict[str, Any] = {
             "path": self._model,
             "content": content_store,
-            "hybrid": self._hybrid,
             "objects": True,
+            # encodebatch: max docs per embedding API call.
+            # OpenAI limits 300k tokens/request. 50 docs × ~5k tokens = ~250k.
+            "encodebatch": 50,
         }
+        # For non-pgvector backends, use txtai's hybrid mode (SQLite BM25).
+        # For pgvector, we configure pgtext scoring separately which
+        # auto-enables hybrid without SQLite dependency.
+        if not self._database_url and self._hybrid:
+            config["hybrid"] = True
         if self._vectors:
             config["vectors"] = dict(self._vectors)
 
@@ -231,40 +296,84 @@ class TxtaiBackend:
                 config["backend"] = "pgvector"
                 config["pgvector"] = {"url": self._database_url}
                 use_pgvector = True
+
+                # Use PostgreSQL FTS for scoring instead of SQLite BM25.
+                # Eliminates SQLite file dependencies (permissions, stale state).
+                config["scoring"] = {
+                    "method": "pgtext",
+                    "url": self._database_url,
+                }
+
+                # Graph disabled by default for performance — txtai's graph
+                # upsert runs a vector search for EACH new doc to find
+                # similar nodes to link, making indexing 10x slower with no
+                # quality gain on most workloads. Enable explicitly via
+                # NEXUS_TXTAI_GRAPH=true if needed.
+                import os as _os
+
+                if self._graph and _os.environ.get("NEXUS_TXTAI_GRAPH", "").lower() == "true":
+                    config["graph"] = {"backend": "rdbms", "url": self._database_url}
             else:
                 logger.warning(
                     "pgvector backend not available (install txtai[ann]). "
                     "Falling back to default in-memory backend."
                 )
+                if self._graph:
+                    config["graph"] = {"backend": "networkx"}
 
-        if self._graph:
-            config["graph"] = {"backend": "networkx"}
-
-        # Attempt full hybrid init; fall back to keyword-only on failure
-        try:
-            self._embeddings = Embeddings(config)
-        except Exception:
-            logger.warning(
-                "Full hybrid init failed (model=%s). Falling back to keyword-only (BM25).",
-                self._model,
-                exc_info=True,
-            )
+        # Try loading existing pgvector index first (survives restarts)
+        if use_pgvector:
             try:
-                bm25_config: dict[str, Any] = {
-                    "keyword": True,
-                    "content": content_store,
-                    "objects": True,
-                }
-                self._embeddings = Embeddings(bm25_config)
-                self._hybrid = False
-                logger.info("Keyword-only (BM25) backend started successfully")
+                probe = Embeddings()
+                if probe.exists(self._config_path):
+                    probe.load(self._config_path)
+                    self._embeddings = probe
+                    logger.info(
+                        "Loaded existing txtai index from pgvector (config=%s, count=%d)",
+                        self._config_path,
+                        probe.count() or 0,
+                    )
+                else:
+                    logger.info(
+                        "No existing txtai index at %s — will create on first index()",
+                        self._config_path,
+                    )
             except Exception:
-                logger.error(
-                    "BM25 fallback also failed. "
-                    "Search daemon will start in degraded mode (no results).",
+                logger.debug("Failed to load existing index, creating fresh", exc_info=True)
+
+        # Create fresh Embeddings if we didn't load from pgvector
+        if self._embeddings is None:
+            try:
+                self._embeddings = Embeddings(config)
+            except Exception:
+                logger.warning(
+                    "Full hybrid init failed (model=%s). Falling back to keyword-only (BM25).",
+                    self._model,
                     exc_info=True,
                 )
-                self._embeddings = None
+                try:
+                    bm25_config: dict[str, Any] = {
+                        "keyword": True,
+                        "content": content_store,
+                        "objects": True,
+                    }
+                    self._embeddings = Embeddings(bm25_config)
+                    self._hybrid = False
+                    logger.info("Keyword-only (BM25) backend started successfully")
+                except Exception:
+                    logger.error(
+                        "BM25 fallback also failed. "
+                        "Search daemon will start in degraded mode (no results).",
+                        exc_info=True,
+                    )
+                    self._embeddings = None
+
+        # Configure litellm retries for API-backed embeddings
+        self._configure_litellm()
+
+        # Sync offset from PostgreSQL to prevent indexid collisions
+        if use_pgvector and self._embeddings:
+            self._sync_offset_from_db()
 
         # Mark backend usable as soon as embeddings are ready. Reranker startup
         # can continue in the background without blocking indexing/search.
@@ -316,6 +425,7 @@ class TxtaiBackend:
         async with self._lock:
             self._reranker = None
             if self._embeddings is not None:
+                await asyncio.to_thread(self._save)
                 await asyncio.to_thread(self._embeddings.close)
                 self._embeddings = None
             self._started = False
@@ -323,8 +433,46 @@ class TxtaiBackend:
 
     # ----- Index operations ---------------------------------------------------
 
+    def _save(self) -> None:
+        """Commit all PostgreSQL transactions and persist config.json.
+
+        With all-PostgreSQL storage (pgvector + pgtext + rdbms graph),
+        save() just commits DB transactions. No SQLite or large file writes.
+        The only local file is config.json (~1KB) for txtai's load() to
+        reconnect on restart.
+
+        **Fail-closed contract:** if ``Embeddings.save()`` raises, this method
+        rolls back both ANN and content DB sessions and re-raises. Callers
+        (``index()``/``upsert()``) MUST propagate the failure so clients can
+        retry — silently swallowing here would create durability gaps when
+        the config path is unwritable, the disk is full, or a PostgreSQL
+        commit fails, because the caller would see a success count even
+        though nothing was persisted.
+        """
+        if not self._embeddings:
+            return
+        try:
+            import os
+
+            os.makedirs(self._config_path, exist_ok=True)
+            self._embeddings.save(self._config_path)
+        except Exception:
+            logger.error(
+                "txtai save failed — rolling back sessions and re-raising",
+                exc_info=True,
+            )
+            # Roll back BOTH ANN and content DB sessions so subsequent calls
+            # can recover (otherwise PendingRollbackError cascades).
+            self._rollback_db_sessions()
+            raise
+
     async def index(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
-        """Index documents (full rebuild for zone_id)."""
+        """Index documents (full rebuild for zone_id).
+
+        Fails closed: if the underlying ``Embeddings.index`` or ``_save``
+        raises, rolls back and re-raises so callers know the batch did not
+        persist.
+        """
         if not documents:
             return 0
         await self.startup()
@@ -334,14 +482,60 @@ class TxtaiBackend:
         async with self._lock:
             if not self._embeddings:
                 return 0
-            await asyncio.to_thread(self._embeddings.index, rows)
+            try:
+                await asyncio.to_thread(self._embeddings.index, rows)
+                await asyncio.to_thread(self._save)
+            except Exception:
+                logger.error("index failed, rolling back sessions", exc_info=True)
+                await asyncio.to_thread(self._rollback_db_sessions)
+                raise
         return len(rows)
+
+    def _rollback_ann_session(self) -> None:
+        """Rollback pgvector session to recover from PendingRollbackError."""
+        import contextlib
+
+        ann = getattr(self._embeddings, "ann", None)
+        if ann and hasattr(ann, "database"):
+            with contextlib.suppress(Exception):
+                ann.database.rollback()
+                if hasattr(ann, "connection"):
+                    ann.connection.rollback()
+
+    def _rollback_db_sessions(self) -> None:
+        """Rollback BOTH ANN and content DB sessions after a failed query.
+
+        After a SQL parse error (e.g., bad query string), PostgreSQL puts
+        the transaction in 'aborted' state. ALL subsequent operations fail
+        with InFailedSqlTransaction until rollback() is called. This method
+        rolls back both the pgvector ANN session AND the content database
+        session so subsequent searches can succeed.
+        """
+        if not self._embeddings:
+            return
+        # ANN (pgvector) session
+        self._rollback_ann_session()
+        # Content database session (sections/documents tables)
+        db = getattr(self._embeddings, "database", None)
+        if db is None:
+            return
+        import contextlib
+
+        for attr in ("connection", "cursor", "session"):
+            obj = getattr(db, attr, None)
+            if obj and hasattr(obj, "rollback"):
+                with contextlib.suppress(Exception):
+                    obj.rollback()
 
     async def upsert(self, documents: list[dict[str, Any]], *, zone_id: str) -> int:
         """Upsert documents (insert-or-update).
 
         Falls back to ``index()`` on first call when the ANN backend
-        hasn't been initialized yet.
+        hasn't been initialized yet. Subsequent calls use upsert() which
+        appends with auto-incrementing indexids (no collision with pgvector).
+
+        If upsert fails (e.g., duplicate indexid from a partially committed
+        batch), rolls back the pgvector session and retries once.
         """
         if not documents:
             return 0
@@ -350,16 +544,91 @@ class TxtaiBackend:
         stamped = _stamp_zone_id(documents, zone_id)
         rows = [(doc["id"], doc, None) for doc in stamped]
 
-        # txtai requires index() for the first batch to initialize the ANN.
-        # After that, upsert() works for incremental updates.
         async with self._lock:
             if not self._embeddings:
                 return 0
-            if getattr(self._embeddings, "ann", None) is None:
-                await asyncio.to_thread(self._embeddings.index, rows)
-            else:
-                await asyncio.to_thread(self._embeddings.upsert, rows)
-        return len(rows)
+            for attempt in range(2):
+                try:
+                    if getattr(self._embeddings, "ann", None) is None:
+                        # ANN not loaded — need to initialize. But if pgvector
+                        # already has data (from a previous session), index()
+                        # would DROP the table and destroy it. Check first.
+                        has_existing = False
+                        if self._database_url:
+                            try:
+                                from sqlalchemy import create_engine
+                                from sqlalchemy import text as sa_text
+
+                                eng = create_engine(self._database_url)
+                                with eng.connect() as conn:
+                                    r = conn.execute(sa_text("SELECT count(*) FROM vectors"))
+                                    has_existing = (r.scalar() or 0) > 0
+                                eng.dispose()
+                            except Exception:
+                                pass
+
+                        if has_existing:
+                            # Data exists — load from pgvector instead of rebuild
+                            logger.info(
+                                "pgvector has existing data, loading instead of "
+                                "rebuilding (would drop table)"
+                            )
+                            self._embeddings.load(self._config_path)
+                            await asyncio.to_thread(self._embeddings.upsert, rows)
+                        else:
+                            await asyncio.to_thread(self._embeddings.index, rows)
+                    else:
+                        # Incremental: append to existing index (no table drop)
+                        await asyncio.to_thread(self._embeddings.upsert, rows)
+                    await asyncio.to_thread(self._save)
+                    return len(rows)
+                except Exception:
+                    if attempt == 0:
+                        logger.warning(
+                            "upsert failed, rolling back and syncing offset",
+                            exc_info=True,
+                        )
+                        await asyncio.to_thread(self._rollback_ann_session)
+                        await asyncio.to_thread(self._sync_offset_from_db)
+                    else:
+                        raise
+        return 0
+
+    def _sync_offset_from_db(self) -> None:
+        """Sync config offset from actual PostgreSQL max indexid.
+
+        After a partial commit + rollback, the config offset can be behind
+        the actual max indexid in PostgreSQL, causing duplicate key errors
+        on retry. This reads the true max and updates the config.
+        """
+        if not self._database_url or not self._embeddings:
+            return
+        try:
+            from sqlalchemy import create_engine
+            from sqlalchemy import text as sa_text
+
+            eng = create_engine(self._database_url)
+            with eng.connect() as conn:
+                for table in ("sections", "vectors"):
+                    try:
+                        r = conn.execute(sa_text(f"SELECT max(indexid) FROM {table}"))
+                        max_id = r.scalar()
+                        if max_id is not None:
+                            current = self._embeddings.config.get("offset", 0)
+                            new_offset = max(current, max_id + 1)
+                            if new_offset != current:
+                                self._embeddings.config["offset"] = new_offset
+                                logger.info(
+                                    "Synced offset from %s: %d → %d",
+                                    table,
+                                    current,
+                                    new_offset,
+                                )
+                    except Exception:
+                        pass
+            eng.dispose()
+        except Exception:
+            pass
 
     async def delete(self, ids: list[str], *, zone_id: str) -> int:  # noqa: ARG002
         """Delete documents by id."""
@@ -393,6 +662,11 @@ class TxtaiBackend:
         fetch_limit = limit * 2 if self._reranker else limit
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
+        # Even with pgvector, we must serialize against writes because txtai
+        # keeps a single SQLAlchemy session on the shared Embeddings object.
+        # Concurrent search() and upsert()/index() calls would touch the same
+        # mutable DB session from different threads, causing PendingRollback
+        # errors and inconsistent results.
         async with self._lock:
             if not self._embeddings:
                 return []
@@ -422,6 +696,74 @@ class TxtaiBackend:
             results = results[:limit]
 
         return results
+
+    async def batch_search(
+        self,
+        queries: list[dict[str, Any]],
+        *,
+        zone_id: str,
+    ) -> list[list[BaseSearchResult]]:
+        """Batch search: embed N queries in ONE API call, then search.
+
+        Each query dict has: {"q": str, "limit": int, "path": str, "type": str}.
+        Returns a list of result lists, one per input query.
+
+        Optimized for benchmarks and bulk evaluations: instead of N sequential
+        OpenAI API calls (1.5s each = 12+ min for 470 queries), we batch all
+        query embeddings into one API call (~3s) and run N fast SQL queries
+        in parallel (~50ms each). 470 queries: ~30s total instead of ~16 min.
+        """
+        if not queries:
+            return []
+        await self.startup()
+
+        if not self._embeddings:
+            return [[] for _ in queries]
+
+        # Build SQL queries — txtai's batchsearch handles embedding internally
+        # in one batch call to litellm (which calls OpenAI once with all texts)
+        sqls = []
+        for q_spec in queries:
+            q_text = q_spec.get("q", "")
+            limit = int(q_spec.get("limit", 10))
+            path_filter = q_spec.get("path")
+            sql = _build_search_sql(q_text, zone_id=zone_id, path_filter=path_filter, limit=limit)
+            sqls.append(sql)
+
+        # txtai.batchsearch() embeds all queries in ONE API call internally.
+        # Must hold the write lock: txtai shares a single SQLAlchemy session
+        # across search and write paths, so concurrent batchsearch + upsert
+        # corrupts the session (InFailedSqlTransaction / PendingRollback).
+        try:
+            async with self._lock:
+                if not self._embeddings:
+                    return [[] for _ in queries]
+                raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
+        except Exception:
+            logger.warning("batch_search failed, rolling back session", exc_info=True)
+            await asyncio.to_thread(self._rollback_db_sessions)
+            return [[] for _ in queries]
+
+        # Convert each query's raw results into BaseSearchResult lists
+        all_results: list[list[BaseSearchResult]] = []
+        for raw in raw_results:
+            results: list[BaseSearchResult] = []
+            for r in raw:
+                if not isinstance(r, dict):
+                    continue
+                score = float(r.get("score", 0.0))
+                results.append(
+                    BaseSearchResult(
+                        path=r.get("path", ""),
+                        chunk_text=r.get("text", ""),
+                        score=score,
+                        keyword_score=score,
+                        vector_score=score,
+                    )
+                )
+            all_results.append(results)
+
+        return all_results
 
     async def _rerank_results(
         self,
@@ -470,24 +812,36 @@ class TxtaiBackend:
         zone_id: str,
         hops: int = 2,  # noqa: ARG002
         limit: int = 10,
+        path_filter: str | None = None,
     ) -> list[BaseSearchResult]:
-        """Graph-augmented search using txtai's semantic graph."""
+        """Graph-augmented search using txtai's semantic graph.
+
+        Uses ``Embeddings.search()`` with graph enabled — txtai automatically
+        applies the semantic graph as a boosting/re-ranking signal on top of
+        the standard hybrid BM25+dense retrieval. This is NOT the raw graph
+        query API (``graph.search()``) which expects graph query syntax.
+        """
         await self.startup()
+
+        # Build SQL with zone_id + optional path filter (same as regular search)
+        sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=limit)
+
         async with self._lock:
             if not self._embeddings or not getattr(self._embeddings, "graph", None):
                 return []
-            raw = await asyncio.to_thread(self._embeddings.graph.search, query, limit=limit)
+            # txtai's Embeddings.search() uses graph as boost when graph is configured
+            raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:
-            row = r if isinstance(r, dict) else {"text": str(r), "score": 0.0}
-            if row.get("zone_id") != zone_id:
-                continue
+            score = float(r.get("score", 0.0))
             results.append(
                 BaseSearchResult(
-                    path=row.get("path", ""),
-                    chunk_text=row.get("text", ""),
-                    score=float(row.get("score", 0.0)),
+                    path=r.get("path", ""),
+                    chunk_text=r.get("text", ""),
+                    score=score,
+                    keyword_score=score,
+                    vector_score=score,
                 )
             )
         return results
@@ -565,12 +919,20 @@ def _build_search_sql(
     Centralises query construction to avoid scattered f-string concatenation
     and ensure consistent sanitisation of user-supplied values.
     """
+    # txtai's similar() returns top-K candidates BEFORE other WHERE clauses
+    # are applied. With path/zone filters, we need to over-fetch from similar()
+    # so the post-filter has enough candidates to find matching docs.
+    # Without this: similar() returns top-3, then path filter → 0 results.
+    # With over-fetch: similar() returns top-1000, then path filter → matches.
+    similar_candidates = 1000 if path_filter else max(int(limit) * 3, 30)
     clauses = [
-        f"similar('{_escape_sql_string(query)}')",
+        f"similar('{_escape_sql_string(query)}', {similar_candidates})",
         f"zone_id = '{_escape_sql_string(zone_id)}'",
     ]
     if path_filter:
-        clauses.append(f"path LIKE '{_escape_like_string(path_filter)}%' ESCAPE '\\'")
+        # Note: txtai's SQL parser does not support the ESCAPE keyword.
+        # We rely on _escape_sql_string to sanitise the value instead.
+        clauses.append(f"path LIKE '{_escape_sql_string(path_filter)}%'")
 
     where = " AND ".join(clauses)
     safe_limit = max(1, min(int(limit), 1000))

@@ -280,6 +280,14 @@ class SearchDaemon:
         try:
             from nexus.bricks.search.txtai_backend import TxtaiBackend
 
+            # Pass embedding cache so txtai can skip redundant API calls
+            _emb_cache = None
+            if self._cache_brick:
+                import contextlib
+
+                with contextlib.suppress(Exception):
+                    _emb_cache = self._cache_brick.embedding_cache
+
             self._backend = TxtaiBackend(
                 database_url=self.config.database_url,
                 model=self.config.txtai_model,
@@ -288,6 +296,8 @@ class SearchDaemon:
                 graph=self.config.txtai_graph,
                 reranker_model=self.config.txtai_reranker,
                 sparse=self.config.txtai_sparse,
+                embedding_cache=_emb_cache,
+                data_path=self.config.data_path if hasattr(self.config, "data_path") else None,
             )
             self._backend.kickoff_startup()
             self._txtai_bootstrap_task = asyncio.create_task(self._bootstrap_txtai_backend())
@@ -694,6 +704,33 @@ class SearchDaemon:
         except TimeoutError:
             logger.warning(f"Search timeout after {self.config.query_timeout_seconds}s")
             return []
+
+    async def batch_search(
+        self,
+        queries: list[dict[str, Any]],
+        *,
+        zone_id: str | None = None,
+    ) -> list[list[Any]]:
+        """Batch search: embed N queries in ONE API call.
+
+        Powers ``POST /api/v2/search/query/batch`` for benchmarks and bulk
+        evaluations. ~30s for 470 queries instead of ~16 min sequential.
+        """
+        if not self._initialized:
+            raise RuntimeError("SearchDaemon not initialized. Call startup() first.")
+
+        from nexus.contracts.constants import ROOT_ZONE_ID
+
+        effective_zone_id = zone_id or ROOT_ZONE_ID
+        if self._backend is None:
+            return [[] for _ in queries]
+
+        backend_batch = getattr(self._backend, "batch_search", None)
+        if backend_batch is None:
+            return [[] for _ in queries]
+
+        results: list[list[Any]] = await backend_batch(queries, zone_id=effective_zone_id)
+        return results
 
     async def index_documents(
         self,

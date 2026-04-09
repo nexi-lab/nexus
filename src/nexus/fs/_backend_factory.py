@@ -170,12 +170,14 @@ def _infer_connector_user_email(
     if not providers:
         return None
 
-    oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
-    try:
-        import asyncio
+    import asyncio
 
-        creds = asyncio.run(oauth_service.list_credentials())
+    oauth_service = oauth_module.OAuthCredentialService(token_manager=get_token_manager())
+    coro = oauth_service.list_credentials()
+    try:
+        creds = asyncio.run(coro)
     except Exception:
+        coro.close()  # prevent "coroutine never awaited" RuntimeWarning
         return None
 
     emails = sorted(

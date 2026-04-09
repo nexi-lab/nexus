@@ -14,7 +14,7 @@
 //! Issue #1868: Phase H — kernel boundary collapse.
 
 use crate::dcache::{CachedEntry, DCache, DT_DIR, DT_PIPE, DT_REG, DT_STREAM};
-use crate::dispatch::{FileEvent, MutationObserver, Trie};
+use crate::dispatch::{FileEvent, FileEventType, MutationObserver, Trie};
 use crate::file_watch::FileWatchRegistry;
 use crate::lock::{LockMode, VFSLockManagerInner};
 use crate::metastore::RedbMetastore;
@@ -911,7 +911,10 @@ impl Kernel {
     /// before submitting to the pool. This prevents deadlocks if an
     /// observer's callback re-enters the kernel (e.g. an audit logger
     /// that itself does sys_write).
-    #[allow(dead_code)]
+    ///
+    /// Called by every successful Tier 1 mutation syscall (sys_write,
+    /// sys_unlink, sys_rename, sys_mkdir, sys_rmdir) via the
+    /// `dispatch_mutation` helper.
     pub fn dispatch_observers(&self, event: &FileEvent) {
         let observers = self.observers.lock().matching(event.event_type as u32);
         if observers.is_empty() {
@@ -938,6 +941,34 @@ impl Kernel {
     #[allow(dead_code)]
     pub fn flush_observers(&self) {
         self.observer_pool.join();
+    }
+
+    /// Helper: build a `FileEvent` pre-populated with the syscall's
+    /// `OperationContext` identity fields (zone_id, user_id, agent_id),
+    /// then apply caller-provided extras and dispatch.
+    ///
+    /// Used by sys_* methods to keep the per-syscall dispatch site to
+    /// 3-4 lines instead of a 15-field struct literal. Fast path: when
+    /// no observers are registered, `dispatch_observers` is an early
+    /// return after a single Mutex acquire — the FileEvent construction
+    /// is essentially free against any observer-bearing workload, so
+    /// there's no point in gating it behind a count check.
+    #[inline]
+    fn dispatch_mutation(
+        &self,
+        event_type: FileEventType,
+        path: &str,
+        ctx: &OperationContext,
+        extra: impl FnOnce(&mut FileEvent),
+    ) {
+        let mut event = FileEvent::new(event_type, path);
+        event.zone_id = Some(ctx.zone_id.clone());
+        if !ctx.user_id.is_empty() {
+            event.user_id = Some(ctx.user_id.clone());
+        }
+        event.agent_id = ctx.agent_id.clone();
+        extra(&mut event);
+        self.dispatch_observers(&event);
     }
 
     /// Number of registered observers.
@@ -1566,8 +1597,12 @@ impl Kernel {
         // 6. After write -> build metadata + metastore.put + dcache update
         let result = match write_result {
             Some(wr) => {
-                // Get existing version for increment
-                let old_version = self.dcache.get_entry(path).map(|e| e.version).unwrap_or(0);
+                // Snapshot old dcache state for the OBSERVE event payload
+                // (is_new + old_etag fields). Done before metastore.put so
+                // we capture the pre-write version, not the new one.
+                let old_entry = self.dcache.get_entry(path);
+                let old_version = old_entry.as_ref().map(|e| e.version).unwrap_or(0);
+                let old_etag = old_entry.as_ref().and_then(|e| e.etag.clone());
                 let new_version = old_version + 1;
 
                 // Build FileMetadata and persist via metastore (per-mount or global)
@@ -1601,6 +1636,19 @@ impl Kernel {
                         mime_type: None,
                     },
                 );
+
+                // OBSERVE-phase dispatch (§11 Phase 5): queue FileWrite to
+                // the kernel observer ThreadPool. Returns immediately —
+                // observer callbacks run off the syscall hot path.
+                let etag = wr.content_id.clone();
+                let size = wr.size;
+                self.dispatch_mutation(FileEventType::FileWrite, path, ctx, |ev| {
+                    ev.size = Some(size);
+                    ev.etag = Some(etag);
+                    ev.version = Some(new_version);
+                    ev.is_new = old_version == 0;
+                    ev.old_etag = old_etag;
+                });
 
                 Ok(SysWriteResult {
                     hit: true,
@@ -1779,7 +1827,17 @@ impl Kernel {
             }
         }
 
-        // 10. Return hit=true with metadata for event payload
+        // 10. OBSERVE-phase dispatch (§11 Phase 5): queue FileDelete.
+        // Cloned out of `entry` because the SysUnlinkResult below also
+        // moves them.
+        let etag_for_event = entry.etag.clone();
+        let size_for_event = entry.size;
+        self.dispatch_mutation(FileEventType::FileDelete, path, ctx, |ev| {
+            ev.size = Some(size_for_event);
+            ev.etag = etag_for_event;
+        });
+
+        // 11. Return hit=true with metadata for event payload
         Ok(SysUnlinkResult {
             hit: true,
             entry_type: entry.entry_type,
@@ -1979,6 +2037,14 @@ impl Kernel {
         // 10. Release sorted locks
         release_locks(&self.vfs_lock, lock1, lock2);
 
+        // 11. OBSERVE-phase dispatch (§11 Phase 5): queue FileRename.
+        // Convention (mirrors Python FileEvent for renames): primary
+        // `path` is the source, `new_path` is the destination.
+        let new_path_owned = new_path.to_string();
+        self.dispatch_mutation(FileEventType::FileRename, old_path, ctx, |ev| {
+            ev.new_path = Some(new_path_owned);
+        });
+
         Ok(SysRenameResult {
             hit: true,
             success: true,
@@ -2069,6 +2135,15 @@ impl Kernel {
                 mime_type: Some("inode/directory".to_string()),
             },
         );
+
+        // 8. OBSERVE-phase dispatch (§11 Phase 5): queue DirCreate.
+        // Only fires on the newly-created path — the early return at
+        // step 3 (already-exists branch) does NOT dispatch because no
+        // state actually changed. Parent directories created via
+        // ensure_parent_directories don't get individual events; the
+        // top-level mkdir event is enough for observers like
+        // FileWatcher to invalidate their dcache for the subtree.
+        self.dispatch_mutation(FileEventType::DirCreate, path, ctx, |_ev| {});
 
         Ok(SysMkdirResult {
             hit: true,
@@ -2218,6 +2293,14 @@ impl Kernel {
         self.dcache.evict(path);
         let prefix = format!("{}/", path.trim_end_matches('/'));
         self.dcache.evict_prefix(&prefix);
+
+        // 9. OBSERVE-phase dispatch (§11 Phase 5): queue DirDelete.
+        // Like sys_mkdir, only the top-level rmdir event fires —
+        // recursively-deleted children don't generate individual events
+        // (observers needing per-child notifications can list the
+        // directory before unlink themselves; the top-level event is
+        // the cache-invalidation signal).
+        self.dispatch_mutation(FileEventType::DirDelete, path, ctx, |_ev| {});
 
         Ok(SysRmdirResult {
             hit: true,
@@ -2720,5 +2803,100 @@ mod tests {
         // Count is unchanged — observer is gone.
         assert_eq!(seen.load(Ordering::Relaxed), 1);
         assert_eq!(kernel.observer_count(), 0);
+    }
+
+    // ── §11 Phase 5 dispatch_mutation context propagation tests ────
+
+    /// Captures the FileEvent it receives so the test can assert on
+    /// every field. Used by the dispatch_mutation context tests below.
+    struct CapturingObserver {
+        captured: Arc<parking_lot::Mutex<Option<FileEvent>>>,
+    }
+
+    impl MutationObserver for CapturingObserver {
+        fn on_mutation(&self, event: &FileEvent) {
+            *self.captured.lock() = Some(event.clone());
+        }
+    }
+
+    #[test]
+    fn dispatch_mutation_propagates_operation_context_identity() {
+        let kernel = Kernel::new();
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        let obs = Arc::new(CapturingObserver {
+            captured: Arc::clone(&captured),
+        });
+        kernel.register_observer(obs, "cap".to_string(), FileEventType::FileWrite.bit());
+
+        let ctx = OperationContext {
+            user_id: "alice".to_string(),
+            zone_id: "root".to_string(),
+            is_admin: false,
+            agent_id: Some("agent-42".to_string()),
+            is_system: false,
+            groups: vec![],
+            admin_capabilities: vec![],
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: "req-1".to_string(),
+            context_zone_id: None,
+        };
+
+        kernel.dispatch_mutation(FileEventType::FileWrite, "/foo.txt", &ctx, |ev| {
+            ev.size = Some(42);
+            ev.etag = Some("abc123".to_string());
+            ev.version = Some(1);
+            ev.is_new = true;
+        });
+        kernel.flush_observers();
+
+        let event = captured.lock().clone().expect("observer received event");
+        assert_eq!(event.event_type, FileEventType::FileWrite);
+        assert_eq!(event.path, "/foo.txt");
+        assert_eq!(event.zone_id.as_deref(), Some("root"));
+        assert_eq!(event.user_id.as_deref(), Some("alice"));
+        assert_eq!(event.agent_id.as_deref(), Some("agent-42"));
+        assert_eq!(event.size, Some(42));
+        assert_eq!(event.etag.as_deref(), Some("abc123"));
+        assert_eq!(event.version, Some(1));
+        assert!(event.is_new);
+    }
+
+    #[test]
+    fn dispatch_mutation_handles_anonymous_context_without_user_id() {
+        // Edge case: kernel-internal calls (e.g. background scanners)
+        // pass an OperationContext with empty user_id. The helper must
+        // not stamp Some("") into event.user_id — it should leave it None.
+        let kernel = Kernel::new();
+        let captured = Arc::new(parking_lot::Mutex::new(None));
+        kernel.register_observer(
+            Arc::new(CapturingObserver {
+                captured: Arc::clone(&captured),
+            }),
+            "cap".to_string(),
+            FileEventType::DirCreate.bit(),
+        );
+
+        let ctx = OperationContext {
+            user_id: String::new(),
+            zone_id: "root".to_string(),
+            is_admin: true,
+            agent_id: None,
+            is_system: true,
+            groups: vec![],
+            admin_capabilities: vec![],
+            subject_type: "user".to_string(),
+            subject_id: None,
+            request_id: String::new(),
+            context_zone_id: None,
+        };
+
+        kernel.dispatch_mutation(FileEventType::DirCreate, "/d", &ctx, |_ev| {});
+        kernel.flush_observers();
+
+        let event = captured.lock().clone().expect("observer received event");
+        assert!(event.user_id.is_none());
+        assert!(event.agent_id.is_none());
+        assert_eq!(event.zone_id.as_deref(), Some("root"));
     }
 }

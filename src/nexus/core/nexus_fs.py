@@ -554,7 +554,7 @@ class NexusFS(  # type: ignore[misc]
                 },
             )
 
-    async def _check_is_directory(
+    def _check_is_directory(
         self,
         path: str,
         *,
@@ -563,7 +563,8 @@ class NexusFS(  # type: ignore[misc]
     ) -> bool:
         """Internal: check if path is a directory (explicit or implicit).
 
-        Used by sys_stat. is_directory is a Tier 2 wrapper over sys_stat.
+        §11 Phase 6: converted from async def → def. Body was already
+        fully synchronous (no awaits). Used by sys_stat.
 
         Args:
             _meta: Pre-fetched FileMetadata from caller (avoids duplicate
@@ -692,7 +693,7 @@ class NexusFS(  # type: ignore[misc]
         file_meta = self.metadata.get(normalized)
 
         # Check if it's a directory (pass pre-fetched meta to avoid second metadata.get)
-        is_dir = await self._check_is_directory(normalized, context=ctx, _meta=file_meta)
+        is_dir = self._check_is_directory(normalized, context=ctx, _meta=file_meta)
 
         if is_dir:
             if file_meta is not None:

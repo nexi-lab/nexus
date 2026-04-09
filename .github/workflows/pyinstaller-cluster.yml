@@ -382,41 +382,35 @@ jobs:
           echo "=== dist-binary contents ==="
           ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
 
-          # Locate the produced binary — PyInstaller may output a file or a
-          # one-dir folder depending on the spec; handle both.
-          if [ -f "dist-binary/nexus-cluster.exe" ]; then
-            mv dist-binary/nexus-cluster.exe "dist-binary/${ARTIFACT}.exe"
-            ARTIFACT_PATH="dist-binary/${ARTIFACT}.exe"
-          elif [ -f "dist-binary/nexus-cluster" ]; then
-            mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
-            chmod +x "dist-binary/${ARTIFACT}"
-            ARTIFACT_PATH="dist-binary/${ARTIFACT}"
-          elif [ -d "dist-binary/nexus-cluster" ]; then
-            # one-dir mode: rename the directory
-            mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
-            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster" 2>/dev/null || true
-            ARTIFACT_PATH="dist-binary/${ARTIFACT}"
-          else
-            echo "ERROR: dist-binary/nexus-cluster not found."
+          # onedir mode: PyInstaller outputs dist-binary/nexus-cluster/ directory
+          if [ ! -d "dist-binary/nexus-cluster" ]; then
+            echo "ERROR: dist-binary/nexus-cluster directory not found."
             echo "Files present in dist-binary/:"
             find dist-binary/ -maxdepth 3 2>/dev/null || true
             exit 1
           fi
+
+          mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
+          # Mark the main executable inside the directory
+          if [ -f "dist-binary/${ARTIFACT}/nexus-cluster.exe" ]; then
+            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster.exe" 2>/dev/null || true
+          else
+            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster"
+          fi
+
           echo "ARTIFACT=${ARTIFACT}" >> "$GITHUB_ENV"
-          echo "ARTIFACT_PATH=${ARTIFACT_PATH}" >> "$GITHUB_ENV"
+          echo "ARTIFACT_PATH=dist-binary/${ARTIFACT}" >> "$GITHUB_ENV"
           echo "Binary staged:"
-          ls -lh dist-binary/
+          ls -lh "dist-binary/${ARTIFACT}/"
 
       - name: Smoke test — binary is executable
         shell: bash
         run: |
-          BINARY="${{ env.ARTIFACT_PATH }}"
-          if [ -d "$BINARY" ]; then
-            if [ -f "$BINARY/nexus-cluster.exe" ]; then
-              BINARY="$BINARY/nexus-cluster.exe"
-            else
-              BINARY="$BINARY/nexus-cluster"
-            fi
+          # onedir: the executable lives inside the directory
+          if [ -f "${{ env.ARTIFACT_PATH }}/nexus-cluster.exe" ]; then
+            BINARY="${{ env.ARTIFACT_PATH }}/nexus-cluster.exe"
+          else
+            BINARY="${{ env.ARTIFACT_PATH }}/nexus-cluster"
           fi
           "$BINARY" --version 2>/dev/null \
             || "$BINARY" --help 2>/dev/null \
@@ -450,15 +444,13 @@ jobs:
           echo "Configuring coscmd..."
           coscmd config -a "${COS_SECRET_ID}" -s "${COS_SECRET_KEY}" -b "${COS_BUCKET}" -r "${COS_REGION}"
 
-          UPLOAD_PATH="${ARTIFACT_PATH}"
-          if [ -d "${UPLOAD_PATH}" ]; then
-            if [ "${RUNNER_OS}" = "Windows" ]; then
-              UPLOAD_PATH="dist-binary/${ARTIFACT}.zip"
-              powershell -NoLogo -NoProfile -Command "Compress-Archive -Path 'dist-binary/${ARTIFACT}\\*' -DestinationPath '${UPLOAD_PATH}' -Force"
-            else
-              UPLOAD_PATH="dist-binary/${ARTIFACT}.tar.gz"
-              tar -C dist-binary -czf "${UPLOAD_PATH}" "${ARTIFACT}"
-            fi
+          # onedir mode: always package the directory into an archive for upload
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            UPLOAD_PATH="dist-binary/${ARTIFACT}.zip"
+            powershell -NoLogo -NoProfile -Command "Compress-Archive -Path 'dist-binary/${ARTIFACT}\\*' -DestinationPath '${UPLOAD_PATH}' -Force"
+          else
+            UPLOAD_PATH="dist-binary/${ARTIFACT}.tar.gz"
+            tar -C dist-binary -czf "${UPLOAD_PATH}" "${ARTIFACT}"
           fi
 
           REMOTE_PATH="${ARTIFACT_VERSION}/$(basename "${UPLOAD_PATH}")"
@@ -487,12 +479,29 @@ jobs:
         with:
           path: artifacts
 
-      - name: List downloaded files
-        run: find artifacts -type f | sort
+      - name: List downloaded artifacts
+        run: ls -lhR artifacts/
+
+      # onedir mode: each artifact is a directory of files. Package each into
+      # an archive (tar.gz for Unix, zip for Windows) before attaching to the
+      # GitHub Release so users get a single downloadable file per platform.
+      - name: Package artifacts for release
+        run: |
+          mkdir -p release-assets
+          for dir in artifacts/*/; do
+            name="$(basename "$dir")"
+            if echo "$name" | grep -qi windows; then
+              (cd artifacts && zip -r "../release-assets/${name}.zip" "$name")
+            else
+              tar -C artifacts -czf "release-assets/${name}.tar.gz" "$name"
+            fi
+          done
+          echo "=== release-assets ==="
+          ls -lh release-assets/
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -131,7 +131,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # Required for onedir: tells EXE not to bundle binaries/datas
-    name="nexus-cluster",
+    name="nexusd",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

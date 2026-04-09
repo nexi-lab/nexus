@@ -392,10 +392,10 @@ jobs:
 
           mv dist-binary/nexus-cluster "dist-binary/${ARTIFACT}"
           # Mark the main executable inside the directory
-          if [ -f "dist-binary/${ARTIFACT}/nexus-cluster.exe" ]; then
-            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster.exe" 2>/dev/null || true
+          if [ -f "dist-binary/${ARTIFACT}/nexusd.exe" ]; then
+            chmod +x "dist-binary/${ARTIFACT}/nexusd.exe" 2>/dev/null || true
           else
-            chmod +x "dist-binary/${ARTIFACT}/nexus-cluster"
+            chmod +x "dist-binary/${ARTIFACT}/nexusd"
           fi
 
           echo "ARTIFACT=${ARTIFACT}" >> "$GITHUB_ENV"
@@ -407,10 +407,10 @@ jobs:
         shell: bash
         run: |
           # onedir: the executable lives inside the directory
-          if [ -f "${{ env.ARTIFACT_PATH }}/nexus-cluster.exe" ]; then
-            BINARY="${{ env.ARTIFACT_PATH }}/nexus-cluster.exe"
+          if [ -f "${{ env.ARTIFACT_PATH }}/nexusd.exe" ]; then
+            BINARY="${{ env.ARTIFACT_PATH }}/nexusd.exe"
           else
-            BINARY="${{ env.ARTIFACT_PATH }}/nexus-cluster"
+            BINARY="${{ env.ARTIFACT_PATH }}/nexusd"
           fi
           "$BINARY" --version 2>/dev/null \
             || "$BINARY" --help 2>/dev/null \

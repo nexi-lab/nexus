@@ -26,7 +26,6 @@ DEFAULT_PORTS: dict[str, int] = {
     "grpc": 2028,
     "postgres": 5432,
     "dragonfly": 6379,
-    "zoekt": 6070,
 }
 
 # Port range for hash-derived ports (10000–59999 gives 50k usable ports,
@@ -44,7 +43,6 @@ PORT_LABELS: dict[str, str] = {
     "grpc": "Nexus gRPC",
     "postgres": "PostgreSQL",
     "dragonfly": "DragonflyDB",
-    "zoekt": "Zoekt Search",
 }
 
 # Strategies for resolving port conflicts
@@ -64,8 +62,7 @@ def derive_ports(data_dir: str | Path) -> dict[str, int]:
         +1  grpc
         +2  postgres
         +3  dragonfly
-        +4  zoekt
-        +5…+9  reserved for future services
+        +4…+9  reserved for future services
     """
     abs_path = str(Path(data_dir).resolve())
     digest = hashlib.sha256(abs_path.encode()).hexdigest()
@@ -78,7 +75,6 @@ def derive_ports(data_dir: str | Path) -> dict[str, int]:
         "grpc": base + 1,
         "postgres": base + 2,
         "dragonfly": base + 3,
-        "zoekt": base + 4,
     }
 
 

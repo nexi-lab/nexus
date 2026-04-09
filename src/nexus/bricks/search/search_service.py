@@ -32,7 +32,6 @@ from nexus.contracts.search_types import (
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_TRIGRAM_THRESHOLD,
-    GREP_ZOEKT_THRESHOLD,
     GlobStrategy,
     SearchStrategy,
 )
@@ -163,7 +162,6 @@ class SearchService:
         list_parallel_workers: int = LIST_PARALLEL_WORKERS,
         grep_parallel_workers: int = GREP_PARALLEL_WORKERS,
         file_cache: Any | None = None,
-        zoekt_client: Any | None = None,
     ):
         """Initialize search service.
 
@@ -176,14 +174,12 @@ class SearchService:
             default_context: Default operation context (embedded mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
             gateway: NexusFSGateway for file ops, routing, and dependency tracking
-            zoekt_client: Injected ZoektClient instance (Issue #2188).
         """
         self.metadata = metadata_store
         self._record_store = record_store
         self._fp_engine: Any = None  # Issue #3266: cached SQLAlchemy engine
         # Injected file cache (Issue #690 — replaces global singleton)
         self._file_cache = file_cache
-        self._zoekt_client = zoekt_client
         self._permission_enforcer = permission_enforcer
         self.router = router
         self._rebac_manager = rebac_manager
@@ -1751,20 +1747,6 @@ class SearchService:
                 return trigram_results
             strategy = SearchStrategy.RUST_BULK  # Fallback
 
-        # Strategy: ZOEKT_INDEX
-        if strategy == SearchStrategy.ZOEKT_INDEX:
-            zoekt_results = self._try_grep_with_zoekt(
-                pattern=pattern,
-                path=path,
-                file_pattern=file_pattern,
-                ignore_case=ignore_case,
-                max_results=max_results,
-                context=context,
-            )
-            if zoekt_results is not None:
-                return zoekt_results
-            strategy = SearchStrategy.RUST_BULK
-
         # Strategy: CACHED_TEXT or opportunistic cached text search
         if strategy == SearchStrategy.CACHED_TEXT or searchable_texts:
             for file_path, text in searchable_texts.items():
@@ -2006,77 +1988,6 @@ class SearchService:
 
         return results
 
-    def _try_grep_with_zoekt(
-        self,
-        pattern: str,
-        path: str,
-        file_pattern: str | None,
-        ignore_case: bool,
-        max_results: int,
-        context: Any,
-    ) -> builtins.list[dict[str, Any]] | None:
-        """Try Zoekt for accelerated grep. Returns None if not available."""
-        if self._zoekt_client is None:
-            return None
-
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return None
-            is_available = loop.run_until_complete(self._zoekt_client.is_available())
-        except RuntimeError:
-            is_available = asyncio.run(self._zoekt_client.is_available())
-
-        if not is_available:
-            return None
-
-        try:
-            zoekt_query = pattern
-            if ignore_case:
-                zoekt_query = f"(?i){pattern}"
-            if path and path != "/":
-                zoekt_query = f"file:{path.lstrip('/')}/ {zoekt_query}"
-
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return None
-                matches = loop.run_until_complete(
-                    self._zoekt_client.search(zoekt_query, num=max_results * 3)
-                )
-            except RuntimeError:
-                matches = asyncio.run(self._zoekt_client.search(zoekt_query, num=max_results * 3))
-
-            if not matches:
-                return None
-
-            if file_pattern:
-                matches = [m for m in matches if glob_fast.glob_match(m.file, [file_pattern])]
-
-            unique_files = list({m.file for m in matches})
-            if self._permission_enforcer and context:
-                permitted_files = set(self._permission_enforcer.filter_list(unique_files, context))
-            else:
-                permitted_files = set(unique_files)
-
-            results = []
-            for match in matches:
-                if match.file in permitted_files:
-                    results.append(
-                        {
-                            "file": match.file,
-                            "line": match.line,
-                            "content": match.content,
-                            "match": match.match,
-                        }
-                    )
-                    if len(results) >= max_results:
-                        break
-            return results
-        except Exception as e:
-            logger.warning(f"[GREP] Zoekt search failed: {e}")
-            return None
-
     async def _try_grep_with_trigram(
         self,
         pattern: str,
@@ -2306,26 +2217,10 @@ class SearchService:
     # Algorithm Selection (Issue #929)
     # =========================================================================
 
-    def _is_zoekt_available(self) -> bool:
-        """Check if Zoekt indexing service is available."""
-        if self._zoekt_client is None:
-            return False
-
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                return False
-            return loop.run_until_complete(self._zoekt_client.is_available())
-        except RuntimeError:
-            return asyncio.run(self._zoekt_client.is_available())
-        except Exception:
-            return False
-
     def _select_grep_strategy(
         self,
         file_count: int,
         cached_text_ratio: float,
-        zoekt_available: bool | None = None,
         zone_id: str | None = None,
     ) -> SearchStrategy:
         """Select optimal grep strategy (Issue #929, #954)."""
@@ -2341,11 +2236,6 @@ class SearchService:
             and trigram_fast.index_exists(zone_id)
         ):
             return SearchStrategy.TRIGRAM_INDEX
-        if file_count > GREP_ZOEKT_THRESHOLD:
-            if zoekt_available is None:
-                zoekt_available = self._is_zoekt_available()
-            if zoekt_available:
-                return SearchStrategy.ZOEKT_INDEX
         if GREP_PARALLEL_THRESHOLD <= file_count <= 10000:
             return SearchStrategy.PARALLEL_POOL
         if grep_fast.is_available():

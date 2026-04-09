@@ -4,7 +4,6 @@ Provides:
 - Hybrid BM25+dense search via txtai (pgvector backend)
 - Semantic graph search via txtai
 - Cross-encoder reranking (configurable)
-- Zoekt trigram code search (optional, orthogonal to txtai)
 - Hot Search Daemon for sub-50ms response
 - Query expansion for improved recall
 - Pluggable backend registry
@@ -70,11 +69,6 @@ from nexus.bricks.search.txtai_backend import (
     TxtaiBackend,
     create_backend,
 )
-from nexus.bricks.search.zoekt_client import (
-    ZoektClient,
-    ZoektIndexManager,
-    ZoektMatch,
-)
 from nexus.contracts.search_types import (
     AGGREGATION_WORDS,
     COMPARISON_WORDS,
@@ -84,7 +78,6 @@ from nexus.contracts.search_types import (
     GREP_PARALLEL_THRESHOLD,
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
-    GREP_ZOEKT_THRESHOLD,
     MULTIHOP_PATTERNS,
     TEMPORAL_WORDS,
     GlobStrategy,
@@ -106,7 +99,6 @@ __all__ = [
     "GlobStrategy",
     "GREP_SEQUENTIAL_THRESHOLD",
     "GREP_PARALLEL_THRESHOLD",
-    "GREP_ZOEKT_THRESHOLD",
     "GREP_PARALLEL_WORKERS",
     "GREP_CACHED_TEXT_RATIO",
     "GLOB_RUST_THRESHOLD",
@@ -159,10 +151,6 @@ __all__ = [
     "DaemonStats",
     "SearchResult",
     "create_and_start_daemon",
-    # Zoekt Code Search
-    "ZoektClient",
-    "ZoektIndexManager",
-    "ZoektMatch",
     # txtai backend (Issue #2663)
     "TxtaiBackend",
     "SearchBackendProtocol",

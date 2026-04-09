@@ -478,41 +478,6 @@ curl "$NEXUS_URL/api/v2/search/health"
 curl -H "Authorization: Bearer $NEXUS_API_KEY" "$NEXUS_URL/api/v2/search/stats"
 ```
 
-### 5.6 What about Zoekt?
-
-Zoekt is an optional fast trigram/code-search backend behind Nexus search.
-There is not a separate `nexus zoekt ...` command today. You run Zoekt
-separately, then point Nexus at it.
-
-Step by step:
-
-1. start your Zoekt service outside Nexus
-2. point Nexus at that service with the Zoekt environment variables
-3. start `nexusd`
-4. keep using `nexus grep` and `nexus search ...` from the client side
-
-Typical Nexus-side setup:
-
-```bash
-export ZOEKT_ENABLED=true
-export ZOEKT_URL="http://localhost:6070"
-export ZOEKT_INDEX_DIR="$PWD/.zoekt-index"
-export ZOEKT_DATA_DIR="$PWD"
-export ZOEKT_INDEX_BINARY="zoekt-index"
-export NEXUS_SEARCH_DAEMON=true
-
-nexusd --profile full --port 2026 --data-dir "$PWD/data"
-```
-
-What this means in practice:
-
-- Nexus still exposes normal `grep` and `search` flows
-- the search brick uses Zoekt when it is available
-- Zoekt is especially useful for large code trees
-
-If you only want a beginner path, start with `nexus search init/index/query`
-and add Zoekt later.
-
 Packages behind this:
 
 - Search daemon and retrieval: `nexus.bricks.search`
@@ -1243,7 +1208,6 @@ Check:
 - `nexus search init` has been run for semantic search
 - `NEXUS_SEARCH_DAEMON=true` for long-running server-side search
 - parser keys such as `UNSTRUCTURED_API_KEY` or `LLAMA_CLOUD_API_KEY` if you expect parsed search
-- `ZOEKT_ENABLED=true` only after a Zoekt server is actually running
 
 ### If older docs say `nexus serve`
 

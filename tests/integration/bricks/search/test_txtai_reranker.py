@@ -185,34 +185,10 @@ class TestDaemonBackendDelegation:
         assert daemon.last_search_timing["rerank_ms"] == 3.5
 
     @pytest.mark.asyncio
-    async def test_keyword_tries_zoekt_first(self) -> None:
-        """Keyword search should try Zoekt before txtai backend."""
+    async def test_keyword_uses_backend(self) -> None:
+        """Keyword search uses txtai backend."""
         daemon = SearchDaemon()
         daemon._initialized = True
-        daemon.stats.zoekt_available = True
-
-        mock_zoekt = AsyncMock()
-        mock_zoekt.is_available.return_value = True
-        mock_zoekt.search.return_value = [
-            MagicMock(file="/a.py", content="match", score=1.0, line=5),
-        ]
-        daemon._zoekt_client = mock_zoekt
-
-        mock_backend = AsyncMock()
-        daemon._backend = mock_backend
-
-        results = await daemon.search("test", search_type="keyword", zone_id="z")
-
-        # Zoekt was used, backend was not
-        assert len(results) == 1
-        mock_backend.search.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_keyword_falls_to_backend_when_no_zoekt(self) -> None:
-        """When Zoekt unavailable, keyword search falls to txtai backend."""
-        daemon = SearchDaemon()
-        daemon._initialized = True
-        daemon.stats.zoekt_available = False
 
         mock_backend = AsyncMock()
         mock_backend.search.return_value = [

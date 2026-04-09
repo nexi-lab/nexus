@@ -76,13 +76,6 @@ DEFAULT_OTEL_ENDPOINT = "http://localhost:4317"
 """Default OpenTelemetry OTLP endpoint. Override via OTEL_EXPORTER_OTLP_ENDPOINT env var."""
 
 # =============================================================================
-# Search Defaults
-# =============================================================================
-
-DEFAULT_ZOEKT_URL = "http://localhost:6070"
-"""Default Zoekt code search server URL. Override via ZOEKT_URL env var."""
-
-# =============================================================================
 # Event Bus Defaults
 # =============================================================================
 

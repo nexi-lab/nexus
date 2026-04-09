@@ -675,10 +675,10 @@ class FileContentCache:
 
         return stats
 
-    def get_zoekt_index_path(self) -> Path:
-        """Get the path that Zoekt should index.
+    def get_cache_index_path(self) -> Path:
+        """Get the path to the cache directory for indexing.
 
         Returns:
-            Path to the cache directory for Zoekt indexing
+            Path to the cache directory
         """
         return self.cache_dir

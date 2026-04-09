@@ -183,12 +183,12 @@ class TestFileContentCache:
         assert stats["zones"]["zone2"]["files"] == 1
         assert stats["zones"]["zone2"]["size_bytes"] == 3
 
-    def test_zoekt_index_path(self, tmp_path: Path):
-        """Test Zoekt index path returns cache directory."""
+    def test_cache_index_path(self, tmp_path: Path):
+        """Test cache index path returns cache directory."""
         cache = FileContentCache(tmp_path)
 
-        zoekt_path = cache.get_zoekt_index_path()
-        assert zoekt_path == tmp_path / ".cache"
+        cache_path = cache.get_cache_index_path()
+        assert cache_path == tmp_path / ".cache"
 
     def test_hash_based_sharding(self, tmp_path: Path):
         """Test that files are sharded by hash."""

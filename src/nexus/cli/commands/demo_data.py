@@ -256,7 +256,6 @@ DEMO_FILES: list[tuple[str, str, str]] = [
         "  ttl: 3600\n"
         "  max_memory: 512mb\n\n"
         "search:\n"
-        "  engine: zoekt\n"
         "  semantic_enabled: true\n"
         "  embedding_model: text-embedding-3-small\n",
         "YAML config file (grep-friendly)",

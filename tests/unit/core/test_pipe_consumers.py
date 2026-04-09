@@ -1,24 +1,24 @@
-"""Integration tests: DT_PIPE consumer end-to-end (#926, #809, #810).
+"""Integration tests: DT_PIPE consumer end-to-end (#926, #809).
 
-Verifies that ZoektPipeConsumer and PipedRecordStoreWriteObserver correctly
+Verifies that PipedRecordStoreWriteObserver correctly
 flow events through the DT_PIPE kernel IPC path via NexusFS syscalls:
 
-    sync producer (notify_write / AuditWriteInterceptor)
+    sync producer (AuditWriteInterceptor)
       -> deque buffer -> flush task -> sys_write  # decoupled
       -> async consumer (_consume loop)
-      -> trigger_reindex_async() / RecordStore flush
+      -> RecordStore flush
 
 These tests prove DT_PIPE works end-to-end as a production IPC mechanism,
 not just as isolated unit primitives.
 
-See: factory/zoekt_pipe_consumer.py, storage/piped_record_store_write_observer.py
+See: storage/piped_record_store_write_observer.py
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -102,159 +102,6 @@ class MockNexusFS:
     async def sys_unlink(self, path: str, **kwargs: object) -> None:  # noqa: ARG002
         """Close the pipe — subsequent reads raise NexusFileNotFoundError."""
         self._closed.add(path)
-
-
-# ======================================================================
-# ZoektPipeConsumer — end-to-end tests
-# ======================================================================
-
-
-class TestZoektPipeConsumerE2E:
-    """Prove DT_PIPE end-to-end: sync notify_write -> pipe -> consumer -> reindex."""
-
-    @pytest.mark.asyncio
-    async def test_notify_write_triggers_reindex(self) -> None:
-        """Full E2E: sync notify_write -> buffer -> sys_write -> consumer -> reindex."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        mock_nx = MockNexusFS()
-
-        # Mock ZoektIndexManager
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 0.05  # Short debounce for test speed
-        zoekt.trigger_reindex_async = AsyncMock()
-
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
-        consumer.bind_fs(mock_nx)
-        await consumer.start()
-
-        try:
-            # Sync producer — this is the hot path (~5us)
-            consumer.notify_write("/workspace/file1.txt")
-            consumer.notify_write("/workspace/file2.txt")
-
-            # Wait for debounce window + consumer processing
-            await asyncio.sleep(0.1)
-
-            # Verify reindex was triggered
-            assert zoekt.trigger_reindex_async.call_count >= 1
-        finally:
-            await consumer.stop()
-
-    @pytest.mark.asyncio
-    async def test_sync_complete_triggers_reindex(self) -> None:
-        """notify_sync_complete flows through pipe to trigger reindex."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        mock_nx = MockNexusFS()
-
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 0.05
-        zoekt.trigger_reindex_async = AsyncMock()
-
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
-        consumer.bind_fs(mock_nx)
-        await consumer.start()
-
-        try:
-            consumer.notify_sync_complete(files_synced=5)
-            await asyncio.sleep(0.1)
-            assert zoekt.trigger_reindex_async.call_count >= 1
-        finally:
-            await consumer.stop()
-
-    @pytest.mark.asyncio
-    async def test_debounce_coalesces_writes(self) -> None:
-        """Multiple rapid writes within debounce window -> single reindex."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        mock_nx = MockNexusFS()
-
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 0.1
-        zoekt.trigger_reindex_async = AsyncMock()
-
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.05)
-        consumer.bind_fs(mock_nx)
-        await consumer.start()
-
-        try:
-            # Rapid-fire 20 writes within debounce window
-            for i in range(20):
-                consumer.notify_write(f"/workspace/file{i}.txt")
-
-            # Wait for debounce + processing
-            await asyncio.sleep(0.1)
-
-            # Should coalesce into 1 reindex call (not 20)
-            assert zoekt.trigger_reindex_async.call_count == 1
-        finally:
-            await consumer.stop()
-
-    @pytest.mark.asyncio
-    async def test_fallback_without_bind_fs(self) -> None:
-        """Without bind_fs, notify_write falls back to direct call."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 0.05
-
-        consumer = ZoektPipeConsumer(zoekt)
-        # No bind_fs() -> no start() -> fallback path
-
-        consumer.notify_write("/workspace/file.txt")
-
-        # Falls back to direct zoekt.notify_write()
-        zoekt.notify_write.assert_called_once_with("/workspace/file.txt")
-
-    @pytest.mark.asyncio
-    async def test_graceful_shutdown_drains(self) -> None:
-        """stop() drains remaining pipe events before exiting."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        mock_nx = MockNexusFS()
-
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 0.5  # Long debounce
-        zoekt.trigger_reindex_async = AsyncMock()
-
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=0.5)
-        consumer.bind_fs(mock_nx)
-        await consumer.start()
-
-        # Write events, then immediately stop (before debounce fires)
-        consumer.notify_write("/workspace/file.txt")
-        await consumer.stop()
-
-        # Consumer should have been cancelled cleanly (no exceptions)
-        # The consumer task should be None after stop
-        assert consumer._consumer_task is None
-
-    @pytest.mark.asyncio
-    async def test_pipe_full_falls_back(self) -> None:
-        """When deque maxlen is reached, oldest events are dropped (deque behavior)."""
-        from nexus.factory.zoekt_pipe_consumer import ZoektPipeConsumer
-
-        mock_nx = MockNexusFS()
-
-        zoekt = MagicMock()
-        zoekt.debounce_seconds = 10  # Very long debounce - consumer won't drain
-
-        consumer = ZoektPipeConsumer(zoekt, debounce_seconds=10)
-        consumer.bind_fs(mock_nx)
-        await consumer.start()
-
-        try:
-            # The write buffer is a deque(maxlen=10_000). Fill it.
-            # With the new sys_write API, the sync path buffers into _write_buffer.
-            # Once pipe_ready is True, writes go to the buffer (no fallback to direct).
-            for i in range(100):
-                consumer.notify_write(f"/workspace/file{i}.txt")
-
-            # Events are buffered, not directly calling zoekt
-            # (they go through pipe path since bind_fs was called and start() ran)
-        finally:
-            await consumer.stop()
 
 
 # ======================================================================

@@ -77,7 +77,6 @@ class DaemonStats:
     avg_latency_ms: float = 0.0
     p99_latency_ms: float = 0.0
     last_index_refresh: float | None = None
-    zoekt_available: bool = False
     embedding_cache_connected: bool = False
     mutation_consumers: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -155,7 +154,6 @@ class SearchDaemon:
         config: DaemonConfig | None = None,
         *,
         async_session_factory: Any | None = None,
-        zoekt_client: Any | None = None,
         cache_brick: Any | None = None,
         settings_store: Any | None = None,
     ):
@@ -165,14 +163,12 @@ class SearchDaemon:
             config: Daemon configuration (uses defaults if not provided)
             async_session_factory: Injected async_sessionmaker from RecordStoreABC.
                 When provided, skips creating a private engine (Issue #1597).
-            zoekt_client: Injected ZoektClient instance (Issue #2188).
             cache_brick: Injected CacheBrick for embedding cache health checks.
             settings_store: Optional SystemSettingsStoreProtocol for durable
                 consumer checkpoints.
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
-        self._zoekt_client = zoekt_client
         self._cache_brick = cache_brick
         self._settings_store = settings_store
 
@@ -273,7 +269,6 @@ class SearchDaemon:
             await self._warm_vector_index()
 
         # Check optional components
-        await self._check_zoekt()
         await self._check_embedding_cache()
 
         # Initialize txtai backend for semantic/hybrid/graph search (Issue #2663)
@@ -566,21 +561,6 @@ class SearchDaemon:
             # Non-fatal - vector search will still work, just slower first time
             logger.debug(f"Vector index warmup skipped: {e}")
 
-    async def _check_zoekt(self) -> None:
-        """Check if Zoekt trigram search is available."""
-        if self._zoekt_client is None:
-            self.stats.zoekt_available = False
-            return
-
-        try:
-            self.stats.zoekt_available = await self._zoekt_client.is_available()
-
-            if self.stats.zoekt_available:
-                logger.info("Zoekt trigram search available")
-        except Exception as e:
-            logger.debug("Zoekt availability check failed: %s", e)
-            self.stats.zoekt_available = False
-
     async def _check_embedding_cache(self) -> None:
         """Check if embedding cache (Dragonfly) is connected."""
         if self._cache_brick is not None:
@@ -628,15 +608,6 @@ class SearchDaemon:
         self.last_search_timing = {}
 
         try:
-            # For keyword search: Zoekt first (code search), then txtai BM25
-            if search_type == "keyword" and self.stats.zoekt_available:
-                zoekt_results = await self._search_zoekt(query, limit, path_filter)
-                if zoekt_results:
-                    latency_ms = (time.perf_counter() - start) * 1000
-                    self._track_latency(latency_ms)
-                    self.last_search_timing["backend_ms"] = latency_ms
-                    return zoekt_results
-
             # Delegate to txtai backend for all search types (Issue #2663)
             if self._backend is not None and (
                 self._txtai_bootstrapped or self._txtai_bootstrap_task is None
@@ -852,14 +823,8 @@ class SearchDaemon:
         *,
         zone_id: str | None = None,
     ) -> list[SearchResult]:
-        """Fast keyword search using BM25S or Zoekt."""
+        """Fast keyword search using BM25S."""
         results: list[SearchResult] = []
-
-        # Try Zoekt first (fastest, trigram-based)
-        if self.stats.zoekt_available:
-            zoekt_results = await self._search_zoekt(query, limit, path_filter)
-            if zoekt_results:
-                return zoekt_results
 
         # Fall back to BM25S (in-memory, very fast)
         if self._bm25s_index:
@@ -1051,42 +1016,6 @@ class SearchDaemon:
             )
             for k in sorted_keys
         ]
-
-    async def _search_zoekt(
-        self,
-        query: str,
-        limit: int,
-        path_filter: str | None,
-    ) -> list[SearchResult]:
-        """Search using Zoekt trigram index."""
-        try:
-            if self._zoekt_client is None or not await self._zoekt_client.is_available():
-                return []
-
-            # Build Zoekt query
-            zoekt_query = query
-            if path_filter:
-                zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
-
-            matches = await self._zoekt_client.search(zoekt_query, num=limit)
-
-            return [
-                SearchResult(
-                    path=match.file,
-                    chunk_index=0,
-                    chunk_text=match.content,
-                    score=match.score or 1.0,
-                    line_start=match.line,
-                    line_end=match.line,
-                    keyword_score=match.score or 1.0,
-                    search_type="keyword",
-                )
-                for match in matches
-            ]
-
-        except Exception as e:
-            logger.debug(f"Zoekt search failed: {e}")
-            return []
 
     async def _search_bm25s(
         self,
@@ -2059,7 +1988,6 @@ class SearchDaemon:
             "avg_latency_ms": round(self.stats.avg_latency_ms, 2),
             "p99_latency_ms": round(self.stats.p99_latency_ms, 2),
             "last_index_refresh": self.stats.last_index_refresh,
-            "zoekt_available": self.stats.zoekt_available,
             "embedding_cache_connected": self.stats.embedding_cache_connected,
             # Issue #1024: Entropy filtering configuration
             "entropy_filtering": {
@@ -2081,12 +2009,8 @@ class SearchDaemon:
         Returns:
             Health status dictionary
         """
-        # Keyword search is available via BM25S, Zoekt, or DB FTS fallback
-        keyword_ready = (
-            self._bm25s_index is not None
-            or self.stats.zoekt_available
-            or self._async_engine is not None
-        )
+        # Keyword search is available via BM25S or DB FTS fallback
+        keyword_ready = self._bm25s_index is not None or self._async_engine is not None
         return {
             "status": "healthy" if self._initialized else "starting",
             "initialized": self._initialized,
@@ -2094,7 +2018,6 @@ class SearchDaemon:
             "backend": "txtai" if self._backend is not None else "legacy",
             "bm25_index_loaded": keyword_ready,
             "db_pool_ready": self._async_engine is not None,
-            "zoekt_available": self.stats.zoekt_available,
         }
 
 

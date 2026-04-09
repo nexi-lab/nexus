@@ -121,15 +121,6 @@ class SearchConfig:
     index_cross_doc_batching: bool = True  # Enable cross-document batching
     index_max_embedding_concurrency: int = 5  # Max concurrent embedding API calls
 
-    # Zoekt code search (Issue #2188: centralized from module-level env vars)
-    zoekt_url: str = "http://localhost:6070"
-    zoekt_enabled: bool = False
-    zoekt_timeout: float = 10.0
-    zoekt_index_dir: str = "/app/data/.zoekt-index"
-    zoekt_data_dir: str = "/app/data"
-    zoekt_debounce_seconds: float = 5.0
-    zoekt_index_binary: str = "zoekt-index"
-
     # Thread pool sizing (Issue #2188: centralized from module-level globals)
     vector_pool_workers: int = 2  # ThreadPoolExecutor for sync-to-async bridge
     ml_executor_workers: int = 4  # ThreadPoolExecutor for ML inference
@@ -155,12 +146,10 @@ def search_config_from_env() -> SearchConfig:
         NEXUS_CONTEXTUAL_CHUNKING: Enable contextual chunking
         NEXUS_ATTRIBUTE_BOOSTING: Enable attribute ranking
 
+
     Returns:
         Frozen SearchConfig instance.
     """
-    # Import here to avoid circular dependency
-    from nexus.contracts.constants import DEFAULT_ZOEKT_URL
-
     return SearchConfig(
         chunk_size=get_env_int("NEXUS_CHUNK_SIZE", 1024),
         chunk_strategy=os.environ.get("NEXUS_CHUNK_STRATEGY", "semantic"),
@@ -182,14 +171,6 @@ def search_config_from_env() -> SearchConfig:
         index_batch_size=get_env_int("NEXUS_INDEX_BATCH_SIZE", 100),
         index_cross_doc_batching=get_env_bool("NEXUS_INDEX_CROSS_DOC_BATCHING", True),
         index_max_embedding_concurrency=get_env_int("NEXUS_INDEX_MAX_EMBEDDING_CONCURRENCY", 5),
-        # Zoekt (Issue #2188)
-        zoekt_url=os.environ.get("ZOEKT_URL", DEFAULT_ZOEKT_URL),
-        zoekt_enabled=get_env_bool("ZOEKT_ENABLED", False),
-        zoekt_timeout=get_env_float("ZOEKT_TIMEOUT", 10.0),
-        zoekt_index_dir=os.environ.get("ZOEKT_INDEX_DIR", "/app/data/.zoekt-index"),
-        zoekt_data_dir=os.environ.get("ZOEKT_DATA_DIR", "/app/data"),
-        zoekt_debounce_seconds=get_env_float("ZOEKT_DEBOUNCE_SECONDS", 5.0),
-        zoekt_index_binary=os.environ.get("ZOEKT_INDEX_BINARY", "zoekt-index"),
         # Thread pools (Issue #2188)
         vector_pool_workers=get_env_int("NEXUS_VDB_WORKERS", 2),
         ml_executor_workers=get_env_int("NEXUS_ML_WORKERS", 4),

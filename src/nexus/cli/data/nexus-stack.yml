@@ -103,9 +103,6 @@ services:
       # Default to 127.0.0.1 for single-node; override for federation/cross-container.
       # NEXUS_GRPC_PORT is fixed at 2028 inside this container (host port varies via mapping).
       NEXUS_ADVERTISE_ADDR: ${NEXUS_ADVERTISE_ADDR:-127.0.0.1:2028}
-      # Zoekt (external container, not built-in sidecar)
-      ZOEKT_ENABLED: ${ZOEKT_ENABLED:-false}
-      ZOEKT_URL: ${ZOEKT_URL:-http://zoekt:6070}
       # TigerBeetle (Nexus Pay)
       TIGERBEETLE_ADDRESS: ${TIGERBEETLE_ADDRESS:-tigerbeetle:3000}
       NEXUS_PAY_ENABLED: ${NEXUS_PAY_ENABLED:-true}
@@ -214,39 +211,6 @@ services:
         max-file: "3"
 
   # ============================================================================
-  # Zoekt — Fast Code Search
-  # ============================================================================
-  zoekt:
-    # Multi-arch image (amd64 + arm64) — replaces sourcegraph/zoekt-webserver
-    # which is amd64-only and requires slow QEMU emulation on Apple Silicon.
-    image: ${ZOEKT_IMAGE_REF:-ghcr.io/nexi-lab/nexus-zoekt:stable}
-    restart: unless-stopped
-    profiles:
-      - search
-    command: ["-index", "/index", "-listen", ":6070"]
-    environment:
-      ZOEKT_INDEX_DIR: /index
-      ZOEKT_DATA_DIR: /data
-    volumes:
-      - ${NEXUS_HOST_DATA_DIR:-./nexus-data}:/data
-      - zoekt-index:/index
-    ports:
-      - "${ZOEKT_PORT:-6070}:6070"
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6070/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    networks:
-      - nexus-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ============================================================================
   # NATS JetStream — Durable Event Bus (optional add-on)
   # ============================================================================
   nats:
@@ -283,8 +247,6 @@ volumes:
   postgres-wal-archive:
     driver: local
   dragonfly-data:
-    driver: local
-  zoekt-index:
     driver: local
   nats-data:
     driver: local

@@ -37,7 +37,7 @@ class SearchBrickManifest(BrickManifest):
         "nexus.bricks.search.result_builders",
         "nexus.bricks.search.search_service",
     )
-    optional_modules: tuple[str, ...] = ("nexus.bricks.search.zoekt_client",)
+    optional_modules: tuple[str, ...] = ()
 
 
 def verify_imports() -> dict[str, bool]:

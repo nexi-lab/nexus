@@ -247,37 +247,36 @@ function SideNavItem(props: SideNavItemProps) {
       ? palette.faint
       : palette.muted;
 
+  // No if/return — SolidJS components run once; a top-level if/return locks
+  // the branch chosen at construction time even when props.mode changes later.
+  // Use a reactive ternary inside the returned JSX instead.
   const paddedLabel = props.item.fullLabel.padEnd(12);
 
-  if (props.mode === "collapsed") {
-    return (
-      <box height={1}>
+  return (
+    <box height={1}>
+      {props.mode === "collapsed" ? (
         <text>
           <span foregroundColor={props.isActive ? palette.accent : textColor()}>
             {` ${props.item.icon}${props.item.shortcut}`}
           </span>
           <span foregroundColor={indicatorColor()}>{indicator()}</span>
         </text>
-      </box>
-    );
-  }
-
-  return (
-    <box height={1}>
-      <text>
-        {props.isActive ? (
-          <>
-            <span foregroundColor={palette.accent} bold>{` ${props.item.shortcut}:`}</span>
-            <span foregroundColor={palette.accent} bold>{paddedLabel}</span>
-          </>
-        ) : (
-          <>
-            <span foregroundColor={textColor()}>{` ${props.item.shortcut}:`}</span>
-            <span foregroundColor={textColor()}>{paddedLabel}</span>
-          </>
-        )}
-        <span foregroundColor={indicatorColor()}>{indicator()}</span>
-      </text>
+      ) : (
+        <text>
+          {props.isActive ? (
+            <>
+              <span foregroundColor={palette.accent} bold>{` ${props.item.shortcut}:`}</span>
+              <span foregroundColor={palette.accent} bold>{paddedLabel}</span>
+            </>
+          ) : (
+            <>
+              <span foregroundColor={textColor()}>{` ${props.item.shortcut}:`}</span>
+              <span foregroundColor={textColor()}>{paddedLabel}</span>
+            </>
+          )}
+          <span foregroundColor={indicatorColor()}>{indicator()}</span>
+        </text>
+      )}
     </box>
   );
 }

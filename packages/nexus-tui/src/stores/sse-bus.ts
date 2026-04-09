@@ -270,10 +270,20 @@ export const useSseBus = create<SseBusState>((set) => ({
   },
 
   registerHandler: (id, handler, opts) => {
-    // Clear existing handler's timer if re-registering
     const existing = handlers.get(id);
-    if (existing?.timer != null) {
-      clearTimeout(existing.timer);
+
+    // Issue 8A: guard against accidental duplicate registrations.
+    // In tests/dev: throw immediately so bugs surface at the call site.
+    // In production: warn and overwrite (safe fallback — latest handler wins).
+    if (existing) {
+      const msg = `[sse-bus] Duplicate handler ID "${id}". ` +
+        "Call unregisterHandler() before re-registering, or use a unique ID.";
+      if (process.env.NODE_ENV !== "production") {
+        throw new Error(msg);
+      } else {
+        console.warn(msg);
+      }
+      if (existing.timer != null) clearTimeout(existing.timer);
     }
 
     handlers.set(id, {

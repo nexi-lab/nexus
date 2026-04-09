@@ -13,7 +13,8 @@
 import { createCliRenderer } from "@opentui/core";
 import { render } from "@opentui/solid";
 import { resolveConfig } from "@nexus-ai-fs/api-client";
-import { useGlobalStore } from "./stores/global-store.js";
+import { useGlobalStore, setClientFactory } from "./stores/global-store.js";
+import { createWorkerManager } from "./worker/worker-manager.js";
 import { App } from "./app.js";
 import { resetTerminal } from "./utils/terminal.js";
 
@@ -100,6 +101,20 @@ async function main(): Promise<void> {
     subject: cliArgs.subject,
     zoneId: cliArgs.zoneId,
     transformKeys: false,
+  });
+
+  // §2: Spawn the API worker thread before initConfig so that testConnection()
+  // routes through the worker from the very first request.
+  const workerManager = createWorkerManager(config);
+  setClientFactory((newConfig) => {
+    // On identity switch (setIdentity) the factory is called with updated config.
+    // Reconfigure the worker so subsequent requests carry the new identity headers.
+    workerManager.reconfigure(newConfig);
+    // Cast is safe: WorkerFetchClient implements every public FetchClient method
+    // called by stores (get, post, put, patch, delete, postNoContent,
+    // deleteNoContent, rawRequest). Only the knowledge-platform helpers (getAspects
+    // etc.) are absent — none are called by TUI stores.
+    return workerManager.client as unknown as import("@nexus-ai-fs/api-client").FetchClient;
   });
 
   // Initialize global store — testConnection() is called automatically by initConfig()

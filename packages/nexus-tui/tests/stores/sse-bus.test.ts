@@ -198,4 +198,40 @@ describe("SseBus", () => {
       expect(useSseBus.getState().connected).toBe(false);
     });
   });
+
+  // ─── Duplicate handler guard (Issue 8A) ────────────────────────────────────
+
+  describe("registerHandler duplicate guard", () => {
+    it("throws in non-production env when the same ID is registered twice", () => {
+      const orig = process.env.NODE_ENV;
+      process.env.NODE_ENV = "test";
+
+      useSseBus.getState().registerHandler("test:dup", () => {});
+      expect(() => {
+        useSseBus.getState().registerHandler("test:dup", () => {});
+      }).toThrow(/Duplicate handler ID "test:dup"/);
+
+      process.env.NODE_ENV = orig;
+      useSseBus.getState().unregisterHandler("test:dup");
+    });
+
+    it("allows re-registration after unregister", () => {
+      useSseBus.getState().registerHandler("test:reuse", () => {});
+      useSseBus.getState().unregisterHandler("test:reuse");
+      // Should not throw
+      expect(() => {
+        useSseBus.getState().registerHandler("test:reuse", () => {});
+      }).not.toThrow();
+      useSseBus.getState().unregisterHandler("test:reuse");
+    });
+
+    it("different IDs never conflict", () => {
+      expect(() => {
+        useSseBus.getState().registerHandler("test:alpha", () => {});
+        useSseBus.getState().registerHandler("test:beta", () => {});
+      }).not.toThrow();
+      useSseBus.getState().unregisterHandler("test:alpha");
+      useSseBus.getState().unregisterHandler("test:beta");
+    });
+  });
 });

@@ -86,18 +86,20 @@ function readYamlConfig(): YamlConfig {
     const path = require("node:path") as typeof import("node:path");
 
     // Walk up from CWD looking for nexus.yaml or nexus.yml.
-    // Stops at the git root (.git file or directory) to avoid leaking
-    // into a parent repository. For git worktrees, this means the search
-    // stops at the worktree root — each worktree should have its own
-    // nexus.yaml (created via `nexus init` from the pre-connection screen).
+    // Stops at a real git root (.git directory) to avoid leaking into a
+    // parent repository. Git worktrees have .git as a FILE (not a directory),
+    // so we continue past them — this lets the walk reach the original repo
+    // root where nexus.yaml typically lives.
     const candidates: string[] = [];
     let dir = path.resolve(".");
     for (let i = 0; i < 20; i++) {
       candidates.push(path.join(dir, "nexus.yaml"));
       candidates.push(path.join(dir, "nexus.yml"));
-      // Stop after reaching a git root (both regular repos and worktrees)
+      // Stop only at a real git root (.git directory). A .git FILE means we're
+      // inside a git worktree — keep walking up to find the original repo root.
       try {
-        if (fs.existsSync(path.join(dir, ".git"))) break;
+        const gitPath = path.join(dir, ".git");
+        if (fs.existsSync(gitPath) && fs.statSync(gitPath).isDirectory()) break;
       } catch { /* ignore */ }
       const parent = path.dirname(dir);
       if (parent === dir) break;

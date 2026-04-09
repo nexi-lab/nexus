@@ -108,17 +108,13 @@ repos:
         pass_filenames: false
         files: ^rust/nexus_raft/.*\.rs$
 
-      # Codegen sync check — regenerate + ruff format + verify no diff
+      # Codegen sync check — verify all 4 generated files (Python + Rust) are up-to-date
       - id: codegen-check
         name: Codegen Sync Check
-        entry: >-
-          bash -c 'python3 scripts/codegen_kernel_abi.py
-          && python3 -m ruff format stubs/nexus_kernel/__init__.pyi src/nexus/core/kernel_protocols.py src/nexus/core/kernel_exports.py --quiet
-          && git diff --quiet stubs/nexus_kernel/__init__.pyi src/nexus/core/kernel_protocols.py src/nexus/core/kernel_exports.py
-          || (echo "ERROR: codegen output stale — run: python3 scripts/codegen_kernel_abi.py" && exit 1)'
+        entry: python3 scripts/codegen_kernel_abi.py --check
         language: system
         pass_filenames: false
-        files: ^(rust/nexus_kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py)$
+        files: ^(rust/nexus_kernel/src/.*\.rs|scripts/codegen_kernel_abi\.py|stubs/nexus_kernel/|src/nexus/core/kernel_)$
 
       # Rust quality: no todo!()/unimplemented!() in committed code
       - id: rust-no-todo

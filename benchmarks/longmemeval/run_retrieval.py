@@ -33,9 +33,9 @@ except ImportError:
 DATA_DIR = Path(__file__).parent / "data"
 DEFAULT_DATA = DATA_DIR / "longmemeval_s_cleaned.json"
 
-NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:40970")
+NEXUS_URL = os.environ.get("NEXUS_URL", "http://localhost:46930")
 NEXUS_API_KEY = os.environ.get(
-    "NEXUS_API_KEY", "sk-pgVobcduFYpVrec61i17xr2gQbZogGYZI50-Qmk7lSc"
+    "NEXUS_API_KEY", "sk-WCsGdtHC1ackWlSUEqtOEcglSHEUfBkLQS6P2wCyfhk"
 )
 
 

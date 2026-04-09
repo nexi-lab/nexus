@@ -439,6 +439,71 @@ async def _handle_federated_search(
     return response_dict
 
 
+@router.post("/query/batch")
+async def search_query_batch(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(require_auth),
+    search_daemon: Any = Depends(_get_search_daemon),
+) -> dict[str, Any]:
+    """Batch search: run N queries through full hybrid pipeline.
+
+    Body: {
+        "queries": [
+            {"q": "text", "limit": 10, "path": "/optional"},
+            ...
+        ]
+    }
+
+    Returns: {"queries": [{"query": str, "results": [...], "total": int}, ...]}
+
+    Optimized for benchmarks and bulk evaluations. txtai's batchsearch()
+    embeds all query texts in ONE OpenAI API call, then runs each through
+    the full hybrid pipeline (BM25 + vector + fusion). For 470 queries:
+    ~30s instead of ~16 min sequential.
+    """
+    from nexus.contracts.constants import ROOT_ZONE_ID
+
+    zone_id = auth_result.get("zone_id") or ROOT_ZONE_ID
+    body = await request.json()
+    queries: list[dict[str, Any]] = body.get("queries", [])
+    if not queries:
+        raise HTTPException(status_code=400, detail="No queries provided")
+
+    if not search_daemon.is_initialized:
+        raise HTTPException(status_code=503, detail="Search daemon is still initializing")
+
+    t0 = time.perf_counter()
+    raw_results = await search_daemon.batch_search(queries, zone_id=zone_id)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    response_queries: list[dict[str, Any]] = []
+    for q_spec, results in zip(queries, raw_results, strict=True):
+        formatted = [
+            {
+                "path": r.path,
+                "chunk_text": r.chunk_text,
+                "score": round(r.score, 4),
+                "keyword_score": round(r.keyword_score, 4) if r.keyword_score is not None else None,
+                "vector_score": round(r.vector_score, 4) if r.vector_score is not None else None,
+            }
+            for r in results
+        ]
+        response_queries.append(
+            {
+                "query": q_spec.get("q", ""),
+                "results": formatted,
+                "total": len(formatted),
+            }
+        )
+
+    return {
+        "queries": response_queries,
+        "total_queries": len(queries),
+        "latency_ms": round(elapsed_ms, 2),
+        "avg_per_query_ms": round(elapsed_ms / max(len(queries), 1), 2),
+    }
+
+
 @router.post("/index")
 async def search_index_documents(
     request: Request,

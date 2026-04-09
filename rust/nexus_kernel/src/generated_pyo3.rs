@@ -1629,6 +1629,17 @@ impl PyKernel {
         self.observers.lock().count()
     }
 
+    /// Block until all queued observer jobs complete (test helper).
+    ///
+    /// OBSERVE dispatch is fire-and-forget — `dispatch_observers` returns
+    /// as soon as jobs are queued on the background ThreadPool. Tests need
+    /// this helper to make assertions deterministic (drain the pool before
+    /// checking observer side-effects). Not for production — blocks the
+    /// calling thread until every worker finishes.
+    fn flush_observers(&self, py: Python<'_>) {
+        py.detach(|| self.inner.flush_observers());
+    }
+
     // ── Hook counts ────────────────────────────────────────────────────
 
     fn set_hook_count(&self, op: &str, count: u64) {

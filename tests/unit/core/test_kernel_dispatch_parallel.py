@@ -9,7 +9,6 @@ Tests:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import pytest
@@ -242,112 +241,19 @@ class TestObserverDispatch:
         await dispatch.notify(_write_event())
         assert len(good._calls) == 1
 
-    async def test_deferred_fault_isolation(self, dispatch: _TestDispatch) -> None:
-        """Deferred observer failure should not affect the caller."""
-        bad = _make_async_observer(
-            name="Bad", side_effect=RuntimeError("boom"), observe_inline=False
-        )
-        dispatch.register_observe(bad)
-        # Should not raise — error is logged in background
-        await dispatch.notify(_write_event())
-        await asyncio.sleep(0.05)
-        assert len(dispatch._background_tasks) == 0
-
-
-class TestHybridDispatch:
-    """Mix of inline and deferred observers in the same notify() call."""
-
-    async def test_inline_fires_immediately_deferred_fires_later(
-        self, dispatch: _TestDispatch
-    ) -> None:
-        inline = _make_async_observer(name="Inline", observe_inline=True)
-        deferred = _make_async_observer(name="Deferred", delay=0.05, observe_inline=False)
-        dispatch.register_observe(inline)
-        dispatch.register_observe(deferred)
-
-        await dispatch.notify(_write_event())
-
-        # Inline: already delivered
-        assert len(inline._calls) == 1
-        # Deferred: not yet delivered
-        assert len(deferred._calls) == 0
-
-        # Wait for deferred to complete
-        await asyncio.sleep(0.1)
-        assert len(deferred._calls) == 1
-
-    async def test_deferred_failure_does_not_affect_inline(self, dispatch: _TestDispatch) -> None:
-        inline = _make_async_observer(name="Inline", observe_inline=True)
-        bad_deferred = _make_async_observer(
-            name="BadDeferred", side_effect=RuntimeError("boom"), observe_inline=False
-        )
-        dispatch.register_observe(inline)
-        dispatch.register_observe(bad_deferred)
-
-        await dispatch.notify(_write_event())
-        assert len(inline._calls) == 1
-
-    async def test_notify_returns_fast_with_slow_deferred(self, dispatch: _TestDispatch) -> None:
-        """notify() should return in <10ms even with a 500ms deferred observer."""
-        import time
-
-        slow = _make_async_observer(name="Slow", delay=0.5, observe_inline=False)
-        dispatch.register_observe(slow)
-
-        t0 = time.monotonic()
-        await dispatch.notify(_write_event())
-        elapsed = time.monotonic() - t0
-
-        assert elapsed < 0.01, f"notify() blocked for {elapsed:.3f}s — should be fire-and-forget"
-        # Clean up: cancel the slow background task
-        await dispatch.shutdown(timeout=0.01)
-
-
-# ── Background task lifecycle tests (Issue #3391) ────────────────────
-
-
-class TestBackgroundTaskLifecycle:
-    """Tests for _background_tasks tracking, exception logging, and shutdown."""
-
-    async def test_task_appears_in_tracking_set(self, dispatch: _TestDispatch) -> None:
-        obs = _make_async_observer(name="Tracked", delay=0.1, observe_inline=False)
-        dispatch.register_observe(obs)
-        await dispatch.notify(_write_event())
-        assert len(dispatch._background_tasks) == 1
-
-    async def test_failed_task_logs_warning(self, dispatch: _TestDispatch, caplog) -> None:
+    async def test_failed_observer_logs_warning(self, dispatch: _TestDispatch, caplog) -> None:
+        """Observer exceptions are caught and logged, never raised to caller."""
         import logging
 
-        obs = _make_async_observer(
-            name="Failing", side_effect=RuntimeError("test-error"), observe_inline=False
-        )
+        obs = _make_async_observer(name="Failing", side_effect=RuntimeError("test-error"))
         dispatch.register_observe(obs)
 
         with caplog.at_level(logging.WARNING, logger="nexus.core.nexus_fs_dispatch"):
             await dispatch.notify(_write_event())
-            await asyncio.sleep(0.05)
 
         assert any("test-error" in r.message for r in caplog.records)
 
-    async def test_shutdown_drains_pending_tasks(self, dispatch: _TestDispatch) -> None:
-        obs = _make_async_observer(name="Slow", delay=0.05, observe_inline=False)
-        dispatch.register_observe(obs)
-        await dispatch.notify(_write_event())
-        assert len(dispatch._background_tasks) == 1
-
-        await dispatch.shutdown(timeout=1.0)
-        assert len(dispatch._background_tasks) == 0
-        assert len(obs._calls) == 1  # task completed, not cancelled
-
-    async def test_shutdown_cancels_stragglers(self, dispatch: _TestDispatch) -> None:
-        obs = _make_async_observer(name="VerySlowObs", delay=10.0, observe_inline=False)
-        dispatch.register_observe(obs)
-        await dispatch.notify(_write_event())
-
-        await dispatch.shutdown(timeout=0.01)
-        # Task was cancelled — event not delivered
-        assert len(obs._calls) == 0
-
-    async def test_shutdown_noop_when_empty(self, dispatch: _TestDispatch) -> None:
-        """shutdown() with no pending tasks should return immediately."""
+    async def test_shutdown_is_no_op(self, dispatch: _TestDispatch) -> None:
+        """shutdown() is a no-op after §11 Phase 6 (observer work runs on
+        Rust kernel ThreadPool, not Python asyncio.Task background set)."""
         await dispatch.shutdown()  # should not raise

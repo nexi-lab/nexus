@@ -938,7 +938,6 @@ impl Kernel {
     /// Not for production: it blocks the calling thread until the entire
     /// ThreadPool drains, which would defeat the fire-and-forget contract
     /// if called on the syscall hot path.
-    #[allow(dead_code)]
     pub fn flush_observers(&self) {
         self.observer_pool.join();
     }

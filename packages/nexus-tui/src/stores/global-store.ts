@@ -8,6 +8,26 @@ import { FetchClient, resolveConfig } from "@nexus-ai-fs/api-client";
 import { categorizeError } from "./create-api-action.js";
 import { useErrorStore } from "./error-store.js";
 
+// ─── Client factory ───────────────────────────────────────────────────────────
+
+/**
+ * Factory that creates (or returns) the HTTP client for a given config.
+ * Defaults to constructing a direct FetchClient (used in tests and SSR contexts).
+ * Replaced at startup by the WorkerManager to route calls through the worker thread.
+ *
+ * @see §2 Worker thread isolation — Issue #3632
+ */
+let _clientFactory: (config: NexusClientOptions) => FetchClient = (config) =>
+  new FetchClient(config);
+
+/**
+ * Override the HTTP client factory. Call this once before initConfig(), passing
+ * a factory that returns a WorkerFetchClient backed by the WorkerManager.
+ */
+export function setClientFactory(factory: (config: NexusClientOptions) => FetchClient): void {
+  _clientFactory = factory;
+}
+
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
 
 export type PanelId =
@@ -100,7 +120,7 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
 
   initConfig: (overrides) => {
     const config = resolveConfig({ transformKeys: false, ...overrides });
-    const client = new FetchClient(config);
+    const client = _clientFactory(config);
     set({ config, client, userInfo: null, connectionStatus: client ? "connecting" : "disconnected" });
 
     if (client) {
@@ -254,7 +274,8 @@ export const useGlobalStore = create<GlobalState>((set, get) => ({
       subject: "subject" in identity ? identity.subject : currentConfig.subject,
       zoneId: "zoneId" in identity ? identity.zoneId : currentConfig.zoneId,
     };
-    const client = new FetchClient(config);
+    // _clientFactory reconfigures the worker thread and returns the stable client.
+    const client = _clientFactory(config);
     set({ config, client, userInfo: null });
   },
 

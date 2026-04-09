@@ -37,7 +37,6 @@ Issue #900, #889, #1665.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -72,41 +71,15 @@ class DispatchMixin:
         self._next_resolver_idx: int = 0
         self._mount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
         self._unmount_hooks: list[tuple[Any, Any]] = []  # (hook, adapter) pairs
-        self._background_tasks: set[asyncio.Task] = set()
-
-    # ── Lifecycle (Issue #3391) ──────────────────────────────────────────
-
-    def _on_background_task_done(self, task: asyncio.Task) -> None:
-        """Done-callback for background observer tasks — log exceptions, discard ref."""
-        self._background_tasks.discard(task)
-        if task.cancelled():
-            return
-        exc = task.exception()
-        if exc is not None:
-            logger.warning("Background observer task %s failed: %s", task.get_name(), exc)
 
     async def shutdown(self, *, timeout: float = 5.0) -> None:
-        """Drain background observer tasks (call during kernel teardown).
+        """Shutdown dispatch state (call during kernel teardown).
 
-        Handles cross-loop scenarios (e.g. TestClient calling aclose() on
-        a different event loop than the one that spawned the tasks).
+        §11 Phase 3 moved observer callbacks to the Rust kernel's
+        background ThreadPool — there are no Python asyncio.Task
+        observer jobs to drain anymore. This method is kept as a
+        no-op so callers don't break.
         """
-        if not self._background_tasks:
-            return
-        _pending = set(self._background_tasks)
-        try:
-            done, still_pending = await asyncio.wait(_pending, timeout=timeout)
-            for task in still_pending:
-                task.cancel()
-            if still_pending:
-                await asyncio.gather(*still_pending, return_exceptions=True)
-        except RuntimeError:
-            # Tasks belong to a different event loop (e.g. pytest loop vs
-            # TestClient loop in Python 3.13+). Best-effort cancel + discard.
-            for task in _pending:
-                task.cancel()
-        finally:
-            self._background_tasks.clear()
 
     # ── PRE-DISPATCH: virtual path resolvers (Issue #889, #1317) ──────
 
@@ -261,12 +234,19 @@ class DispatchMixin:
     # ── register_observe: generic OBSERVE observers (Issue #1748) ───────
 
     def register_observe(self, obs: VFSObserver) -> None:
+        """Register an OBSERVE-phase observer.
+
+        §11 Phase 2 deleted ``OBSERVE_INLINE`` — all observers run on the
+        kernel's background ThreadPool (fire-and-forget by contract).
+        The ``is_inline`` parameter is no longer passed to the Rust
+        registry; the legacy ``ObserverRegistry`` in ``hook_registry.rs``
+        still accepts it for backward compat until Phase 6 fully rewires
+        registration to the Rust kernel ``KernelObserverRegistry``.
+        """
         from nexus.core.file_events import ALL_FILE_EVENTS
 
         mask = getattr(obs, "event_mask", ALL_FILE_EVENTS)
-        is_inline_attr = getattr(obs, "OBSERVE_INLINE", True)
-        is_inline = bool(is_inline_attr) if isinstance(is_inline_attr, (bool, int)) else True
-        self._kernel.register_observer(obs, mask, is_inline)
+        self._kernel.register_observer(obs, mask, False)
 
     def has_hooks(self, op: str) -> bool:
         """O(1) check: any hooks registered for *op*? Delegates to Rust Kernel."""
@@ -289,16 +269,17 @@ class DispatchMixin:
     # ── OBSERVE dispatch (Issue #1812, #1748, #3391) ──────────────────────
 
     async def notify(self, event: FileEvent) -> None:
-        """OBSERVE phase — hybrid inline/deferred dispatch.
+        """OBSERVE phase — fire-and-forget dispatch to all matching observers.
 
-        Rust ``dispatch_observers()`` partitions observers by ``is_inline``
-        (cached at registration from ``OBSERVE_INLINE`` attribute).
+        Used by Python-only fallback paths (hit=false) that the Rust kernel
+        did not handle. For hit=true paths, the Rust kernel fires OBSERVE
+        via its own ThreadPool (§11 Phase 5) — callers must NOT also call
+        notify(), or observers will see duplicate events.
 
-        Inline observers: run via ``asyncio.gather`` on the caller's path.
-        Deferred observers: spawned as tracked background tasks.
-
-        Issue #3391: inspired by DFUSE (arXiv:2503.18191) — eliminate
-        I/O round-trips from the write critical path.
+        §11 Phase 2 deleted ``OBSERVE_INLINE`` — all observers are dispatched
+        the same way (sync ``on_mutation`` call, fire-and-forget). There is
+        no inline/deferred split anymore. Observers that need background I/O
+        (e.g. EventBusObserver) schedule their own async work internally.
         """
         from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
@@ -306,32 +287,16 @@ class DispatchMixin:
         bit = FILE_EVENT_BIT.get(event_type, 0) if event_type else 0
         if not bit:
             return
-        inline, deferred = self._kernel.dispatch_observers(bit)
-        if not inline and not deferred:
+        # Use get_matching_observers (non-partitioned) — no inline/deferred split
+        observers = self._kernel.get_matching_observers(bit)
+        if not observers:
             return
 
-        async def _safe(obs: Any, name: str) -> None:
-            from nexus.lib.lock_order import enter_observer_context, exit_observer_context
-
-            enter_observer_context()
+        for obs, name in observers:
             try:
-                result = obs.on_mutation(event)
-                if result is not None:
-                    await result  # async observer
+                obs.on_mutation(event)
             except Exception as exc:
                 logger.warning("Observer %s failed: %s", name, exc)
-            finally:
-                exit_observer_context()
-
-        # Inline: await on caller's path (fast observers)
-        if inline:
-            await asyncio.gather(*(_safe(obs, name) for obs, name in inline))
-
-        # Deferred: fire-and-forget background tasks (I/O-bound observers)
-        for obs, name in deferred:
-            task = asyncio.create_task(_safe(obs, name), name=f"observe-{name}")
-            self._background_tasks.add(task)
-            task.add_done_callback(self._on_background_task_done)
 
     # ── MOUNT/UNMOUNT hooks (unified into OBSERVE phase) ────────────────
     #
@@ -344,13 +309,11 @@ class DispatchMixin:
 
         # Wrap VFSMountHook as an observer with on_mutation
         class _MountObserverAdapter:
-            OBSERVE_INLINE = True
-
             def __init__(self, h: VFSMountHook):
                 self._hook = h
                 self.event_mask = FILE_EVENT_BIT[FileEventType.MOUNT]
 
-            async def on_mutation(self, event: Any) -> None:
+            def on_mutation(self, event: Any) -> None:
                 from nexus.contracts.vfs_hooks import MountHookContext
 
                 ctx = MountHookContext(
@@ -367,13 +330,11 @@ class DispatchMixin:
         from nexus.core.file_events import FILE_EVENT_BIT, FileEventType
 
         class _UnmountObserverAdapter:
-            OBSERVE_INLINE = True
-
             def __init__(self, h: VFSUnmountHook):
                 self._hook = h
                 self.event_mask = FILE_EVENT_BIT[FileEventType.UNMOUNT]
 
-            async def on_mutation(self, event: Any) -> None:
+            def on_mutation(self, event: Any) -> None:
                 from nexus.contracts.vfs_hooks import UnmountHookContext
 
                 ctx = UnmountHookContext(

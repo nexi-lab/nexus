@@ -309,20 +309,21 @@ class VFSObserver(Protocol):
     Receives a frozen ``FileEvent`` after every successful mutation.
     Must not raise — exceptions are caught and logged by KernelDispatch.
 
+    OBSERVE is fire-and-forget by definition. All observers run on the
+    kernel's background ThreadPool (§11 Phase 3), off the syscall hot
+    path. There is no other mode — ``OBSERVE_INLINE`` was deleted in
+    §11 Phase 2 because inline observers were functionally identical to
+    INTERCEPT POST hooks and violated dispatch-contract orthogonality.
+    Observers needing sync blocking on the syscall return path belong in
+    INTERCEPT POST, not OBSERVE.
+
     Optional class attributes:
 
     ``event_mask`` (default: ``ALL_FILE_EVENTS``)
         Rust-side event-type bitmask filtering to skip irrelevant observers.
-
-    ``OBSERVE_INLINE`` (default: ``True``)
-        When True, ``on_mutation`` runs synchronously on the caller's path
-        (suited for fast, in-process work like resolving futures).
-        When False, ``on_mutation`` is dispatched as a tracked background
-        task — fire-and-forget from the caller's perspective (suited for
-        I/O-bound work like publishing to an event bus).
     """
 
-    async def on_mutation(self, event: Any) -> None: ...
+    def on_mutation(self, event: Any) -> None: ...
 
 
 # ---------------------------------------------------------------------------

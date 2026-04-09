@@ -1954,16 +1954,18 @@ class NexusFS(  # type: ignore[misc]
             },
         )
 
-        # Issue #900/#3391: Unified two-phase dispatch — OBSERVE then INTERCEPT
-        await self.notify(
-            FileEvent(
-                type=FileEventType.DIR_CREATE,
-                path=path,
-                zone_id=ctx.zone_id or ROOT_ZONE_ID,
-                agent_id=ctx.agent_id,
-                user_id=ctx.user_id,
+        # OBSERVE: Rust kernel fires DirCreate when hit=true (§11 Phase 5).
+        # Only Python fires for the fallback path.
+        if not _mkdir_result.hit:
+            await self.notify(
+                FileEvent(
+                    type=FileEventType.DIR_CREATE,
+                    path=path,
+                    zone_id=ctx.zone_id or ROOT_ZONE_ID,
+                    agent_id=ctx.agent_id,
+                    user_id=ctx.user_id,
+                )
             )
-        )
         if _mkdir_result.post_hook_needed:
             from nexus.contracts.vfs_hooks import MkdirHookContext
 
@@ -2122,6 +2124,22 @@ class NexusFS(  # type: ignore[misc]
         """
         wr = self._write_content(
             path, content, context, offset=offset, consistency=consistency, _meta=_meta
+        )
+        # OBSERVE dispatch: this is the Python-only fallback path
+        # (sys_write hit=false → Rust kernel did not fire OBSERVE).
+        # Fire it from Python before INTERCEPT POST hooks.
+        await self.notify(
+            FileEvent(
+                type=FileEventType.FILE_WRITE,
+                path=path,
+                zone_id=wr.zone_id or ROOT_ZONE_ID,
+                agent_id=wr.agent_id,
+                etag=wr.content_hash,
+                size=wr.size,
+                version=wr.new_version,
+                is_new=wr.is_new,
+                old_etag=wr.old_etag,
+            )
         )
         return await self._dispatch_write_events(path, wr, content)
 
@@ -2292,22 +2310,11 @@ class NexusFS(  # type: ignore[misc]
         """
         # --- Lock released — event dispatch + side effects (like Linux inotify after i_rwsem) ---
 
-        # Issue #900: Unified two-phase dispatch — OBSERVE (fire-and-forget)
-        await self.notify(
-            FileEvent(
-                type=FileEventType.FILE_WRITE,
-                path=path,
-                zone_id=result.zone_id or ROOT_ZONE_ID,
-                agent_id=result.agent_id,
-                etag=result.content_hash,
-                size=result.size,
-                version=result.new_version,
-                is_new=result.is_new,
-                old_etag=result.old_etag,
-            )
-        )
+        # OBSERVE dispatch is handled by the caller:
+        #   - sys_write hit=true → Rust kernel fires OBSERVE via ThreadPool (§11 Phase 5)
+        #   - _write_internal (hit=false fallback) → Python fires notify() before calling this
 
-        # Issue #900: Unified two-phase dispatch — INTERCEPT (observer + hooks)
+        # INTERCEPT POST hooks
         from nexus.contracts.vfs_hooks import WriteHookContext
 
         _write_ctx = WriteHookContext(
@@ -3027,17 +3034,19 @@ class NexusFS(  # type: ignore[misc]
                         _be,
                     )
 
-        # Event dispatch
-        await self.notify(
-            FileEvent(
-                type=FileEventType.FILE_DELETE,
-                path=path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                agent_id=agent_id,
-                etag=meta.etag,
-                size=meta.size,
+        # OBSERVE: Rust kernel fires FileDelete when hit=true (§11 Phase 5).
+        # Only Python fires for the fallback path.
+        if not _unlink_result.hit:
+            await self.notify(
+                FileEvent(
+                    type=FileEventType.FILE_DELETE,
+                    path=path,
+                    zone_id=zone_id or ROOT_ZONE_ID,
+                    agent_id=agent_id,
+                    etag=meta.etag,
+                    size=meta.size,
+                )
             )
-        )
 
         return {}
 
@@ -3291,16 +3300,18 @@ class NexusFS(  # type: ignore[misc]
 
             mark_released(L1_VFS)
 
-        # Event dispatch
-        await self.notify(
-            FileEvent(
-                type=FileEventType.FILE_RENAME,
-                path=old_path,
-                zone_id=zone_id or ROOT_ZONE_ID,
-                agent_id=agent_id,
-                new_path=new_path,
+        # OBSERVE: Rust kernel fires FileRename when hit=true (§11 Phase 5).
+        # Only Python fires for the fallback path.
+        if not _rename_result.hit:
+            await self.notify(
+                FileEvent(
+                    type=FileEventType.FILE_RENAME,
+                    path=old_path,
+                    zone_id=zone_id or ROOT_ZONE_ID,
+                    agent_id=agent_id,
+                    new_path=new_path,
+                )
             )
-        )
 
         # POST-INTERCEPT hooks
         if _rename_result.post_hook_needed:

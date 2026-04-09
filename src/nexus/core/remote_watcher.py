@@ -141,12 +141,10 @@ class StreamEventObserver:
     """VFSObserver that publishes FileEvents to StreamRemoteWatcher.
 
     Analogous to EventBusObserver but writes to DT_STREAM instead of
-    NATS/Dragonfly. Inline (OBSERVE_INLINE=True) since stream_write_nowait
-    is ~0.5μs with no network I/O.
+    NATS/Dragonfly. stream_write_nowait is ~0.5μs (no network I/O).
     """
 
     event_mask: int = ALL_FILE_EVENTS
-    OBSERVE_INLINE: bool = True  # no network I/O — safe to run inline
 
     def __init__(self, watcher: StreamRemoteWatcher) -> None:
         self._watcher = watcher

@@ -146,8 +146,6 @@ def _make_observer(name: str = "bench_obs", event_mask: int = 0x7FF):
     """Create a minimal sync observer."""
 
     class _Obs:
-        OBSERVE_INLINE = True
-
         def __init__(self):
             self.event_mask = event_mask
 

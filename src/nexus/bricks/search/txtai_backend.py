@@ -662,16 +662,15 @@ class TxtaiBackend:
         fetch_limit = limit * 2 if self._reranker else limit
 
         sql = _build_search_sql(query, zone_id=zone_id, path_filter=path_filter, limit=fetch_limit)
-        # With pgvector, PostgreSQL handles concurrent read/write safely,
-        # so we don't need to block search on the txtai write lock.
-        # The lock was only needed for faiss (not thread-safe).
-        if self._database_url and self._embeddings:
+        # Even with pgvector, we must serialize against writes because txtai
+        # keeps a single SQLAlchemy session on the shared Embeddings object.
+        # Concurrent search() and upsert()/index() calls would touch the same
+        # mutable DB session from different threads, causing PendingRollback
+        # errors and inconsistent results.
+        async with self._lock:
+            if not self._embeddings:
+                return []
             raw: list[dict[str, Any]] = await asyncio.to_thread(self._embeddings.search, sql)
-        else:
-            async with self._lock:
-                if not self._embeddings:
-                    return []
-                raw = await asyncio.to_thread(self._embeddings.search, sql)
 
         results: list[BaseSearchResult] = []
         for r in raw:
@@ -731,14 +730,15 @@ class TxtaiBackend:
             sql = _build_search_sql(q_text, zone_id=zone_id, path_filter=path_filter, limit=limit)
             sqls.append(sql)
 
-        # txtai.batchsearch() embeds all queries in ONE API call internally
+        # txtai.batchsearch() embeds all queries in ONE API call internally.
+        # Must hold the write lock: txtai shares a single SQLAlchemy session
+        # across search and write paths, so concurrent batchsearch + upsert
+        # corrupts the session (InFailedSqlTransaction / PendingRollback).
         try:
-            if self._database_url:
-                # pgvector: PostgreSQL handles concurrency, no lock needed
+            async with self._lock:
+                if not self._embeddings:
+                    return [[] for _ in queries]
                 raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
-            else:
-                async with self._lock:
-                    raw_results = await asyncio.to_thread(self._embeddings.batchsearch, sqls)
         except Exception:
             logger.warning("batch_search failed, rolling back session", exc_info=True)
             await asyncio.to_thread(self._rollback_db_sessions)

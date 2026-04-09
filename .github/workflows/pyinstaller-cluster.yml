@@ -368,15 +368,10 @@ jobs:
           # A .py extension causes it to analyse the file as a script instead,
           # ignoring the EXE name / one-file settings defined inside.
           cp pyinstaller_spec_cluster.py pyinstaller_spec_cluster.spec
-          # onedir mode: do NOT pass --distpath here. When --distpath and the
-          # COLLECT name are the same, PyInstaller resolves the EXE source path
-          # to distpath/name (a directory) instead of the workpath executable,
-          # causing "Resource is not a valid file". Let PyInstaller write to the
-          # default dist/ folder, then rename it to dist-binary/ below.
           pyinstaller pyinstaller_spec_cluster.spec \
+            --distpath dist-binary \
             --workpath build-pyinstaller \
             --noconfirm
-          mv dist dist-binary
           echo "=== dist-binary contents after PyInstaller ==="
           ls -lhR dist-binary/ || echo "(dist-binary does not exist)"
 

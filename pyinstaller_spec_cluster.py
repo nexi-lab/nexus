@@ -130,6 +130,7 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
+    exclude_binaries=True,  # Required for onedir: tells EXE not to bundle binaries/datas
     name="nexus-cluster",
     debug=False,
     bootloader_ignore_signals=False,

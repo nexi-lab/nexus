@@ -71,53 +71,238 @@ class SessionManager:
 
 ---
 
-## 2. Tool System [P0]
+## 2. Tool System [P0 — Detailed Design]
 
-### 2.1 Tool Interface [Production]
-- See §1.5 Tool protocol design.
-- **Layer: Framework | P0 | Needs building**
+### 2.1 Tool Interface — extend Protocol
 
-### 2.2 Tool Dispatch [Production]
-- ToolRegistry + schemas() + execute().
-- **Layer: Framework | P0 | Needs building**
+**CC source**: `Tool.ts:362-695`. CC's Tool has: `name`, `inputSchema`, `call()`,
+`description()`, `isReadOnly()`, `isConcurrencySafe()`, `isDestructive()`,
+`validateInput()`, `checkPermissions()`, `maxResultSizeChars`, `shouldDefer`,
+`alwaysLoad`, `preparePermissionMatcher()`.
 
-### 2.3 Parallel Tool Execution [Production, partial gated]
-- Classify concurrent-safe vs serial, gather vs sequential.
-- **Layer: Framework | P1 | Needs building**
+**Nexus current**: `Tool` Protocol has `name`, `description`, `input_schema`, `call()`,
+`is_read_only()`, `is_concurrent_safe()`. Missing: `max_result_size_chars`,
+`validate_input`, `check_permissions`, `is_destructive`, `should_defer`.
 
-### 2.4 Tool Result Handling [Production]
-- Truncation at 50,000 chars.
-- Each tool_use gets a matching tool_result.
-- **Layer: Framework | P0 | Needs building**
+**Plan — add to Tool Protocol**:
+- `max_result_size_chars: int` — per-tool cap (default 50K). CC: `Tool.ts:466`
+- `validate_input(input) -> ValidationResult` — input validation (optional, default pass). Via kernel INTERCEPT hook, not Python layer.
+- `check_permissions(input, ctx) -> PermissionResult` — permission gate (optional, default allow). Via Rust CC-like permission service, not ReBAC.
+- `is_destructive(input) -> bool` — marks irreversible ops. CC: `Tool.ts:407`
+- `should_defer: bool` — lazy schema loading (see §2.5). CC: `Tool.ts:438`
 
-### 2.5 Deferred Tool Loading / ToolSearch [Gated]
-- Lazy schema loading. Tool search via VFS grep on tool definition files.
-- **Layer: Framework | P2 | Needs building (deferred)**
+Core Tier A tools (read/write/edit/bash/grep/glob): ✅ DONE.
+Protocol extension: **Needs building**.
 
-### 2.6 Complete Tool Inventory (~40+)
+**Layer: Framework (Rust permission svc + Python Protocol) | P0**
 
-**Production**: Read, Write, Edit, Glob, Grep, Bash, Agent, SendMessage, TodoWrite, TaskCreate/Update/Get/List/Stop/Output, EnterPlanMode, ExitPlanMode, EnterWorktree, ExitWorktree, Skill, WebFetch, WebSearch, NotebookEdit, MCPTool, ListMcpResources, ReadMcpResource, CronCreate/Delete/List, AskUserQuestion, Config
+### 2.2 Tool Dispatch — DONE
 
-**Gated**: TeamCreate/Delete, ListPeers, Brief, Sleep
+`ToolRegistry.execute_one()` + `schemas()`. See `services/agent_runtime/tool_registry.py`.
 
-**Unreleased**: WebBrowser, TerminalCapture, Workflow, Monitor, Snip, OverflowTest, SubscribePR, Tungsten, VerifyPlanExecution, REPL, SuggestBackgroundPR
+### 2.3 Parallel Tool Execution — CC-equivalent exclusive-lock model
+
+**CC source**: `StreamingToolExecutor.ts:34-151`. Algorithm:
+- Concurrent-safe tools run in parallel (`asyncio.gather` equivalent)
+- Non-concurrent-safe tools require exclusive access — block ALL others
+- `canExecuteTool`: returns true IFF (no running tools) OR (this tool AND all running are concurrent-safe)
+- Sibling abort: if one concurrent tool errors, signal siblings to short-circuit (`StreamingToolExecutor.ts:45-48`)
+
+**Nexus current**: `ToolRegistry.execute()` classifies concurrent/serial and gathers, BUT `managed_loop` doesn't use it — loops `execute_one` sequentially.
+
+**Plan — implement via pluggable `ConcurrencyPolicy` ABC**:
+
+```python
+class ConcurrencyPolicy(Protocol):
+    """Pluggable concurrency control for tool execution."""
+    async def execute_batch(self, tools: list[ToolCall], executor: ToolRegistry) -> list[str]: ...
+
+class ExclusiveLockPolicy:
+    """CC-equivalent: concurrent-safe gather, non-safe exclusive."""
+    # Default. Cite: StreamingToolExecutor.ts:129-151
+```
+
+Wire into `managed_loop.run()`: replace sequential `for tc in tool_calls`.
+
+**Layer: Framework | P0 | Needs building**
+
+### 2.4 Tool Result Handling — two-tier truncation + spill to VFS
+
+**CC source**: `toolResultStorage.ts:189-356`, `toolLimits.ts:4-49`.
+
+CC behavior (NOT simple `[:50000]` — much more sophisticated):
+1. **Per-tool cap**: each tool has `maxResultSizeChars` (default 50K, BashTool=30K, most tools=100K)
+2. If result exceeds cap → **persist full content to disk**, send LLM a preview:
+   ```
+   <persisted-output>
+   Output too large (350.2 KB). Full output saved to: {path}
+
+   Preview (first 2.0 KB):
+   {head of content, cut at last newline boundary}
+   ...
+   </persisted-output>
+   ```
+3. **Per-message aggregate budget** (200K): if N parallel tool results together exceed 200K, persist largest until under budget. Prevents 5×40K=200K blowup.
+4. **Empty result handling**: inject `({tool_name} completed with no output)` to prevent LLM tokenization errors. Cite: `toolResultStorage.ts:272-296`.
+5. **Preview algorithm**: head-only, truncated at last newline in `[max_bytes*0.5, max_bytes]` window. Cite: `toolResultStorage.ts:339-356`.
+
+**Nexus plan — pluggable ABCs**:
+
+```python
+class TruncationStrategy(Protocol):
+    """Pluggable preview generation."""
+    def generate_preview(self, content: str, max_bytes: int) -> tuple[str, bool]: ...
+
+class ToolResultStorage(Protocol):
+    """Pluggable spill-to-disk."""
+    async def persist(self, content: str, tool_use_id: str) -> str: ...  # returns VFS path
+
+class MessageBudgetPolicy(Protocol):
+    """Pluggable per-message budget enforcement."""
+    async def enforce(self, results: list[ToolResult], budget: int) -> list[ToolResult]: ...
+```
+
+**Default implementations** match CC behavior but use nexus-native storage:
+Large tool results persist to DT_STREAM (WALStreamBackend or MemoryStreamBackend).
+LLM reads back via `read_file(same_path, offset=N)` — **same path, no new file**.
+This is better than CC's separate file approach: LLM doesn't need to remember a
+different path, just reads from the same resource with offset.
+
+Configurable thresholds (CC has per-tool + global):
+- `DEFAULT_MAX_RESULT_SIZE_CHARS = 50_000` (per-tool default)
+- `MAX_TOOL_RESULTS_PER_MESSAGE_CHARS = 200_000` (per-message aggregate)
+- `PREVIEW_SIZE_BYTES = 2_000` (preview length)
+
+All constants overridable via config.
+
+**Layer: Framework | P0 | Needs building**
+
+### 2.5 Deferred Tool Loading / ToolSearch
+
+**CC source**: `Tool.ts:438-449`, `ToolSearchTool/prompt.ts:62-108`.
+
+CC behavior:
+1. Tools with `shouldDefer=true` → schema NOT sent to LLM at boot
+2. Only tool **names** listed in `<available-deferred-tools>` system reminder
+3. LLM calls `ToolSearch` tool → returns full `<function>` JSON schema blocks
+4. After ToolSearch, LLM can invoke those tools normally
+5. MCP tools always deferred; ToolSearch + Agent never deferred
+
+**Nexus**: Tier B (filesystem discovery via `--tools` DT_MOUNT) covers external tool lazy loading. For built-in tools, Tier A is small (6 tools, ~1.2K tokens) — no need to defer.
+
+When MCP integration is added (§10), adopt `shouldDefer` on Tool Protocol for MCP tools. ToolSearch maps to VFS grep on tool schema files.
+
+**Status**: Tier B ✅ DONE. Built-in deferral deferred until §10.
+
+### 2.6 Complete Tool Inventory (40 CC tools → Nexus mapping)
+
+| CC Tool | §  | Nexus Equivalent | Status |
+|---------|-----|-----------------|--------|
+| FileReadTool | §2 | `read_file` (Tier A) | ✅ Done |
+| FileWriteTool | §2 | `write_file` (Tier A) | ✅ Done |
+| FileEditTool | §2 | `edit_file` (Tier A) | ✅ Done |
+| BashTool | §2 | `bash` (Tier A) | ✅ Done |
+| GlobTool | §2 | `glob` (Tier A) | ✅ Done |
+| GrepTool | §2 | `grep` (Tier A) | ✅ Done |
+| AgentTool | §5 | AgentRegistry.spawn() + ACP | Infra exists |
+| SendMessageTool | §5 | DT_PIPE messaging | Infra exists |
+| TodoWriteTool | §6 | — | Needs building |
+| TaskCreateTool | §6 | — | Needs building |
+| TaskGetTool | §6 | — | Needs building |
+| TaskListTool | §6 | — | Needs building |
+| TaskUpdateTool | §6 | — | Needs building |
+| TaskStopTool | §6 | — | Needs building |
+| TaskOutputTool | §6 | — | Needs building |
+| EnterPlanModeTool | §6 | — | Needs building |
+| ExitPlanModeTool | §6 | — | Needs building |
+| SkillTool | §7 | — | Needs building |
+| ToolSearchTool | §2.5 | Tier B filesystem discovery | ✅ Different approach |
+| AskUserQuestionTool | §11 | StdioPipe interactive prompt | Needs building |
+| ConfigTool | §13 | `~/.nexus/config.yaml` edit | Needs building |
+| WebFetchTool | §10 | — | Needs building |
+| WebSearchTool | §10 | — | Needs building |
+| MCPTool | §10 | — | Needs building |
+| ListMcpResourcesTool | §10 | — | Needs building |
+| ReadMcpResourceTool | §10 | — | Needs building |
+| McpAuthTool | §10 | — | Needs building |
+| NotebookEditTool | §14 | — | Needs building |
+| LSPTool | §10 | — | Needs building |
+| REPLTool | §11 | — | Needs building |
+| EnterWorktreeTool | §8 | — | Needs building |
+| ExitWorktreeTool | §8 | — | Needs building |
+| ScheduleCronTool (×3) | §9 | — | Needs building |
+| RemoteTriggerTool | §9 | — | Needs building |
+| TeamCreateTool | §5 | — | Needs building |
+| TeamDeleteTool | §5 | — | Needs building |
+| BriefTool | — | — | Skip (KAIROS-gated) |
+| SleepTool | §9 | `asyncio.sleep` wrapper | Trivial |
+| PowerShellTool | — | — | Skip (Windows only) |
+| SyntheticOutputTool | — | — | Skip (testing only) |
+
+**§2 scope**: 6 Tier A tools ✅ Done. Other tools belong to §5-§14.
 
 ---
 
-## 3. Permission System [P0]
+## 3. Permission System [P0 — Detailed Design]
 
-### 3.1 Multi-layer Permission Pipeline [Production]
-- validateInput → PreToolUse Hooks → Permission Rules → Interactive Prompt → checkPermissions
-- **Layer: Infra(ReBAC) + Framework | P0 | Nexus ReBAC stronger, needs interactive prompt**
+### 3.1 Three-Checkpoint Permission Pipeline
 
-### 3.2 Path Sandboxing [Production]
-- **Layer: Infra | P0 | VFS mount boundary already exists**
+**CC source**: `toolExecution.ts:683-929`. Three sequential checkpoints:
 
-### 3.3 Dangerous Command Blocking [Production]
-- **Layer: Framework | P1 | Needs building (INTERCEPT hook)**
+1. **validateInput** (`toolExecution.ts:683-686`) — input shape validation, blocked patterns.
+   CC: per-tool `validateInput()` method.
+   Nexus: kernel INTERCEPT hook — tool registers a pre-exec validator via `HookSpec`.
 
-### 3.4 User Hooks [Production]
-- **Layer: Framework | P1 | Needs shell adapter**
+2. **PreToolUse hooks** (`toolExecution.ts:800-862`) — user-defined hook chain.
+   CC: config-driven hook list (`~/.claude/settings.json`).
+   Nexus: kernel INTERCEPT hooks via existing `HookRegistry`. Tool-level hooks register at mount time. Config-driven deny/allow rules in `~/.nexus/config.yaml`.
+
+3. **checkPermissions** (`toolExecution.ts:921-929`) — rule-based permission matching.
+   CC: simple wildcard pattern matching (`Bash(git *)`) + interactive user prompt (allow/deny/always-allow).
+   Nexus: **new Rust CC-like permission service** (NOT ReBAC — simpler). Inject into kernel via INTERCEPT phase. V1: rule-based deny/allow. V2: add interactive prompt.
+
+**Rust permission service design**:
+```rust
+/// CC-like rule-based permission matcher.
+/// Injected into kernel's INTERCEPT phase as a hook.
+pub struct ToolPermissionService {
+    rules: Vec<PermissionRule>,  // loaded from ~/.nexus/config.yaml
+}
+
+struct PermissionRule {
+    tool_pattern: String,      // e.g. "Bash(git *)", "FileWrite(/etc/*)"
+    action: PermissionAction,  // Allow | Deny | Ask
+}
+```
+
+Matches CC's `bashPermissions.ts` wildcard pattern matching. Rules loaded from config. `Ask` deferred to V2 (interactive terminal prompt).
+
+**Layer: Infra (Rust) + Framework | P0 | Needs building**
+
+### 3.2 Path Sandboxing — ✅ DONE
+
+VFS mount boundaries are stronger than CC's `safe_path()`. Every tool operates through `sys_read`/`sys_write` which goes through kernel routing + permission checks. No path escape possible.
+
+### 3.3 Dangerous Command Blocking
+
+**CC source**: `bashSecurity.ts:77-101`. CC has **23 security check categories**:
+command substitution, process substitution, shell metacharacters, obfuscated flags,
+dangerous variables, IFS injection, git commit substitution, /proc/environ access,
+zsh dangerous commands, brace expansion, control characters, unicode whitespace, etc.
+
+**Nexus plan**: implement `BashCommandValidator` (Rust, inject as INTERCEPT hook).
+Adopt CC's full 23-category check list. Configurable via deny list in config.
+CC: `bashSecurity.ts:16-101`. Each category has pattern + error message.
+
+**Layer: Infra (Rust) | P1 | Needs building**
+
+### 3.4 User Hooks — PreToolUse config hooks
+
+CC: `settings.json` → `hooks` array → `preToolUse` entries.
+Nexus: `~/.nexus/config.yaml` → `settings.agent.hooks.pre_tool_use` entries.
+Loaded at agent boot, registered as INTERCEPT hooks in kernel dispatch.
+
+**Layer: Framework | P1 | Needs building**
 
 ---
 
@@ -459,6 +644,11 @@ Precedence: `CLI args > env vars > config file` (matching CC).
 7. ~~**System Prompt Assembly** (§4.2)~~ — DONE (assemble_system_prompt + vfs_paths, 9 tests)
 8. ~~**REPL + CLI** (§11.2 + §13.2)~~ — DONE (`nexus chat`, interactive REPL + one-shot, embedded/remote modes, V1 slash commands)
 9. ~~**External tool discovery (Tier B)** (§1.5)~~ — DONE (`--tools PATH` → DT_MOUNT to `/root/tools/{name}`)
+10. **Tool Protocol extension** (§2.1) — add max_result_size_chars, validate_input, check_permissions, is_destructive
+11. **Parallel execution** (§2.3) — CC-equivalent StreamingToolExecutor with pluggable ConcurrencyPolicy
+12. **Tool result handling** (§2.4) — two-tier truncation + spill-to-VFS with pluggable ABCs
+13. **Rust permission service** (§3.1) — CC-like rule-based matcher, inject kernel INTERCEPT
+14. **Bash security** (§3.3) — 23-category command validator (Rust)
 
 ### Deferred Items (not in current scope):
 - Multi-agent teams (§5.2, P1)

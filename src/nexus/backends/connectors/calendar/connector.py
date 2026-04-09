@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 @register_connector(
-    "gcalendar_connector",
+    "calendar_connector",
     description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
     category="oauth",
     requires=["google-api-python-client", "google-auth-oauthlib"],

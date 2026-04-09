@@ -1230,7 +1230,7 @@ class PlaygroundApp(App[None]):
             return "gdrive://root"
         if connector_name == "gmail_connector":
             return "gmail://inbox"
-        if connector_name == "gcalendar_connector":
+        if connector_name == "calendar_connector":
             return "gws://calendar"
         if connector_name == "slack_connector":
             return "slack://workspace"

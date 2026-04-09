@@ -98,7 +98,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "google-calendar": ServiceInfo(
         name="google-calendar",
         display_name="Google Calendar",
-        connector=None,  # auto-derived: gcalendar_connector
+        connector=None,  # auto-derived: calendar_connector
         klavis_mcp="google_calendar",
         oauth_provider="google",
         capabilities=["read", "write", "list", "delete", "tools"],

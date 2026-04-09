@@ -49,18 +49,10 @@ def _resolve_txtai_runtime_config() -> tuple[str, dict[str, str] | None]:
 
 async def startup_search(app: "FastAPI", svc: "LifespanServices") -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""
-    search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() in (
-        "true",
-        "1",
-        "yes",
-    ) or (
-        # Auto-enable if not explicitly disabled and database URL is set
-        os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
-        and svc.database_url
-    )
+    search_daemon_enabled = os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
 
     if not search_daemon_enabled:
-        logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
+        logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=false to disable)")
         return []
 
     try:

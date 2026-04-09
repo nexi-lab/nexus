@@ -121,11 +121,14 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+# onedir mode: EXE only holds the bootloader + scripts; binaries/datas go into
+# COLLECT so they sit next to the executable instead of being re-extracted on
+# every launch. This eliminates the startup decompression cost of onefile mode
+# and is especially beneficial here because the bundle includes native Rust
+# extensions (.so/.dylib) that are expensive to extract each run.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name="nexus-cluster",
     debug=False,
@@ -133,11 +136,20 @@ exe = EXE(
     strip=False,
     upx=False,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="nexus-cluster",
 )

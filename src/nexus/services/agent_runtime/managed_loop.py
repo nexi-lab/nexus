@@ -274,6 +274,17 @@ class ManagedAgentLoop:
                     tool_results, MAX_TOOL_RESULTS_PER_MESSAGE_CHARS
                 )
                 for tr in tool_results:
+                    # §4A.4: emit tool_call completion status for ACP UI
+                    if tr.truncated or tr.content.startswith('{"error"'):
+                        self._observer.observe_update(
+                            "tool_call_failed",
+                            {"tool_call_id": tr.tool_call_id, "error": tr.content},
+                        )
+                    else:
+                        self._observer.observe_update(
+                            "tool_call_complete",
+                            {"tool_call_id": tr.tool_call_id, "content": tr.content[:200]},
+                        )
                     self._messages.append(
                         {
                             "role": "tool",
